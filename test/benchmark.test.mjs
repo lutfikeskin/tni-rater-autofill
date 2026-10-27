@@ -64,6 +64,21 @@ test('choiceVerdict follows the fill engine\'s exact, yes/no, state and dollar t
   assert.equal(choiceVerdict({ kind: 'int', value: 800 }, 'More than 500 miles'), 'unsure');
   assert.equal(choiceVerdict({ kind: 'pick-not', value: { not: 'different' } }, 'Main St (USDOT Address)'), 'unsure');
   assert.equal(choiceVerdict({ kind: 'choice', value: 'Trucking' }, 'Trucking - all classes'), 'unsure');
+  // An answer that depends on what lists offer (`onlyIf`: GEICO's Medical Payments $5,000, Not
+  // Included where it offers no limit, W44-26): read from the question's own options in the layout.
+  const med = { kind: 'choice', value: '$5,000', onlyIf: [{ path: null, limit: true, value: null }, { path: null, limit: false, value: 'Not Included' }] };
+  const limits = ['Please Select', 'Not Included', '$500', '$1,000', '$2,000', '$5,000'];
+  assert.equal(choiceVerdict(med, '$5,000', limits), 'agree');
+  assert.equal(choiceVerdict(med, 'Not Included', limits), 'differ', 'limits offered: $5,000');
+  assert.equal(choiceVerdict(med, 'Not Included', ['Please Select', 'Not Included']), 'agree', 'no limit offered');
+  assert.equal(choiceVerdict({ ...med, onlyIf: [{ path: null, limit: false, value: null }] }, 'Not Included', limits), 'unsure', 'no condition holds: the agent\'s');
+  // Without the options, or reading another question's list: can't tell.
+  assert.equal(choiceVerdict(med, '$5,000'), 'agree');
+  assert.equal(choiceVerdict(med, 'Not Included'), 'unsure');
+  assert.equal(choiceVerdict(med, '$500'), 'differ');
+  const pip = { kind: 'choice', value: '$2,500', onlyIf: [{ path: 'geico.qMedicalPayments', limit: true, value: 'I decline' }, { path: 'geico.qMedicalPayments', limit: false, value: null }] };
+  assert.equal(choiceVerdict(pip, 'I decline', ['I decline', '$2,500']), 'unsure');
+  assert.equal(choiceVerdict(pip, '$2,500', ['I decline', '$2,500']), 'agree');
 });
 
 test('textVerdict needs an intake field to tell typed text apart', () => {
@@ -111,6 +126,25 @@ test('benchmark gives a withOption rule the options the quote recorded', () => {
   const rows = lone('PrintEmailFax', 't1', { type: 'field_change', q: '32B0', key: '32B0', label: 'Documents', kind: 'select', by: 'agent', from: null, to: 'Insurance Quote (with all bill plans)' }, [doc]);
   assert.equal(rows[0].status, 'value');
   assert.equal(rows[0].result, 'agree');
+});
+
+// GEICO's Medical Payments (W44-26): $5,000, Not Included where its list offers no limit. Its list has
+// no data-model name and a new id each render: its options are found by its text on its page.
+test('benchmark reads a list-dependent answer from the options the quote recorded for that question', () => {
+  // The quote's fill gave `shown` (paired by the rule path that filled it) and the agent kept it.
+  const med = (options, shown) => {
+    const base = { session: 's', intakeId: 'sample', carrier: 'geico', page: '/quote', view: 't1', step: 'Quote & Coverages' };
+    const label = 'Medical Payments (MED)';
+    const events = [
+      { id: '1', t: '2026-10-05T12:00:00Z', ...base, type: 'intake_loaded', carrier: undefined, state: 'TX', businessClass: 'Expediter' },
+      { id: '2', t: '2026-10-05T12:00:01Z', ...base, type: 'page_layout', fields: [{ id: 'Id_med_1', label, kind: 'select', options }] },
+      { id: '3', t: '2026-10-05T12:00:02Z', ...base, type: 'fill_field', q: null, key: 'cov:medical payments med', label, controlKind: 'select', result: 'filled', path: 'geico.qMedicalPayments', shown },
+    ];
+    return benchmark(events, { carriers: CARRIERS, raws: new Map([['sample', raw]]) }).rows.find((r) => r.label === label);
+  };
+  assert.equal(med(['Please Select', 'Not Included'], 'Not Included').result, 'agree', 'no limit offered: Not Included');
+  assert.equal(med(['Please Select', 'Not Included', '$500', '$5,000'], 'Not Included').result, 'differ', 'limits offered: $5,000');
+  assert.equal(med(['Please Select', 'Not Included', '$500', '$5,000'], '$5,000').result, 'agree');
 });
 
 test('compareRuns lists answers whose result changed between two runs of the same quotes', () => {

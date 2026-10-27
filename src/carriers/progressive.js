@@ -30,8 +30,9 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
-import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
+import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, driverExcluded, nonDrivingOwnerRow } from '../util.js';
+import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -44,52 +45,78 @@ const explicitBoolean = (record, path) => {
   return typeof value === 'boolean' ? value : null;
 };
 
-// The business owner, matched to their driver row (for date of birth and a clean name split).
-// An intake saying the owner doesn't drive links no row, whatever the names: the name parts come
-// from the owner box alone and the date of birth stays the agent's (a driver with the owner's
-// surname is another person). The date of birth (`dob`) is the matched driver's, or the first
-// of several drivers matching the owner's name; with none it is the agent's, with a warning
-// (ownerDobNote; TNI, 2026-10-20: never another driver's).
+// The business owner and their driver row (for date of birth and a clean name split). TNI,
+// 2026-10-27 (answer to PR question V4): "The owner is always the first driver on the intake's driver
+// list", Sr or Jr regardless, so the owner's row is the first (util.js ownerRow), whatever its name;
+// the rows after it are ordinary drivers, even with the owner's name. This replaces finding the row
+// by the owner's name (and, of several, T2's exact full name), and the 2026-10-20 rule that an owner
+// no row's name matched got no date of birth: a first row with another name is still the owner's,
+// and the Intake step says so (normalize.js `drivers.owner-name-differs`).
+// - `driver`: the owner's row while the owner drives (as their driver row); none when the intake
+//   says the owner doesn't drive.
+// - `dob` from `dobDriver`: that row, or with the intake's No the owner's row all the same
+//   (util.js nonDrivingOwnerRow; TNI, 2026-10-26: answer to PR question, T3, asked of GEICO, and V2,
+//   2026-10-27: confirmed here and on AmWINS). None with no driver rows: the agent's (ownerDobNote).
+// - The name parts come from the row only when it carries the owner box's name (`named`: the same
+//   words, the owner's first name and surname by util.js ownerIsDriver, the first name repeated in the
+//   sole driver's last-name box, or an owner box holding only the first name); otherwise, and when the
+//   owner doesn't drive, from the owner box (never another person's name: the FL run that put the
+//   first driver in the owner boxes, the 2026-10-08 audit's "Alice Sample" and "Bob Sample").
 export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
-  const candidates = r.applicant.ownerDrives === false ? [] : r.drivers;
-  const fullMatches = candidates.filter((d) => nameKey(full) && nameKey(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''} ${d.suffix ?? ''}`) === nameKey(full));
-  // The owner's surname (or a word of a two-word surname) with a matching first name (util.js).
-  const lastMatches = candidates.filter((d) => ownerIsDriver(full, d));
+  const row = ownerRow(r);
+  const driver = r.applicant.ownerDrives === false ? null : row;
+  const fullMatch = !!driver && !!nameKey(full) && nameKey(`${driver.first ?? ''} ${driver.middle ?? ''} ${driver.last ?? ''} ${driver.suffix ?? ''}`) === nameKey(full);
   // Some intakes repeat the first name in the sole driver's last-name box. Only connect
-  // that DOB when the intake explicitly says the owner drives and the owner's first name agrees.
+  // that row's name when the intake explicitly says the owner drives and the owner's first name agrees.
+  // A blank box, TNI's Yes for the owner-driver question (W44-25), is no evidence of the name.
   const sole = r.drivers.length === 1 ? r.drivers[0] : null;
-  const repeatedFirst = sole && r.applicant.ownerDrives === true && nameKey(sole.first)
+  const repeatedFirst = !!driver && driver === sole && r.applicant.ownerDrives === true && !!nameKey(sole.first)
     && nameKey(sole.first) === nameKey(sole.last)
     && nameKey(sole.first) === nameKey(full.split(/\s+/).slice(0, -1).join(' '));
-  // The owner box sometimes holds only the first name ("IBRAHIM"): the one driver whose first
-  // name starts with it is the owner.
-  const firstOnly = !/\s/.test(full.trim()) && full.trim()
-    ? candidates.filter((d) => (d.first ?? '').trim().split(/\s+/)[0].toLowerCase() === full.trim().toLowerCase()) : [];
-  const driver = fullMatches.length === 1 ? fullMatches[0] : fullMatches.length ? null : lastMatches.length === 1 ? lastMatches[0]
-    : repeatedFirst ? sole : firstOnly.length === 1 ? firstOnly[0] : null;
-  const first = driver?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
-  const dobDriver = driver ?? fullMatches[0] ?? lastMatches[0] ?? null;
-  return { driver, dob: dobDriver?.dob ?? null, dobDriver, first: first || null, middle: driver?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : driver?.last ?? full.split(/\s+/).at(-1) ?? null };
+  // The owner box sometimes holds only the first name ("IBRAHIM"): the row whose first name starts
+  // with it gives the rest of the name.
+  const firstOnly = !!driver && !/\s/.test(full.trim()) && !!full.trim()
+    && (driver.first ?? '').trim().split(/\s+/)[0].toLowerCase() === full.trim().toLowerCase();
+  const named = driver && (fullMatch || ownerIsDriver(full, driver) || repeatedFirst || firstOnly) ? driver : null;
+  const first = named?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
+  const dobDriver = r.applicant.ownerDrives === false ? nonDrivingOwnerRow(r) : driver;
+  return { driver, named, dob: dobDriver?.dob ?? null, dobDriver, first: first || null, middle: named?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : named?.last ?? full.split(/\s+/).at(-1) ?? null };
 }
 
 // The owner's date of birth left to the agent, and why (Progressive and AmWINS).
 export function ownerDobNote(r) {
   const o = owner(r);
   if (o.dob) return null;
-  if (r.applicant.ownerDrives === false) return 'The intake says the owner doesn\'t drive, so no driver row gives their date of birth: enter it yourself.';
   if (o.dobDriver) return 'The owner\'s driver row has no date of birth: enter it yourself.';
-  return `No driver matches the owner "${r.applicant.owner1 ?? ''}": check the names and enter the owner's date of birth yourself.`;
+  if (r.applicant.ownerDrives === false) return 'The intake says the owner doesn\'t drive, and no driver row is theirs (TNI: the owner\'s is the first driver; none on the intake, or set as not excluded in client details), so none gives their date of birth: enter it yourself.';
+  // The owner's row is the first (V4), so only an intake with no driver rows gets here.
+  return 'The intake lists no drivers, so no driver row gives the owner\'s date of birth: enter it yourself.';
 }
 
 // "Is the customer currently insured with Progressive Commercial Auto?" Yes only when the
-// intake's current-insurance section is a Progressive *commercial* auto policy filled out with
-// the coverage (limit) and the expiration date. A Progressive personal auto policy doesn't count.
+// intake's current-insurance section is a Progressive *commercial* auto policy, not expired. A
+// Progressive personal auto policy doesn't count. Progressive misspelled or with a suffix
+// ("Progresive", "Progressive Commercial") is Progressive (sameCarrier; TNI, 2026-10-26, W44-06).
+// Without a limit or a usable expiration date too (TNI, 2026-10-26: answer to PR question 9, by
+// W44-29's proof of prior: priorPolicyCurrent), TNI's answer, a standard: it used to be No unless
+// both were filled. An expired policy stays No. A Progressive policy whose type is left blank is the
+// agent's, a `fact` with a note that the type isn't on the intake, dated or undated (TNI,
+// 2026-10-26: answer to PR question R9: untypedCarrierPolicy): it used to be No. An expired one of
+// no type is No again, `derived`, as any expired Progressive policy: an expired policy isn't current
+// (TNI, 2026-10-26: answer to PR question T10: priorPolicyCurrent). The red warning still shows.
 const insuredWithProgressive = (r) => {
   const p = r.priorInsurance[0];
-  return !!(p && /commercial\s+auto/i.test(p.type ?? '') && /progressive/i.test(p.carrier ?? '') && p.limit && p.expiration && !priorPolicyExpired(r, p));
+  return !!(p && /commercial\s+auto/i.test(p.type ?? '') && sameCarrier(p.carrier, 'progressive') && priorPolicyCurrent(r, p));
 };
+const untypedProgressive = (r) => untypedCarrierPolicy(r.priorInsurance?.[0], 'progressive') && priorPolicyCurrent(r);
+// Derived with a limit and a date, as before; TNI's standard when the Yes is question 9's answer; a
+// fact, the agent's, for a Progressive policy of no type not expired (R9, T10).
+const insuredWithProgressiveSource = (r) => (untypedProgressive(r) ? 'fact' : insuredWithProgressive(r)
+  && !(r.priorInsurance[0].limit && /^\d{2}\/\d{2}\/\d{4}$/.test(r.priorInsurance[0].expiration ?? '')) ? 'standard' : 'derived');
+const insuredWithProgressiveNote = (r) => (untypedProgressive(r)
+  ? 'The intake\'s current policy is with Progressive, but its policy type isn\'t on the intake: answer it yourself.' : null);
 
 // After a USDOT lookup Progressive offers the registered business name / address as a choice,
 // next to "Enter a different …". Agents pick the registered one. Without a USDOT number there is
@@ -150,6 +177,8 @@ const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
 const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').trim());
 const isArkansas = (r) => /^(ar|arkansas)$/i.test(String(r.garaging?.state ?? '').trim());
+const isTexas = (r) => /^(tx|texas)$/i.test(String(r.garaging?.state ?? '').trim());
+const isMaryland = (r) => /^(md|maryland)$/i.test(String(r.garaging?.state ?? '').trim());
 
 // A trailer's attached equipment: the intake's amount when it gives one (not "N/A" or 0), else
 // none (TNI standard: "Trailer has no equipment").
@@ -158,12 +187,21 @@ const trailerEquipment = (r) => (r.trailerInfo?.equipTrailer > 0 ? r.trailerInfo
 const trailerEquipmentSource = (r) => (r.trailerInfo?.equipTrailer == null ? 'standard' : 'derived');
 
 // A driver the intake marks excluded ("Excluded" in their license-number box, normalize.js; or set
-// in client details). TNI (2026-10-20): the exclude question is Yes for them.
-const excludedDriver = (r, a) => r.drivers?.[a.drivers ?? 0]?.excluded === true;
+// in client details). TNI (2026-10-20): the exclude question is Yes for them. The owner's row when
+// the intake says the owner doesn't drive counts too (TNI, 2026-10-26: answer to PR question, R1:
+// util.js driverExcluded). The owner's row is the first, whatever its name (TNI, 2026-10-27: answer
+// to PR question V4); a later row with the owner's name is excluded only by its own mark. It stays
+// an excluded driver here, also marked over a blank box or a Yes (V3: only GEICO leaves it out).
+const excludedDriver = (r, a) => driverExcluded(r, r.drivers?.[a.drivers ?? 0]);
 
 // TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
 // the driver took a course (or the Additional Notes box does); then it's the agent's.
 const defensiveMention = (r) => String(otherNotes(r) ?? '').match(/[^\n.]*defensive[^\n.]*/i)?.[0].trim().slice(0, 80) ?? null;
+// KY's wording asks about an Armed Forces course (W44-32): a course the notes mention that isn't
+// said to be military doesn't change its No (TNI, 2026-10-26: answer to PR question); one that is
+// stays the agent's.
+const ARMED_FORCES_COURSE = { field: 'DriverInput.DefensiveDriverDiscount', label: 'armed forces' };
+const militaryCourse = (r) => (/\b(military|armed forces|army|navy|naval|air force|marines?|coast guard|national guard)\b/i.test(defensiveMention(r) ?? '') ? defensiveMention(r) : null);
 
 // A driver's accidents, claims or violations: the claims box's Yes or No. TNI (2026-10-19, after a
 // live run): when it gives neither, No (standard) unless the intake's notes (the claims box's
@@ -238,17 +276,29 @@ const filings = (r) => (r.operations.filingsRequired === true ? true : r.operati
 const filingsHint = (r) => (r.operations.filingsRequired != null ? null
   : r.operations.filingsWhich ? `names filings ("${String(r.operations.filingsWhich).slice(0, 40)}")`
     : r.operations.needSr22 === true ? 'says an SR-22 is needed' : null);
-const filingsNote = (r) => (r.operations.filingsRequired === true && !r.applicant.dot
+const filingsNote = (r) => (ntlNoDotFilings(r) ? null : r.operations.filingsRequired === true && !r.applicant.dot
   ? 'Filings are requested but the intake has no USDOT number; Progressive may not allow filings without one.'
   : filingsHint(r) ? `The intake leaves "filings required" blank but ${filingsHint(r)}: answer it yourself.` : null);
 // "Are state or federal filings required?" TNI (2026-10-19, after a live run): left blank on an
 // intake with no USDOT or MC number, No (standard), also when the intake says one is coming
-// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number,
-// filings named or an SR-22 needed, a blank answer stays the agent's. (The Filings page's answers
-// keep `filings`: that page shows only after a Yes.)
-const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && !r.applicant.dot && !r.applicant.mc && !filingsHint(r);
-const filingsAsked = (r) => (filingsBlankNoNumber(r) ? false : filings(r));
-const filingsSource = (r) => (filingsBlankNoNumber(r) ? 'standard' : 'derived');
+// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number, No
+// too, as on every carrier (TNI, 2026-10-26: answer to PR question, replacing the 2026-10-19 rule
+// that left it to the agent), except on a quote that is or may be NTL (W44-28's). Filings named or an
+// SR-22 needed leave a blank to the agent. (The Filings page's answers keep `filings`: that page
+// shows only after a Yes. `filingsBlankNoNumber` keeps the 2026-10-19 rule's name.)
+const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && (notNtl(r) || (!r.applicant.dot && !r.applicant.mc)) && !filingsHint(r);
+// An NTL quote (TNI, 2026-10-26, W44-28: "US DOT is not added and filings not added if its NTL, in
+// every case"): No, whatever the intake asks; the intake's own No stays the intake's (`derived`).
+// The Federal filing on the Filings page (reached only after a Yes) is No there too.
+const ntlNoFilings = (r) => ntlNoDotFilings(r) && r.operations.filingsRequired !== false;
+const filingsAsked = (r) => (ntlNoDotFilings(r) || filingsBlankNoNumber(r) ? false : filings(r));
+// (TNI, 2026-10-26: answers to PR questions) NTL with primary auto liability too, or NTL mentioned
+// and not answered yet: the USDOT and filings questions (`1ED`, `1F3`, `CA`, the Federal filing)
+// are the agent's, with a note saying why (`ntlDotFilingsHold`), and Verify USDOT isn't clicked.
+// Business Owner Info comes before Rates, so the USDOT number waits for the NTL answer there too.
+const held = (source) => (r) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r) : source);
+const holdOr = (note) => (r) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r) : note ?? null);
+const filingsSource = (r) => (ntlNoFilings(r) || filingsBlankNoNumber(r) ? 'standard' : 'derived');
 const usesEld = (r) => explicitBoolean(r, 'operations.usesEld');
 const eldNote = (r) => (usesEld(r) == null ? 'The intake does not answer the ELD question.' : null);
 const cargoNote = (r) => r.coverage.cargo === true && !r.coverage.cargoLimit
@@ -294,7 +344,18 @@ const isFreightHauler = (r) => FREIGHT_HAULER.test((r.operations.businessClass ?
 const isGeneralFreight = (r) => isFreightHauler(r) && /general\s+freight/i.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
 const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHauler(r) ? 'General Freight Hauler' : (r.operations.businessClass ?? null);
 const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
-const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration && !priorPolicyExpired(r, p));
+// "Is the customer currently insured?" Yes for a policy on the intake with a limit and an
+// expiration not passed (derived), and, TNI's assumption, whenever any box of an auto or untyped
+// policy is filled (TNI, 2026-10-26, W44-29: proof of prior insurance, 1-3 years; the Intake step
+// names the blank boxes). Nothing filled, no prior insurance or an expired policy: No, as before.
+const PRIOR_DATE = /^\d{2}\/\d{2}\/\d{4}$/;
+const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration && !priorPolicyExpired(r, p)) || priorInsuranceAssumed(r);
+const insuredSource = (r) => (currentlyInsured(r) && !r.priorInsurance?.some((p) => p.limit && PRIOR_DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p)) ? 'standard' : 'derived');
+// The current policy's limit and expiration date, asked once currently insured: a blank box (or a
+// remark in the date box) is the agent's, named, never typed.
+const priorBoxNote = (r, key) => (!currentlyInsured(r) ? null
+  : key === 'limit' && !r.priorInsurance?.[0]?.limit ? 'The intake\'s current insurance has no limit: answer it yourself.'
+    : key === 'expiration' && !PRIOR_DATE.test(r.priorInsurance?.[0]?.expiration ?? '') ? 'The intake\'s current insurance has no expiration date: enter it yourself.' : null);
 // Other business coverages (MoreAboutBusiness): TNI's standard is none (2026-10-10), unless the
 // notes say the customer has general liability: the agent marked that they have it
 // (coverage.hasGl, from Luna's claims-box card). Then every one of them is the agent's. GL asked
@@ -323,9 +384,18 @@ const forHireNote = (r) => (forHire(r) == null ? `Whether a ${r.operations.busin
 // is the agent's (2026-10-09; until then "will not" was asserted). "No" in the intake's USDOT box
 // (`noDot`) is No too (TNI, 2026-10-26: answer to PR question), unless the 60-day answer says one is coming.
 // So are "None" and "N/A" there (R14), and an MC number on the intake changes nothing (R12).
-const hasUsdot = (r) => (r.applicant.dot ? 'Yes - the customer has a USDOT number'
+// On an NTL quote No, and the number is neither typed nor verified (TNI, 2026-10-26, W44-28: "US DOT
+// is not added … if its NTL, in every case"); the intake's own No ("will not have one") stays `derived`.
+// This wording is accepted also when the client has a USDOT number (TNI, 2026-10-26: answer to PR
+// question).
+const USDOT_NO = 'No - and the customer will not have a USDOT number';
+const intakeUsdotNo = (r) => !r.applicant.dot && r.applicant.mcDotWithin60Days !== true
+  && (r.applicant.mcDotWithin60Days === false || r.applicant.noDot === true);
+const hasUsdot = (r) => (ntlNoDotFilings(r) ? USDOT_NO : r.applicant.dot ? 'Yes - the customer has a USDOT number'
   : r.applicant.mcDotWithin60Days === true ? 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days'
-    : r.applicant.mcDotWithin60Days === false || r.applicant.noDot === true ? 'No - and the customer will not have a USDOT number' : null);
+    : intakeUsdotNo(r) ? USDOT_NO : null);
+const hasUsdotSource = (r) => (ntlNoDotFilings(r) && !intakeUsdotNo(r) ? 'standard' : 'derived');
+const dotOnQuote = (r) => !!r.applicant.dot && !ntlNoDotFilings(r);
 const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT number and doesn\'t say whether one is expected within 60 days: answer it yourself.' : null);
 
 // Rates as TNI agents work it (cargo and GL added, bill plan, back, Recalculate, Print). With NTL
@@ -334,8 +404,8 @@ const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT numb
 // while its new questions are open).
 // An NTL mention in the claims box the agent hasn't answered yet (Yes or No) is not a No: Rates
 // waits for it like for NTL itself.
-// Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl).
-const ntlUndecided = (r) => r.coverage.ntl == null && (!!ntlMention(intakeNotes(r)) || r.claims?.aiNtl === true);
+// Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl):
+// `ntlUndecided` in normalize.js, which holds the USDOT and filings questions too.
 const notNtl = (r) => r.coverage.ntl !== true && !ntlUndecided(r);
 // An NTL quote asking for neither cargo nor general liability: the fill does Rates as on any quote
 // (the maintainer, 2026-10-26, live run: NTL, then Done with this coverage, Recalculate, the bill
@@ -388,8 +458,8 @@ const SAFE_LABEL_RULES = [
   { path: 'operations.hazPlacard', label: 'placard', kind: 'bool', source: hazPlacardSource, value: hazPlacard, note: hazPlacardNote },
   { path: 'operations.personalUse', label: 'personal use' },
   { path: 'coverage.autoLiabLimit', label: '(auto |bodily injury |combined single |csl )?liability limit|^bi limit|combined single limit', not: 'general|cargo' },
-  { path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', ignore: (r) => !currentlyInsured(r) },
-  { path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration', ignore: (r) => !currentlyInsured(r) },
+  { path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', clientFact: true, ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'limit') },
+  { path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration', clientFact: true, ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'expiration') },
   { name: 'Fire / theft additional coverage (standard: Not selected)', label: 'fire\\s*/?\\s*theft', kind: 'choice', source: 'standard', value: () => 'Not selected' },
 ];
 
@@ -478,7 +548,10 @@ export const progressive = {
     // Done once the page shows the lookup's result (the registered names to pick, or the 60-day
     // question when the number is new): a click without one is tried again, then the agent's.
     // Already showing them for the number on the page (the agent verified it before Fill): done.
-    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] } },
+    // Never on an NTL quote, whose USDOT number isn't entered (TNI, 2026-10-26, W44-28), nor while the
+    // USDOT number is the agent's: NTL with primary auto liability, or NTL not answered yet (TNI,
+    // 2026-10-26: answers to PR questions).
+    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] }, when: (r) => !ntlNoDotFilings(r) && !ntlDotFilingsHold(r) },
     // Vehicle summary: "Add a Vehicle" for a vehicle not entered yet (its VIN lookup not done).
     // The vehicles found by the USDOT lookup are listed there too; ours is added with Add Vehicle,
     // which sits in the "Add" menu.
@@ -638,10 +711,10 @@ export const progressive = {
     ...onPage(['BusinessOwnerInfo', 'BECAPopup'], [
       { q: '18F', field: 'AgencyInfo.AgencyCodeAgent', ask: 'Agent Code', name: 'Agent code (preserve prefilled value)', ignore: true },
       { q: '194', field: 'PolicyInput.EffectiveDate', ask: 'When should this Progressive Commercial Auto policy start?', name: 'Policy start date (preserve prefilled value)', ignore: true },
-      { q: '198', source: 'derived', field: 'AccountInput.PGRInsuredIndicator', ask: 'Is the customer currently insured with Progressive Commercial Auto?', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive },
+      { q: '198', source: insuredWithProgressiveSource, field: 'AccountInput.PGRInsuredIndicator', ask: 'Is the customer currently insured with Progressive Commercial Auto?', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive, note: insuredWithProgressiveNote },
       { q: '1CC', field: 'Warehouse.QuoteVendorCode', ask: 'Quote Vendor Code', optional: true, name: 'Quote vendor code (optional)', ignore: true },
-      { q: '1ED', source: 'derived', clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: hasUsdotNote },
-      { q: '1F3', field: 'USDOTInput.NumberCollection', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !r.applicant.dot },
+      { q: '1ED', source: held(hasUsdotSource), clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: holdOr(hasUsdotNote) },
+      { q: '1F3', field: 'USDOTInput.NumberCollection', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !dotOnQuote(r), note: holdOr() },
       // Shown when Verify USDOT finds no record for the number (a brand-new USDOT). TNI's standard
       // Yes (2026-10-19, after a live run): a number the lookup doesn't know yet is a new one.
       { q: '21E', source: 'standard', field: 'USDOTInput.SixtyDayQuestion', ask: 'Did the customer obtain their USDOT Number within the last 60 days?', name: 'USDOT obtained within the last 60 days (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, value: () => true },
@@ -691,7 +764,13 @@ export const progressive = {
       { q: '296', source: 'derived', field: 'AccountInput.BusinessOwnerMiddleInitial', ask: 'MIMiddle initial', optional: true, name: 'Owner middle initial', value: (r) => owner(r).middle?.[0] ?? null, ignore: true },
       { q: '297', source: 'derived', field: 'AccountInput.BusinessOwnerLastName', ask: 'Last Name', name: 'Owner last name', value: (r) => owner(r).last },
       { q: '298', field: 'AccountInput.BusinessOwnerSuffix', ask: 'Suffix', optional: true, name: 'Owner suffix (optional)', ignore: true },
-      { q: '29F', field: 'AccountInput.DriverInPolicyIndicator', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives' },
+      // The intake's answer; a blank box is TNI's standard Yes, and an owner whose driver row the
+      // intake marks excluded is not a driver, No (TNI, 2026-10-26, W44-25: util.js ownerDrives).
+      // The owner's row is the first (TNI, 2026-10-27: answer to PR question V4), so a later row with
+      // the owner's name, marked or not, changes nothing: V4 replaces the 2026-10-26 answer that left
+      // the owner's name on several rows, only some excluded, to the agent.
+      { q: '29F', field: 'AccountInput.DriverInPolicyIndicator', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives',
+        source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn },
       { q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
       // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
       { q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
@@ -726,15 +805,17 @@ export const progressive = {
     // --- More about the business (MoreAboutBusiness) -------------------------------------------
     ...onPage('MoreAboutBusiness', [
       { q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
-      { q: '81', source: 'derived', field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
+      { q: '81', source: insuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
       // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer
       // currently insured ("more than a year is always Yes"); otherwise the agent's. Yes reveals the
       // current BI limit (95; live run 2026-10-10: left blank until the agent answered this).
       { q: '83', source: (r) => (currentlyInsured(r) ? 'standard' : 'attestation'), field: 'MoreBusinessInput.HasContinuousCoverage', ask: 'Has the customer had continuous coverage?', name: 'Continuous coverage (Yes when currently insured)', kind: 'bool',
         value: (r) => (currentlyInsured(r) ? true : null),
         note: (r) => (currentlyInsured(r) ? null : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
-      { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', ignore: (r) => !currentlyInsured(r) },
-      { q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', ignore: (r) => !currentlyInsured(r) },
+      { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true,
+        ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'limit') },
+      { q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', clientFact: true,
+        ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'expiration') },
       // Other business coverages: TNI's standard None (2026-10-10; the agent's from 2026-10-09),
       // unless the notes say the customer has general liability (hasGl): then all of them are the
       // agent's. A GL request alone keeps None (2026-10-19). The radio version (A2: General Liability / Business Owner's Policy /
@@ -753,7 +834,7 @@ export const progressive = {
       { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
       { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },
       { q: 'C1', field: 'AccountInput.BlanketWOSQuestion', ask: 'Is a Blanket Waiver of Subrogation endorsement needed by contract?', name: 'Blanket waiver of subrogation (preserve prefilled value)', ignore: true },
-      { q: 'CA', source: filingsSource, field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank with no USDOT or MC number)', kind: 'bool', value: filingsAsked, note: filingsNote },
+      { q: 'CA', source: held(filingsSource), field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank)', kind: 'bool', value: filingsAsked, note: holdOr(filingsNote) },
       { q: 'D1', source: 'derived', field: 'PolicyInput.ELDHoursOfServiceRecords', ask: 'Is an Electronic Logging Device (ELD) required to record hours of service?', name: 'Electronic logging', kind: 'bool', value: usesEld, note: eldNote },
     ]),
 
@@ -761,7 +842,7 @@ export const progressive = {
     ...onPage('Filings', [
       // TNI's 2026-10-01 decision, kept as a standard: the quote covers all the customer's vehicles.
       { q: 'F11', source: 'standard', field: 'FilingsInput.AllVehiclesUsedOwned', ask: 'Will this quote include all the customer\'s commercially owned and operated vehicles?', name: 'All commercially owned vehicles on this quote (standard: Yes)', kind: 'bool', value: filings },
-      { source: 'derived', field: 'FilingsInput.FederalOpAuthorityIndicator', label: '^federal( liability)?( filing)?$', name: 'Federal filing', kind: 'bool', value: filings },
+      { source: held((r) => (ntlNoFilings(r) ? 'standard' : 'derived')), field: 'FilingsInput.FederalOpAuthorityIndicator', label: '^federal( liability)?( filing)?$', name: 'Federal filing', kind: 'bool', value: (r) => (ntlNoDotFilings(r) ? false : filings(r)), note: holdOr() },
       { field: 'FilingsInput.MCS90Indicator', label: '^mcs ?-?90$', name: 'MCS-90 (ticked by the page with Federal)', kind: 'bool', ignore: true },
       { field: 'FilingsInput.StateIndicator', label: '^state( filing)?$', name: 'State filing', kind: 'bool', ignore: true },
     ]),
@@ -774,8 +855,15 @@ export const progressive = {
       { q: '2BCB', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (from VIN lookup)', ignore: true },
       // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
       // a box the lookup leaves empty goes to the agent.
-      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
+      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
         q, field, ask, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
+      })),
+      // The anti-theft device: Progressive's own choice (the VIN lookup's) when it made one, and None
+      // when it didn't (TNI, 2026-10-26, W44-32: "If not selected automatically, no"; KY live run, where
+      // the list was unfamiliar and the agent picked None). FL's list (None, Standard, Recovery) and
+      // KY's (None, Anti-Theft Device 1 to 3, with no caption of its own) have their own names.
+      ...[['2BAC', 'RiskInput.AntiTheftDevice', 'Anti-Theft Device Discount'], ['2CFA', 'RiskInputNonShredded.AntiTheftDeviceAgentOptions', null]].map(/** @returns {CarrierRule} */ ([q, field, ask]) => ({
+        q, field, ...(ask ? { ask } : {}), source: 'standard', name: 'Anti-theft device (Progressive\'s, else TNI: None)', kind: 'choice', value: () => 'None', keepPreset: true,
       })),
       // Asked only when the VIN lookup decodes a vehicle other than the tile picked from the intake's
       // type (TN 2026-10-08: an intake "Van" whose VIN was a truck tractor). The agent's pick, with
@@ -848,10 +936,18 @@ export const progressive = {
       { q: '2960', field: 'DriverInput.CDLYearUnknow', ask: 'Year is unknown', name: 'CDL year unknown (the agent\'s)', ignore: true },
       // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; a course the
       // intake's description box mentions is the agent's. (299D: the id when it was first seen,
-      // after the renumbering.)
-      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
+      // after the renumbering.) KY asks it about an Armed Forces course: the same No (TNI, 2026-10-26,
+      // W44-32: "Military Stuff NO"; the agent confirmed the fill's No, held as reworded), also with a
+      // course in the notes not said to be military (TNI, 2026-10-26: answer to PR question). Each
+      // wording is its own rule, told by the question's text (ARMED_FORCES_COURSE).
+      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', unlessShown: ARMED_FORCES_COURSE,
+        ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
+      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', whenShown: ARMED_FORCES_COURSE,
+        ask: 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?', name: 'Armed Forces defensive driving course (standard: No)', kind: 'bool', value: (r) => (militaryCourse(r) ? null : false), note: (r) => (militaryCourse(r) ? `The intake's notes mention a military defensive driving course ("${militaryCourse(r)}"): answer it yourself.` : null) },
       // No: the driver is listed on the intake to be covered. Yes for a driver the intake marks
-      // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver).
+      // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver), and for the
+      // owner's row when the intake says the owner doesn't drive (TNI, 2026-10-26: answer to PR
+      // question, R1): the first row (TNI, 2026-10-27: answer to PR question V4).
       { q: '28C1', source: 'derived', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (No unless the intake marks them excluded)', kind: 'bool', value: excludedDriver },
       // The claims box's Yes or No; neither: TNI's standard No unless the notes mention one (hasClaims, 2026-10-19).
       { q: '28F5', source: hasClaimsSource, field: 'DriverInput.AnyAccidentsViolationsPastExpYears', label: '^has this driver had any accidents claims or violations in the past', path: 'claims.hasClaims', name: 'Accidents / claims / violations (standard: No unless the intake says otherwise)', kind: 'bool', value: hasClaims, note: hasClaimsNote },
@@ -875,14 +971,24 @@ export const progressive = {
       // FL: the CSL already covers property damage; PIP is required, $10k with no deductible (TNI).
       // Changing PIP makes Progressive invalidate the liability limit, which is picked again.
       { q: '1DB8', source: 'standard', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
-      // PIP shares its data-model name across states: other states' lists (TX $2,500–$25,000, MD
-      // "Full PIP") are left as Progressive set them (TNI 2026-10-07: no standard there).
-      { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r), emptyNote: (r) => (isFlorida(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida and Arkansas only: choose it yourself.') },
+      // PIP shares its data-model name across states. TX (TNI, 2026-10-26, W44-26: Medical Payments
+      // $5,000 wherever offered, PIP not selected unless the state requires it): Progressive offers
+      // medical payments there (1FE4), so PIP is Not Selected, from its list of Not Selected and
+      // $2,500 to $25,000. Other states' lists are left as Progressive set them: KY (base PIP is
+      // required there, so Progressive's stays), UT (required, "$3k Basic" its only option, no medical
+      // payments: it stays) (TNI, 2026-10-26: answers to PR questions) and MD (its own list, 1E7C).
+      { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; TX: Not Selected; other states: as Progressive set it)', kind: 'choice',
+        value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : isTexas(r) ? 'Not Selected' : null), ignore: (r) => !isFlorida(r) && !isTexas(r),
+        emptyNote: (r) => (isFlorida(r) || isTexas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida, Texas and Arkansas only: choose it yourself.') },
+      // Guest and Optional Personal Injury Protection (KY live run, 2026-10-26: no rule knew them, and
+      // Guest PIP was left required and empty): Not selected (TNI, 2026-10-26, W44-32).
+      { q: '1EE4', source: 'standard', field: 'LineInput.GuestPIPLimit', ask: 'Guest Personal Injury Protection', name: 'Guest personal injury protection (TNI: Not selected)', kind: 'choice', value: () => 'Not selected' },
+      { q: '1EE8', source: 'standard', field: 'LineInput.OptionalPIPLimit', ask: 'Optional Personal Injury Protection', name: 'Optional personal injury protection (TNI: Not selected)', kind: 'choice', value: () => 'Not selected' },
       // AR (TNI, 2026-10-19, after a live run): personal injury protection is its own control there
       // (PIPInput.Limit, captioned only "Limit", so it was unfamiliar), offering 5k medical, income
       // loss and 5k accidental death alone or together. Progressive picked all three; TNI's standard
       // is 5k Medical and Hospital alone. Other states with this control keep Progressive's choice.
-      { q: '1FB2', source: 'standard', field: 'PIPInput.Limit', name: 'Personal injury protection, AR (standard: 5k Medical and Hospital; other states: as Progressive set it)', kind: 'choice', value: (r) => (isArkansas(r) ? '5k Medical and Hospital' : null), ignore: (r) => !isArkansas(r), emptyNote: (r) => (isArkansas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida and Arkansas only: choose it yourself.') },
+      { q: '1FB2', source: 'standard', field: 'PIPInput.Limit', name: 'Personal injury protection, AR (standard: 5k Medical and Hospital; other states: as Progressive set it)', kind: 'choice', value: (r) => (isArkansas(r) ? '5k Medical and Hospital' : null), ignore: (r) => !isArkansas(r), emptyNote: (r) => (isArkansas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida, Texas and Arkansas only: choose it yourself.') },
       { q: '1DEE', source: 'standard', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
       // SC (2026-10-07): uninsured and underinsured motorist as BI & PD together, each $100k CSL with
       // the deductible Progressive lists for it (the agent's picks on that quote).
@@ -901,8 +1007,12 @@ export const progressive = {
       ...[['1E69', 'Extraordinary Medical Expense'], ['1E6E', 'Income Loss'], ['1E71', 'Funeral Expense'], ['1E74', 'Accidental Death']]
         .map(/** @returns {CarrierRule} */ ([q, what]) => ({ q, source: 'standard', ask: `${what} Benefits`, name: `PA ${what.toLowerCase()} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
       // PIP's state choice (MD): its box has no question text and its fieldref isn't recorded yet; it's
-      // the list offering "$2,500 Full PIP". Other states' (TX: plain amounts) stay the agent's.
-      { q: '1E7C', withOption: '$2,500 Full PIP', name: 'PIP (preserve prefilled state choice)', ignore: true },
+      // the list offering "$2,500 Full PIP" (Not selected, $2,500 Full PIP, $2,500 Guest PIP). Its MD
+      // page offers no medical payments, so W44-26 takes PIP $2,500 there: "$2,500 Full PIP", not
+      // Guest PIP (TNI, 2026-10-26: answer to PR question). Another state showing this list (none
+      // captured) keeps Progressive's choice.
+      { q: '1E7C', source: 'standard', withOption: '$2,500 Full PIP', name: 'PIP, MD (standard: $2,500 Full PIP; other states: as Progressive set it)', kind: 'choice',
+        value: (r) => (isMaryland(r) ? '$2,500 Full PIP' : null), ignore: (r) => !isMaryland(r) },
       // SC (2026-10-07) lists comprehensive with a $0 glass deductible ("$1,000 Deductible w/ $0
       // Glass Deductible"): the same deductible.
       // TNI's standard deductibles (the intake has no deductible field).
@@ -915,7 +1025,8 @@ export const progressive = {
       { q: '200F', source: 'standard', field: 'FireAndTheftInput.Deductible', name: 'Additional fire / theft coverage (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       // One per vehicle (UT 2026-10-07: two vehicles, two rows, no caption on either).
       { q: '1FDD', source: 'standard', field: 'UMPDInput.Limit', ask: 'UMPDInput.Limit', name: 'UMPD limit (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle' },
-      // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle).
+      // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle):
+      // $5,000 wherever Progressive offers it (TNI, 2026-10-26, W44-26).
       { q: '1FE4', source: 'standard', field: 'MedicalPaymentInput.Limit', name: 'Medical payments per person (standard: $5,000)', kind: 'choice', value: () => '$5,000 per person', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '2158', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
       { q: '215A', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },

@@ -5,10 +5,11 @@ import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
+import { assistContextKey, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
-import { unitToAdd, unitListSpecs, advanceFor } from '../src/units.js';
+import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
+import { buildPlan } from '../src/plan.js';
 import { intakeNotes } from '../src/normalize.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
@@ -1043,7 +1044,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }], knownStep,
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events), currentSession: () => null },
     runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
-    pickListItem: async () => {}, retireAiOrigins: async () => {},
+    pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {},
     afterFill: () => {},
     runPendingPage: () => {}, fillProblem() {}, reportShown: () => true,
   };
@@ -1083,7 +1084,7 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
     runAssist: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {}, fillProblem() {}, reportShown: () => true,
     // The list moved the picker to the vehicle it adds (pickUnitToAdd).
-    pickListItem: async () => { state.active.vehicles = next; },
+    pickListItem: async () => { state.active.vehicles = next; }, noteMissingUnit: () => {},
     reportKey: (tabId, page, carrier, active = state.active) => `v${active.vehicles}`,
   };
   context.renderSteps ??= () => {};
@@ -1577,6 +1578,25 @@ function makeAiActionHarness({ rejected = false, via = 'row' } = {}) {
     snapshotStartedPromise, release: (snapshot = [frame]) => releaseSnapshot(snapshot),
   };
 }
+
+test('a question Luna left shows its recommendation; an answered one shows none', () => {
+  const holder = { isConnected: true, children: [], replaceChildren(...c) { this.children = c; } };
+  const fakeH = (tag, props = {}, ...children) => ({ tag, props, children: children.flat().filter(c => c != null && c !== false), dataset: {} });
+  const state = { filling: false, tab: { id: 1, url: 'https://example.test/quote' }, intake: { record: {} }, active: {}, aiCache: new Map(), agentKeys: new Map(), aiRun: 0, aiDocks: new Map() };
+  const context = { state, $: id => (id === 'report' ? { querySelectorAll: () => [] } : { checked: false }), h: fakeH, pageOf: url => new URL(url).pathname,
+    assistContextKey: () => 'context', aiFingerprint: JSON.stringify, runKit: async () => [], usage: { log() {} }, recount() {}, renderSteps() {} };
+  vm.runInNewContext(AI_ACTION_FUNCTIONS, context, { filename: 'sidepanel/sidepanel.js' });
+  const ctx = { tabId: 1, page: '/quote', carrier: { id: 'synthetic', practice: true } };
+  const left = { key: 'sr22', label: 'SR-22?', leave: true, applyable: true, controlKind: 'radio', options: ['Yes', 'No'], tip: 'Not on the intake.',
+    nextStep: 'The intake leaves "Needs SR-22" blank: confirm it with the client, then add it under All client details.', checks: [] };
+  context.renderAi(holder, [left], ctx);
+  const text = aiActionTreeText(holder.children);
+  assert.match(text, /this one is yours to decide/);
+  assert.match(text, /Luna recommends: The intake leaves "Needs SR-22" blank/);
+  assert.equal(aiActionButtons(holder.children).some(b => /Use this answer/.test(aiActionTreeText(b.children))), false, 'a recommendation is no answer to put in');
+  context.renderAi(holder, [{ ...left, leave: false, choice: 'No', nextStep: null, evidenceSources: [] }], ctx);
+  assert.doesNotMatch(aiActionTreeText(holder.children), /recommends/);
+});
 
 async function awaitDeferredAction(harness, mutate) {
   const action = harness.button().props.onclick();
@@ -2232,9 +2252,9 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     aiCacheSignature: (x) => JSON.stringify(x), runKit: async () => [{ frameId: 0, result: 'snapshot' }],
     suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events) },
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
-    syncAiBanner: () => {}, pendingAi: () => [], redactor: () => (s) => s, redactionTerms: () => [],
+    syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
-  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('runAssist'), context);
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
   return { state, context, ctx, report, logged, rendered, applied, holder: () => report.children.at(-1) };
 }
@@ -2261,6 +2281,27 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   await fresh.context.runAssist([{}], fresh.ctx);
   assert.equal(fresh.rendered.length, 1);
   assert.equal(fresh.logged[0].error, undefined);
+});
+
+// 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions
+// were left, as counts.
+test('Luna gets the page’s other answers from the snapshot, and the log counts why questions were left', async () => {
+  let sent;
+  const why = ['missing', 'unverified', 'unverified', 'chose', null];
+  const t = assistHarness({ suggest: async (items, context) => {
+    sent = context;
+    return { suggestions: why.map((leaveWhy, i) => ({ key: `k${i}`, label: `Q${i}`, leave: !!leaveWhy, leaveWhy })), tokensIn: 1, tokensOut: 1, modelCalls: 1 };
+  } });
+  t.context.runKit = async () => [{ frameId: 0, result: JSON.stringify(['https://rater.test/', [
+    { key: 'liab', label: 'Liability limit', kind: 'select', current: '$1,000,000 CSL' },
+    { key: 'typed', label: 'Years in business', kind: 'text', current: '7' },
+    { key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125', kind: 'select', current: null },
+  ]]) }];
+  await t.context.runAssist([{}], t.ctx);
+  assert.deepEqual(sent.pageAnswers, [{ label: 'Liability limit', answer: '$1,000,000 CSL' }], 'choice answers only, not the questions asked or typed values');
+  const { leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified, leave } = t.logged[0];
+  assert.deepEqual({ leave, leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified },
+    { leave: 4, leaveMissing: 1, leaveConflict: 0, leaveChose: 1, leaveNoSource: 0, leaveUnverified: 2 });
 });
 
 // 2026-10-09 to 10-26: 12 of 58 page reviews ended "The page or intake changed", most on GEICO's
@@ -2396,7 +2437,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
       state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
       recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
-      runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, retireAiOrigins: async () => {},
+      runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {},
       afterFill: () => followUp, runPendingPage: () => {}, viewOf: () => 't1',
     };
     context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
@@ -3330,7 +3371,7 @@ test('an automatic fill readies its tab for layouts only when it went through', 
       state, Date, crypto, rulesVersion: null, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
       redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
-      runAssist: () => {}, pickListItem: async () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
+      runAssist: () => {}, pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
       $: () => ({ checked: false, append() {} }), h: () => ({}), viewOf: () => 't1', fillProblem() {}, reportShown: () => true,
     };
     context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
@@ -3712,7 +3753,7 @@ function stopHarness(page = 'DeclinationNotice') {
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
     usage: { log: (...events) => logged.push(...events), currentSession: () => ({ id: 'quote-1' }) },
     runKit: async (...args) => { kits.push(args); return []; }, tellRecorder: async () => {}, ensureRecorder: async () => {},
-    pickListItem: async () => {}, retireAiOrigins: async () => {}, buildPlan: () => [], fillOptions: () => ({}),
+    pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {}, buildPlan: () => [], fillOptions: () => ({}),
     scheduleLayout: () => {}, store: { set: async () => {} },
   };
   vm.runInNewContext(`${PAGE_HELPERS}\n${['showStopPage', 'stopPageIsOurs', 'fillPage', 'scheduleAutoFill', 'autoFill', 'aiActionCurrent', 'onRecorderMessage', 'viewOf', 'saveViews', 'stepScope'].map(extractFunction).join('\n')}`, context);
@@ -4154,7 +4195,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   const seen = { plan: null, logged: [], rendered: 0, reportTabs: [], problems: [], layouts: 0, persistedKeys: [], persistedActions: [], afterFill: [], options: null };
   const context = {
     state, URL, crypto, Date, rulesVersion: rules, $: (id) => ui[id], pageOf: (url) => new URL(url).pathname, onQuotePage: () => true, showStopPage() {},
-    clearTimeout() {}, setTimeout: () => 1, pickListItem: async () => {},
+    clearTimeout() {}, setTimeout: () => 1, pickListItem: async () => {}, noteMissingUnit: () => {},
     buildPlan: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
     fillOptions: () => ({}), pendingAi: () => [], ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
     runKit: async (tabId, carrier, func, args) => { seen.options = args[1]; markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
@@ -5815,6 +5856,37 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   assert.deepEqual([...intake.done], []);
 });
 
+// TNI, 2026-10-26 (answer to PR #189's question 9): the current carrier being one the panel quotes
+// is said in red on the intake check screen, before any carrier page, first among the checks. It is
+// a check like the others (its field, Looks right now), no stop (question 19).
+test('an alert intake check is red and first on the check screen, with its field and Looks right now', () => {
+  const el = (tag, props = {}, ...children) => ({ tag, props, children: children.flat().filter((c) => c != null && c !== false) });
+  const nodes = {};
+  const $ = (id) => (nodes[id] ??= { id, hidden: false, textContent: '', replaceChildren(...kids) { this.kids = kids; } });
+  const intake = { record: { priorInsurance: [{ type: 'Commercial Auto', carrier: 'GEICO' }] }, agentEdited: [], done: [], warnings: [
+    { code: 'other', level: 'check', path: 'applicant.name', msg: 'other' },
+    { code: 'prior.carrier-is-quoted', level: 'check', path: 'priorInsurance[0].carrier', alert: true, msg: 'Current insurance is with GEICO: a GEICO quote may be declined or routed.' },
+  ] };
+  const rows = [];
+  const sandbox = { state: { intake, view: 'check' }, h: el, $, fieldInfo: (p) => ({ label: `Field ${p}`, kind: 'text' }), sourcePlace: () => null, pdfPageSaid: () => '',
+    renderSteps() {}, fieldRow: (path) => { rows.push(path); return el('input', { path }); }, jumpTo() {}, openPdf() {} };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('renderWarnings'), sandbox);
+  sandbox.renderWarnings();
+  assert.equal(nodes['check-title'].textContent, '2 things to look at on the intake');
+  const [first, second] = nodes.warnings.kids;
+  assert.deepEqual([first.props.class, first.props.role, first.props.dataset.check], ['check alert', 'alert', '1'], 'red, said at once, first');
+  assert.deepEqual([second.props.class, second.props.role ?? null], ['check', null], 'the others as before');
+  assert.ok(JSON.stringify(first).includes('Looks right now'));
+  assert.deepEqual(rows, ['priorInsurance[0].carrier', 'applicant.name']);
+  // Checked, it is a row like any other.
+  intake.done = [1];
+  sandbox.renderWarnings();
+  assert.equal(nodes.warnings.kids[0].props.class, 'checked-row');
+  const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
+  assert.match(css, /\.check\.alert\s*\{[^}]*border-color:\s*var\(--signal-line\)/);
+});
+
 // ---------------------------------------------------------------------------------------------
 // GEICO (survey 2026-10-20): every step of the quote is one address (sales.geico.com/quote), the
 // Vehicles and Drivers & Incidents steps draw one unit's form at a time, and Final Quote Details,
@@ -6103,7 +6175,7 @@ function siteHarness(carrier, step) {
   const ui = {};
   const state = { tab: { id: 4, url: 'https://sales.geico.com/quote', carrier }, intake: { record: {} }, filling: false, reports: new Map(), autoPages: new Set(), tabSteps: new Map(step ? [[4, step]] : []) };
   const context = { state, URL, inExtension: true, $: (id) => (ui[id] ??= el()), h: (tag, props) => ({ tag, props }), quoteProgress,
-    reportShown: () => false, currentReportKey: () => '4|/quote', showStopPage() {}, showStateNote() {}, showReviewMode() {}, renderSteps() {} };
+    reportShown: () => false, currentReportKey: () => '4|/quote', showCarrierNote() {}, showStopPage() {}, showStateNote() {}, showReviewMode() {}, renderSteps() {} };
   vm.runInNewContext(`${PAGE_HELPERS}\n${extractFunction('renderSite')}`, context);
   context.renderSite();
   return ui;
@@ -6127,6 +6199,66 @@ test('on a stop step the panel offers no fill; on the other steps it names the s
   assert.deepEqual([unreadDock.phase, unreadDock.button], ['ready', 'fill']);
   const unread = siteHarness(geico, null);
   assert.equal(unread['site-step'].hidden, true);
+});
+
+// TNI, 2026-10-26, W44-27: the intake's current insurance is with the carrier the tab is on (GEICO or
+// Progressive, spelling variants included, util.js sameCarrier): a red card at the top of the page's
+// cards from arrival, before any fill, while the tab is on that carrier. It is no stop: nothing that
+// fills, clicks or asks the AI reads it.
+test('a red card says the client\'s current insurance is with the carrier the tab is on, and stops nothing', async () => {
+  const { sameCarrier, noPriorInsurance, quotedCarrierPolicy } = await import('../src/util.js');
+  const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
+  const box = { hidden: true, children: [], replaceChildren(...next) { this.children = next; } };
+  const state = { tab: { id: 4, url: 'https://sales.geico.com/quote', carrier: geico }, intake: null };
+  const context = { state, h: node, $: (id) => (id === 'carrier-note' ? box : null), sameCarrier, noPriorInsurance, quotedCarrierPolicy };
+  vm.runInNewContext(extractFunction('showCarrierNote'), context);
+  // `prior`: the intake's current-insurance row; null: a blank section; undefined: no intake.
+  const show = (carrier, prior) => {
+    state.tab = carrier ? { id: 4, url: 'https://example.test/quote', carrier } : null;
+    state.intake = prior === undefined ? null : { record: { priorInsurance: prior ? [prior] : [] } };
+    context.showCarrierNote();
+    return box.hidden ? null : JSON.stringify(box.children);
+  };
+  const policy = (carrier, more = {}) => ({ type: 'Commercial Auto', carrier, limit: '$1M CSL', expiration: '12/31/2026', ...more });
+  for (const name of ['GEICO', 'Gieco', 'GICO', 'Geico Commercial']) {
+    const card = show(geico, policy(name));
+    assert.ok(card, name);
+    assert.match(card, /The client's current insurance is with GEICO/);
+    assert.match(card, /GEICO may decline or route this quote\. Check with the client before going on\./);
+    assert.match(card, /"role":"alert"/);
+    assert.match(card, /"class":"issue"/, 'red: a card with no tone');
+    assert.match(card, /Filling goes on as usual/, 'it says it is no stop');
+  }
+  assert.match(show(progressive, policy('Progresive')), /The client's current insurance is with Progressive/);
+  assert.match(show(progressive, policy('Progressive Commercial')), /Progressive may decline or route this quote/);
+  // None: the tab on another carrier, another insurer with a similar name, no prior insurance, a
+  // blank section, no intake, no carrier page, and AmWINS (a wholesaler, never the current carrier).
+  assert.equal(show(progressive, policy('GEICO')), null);
+  assert.equal(show(geico, policy('Progressive')), null);
+  assert.equal(show(geico, policy('Gainsco')), null);
+  assert.equal(show(progressive, policy('Protective')), null);
+  assert.equal(show(geico, { type: null, carrier: 'No GEICO', limit: null, expiration: null }), null, 'no prior insurance');
+  assert.equal(show(geico, null), null, 'a blank current-insurance section');
+  assert.equal(show(geico, undefined), null, 'no intake');
+  assert.equal(show(null, policy('GEICO')), null, 'not a rater page');
+  assert.equal(show(amwins, policy('AmWINS')), null, 'a wholesaler');
+  // TNI, 2026-10-26 (answer to PR question 18): only a commercial auto policy with the carrier. A
+  // personal auto, GL-only, cargo or other policy with GEICO says nothing; one of no type is said
+  // (only a warning), and so is an expired or undated one, as before.
+  for (const type of ['Personal Auto', 'General Liability', 'Cargo', 'Other']) assert.equal(show(geico, policy('GEICO', { type })), null, type);
+  assert.equal(show(progressive, policy('Progressive', { type: 'Personal Auto' })), null, 'Progressive personal auto');
+  for (const more of [{ type: null }, { expiration: '01/31/2026' }, { expiration: null }]) assert.ok(show(geico, policy('GEICO', more)), JSON.stringify(more));
+  // Shown on arrival with the other cards (renderSite runs as the tab reaches a carrier page and as
+  // the intake loads or changes), first among them.
+  assert.match(extractFunction('renderSite').split('\nfunction ')[0], /showCarrierNote\(\);\s*showStopPage\(\);/);
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.match(html, /<div id="issues" class="issues">\s*<div id="carrier-note" hidden><\/div>/);
+  // No stop: the fill, follow-ups, the dock, the stop checks and the AI never read it, and
+  // Progressive's DeclinationNotice stays its stop page.
+  for (const fn of ['fillPage', 'scheduleAutoFill', 'dockFor', 'stopNoteFor', 'showStopPage', 'aiActionCurrent', 'stateIssue']) {
+    assert.doesNotMatch(extractFunction(fn), /showCarrierNote|carrier-note|sameCarrier|quotedCarrierPolicy|carrier-is-quoted|\.alert\b/, fn);
+  }
+  assert.ok(progressive.stopPages?.DeclinationNotice, 'Progressive\'s stop page stays');
 });
 
 test('a one-address step about one vehicle or driver is scoped like Progressive\'s vehicle and driver pages', () => {
@@ -6868,7 +7000,7 @@ test('GEICO Quote & Coverages: once filled, an automatic fill runs there only fo
 // FL live run, 2026-10-21: the second vehicle's and second driver's Add forms waited for a pick, and
 // the panel's driver was the owner GEICO already lists.
 test('a new, blank GEICO unit form is the next intake unit no form was filled for; never the owner GEICO lists', async () => {
-  const run = async ({ forms, active = {}, unitForms = {}, record, listedDriver = () => -1 }) => {
+  const run = async ({ forms, active = {}, unitForms = {}, record, listedDriver = () => -1, omittedDriver = () => -1 }) => {
     const intake = { record };
     const state = { tab: { id: 4 }, intake, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0, ...active }, unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms } };
     const calls = { saved: 0, rendered: 0 };
@@ -6879,7 +7011,7 @@ test('a new, blank GEICO unit form is the next intake unit no form was filled fo
       renderPickers: () => { calls.rendered++; },
     };
     vm.runInNewContext(['formScoped', 'pickUnitForm'].map(extractFunction).join('\n'), context);
-    await context.pickUnitForm({ ...geico, listedDriver }, { tabId: 4, intake, revision: 1 });
+    await context.pickUnitForm({ ...geico, listedDriver, omittedDriver }, { tabId: 4, intake, revision: 1 });
     return { active: { ...state.active }, ...calls };
   };
   const record = { vehicles: [{}, {}, {}], drivers: [{}, {}, {}], trailers: [] };
@@ -6895,6 +7027,13 @@ test('a new, blank GEICO unit form is the next intake unit no form was filled fo
 
   // Owner listed and driver 2 bound: the next form is driver 3.
   out = await run({ forms: [{ list: 'drivers', id: 'E', blank: true }], unitForms: { drivers: { D: 1 } }, active: { drivers: 1 }, record, listedDriver: () => 0 });
+  assert.equal(out.active.drivers, 2);
+
+  // The owner who doesn't drive, whose row GEICO's quote leaves out (TNI, 2026-10-26: answer to PR
+  // question, T1): an Add Driver form is never theirs either.
+  out = await run({ forms: [{ list: 'drivers', id: 'D', blank: true }], record, omittedDriver: () => 0 });
+  assert.equal(out.active.drivers, 1);
+  out = await run({ forms: [{ list: 'drivers', id: 'E', blank: true }], unitForms: { drivers: { D: 0 } }, record, omittedDriver: () => 1 });
   assert.equal(out.active.drivers, 2);
 
   // An answered form (a saved unit opened again), a form already bound, or a free active unit: no change.
@@ -6968,7 +7107,7 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
       persistDoneActions: () => { calls.persisted++; },
       save: async () => { calls.saved++; },
       renderPickers: () => { calls.rendered++; },
-      unitToAdd, unitListSpecs,
+      unitToAdd, unitListSpecs, unitMissing, buildPlan,
     };
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
     const ctx = { tabId: 4, intake, revision: 1, asked, settings: { autoAdvance, autoPages } };
@@ -7312,7 +7451,7 @@ test('a unit list not read as complete is said in counts in the usage log', asyn
     const state = { tab: { id: 4 }, intake: { record }, intakeRevision: 1, active: { vehicles: 1, drivers: 0, trailers: 0 },
       unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms }, doneActions: new Set() };
     const context = { state, knownStep, runKit: async () => [{ result: { step: 'Vehicles', forms: [], lists } }], fillCurrent: () => true,
-      persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs };
+      persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs, unitMissing, buildPlan };
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
     const ctx = { tabId: 4, intake: state.intake, revision: 1, settings: { autoAdvance: true } };
     await context.pickUnitToAdd(geico, ctx);
@@ -8351,6 +8490,30 @@ test('the NTL-with-cargo check follows the agent\'s edits', () => {
   assert.match(extractFunction('agentEdit'), /if \(\['coverage\.ntl', 'coverage\.cargo', 'coverage\.autoLiability'\]\.includes\(path\)\) \{ ntlCargoEdited\(state\.intake\); await save\(\); render\(\); \}/);
 });
 
+// (TNI, 2026-10-26: answer to PR question, #192) NTL and primary auto liability both asked for is
+// an intake check naming the conflict. Today's form can't ask for both (Non-Trucking is its auto
+// liability answer): the agent's NTL Yes with auto liability Yes does, so the check follows the
+// agent's edits of NTL or auto liability, as the NTL-with-cargo check does.
+test('the NTL-with-primary-liability check follows the agent\'s edits', () => {
+  const intake = { record: { coverage: { ntl: true, autoLiability: 'Yes' } }, warnings: [], done: [] };
+  const context = { ntlWithPrimary: (r) => r.coverage.ntl === true && r.coverage.autoLiability === 'Yes', NTL_PRIMARY_MESSAGE: 'ntl and primary' };
+  vm.runInNewContext(extractFunction('ntlPrimaryEdited'), context);
+  context.ntlPrimaryEdited(intake);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level, w.path, w.msg]), [['coverage.ntl-primary', 'check', 'coverage.autoLiability', 'ntl and primary']]);
+  intake.done = [0];
+  intake.record.coverage.ntl = false;
+  context.ntlPrimaryEdited(intake);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['coverage.ntl-primary', 'info']], 'retired');
+  intake.record.coverage.ntl = true;
+  context.ntlPrimaryEdited(intake);
+  assert.deepEqual([intake.warnings.map((w) => [w.code, w.level]), intake.done], [[['coverage.ntl-primary', 'check']], []], 'asked again, not checked');
+  // Never asked while they aren't both asked for.
+  const other = { record: { coverage: { ntl: true, autoLiability: 'Non-Trucking' } }, warnings: [], done: [] };
+  context.ntlPrimaryEdited(other);
+  assert.deepEqual(other.warnings, []);
+  assert.match(extractFunction('agentEdit'), /if \(\['coverage\.ntl', 'coverage\.autoLiability'\]\.includes\(path\)\) ntlPrimaryEdited\(state\.intake\);/);
+});
+
 // The review of PR #176: auto liability edited away from Non-Trucking left "NTL is set to Yes" on
 // the intake (NTL was unset) and asked nothing about an NTL mention in the notes, the only warning
 // AmWINS gives; edited to Non-Trucking, the notes' question stayed, asking to set what is set.
@@ -8494,4 +8657,68 @@ test('the next-step watch reads a frame without the kit as nothing, without thro
   await context.watchNextStep({ id: 'amwins' }, 'Step', 'same', 'Step||Vehicles');
   assert.deepEqual(thrown, []);
   assert.equal(fills, 1, 'the next step is filled');
+});
+
+// W44-05, GEICO PA (2026-10-26): the agent left Vehicles during the van's form and confirmed "Yes,
+// Discard Changes"; the van's form kept the van bound (unitForms), so back on Vehicles the next blank
+// form was filled as the box truck, and the van was never added. A discarded form lets go of its unit.
+test('a unit form the agent discards no longer holds its unit; other forms and clicks change nothing', () => {
+  const persisted = [];
+  const state = { tab: { id: 4 }, unitForms: { vehicles: { VAN: 0, OTHER: 1 }, drivers: { D: 0 }, trailers: {} } };
+  const context = { state, persistUnitForms: (tabId, forms) => persisted.push([tabId, JSON.parse(JSON.stringify(forms))]) };
+  vm.createContext(context);
+  vm.runInContext(extractFunction('releaseDiscardedForms'), context);
+  context.releaseDiscardedForms([{ list: 'vehicles', id: 'VAN', blank: false }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.unitForms)), { vehicles: { OTHER: 1 }, drivers: { D: 0 }, trailers: {} });
+  assert.equal(persisted.length, 1);
+  // A form no fill bound, or none on screen: nothing to let go, nothing saved.
+  context.releaseDiscardedForms([{ list: 'vehicles', id: 'NEW', blank: true }]);
+  context.releaseDiscardedForms([]);
+  assert.equal(persisted.length, 1);
+});
+
+// W44-05: only the agent's Yes to GEICO's discard question lets go of the forms on screen. "Discard
+// Changes" only opens the question, and "No, please don't discard." keeps the form and its answers: let
+// go there, the form the agent kept would be filled as the next unit picked (the mock's #action-modal).
+test('only a confirmed discard, with the forms on screen, lets go of their units', () => {
+  const state = { intake: { record: {} }, tab: { id: 4, carrier: { id: 'geico' } }, unitForms: { vehicles: { VAN: 0 }, drivers: {}, trailers: {} } };
+  const context = { state, usage: { log() {} }, pageOf: (u) => u, samePage: (p) => p, viewOf: () => 't1', knownStep: () => undefined,
+    redactor: () => (s) => s, redactionTerms: () => [], agentHelperDone() {}, persistUnitForms() {} };
+  vm.createContext(context);
+  vm.runInContext(['releaseDiscardedForms', 'onRecorderMessage'].map(extractFunction).join('\n'), context);
+  const click = (text, forms = [{ list: 'vehicles', id: 'VAN', blank: false }]) => context.onRecorderMessage({ ra: 'usage', event: 'agent_click', page: '/quote', text, forms }, { tab: { id: 4 }, frameId: 0 });
+  for (const text of ['Discard Changes', 'No, please don\'t discard.', 'Save and Continue']) {
+    click(text);
+    assert.deepEqual(Object.keys(state.unitForms.vehicles), ['VAN'], text);
+  }
+  click('Yes, please discard.', null);
+  assert.deepEqual(Object.keys(state.unitForms.vehicles), ['VAN'], 'no forms sent');
+  click('Yes, please discard.');
+  assert.deepEqual(Object.keys(state.unitForms.vehicles), [], 'the confirm lets go');
+  state.unitForms.vehicles.VAN = 0;
+  click('Yes, Discard Changes');
+  assert.deepEqual(Object.keys(state.unitForms.vehicles), [], 'the live run\'s words');
+});
+
+// W44-01: the unit pickUnitToAdd found missing from the list with nothing to add it is an item the top
+// frame's report leaves for the agent, holding its Continue; nothing for another frame, a halted fill,
+// or when nothing is missing.
+test('a unit missing from the list with no helper for it is left for the agent in the top frame\'s report', () => {
+  const context = { unitMissingItem };
+  vm.createContext(context);
+  vm.runInContext(extractFunction('noteMissingUnit'), context);
+  const record = { applicant: { ownerDrives: null }, drivers: [{ first: 'Pat', last: 'Owner' }, { first: 'Sam', last: 'Second' }] };
+  const ctx = { carrier: geico, intake: { record }, unitMissing: { list: 'drivers', index: 1 } };
+  const results = [{ frameId: 3, result: { noData: [], blockers: [] } }, { frameId: 0, result: { noData: [], blockers: ['continue: none to click'] } }];
+  context.noteMissingUnit(results, ctx);
+  assert.deepEqual(results[0].result, { noData: [], blockers: [] });
+  const top = results[1].result;
+  assert.deepEqual(JSON.parse(JSON.stringify([top.noData.map((x) => [x.label, x.path]), top.blockers])), [[['Add Driver', 'drivers[1]']], ['continue: none to click', 'needs you: Add Driver']]);
+  assert.match(top.noData[0].note, /^Sam Second \(driver 2 of the intake\)/);
+  const halted = [{ frameId: 0, result: { halted: true, noData: [], blockers: [] } }];
+  context.noteMissingUnit(halted, ctx);
+  assert.equal(halted[0].result.noData.length, 0);
+  const none = [{ frameId: 0, result: { noData: [], blockers: [] } }];
+  context.noteMissingUnit(none, { ...ctx, unitMissing: null });
+  assert.equal(none[0].result.noData.length, 0);
 });

@@ -113,7 +113,8 @@ test('an answer the reader took from the notes points at that notes box (W44-09)
 // "No" in the USDOT box (TNI, 2026-10-26: answer to PR question): the has-a-USDOT-number answers
 // it gives are shown on that box.
 test('a USDOT answer read from "no" in the USDOT box points at that box', () => {
-  const intake = { ...normalizeIntake({ ...rawNew, dot_number: 'No', mc_number: '', mc_dot_60days: '' }, { today: new Date('2026-10-26') }), places: placesNew };
+  // Without the form's "Needs NTL too", which holds the USDOT questions for the agent (W44-28).
+  const intake = { ...normalizeIntake({ ...rawNew, dot_number: 'No', mc_number: '', mc_dot_60days: '', additional_notes: '' }, { today: new Date('2026-10-26') }), places: placesNew };
   for (const step of [buildPlan(intake.record, progressive).find((s) => s.q === '1ED'), buildPlan(intake.record, geico).find((s) => s.name === 'Has a USDOT number')]) {
     assert.deepEqual(step.from, ['applicant.noDot']);
     assert.deepEqual(sourcePlace(step.from, intake).rects, [placesNew.fields.dot_number.rect]);

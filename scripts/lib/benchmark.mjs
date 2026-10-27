@@ -11,8 +11,10 @@
 // The agent's final answer is a proxy for the right one, not proof: a correction can be a
 // legitimate exception for that client. Choice matching covers pagekit's exact, yes/no, state and
 // dollar-amount tiers; a pick that depends on the page's options (a band, a prefix, "any but")
-// is `unsure`. Typed text is never logged, so a text answer is compared through the intake paths
-// the agent's text matched (matchesIntake) or the rule path that filled it.
+// is `unsure`, and one that depends on whether its own list offers a limit (`onlyIf`) is read from
+// the options the quote's layouts recorded. Typed text is never logged, so a text answer is
+// compared through the intake paths the agent's text matched (matchesIntake) or the rule path that
+// filled it.
 
 import { normalizeIntake } from '../../src/normalize.js';
 import { buildPlan } from '../../src/plan.js';
@@ -41,10 +43,23 @@ function moneyTokens(s) {
   return out;
 }
 
-// Whether today's step would pick the option the quote ended on.
-export function choiceVerdict(step, answer) {
+// Whether today's step would pick the option the quote ended on. `options`: the question's options in
+// the quote's layout, when it recorded them.
+export function choiceVerdict(step, answer, options = null) {
   if (['pick-not', 'first-option', 'selected-option', 'address-suggest'].includes(step.kind)) return 'unsure';
   const got = squash(answer);
+  // An answer that depends on what lists offer (`onlyIf`: GEICO's Medical Payments $5,000, Not
+  // Included where it offers no limit, W44-26), as the page kit reads them: from the question's own
+  // options when the layout has them (a limit is an option with an amount). None holding is the
+  // agent's; a condition on another question's list, or options not recorded, can't be told here.
+  if (step.onlyIf?.length) {
+    if (options?.length && step.onlyIf.every((x) => !x.path)) {
+      const limit = options.some((t) => moneyTokens(t).length > 0);
+      const holds = step.onlyIf.find((x) => x.limit === limit);
+      if (!holds) return 'unsure';
+      step = { ...step, value: holds.value ?? step.value };
+    } else if (step.onlyIf.some((x) => x.value != null && squash(x.value) === got)) return 'unsure';
+  }
   if (step.kind === 'bool') {
     const yes = !!step.value;
     if (answer === 'checked' || answer === 'unchecked') return (answer === 'checked') === yes ? 'agree' : 'differ';
@@ -144,6 +159,22 @@ function elementIds(events) {
   };
 }
 
+// The options a question showed in a quote's layouts, by its text on its page (GEICO's coverage
+// lists have no data-model name and a new id each render), for a choice that depends on them
+// (`onlyIf`); null when none were recorded.
+function layoutOptions(events) {
+  const seen = new Map();
+  for (const e of events) {
+    if (!isPageLayout(e) || !e.session) continue;
+    for (const f of e.fields ?? []) {
+      if (!f.options?.length || !squash(f.label)) continue;
+      const k = `${e.session}|${e.page}|${squash(f.label)}`;
+      seen.set(k, [...new Set([...(seen.get(k) ?? []), ...f.options.map((o) => (typeof o === 'string' ? o : o?.text ?? ''))])]);
+    }
+  }
+  return (session, a) => seen.get(`${session}|${a.page}|${squash(a.label)}`) ?? null;
+}
+
 // Today's answer for one recorded question: { status, step?, rule?, pairedBy? }. status: `none`
 // (no rule claims it; the agent's), `unsure` (only a selector might claim it, or which unit's row
 // can't be told), `agent` (a rule leaves it to the agent), `ignored`, `blank` (no answer from this
@@ -229,6 +260,7 @@ export function benchmark(events, { carriers, raws, detail = false }) {
   // The agent corrected the intake in the panel: the PDF read again doesn't hold those corrections.
   const editedSessions = new Set(events.filter((e) => e.type === 'intake_edit' && e.session).map((e) => e.session));
   const elementOf = elementIds(events);
+  const optionsOf = layoutOptions(events);
   const rows = [];
   const missing = new Set();
   let replayed = 0;
@@ -251,7 +283,7 @@ export function benchmark(events, { carriers, raws, detail = false }) {
       let reason = now.reason ?? null;
       if (!truth) result = 'unknown';
       else if (now.status === 'value') {
-        result = choice ? choiceVerdict(now.step, truth.value) : textVerdict(now.step, truth, record);
+        result = choice ? choiceVerdict(now.step, truth.value, a.layout?.opts ?? optionsOf(session, a)) : textVerdict(now.step, truth, record);
         if (result === 'unsure') reason = choice ? 'depends on the page\'s options' : 'derived or suggested text';
       } else result = { none: 'left', agent: 'left', ignored: 'left', blank: 'blank', unsure: 'unsure' }[now.status];
       const row = {

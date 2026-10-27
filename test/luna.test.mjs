@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectItems, AssistError, LEAVE } from '../src/ai/common.js';
+import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intakePathOf } from '../src/ai/common.js';
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
   firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES } from '../src/ai/luna.js';
@@ -15,18 +15,18 @@ const envelope = data => ({ status: 'completed', model: DEFAULT_MODEL,
 const answer = (body, overrides = {}) => {
   const state = JSON.parse(body.input[0].content);
   const source = Object.keys(state.sources).find(k => state.sources[k].path === 'operations.hazPlacard');
-  return envelope({ decisions: { f1: { option: 'o1', sourceIds: [source], explanation: 'The intake explicitly says No.', missingInformation: [], conflicts: [], ...overrides } } });
+  return envelope({ decisions: { f1: { option: 'o1', sourceIds: [source], explanation: 'The intake explicitly says No.', missingInformation: [], conflicts: [], nextStep: '', ...overrides } } });
 };
 const questions = count => Array.from({ length: count }, (_, i) => ({ ...items[0], id: `f${i + 1}`, key: `haz${i + 1}` }));
 const groupAnswer = (body, leave = false) => {
   const state = JSON.parse(body.input[0].content);
   const source = Object.keys(state.sources).find(k => state.sources[k].path === 'operations.hazPlacard');
   return envelope({ decisions: Object.fromEntries(Object.keys(state.fields).map(id => [id, {
-    option: leave ? LEAVE : 'o1', sourceIds: leave ? [] : [source], explanation: 'Explicit No.', missingInformation: [], conflicts: [],
+    option: leave ? LEAVE : 'o1', sourceIds: leave ? [] : [source], explanation: 'Explicit No.', missingInformation: [], conflicts: [], nextStep: '',
   }])) });
 };
 const groupCheck = body => envelope({ decisions: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).proposed)
-  .map(id => [id, { supported: true }])) });
+  .map(id => [id, { supported: true, gap: '' }])) });
 
 test('Luna requests fixed reasoning model and strict schema without tools or provider storage', () => {
   const body = buildRequest(items, context), wire = JSON.stringify(body);
@@ -57,7 +57,7 @@ test('explicit No becomes eligible only after evidence verification, without fab
   assert.equal(x.leave, false);
   assert.equal(x.autoOk, false);
   assert.equal(x.confidence, null);
-  const verified = verifyResponse(envelope({ decisions: { f1: { supported: true } } }), [x])[0];
+  const verified = verifyResponse(envelope({ decisions: { f1: { supported: true, gap: '' } } }), [x])[0];
   assert.equal(verified.verified, true);
   assert.equal(verified.autoOk, true);
   assert.equal(verified.confidence, null);
@@ -65,7 +65,7 @@ test('explicit No becomes eligible only after evidence verification, without fab
 
 test('verified choices keep numeric, identity, explicit review and unchanged fields manual', () => {
   const body = buildRequest(items, context), [parsed] = parseResponse(answer(body), items, body);
-  const checked = envelope({ decisions: { f1: { supported: true } } });
+  const checked = envelope({ decisions: { f1: { supported: true, gap: '' } } });
   for (const metadata of [{ manualOnly: true }, { reviewOnly: true }, { applyable: false },
     { fieldType: 'number' }, { fieldType: 'numeric' }, { fieldType: 'date' }, { fieldType: 'limit' },
     { fieldType: 'identity' }, { fieldType: 'identifier' }, { fieldType: null, valueType: 'date' },
@@ -78,7 +78,7 @@ test('verified choices keep numeric, identity, explicit review and unchanged fie
 });
 
 test('verified radio and checkbox choices can be selected automatically', () => {
-  const checked = envelope({ decisions: { f1: { supported: true } } });
+  const checked = envelope({ decisions: { f1: { supported: true, gap: '' } } });
   for (const controlKind of ['radio', 'checkbox']) {
     const fields = collectItems([{ unknown: [{ key: 'haz', label: 'Hazardous materials requiring placards?', controlKind,
       options: ['Yes', 'No'], current: '' }] }]).items;
@@ -139,18 +139,18 @@ test('second evidence check rejects unsupported choices and mismatched schemas',
   assert.match(check.instructions, /Missing facts, conflicts/);
   assert.equal(check.max_output_tokens, 2048);
   assert.equal(JSON.parse(check.input[0].content).proposed.f1.answer, 'No');
-  const [unsupported] = verifyResponse(envelope({ decisions: { f1: { supported: false } } }), parsed);
+  const [unsupported] = verifyResponse(envelope({ decisions: { f1: { supported: false, gap: '' } } }), parsed);
   assert.equal(unsupported.leave, true);
   assert.equal(unsupported.choice, null);
   assert.equal(unsupported.evidence, null);
   assert.equal(unsupported.autoOk, false);
-  assert.throws(() => verifyResponse({ ...envelope({ decisions: { f1: { supported: true } } }), model: 'other-model' }, parsed), AssistError);
+  assert.throws(() => verifyResponse({ ...envelope({ decisions: { f1: { supported: true, gap: '' } } }), model: 'other-model' }, parsed), AssistError);
   assert.throws(() => verifyResponse(envelope({ decisions: { f1: { supported: 'true' } } }), parsed), AssistError);
 });
 
 test('suggestions wait for both calls; stale verification responses are discarded', async () => {
   let count = 0;
-  const call = async ({ body }) => ++count === 1 ? answer(body) : envelope({ decisions: { f1: { supported: true } } });
+  const call = async ({ body }) => ++count === 1 ? answer(body) : envelope({ decisions: { f1: { supported: true, gap: '' } } });
   const result = await suggest(items, context, { apiKey: 'synthetic' }, { call });
   assert.equal(count, 2);
   assert.equal(result.suggestions[0].autoOk, true);
@@ -650,4 +650,172 @@ test('every Luna request the panel builds passes the usage server\'s check', asy
     driverNames: buildNameReview({ drivers: [{ first: 'Ann' }, { first: 'Sam' }] }).body,
   };
   for (const [name, b] of Object.entries(bodies)) assert.equal(lunaRequestError(b), null, name);
+});
+
+// More read-only context (2026-10-27): the questions Luna left most were GEICO's per-vehicle and
+// per-driver questions (only the active row was sent), questions whose mapped intake field is blank
+// (Luna wasn't told which field), and questions whose neighbours on the page it couldn't see.
+const fleet = {
+  applicant: { name: 'Sample Freight LLC', owner1: 'Pat Sample' },
+  operations: { hazPlacard: false },
+  drivers: [{ first: 'Pat', last: 'Sample', licenseNumber: 'D-PRIVATE-1', cdl: true },
+    { first: 'Lee', last: 'Other', licenseNumber: 'D-PRIVATE-2', cdl: true },
+    { first: 'Kim', last: 'Third', cdl: false }],
+  vehicles: [{ year: 2019, make: 'Ford', model: 'Transit', type: 'Cargo Van', vin: 'VIN-PRIVATE-1' },
+    { year: 2020, make: 'RAM', model: '3500', type: 'Pickup', vin: 'VIN-PRIVATE-2', value: 42000 }],
+};
+const fleetContext = { carrier: 'geico', page: '/quote', active: { drivers: 0, vehicles: 0 }, record: fleet };
+const reported = (x) => collectItems([{ noData: [x] }]).items;
+
+test('a question about another driver or vehicle sends that row, named as its entity, and no other', () => {
+  const [cdl] = reported({ key: 'cdl2', label: 'Does this driver have a CDL?', controlKind: 'radio', options: ['Yes', 'No'], path: 'drivers[1].cdl' });
+  const [comp] = collectItems([{ unknown: [{ key: 'comp', label: '2020 RAM 3500 Comprehensive or Fire & Theft Coverage', controlKind: 'select', options: ['$500', '$1,000', 'No coverage'] }] }]).items;
+  assert.equal(cdl.rulePath, 'drivers[1].cdl');
+  assert.equal(entityOf(cdl, fleet), 'drivers[1]');
+  assert.equal(entityOf(comp, fleet), 'vehicles[1]');
+  assert.deepEqual(rowsFor([cdl, comp], fleet, fleetContext.active), { drivers: [1], vehicles: [1] });
+  const body = buildRequest([cdl, { ...comp, id: 'f2' }], fleetContext), wire = JSON.stringify(body);
+  const state = JSON.parse(body.input[0].content);
+  assert.deepEqual({ entity: state.fields.f1.entity, intakePath: state.fields.f1.intakePath, intakeBlank: state.fields.f1.intakeBlank },
+    { entity: 'drivers[1]', intakePath: 'drivers[1].cdl', intakeBlank: false });
+  assert.equal(state.fields.f2.entity, 'vehicles[1]');
+  const paths = Object.values(state.sources).map((s) => s.path);
+  assert.ok(paths.includes('drivers[1].cdl') && paths.includes('vehicles[1].value'), 'the named rows are evidence');
+  assert.ok(!paths.some((p) => p?.startsWith('drivers[2]')), 'a row no question names stays out');
+  // The same redaction and identifier removal as the active row.
+  for (const secret of ['D-PRIVATE', 'VIN-PRIVATE', 'Lee', 'Other', 'Sample Freight']) assert.equal(wire.includes(secret), false, secret);
+  // The evidence check sees the same rows, and the entity it judges for.
+  const parsed = parseResponse(envelope({ decisions: {
+    f1: { option: 'o0', sourceIds: [Object.keys(state.sources).find((k) => state.sources[k].path === 'drivers[1].cdl')], explanation: 'Driver 2 has a CDL.', missingInformation: [], conflicts: [], nextStep: '' },
+    f2: { option: LEAVE, sourceIds: [], explanation: 'No deductible on the intake.', missingInformation: ['Comprehensive deductible'], conflicts: [], nextStep: 'Ask the client which comprehensive deductible they want.' } } }), [cdl, { ...comp, id: 'f2' }], body);
+  assert.equal(parsed[1].nextStep, 'Ask the client which comprehensive deductible they want.');
+  const check = JSON.parse(buildVerification(parsed, fleetContext).input[0].content);
+  assert.equal(check.proposed.f1.entity, 'drivers[1]');
+  assert.equal(check.intake['drivers[1]'].cdl, true);
+  assert.equal(check.intake['vehicles[1]'], undefined, 'only rows of proposed answers');
+});
+
+test('rows: at most two more per list, a carrier key is no intake path, an ambiguous vehicle names none', () => {
+  assert.equal(intakePathOf('geico.qLiabilityCoverage'), null);
+  assert.equal(intakePathOf('264'), null);
+  assert.equal(intakePathOf('operations.needSr22'), 'operations.needSr22');
+  const many = { drivers: Array.from({ length: 6 }, (_, i) => ({ first: `D${i}`, cdl: true })) };
+  const asks = [1, 2, 3, 4].map((i) => ({ rulePath: `drivers[${i}].cdl`, label: 'CDL?' }));
+  assert.deepEqual(rowsFor(asks, many, { drivers: 0 }), { drivers: [1, 2] });
+  const twins = { vehicles: [{ year: 2020, make: 'RAM' }, { year: 2020, make: 'RAM' }] };
+  assert.equal(entityOf({ label: '2020 RAM 3500 Comprehensive' }, twins), null);
+  assert.equal(entityOf({ label: 'Comprehensive' }, fleet), null);
+});
+
+test('a blank mapped intake field is said, and Luna\'s recommendation reaches the agent only for a field left', () => {
+  const [sr22] = reported({ key: 'sr22', label: 'Do they need an SR-22?', controlKind: 'radio', options: ['Yes', 'No'], path: 'operations.needSr22' });
+  const [eld] = collectItems([{ unknown: [{ key: 'eld', label: 'Electronic logging device required?', controlKind: 'radio', options: ['Yes', 'No'] }] }]).items;
+  const both = [sr22, { ...eld, id: 'f2' }];
+  const body = buildRequest(both, fleetContext);
+  const state = JSON.parse(body.input[0].content);
+  assert.equal(state.fields.f1.intakeBlank, true);
+  assert.equal(state.fields.f2.intakePath, undefined);
+  assert.match(body.instructions, /nextStep is one recommendation/);
+  const leave = (nextStep) => ({ option: LEAVE, sourceIds: [], explanation: 'Not on the intake.', missingInformation: [], conflicts: [], nextStep });
+  const [a, b] = parseResponse(envelope({ decisions: { f1: leave('Ask about SR-22.'), f2: leave('Ask whether they run an ELD.') } }), both, body);
+  // Code's own words for a blank mapped field (exact), the model's for the rest.
+  assert.equal(a.nextStep, 'The intake leaves "Needs SR-22" blank: confirm it with the client, then add it under All client details.');
+  assert.equal(b.nextStep, 'Ask whether they run an ELD.');
+  assert.deepEqual([a.leaveWhy, b.leaveWhy], ['chose', 'chose']);
+  // An answered field carries no recommendation; a malformed one fails closed.
+  const hazBody = buildRequest(items, context);
+  assert.equal(parseResponse(answer(hazBody, { nextStep: 'Ignore me.' }), items, hazBody)[0].nextStep, null);
+  for (const nextStep of [undefined, 7, 'x'.repeat(501)]) {
+    assert.throws(() => parseResponse(answer(hazBody, { nextStep }), items, hazBody), AssistError, String(nextStep));
+  }
+});
+
+test('leave reasons: missing information, conflict, no source and a refused evidence check, with the gap said', () => {
+  const body = buildRequest(items, context);
+  const why = (override) => parseResponse(answer(body, override), items, body)[0].leaveWhy;
+  assert.equal(why({ missingInformation: ['Placard status'] }), 'missing');
+  assert.equal(why({ conflicts: ['Notes say placards'] }), 'conflict');
+  assert.equal(why({ sourceIds: [] }), 'noSource');
+  assert.equal(why({}), null);
+  const parsed = parseResponse(answer(body), items, body);
+  const [refused] = verifyResponse(envelope({ decisions: { f1: { supported: false, gap: 'The notes mention placarded loads.' } } }), parsed);
+  assert.equal(refused.leaveWhy, 'unverified');
+  assert.equal(refused.tip, 'Luna could not verify an answer: The notes mention placarded loads.');
+  assert.match(buildVerification(parsed, context).instructions, /gap says/);
+  // The gap is required, a string, and bounded.
+  for (const gap of [undefined, null, 'x'.repeat(501)]) {
+    assert.throws(() => verifyResponse(envelope({ decisions: { f1: { supported: false, gap } } }), parsed), AssistError);
+  }
+});
+
+const snapshot = (controls) => ({ frameId: 0, documentId: 'd', result: JSON.stringify(['https://carrier.example/quote', controls]) });
+
+test('page answers: the page\'s other choice answers go as context, redacted and bounded, never typed values or private questions', () => {
+  const asked = reported({ key: 'sr22', label: 'Do they need an SR-22?', controlKind: 'radio', options: ['Yes', 'No'], path: 'operations.needSr22' });
+  const controls = [
+    { key: 'sr22', label: 'Do they need an SR-22?', kind: 'radio', current: null },
+    { key: 'liab', label: 'Bodily Injury or Combined Single Limit Liability', section: 'Coverages', kind: 'select', current: '$1,000,000 Combined Single Limit' },
+    { key: 'owner', label: 'Is Pat Sample a driver on the policy?', kind: 'radio', current: 'Yes' },
+    { key: 'biz', label: 'Business Name', kind: 'select', current: 'Sample Freight LLC' },
+    { key: 'vin', label: 'VIN', kind: 'select', current: 'VIN-PRIVATE-1' },
+    { key: 'street', label: 'Garaging address', kind: 'select', current: 'Main' },
+    { key: 'typed', label: 'Years in business', kind: 'text', current: '7' },
+    { key: 'mvr', label: 'Order MVR now?', kind: 'radio', current: 'No' },
+    { key: 'empty', label: 'Medical Payments', kind: 'select', current: '' },
+  ];
+  const out = pageAnswers([snapshot(controls), { frameId: 1, result: null }, { frameId: 2, result: '{bad json' }], asked, fleet);
+  assert.deepEqual(out, [
+    { section: 'Coverages', label: 'Bodily Injury or Combined Single Limit Liability', answer: '$1,000,000 Combined Single Limit' },
+    { label: 'Is [client] a driver on the policy?', answer: 'Yes' },
+  ]);
+  // Bounded: 40 answers, about 6,000 characters.
+  const lots = Array.from({ length: 80 }, (_, i) => ({ key: `q${i}`, label: `Question ${i} ${'about the business '.repeat(8)}`, kind: 'radio', current: 'Yes' }));
+  const bounded = pageAnswers([snapshot(lots)], [], fleet);
+  assert.ok(bounded.length <= 40 && JSON.stringify(bounded).length <= 6200, `${bounded.length}`);
+  assert.ok(bounded.every((x) => x.label.length <= 120));
+  // In both calls as context; never among the sources a decision may cite.
+  const body = buildRequest(asked, { ...fleetContext, pageAnswers: out }), state = JSON.parse(body.input[0].content);
+  assert.deepEqual(state.pageAnswers, out);
+  assert.ok(Object.values(state.sources).every((s) => !JSON.stringify(s).includes('Combined Single Limit')));
+  assert.match(body.instructions, /pageAnswers .* never evidence and never citable/);
+  const hazBody = buildRequest(items, { ...context, pageAnswers: out });
+  const parsed = parseResponse(answer(hazBody), items, hazBody);
+  assert.deepEqual(JSON.parse(buildVerification(parsed, { ...context, pageAnswers: out }).input[0].content).pageAnswers, out);
+  // No page answers: no key at all (the request is as before).
+  assert.equal(JSON.parse(buildRequest(items, context).input[0].content).pageAnswers, undefined);
+});
+
+test('with every new context, each request still passes the usage server\'s check and the size bound', async () => {
+  const { lunaRequestError } = await import('../server/index.mjs');
+  const lots = Array.from({ length: 80 }, (_, i) => ({ key: `q${i}`, label: `Question ${i} ${'about the business '.repeat(8)}`, kind: 'radio', current: 'Yes' }));
+  const ctx = { ...fleetContext, pageAnswers: pageAnswers([snapshot(lots)], [], fleet) };
+  const asks = Array.from({ length: 12 }, (_, i) => ({ ...reported({ key: `k${i}`, label: `Driver question ${i}?`, controlKind: 'radio', options: ['Yes', 'No'], path: `drivers[${1 + (i % 2)}].cdl` })[0], id: `f${i + 1}` }));
+  let calls = 0;
+  const call = async ({ body }) => {
+    calls++;
+    assert.equal(lunaRequestError(body), null);
+    const state = JSON.parse(body.input[0].content);
+    return state.proposed ? envelope({ decisions: Object.fromEntries(Object.keys(state.proposed).map((id) => [id, { supported: true, gap: '' }])) })
+      : envelope({ decisions: Object.fromEntries(Object.keys(state.fields).map((id) => [id, { option: LEAVE, sourceIds: [], explanation: '', missingInformation: [], conflicts: [], nextStep: '' }])) });
+  };
+  const result = await suggest(asks, ctx, { apiKey: 'synthetic' }, { call });
+  assert.equal(result.suggestions.length, 12);
+  assert.ok(calls >= 1);
+});
+
+// Code, not only the prompt, keeps another row's facts from answering a question (2026-10-27
+// review): once a question names drivers[1], that row's facts are sources for every field in the group.
+test('a citation from another driver or vehicle row than the field\'s own leaves the field', () => {
+  const [cdl] = reported({ key: 'cdl2', label: 'Does this driver have a CDL?', controlKind: 'radio', options: ['Yes', 'No'], path: 'drivers[1].cdl' });
+  const [own] = collectItems([{ unknown: [{ key: 'cdl0', label: 'Does the applicant hold a CDL?', controlKind: 'radio', options: ['Yes', 'No'] }] }]).items;
+  const [comp] = collectItems([{ unknown: [{ key: 'comp', label: '2020 RAM 3500 Comprehensive or Fire & Theft Coverage', controlKind: 'select', options: ['$500', '$1,000', 'No coverage'] }] }]).items;
+  const group = [cdl, { ...own, id: 'f2' }, { ...comp, id: 'f3' }];
+  const body = buildRequest(group, fleetContext), state = JSON.parse(body.input[0].content);
+  const id = (path) => Object.keys(state.sources).find((k) => state.sources[k].path === path);
+  const pick = (option, path) => ({ option, sourceIds: [id(path)], explanation: 'Cited.', missingInformation: [], conflicts: [], nextStep: '' });
+  const [a, b, c] = parseResponse(envelope({ decisions: {
+    f1: pick('o0', 'drivers[1].cdl'), f2: pick('o0', 'drivers[1].cdl'), f3: pick('o1', 'vehicles[0].year') } }), group, body);
+  assert.deepEqual([a.leave, a.leaveWhy], [false, null], 'its own row');
+  assert.deepEqual([b.leave, b.leaveWhy, b.choice], [true, 'noSource', null], 'the active driver\'s question, cited from driver 2');
+  assert.deepEqual([c.leave, c.leaveWhy, c.choice], [true, 'noSource', null], 'vehicle 2\'s question, cited from vehicle 1');
 });
