@@ -116,9 +116,8 @@ export function intakeValue(record, path) {
 }
 
 // Which driver, vehicle or trailer row a question is about: its intake path's, else a vehicle whose
-// year and make (and model, when the intake has it) are in the question's text, when exactly one is.
-// Code matches (year and make: GEICO's per-vehicle questions start "2020 RAM 3500"); the model is
-// told the row, never asked to find it.
+// year and make are in the question's text (GEICO's per-vehicle questions start "2020 RAM 3500"),
+// when exactly one is. Code matches; the model is told the row, never asked to find it.
 export function entityOf(item, record) {
   const m = UNIT_PATH.exec(item.rulePath ?? '');
   if (m) return record?.[m[1]]?.[Number(m[2])] ? `${m[1]}[${m[2]}]` : null;
@@ -174,8 +173,7 @@ export function pageAnswers(snapshots, items, record) {
 }
 
 // Keep only the active row of repeating entities, and the rows the questions name (`rows`, from
-// rowsFor). Identifiers are represented by presence,
-// never guessed or copied by the assistant. Other sensitive fields are not needed for option matching.
+// rowsFor). Identifiers are represented by presence, never guessed or copied by the assistant. Other sensitive fields are not needed for option matching.
 // Every string the model sees is redacted with the same terms as the claims-box review and the
 // usage log (redactionTerms: the client's names, dates of birth, street, city, ZIP, contact and ID
 // numbers become `[client]`), in the evidence sources and in the verification call's intake alike
