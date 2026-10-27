@@ -126,7 +126,8 @@
  * @property {boolean} [optional]
  * @property {boolean} [each]
  * @property {boolean} [hidden]
- * @property {boolean} [replace]
+ * @property {ClientValue<boolean>} [replace]  our answer replaces a differing one already on the page (a
+ *   lookup's, or a bulk helper's such as AmWINS' "Default all answers to No"); a function: only for these clients
  * @property {boolean} [trustPage]
  * @property {boolean} [keepChoice]
  * @property {boolean} [keepUnlisted]
