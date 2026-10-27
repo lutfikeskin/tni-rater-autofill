@@ -256,7 +256,8 @@ const NEW_AUTHORITY = /^(?:(?:brand[\s-]+)?new|new[\s-]+(?:authority|venture))\.
 // 2026-10-26, W44-09: "the reader takes it from the notes"; also over years under own authority): "3+ years in business", "in Biz for 3+ years",
 // "in business for 5 years" (a plus is at least that many: 3+ is 3), and a start year:
 // "established 2019", "founded in 2019", "in business since 2019". Narrow on purpose: only a
-// whole number of years right beside "in business" / "in biz" ("in the business" is a career in
+// whole number of years or months, in digits or words (T8, below), right beside "in business" /
+// "in biz" ("in the business" is a career in
 // the trade), in a clause saying nothing about driving, a CDL, experience, authority, insurance or
 // claims, and with no negation. Two figures that disagree settle nothing: the agent's, as when the
 // notes say nothing.
@@ -269,11 +270,55 @@ const QUALIFIER = '(?:(?:less|more)\\s+than|over|under|almost|nearly|about|aroun
 const AS_THE_FIGURE = /^(?:over|about|around|more\s+than|approx(?:imately|\.)?)$/i;
 const BELOW = /^(?:less\s+than|under)$/i;
 // Months are whole years, rounded down: "18 months" is 1, "6 months" is 0 (TNI, 2026-10-26: answer
-// to PR question, R11), also after a word read as the figure ("over 18 months" is 1). Months right
-// after years ("1 year 6 months", "2 years, 6 months") settle nothing: the agent's.
+// to PR question, R11), also after a word read as the figure: "over 18 months" is 1, "about 6
+// months" is 0 (TNI, 2026-10-26: answer to PR question, T7, confirmed).
+// "less than N months" with N up to 12 is 0 (TNI, 2026-10-26: answer to PR question, T8); more
+// than 12 months, and "under" before months, which the answer doesn't name, settle nothing.
+const LESS_THAN = /^less\s+than$/i;
+const MAX_MONTHS_BELOW_A_YEAR = 12;
+// A number in words reads as its digits (TNI, 2026-10-26: answer to PR question, T8): "two years
+// in business" is 2, "less than one year" is 0, up to ninety-nine ("twenty-five"). "a" counts only
+// in "less than a year" (0); "a year" alone, "half a year" and "a few years" settle nothing. A word
+// right after a hyphen ("five" in "twenty-five") is never a figure of its own, nor is the end of a
+// range in words ("two-three", "two to three", "two or three", "two and three years"), which no
+// answer settles: unread, as before.
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
+  'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS_WORDS = ['twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+const RANGE_END = `(?<!(?:\\d|\\b(?:${[...NUMBER_WORDS, ...TENS_WORDS].join('|')}))\\s*(?:[-–]|\\b(?:to|or|and)\\b)\\s*)`;
+const IN_WORDS = `(?<![\\w-])${RANGE_END}(?:(?:${TENS_WORDS.join('|')})(?:[\\s-]+(?:${NUMBER_WORDS.slice(1, 10).join('|')}))?|${NUMBER_WORDS.join('|')})(?![\\w-])`;
+const NUMBER = `\\d{1,3}|${IN_WORDS}|(?<=\\bless\\s+than\\s+)a(?=\\s+(?:year|yr)\\b)`;
+const numberValue = (s) => {
+  if (/^\d+$/.test(s)) return Number(s);
+  if (/^a$/i.test(s)) return 1;
+  const [tens, units] = s.toLowerCase().split(/[\s-]+/);
+  const t = TENS_WORDS.indexOf(tens);
+  return t < 0 ? NUMBER_WORDS.indexOf(tens) : 20 + t * 10 + (units ? NUMBER_WORDS.indexOf(units) : 0);
+};
+// Years plus months are the whole years, the months dropped: "1 year 6 months" and "2 years, 6
+// months" in business are 1 and 2 (TNI, 2026-10-26: answer to PR question, T8).
 const MONTHS = /^mo/i;
-const YEARS = `(?:(${QUALIFIER})\\s*)?(\\d{1,3})\\s*\\+?\\s*(years?|yrs?|months?|mos?)\\b\\.?`;
-const YEARS_THEN_MONTHS = /\b\d{1,3}\s*\+?\s*(?:years?|yrs?)\b\.?[\s,&]*(?:and\s+)?\d{1,3}\s*\+?\s*(?:months?|mos?)\b/i;
+const YEARS_UNIT = '(?:years?|yrs?)';
+const MONTHS_UNIT = '(?:months?|mos?)';
+const AND_MONTHS = `[\\s,&]*(?:and\\s+)?(?<months>${NUMBER})\\s*\\+?\\s*(?<monthsUnit>${MONTHS_UNIT})\\b\\.?`;
+const YEARS = `(?:(?<word>${QUALIFIER})\\s*)?(?<n>${NUMBER})\\s*\\+?\\s*(?<unit>${YEARS_UNIT}|${MONTHS_UNIT})\\b\\.?(?:(?<=${YEARS_UNIT}\\.?)${AND_MONTHS})?`;
+// Months right after years on a line, outside one figure read as above: a months figure there
+// settles nothing.
+const FIGURE = `(?:\\d{1,3}|${IN_WORDS})\\s*\\+?\\s*`;
+const YEARS_THEN_MONTHS = new RegExp(`${FIGURE}${YEARS_UNIT}\\b\\.?[\\s,&]*(?:and\\s+)?${FIGURE}${MONTHS_UNIT}\\b`, 'i');
+// Clauses: semicolons, commas, and full stops before a new sentence ("3 yrs. in biz" is one). A
+// comma between years and months ("2 years, 6 months") joins one figure, not two clauses.
+const ENDS_WITH_YEARS = new RegExp(`${FIGURE}${YEARS_UNIT}\\b\\.?$`, 'i');
+const STARTS_WITH_MONTHS = new RegExp(`^(?:and\\s+)?${FIGURE}${MONTHS_UNIT}\\b`, 'i');
+const clausesOf = (line) => {
+  const parts = line.split(/(;|,\s|\.\s+(?=[A-Z]))/);
+  const clauses = [parts[0]];
+  for (let i = 1; i < parts.length; i += 2) {
+    if (parts[i].startsWith(',') && ENDS_WITH_YEARS.test(clauses.at(-1)) && STARTS_WITH_MONTHS.test(parts[i + 1])) clauses.push(`${clauses.pop()}${parts[i]}${parts[i + 1]}`);
+    else clauses.push(parts[i + 1]);
+  }
+  return clauses;
+};
 const BIZ = '(?:business|biz)\\b';
 const BIZ_PHRASES = [
   new RegExp(`(?<![\\w.,])${YEARS}\\s+in\\s+${BIZ}`, 'i'),
@@ -288,8 +333,8 @@ const MAX_BUSINESS_YEARS = 100;
 /**
  * Years in business the notes state, from the boxes given in order ([form field, text]): one
  * statement, or several that agree. None, an undecided qualifier ("less than 3") or figures that
- * disagree give null. `reading`: the figure as written when it isn't plain whole years ("over 3
- * years", "less than 1 year", "18 months"), for the first one.
+ * disagree give null. `reading`: the figure as written when it isn't plain whole years in digits
+ * ("over 3 years", "less than 1 year", "18 months", "two years", "1 year 6 months"), for the first one.
  * @param {[string, string|null|undefined][]} boxes
  * @param {number} year  this year, for a start year
  * @returns {{ years: number, established: number|null, quote: string, fields: string[], reading: string|null } | null}
@@ -299,20 +344,24 @@ export function yearsInBusinessFromNotes(boxes, year) {
   for (const [field, text] of boxes) {
     for (const line of String(text ?? '').split('\n')) {
       const yearsThenMonths = YEARS_THEN_MONTHS.test(line);
-      // Clauses: semicolons, commas, and full stops before a new sentence ("3 yrs. in biz" is one).
-      for (const clause of line.split(/;|,\s|\.\s+(?=[A-Z])/)) {
+      for (const clause of clausesOf(line)) {
         const quote = clause.trim();
         if (!quote || NOT_THE_BUSINESS.test(quote)) continue;
         for (const re of BIZ_PHRASES) {
           const m = quote.match(re);
-          if (!m) continue;
-          const [, word, n, unit] = m;
+          if (!m?.groups) continue;
+          const { word, n, unit, months: andMonths, monthsUnit } = m.groups;
+          const figure = numberValue(n);
           const months = MONTHS.test(unit);
-          // "less than 1 year", "under 1 year": 0 (R10).
-          const belowOne = Boolean(word) && BELOW.test(word) && !months && Number(n) === 1;
-          const read = word ? AS_THE_FIGURE.test(word) || belowOne : !QUALIFIED.test(quote.slice(0, m.index));
-          const years = !read || (months && yearsThenMonths) ? null : belowOne ? 0 : months ? Math.floor(Number(n) / 12) : Number(n);
-          const reading = word || months ? `${word ? `${word} ` : ''}${n} ${unit}` : null;
+          // "less than 1 year", "under 1 year": 0 (R10); "less than N months", N up to 12: 0 (T8).
+          // Not with months after the year ("less than 1 year 6 months" is more than a year).
+          const belowOne = Boolean(word) && BELOW.test(word) && !months && !andMonths && figure === 1;
+          const belowAYear = Boolean(word) && LESS_THAN.test(word) && months && figure >= 1 && figure <= MAX_MONTHS_BELOW_A_YEAR;
+          const read = word ? AS_THE_FIGURE.test(word) || belowOne || belowAYear : !QUALIFIED.test(quote.slice(0, m.index));
+          const years = !read || (months && yearsThenMonths) ? null : belowOne || belowAYear ? 0 : months ? Math.floor(figure / 12) : figure;
+          // How it was read, when it isn't plain whole years in digits.
+          const reading = word || months || andMonths || !/^\d+$/.test(n)
+            ? `${word ? `${word} ` : ''}${n} ${unit}${andMonths ? ` ${andMonths} ${monthsUnit}` : ''}` : null;
           found.push({ years, established: null, quote, field, reading });
         }
         const start = quote.match(BIZ_START);
