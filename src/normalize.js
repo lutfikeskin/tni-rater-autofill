@@ -5,7 +5,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, noPriorInsurance, priorInsuranceAssumed, priorPolicyExpired, ownerIsDriver, set, companyName } from './util.js';
+import { STATES, noPriorInsurance, priorInsuranceAssumed, priorPolicyExpired, priorPolicyNotAuto, ownerIsDriver, set, companyName } from './util.js';
 
 /** @import { IntakeResult } from '../types.js' */
 
@@ -224,26 +224,53 @@ export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.tex
 // is under 5); null when no line gives one. "About", "around" or "approximately" N is N (TNI,
 // 2026-10-26: answer to PR question, round 2, R8, as "about N" is N for the intake's other
 // figures), and "roughly N" too (TNI, 2026-10-26: answer to PR question, round 3, T5; until then
-// half a year either side); "over N" (more than N) and "N+" (N or more) stay as before, with no
-// end. A hedge not named here isn't read: the number alone is ("~5 years" is 5), or nothing when
-// the hedge is part of it ("5ish years", "5 or so years" give no time). The carriers place a time
+// half a year either side); "over N" (more than N) stays as before, with no end. Hedges read as their words (TNI, 2026-10-27: answer to PR question, round 5, V6): "~",
+// "approx." / "approx" / "approximately", "abt", "est." / "estimated", "circa", "Nish" ("5ish"),
+// "N or so" and "give or take" are "about N", so N; ">", "N plus" and "N+" are "over N" (until
+// then "N+" was N or more, and ">5" was read as 5); "<" is "under N" (until then "<5" was read as
+// 5). A word not named stays unread ("some 5 years", "maybe 5 years": the number alone). A range
+// ("3-5 years", "3 to 5 years", "three to five years") runs from its first figure to its last, so
+// a carrier answers it only when both ends give the same answer there (TNI, 2026-10-27: answer to
+// PR question, round 5, V7; until then the last figure alone was read). The carriers place a time
 // on a band edge (tenureBand).
 const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const INSURANCE_WORDS = /\b(?:insur\w*|polic(?:y|ies)|pop|proof of prior)\b/i;
-const YEARS_SAID = /(?:\b(over|more than|at least|almost|nearly|close to|under|less than|about|around|approximately|roughly)\s+)?\b(\d{1,2}(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s*(\+)?\s*(?:years?|yrs?)\b(?![\s-]*(?:old|in business|of experience|experience|exp\b))/gi;
+const NUMBER_SAID = String.raw`\d{1,2}(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty`;
+// [1] a symbol before the number (~ > <), [2] a word before it, [3] a range's first figure, [4] the
+// number, [5]-[8] a hedge after it ("+", "plus", "ish", "or so"), [9] a hedge after "years".
+const YEARS_SAID = new RegExp(String.raw`(?:([~><])\s*|\b(over|more than|at least|almost|nearly|close to|under|less than|about|around|approximately|approx\.?|abt\.?|est\.?|estimated|circa|roughly|give or take)\s+)?\b(?:(${NUMBER_SAID})\s*(?:[-–—]|to\b)\s*)?\b(${NUMBER_SAID})(?:\s*(\+)|\s+(plus)\b|-?(ish)\b|\s+(or so)\b)?\s*(?:years?|yrs?)\b(?:,?\s+(or so|give or take)\b)?(?![\s-]*(?:old|in business|of experience|experience|exp\b))`, 'gi');
+/** @param {string} s */
+const yearsNumber = (s) => NUMBER_WORDS[s.toLowerCase()] ?? Number(s);
 const START_SAID = /\b(?:since|started|began|start(?:ing)?)\s+(?:(?:in|on)\s+)?(?:(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:(\d{1,2})(?:st|nd|rd|th)?,?\s+)?|(\d{1,2})\/(?:(\d{1,2})\/)?)?((?:19|20)\d{2})\b/gi;
-// The least and the most a number of years said with its qualifier ("over", "+", "almost", …) can mean.
-const saidSpan = (n, qualifier, plus) => {
+// The least and the most a number of years said with its qualifier ("over", "+", "almost", …) can
+// mean. TNI, 2026-10-27 (answer to PR question, round 5, V6): a hedge reads as its word: ">", "+"
+// and "plus" as "over", "<" as "under", the others named above as "about".
+const OVER = new Set(['over', 'more than', '>', '+', 'plus']);
+const UNDER = new Set(['under', 'less than', '<']);
+/** @param {number} n @param {string | undefined} qualifier @returns {number[]} */
+const saidSpan = (n, qualifier) => {
   const q = String(qualifier ?? '').toLowerCase().replace(/\s+/g, ' ');
-  if (plus || q === 'at least') return [n, Infinity];
-  if (q === 'over' || q === 'more than') return [n + 0.1, Infinity];
+  if (q === 'at least') return [n, Infinity];
+  if (OVER.has(q)) return [n + 0.1, Infinity];
   if (q === 'almost' || q === 'nearly' || q === 'close to') return [n - 1, n - 0.1];
-  if (q === 'under' || q === 'less than') return [0, n - 0.1];
+  if (UNDER.has(q)) return [0, n - 0.1];
   // TNI, 2026-10-26 (answer to PR question, round 2, R8): "about 3 years" counts as 3, as do
   // "around" and "approximately". TNI, 2026-10-26 (answer to PR question, round 3, T5): "roughly
-  // N" counts as N, like "about N" (until then half a year either side).
+  // N" counts as N, like "about N" (until then half a year either side). TNI, 2026-10-27 (answer
+  // to PR question, round 5, V6): so do "~", "approx.", "abt", "est.", "estimated", "circa",
+  // "Nish", "N or so" and "give or take".
   return [n, n];
+};
+// A match of YEARS_SAID as [least, most]: its qualifier is the symbol or word before the number,
+// else the hedge after it. A range spans its first figure's least to its last figure's most, so a
+// carrier's band answers it only when both ends fall in it (TNI, 2026-10-27: answer to PR
+// question, round 5, V7).
+/** @param {RegExpMatchArray} m @returns {number[]} */
+const yearsSpan = (m) => {
+  const qualifier = m[1] ?? m[2] ?? m[5] ?? m[6] ?? m[7] ?? m[8] ?? m[9];
+  const last = saidSpan(yearsNumber(m[4]), qualifier);
+  return m[3] == null ? last : [saidSpan(yearsNumber(m[3]), qualifier)[0], last[1]];
 };
 const tenth = (n) => Math.round(n * 10) / 10;
 /** @param {any} record @returns {{ years: number, least: number, line: string } | null} */
@@ -258,7 +285,7 @@ export const insurerTenure = (record) => {
     const line = text.trim();
     if (!INSURANCE_WORDS.test(line) && !(carrier.length >= 3 && line.toLowerCase().includes(carrier))) continue;
     /** @type {number[][]} [least, most] */
-    const spans = [...line.matchAll(YEARS_SAID)].map((m) => saidSpan(NUMBER_WORDS[m[2].toLowerCase()] ?? Number(m[2]), m[1], m[3]));
+    const spans = [...line.matchAll(YEARS_SAID)].map(yearsSpan);
     for (const m of line.matchAll(START_SAID)) {
       const month = m[1] ? MONTHS.indexOf(m[1].toLowerCase()) : m[3] ? Number(m[3]) - 1 : null;
       if (month != null && (month < 0 || month > 11)) continue;
@@ -766,13 +793,16 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // 2026-10-26: answer to PR question, W44-29). From 2 years: AmWINS' 1 TO 2 and 2 TO 3 YEARS share
   // 2, and a time on a band edge takes the upper band (TNI, 2026-10-26: answer to PR question, round 2, R5).
   // An expired policy: both carriers leave the question to the agent (TNI, 2026-10-26: answer to PR
-  // question, round 3, T6), so the check says that instead of a band.
+  // question, round 3, T6), so the check says that instead of a band. So does a General Liability,
+  // Cargo or Other policy (TNI, 2026-10-27: answer to PR question, round 5, V8).
   const tenure = insurerTenure(record);
   if (tenure && tenure.years >= 2) {
     const inNotes = String(record.notes?.text ?? '').split('\n').map((s) => s.trim()).includes(tenure.line);
     const then = priorPolicyExpired(record)
       ? 'The current policy has expired, so the carriers\' questions on how long with the current insurer are left to you (TNI).'
-      : 'The carriers\' questions on how long with the current insurer take the band for it, never under 1-3 years (TNI); a time two bands could fit is left to you.';
+      : priorPolicyNotAuto(record.priorInsurance?.[0])
+        ? 'The current policy isn\'t auto insurance (not proof of prior insurance), so the carriers\' questions on how long with the current insurer are left to you (TNI).'
+        : 'The carriers\' questions on how long with the current insurer take the band for it, never under 1-3 years (TNI); a time two bands could fit is left to you.';
     check('prior.tenure', inNotes ? 'notes.text' : 'claims.text', `The claims box or Additional Notes give the time with the current insurer: "${tenure.line.slice(0, 160)}". ${then}`);
   }
   // Non-trucking liability (NTL) is named only in the notes: "NTL", "non-trucking" (also written

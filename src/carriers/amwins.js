@@ -50,7 +50,7 @@
 
 import { owner, ownerDobNote } from './progressive.js';
 import { isLongHaul, otherNotes, insurerTenure, tenureBand } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -239,18 +239,27 @@ const authorityAge = (r) => {
 // ones too): the agent's, as GEICO's years with the insurer is (TNI, 2026-10-26: answer to PR
 // question, round 3, T6; until then the band, or 1 TO 2 YEARS). An expired policy isn't current
 // (answer 7), so the notes' time may not be with a current carrier. With no time in the notes it
-// stays 1 TO 2 YEARS (answer 11: asked whatever the prior insurance).
+// stays 1 TO 2 YEARS (answer 11: asked whatever the prior insurance). TNI, 2026-10-27 (answer to
+// PR question, round 5, V9): confirmed, any time, under 2 years too ("about 1 year": the agent's).
+// A General Liability, Cargo or Other policy (not proof of prior, answer 8) with a time with the
+// insurer in the notes, any time as for an expired one: the agent's too, as GEICO's years with
+// the insurer is (TNI, 2026-10-27: answer to PR question, round 5, V8; until then the band, or
+// 1 TO 2 YEARS). With no time in the notes it stays 1 TO 2 YEARS (answer 11); an auto or untyped
+// policy with a time keeps its band. A range of years in the notes ("3-5 years") is answered only
+// when both ends fall in one band (TNI, 2026-10-27: answer to PR question, round 5, V7).
 const AMWINS_TENURE = (n) => (n < 2 ? '1 TO 2 YEARS' : n <= 3 ? '2 TO 3 YEARS' : 'MORE THAN 3 YEARS');
 const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years >= 2 ? t : null; };
 const expiredWithTenure = (r) => priorPolicyExpired(r, r.priorInsurance?.[0]) && !!insurerTenure(r);
+const notAutoWithTenure = (r) => priorPolicyNotAuto(r.priorInsurance?.[0]) && !!insurerTenure(r);
 const withCurrentCarrier = (r) => {
-  if (expiredWithTenure(r)) return null;
+  if (expiredWithTenure(r) || notAutoWithTenure(r)) return null;
   const t = longerTenure(r);
   return t ? tenureBand(t, AMWINS_TENURE) : '1 TO 2 YEARS';
 };
 const withCurrentCarrierNote = (r) => (withCurrentCarrier(r) ? null
   : expiredWithTenure(r) ? `The intake's current policy has expired, and its notes give the time with the insurer ("${insurerTenure(r)?.line.slice(0, 80)}"): pick it yourself.`
-    : `The intake's notes give the time with the current carrier ("${longerTenure(r)?.line.slice(0, 80)}"), and more than one of AmWINS' bands could fit it: pick it yourself.`);
+    : notAutoWithTenure(r) ? `The intake's current insurance is ${String(r.priorInsurance[0].type).trim().slice(0, 30)}, not proof of prior insurance, and its notes give the time with the insurer ("${insurerTenure(r)?.line.slice(0, 80)}"): pick it yourself.`
+      : `The intake's notes give the time with the current carrier ("${longerTenure(r)?.line.slice(0, 80)}"), and more than one of AmWINS' bands could fit it: pick it yourself.`);
 // Federal filings from the intake's "which filings": liability means BMC-91 (MCS-90 comes with
 // it); cargo means BMC-32. Unknown when the intake doesn't say which.
 const filingsText = (r) => (filings(r) ? r.operations.filingsWhich ?? null : null);

@@ -567,7 +567,10 @@ const employees = (r) => {
 // band: exactly 5 years is 5-10, exactly 10 or "10+" is 10+ (TNI, 2026-10-26: answer to PR
 // question, round 2, R5; until then the agent's). Exactly 3 stays 1-3, the decision's "1-3 at
 // least". A time two bands could fit ("since 2021" in 2026: 4.7 to 5.7 years) stays the agent's,
-// with the line quoted.
+// with the line quoted. Hedges read as their words, ">5" and "5 plus" as over 5, "~5" and "5ish"
+// as 5, "<5" as under 5 (TNI, 2026-10-27: answer to PR question, round 5, V6); a range ("3-5
+// years") is a band only when both ends fall in it, "6-8 years" 5-10 Years (TNI, 2026-10-27:
+// answer to PR question, round 5, V7).
 const GEICO_TENURE = (n) => (n <= 3 ? '1-3 Years' : n < 5 ? '3-5 Years' : n < 10 ? '5-10 Years' : '10+ Years');
 const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years > 3 ? t : null; };
 const yearsWithInsurer = (r) => {

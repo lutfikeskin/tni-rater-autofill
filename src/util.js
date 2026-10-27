@@ -81,6 +81,13 @@ export function priorInsuranceAssumed(record, policy = record?.priorInsurance?.[
   if (filled(policy.type) && !AUTO_POLICY.test(String(policy.type).trim())) return false;
   return !priorPolicyExpired(record, policy);
 }
+// The intake's current insurance typed as something other than auto insurance (General Liability,
+// Cargo, Other): not proof of prior insurance (TNI, 2026-10-26: answer to PR question 8). An
+// untyped policy isn't one.
+export function priorPolicyNotAuto(policy) {
+  const type = String(policy?.type ?? '').trim();
+  return type !== '' && !noPriorInsurance(policy) && !AUTO_POLICY.test(type);
+}
 
 // A person's name as lowercase words without accents ("Campelo Kraychete" -> ["campelo", "kraychete"]).
 export function nameWords(name) {
