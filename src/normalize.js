@@ -273,12 +273,13 @@ const BELOW = /^(?:less\s+than|under)$/i;
 // to PR question, R11), also after a word read as the figure: "over 18 months" is 1, "about 6
 // months" is 0 (TNI, 2026-10-26: answer to PR question, T7, confirmed).
 // "less than N months" with N up to 12 is 0 (TNI, 2026-10-26: answer to PR question, T8); more
-// than 12 months, and "under" before months, which the answer doesn't name, settle nothing.
-const LESS_THAN = /^less\s+than$/i;
+// than 12 months settles nothing. "under" reads exactly as "less than" does: "under 6 months" is 0
+// (TNI, 2026-10-27: answer to PR question U1), "under 18 months" settles nothing.
 const MAX_MONTHS_BELOW_A_YEAR = 12;
 // A number in words reads as its digits (TNI, 2026-10-26: answer to PR question, T8): "two years
 // in business" is 2, "less than one year" is 0, up to ninety-nine ("twenty-five"). "a" counts only
-// in "less than a year" (0); "a year" alone, "half a year" and "a few years" settle nothing. A word
+// in "less than a year" and "under a year" (0; TNI, 2026-10-27: answer to PR question U1); "a year"
+// alone, "half a year" and "a few years" settle nothing. A word
 // right after a hyphen ("five" in "twenty-five") is never a figure of its own, nor is the end of a
 // range in words ("two-three", "two to three", "two or three", "two and three years"), which no
 // answer settles: unread, as before.
@@ -287,7 +288,7 @@ const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'sev
 const TENS_WORDS = ['twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
 const RANGE_END = `(?<!(?:\\d|\\b(?:${[...NUMBER_WORDS, ...TENS_WORDS].join('|')}))\\s*(?:[-–]|\\b(?:to|or|and)\\b)\\s*)`;
 const IN_WORDS = `(?<![\\w-])${RANGE_END}(?:(?:${TENS_WORDS.join('|')})(?:[\\s-]+(?:${NUMBER_WORDS.slice(1, 10).join('|')}))?|${NUMBER_WORDS.join('|')})(?![\\w-])`;
-const NUMBER = `\\d{1,3}|${IN_WORDS}|(?<=\\bless\\s+than\\s+)a(?=\\s+(?:year|yr)\\b)`;
+const NUMBER = `\\d{1,3}|${IN_WORDS}|(?<=\\b(?:less\\s+than|under)\\s+)a(?=\\s+(?:year|yr)\\b)`;
 const numberValue = (s) => {
   if (/^\d+$/.test(s)) return Number(s);
   if (/^a$/i.test(s)) return 1;
@@ -353,10 +354,11 @@ export function yearsInBusinessFromNotes(boxes, year) {
           const { word, n, unit, months: andMonths, monthsUnit } = m.groups;
           const figure = numberValue(n);
           const months = MONTHS.test(unit);
-          // "less than 1 year", "under 1 year": 0 (R10); "less than N months", N up to 12: 0 (T8).
-          // Not with months after the year ("less than 1 year 6 months" is more than a year).
+          // "less than 1 year", "under 1 year": 0 (R10); "less than N months", N up to 12: 0 (T8),
+          // and "under N months" alike (U1). Not with months after the year ("less than 1 year 6
+          // months" and "under 1 year 6 months" are more than a year).
           const belowOne = Boolean(word) && BELOW.test(word) && !months && !andMonths && figure === 1;
-          const belowAYear = Boolean(word) && LESS_THAN.test(word) && months && figure >= 1 && figure <= MAX_MONTHS_BELOW_A_YEAR;
+          const belowAYear = Boolean(word) && BELOW.test(word) && months && figure >= 1 && figure <= MAX_MONTHS_BELOW_A_YEAR;
           const read = word ? AS_THE_FIGURE.test(word) || belowOne || belowAYear : !QUALIFIED.test(quote.slice(0, m.index));
           const years = !read || (months && yearsThenMonths) ? null : belowOne || belowAYear ? 0 : months ? Math.floor(figure / 12) : figure;
           // How it was read, when it isn't plain whole years in digits.

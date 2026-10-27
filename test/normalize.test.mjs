@@ -1215,10 +1215,10 @@ test('"less than N months" in business, N up to 12, is 0 years (W44-09, T8)', ()
     readsYears(notes, 0, reading);
     assert.deepEqual(plansYears(notes), ['New Venture', 'derived', 'Less than 1'], notes);
   }
-  // Counterexamples: more than 12 months stays the agent's, as before; "under" months, "less than
-  // a month" (not named by the answer) and a clause about something else too.
+  // Counterexamples: more than 12 months stays the agent's, as before; "less than a month" (not
+  // named by the answer) and a clause about something else too. "under" months: U1, below.
   for (const notes of ['less than 13 months in business', 'In business for less than 18 months', 'less than 24 mos in biz',
-    'under 6 months in business', 'in business for under 12 months', 'less than a month in business', 'less than 6 months driving']) leavesYears(notes);
+    'less than a month in business', 'less than 6 months driving']) leavesYears(notes);
   // Another number in the same note is not taken: a vehicle count, a driver's experience, a date.
   readsOnly('3 trucks, less than 6 months in business', 0, 'less than 6 months in business');
   readsOnly('Driver has 10 years experience; less than 6 months in business', 0, 'less than 6 months in business');
@@ -1246,11 +1246,11 @@ test('numbers in words in the notes read as their digits (W44-09, T8)', () => {
   // In words and in digits, agreeing or not.
   assert.equal(noYears('two years in business\nIn business for 2 years').record.applicant.yearsInBusiness, 2);
   leavesYears('two years in business\nIn business for 3 years');
-  // Counterexamples, as before: "a year" outside "less than a year", "half a year", "a few years",
+  // Counterexamples, as before: "a year" outside "less than a year" and "under a year" (U1, below), "half a year", "a few years",
   // an ordinal, a fraction, a range in words, other qualifiers, and clauses about something else.
   for (const notes of ['a year in business', 'in business for a year', 'half a year in business', 'in business for half a year',
     'a few years in business', 'several years in business', 'about a year in business', 'more than a year in business',
-    'under a year in business', 'first year in business', 'one and a half years in business', 'two-three years in business',
+    'first year in business', 'one and a half years in business', 'two-three years in business',
     'two to three years in business', 'two or three years in business', 'between two and three years in business', 'two - three years in business',
     'in business for two to three years', 'almost three years in business', 'three years driving', 'CDL for two years', 'Driver experience: three years in business',
     'insured for two years', 'three years', 'less than a year driving']) leavesYears(notes);
@@ -1287,6 +1287,41 @@ test('years plus months in business in the notes are the whole years (W44-09, T8
   readsOnly('10 years driving experience, 2 years 6 months in business', 2, '2 years 6 months in business');
   readsOnly('1 year 6 months in business as of 10/2026', 1, '1 year 6 months in business as of 10/2026');
   readsOnly('2 trucks, 6 months in business', 0, '6 months in business');
+});
+
+// U1 (TNI, 2026-10-27: answer to PR question U1): "under" reads as "less than" does after T8.
+// "under N months" with N from 1 to 12 is 0, "under a year" is 0, and numbers in words work after
+// "under" too. R10's "under 1 year" stays 0. More than 12 months, "under 1 year 6 months", and
+// "under" before another number in the same note (a vehicle count, a driver's experience, an age)
+// are left as they were.
+test('"under N months" (N up to 12) and "under a year" in business are 0 years (W44-09, U1)', () => {
+  for (const [notes, reading] of [['under 6 months in business', 'under 6 months'], ['In business for under 6 months', 'under 6 months'],
+    ['in business for under 12 months', 'under 12 months'], ['Under 1 month in biz', 'Under 1 month'], ['under 11 mos in biz', 'under 11 mos'],
+    ['under six months in business', 'under six months'], ['in business for under twelve months', 'under twelve months'],
+    ['under a year in business', 'under a year'], ['In business for under a year', 'under a year'], ['Under a yr in biz', 'Under a yr'],
+    ['under one year in business', 'under one year'], ['Under 1 yr in biz', 'Under 1 yr']]) {
+    readsYears(notes, 0, reading);
+    assert.deepEqual(plansYears(notes), ['New Venture', 'derived', 'Less than 1'], notes);
+  }
+  // Agreeing with "less than", or with months alone, is one answer; disagreeing settles nothing.
+  assert.equal(noYears('under 6 months in business\nIn business for less than a year').record.applicant.yearsInBusiness, 0);
+  assert.equal(noYears('under a year in business\n6 months in business').record.applicant.yearsInBusiness, 0);
+  leavesYears('under 6 months in business\nIn business for 3 years');
+  // Counterexamples, left as they were: more than 12 months, years plus months, other figures after
+  // "under", "a" before anything but a year, and a clause about something else.
+  for (const notes of ['under 13 months in business', 'In business for under 18 months', 'under 24 mos in biz', 'under eighteen months in business',
+    'under 1 year 6 months in business', 'in business for under 1 year, 6 months', 'under a year 6 months in business', 'under one year six months in business',
+    'under 2 years in business', 'under two years in business', 'under a month in business', 'under a few years in business',
+    'under 6 months driving', 'under a year of driving experience']) leavesYears(notes);
+  // "under" before another number in the same note is not taken: a vehicle count, a driver's
+  // experience, an age. The years come only from the phrase beside "in business".
+  readsOnly('under 5 trucks, 3 years in business', 3, '3 years in business');
+  readsOnly('Driver has under 2 years experience; in business for 4 years', 4, 'in business for 4 years');
+  readsOnly('Owner under 25 years old, in business for 2 years', 2, 'in business for 2 years');
+  readsOnly('under 5 trucks, under 6 months in business', 0, 'under 6 months in business');
+  readsOnly('Driver has under 2 years experience; under a year in business', 0, 'under a year in business');
+  readsOnly('Owner under 25 years old, in business for under 6 months', 0, 'in business for under 6 months');
+  for (const notes of ['under 5 trucks', 'Driver has under 2 years experience', 'Owner under 25 years old']) leavesYears(notes);
 });
 
 // R12 (TNI, 2026-10-26: answer to PR question): "no" in the USDOT box with an MC number on the
