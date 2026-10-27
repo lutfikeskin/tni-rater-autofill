@@ -80,6 +80,8 @@ export function collectItems(frames) {
         : [...new Set((x.options ?? []).map(o => String(o).replace(/\s+/g, ' ').trim()).filter(Boolean))];
       const item = { key: x.key, q: x.q ?? null, label: x.label ?? '', section: x.section || null,
         controlKind: x.controlKind ?? null, required: !!x.required, status, reason: x.reason ?? x.note ?? null,
+        // The intake field the rules map this question to (the fill's `path`), when it is one.
+        rulePath: intakePathOf(x.path),
         current: x.current ?? null, options, applyable: CHOICE_KINDS.has(x.controlKind) && options.length > 0,
         ...restrictions.get(sig),
         fieldType: x.fieldType ?? x.valueType ?? x.semanticType ?? null };
@@ -95,14 +97,89 @@ export function collectItems(frames) {
   return { items, blocked };
 }
 
-// Keep only the active row of repeating entities. Identifiers are represented by presence,
-// never guessed or copied by the assistant. Other sensitive fields are not needed for option matching.
+const SECTION_KEYS = ['applicant', 'operations', 'garaging', 'coverage', 'claims', 'notes', 'trailerInfo', 'priorInsurance'];
+const UNIT_LISTS = ['drivers', 'vehicles', 'trailers'];
+const UNIT_PATH = /^(drivers|vehicles|trailers)\[(\d+)\]/;
+
+// A fill path that names an intake field ("operations.needSr22", "drivers[1].cdl"); a carrier's own
+// key ("geico.qLiabilityCoverage", Progressive's question codes) is none.
+export function intakePathOf(path) {
+  if (typeof path !== 'string' || path.length > 120) return null;
+  return SECTION_KEYS.some((k) => path === k || path.startsWith(`${k}.`) || path.startsWith(`${k}[`)) || UNIT_PATH.test(path) ? path : null;
+}
+
+// The intake value at a path ("drivers[1].cdl"), undefined when the record has none.
+export function intakeValue(record, path) {
+  let value = record;
+  for (const part of String(path).split(/\.|\[(\d+)\]/).filter(Boolean)) value = value == null ? undefined : value[part];
+  return value;
+}
+
+// Which driver, vehicle or trailer row a question is about: its intake path's, else a vehicle whose
+// year and make are in the question's text (GEICO's per-vehicle questions start "2020 RAM 3500"),
+// when exactly one is. Code matches; the model is told the row, never asked to find it.
+export function entityOf(item, record) {
+  const m = UNIT_PATH.exec(item.rulePath ?? '');
+  if (m) return record?.[m[1]]?.[Number(m[2])] ? `${m[1]}[${m[2]}]` : null;
+  const text = ` ${item.label ?? ''} ${item.section ?? ''} `.toLowerCase().replace(/\s+/g, ' ');
+  const named = (record?.vehicles ?? []).flatMap((v, i) => (v?.year && String(v?.make ?? '').trim()
+    && text.includes(` ${String(v.year).trim()} ${String(v.make).trim().toLowerCase().replace(/\s+/g, ' ')} `) ? [i] : []));
+  return named.length === 1 ? `vehicles[${named[0]}]` : null;
+}
+
+// Rows the questions name beyond the active ones, at most MAX_EXTRA_ROWS per list.
+const MAX_EXTRA_ROWS = 2;
+export function rowsFor(items, record, active = {}) {
+  const rows = {};
+  for (const item of items) {
+    const m = UNIT_PATH.exec(entityOf(item, record) ?? '');
+    if (!m || Number(m[2]) === (active[m[1]] ?? 0)) continue;
+    rows[m[1]] ??= [];
+    if (!rows[m[1]].includes(Number(m[2])) && rows[m[1]].length < MAX_EXTRA_ROWS) rows[m[1]].push(Number(m[2]));
+  }
+  return rows;
+}
+
+// The page's other choice questions and what they show now, as the agent sees them: context for
+// consistency, never evidence. From the panel's decision snapshot (pagekit decisionSnapshot, one JSON
+// string per frame). Never a typed value, nor a question on the never-list or about identifiers,
+// names or addresses; labels and answers are redacted like the intake.
+const PAGE_LABEL_PRIVATE = /\b(name|names|address|street|city|zip|phone|e-?mail|birth|dob|vin|licen[cs]e|plate|ssn|fein|ein|policy (number|no|#)|account|routing|usdot|dot (number|no|#)|mc (number|no|#)|suffix)\b/i;
+const MAX_PAGE_ANSWERS = 40;
+const MAX_PAGE_CHARS = 6000;
+export function pageAnswers(snapshots, items, record) {
+  const asked = new Set(items.map((x) => `${x.key}|${x.label}`));
+  const redact = redactor(redactionTerms(record ?? {}));
+  const clip = (s, n) => { const t = redact(String(s ?? '').replace(/\s+/g, ' ').trim()); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+  const out = [], seen = new Set();
+  let size = 0;
+  for (const frame of snapshots ?? []) {
+    let controls;
+    try { controls = JSON.parse(frame?.result ?? 'null')?.[1]; } catch { controls = null; }
+    for (const c of Array.isArray(controls) ? controls : []) {
+      if (!CHOICE_KINDS.has(c?.kind) || asked.has(`${c.key}|${c.label}`) || c.current == null || String(c.current).trim() === '') continue;
+      const text = `${c.section ?? ''} ${c.label ?? ''}`;
+      if (!String(c.label ?? '').trim() || neverReason({ section: c.section, label: c.label, controlKind: c.kind }) || TYPED_ID.test(text) || PAGE_LABEL_PRIVATE.test(text)) continue;
+      const entry = { ...(c.section ? { section: clip(c.section, 60) } : {}), label: clip(c.label, 120), answer: clip(c.current, 60) };
+      const sig = JSON.stringify(entry);
+      if (seen.has(sig)) continue;
+      if (out.length >= MAX_PAGE_ANSWERS || size + sig.length > MAX_PAGE_CHARS) return out;
+      seen.add(sig);
+      size += sig.length;
+      out.push(entry);
+    }
+  }
+  return out;
+}
+
+// Keep only the active row of repeating entities, and the rows the questions name (`rows`, from
+// rowsFor). Identifiers are represented by presence, never guessed or copied by the assistant. Other sensitive fields are not needed for option matching.
 // Every string the model sees is redacted with the same terms as the claims-box review and the
 // usage log (redactionTerms: the client's names, dates of birth, street, city, ZIP, contact and ID
 // numbers become `[client]`), in the evidence sources and in the verification call's intake alike
 // (audit 2026-10-08: names, DOB, address and claims text went verbatim). Numbers and booleans
 // stay; the prior carrier's name and the garaging state are not terms and are still sent.
-export function scopedIntake(record, active) {
+export function scopedIntake(record, active, rows = {}) {
   const privateKey = /^(vin|licenseNumber|licensePlate|fein|ssn|socialSecurity|phone|email|policyNumber|accountNumber|routingNumber|password)$/i;
   const redact = redactor(redactionTerms(record));
   const clean = (obj) => {
@@ -113,19 +190,20 @@ export function scopedIntake(record, active) {
       ['dot', 'mc'].includes(k) ? [`has${k.toUpperCase()}`, !!v] : [k, clean(v)]));
   };
   const out = {};
-  for (const key of ['applicant', 'operations', 'garaging', 'coverage', 'claims', 'notes', 'trailerInfo', 'priorInsurance']) {
+  for (const key of SECTION_KEYS) {
     if (record[key]) out[key] = clean(record[key]);
   }
-  for (const key of ['drivers', 'vehicles', 'trailers']) {
-    const index = active[key] ?? 0;
-    if (Number.isInteger(index) && index >= 0 && record[key]?.[index]) out[`${key}[${index}]`] = clean(record[key][index]);
+  for (const key of UNIT_LISTS) {
+    for (const index of [active[key] ?? 0, ...(rows[key] ?? []).slice(0, MAX_EXTRA_ROWS)]) {
+      if (Number.isInteger(index) && index >= 0 && record[key]?.[index]) out[`${key}[${index}]`] = clean(record[key][index]);
+    }
   }
   if (record.priorInsurance?.length) out.computed = { priorPolicyExpired: priorPolicyExpired(record), noPriorInsurance: noPriorInsurance(record.priorInsurance[0]) };
   return out;
 }
 
 export function evidenceFor(context) {
-  const facts = scopedIntake(context.record, context.active ?? {});
+  const facts = scopedIntake(context.record, context.active ?? {}, context.rows ?? {});
   const sources = {};
   const flatten = (obj, path = '') => {
     for (const [key, value] of Object.entries(obj ?? {})) {
@@ -142,8 +220,10 @@ export function evidenceFor(context) {
   for (const line of (text || '').split('\n').filter(l => l.startsWith('- '))) {
     sources[`s${Object.keys(sources).length + 1}`] = { basis: 'tni_rule', rule: line.slice(2) };
   }
-  if (Object.keys(sources).length > MAX_OPTIONS) throw new AssistError('Too much intake context for one decision. Answer this page manually.');
+  // Too much for one request: the planner splits the group (fewer questions name fewer rows).
+  if (Object.keys(sources).length > MAX_OPTIONS) throw new RequestTooLarge('Too much intake context for one decision. Answer this page manually.');
   return { facts, sources };
 }
 
 export class AssistError extends Error {}
+export class RequestTooLarge extends AssistError {}

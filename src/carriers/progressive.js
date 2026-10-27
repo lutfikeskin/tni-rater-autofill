@@ -150,6 +150,8 @@ const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
 const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').trim());
 const isArkansas = (r) => /^(ar|arkansas)$/i.test(String(r.garaging?.state ?? '').trim());
+const isTexas = (r) => /^(tx|texas)$/i.test(String(r.garaging?.state ?? '').trim());
+const isMaryland = (r) => /^(md|maryland)$/i.test(String(r.garaging?.state ?? '').trim());
 
 // A trailer's attached equipment: the intake's amount when it gives one (not "N/A" or 0), else
 // none (TNI standard: "Trailer has no equipment").
@@ -164,6 +166,11 @@ const excludedDriver = (r, a) => r.drivers?.[a.drivers ?? 0]?.excluded === true;
 // TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
 // the driver took a course (or the Additional Notes box does); then it's the agent's.
 const defensiveMention = (r) => String(otherNotes(r) ?? '').match(/[^\n.]*defensive[^\n.]*/i)?.[0].trim().slice(0, 80) ?? null;
+// KY's wording asks about an Armed Forces course (W44-32): a course the notes mention that isn't
+// said to be military doesn't change its No (TNI, 2026-10-26: answer to PR question); one that is
+// stays the agent's.
+const ARMED_FORCES_COURSE = { field: 'DriverInput.DefensiveDriverDiscount', label: 'armed forces' };
+const militaryCourse = (r) => (/\b(military|armed forces|army|navy|naval|air force|marines?|coast guard|national guard)\b/i.test(defensiveMention(r) ?? '') ? defensiveMention(r) : null);
 
 // A driver's accidents, claims or violations: the claims box's Yes or No. TNI (2026-10-19, after a
 // live run): when it gives neither, No (standard) unless the intake's notes (the claims box's
@@ -243,10 +250,12 @@ const filingsNote = (r) => (ntlNoDotFilings(r) ? null : r.operations.filingsRequ
   : filingsHint(r) ? `The intake leaves "filings required" blank but ${filingsHint(r)}: answer it yourself.` : null);
 // "Are state or federal filings required?" TNI (2026-10-19, after a live run): left blank on an
 // intake with no USDOT or MC number, No (standard), also when the intake says one is coming
-// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number,
-// filings named or an SR-22 needed, a blank answer stays the agent's. (The Filings page's answers
-// keep `filings`: that page shows only after a Yes.)
-const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && !r.applicant.dot && !r.applicant.mc && !filingsHint(r);
+// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number, No
+// too, as on every carrier (TNI, 2026-10-26: answer to PR question, replacing the 2026-10-19 rule
+// that left it to the agent), except on a quote that is or may be NTL (W44-28's). Filings named or an
+// SR-22 needed leave a blank to the agent. (The Filings page's answers keep `filings`: that page
+// shows only after a Yes. `filingsBlankNoNumber` keeps the 2026-10-19 rule's name.)
+const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && (notNtl(r) || (!r.applicant.dot && !r.applicant.mc)) && !filingsHint(r);
 // An NTL quote (TNI, 2026-10-26, W44-28: "US DOT is not added and filings not added if its NTL, in
 // every case"): No, whatever the intake asks; the intake's own No stays the intake's (`derived`).
 // The Federal filing on the Filings page (reached only after a Yes) is No there too.
@@ -771,7 +780,7 @@ export const progressive = {
       { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
       { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },
       { q: 'C1', field: 'AccountInput.BlanketWOSQuestion', ask: 'Is a Blanket Waiver of Subrogation endorsement needed by contract?', name: 'Blanket waiver of subrogation (preserve prefilled value)', ignore: true },
-      { q: 'CA', source: held(filingsSource), field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank with no USDOT or MC number)', kind: 'bool', value: filingsAsked, note: holdOr(filingsNote) },
+      { q: 'CA', source: held(filingsSource), field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank)', kind: 'bool', value: filingsAsked, note: holdOr(filingsNote) },
       { q: 'D1', source: 'derived', field: 'PolicyInput.ELDHoursOfServiceRecords', ask: 'Is an Electronic Logging Device (ELD) required to record hours of service?', name: 'Electronic logging', kind: 'bool', value: usesEld, note: eldNote },
     ]),
 
@@ -792,8 +801,15 @@ export const progressive = {
       { q: '2BCB', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (from VIN lookup)', ignore: true },
       // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
       // a box the lookup leaves empty goes to the agent.
-      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
+      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
         q, field, ask, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
+      })),
+      // The anti-theft device: Progressive's own choice (the VIN lookup's) when it made one, and None
+      // when it didn't (TNI, 2026-10-26, W44-32: "If not selected automatically, no"; KY live run, where
+      // the list was unfamiliar and the agent picked None). FL's list (None, Standard, Recovery) and
+      // KY's (None, Anti-Theft Device 1 to 3, with no caption of its own) have their own names.
+      ...[['2BAC', 'RiskInput.AntiTheftDevice', 'Anti-Theft Device Discount'], ['2CFA', 'RiskInputNonShredded.AntiTheftDeviceAgentOptions', null]].map(/** @returns {CarrierRule} */ ([q, field, ask]) => ({
+        q, field, ...(ask ? { ask } : {}), source: 'standard', name: 'Anti-theft device (Progressive\'s, else TNI: None)', kind: 'choice', value: () => 'None', keepPreset: true,
       })),
       // Asked only when the VIN lookup decodes a vehicle other than the tile picked from the intake's
       // type (TN 2026-10-08: an intake "Van" whose VIN was a truck tractor). The agent's pick, with
@@ -866,8 +882,14 @@ export const progressive = {
       { q: '2960', field: 'DriverInput.CDLYearUnknow', ask: 'Year is unknown', name: 'CDL year unknown (the agent\'s)', ignore: true },
       // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; a course the
       // intake's description box mentions is the agent's. (299D: the id when it was first seen,
-      // after the renumbering.)
-      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
+      // after the renumbering.) KY asks it about an Armed Forces course: the same No (TNI, 2026-10-26,
+      // W44-32: "Military Stuff NO"; the agent confirmed the fill's No, held as reworded), also with a
+      // course in the notes not said to be military (TNI, 2026-10-26: answer to PR question). Each
+      // wording is its own rule, told by the question's text (ARMED_FORCES_COURSE).
+      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', unlessShown: ARMED_FORCES_COURSE,
+        ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
+      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', whenShown: ARMED_FORCES_COURSE,
+        ask: 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?', name: 'Armed Forces defensive driving course (standard: No)', kind: 'bool', value: (r) => (militaryCourse(r) ? null : false), note: (r) => (militaryCourse(r) ? `The intake's notes mention a military defensive driving course ("${militaryCourse(r)}"): answer it yourself.` : null) },
       // No: the driver is listed on the intake to be covered. Yes for a driver the intake marks
       // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver).
       { q: '28C1', source: 'derived', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (No unless the intake marks them excluded)', kind: 'bool', value: excludedDriver },
@@ -893,14 +915,24 @@ export const progressive = {
       // FL: the CSL already covers property damage; PIP is required, $10k with no deductible (TNI).
       // Changing PIP makes Progressive invalidate the liability limit, which is picked again.
       { q: '1DB8', source: 'standard', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
-      // PIP shares its data-model name across states: other states' lists (TX $2,500–$25,000, MD
-      // "Full PIP") are left as Progressive set them (TNI 2026-10-07: no standard there).
-      { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r), emptyNote: (r) => (isFlorida(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida and Arkansas only: choose it yourself.') },
+      // PIP shares its data-model name across states. TX (TNI, 2026-10-26, W44-26: Medical Payments
+      // $5,000 wherever offered, PIP not selected unless the state requires it): Progressive offers
+      // medical payments there (1FE4), so PIP is Not Selected, from its list of Not Selected and
+      // $2,500 to $25,000. Other states' lists are left as Progressive set them: KY (base PIP is
+      // required there, so Progressive's stays), UT (required, "$3k Basic" its only option, no medical
+      // payments: it stays) (TNI, 2026-10-26: answers to PR questions) and MD (its own list, 1E7C).
+      { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; TX: Not Selected; other states: as Progressive set it)', kind: 'choice',
+        value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : isTexas(r) ? 'Not Selected' : null), ignore: (r) => !isFlorida(r) && !isTexas(r),
+        emptyNote: (r) => (isFlorida(r) || isTexas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida, Texas and Arkansas only: choose it yourself.') },
+      // Guest and Optional Personal Injury Protection (KY live run, 2026-10-26: no rule knew them, and
+      // Guest PIP was left required and empty): Not selected (TNI, 2026-10-26, W44-32).
+      { q: '1EE4', source: 'standard', field: 'LineInput.GuestPIPLimit', ask: 'Guest Personal Injury Protection', name: 'Guest personal injury protection (TNI: Not selected)', kind: 'choice', value: () => 'Not selected' },
+      { q: '1EE8', source: 'standard', field: 'LineInput.OptionalPIPLimit', ask: 'Optional Personal Injury Protection', name: 'Optional personal injury protection (TNI: Not selected)', kind: 'choice', value: () => 'Not selected' },
       // AR (TNI, 2026-10-19, after a live run): personal injury protection is its own control there
       // (PIPInput.Limit, captioned only "Limit", so it was unfamiliar), offering 5k medical, income
       // loss and 5k accidental death alone or together. Progressive picked all three; TNI's standard
       // is 5k Medical and Hospital alone. Other states with this control keep Progressive's choice.
-      { q: '1FB2', source: 'standard', field: 'PIPInput.Limit', name: 'Personal injury protection, AR (standard: 5k Medical and Hospital; other states: as Progressive set it)', kind: 'choice', value: (r) => (isArkansas(r) ? '5k Medical and Hospital' : null), ignore: (r) => !isArkansas(r), emptyNote: (r) => (isArkansas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida and Arkansas only: choose it yourself.') },
+      { q: '1FB2', source: 'standard', field: 'PIPInput.Limit', name: 'Personal injury protection, AR (standard: 5k Medical and Hospital; other states: as Progressive set it)', kind: 'choice', value: (r) => (isArkansas(r) ? '5k Medical and Hospital' : null), ignore: (r) => !isArkansas(r), emptyNote: (r) => (isArkansas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida, Texas and Arkansas only: choose it yourself.') },
       { q: '1DEE', source: 'standard', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
       // SC (2026-10-07): uninsured and underinsured motorist as BI & PD together, each $100k CSL with
       // the deductible Progressive lists for it (the agent's picks on that quote).
@@ -919,8 +951,12 @@ export const progressive = {
       ...[['1E69', 'Extraordinary Medical Expense'], ['1E6E', 'Income Loss'], ['1E71', 'Funeral Expense'], ['1E74', 'Accidental Death']]
         .map(/** @returns {CarrierRule} */ ([q, what]) => ({ q, source: 'standard', ask: `${what} Benefits`, name: `PA ${what.toLowerCase()} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
       // PIP's state choice (MD): its box has no question text and its fieldref isn't recorded yet; it's
-      // the list offering "$2,500 Full PIP". Other states' (TX: plain amounts) stay the agent's.
-      { q: '1E7C', withOption: '$2,500 Full PIP', name: 'PIP (preserve prefilled state choice)', ignore: true },
+      // the list offering "$2,500 Full PIP" (Not selected, $2,500 Full PIP, $2,500 Guest PIP). Its MD
+      // page offers no medical payments, so W44-26 takes PIP $2,500 there: "$2,500 Full PIP", not
+      // Guest PIP (TNI, 2026-10-26: answer to PR question). Another state showing this list (none
+      // captured) keeps Progressive's choice.
+      { q: '1E7C', source: 'standard', withOption: '$2,500 Full PIP', name: 'PIP, MD (standard: $2,500 Full PIP; other states: as Progressive set it)', kind: 'choice',
+        value: (r) => (isMaryland(r) ? '$2,500 Full PIP' : null), ignore: (r) => !isMaryland(r) },
       // SC (2026-10-07) lists comprehensive with a $0 glass deductible ("$1,000 Deductible w/ $0
       // Glass Deductible"): the same deductible.
       // TNI's standard deductibles (the intake has no deductible field).
@@ -933,7 +969,8 @@ export const progressive = {
       { q: '200F', source: 'standard', field: 'FireAndTheftInput.Deductible', name: 'Additional fire / theft coverage (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       // One per vehicle (UT 2026-10-07: two vehicles, two rows, no caption on either).
       { q: '1FDD', source: 'standard', field: 'UMPDInput.Limit', ask: 'UMPDInput.Limit', name: 'UMPD limit (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle' },
-      // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle).
+      // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle):
+      // $5,000 wherever Progressive offers it (TNI, 2026-10-26, W44-26).
       { q: '1FE4', source: 'standard', field: 'MedicalPaymentInput.Limit', name: 'Medical payments per person (standard: $5,000)', kind: 'choice', value: () => '$5,000 per person', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '2158', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
       { q: '215A', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },

@@ -73,6 +73,7 @@ const one = (p, name, step) => {
 const value = (r, name, step, active) => one(plan(r, active), name, step).value;
 // The agent's: not filled, with a note saying why.
 const agents = (s) => { assert.equal(s.value, null, `${s.name}: not filled`); assert.ok(s.note, `${s.name}: has a note`); };
+const VEHICLE_TYPE = 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, Box Truck or else Box/Straight Truck for a box truck, else the agent\'s pick)';
 
 // --- The carrier --------------------------------------------------------------------------------
 
@@ -218,12 +219,12 @@ test('the gateway ZIP replaces a carried-over one; a city GEICO doesn\'t list ke
 
 // TNI's GEICO standards (FL live run, 2026-10-21): only these rules may be one.
 const STANDARDS = [
-  'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
+  VEHICLE_TYPE, 'Customizations (from the attached equipment value)',
   'Comprehensive or collision wanted (TNI: Yes)', 'Trailer comprehensive or collision wanted (TNI: Yes)',
   'Driver\'s relationship to the business (Owner, else Employee)', 'Number of employees (the drivers besides the owner)',
   'Years with the current auto insurer (1-3 with a current policy)', 'Liability insurance the business has (None unless the notes say)',
   'Named additional insured or waiver of subrogation (TNI: No)', 'Blanket additional insured by contract (TNI: No)', 'Blanket waiver of subrogation by contract (TNI: No)',
-  'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)', 'Basic personal injury protection (TNI: $2,500, PIP over medical payments; FL: as GEICO has it)', 'Comprehensive', 'Collision', 'Refrigeration breakdown (Yes with a reefer)',
+  'Medical payments (TNI: $5,000; Not Included where GEICO offers no limit)', 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)', 'Comprehensive', 'Collision', 'Refrigeration breakdown (Yes with a reefer)',
   'Business description (For Hire Trucking for an expediter or freight hauler)', 'More about the business (Other For-Hire Trucking for an expediter or freight hauler)',
   'Start quote: Commercial Auto/Trucking (TNI: ticked)',
   // FL live run 4, 2026-10-21 (W43-17, W43-18): GEICO in every state.
@@ -354,19 +355,23 @@ test('a vehicle\'s form and a trailer\'s never answer each other\'s questions', 
   assert.match(one(p, 'Trailer type (the agent\'s pick)').note, /"Dry Van"/);
 });
 
-test('vehicle type: a cargo van is GEICO\'s Delivery Van and a semi truck its Tractor (TNI); any other type is the agent\'s pick', () => {
-  const type = (t) => one(plan(with_({ 'vehicles.0.type': t })), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)');
-  for (const t of ['Van', 'Cargo Van', 'cargo van ']) assert.deepEqual([type(t).value, type(t).source, type(t).standard], ['Delivery Van', 'standard', true], t);
-  for (const t of ['Semi Truck', 'semi-truck']) assert.deepEqual([type(t).value, type(t).source, type(t).standard], ['Tractor', 'standard', true], t);
-  for (const t of ['Box Truck', 'Passenger Van', 'Semi Trailer', 'Van Trailer', null]) {
+// TNI, 2026-10-26, W44-32 (PA live run: an intake "Box Truck" was the agent's, who picked
+// Box/Straight Truck; the maintainer: "If Box Truck is available, yes, if no, Box/Straight Truck").
+test('vehicle type: a cargo van is GEICO\'s Delivery Van, a semi truck its Tractor, a box truck its Box Truck or else Box/Straight Truck (TNI); any other type is the agent\'s pick', () => {
+  const type = (t) => one(plan(with_({ 'vehicles.0.type': t })), VEHICLE_TYPE);
+  const answer = (t) => [type(t).value, type(t).choiceAliases, type(t).source, type(t).standard];
+  for (const t of ['Van', 'Cargo Van', 'cargo van ']) assert.deepEqual(answer(t), ['Delivery Van', [], 'standard', true], t);
+  for (const t of ['Semi Truck', 'semi-truck']) assert.deepEqual(answer(t), ['Tractor', [], 'standard', true], t);
+  for (const t of ['Box Truck', 'box truck', ' Box  Truck ']) assert.deepEqual(answer(t), ['Box Truck', ['Box/Straight Truck'], 'standard', true], t);
+  for (const t of ['Straight Truck', 'Box Truck Trailer', 'Flatbed', 'Passenger Van', 'Semi Trailer', 'Van Trailer', null]) {
     agents(type(t));
     assert.equal(type(t).standard, false, String(t));
   }
-  assert.match(type('Box Truck').note, /"Box Truck"/);
-  // Per vehicle: the second one, a cargo van.
-  const two = with_({ vehicles: [intake().vehicles[0], SECOND_VEHICLE] });
-  assert.equal(one(plan(two, { vehicles: 1 }), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)').value, 'Delivery Van');
-  agents(one(plan(two, { vehicles: 0 }), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)'));
+  assert.match(type('Flatbed').note, /"Flatbed"/);
+  // Per vehicle: a flatbed (the agent's), then a cargo van.
+  const two = with_({ vehicles: [{ ...intake().vehicles[0], type: 'Flatbed' }, SECOND_VEHICLE] });
+  assert.equal(one(plan(two, { vehicles: 1 }), VEHICLE_TYPE).value, 'Delivery Van');
+  agents(one(plan(two, { vehicles: 0 }), VEHICLE_TYPE));
 });
 
 test('with a VIN the year, make and model are checked, never typed; without one they are typed', () => {
@@ -767,6 +772,29 @@ test('filings: the kind and the boxes from which filings the intake names', () =
   }
 });
 
+// The texts AmWINS' "Is a Federal Filing Required?" answers No since T9 (TNI, 2026-10-26: an SR-22
+// beside a Form E or H, "State filing" or "Intrastate" alone, an SR-22 beside an MC number, "SR-22
+// and filings"): GEICO asks about proof of insurance or filings to a state or federal agency, so they
+// stay as before T9. In the which-filings box each is the agent's. So do V12's (TNI, 2026-10-27: a
+// Form E or H, a lone "State", a state filing beside an MC number, "Filings and SR-22").
+test('filings required: AmWINS\' T9 texts stay the agent\'s in GEICO\'s which-filings box (state or federal)', () => {
+  const FILINGS = 'Filings required (TNI: No unless the intake says otherwise)';
+  // V12's texts too (TNI, 2026-10-27: GEICO unchanged).
+  for (const which of ['SR-22 and Form E', 'State filing', 'Intrastate', 'SR-22, MC 123456', 'SR-22 and filings',
+    'Form E', 'State', 'State filing, MC 123456', 'Filings and SR-22', 'SR-22 and additional filings', 'Filings and FR-44']) {
+    const s = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': which })), FILINGS);
+    agents(s);
+    assert.match(s.note, new RegExp(`names filings \\("${which}"\\)`));
+  }
+  // A notes line naming a Form E or H, a state filing or a bare "filings" beside an SR-22: also the agent's.
+  for (const notes of ['SR-22 and Form E', 'Needs a state filing', 'SR-22 and filings',
+    'Needs a Form H filing', 'State filing, MC 123456', 'Filings and SR-22', 'SR-22 and additional filings']) {
+    const s = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': null, 'notes.text': notes })), FILINGS);
+    agents(s);
+    assert.match(s.note, new RegExp(`"${notes}"`));
+  }
+});
+
 // --- Drivers ------------------------------------------------------------------------------------
 
 test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel\'s driver', () => {
@@ -1016,32 +1044,39 @@ test('liability coverage and its limit from the intake; an NTL mention not answe
   }
 });
 
-test('Florida: medical payments Not Included, PIP kept as GEICO offers it (TNI)', () => {
+// TNI, 2026-10-26, W44-26 (the maintainer: "Always add medical payments at $5K, there is no medical
+// payments, choose PIP"; GEICO offering both: "MedPay $5K, PIP yok"), replacing that morning's "If
+// there is personal injury protection available, we always prefer PIP" and Florida's Medical
+// Payments Not Included (2026-10-21). What the page kit does with the lists: test/pagekit.test.mjs.
+const MED = 'Medical payments (TNI: $5,000; Not Included where GEICO offers no limit)';
+const BASIC_PIP = 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)';
+test('Medical Payments $5,000 wherever GEICO offers it, PIP declined beside it and $2,500 without it; Florida keeps its PIP (TNI)', () => {
+  // Every state, Florida too: $5,000, and Not Included where GEICO's list offers no limit (TX).
+  for (const r of [intake(), with_({ 'garaging.state': 'TX' }), with_({ 'garaging.state': 'FL' }), with_({ 'garaging.state': ' fl ' }), blank()]) {
+    const med = one(plan(r), MED);
+    assert.deepEqual([med.value, med.source, med.standard, med.kind, med.ignore, med.onlyIf], ['$5,000', 'standard', true, 'choice', false,
+      [{ path: null, limit: true, value: null }, { path: null, limit: false, value: 'Not Included' }]], r.garaging.state ?? 'blank');
+    assert.match(med.unofferedNote, /doesn't list \$5,000 medical payments/, 'a list without $5,000 is the agent\'s at once');
+  }
+  // Basic PIP outside Florida: I decline where Medical Payments lists a limit, else $2,500 (read from
+  // the Medical Payments list, or none off the page). A list without the answer is the agent's at once.
+  for (const r of [intake(), with_({ 'garaging.state': 'TX' })]) {
+    const p = plan(r);
+    const pip = one(p, BASIC_PIP);
+    const med = one(p, MED);
+    assert.deepEqual([pip.value, pip.source, pip.standard, pip.ignore, pip.whenOffered, pip.emptyNote, pip.onlyIf], ['$2,500', 'standard', true, false, false, null,
+      [{ path: med.path, limit: true, value: 'I decline' }, { path: med.path, limit: false, value: null }]], r.garaging.state);
+    assert.match(pip.unofferedNote, /basic personal injury protection/);
+    // The other PIP lists stay the agent's outside Florida.
+    for (const name of ['Excluded work loss', 'PIP options']) agents(one(p, name));
+  }
+  // Florida requires PIP: the PIP lists (one choice each) are kept as GEICO has them.
   const fl = plan(with_({ 'garaging.state': 'FL' }));
-  const med = one(fl, 'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)');
-  assert.deepEqual([med.value, med.source, med.kind, med.onlyIf, med.unofferedNote], ['Not Included', 'standard', 'choice', null, null], 'FL: whatever else GEICO lists');
-  for (const name of ['Basic personal injury protection (TNI: $2,500, PIP over medical payments; FL: as GEICO has it)', 'PIP options', 'Excluded work loss', 'Stacked uninsured motorist']) {
+  for (const name of [BASIC_PIP, 'PIP options', 'Excluded work loss', 'Stacked uninsured motorist']) {
     const s = one(fl, name);
     assert.deepEqual([s.ignore, s.value, s.source, s.note, s.onlyIf], [true, null, null, null, null], name);
     assert.match(s.emptyNote, /left .* empty/);
   }
-  assert.equal(one(plan(with_({ 'garaging.state': ' fl ' })), 'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)').value, 'Not Included');
-  // Elsewhere (the maintainer, 2026-10-26, a TX live run: "If there is personal injury protection
-  // available, we always prefer PIP", ideally $2,500; without it, Medical Payments with a limit):
-  // Basic PIP $2,500 where it offers a limit, and Medical Payments Not Included where Basic PIP offers
-  // a limit or it offers none (the page kit reads the lists, `onlyIf`; test/pagekit.test.mjs). A list
-  // without the answer is the agent's at once (`unofferedNote`), never waited for (`whenOffered`:
-  // Print went out without it).
-  const tx = plan(intake());
-  const txMed = one(tx, 'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)');
-  const txPip = one(tx, 'Basic personal injury protection (TNI: $2,500, PIP over medical payments; FL: as GEICO has it)');
-  assert.deepEqual([txMed.value, txMed.source, txMed.onlyIf], ['Not Included', 'standard', [{ path: txPip.path, limit: true }, { path: null, limit: false }]], 'read from the Basic PIP list, then its own');
-  assert.match(txMed.onlyNote, /no personal injury protection, so TNI takes medical payments/);
-  assert.match(txMed.unofferedNote, /no medical payments choice/);
-  assert.deepEqual([txPip.value, txPip.source, txPip.whenOffered, txPip.ignore, txPip.emptyNote, txPip.onlyIf], ['$2,500', 'standard', false, false, null, [{ path: null, limit: true }]]);
-  assert.match(txPip.onlyNote, /no basic personal injury protection limit/);
-  assert.match(txPip.unofferedNote, /doesn't offer \$2,500/);
-  for (const name of ['Excluded work loss', 'PIP options']) agents(one(tx, name));
 });
 
 test('cargo: the intake\'s limit and deductible as one pair; never a default deductible', () => {
@@ -1169,7 +1204,7 @@ test('notes are short and plain', () => {
 // FL live run 2, 2026-10-21: GEICO's VIN decode redrew the vehicle form and cleared the type (the
 // Cascadia's Tractor, three times), distance and personal use given before it.
 test('with a VIN, the vehicle form\'s answers wait for GEICO\'s decoded year; without one, nothing waits', () => {
-  const WAITING = ['Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
+  const WAITING = [VEHICLE_TYPE, 'Customizations (from the attached equipment value)',
     'Customization value (the attached equipment value, else TNI: 0)', 'Vehicle value without customizations', 'Comprehensive or collision wanted (TNI: Yes)',
     'Farthest one-way distance (from the radius)', 'Personal use'];
   const withVin = plan(intake());

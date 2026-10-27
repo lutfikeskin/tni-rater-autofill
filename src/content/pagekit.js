@@ -766,6 +766,14 @@
         if (c) take(s, c, field === 'text' ? 'label' : 'name');
       }
     }
+    // A list condition with a value (`onlyIf`: GEICO's Medical Payments is Not Included where it
+    // offers no limit, Basic PIP I decline where Medical Payments offers one; TNI, 2026-10-26,
+    // W44-26) answers in place of the rule's, read from the lists on the page now, so every check of
+    // the answer (kept, accepted, changed since it was given) agrees with what was given.
+    for (const p of pairs) {
+      const value = p.step.onlyIf && p.step.value != null && !p.step.note ? holdingCondition(p.step, p.control, pairs)?.value : null;
+      if (value != null) p.step = { ...p.step, value };
+    }
     pairs.unwitnessed = unwitnessed;
     pairs.witnessed = witnessed;
     pairs.held = held;
@@ -966,6 +974,14 @@
       return true;
     });
   }
+
+  // Whether a list offers a limit: a choice with an amount ("$2,500", "$10,000/No deductible"),
+  // never a placeholder, a stand-in, "Not Included" or "I decline". No list offers none.
+  const offersLimit = (list) => !!list && usableOptions(optionsOf(list)).some((o) => moneyTokens(o.text).length > 0);
+
+  // A step's `onlyIf` condition that holds first, its list read from its own field or, with a
+  // `path`, from that question's among `pairs` (a question off the page offers none); none holding: null.
+  const holdingCondition = (step, control, pairs) => step.onlyIf?.find((x) => offersLimit(x.path ? pairs.find((p) => p.step.path === x.path)?.control : control) === x.limit) ?? null;
 
   function matchOption(options, step) {
     const usable = usableOptions(options);
@@ -2262,7 +2278,7 @@
         // person's): those stay as they are, flagged.
         const own = allPairs.find((p) => p.control === c)?.step;
         const ours = !!own && handled.get(own.id)?.note !== IDENTITY_NOTE
-          && (!own.keepChoice || refill.has(own.id) || report.filled.some((x) => x.stepId === own.id));
+          && (!(own.keepChoice || own.keepPreset) || refill.has(own.id) || report.filled.some((x) => x.stepId === own.id));
         if (ours && own.value != null && !own.ignore && !own.note && !own.verifyOnly && retryOnce(own.id)) {
           report.failed = report.failed.filter((x) => x.key !== fieldKey(c));
           handled.delete(own.id);
@@ -2370,16 +2386,11 @@
         }
         // `onlyIf`: answered only when one of its conditions holds: a list, its own or another
         // question's (`path`; off the page it offers none), offers a limit (a choice with an amount)
-        // or none (GEICO's Medical Payments Not Included where Basic PIP offers a limit or it offers
-        // none: the maintainer, 2026-10-26, "If there is personal injury protection available, we
-        // always prefer PIP"). Otherwise the agent's alone, with `onlyNote`: a limit TNI doesn't
-        // name is never the AI's.
+        // or none, the first one holding giving its `value` (assign; GEICO's Medical Payments $5,000,
+        // Not Included where it offers no limit: TNI, 2026-10-26, W44-26). Otherwise the agent's
+        // alone, with `onlyNote`: a limit TNI doesn't name is never the AI's.
         if (step.onlyIf && step.value != null && !step.note) {
-          const offersLimit = (path) => {
-            const list = path ? allPairs.find((p) => p.step.path === path)?.control : c;
-            return !!list && usableOptions(optionsOf(list)).some((o) => moneyTokens(o.text).length > 0);
-          };
-          if (!step.onlyIf.some((x) => offersLimit(x.path) === x.limit)) {
+          if (!holdingCondition(step, c, allPairs)) {
             report.noData.push({ ...item, note: step.onlyNote, manualOnly: true, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.onlyNote });
             continue;
@@ -2421,7 +2432,7 @@
         // An answer an earlier fill gave here that the page has since taken back (`takenBack`).
         const tookBack = isChoice && !overwrite && !!takenBack?.keys && Object.hasOwn(takenBack.keys, fieldKey(c)) && stepIs(takenBack.steps)
           && !agreesWith(step, c) && !refill.has(step.id) && !report.filled.some((x) => x.stepId === step.id);
-        const differs = isChoice && replaceChoices && !step.keepChoice && !tookBack && !agreesWith(step, c);
+        const differs = isChoice && replaceChoices && !step.keepChoice && !step.keepPreset && !tookBack && !agreesWith(step, c);
         const legacyHold = mayHoldLegacyEdit(c) && !refill.has(step.id);
         // An unticked box that should stay unticked already has its answer (live run 2026-10-09:
         // every unticked box was "filled" again on each pass).
@@ -2439,11 +2450,17 @@
         // Coverages set 9–12 coverages again, once right after Recalculate). An address-suggest
         // box agrees with any address, so Replace still retypes it.
         const sameAnswer = overwrite && answered && step.kind !== 'address-suggest' && agreesWith(step, c);
+        // `keepPreset`: a choice the carrier already made is kept as it is, also with Replace existing
+        // answers; only an empty one is answered (Progressive's anti-theft device, the VIN lookup's
+        // else None: TNI, 2026-10-26, W44-32). The agent's own choice is in the fill's skip anyway.
+        // One the carrier made after the fill's answer (a late VIN lookup) is kept too; the fill's
+        // own answer, or an emptied list, is given again as any other.
+        const presetKept = !!step.keepPreset && isChoice && answered && (!refill.has(step.id) || !agreesWith(step, c));
         // What a fill gave here for another vehicle, driver or trailer, still as it gave it, is
         // replaced with this unit's answer (W43-38, Progressive Add Driver, 2026-10-22: another
         // driver's name and date of birth were kept as differing and left to the agent).
         const otherUnits = answered && !agreesWith(step, c) && givenForOtherUnit(step, c);
-        if (legacyHold || sameAnswer || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+        if (legacyHold || sameAnswer || presetKept || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';

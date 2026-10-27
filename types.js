@@ -75,10 +75,12 @@
 /**
  * What a list offers, for a rule answered only when one of its conditions holds (a rule's
  * `onlyIf`): a limit is a choice with an amount ("$2,500", "$10,000/No deductible"), never a
- * placeholder, GEICO's hidden stand-in, "Not Included" or "I decline".
+ * placeholder, GEICO's hidden stand-in, "Not Included" or "I decline". The first condition that
+ * holds answers: its `value`, or the rule's own.
  * @typedef {object} ListCondition
- * @property {string | null} [path]  another question's plan path, whose list is read (GEICO's Medical Payments reads Basic PIP's); none: the rule's own list
+ * @property {string | null} [path]  another question's plan path, whose list is read (GEICO's Basic PIP reads Medical Payments'); none: the rule's own list
  * @property {boolean} limit  true: the list offers a limit; false: it offers none (a list off the page offers none)
+ * @property {string | null} [value]  the answer when this condition holds, in place of the rule's (GEICO's Medical Payments: Not Included where it offers no limit; Basic PIP: I decline where Medical Payments offers one)
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -130,6 +132,7 @@
  *   lookup's, or a bulk helper's such as AmWINS' "Default all answers to No"); a function: only for these clients
  * @property {boolean} [trustPage]
  * @property {boolean} [keepChoice]
+ * @property {boolean} [keepPreset]  a choice the carrier already made (a pre-selection, such as Progressive's anti-theft device from its VIN lookup) is kept as it is, without a check, also with Replace existing answers: only an empty one is answered
  * @property {boolean} [keepUnlisted]
  * @property {boolean} [whenOffered]
  * @property {{ count: string, one?: string, after: string, name: string }} [orMost]
@@ -138,9 +141,9 @@
  * @property {(record: ClientRecord, active: ActiveUnits) => string[] | null} [businessNames]
  * @property {(record: ClientRecord, active: ActiveUnits) => string[] | null} [labelHas]
  * @property {string} [labelNote]
- * @property {ClientValue<ListCondition[] | null>} [onlyIf]  answered only when one of these holds (GEICO's Medical Payments, Not Included: Basic PIP offers a limit, or Medical Payments none); otherwise the agent's alone (manual only), with `onlyNote`
+ * @property {ClientValue<ListCondition[] | null>} [onlyIf]  answered only when one of these holds, with the first one's value if it has one (GEICO's Medical Payments: $5,000 where it offers a limit, Not Included where it offers none); otherwise the agent's alone (manual only), with `onlyNote`
  * @property {string} [onlyNote]
- * @property {ClientValue<string | null>} [unofferedNote]  a list without the answer, which no helper shows later (GEICO's Basic PIP without $2,500): the agent's alone at once, with this note, instead of a failure
+ * @property {ClientValue<string | null>} [unofferedNote]  a list without the answer, which no helper shows later (GEICO's Medical Payments without $5,000): the agent's alone at once, with this note, instead of a failure
  * @property {boolean} [checkNumber]
  * @property {'section' | 'limit' | true} [cargo]
  * @property {'section' | 'limit'} [gl]
@@ -352,6 +355,7 @@
  * @property {boolean} replace
  * @property {boolean} trustPage
  * @property {boolean} keepChoice
+ * @property {boolean} keepPreset
  * @property {boolean} keepUnlisted
  * @property {boolean} whenOffered
  * @property {{ count: string, one: string | null, after: string, name: string } | null} orMost
@@ -368,7 +372,7 @@
  * @property {string[] | null} businessNames
  * @property {string[] | null} labelHas
  * @property {string | null} labelNote
- * @property {{ path: string | null, limit: boolean }[] | null} onlyIf
+ * @property {{ path: string | null, limit: boolean, value: string | null }[] | null} onlyIf
  * @property {string | null} onlyNote
  * @property {string | null} unofferedNote
  * @property {string | null} fallback
@@ -716,6 +720,32 @@
  * @property {'recalculate'} reason
  * @property {{ action: string | null, ms: number | null, press: 'page' | 'late' | 'kit' | null, premiumMs: number | null, requests: ([number, number] | [number, number, 1])[] }} context
  * @property {{ label: string, key: string | null, selected: string, agents: boolean, seen: [number, string][], putBack: boolean }[]} fields
+ */
+
+/**
+ * @typedef {object} AiSuggestEvent  sidepanel.js runAssist: one Luna page review (counts only)
+ * @property {'ai_suggest'} type
+ * @property {string} model
+ * @property {string} carrier
+ * @property {string} [page]
+ * @property {number} items  questions sent
+ * @property {number} blocked  questions kept from Luna (never-list, manual-only)
+ * @property {number} [ms]  time the review took
+ * @property {number} [suggested]
+ * @property {number} [autoOk]  answers allowed as automatic picks
+ * @property {number} [leave]  questions left to the agent; the leave* counts below say why
+ * @property {number} [leaveMissing]  Luna said information is missing
+ * @property {number} [leaveConflict]  Luna saw conflicting facts
+ * @property {number} [leaveChose]  Luna left it without either
+ * @property {number} [leaveNoSource]  it answered but cited nothing usable
+ * @property {number} [leaveUnverified]  the evidence check refused its answer
+ * @property {number} [tokensIn]
+ * @property {number} [tokensOut]
+ * @property {number} [modelCalls]
+ * @property {number} [reasoningTokens]
+ * @property {number} [cachedTokens]
+ * @property {number} [cacheWriteTokens]
+ * @property {string} [error]
  */
 
 /**
