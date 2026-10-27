@@ -312,10 +312,12 @@ export function buildNotesReview(record, { redact = (s) => s, today = new Date()
   const mention = ntlMention(notes);
   // The years the carrier rules use: the intake's years in business, else its years under own
   // authority; null is TNI's blank-intake standard (0 years, a new venture). A range in the notes the
-  // reader left to the agent (TNI, 2026-10-27: answer to PR question V7) is neither: `yearsRange`.
+  // reader left to the agent (TNI, 2026-10-27: answer to PR question V7) is neither: `yearsRange`;
+  // nor is another statement of years in business it didn't take (round-6 answer 4): `yearsUnread`.
   const a = record.applicant ?? {};
   const yearsRange = a.yearsInBusiness == null && a.yearsInBusinessRange === true;
-  const intakeYears = yearsRange ? null : a.yearsInBusiness ?? a.yearsExperience ?? null;
+  const yearsUnread = a.yearsInBusiness == null && a.yearsInBusinessUnread === true;
+  const intakeYears = yearsRange || yearsUnread ? null : a.yearsInBusiness ?? a.yearsExperience ?? null;
   // Lines only the Additional Notes box has: their items point at that box, not the claims box.
   const inClaims = new Set(noteFragments(record.claims?.text).map(redact));
   const fromNotes = noteFragments(record.notes?.text).map(redact).filter((l) => !inClaims.has(l));
@@ -323,7 +325,7 @@ export function buildNotesReview(record, { redact = (s) => s, today = new Date()
     quotedFragments: mention ? noteFragments(mention).map(redact) : [], truncated: claimsTruncated(notes),
     // NTL already Yes (the form's Non-Trucking, or the agent's): nothing more to ask about it.
     ntlSet: ntl === true,
-    intakeYears, yearsRange, year: today.getFullYear() };
+    intakeYears, yearsRange, yearsUnread, year: today.getFullYear() };
 }
 
 const yearsOrNull = (v, max) => v === null || (Number.isInteger(v) && v >= 0 && v <= max);
@@ -351,12 +353,13 @@ const statedYears = (x, year) => x.businessYears ?? (x.businessSince != null ? y
 // With NTL already Yes (`ntlSet`) no line asks about NTL.
 // How long the business has run: one item, for the first line stating it, when it differs from
 // the intake's years (`intakeYears`, null when blank: the quote then gets 0, a new venture; or,
-// with `yearsRange`, the agent's, as a range in the notes left it).
+// with `yearsRange` or `yearsUnread`, the agent's, as a range or another statement in the notes
+// the reader didn't take left it).
 // General liability: one item, for the first line flagged, whether or not the form asks for GL.
 // Its quote must be one of the lines sent (`lines`): evidence Luna can't make up.
 export const GL_CHOICES = Object.freeze([{ label: 'Client has GL', path: 'coverage.hasGl', value: true }, { label: 'Not GL' }]);
 const shortQuote = (line, max = 120) => (line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line);
-export function notesWarnings(results, { quotedFragments = [], ntlSet = false, intakeYears = null, yearsRange = false, year = new Date().getFullYear(), lines = null, fromNotes = [] } = {}) {
+export function notesWarnings(results, { quotedFragments = [], ntlSet = false, intakeYears = null, yearsRange = false, yearsUnread = false, year = new Date().getFullYear(), lines = null, fromNotes = [] } = {}) {
   const out = [];
   const gl = results.find((x) => x.generalLiability === true && (!lines || lines.includes(x.line)));
   if (gl) {
@@ -369,6 +372,8 @@ export function notesWarnings(results, { quotedFragments = [], ntlSet = false, i
     const about = `"${stated.line}" (${years} year${years === 1 ? '' : 's'})`;
     out.push({ line: stated.line, code: 'ai.years-in-business', path: 'applicant.yearsInBusiness', level: 'check', msg: yearsRange
       ? `Luna: the claims box or Additional Notes may say how long the business has run: ${about}. The intake's notes give years in business as a range, so it is left to you. If the line is right, enter Years in business or Year established here.`
+      : yearsUnread
+      ? `Luna: the claims box or Additional Notes may say how long the business has run: ${about}. The intake's notes state years in business, but not as one number, so it is left to you. If the line is right, enter Years in business or Year established here.`
       : intakeYears == null
       ? `Luna: the claims box or Additional Notes may say how long the business has run: ${about}. Years in business is blank on the intake, so the quote gets 0 (New Venture). If the line is right, enter Years in business or Year established here.`
       : `Luna: the claims box or Additional Notes may say how long the business has run: ${about}, but the intake gives ${intakeYears}. Check Years in business here.` });

@@ -90,15 +90,19 @@ const ownerFull = (r) => {
 // Years the notes state, with none on the form, are the intake's years in business (normalize.js, W44-09),
 // also over years under own authority (TNI, 2026-10-26: answer to PR question).
 // A range in the notes whose ends differ ("2-3 years in business") is the agent's, neither New
-// Venture nor the authority years (TNI, 2026-10-27: answer to PR question V7).
+// Venture nor the authority years (TNI, 2026-10-27: answer to PR question V7). So is any other
+// statement of it the reader doesn't take ("a few years", "almost 3 years", figures that disagree):
+// TNI, 2026-10-27: round-6 answer 4.
 const businessYears = (r) => r.applicant.yearsInBusiness ?? r.applicant.yearsExperience ?? null;
 const yearsRange = (r) => r.applicant.yearsInBusiness == null && r.applicant.yearsInBusinessRange === true;
+const yearsUnread = (r) => r.applicant.yearsInBusiness == null && r.applicant.yearsInBusinessUnread === true;
 const yearsInBusiness = (r) => {
   const n = businessYears(r) ?? 0;
   return n < 1 ? 'New Venture' : n >= 5 ? '5+' : String(n);
 };
-const yearsSource = (r) => (yearsRange(r) || businessYears(r) != null ? 'derived' : 'standard');
-const yearsNote = (r) => (yearsRange(r) ? 'The notes give years in business as a range: answer it yourself.' : null);
+const yearsSource = (r) => (yearsRange(r) || yearsUnread(r) || businessYears(r) != null ? 'derived' : 'standard');
+const yearsNote = (r) => (yearsRange(r) ? 'The notes give years in business as a range: answer it yourself.'
+  : yearsUnread(r) ? 'The notes say how long the business has run, but not as one number of years: answer it yourself.' : null);
 // Year established: the intake's, else this year (TNI's standard, as on the recorded quotes).
 const yearEstablished = (r) => r.applicant.yearEstablished ?? new Date().getFullYear();
 const establishedSource = (r) => (r.applicant.yearEstablished == null ? 'standard' : 'derived');

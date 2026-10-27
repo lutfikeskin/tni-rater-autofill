@@ -523,6 +523,14 @@ test('claims-box review: a stated time in business the intake lacks or contradic
     assert.match(msg, /"in Biz for 3\+ years" \(3 years\).*a range, so it is left to you/, JSON.stringify(applicant));
     assert.doesNotMatch(msg, /New Venture|the intake gives/, JSON.stringify(applicant));
   }
+  // An in-business statement the reader didn't take (TNI, 2026-10-27: round-6 answer 4): the
+  // agent's the same way, not New Venture nor the authority years.
+  for (const applicant of [{ yearsInBusiness: null, yearsExperience: null, yearsInBusinessUnread: true }, { yearsInBusiness: null, yearsExperience: 4, yearsInBusinessUnread: true }]) {
+    const unread = buildNotesReview(record(applicant), { today });
+    const msg = notesWarnings(parseNotesReview(answer({ businessYears: 3 }), unread), unread)[0].msg;
+    assert.match(msg, /"in Biz for 3\+ years" \(3 years\).*not as one number, so it is left to you/, JSON.stringify(applicant));
+    assert.doesNotMatch(msg, /New Venture|the intake gives|range/, JSON.stringify(applicant));
+  }
   // Out-of-range answers fail the review.
   for (const bad of [{ businessYears: -1 }, { businessYears: 2.5 }, { businessYears: 101 }, { businessSince: 2027 }, { businessSince: 1900 }, { businessYears: '3' }]) {
     assert.throws(() => parseNotesReview(answer(bad), blank), AssistError, JSON.stringify(bad));
