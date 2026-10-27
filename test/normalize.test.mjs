@@ -368,6 +368,23 @@ test('helpers', () => {
   assert.equal(parseAddress('100 Main St, Ste Genevieve, MO 63670').unit, null);
   assert.equal(parseAddress('100 Main St Apt 4, Dover, DE 19901').unit, 'Apt 4');
   assert.equal(parseAddress('100 Main St Apt 4, Dover, DE 19901').city, 'Dover');
+  // Trailing junk after the ZIP (county, leftover) is ignored; a directional stuck to the city
+  // stays there for the agent to confirm (TNI, 2026-10-27: "… DR SWCARTERSVILLE, GA 30120-5877BARTOW").
+  assert.deepEqual(split('107 BURNT HICKORY DR SWCARTERSVILLE, GA 30120-5877BARTOW'),
+    { street: '107 BURNT HICKORY DR', unit: null, city: 'SWCARTERSVILLE', state: 'GA', zip: '30120-5877' });
+  assert.equal(parseAddress('107 BURNT HICKORY DR SWCARTERSVILLE, GA 30120-5877BARTOW').confident, false);
+  assert.deepEqual(split('100 Main St, Rock Hill, SC 29730 BARTOW'),
+    { street: '100 Main St', unit: null, city: 'Rock Hill', state: 'SC', zip: '29730' });
+  // All-caps cities that start like a direction stay whole, with or without commas.
+  for (const city of ['NEWARK', 'SEATTLE', 'SALEM', 'EASTON', 'WESTMINSTER', 'NEW BERN']) {
+    assert.equal(parseAddress(`1 MAIN ST ${city} NJ 07102`).city, city, city);
+    assert.equal(parseAddress(`1 MAIN ST, ${city}, NJ 07102`).city, city, `${city} with commas`);
+    assert.equal(parseAddress(`1 MAIN ST, ${city}, NJ 07102`).street, '1 MAIN ST', `${city} street`);
+  }
+  // Clean addresses and city names that only look like a direction stay as they were.
+  assert.deepEqual(split('100 Main St, Rock Hill, SC 29730'),
+    { street: '100 Main St', unit: null, city: 'Rock Hill', state: 'SC', zip: '29730' });
+  assert.equal(parseAddress('100 Main St, Westminster, MD 21157').city, 'Westminster');
 });
 
 test('plan resolves the chosen driver and vehicle', () => {
