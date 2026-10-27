@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// The pull-request checks (checks.yml, windows-smoke.yml) on this computer, in the same order,
-// before a push spends paid GitHub minutes on them. Stops at the first failure.
+// The pull-request checks (checks.yml, windows-smoke.yml) on this computer, in windows-smoke.yml's
+// order: for reproducing a failing GitHub job, or before a push with `TNI_CI=full git push`. GitHub's
+// Checks on the pull request are the gate. Stops at the first failure.
 //
 //   npm run ci           -> lint, type check, unit tests, package, store ZIP check, packaged-extension
 //                           E2E with the replay server, AmWINS (normal and reversed), GEICO mock,
@@ -11,8 +12,8 @@
 // chromium` once). A replay server already serving port 8792 is used as it is; otherwise one is
 // started for the E2E step and stopped after it, as in CI.
 //
-// A pass with no uncommitted changes to tracked files is remembered for HEAD, so the pre-push hook
-// (.githooks/pre-push) doesn't run the same checks again before that commit is pushed.
+// A pass with no uncommitted changes to tracked files is remembered for HEAD, so `TNI_CI=full git
+// push` (.githooks/pre-push) doesn't run the same checks again before that commit is pushed.
 
 import fs from 'node:fs';
 import path from 'node:path';
