@@ -1034,6 +1034,24 @@ test('owner is a driver (29F): the owner\'s name on two driver rows, one exclude
   assert.deepEqual(step(null, [true, true]), [false, 'derived', false, null]);
 });
 
+// TNI, 2026-10-27: Progressive's president/CEO daily-operations checkbox is Yes when the owner
+// drives and isn't excluded; No otherwise.
+test('owner daily operations (2D7): Yes when the owner drives; No otherwise', () => {
+  const daily = (box, excluded = false) => {
+    const r = baseRecord();
+    r.applicant.ownerDrives = box;
+    if (excluded) r.drivers[0].excluded = true;
+    return byQ(buildPlan(r, progressive), '2D7');
+  };
+  const said = (s) => [s.value, s.source, s.manualOnly, s.note];
+  assert.deepEqual(said(daily(true)), [true, 'derived', false, null]);
+  assert.deepEqual(said(daily(null)), [true, 'standard', false, null], 'blank box: TNI\'s Yes');
+  assert.deepEqual(said(daily(false)), [false, 'derived', false, null]);
+  assert.deepEqual(said(daily(null, true)), [false, 'derived', false, null]);
+  assert.match(daily(true, true).warn ?? '', /marks their driver row excluded/, 'says Yes, excluded: warned');
+  assert.equal(daily(true).warn ?? null, null);
+});
+
 // TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives; if
 // the owner's row is marked Excluded, or the answer is No, the owner is excluded. The intake's No
 // makes the owner's driver row (the first: V4) an excluded driver, as an "Excluded" mark does: the

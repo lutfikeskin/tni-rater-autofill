@@ -51,7 +51,7 @@
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -1181,6 +1181,11 @@ export const geico = {
       // the owner's name on several rows, only some excluded, to the agent.
       { tni: 'general.owner-drives', field: 'GiveOwnerActiveDriverStatusYesNo', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives', name: 'Owner is a driver (TNI: Yes when the intake leaves it blank, unless excluded)', kind: 'bool',
         source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn },
+      // Yes when the owner drives and isn't excluded; No otherwise (TNI, 2026-10-27).
+      { tni: 'general.owner-daily-ops', field: 'GiveOwnerInvolvedInDailyOperationsYesNo',
+        ask: 'Is the owner involved in the daily operations of the business?',
+        name: 'Owner involved in daily operations (Yes when the owner drives)', kind: 'bool',
+        source: ownerDailyOpsSource, value: ownerDailyOps, warn: ownerDrivesWarn },
     ]),
     // Never filled, wherever GEICO asks it (and never logged: typed values never are).
     fact('GiveSocialSecurityNumber', 'Owner Social Security number (never filled)', { steps: [BUSINESS_OWNER, VEHICLES], ask: 'Business Owner Social Security Number',

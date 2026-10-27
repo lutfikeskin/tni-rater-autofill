@@ -309,6 +309,22 @@ export function ownerDrivesWarn(r) {
     ? 'The intake says the owner drives, but marks their driver row excluded: answered No (TNI: an excluded owner isn\'t a driver). Confirm it with the client.' : null;
 }
 
+// Whether the owner is involved in daily operations (Progressive's president/CEO checkbox;
+// GEICO's owner Yes/No). TNI, 2026-10-27: Yes when the owner drives and isn't excluded
+// (`ownerDrives`); No when they don't drive or are excluded.
+/** @returns {boolean} */
+export function ownerDailyOps(r) {
+  return ownerDrives(r) === true;
+}
+
+// Where ownerDailyOps' answer comes from: TNI's standard when the owner-drives box is blank and
+// nothing excludes the owner (ownerDrivesSource), else derived from the intake's box or exclusion.
+// The intake's "owner drives, but excluded" warning goes with the No (ownerDrivesWarn).
+/** @returns {'standard' | 'derived'} */
+export function ownerDailyOpsSource(r) {
+  return ownerDrivesSource(r) === 'standard' ? 'standard' : 'derived';
+}
+
 // A company-name box saying there is no company ("NO", "N/A", "N.A.", "None.", "No company"): the
 // owner is a sole proprietor (TNI, 2026-10-20). Only for that box: "NO" elsewhere is an answer.
 const NO_COMPANY = /^(?:no(?:ne)?|n\s*[\/.]?\s*a\.?|nil|null|unknown|not applicable|no (?:company|business|name)(?: name)?|-+|\.+)\.?$/i;

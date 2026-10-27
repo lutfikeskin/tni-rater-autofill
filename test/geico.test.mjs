@@ -247,7 +247,9 @@ const STANDARDS = [
 // TNI, 2026-10-26 (W44-25): "Owner Drivers if not excluded, in every case".
 const OWNER_DRIVES = 'Owner is a driver (TNI: Yes when the intake leaves it blank, unless excluded)';
 const OWNER_DRIVES_ADD = 'Owner is a driver (Add Driver; TNI: Yes when the intake leaves it blank, unless excluded)';
-STANDARDS.push(OWNER_DRIVES, OWNER_DRIVES_ADD);
+// TNI, 2026-10-27: Yes when the owner drives, No otherwise; with the owner-drives box blank, TNI's.
+const OWNER_DAILY = 'Owner involved in daily operations (Yes when the owner drives)';
+STANDARDS.push(OWNER_DRIVES, OWNER_DRIVES_ADD, OWNER_DAILY);
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
   const seen = new Set();
@@ -307,9 +309,11 @@ test('a blank intake answers nothing but TNI\'s standards', () => {
     'Filings required (TNI: No unless the intake says otherwise)', 'SR-22 (the owner; TNI: No unless the intake says otherwise)',
     'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)',
     'Customization value (the attached equipment value, else TNI: 0)'].map((n) => one(p, n, n.startsWith('Customization') ? VEH : undefined).value), [false, false, false, false, false, 0]);
-  // ELD has no standard; whether the owner drives is TNI's Yes (W44-25).
+  // ELD has no standard; whether the owner drives is TNI's Yes (W44-25), and daily operations
+  // follows it (TNI, 2026-10-27), TNI's too.
   agents(one(p, 'Electronic logging device (ELD)'));
   assert.deepEqual([one(p, OWNER_DRIVES).value, one(p, OWNER_DRIVES).source], [true, 'standard']);
+  assert.deepEqual([one(p, OWNER_DAILY, BOI).value, one(p, OWNER_DAILY, BOI).source], [true, 'standard']);
 });
 
 test('the plan is plain data: steps and form conditions included', () => {
@@ -724,6 +728,22 @@ test('owner drives (W44-25): blank is TNI\'s Yes and GEICO adds the other driver
   // In review mode (a class the standards weren't set on) the standard Yes is a check item.
   const review = drives(two({ 'applicant.ownerDrives': null, 'operations.businessClass': 'Dump Truck' }));
   assert.deepEqual([review.value, review.standard, review.reviewRequired], [true, true, true]);
+});
+
+// TNI, 2026-10-27: "Is the owner involved in the daily operations of the business?" is Yes when the
+// owner drives and isn't excluded; No when they don't drive or are excluded.
+test('owner daily operations: Yes when the owner drives; No otherwise', () => {
+  const daily = (r) => one(plan(r), OWNER_DAILY, BOI);
+  const said = (s) => [s.value, s.source, s.manualOnly, s.note];
+  // Drives: the intake's Yes (derived from it), or a blank box (TNI's Yes, so TNI's standard).
+  assert.deepEqual(said(daily(intake())), [true, 'derived', false, null]);
+  assert.deepEqual(said(daily(with_({ 'applicant.ownerDrives': null }))), [true, 'standard', false, null]);
+  // Doesn't drive, or excluded: No.
+  assert.deepEqual(said(daily(with_({ 'applicant.ownerDrives': false }))), [false, 'derived', false, null]);
+  assert.deepEqual(said(daily(with_({ 'applicant.ownerDrives': null, 'drivers.0.excluded': true }))), [false, 'derived', false, null]);
+  // The intake says the owner drives but excludes them: No, with the warning to confirm it.
+  assert.match(daily(with_({ 'applicant.ownerDrives': true, 'drivers.0.excluded': true })).warn ?? '', /marks their driver row excluded/);
+  assert.equal(daily(intake()).warn ?? null, null);
 });
 
 // TNI, 2026-10-26 (answer to PR question): the owner's name matched two driver rows (a Sr and a Jr)
