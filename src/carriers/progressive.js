@@ -30,7 +30,7 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE } from '../util.js';
+import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight } from '../util.js';
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, nonDrivingOwnerRow } from '../util.js';
 import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 
@@ -265,10 +265,7 @@ const cargo = (r) => {
 const cargoSource = (r) => (r.coverage.cargo !== false && noCargoDeductible(r) ? 'fact' : 'derived');
 
 // What the intake calls the freight -> Progressive's commodity category and commodity.
-const COMMODITIES = [
-  { match: /general\s*freight/i, category: 'Consumer Goods', commodity: 'Other Consumer Goods' },
-];
-const commodity = (r) => COMMODITIES.find((c) => c.match.test(r.operations.whatHaul ?? '')) ?? null;
+const commodity = (r) => (haulsGeneralFreight(r) ? { category: 'Consumer Goods', commodity: 'Other Consumer Goods' } : null);
 
 // Filings: Yes when the intake says so. On the Filings page the standard answers are "all
 // vehicles on this quote" = Yes and the Federal filing; ticking Federal makes Progressive tick
@@ -837,10 +834,11 @@ export const progressive = {
       ...[['A7', 'Business Owners Policy'], ['A8', 'General Liability'], ['A9', 'Workers\' Compensation'], ['AF', 'Business Owners Policy'], ['B0', 'General Liability']]
         .map(([q, ask]) => otherCoverage({ q, ask, each: true, name: `Other coverage: ${ask}`, group: OTHER_GROUP[q], kind: 'bool' },
           false, `tick ${ask} yourself if they have it.`)),
-      { q: 'B7', field: 'MoreBusinessInput.AdditionalInsuredCount', ask: 'Number of Named Additional Insureds', name: 'Named additional insured count (preserve prefilled value)', ignore: true },
-      { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
-      { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },
-      { q: 'C1', field: 'AccountInput.BlanketWOSQuestion', ask: 'Is a Blanket Waiver of Subrogation endorsement needed by contract?', name: 'Blanket waiver of subrogation (preserve prefilled value)', ignore: true },
+      // TNI, 2026-10-27: No / 0 on every carrier; named AI and waivers are added after the policy starts.
+      { q: 'B7', tni: 'general.additional-insured', source: 'standard', field: 'MoreBusinessInput.AdditionalInsuredCount', ask: 'Number of Named Additional Insureds', name: 'Named additional insured count (standard: 0)', value: () => 0 },
+      { q: 'B8', tni: 'general.additional-insured', source: 'standard', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (standard: 0)', value: () => 0 },
+      { q: 'BE', tni: 'general.additional-insured', source: 'standard', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (standard: No)', kind: 'bool', value: () => false },
+      { q: 'C1', tni: 'general.additional-insured', source: 'standard', field: 'AccountInput.BlanketWOSQuestion', ask: 'Is a Blanket Waiver of Subrogation endorsement needed by contract?', name: 'Blanket waiver of subrogation (standard: No)', kind: 'bool', value: () => false },
       { q: 'CA', tni: 'progressive.filings-required', source: held(filingsSource), field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank)', kind: 'bool', value: filingsAsked, note: holdOr(filingsNote) },
       { q: 'D1', source: 'derived', field: 'PolicyInput.ELDHoursOfServiceRecords', ask: 'Is an Electronic Logging Device (ELD) required to record hours of service?', name: 'Electronic logging', kind: 'bool', value: usesEld, note: eldNote },
     ]),

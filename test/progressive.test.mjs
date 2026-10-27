@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { buildPlan } from '../src/plan.js';
 import { progressive, owner } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
+import { geico } from '../src/carriers/geico.js';
 
 const baseRecord = () => ({
   applicant: {
@@ -37,6 +38,33 @@ test('refrigeration breakdown is requested only when the intake selects Reefer',
     assert.equal(step.path, 'coverage.reeferBreakdown');
     assert.equal(step.note, null);
   }
+});
+
+// General freight is Consumer Goods, then Other Consumer Goods, on every carrier (TNI, 2026-10-27:
+// a live intake's "General Fright" was left to the agent). With what they haul blank, the class.
+test('general freight, also misspelled or as the business class, is Consumer Goods / Other Consumer Goods on every carrier', () => {
+  const goods = (operations) => {
+    const record = baseRecord();
+    Object.assign(record.operations, operations);
+    const p = buildPlan(record, progressive), g = buildPlan(record, geico), a = buildPlan(record, amwins, {});
+    return [byQ(p, '216A').value, byQ(p, '216B').value, g.find((x) => x.name === 'Cargo commodities').value,
+      a.find((x) => /^Disclosure/.test(x.name ?? '')).value.split('\n')[0]];
+  };
+  const CONSUMER = ['Consumer Goods', 'Other Consumer Goods', 'Consumer Goods - Other Consumer Goods', 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods'];
+  for (const whatHaul of ['General freight', 'General Fright ', 'General Frieght', 'general freigt', 'Gen. Freight', 'Non-hazardous general freight']) {
+    assert.deepEqual(goods({ whatHaul }), CONSUMER, whatHaul);
+  }
+  assert.deepEqual(goods({ businessClass: 'General Freight', whatHaul: null }), CONSUMER, 'the class, with what they haul blank');
+  // What they haul wins over the class; neither general freight: the agent's.
+  const [category, , commodities, disclosure] = goods({ businessClass: 'General Freight Hauler', whatHaul: 'Furniture' });
+  assert.equal(category, null);
+  assert.equal(commodities, null, 'GEICO too');
+  assert.equal(disclosure, 'Motor Truck Cargo $100K with $1K Ded - Furniture');
+  for (const businessClass of ['Freight Hauler', 'Dry Freight', 'General']) {
+    assert.equal(goods({ businessClass, whatHaul: 'Furniture' })[2], null, `GEICO: ${businessClass} hauling furniture`);
+  }
+  assert.equal(goods({ businessClass: 'Expediter', whatHaul: 'Dry freight' })[2], CONSUMER[2], 'GEICO: dry freight hauled');
+  assert.equal(goods({ whatHaul: 'General fleet maintenance parts' })[0], null);
 });
 
 test('freight intake maps business type and blank business name to sole proprietor', () => {
@@ -314,6 +342,11 @@ test('search-style business type (IN), other-coverage checkboxes, vehicle list',
   const has = baseRecord();
   has.coverage.hasGl = true;
   for (const q of ['AA', 'B2', 'A8', 'A2']) { const s = byQ(buildPlan(has, progressive, {}), q); assert.equal(s.value, null, q); assert.match(s.note, /general liability/); }
+  // TNI, 2026-10-27: named AI / waiver counts 0 and blanket endorsements No (after-bind, not at quote).
+  assert.deepEqual(['B7', 'B8', 'BE', 'C1'].map((q) => {
+    const s = byQ(plan, q);
+    return [s.value, s.source, s.standard];
+  }), [[0, 'standard', true], [0, 'standard', true], [false, 'standard', true], [false, 'standard', true]]);
   const search = plan.find((s) => s.action === 'businessTypeSearch');
   assert.equal(search.near, 'business type');
   assert.equal(progressive.vehicleList, 'VehicleSummary');

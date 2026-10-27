@@ -56,6 +56,12 @@ export function noPriorInsurance(policy) {
 // carrier the cargo limit and deductible are the agent's, told what it usually is (TNI, 2026-10-27;
 // before, Progressive and AmWINS took $1,000).
 export const noCargoDeductible = (record) => !!record.coverage?.cargoLimit && record.coverage?.cargoDeductible == null;
+// General freight is Consumer Goods, and Other Consumer Goods where a carrier asks which, on every
+// carrier (TNI). Misspelled ("General Fright", "Frieght", "freigt") or cut ("Gen. Freight") too
+// (TNI, 2026-10-27: a live intake's "General Fright" was left to the agent).
+export const GENERAL_FREIGHT = /\bgen(?:eral|\.)?\s*f[re]{1,3}[ie]{0,2}g?h?t\b/i;
+// What they haul names general freight, or, left blank, the business class does.
+export const haulsGeneralFreight = (record) => GENERAL_FREIGHT.test(String(record.operations?.whatHaul ?? '').trim() || String(record.operations?.businessClass ?? ''));
 export const CARGO_DEDUCTIBLE_NOTE = 'The intake gives a cargo limit but no deductible: choose the cargo limit and deductible yourself (the deductible is usually $1,000 or $2,500).';
 
 // The names a carrier being quoted goes by as an intake's current carrier (sameCarrier): one word
