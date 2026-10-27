@@ -1880,6 +1880,10 @@ test('"a 3-year-old company" and "a 3-year-old trucking business" read as 3', ()
   }
   for (const notes of ['almost a 3-year-old trucking company', 'almost a 3-year-old business']) leavesUnread(notes);
   for (const notes of ['10-year-old company truck', 'a 3-year-old truck business', 'Owns a 5 year old box truck company']) leavesYears(notes);
+  // Glue or person words between "old" and the business are not a description of the business
+  // (Claude review on #203): they must not become years in business.
+  for (const notes of ['Equipment is 10 years old and company pays', 'The trailer is 8 years old with company logo',
+    'Owner is 45 years old for company events', 'A van is 5 years old of company fleet']) leavesYears(notes);
 });
 
 // R12 (TNI, 2026-10-26: answer to PR question): "no" in the USDOT box with an MC number on the

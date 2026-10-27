@@ -498,8 +498,12 @@ const ORDINAL_YEARS = { first: 0, '1st': 0, second: 1, '2nd': 1 };
 // before it that aren't a vehicle ("a 3-year-old trucking business"), too (the maintainer,
 // 2026-10-27: answer to PR #191's open question).
 const VEHICLE_WORD = '(?:trucks?|vehicles?|vans?|trailers?|cars?|tractors?)\\b';
+// Between "old" and the business: industry-ish words only (trucking, family, hauling…). Glue or
+// person words ("old and company", "old with company", "old for company") must not count — they
+// used to turn a person's or equipment's age into years in business (Claude review on #203).
+const AGE_FILLER_BLOCK = '(?:trucks?|vehicles?|vans?|trailers?|cars?|tractors?|with|and|at|in|of|for|since|to|by|from|on|as|or|the|a|an|driver|owner|person|people|man|woman|men|women)\\b';
 const BUSINESS_NOT_VEHICLE = `(?:business|biz|company)\\b(?!\\s+${VEHICLE_WORD})`;
-const AGE_OF_BUSINESS = `(?:(?!${VEHICLE_WORD})[a-z]+\\s+){0,2}${BUSINESS_NOT_VEHICLE}`;
+const AGE_OF_BUSINESS = `(?:(?!${AGE_FILLER_BLOCK})[a-z]+\\s+){0,2}${BUSINESS_NOT_VEHICLE}`;
 const AGED_BUSINESS = new RegExp(`(?<![\\w-])(?<!\\bhalf\\s)(?<reading>(?<n>${DIGITS}|${WORD_NUMBER}|a)[\\s-]+(?:year|yr)s?[\\s-]+old)\\s+${AGE_OF_BUSINESS}`, 'i');
 // Months right after years on a line, outside one figure read as above: a months figure there
 // settles nothing.
