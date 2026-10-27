@@ -2438,7 +2438,9 @@
         // `keepPreset`: a choice the carrier already made is kept as it is, also with Replace existing
         // answers; only an empty one is answered (Progressive's anti-theft device, the VIN lookup's
         // else None: TNI, 2026-10-26, W44-32). The agent's own choice is in the fill's skip anyway.
-        const presetKept = !!step.keepPreset && isChoice && answered && !refill.has(step.id);
+        // One the carrier made after the fill's answer (a late VIN lookup) is kept too; the fill's
+        // own answer, or an emptied list, is given again as any other.
+        const presetKept = !!step.keepPreset && isChoice && answered && (!refill.has(step.id) || !agreesWith(step, c));
         // What a fill gave here for another vehicle, driver or trailer, still as it gave it, is
         // replaced with this unit's answer (W43-38, Progressive Add Driver, 2026-10-22: another
         // driver's name and date of birth were kept as differing and left to the agent).

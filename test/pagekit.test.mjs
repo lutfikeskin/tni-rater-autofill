@@ -3353,6 +3353,30 @@ test('Progressive\'s anti-theft device: None when nothing is selected, Progressi
   }
 });
 
+// The same rule when Progressive selects a device a moment after the fill gave None (a late answer
+// from its VIN lookup): Progressive's choice is kept, not overwritten with None again (PR #196 review).
+test('Progressive\'s anti-theft device selected by the page after the fill gave None: its choice is kept, not given None again (keepPreset)', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [{ type: 'Van' }], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive, { vehicles: 0 }).filter((s) => s.q === '2CFA');
+  // 20 ms: while the fill is still on the page (this harness's pages settle at once).
+  for (const [overwrite, ms] of [[false, 20], [true, 20]]) {
+    const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+    let late = false;
+    const list = addExtText(h, 'c', '2CFA', { caption: ' ', ref: 'RiskInputNonShredded.AntiTheftDeviceAgentOptions', required: true, value: '',
+      onSet: (cmp, v) => {
+        if (v !== 'None' || late) return;
+        late = true;
+        setTimeout(() => { cmp._value = 'Anti-Theft Device 2'; cmp.el.dom.value = cmp._value; }, ms);
+      } });
+    const records = ['', 'None', 'Anti-Theft Device 1', 'Anti-Theft Device 2', 'Anti-Theft Device 3'].map((label) => ({ get: () => label }));
+    Object.assign(list.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+    const report = await h.kit.fill(plan, { maxRounds: 6, replaceChoices: true, overwrite });
+    const where = `${ms} ms${overwrite ? ', replace existing answers' : ''}`;
+    assert.equal(list.cmp.getValue(), 'Anti-Theft Device 2', where);
+    assert.deepEqual([report.filled.length, report.failed.length, report.checks.length], [0, 0, 0], `${where}: ${JSON.stringify(report.failed)}`);
+  }
+});
+
 // AmWINS' vehicle rows after Import Valid Records: each row shows a VIN, in the import's order,
 // not the intake's. A step with a `witness` takes the row whose VIN is its unit's; a unit whose
 // VIN is on no row (rejected by the import) or on two stays the agent's, named without its VIN.
