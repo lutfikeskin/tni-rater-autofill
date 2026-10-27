@@ -559,10 +559,54 @@ test('"between 3 and 5 years", "3 or 4 years" and "1 year to 2 years" are ranges
       assert.ok(step.note.includes(line), line);
     }
   }
-  // Counterexamples: "N or so" is a hedge, not a range; "N years or more" and "5 years to date"
-  // are the one figure; "and" without "between" joins no range.
+  // Counterexamples: "N or so" is a hedge, not a range; "5 years to date" is the one figure ("N
+  // years or more": the follow-up test below); "and" without "between" joins no range.
   assert.deepEqual(tenureOf('Insured 3 or so years with Synthetic Mutual'), { years: 3, least: 3, line: 'Insured 3 or so years with Synthetic Mutual' });
-  assert.deepEqual(tenureOf('Insured 6 years or more with Synthetic Mutual'), { years: 6, least: 6, line: 'Insured 6 years or more with Synthetic Mutual' });
   assert.deepEqual(tenureOf('Insured 5 years to date with Synthetic Mutual'), { years: 5, least: 5, line: 'Insured 5 years to date with Synthetic Mutual' });
   assert.deepEqual(tenureOf('Insured 2 and 6 years with Synthetic Mutual'), { years: 6, least: 6, line: 'Insured 2 and 6 years with Synthetic Mutual' });
+});
+
+// The maintainer, 2026-10-27 (answer to the PR's follow-up): "perhaps N years", "possibly N years"
+// and a trailing "N years maybe" make the line the agent's, like "maybe N" (any time, no band);
+// "N years or more" is "N+", over N. Other words not named stay as they are.
+test('"perhaps", "possibly" and a trailing "maybe" leave the line to the agent; "N years or more" is over N (the maintainer, 2026-10-27, follow-up)', () => {
+  const tenureOf = (line) => insurerTenure(intake(DATED, { additional_notes: line }).record);
+  for (const line of ['Insured perhaps 5 years with Synthetic Mutual', 'Insured possibly 5 years with Synthetic Mutual', 'Insured 5 years maybe with Synthetic Mutual',
+    'Insured with Synthetic Mutual 5 years, maybe', 'Insured possibly 1 year with Synthetic Mutual', 'Insured 1 year maybe with Synthetic Mutual']) {
+    const { record: r, warnings } = intake(DATED, { additional_notes: line });
+    assert.deepEqual(tenureOf(line), { years: Infinity, least: 0, line }, line);
+    const years = geicoStep(r, GEICO.years);
+    agents(years);
+    assert.equal(years.source, 'fact', line);
+    assert.ok(years.note.includes(line), line);
+    agents(howLong(r));
+    assert.equal(howLong(r).source, 'fact', line);
+    assert.ok(howLong(r).note.includes(line), line);
+    assert.ok(warnings.find((w) => w.code === 'prior.tenure')?.msg.includes(`"${line}"`), line);
+  }
+  // "N years or more" as "N+": over N, no end. [line, least, GEICO's answer (null: the agent's), AmWINS' answer]
+  for (const [line, least, geicoBand, amwinsBand] of [
+    ['Insured 6 years or more with Synthetic Mutual', 6.1, null, 'MORE THAN 3 YEARS'],
+    ['Insured 3 years or more with Synthetic Mutual', 3.1, null, 'MORE THAN 3 YEARS'],
+    ['Insured 10 years or more with Synthetic Mutual', 10.1, '10+ Years', 'MORE THAN 3 YEARS'],
+  ]) {
+    assert.deepEqual(tenureOf(line), { years: Infinity, least, line }, line);
+    const r = intake(DATED, { additional_notes: line }).record;
+    const years = geicoStep(r, GEICO.years);
+    if (geicoBand) assert.deepEqual([years.value, years.source], [geicoBand, 'derived'], line);
+    else {
+      agents(years);
+      assert.ok(years.note.includes(line), line);
+    }
+    assert.deepEqual([howLong(r).value, howLong(r).source], [amwinsBand, 'derived'], line);
+    // The same answers as "N+".
+    const plus = intake(DATED, { additional_notes: line.replace(' years or more', '+ years') }).record;
+    assert.deepEqual([geicoStep(plus, GEICO.years).value, howLong(plus).value], [years.value, howLong(r).value], line);
+  }
+  // Counterexamples: words not named stay as they are (the number alone); "N years or so" stays
+  // about N; "maybe" on a line without insurance isn't read.
+  assert.deepEqual(tenureOf('Insured probably 5 years with Synthetic Mutual'), { years: 5, least: 5, line: 'Insured probably 5 years with Synthetic Mutual' });
+  assert.deepEqual(tenureOf('Insured 5 years perhaps with Synthetic Mutual'), { years: 5, least: 5, line: 'Insured 5 years perhaps with Synthetic Mutual' });
+  assert.deepEqual(tenureOf('Insured 6 years or so with Synthetic Mutual'), { years: 6, least: 6, line: 'Insured 6 years or so with Synthetic Mutual' });
+  assert.equal(tenureOf('5 years maybe'), null);
 });

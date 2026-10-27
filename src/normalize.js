@@ -229,8 +229,9 @@ export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.tex
 // "N or so" and "give or take" are "about N", so N; ">", "N plus" and "N+" are "over N" (until
 // then "N+" was N or more, and ">5" was read as 5); "<" is "under N" (until then "<5" was read as
 // 5). "Some" and "ca." are "about N" too, and "maybe N" and "up to N" give any time, so the line is
-// the agent's (the maintainer, 2026-10-27: answer to PR question; until then all four were N). A
-// word not named stays unread (the number alone). A range ("3-5 years", "3 to 5 years", "three to
+// the agent's (the maintainer, 2026-10-27: answer to PR question; until then all four were N), as
+// do "perhaps N", "possibly N" and "N years maybe"; "N years or more" is "N+", over N (answer to
+// PR follow-up, the same day; until then N). A word not named stays unread (the number alone). A range ("3-5 years", "3 to 5 years", "three to
 // five years"; also "between 3 and 5 years", "3 or 4 years" and "1 year to 2 years", the
 // maintainer, 2026-10-27: answer to PR question, until then each figure alone, the longest kept)
 // runs from its first figure to its last, so a carrier answers it only when both ends give the
@@ -244,16 +245,21 @@ const NUMBER_SAID = String.raw`\d{1,2}(?:\.\d+)?|one|two|three|four|five|six|sev
 // [1] a symbol before the number (~ > <), [2] a word before it, [3] a range's first figure after
 // "between" ("between 3 and 5 years"), [4] a range's first figure ("3-5", "3 to 5", "3 or 4", "1
 // year to 2 years"), [5] the number, [6]-[9] a hedge after it ("+", "plus", "ish", "or so"), [10] a
-// hedge after "years".
-const YEARS_SAID = new RegExp(String.raw`(?:([~><])\s*|\b(over|more than|at least|almost|nearly|close to|under|less than|about|around|approximately|approx\.?|abt\.?|est\.?|estimated|circa|ca\.|some|roughly|give or take|maybe|up to)\s+)?(?:\bbetween\s+(${NUMBER_SAID})(?:\s*(?:years?|yrs?))?\s+and\s+|\b(${NUMBER_SAID})(?:\s*(?:years?|yrs?))?\s*(?:[-–—]|to\b|or\b)\s*)?\b(${NUMBER_SAID})(?:\s*(\+)|\s+(plus)\b|-?(ish)\b|\s+(or so)\b)?\s*(?:years?|yrs?)\b(?:,?\s+(or so|give or take)\b)?(?![\s-]*(?:old|in business|of experience|experience|exp\b))`, 'gi');
+// hedge after "years" ("or so", "give or take", "maybe", "or more").
+const YEARS_SAID = new RegExp(String.raw`(?:([~><])\s*|\b(over|more than|at least|almost|nearly|close to|under|less than|about|around|approximately|approx\.?|abt\.?|est\.?|estimated|circa|ca\.|some|roughly|give or take|maybe|perhaps|possibly|up to)\s+)?(?:\bbetween\s+(${NUMBER_SAID})(?:\s*(?:years?|yrs?))?\s+and\s+|\b(${NUMBER_SAID})(?:\s*(?:years?|yrs?))?\s*(?:[-–—]|to\b|or\b)\s*)?\b(${NUMBER_SAID})(?:\s*(\+)|\s+(plus)\b|-?(ish)\b|\s+(or so)\b)?\s*(?:years?|yrs?)\b(?:,?\s+(or so|give or take|maybe|or more)\b)?(?![\s-]*(?:old|in business|of experience|experience|exp\b))`, 'gi');
 /** @param {string} s */
 const yearsNumber = (s) => NUMBER_WORDS[s.toLowerCase()] ?? Number(s);
 const START_SAID = /\b(?:since|started|began|start(?:ing)?)\s+(?:(?:in|on)\s+)?(?:(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:(\d{1,2})(?:st|nd|rd|th)?,?\s+)?|(\d{1,2})\/(?:(\d{1,2})\/)?)?((?:19|20)\d{2})\b/gi;
 // The least and the most a number of years said with its qualifier ("over", "+", "almost", …) can
 // mean. TNI, 2026-10-27 (answer to PR question, round 5, V6): a hedge reads as its word: ">", "+"
-// and "plus" as "over", "<" as "under", the others named above as "about".
-const OVER = new Set(['over', 'more than', '>', '+', 'plus']);
+// and "plus" as "over", "<" as "under", the others named above as "about". The maintainer,
+// 2026-10-27 (answer to PR follow-up): "N years or more" as "N+", so "over".
+const OVER = new Set(['over', 'more than', '>', '+', 'plus', 'or more']);
 const UNDER = new Set(['under', 'less than', '<']);
+// The maintainer, 2026-10-27 (answers to PR question and follow-up): "maybe N", "up to N",
+// "perhaps N", "possibly N" and "N years maybe" give any time, so no band fits and the line is the
+// agent's.
+const ANY_TIME = new Set(['maybe', 'up to', 'perhaps', 'possibly']);
 /** @param {number} n @param {string | undefined} qualifier @returns {number[]} */
 const saidSpan = (n, qualifier) => {
   const q = String(qualifier ?? '').toLowerCase().replace(/\s+/g, ' ');
@@ -262,8 +268,9 @@ const saidSpan = (n, qualifier) => {
   if (q === 'almost' || q === 'nearly' || q === 'close to') return [n - 1, n - 0.1];
   if (UNDER.has(q)) return [0, n - 0.1];
   // The maintainer, 2026-10-27 (answer to PR question): "maybe N" and "up to N" make the line the
-  // agent's, whatever N: any time, so no band fits it (until then N).
-  if (q === 'maybe' || q === 'up to') return [0, Infinity];
+  // agent's, whatever N: any time, so no band fits it (until then N). So do "perhaps N", "possibly
+  // N" and "N years maybe" (answer to PR follow-up, the same day).
+  if (ANY_TIME.has(q)) return [0, Infinity];
   // TNI, 2026-10-26 (answer to PR question, round 2, R8): "about 3 years" counts as 3, as do
   // "around" and "approximately". TNI, 2026-10-26 (answer to PR question, round 3, T5): "roughly
   // N" counts as N, like "about N" (until then half a year either side). TNI, 2026-10-27 (answer
