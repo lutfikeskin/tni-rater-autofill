@@ -702,7 +702,13 @@ export const progressive = {
     // --- Owner not found by Progressive's lookup (NoHit) ----------------------------------------
     ...onPage('NoHit', [
       // The owner's details again, for a second search. The SSN is never filled.
-      { q: '1B7F', source: 'derived', field: 'NoHitCredit.FirstName', ask: 'Business Owner\'s Name', name: 'Owner first name (NoHit)', value: (r) => owner(r).first },
+      // The first name is its first word only, split on spaces ("Mary-Ann" stays whole): TNI's
+      // decision (TNI, 2026-10-26, W44-30), after NoHit intakes whose owner first-name box held
+      // several words; Progressive's own advice here is to drop the middle name. Only on NoHit:
+      // Business Owner Info and the driver forms keep the whole first name. The page arrives with
+      // the whole first name from Business Owner Info already in the box, so the first word
+      // replaces it (`replace`); an agent's edit on this box stays protected as on any other.
+      { q: '1B7F', source: 'derived', replace: true, field: 'NoHitCredit.FirstName', ask: 'Business Owner\'s Name', name: 'Owner first name (NoHit: its first word)', value: (r) => owner(r).first?.trim().split(/\s+/)[0] || null },
       { q: '1B80', field: 'NoHitCredit.MiddleInitial', ask: 'MIMiddle initial', optional: true, name: 'Owner middle initial (NoHit, optional)', ignore: true },
       { q: '1B81', source: 'derived', field: 'NoHitCredit.LastName', ask: 'Last Name', name: 'Owner last name (NoHit)', value: (r) => owner(r).last },
       { q: '1B82', field: 'NoHitCredit.Suffix', ask: 'Suffix', optional: true, name: 'Owner suffix (NoHit, optional)', ignore: true },

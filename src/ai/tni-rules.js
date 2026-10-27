@@ -75,7 +75,8 @@ export const TNI_RULES = `
 - Cargo without a deductible on the intake: $1,000 deductible.
 
 ## Owner not found (NoHit page)
-- Owner's first and last name, home address, city, ZIP and date of birth from the intake. Never the Social Security Number: that is the agent's.
+- Owner's first name: only its first word (TNI, 2026-10-26): a first name of several words ("Amina Sample") is entered as its first word ("Amina"); a hyphenated name ("Mary-Ann") is one word. Only on this page: Business Owner Info and the driver pages keep the whole first name. Leave the middle initial as the page has it.
+- Owner's last name, home address, city, ZIP and date of birth from the intake. Never the Social Security Number: that is the agent's.
 
 ## Payment and printing
 - Order on the rates page: add cargo (Done with this coverage), then general liability when requested (Done with this coverage), open the bill plan / billing options, choose automatic payments from a checking account (keep the pre-selected plan), come back to rates, Recalculate, then Print, Email, Fax.
