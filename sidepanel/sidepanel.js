@@ -2464,8 +2464,9 @@ async function captureLayout(job, reason) {
 }
 
 // A screen that is the agent's (carrier `stopButtons`: GEICO's "Add USDOT Number / Skip", W43-27),
-// known by a button only it shows, as a layout reads the page: said on a quiet card above the page's answers while the
-// tab shows it (showStopPage), its arrival logged as a fill run that stopped, as a stop step's is,
+// or the carrier's stop (`stopped`: GEICO's referral, W44-04), known by a button only it shows, as a
+// layout reads the page: said above the page's answers while the tab shows it (showStopPage: a quiet
+// card, or red for a `stopped` one), its arrival logged as a fill run that stopped, as a stop step's is,
 // and nothing filled, clicked or asked of the AI there (stopNoteFor). A layout read without it, a
 // move to a step or a new document (noteStep, the page_view arrival) ends it; a question or list
 // GEICO draws while the screen is up doesn't (review of #141).
@@ -3226,10 +3227,11 @@ function dockFor() {
   }
   const page = pageOf(state.tab.url);
   const step = tabStep(carrier);
-  // The carrier stopped the quote here, or the step or screen is the agent's: nothing to press.
+  // The carrier stopped the quote here (a stop page, or a stop screen marked `stopped`: GEICO's
+  // referral, W44-04), or the step or screen is the agent's: nothing to press.
   if (stopNoteFor(carrier, page, step)) {
-    if (carrier.stopPages?.[page]) return { phase: 'stopped', tone: 'bad', eyebrow: `Stopped by ${carrier.name}`, title: 'Nothing to fill on this rater', sub: 'Nothing on this page was filled or clicked.' };
     const screen = step && carrier.stopSteps?.[step] ? null : state.stopScreens?.get(state.tab.id)?.name;
+    if (carrier.stopPages?.[page] || carrier.stopButtons?.[screen]?.stopped) return { phase: 'stopped', tone: 'bad', eyebrow: `Stopped by ${carrier.name}`, title: 'Nothing to fill on this rater', sub: 'Nothing on this page was filled or clicked.' };
     return { phase: 'yours', eyebrow: 'This step is yours', title: `Finish ${screen ?? step ?? 'this step'} yourself`, sub: `Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.` };
   }
   // The tab's quote is for another state than the intake's: no fill until the agent says which.
@@ -3346,7 +3348,9 @@ function issueCard({ tone = '', title, text = null, notes = [], compare = [], ac
 // carrier's reason is said of this client only once the tab is shown to be this intake's quote
 // (stopPageIsOurs). Steps of a one-address application that are the agent's (GEICO's Final Quote
 // Details, MVR & CLUE, Payment Information: `stopSteps`) are kept the same way, in a quiet card:
-// their note is the step's, about no client, so it is said as it is.
+// their note is the step's, about no client, so it is said as it is. So are screens that are the
+// agent's (`stopButtons`: GEICO's Add USDOT Number), and a screen that is the carrier's stop
+// (`stopped`: GEICO's referral, W44-04) is said in red, as a stop page.
 function showStopPage() {
   const carrier = state.tab?.carrier;
   const page = pageOf(state.tab?.url);
@@ -3365,6 +3369,12 @@ function showStopPage() {
   if (!carrier.stopPages?.[page]) {
     // A stop step's, or a stop screen's (`stopButtons`) on a step that is no stop.
     const screen = step && carrier.stopSteps?.[step] ? null : state.stopScreens?.get(state.tab?.id)?.name;
+    // The carrier's own stop on a screen (`stopped`: GEICO's referral, W44-04): in red, as a stop
+    // page's. A screen is noted only from this intake's layouts (noteStopScreen), so it is this client's.
+    if (carrier.stopButtons?.[screen]?.stopped) {
+      box.replaceChildren(issueCard({ role: 'alert', title: `${carrier.name} stopped this quote`, text: note, notes: ['Nothing on this page is filled or clicked.'] }));
+      return;
+    }
     box.replaceChildren(issueCard({ tone: 'quiet', title: `${screen ?? step}: yours`, text: note,
       notes: [`Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.`] }));
     return;
@@ -4266,7 +4276,10 @@ function renderReport(frames, ctx = {}) {
   const rctx = { tabId, page, carrier };
   const halted = frames.find((f) => f.halted);
   const nodes = [
-    agentPage ? h('p', { class: 'note-line agent-page' }, agentPage) : null,
+    // An agent page's note: a yellow box on a page that needs more attention (`warnPages`:
+    // Progressive's NoHit, W44-14), a line of text on the others.
+    agentPage ? (carrier?.warnPages?.[page] ? issueCard({ tone: 'warn', title: carrier.warnPages[page], text: agentPage })
+      : h('p', { class: 'note-line agent-page' }, agentPage)) : null,
     // An answer picked in place of one the page doesn't offer (pagekit `orMost`: GEICO's pay plan
     // with no 11 Payments, W43-32): named here; nothing is left for the agent by it.
     ...filled.filter((x) => x.said).map((x) => h('p', { class: 'note-line said' }, x.said)),

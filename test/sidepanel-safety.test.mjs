@@ -5842,9 +5842,10 @@ test('a stop is the carrier\'s stop page or, on a one-address application, a ste
   assert.equal(context.stopNoteFor(geico, '/quote'), null);
   assert.equal(context.stopNoteFor(undefined, '/quote'), null);
   // Every other check goes through it: only its own lookup, the stop page's arrival log and the
-  // wording of the stop page's card and of the dock (once stopNoteFor said it's a stop) read stopPages.
+  // wording of the stop page's card and of the dock (once stopNoteFor said it's a stop; the dock's
+  // with a stop screen marked `stopped`, W44-04) read stopPages.
   assert.equal((SIDEPANEL.match(/stopPages\?\.\[/g) ?? []).length, 4);
-  assert.match(extractFunction('dockFor'), /if \(stopNoteFor\(carrier, page, step\)\) \{\s+if \(carrier\.stopPages\?\.\[page\]\)/);
+  assert.match(extractFunction('dockFor'), /if \(stopNoteFor\(carrier, page, step\)\) \{\s+const screen = [^;]+;\s+if \(carrier\.stopPages\?\.\[page\] \|\| carrier\.stopButtons\?\.\[screen\]\?\.stopped\)/);
 });
 
 // The stop harness on GEICO's quote: the tab on `step` (as noteStep heard it).
@@ -5966,6 +5967,70 @@ test('GEICO\'s Add USDOT Number screen: read from its layout\'s buttons, logged 
   assert.equal(other.context.state.stopScreens.size, 0);
   assert.equal(stopScreen(geico, ['  Add   USDOT Number ']), 'USDOT Number');
   assert.equal(stopScreen(geico, ['Add USDOT Number later', 'Skip']), null);
+});
+
+// W44-04, GEICO IL (TNI, 2026-10-26): after Additional Business Info GEICO showed a page with no step
+// and no questions, only Menu, GEICO's phone number and "Return to GEICO Gateway" (GEICO won't quote
+// the business online), and the panel said nothing. Its layout names it (`stopButtons`, `stopped`):
+// GEICO's stop, said in red in the dock and above the answers as a stop page's, logged once as a
+// stop; nothing filled, clicked or asked there. Not the quiet card of the USDOT screen (W43-27).
+test('GEICO\'s referral page: read from its layout\'s buttons, logged once, said as GEICO\'s red stop', async () => {
+  const { context, logged } = layoutHarness(() => []);
+  context.state.tab = { id: 1, url: '/quote', carrier: { ...geico, layoutUrl: /./ } };
+  context.knownStep = knownStep;
+  context.buttons = ['Menu', '(800) 624-2513', 'Return to GEICO Gateway'];
+  await context.recordLayout('/quote', 'arrived+removed');
+  assert.deepEqual({ ...context.state.stopScreens.get(1) }, { name: 'GEICO referral', page: '/quote' });
+  const stops = () => JSON.parse(JSON.stringify(logged.filter((e) => e.type === 'fill_run')));
+  assert.deepEqual(stops().map((e) => [e.blockerList, e.auto, e.page, e.fields]), [[['stop: GEICO referral'], 'stop', '/quote', 0]]);
+  assert.ok(logged.some((e) => e.type === 'page_layout' && e.buttons.includes('Return to GEICO Gateway')));
+  await context.recordLayout('/quote', 'changed');
+  assert.equal(stops().length, 1);
+  // Only that button's words; the USDOT screen stays its own.
+  assert.equal(stopScreen(geico, ['Menu', 'Return to GEICO Gateway later']), null);
+  assert.equal(stopScreen(geico, ['Menu', 'Add USDOT Number', 'Skip']), 'USDOT Number');
+  // Nothing filled, clicked, scheduled or asked there.
+  const t = stopStepHarness('Additional Business Info');
+  t.state.stopScreens = new Map([[4, { name: 'GEICO referral', page: '/quote' }]]);
+  await t.context.fillPage({ auto: 'page' });
+  await t.context.fillPage();
+  t.context.scheduleAutoFill('/quote');
+  await t.context.autoFill('/quote');
+  assert.deepEqual([t.kits, t.timers, t.state.filling], [[], [], false]);
+  assert.equal(t.context.aiActionCurrent({ intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: '/quote' }, []), false);
+  // Above the answers: red, with role alert, as a stop page's.
+  t.context.showStopPage();
+  const text = JSON.stringify(t.ui['stop-note'].children);
+  assert.equal(t.ui['stop-note'].hidden, false);
+  assert.match(text, /"class":"issue","role":"alert"/);
+  assert.match(text, /GEICO stopped this quote/);
+  assert.match(text, /GEICO won't quote this business online/);
+  assert.match(text, /Nothing on this page is filled or clicked/);
+  assert.doesNotMatch(text, /issue quiet|GEICO referral: yours|Additional Business Info: yours/);
+  // The dock: GEICO's stop, no fill offered.
+  const dock = dockHarness({ carrier: geico, url: '/quote', step: 'Additional Business Info', extra: {} });
+  dock.state.stopScreens = new Map([[7, { name: 'GEICO referral', page: '/quote' }]]);
+  const d = dock.dock();
+  assert.deepEqual([d.phase, d.tone, d.eyebrow, d.button], ['stopped', 'bad', 'Stopped by GEICO', undefined]);
+});
+
+// W44-14 (TNI, 2026-10-26; W43-49): Progressive's NoHit page should get more attention: its note is a
+// yellow warning box (`warnPages`), above the answers; other agent pages' notes stay a line of text.
+test('Progressive\'s NoHit note is a yellow warning box; other agent pages\' notes stay lines', () => {
+  const render = (page) => {
+    const { context, box } = reportHarness({ tab: { id: 1, url: page, carrier: progressive }, intake: { record: {} } }, { pageOf: () => page });
+    context.renderReport([{ fields: 1, filled: [{ label: 'Owner first name', shown: 'Synthetic' }], kept: [], failed: [], noData: [], leftRequired: [], actions: [] }]);
+    return box.children.filter(Boolean);
+  };
+  const noHit = render('NoHit');
+  assert.deepEqual([noHit[0].tag, noHit[0].props.class, noHit[0].props.role], ['div', 'issue warn', 'status']);
+  const said = JSON.stringify(noHit[0]);
+  assert.match(said, /"Owner not verified"/);
+  assert.ok(said.includes(JSON.stringify(progressive.agentPages.NoHit)), 'the page\'s note, as it was');
+  assert.ok(!noHit.some((n) => n.props?.class === 'note-line agent-page'));
+  const print = render('PrintEmailFax');
+  assert.deepEqual([print[0].tag, print[0].props.class, print[0].children], ['p', 'note-line agent-page', [progressive.agentPages.PrintEmailFax]]);
+  assert.deepEqual(progressive.warnPages, { NoHit: 'Owner not verified' });
 });
 
 test('on GEICO\'s Add USDOT Number screen the panel says so, and nothing is filled, clicked, scheduled or asked until the next step', async () => {
