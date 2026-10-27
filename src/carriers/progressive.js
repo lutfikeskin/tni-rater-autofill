@@ -31,7 +31,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, driverExcluded, nonDrivingOwnerRow } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, nonDrivingOwnerRow } from '../util.js';
 import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -773,6 +773,11 @@ export const progressive = {
       // the owner's name on several rows, only some excluded, to the agent.
       { tni: 'general.owner-drives', q: '29F', field: 'AccountInput.DriverInPolicyIndicator', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives',
         source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn },
+      // Yes when the owner drives and isn't excluded; No otherwise (TNI, 2026-10-27).
+      { tni: 'general.owner-daily-ops', q: '2D7', field: 'AccountInput.DailyOperations',
+        ask: ['The president or CEO is involved in the daily operations of the business.', 'Is the owner involved in the daily operations of the business?'],
+        name: 'Owner involved in daily operations (Yes when the owner drives)', kind: 'bool',
+        source: ownerDailyOpsSource, value: ownerDailyOps },
       { tni: 'progressive.owner', q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
       // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
       { q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
