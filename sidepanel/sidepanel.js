@@ -272,6 +272,7 @@ const state = {
   recording: null,
   active: { drivers: 0, vehicles: 0, trailers: 0 },
   tab: null, // { id, url, carrier }
+  checksCarrier: null, // the carrier the intake checks were last drawn for (renderSite)
   // The state each tab's quote was picked for on the carrier's page (tab id -> { carrier, code,
   // session, dismissed }): kept when the intake is cleared or replaced, as the tab's quote is.
   quoteStates: new Map(),
@@ -1127,10 +1128,20 @@ function setView(view) {
   $('view').scrollTop = 0;
 }
 
+// A check the agent sees here. The current insurance being with a carrier the panel quotes
+// (prior.carrier-is-quoted) only on that carrier's site: on another carrier's quote it is no
+// concern (TNI, 2026-10-27: GEICO's red card on a Progressive quote).
+function checkShown(w, intake = state.intake) {
+  if (w.level !== 'check') return false;
+  if (w.code !== 'prior.carrier-is-quoted') return true;
+  const carrier = state.tab?.carrier;
+  return !!carrier && quotedCarrierPolicy(intake?.record?.priorInsurance?.[0], carrier.id);
+}
+
 // The view an intake opens on (loaded, or restored when the panel reopens): step 1's checks while
 // one is still open; else the page's answers.
 function firstView(intake) {
-  return intake?.warnings?.some((w, i) => w.level === 'check' && !intake.done?.includes(i)) ? 'check' : 'page';
+  return intake?.warnings?.some((w, i) => checkShown(w, intake) && !intake.done?.includes(i)) ? 'check' : 'page';
 }
 
 // The feed's filters: every answer ('all'), what still needs the agent ('needs'), or what is in
@@ -1145,10 +1156,10 @@ function setFilter(filter) {
 // Looks right now and where it is on the PDF; then the cleanup notes, and All client details below.
 function renderWarnings() {
   const { warnings, done } = state.intake;
-  // An `alert` check first, in red: the current commercial auto policy is with a carrier the panel
-  // quotes (prior.carrier-is-quoted; TNI, 2026-10-26: answer to PR question 9, said here before any
-  // carrier page). Still a check like the others, no stop (question 19).
-  const checks = warnings.map((w, i) => [w, i]).filter(([w]) => w.level === 'check').sort(([a], [b]) => Number(!!b.alert) - Number(!!a.alert));
+  // An `alert` check first, in red: the current commercial auto policy is with the carrier whose
+  // site is open (prior.carrier-is-quoted, checkShown; TNI, 2026-10-26: answer to PR question 9).
+  // Still a check like the others, no stop (question 19).
+  const checks = warnings.map((w, i) => [w, i]).filter(([w]) => checkShown(w)).sort(([a], [b]) => Number(!!b.alert) - Number(!!a.alert));
   const infos = warnings.filter((w) => w.level === 'info');
   const open = checks.filter(([, i]) => !done.includes(i)).length;
   $('check-title').textContent = open ? `${open} thing${open === 1 ? '' : 's'} to look at on the intake` : 'The intake is checked';
@@ -1209,7 +1220,7 @@ async function toggleDone(i, isDone) {
 
 function openFlags(prefix) {
   const { warnings, done } = state.intake;
-  return warnings.filter((w, i) => w.level === 'check' && !done.includes(i) && w.path && (w.path === prefix || w.path.startsWith(`${prefix}.`) || w.path.startsWith(`${prefix}[`)));
+  return warnings.filter((w, i) => checkShown(w) && !done.includes(i) && w.path && (w.path === prefix || w.path.startsWith(`${prefix}.`) || w.path.startsWith(`${prefix}[`)));
 }
 
 // All client details, one card per section (the drawer), every field editable. Built again after
@@ -2856,6 +2867,10 @@ function renderSite() {
   // "Let me look before Continue" is about the panel's Continue: off with it.
   $('check-continue').disabled = !$('auto-advance').checked;
   showCarrierNote();
+  // Another carrier's site shows or hides the current-carrier check (checkShown); only then, so a
+  // page change doesn't redraw a check the agent is typing in.
+  const checksFor = carrier?.id ?? null;
+  if (state.intake && state.checksCarrier !== checksFor) { state.checksCarrier = checksFor; renderWarnings(); }
   showStopPage();
   showStateNote();
   showReviewMode();
@@ -2987,7 +3002,7 @@ function renderSteps() {
   // The unit pickers follow the page or step in front (unitListsHere).
   renderPickers();
   const { warnings, done } = state.intake;
-  const open = warnings.filter((w, i) => w.level === 'check' && !done.includes(i)).length;
+  const open = warnings.filter((w, i) => checkShown(w) && !done.includes(i)).length;
   const carrier = state.tab?.carrier;
   const page = pageOf(state.tab?.url);
   const onRater = inExtension && !!carrier;
@@ -3237,7 +3252,7 @@ function playChime() {
 function dockFor() {
   if (!state.intake) return { phase: 'start', eyebrow: 'Step 1 of 3', title: 'Add the client’s intake PDF', sub: 'Then the panel checks it and fills the rater for you.' };
   const { warnings, done } = state.intake;
-  const open = warnings.filter((w, i) => w.level === 'check' && !done.includes(i)).length;
+  const open = warnings.filter((w, i) => checkShown(w) && !done.includes(i)).length;
   const checksSaid = state.view === 'check' && open ? `${open} intake item${open === 1 ? '' : 's'} not looked at yet. You can still fill.` : null;
   const carrier = state.tab?.carrier;
   if (!inExtension) return { phase: 'off', eyebrow: 'Preview', title: 'Filling works only in the Chrome extension' };
@@ -3359,7 +3374,8 @@ function renderDock() {
 // Progressive's DeclinationNotice stays its stop page. Not logged: a
 // fill run that stopped would count a page nothing stopped. Only for a commercial auto policy, or one
 // of no type (util.js quotedCarrierPolicy; TNI, 2026-10-26: answer to PR question 18: not a personal
-// auto or GL-only policy). The intake check screen says it first (prior.carrier-is-quoted).
+// auto or GL-only policy). The intake check screen says it too, on this carrier's site only
+// (prior.carrier-is-quoted, checkShown).
 function showCarrierNote() {
   const box = $('carrier-note');
   const carrier = state.tab?.carrier;

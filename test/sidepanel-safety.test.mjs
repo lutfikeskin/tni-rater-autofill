@@ -15,6 +15,7 @@ import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { quoteProgress, stopScreen } from '../src/carriers.js';
+import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 
 
@@ -3394,7 +3395,7 @@ test('an intake restored when the panel opens holds layouts like a newly loaded 
 });
 
 test('an intake opens on its checks while one is open, else on the page, loaded or restored', () => {
-  const firstView = vm.runInNewContext(`${extractFunction('firstView')}; firstView`, {});
+  const firstView = vm.runInNewContext(`${extractFunction('checkShown')}\n${extractFunction('firstView')}; firstView`, { state: { tab: null }, quotedCarrierPolicy });
   const warnings = [{ level: 'info' }, { level: 'check' }];
   assert.equal(firstView({ warnings, done: [] }), 'check');
   assert.equal(firstView({ warnings, done: [1] }), 'page', 'every check looked at');
@@ -5811,7 +5812,7 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
     profileLater() {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(['renderWarnings', 'toggleDone', 'agentEdit', 'applyCheckChoice'].map(extractFunction).join('\n') + `\nconst CHOICE_FIELDS = ${SIDEPANEL.match(/const CHOICE_FIELDS = (.*);/)[1]};`, sandbox);
+  vm.runInContext(['checkShown', 'renderWarnings', 'toggleDone', 'agentEdit', 'applyCheckChoice'].map(extractFunction).join('\n') + `\nconst CHOICE_FIELDS = ${SIDEPANEL.match(/const CHOICE_FIELDS = (.*);/)[1]};`, sandbox);
   sandbox.renderWarnings();
   assert.equal(nodes['check-title'].textContent, '4 things to look at on the intake');
   // The open items' cards (a checked one is a row with Undo), and their buttons.
@@ -5869,9 +5870,10 @@ test('an alert intake check is red and first on the check screen, with its field
     { code: 'prior.carrier-is-quoted', level: 'check', path: 'priorInsurance[0].carrier', alert: true, msg: 'Current insurance is with GEICO: a GEICO quote may be declined or routed.' },
   ] };
   const rows = [];
-  const sandbox = { state: { intake, view: 'check' }, h: el, $, fieldInfo: (p) => ({ label: `Field ${p}`, kind: 'text' }), sourcePlace: () => null, pdfPageSaid: () => '',
-    renderSteps() {}, fieldRow: (path) => { rows.push(path); return el('input', { path }); }, jumpTo() {}, openPdf() {} };
+  const sandbox = { state: { intake, view: 'check', tab: { carrier: geico } }, h: el, $, fieldInfo: (p) => ({ label: `Field ${p}`, kind: 'text' }), sourcePlace: () => null, pdfPageSaid: () => '',
+    renderSteps() {}, fieldRow: (path) => { rows.push(path); return el('input', { path }); }, jumpTo() {}, openPdf() {}, quotedCarrierPolicy };
   vm.createContext(sandbox);
+  vm.runInContext(extractFunction('checkShown'), sandbox);
   vm.runInContext(extractFunction('renderWarnings'), sandbox);
   sandbox.renderWarnings();
   assert.equal(nodes['check-title'].textContent, '2 things to look at on the intake');
@@ -5886,6 +5888,16 @@ test('an alert intake check is red and first on the check screen, with its field
   assert.equal(nodes.warnings.kids[0].props.class, 'checked-row');
   const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
   assert.match(css, /\.check\.alert\s*\{[^}]*border-color:\s*var\(--signal-line\)/);
+  // Only on that carrier's site (TNI, 2026-10-27): on another carrier's, or before any carrier page,
+  // it isn't shown or counted.
+  intake.done = [];
+  for (const tab of [{ carrier: progressive }, null]) {
+    sandbox.state.tab = tab;
+    rows.length = 0;
+    sandbox.renderWarnings();
+    assert.equal(nodes['check-title'].textContent, '1 thing to look at on the intake', tab?.carrier.id ?? 'no carrier');
+    assert.deepEqual(rows, ['applicant.name']);
+  }
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -6176,7 +6188,7 @@ function siteHarness(carrier, step) {
   const ui = {};
   const state = { tab: { id: 4, url: 'https://sales.geico.com/quote', carrier }, intake: { record: {} }, filling: false, reports: new Map(), autoPages: new Set(), tabSteps: new Map(step ? [[4, step]] : []) };
   const context = { state, URL, inExtension: true, $: (id) => (ui[id] ??= el()), h: (tag, props) => ({ tag, props }), quoteProgress,
-    reportShown: () => false, currentReportKey: () => '4|/quote', showCarrierNote() {}, showStopPage() {}, showStateNote() {}, showReviewMode() {}, renderSteps() {} };
+    reportShown: () => false, currentReportKey: () => '4|/quote', showCarrierNote() {}, showStopPage() {}, showStateNote() {}, showReviewMode() {}, renderSteps() {}, renderWarnings() {} };
   vm.runInNewContext(`${PAGE_HELPERS}\n${extractFunction('renderSite')}`, context);
   context.renderSite();
   return ui;
@@ -6251,7 +6263,7 @@ test('a red card says the client\'s current insurance is with the carrier the ta
   for (const more of [{ type: null }, { expiration: '01/31/2026' }, { expiration: null }]) assert.ok(show(geico, policy('GEICO', more)), JSON.stringify(more));
   // Shown on arrival with the other cards (renderSite runs as the tab reaches a carrier page and as
   // the intake loads or changes), first among them.
-  assert.match(extractFunction('renderSite').split('\nfunction ')[0], /showCarrierNote\(\);\s*showStopPage\(\);/);
+  assert.match(extractFunction('renderSite').split('\nfunction ')[0], /showCarrierNote\(\);[\s\S]{0,400}?renderWarnings\(\); \}\s*showStopPage\(\);/);
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
   assert.match(html, /<div id="issues" class="issues">\s*<div id="carrier-note" hidden><\/div>/);
   // No stop: the fill, follow-ups, the dock, the stop checks and the AI never read it, and

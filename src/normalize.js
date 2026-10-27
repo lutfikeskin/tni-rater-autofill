@@ -502,9 +502,17 @@ const ORDINAL_YEAR = /(?<![\w-])(?<reading>(?<ordinal>first|1st|second|2nd)\s+(?
 const ORDINAL_YEARS = { first: 0, '1st': 0, second: 1, '2nd': 1 };
 // "a year-old business" is 1 and "3-year-old business" 3 (TNI, 2026-10-27: round-7 answer 3), in
 // digits or words, rounded down like the other figures. A vehicle's age ("truck is 10 years old",
-// "a year-old truck", "10-year-old business truck") is never one.
-const BUSINESS_NOT_VEHICLE = '(?:business|biz)\\b(?!\\s+(?:trucks?|vehicles?|vans?|trailers?|cars?|tractors?)\\b)';
-const AGED_BUSINESS = new RegExp(`(?<![\\w-])(?<!\\bhalf\\s)(?<reading>(?<n>${DIGITS}|${WORD_NUMBER}|a)[\\s-]+(?:year|yr)s?[\\s-]+old)\\s+${BUSINESS_NOT_VEHICLE}`, 'i');
+// "a year-old truck", "10-year-old business truck") is never one. A company, and up to two words
+// before it that aren't a vehicle ("a 3-year-old trucking business"), too (the maintainer,
+// 2026-10-27: answer to PR #191's open question).
+const VEHICLE_WORD = '(?:trucks?|vehicles?|vans?|trailers?|cars?|tractors?)\\b';
+// Between "old" and the business: industry-ish words only (trucking, family, hauling…). Glue or
+// person words ("old and company", "old with company", "old for company") must not count — they
+// used to turn a person's or equipment's age into years in business (Claude review on #203).
+const AGE_FILLER_BLOCK = '(?:trucks?|vehicles?|vans?|trailers?|cars?|tractors?|with|and|at|in|of|for|since|to|by|from|on|as|or|the|a|an|driver|owner|person|people|man|woman|men|women)\\b';
+const BUSINESS_NOT_VEHICLE = `(?:business|biz|company)\\b(?!\\s+${VEHICLE_WORD})`;
+const AGE_OF_BUSINESS = `(?:(?!${AGE_FILLER_BLOCK})[a-z]+\\s+){0,2}${BUSINESS_NOT_VEHICLE}`;
+const AGED_BUSINESS = new RegExp(`(?<![\\w-])(?<!\\bhalf\\s)(?<reading>(?<n>${DIGITS}|${WORD_NUMBER}|a)[\\s-]+(?:year|yr)s?[\\s-]+old)\\s+${AGE_OF_BUSINESS}`, 'i');
 // Months right after years on a line, outside one figure read as above: a months figure there
 // settles nothing.
 const FIGURE = `(?:\\d{1,3}|${IN_WORDS})\\s*\\+?\\s*`;
@@ -540,7 +548,7 @@ const NEGATED = /\b(?:not|never|no)\b|n't\b/i;
 // a time in the same clause ("a few years", "almost 3 years", "since last year", "a long time",
 // 2019). One the reader doesn't take is the agent's, like a range; notes with none are the blank
 // standard.
-const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded)\\b|\\bold\\s+${BUSINESS_NOT_VEHICLE}`, 'i');
+const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded)\\b|\\bold\\s+${AGE_OF_BUSINESS}`, 'i');
 const BIZ_TIME = /\b(?:years?|yrs?|months?|mos?|decades?|since|ago|long|while|(?:19|20)\d{2})\b/i;
 const statesBusinessTime = (clause) => BIZ_MENTION.test(clause) && BIZ_TIME.test(clause);
 // A qualifier just before the match that the match itself doesn't hold (",less than 3 years").
@@ -601,7 +609,7 @@ export function yearsInBusinessFromNotes(boxes, year) {
         // "a 3-year-old business" (round-7 answer 3); after a qualifier ("almost a year-old"), not read.
         const aged = quote.match(AGED_BUSINESS);
         if (aged?.groups) {
-          const years = QUALIFIED.test(quote.slice(0, aged.index)) ? null : Math.floor(numberValue(aged.groups.n));
+          const years = QUALIFIED.test(quote.slice(0, aged.index).replace(/\ban?\s+$/i, '')) ? null : Math.floor(numberValue(aged.groups.n));
           found.push({ years, established: null, quote, field, reading: aged.groups.reading.replace(/\s+/g, ' ') });
         }
         // Every statement in the clause, so two that disagree settle nothing.
@@ -1140,10 +1148,11 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   } else if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
     // The current commercial auto policy is with a carrier the panel quotes (TNI, 2026-10-26: answer
-    // to PR question 9: said on the intake check screen, before any carrier page, so the agent
-    // doesn't fill that carrier's pages for nothing; question 18: commercial auto only, util.js
-    // quotedCarrierPolicy). Named, since an intake isn't tied to one carrier; in red (`alert`), and
-    // a warning only (question 19): filling goes on. The carrier's pages say it again (W44-27).
+    // to PR question 9: said on the intake check screen, so the agent doesn't fill that carrier's
+    // pages for nothing; question 18: commercial auto only, util.js quotedCarrierPolicy). Named,
+    // since an intake isn't tied to one carrier; in red (`alert`), and a warning only (question 19):
+    // filling goes on. The panel shows it only on that carrier's site (checkShown; TNI, 2026-10-27),
+    // and the carrier's pages say it again (W44-27).
     const quoted = quotedCarriersOf(prior);
     if (quoted.length) {
       warnings.push({ code: 'prior.carrier-is-quoted', path: 'priorInsurance[0].carrier', level: 'check', alert: true,
