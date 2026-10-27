@@ -67,6 +67,16 @@ function entityField(item, context) {
 
 const pageContext = context => (context.pageAnswers?.length ? { pageAnswers: context.pageAnswers } : {});
 
+// A driver, vehicle or trailer fact from a row other than the field's: its entity's row, else the
+// active one. Rows a question names are sources for its whole group, so code keeps them to it.
+const UNIT_ROW = /^(drivers|vehicles|trailers)\[(\d+)\]/;
+function otherRow(path, field, active) {
+  const row = UNIT_ROW.exec(path);
+  if (!row) return false;
+  const own = UNIT_ROW.exec(field?.entity ?? '');
+  return Number(row[2]) !== (own?.[1] === row[1] ? Number(own[2]) : (active[row[1]] ?? 0));
+}
+
 // The agent's next step for a field left: the intake field the rules need, when it is empty (code's,
 // exact), else Luna's recommendation.
 const UNIT_SAID = { drivers: 'driver', vehicles: 'vehicle', trailers: 'trailer' };
@@ -119,7 +129,8 @@ export function parseResponse(json, items, body) {
     }
     const evidenceSources = [...new Set(x.sourceIds)].map(id => Object.hasOwn(state.sources, id) ? state.sources[id] : null);
     const validSource = source => source && (source.basis === 'intake' && typeof source.path === 'string'
-      && Object.hasOwn(source, 'value') || source.basis === 'tni_rule' && typeof source.rule === 'string');
+      && Object.hasOwn(source, 'value') && !otherRow(source.path, state.fields[item.id], state.active ?? {})
+      || source.basis === 'tni_rule' && typeof source.rule === 'string');
     // Why a field is left, for the usage counts (most specific first).
     const leaveWhy = neverReason(item) ? 'restricted' : x.missingInformation.length ? 'missing' : x.conflicts.length ? 'conflict'
       : x.option === LEAVE ? 'chose' : !evidenceSources.length || evidenceSources.some(x => !validSource(x)) ? 'noSource' : null;

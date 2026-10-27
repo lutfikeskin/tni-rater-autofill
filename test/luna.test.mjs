@@ -786,3 +786,20 @@ test('with every new context, each request still passes the usage server\'s chec
   assert.equal(result.suggestions.length, 12);
   assert.ok(calls >= 1);
 });
+
+// Code, not only the prompt, keeps another row's facts from answering a question (2026-10-27
+// review): once a question names drivers[1], that row's facts are sources for every field in the group.
+test('a citation from another driver or vehicle row than the field\'s own leaves the field', () => {
+  const [cdl] = reported({ key: 'cdl2', label: 'Does this driver have a CDL?', controlKind: 'radio', options: ['Yes', 'No'], path: 'drivers[1].cdl' });
+  const [own] = collectItems([{ unknown: [{ key: 'cdl0', label: 'Does the applicant hold a CDL?', controlKind: 'radio', options: ['Yes', 'No'] }] }]).items;
+  const [comp] = collectItems([{ unknown: [{ key: 'comp', label: '2020 RAM 3500 Comprehensive or Fire & Theft Coverage', controlKind: 'select', options: ['$500', '$1,000', 'No coverage'] }] }]).items;
+  const group = [cdl, { ...own, id: 'f2' }, { ...comp, id: 'f3' }];
+  const body = buildRequest(group, fleetContext), state = JSON.parse(body.input[0].content);
+  const id = (path) => Object.keys(state.sources).find((k) => state.sources[k].path === path);
+  const pick = (option, path) => ({ option, sourceIds: [id(path)], explanation: 'Cited.', missingInformation: [], conflicts: [], nextStep: '' });
+  const [a, b, c] = parseResponse(envelope({ decisions: {
+    f1: pick('o0', 'drivers[1].cdl'), f2: pick('o0', 'drivers[1].cdl'), f3: pick('o1', 'vehicles[0].year') } }), group, body);
+  assert.deepEqual([a.leave, a.leaveWhy], [false, null], 'its own row');
+  assert.deepEqual([b.leave, b.leaveWhy, b.choice], [true, 'noSource', null], 'the active driver\'s question, cited from driver 2');
+  assert.deepEqual([c.leave, c.leaveWhy, c.choice], [true, 'noSource', null], 'vehicle 2\'s question, cited from vehicle 1');
+});
