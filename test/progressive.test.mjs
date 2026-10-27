@@ -588,8 +588,8 @@ test('AmWINS filing required: a notes line or which-filings box naming only an S
     // The which-filings box names only an SR-22, but a notes line names a federal filing: that line.
     [{ filingsWhich: 'SR-22' }, 'Needs MCS-90 for the broker', /its notes say "Needs MCS-90 for the broker"/],
     [{}, 'Owner needs SR-22\nBroker wants BMC-91', /its notes say "Broker wants BMC-91"/],
-    // Not settled by R16, kept as before: a Form E or H, and a state filing with no SR-22 or FR-44 named.
-    [{ filingsWhich: 'SR-22 and Form E' }, null, /"SR-22 and Form E"/], [{ filingsWhich: 'State filing' }, null, /"State filing"/],
+    // (An SR-22 beside a Form E or H, and a state filing with no SR-22 or FR-44 named, were the agent's
+    // here until T9 made them No: the T9 tests below.)
   ]) {
     const s = filing(changes, { notes });
     assert.deepEqual([s.value, s.source, s.standard], [null, 'derived', false], JSON.stringify([changes, notes]));
@@ -604,6 +604,92 @@ test('AmWINS filing required: a notes line or which-filings box naming only an S
   assert.deepEqual([filing({}, { notes: 'Hauls general freight. Clean record.' }).value, filing({ filingsWhich: 'BMC-91' }, { notes: 'Hauls general freight.' }).value], [false, null]);
   // Non-Trucking: never this standard.
   assert.equal(filing({ filingsWhich: 'SR-22' }, { ntl: true }).standard, false);
+});
+
+// TNI, 2026-10-26 (answer to PR question, T9): with "filings required" blank, four more texts in the
+// which-filings box or a notes line are TNI's No (`standard`, as R16's) on AmWINS' "Is a Federal Filing
+// Required?": an SR-22 beside a Form E or H; "State filing" or "Intrastate" alone; an SR-22 beside an MC
+// number on the same line; "SR-22 and filings". Anything federal beside them stays the agent's, quoted;
+// an intake that asks for filings keeps its Yes; a Non-Trucking quote is never this standard.
+const amwinsFiling = (changes = {}, { notes = null, ntl = null } = {}) => {
+  const r = baseRecord();
+  Object.assign(r.operations, { filingsRequired: null, filingsWhich: null, needSr22: null }, changes);
+  if (notes) r.notes = { text: notes };
+  r.coverage.ntl = ntl;
+  return buildPlan(r, amwins, {}).find((s) => s.re === '^filling required$');
+};
+const filingTniNo = (cases) => {
+  for (const [changes, notes] of cases) {
+    const s = amwinsFiling(changes, { notes });
+    assert.deepEqual([s.value, s.source, s.standard, s.note], [false, 'standard', true, null], JSON.stringify([changes, notes]));
+  }
+};
+const filingAgents = (cases) => {
+  for (const [changes, notes, says] of cases) {
+    const s = amwinsFiling(changes, { notes });
+    assert.deepEqual([s.value, s.source, s.standard], [null, 'derived', false], JSON.stringify([changes, notes]));
+    assert.match(s.note, says);
+  }
+};
+const filingKept = (text) => {
+  for (const [changes, notes] of [[{ filingsRequired: true, filingsWhich: text }, null], [{ filingsRequired: true }, text]]) {
+    const s = amwinsFiling(changes, { notes });
+    assert.deepEqual([s.value, s.source, s.standard], [true, 'derived', false], `filings asked for: ${JSON.stringify([changes, notes])}`);
+  }
+  assert.equal(amwinsFiling({ filingsWhich: text }, { ntl: true }).standard, false, `NTL: ${text}`);
+};
+
+test('AmWINS filing required: an SR-22 beside a Form E or H is TNI\'s No (T9)', () => {
+  filingTniNo([[{ filingsWhich: 'SR-22 and Form E' }, null], [{ filingsWhich: 'SR-22, Form H' }, null], [{ filingsWhich: 'SR22 / Form E / Form H' }, null],
+    [{ filingsWhich: 'FR-44 and Forms E and H' }, null], [{}, 'Owner needs an SR-22 and a Form E filing'], [{}, 'SR-22 plus Form H'], [{ needSr22: true }, 'SR-22, Form E/H']]);
+  // Anything federal beside them: the agent's. A Form E or H with no SR-22 or FR-44 named isn't
+  // settled by T9: the agent's, as before.
+  filingAgents([[{ filingsWhich: 'SR-22, Form E and MCS-90' }, null, /names filings \("SR-22, Form E and MCS-90"\)/], [{}, 'SR-22 and Form H, BMC-91', /its notes say "SR-22 and Form H, BMC-91"/],
+    [{ filingsWhich: 'Form E' }, null, /"Form E"/], [{}, 'Needs a Form H filing', /"Needs a Form H filing"/]]);
+  filingKept('SR-22 and Form E');
+});
+
+test('AmWINS filing required: "State filing" or "Intrastate" alone is TNI\'s No (T9)', () => {
+  filingTniNo([[{ filingsWhich: 'State filing' }, null], [{ filingsWhich: 'State filings' }, null], [{ filingsWhich: 'Intrastate' }, null], [{ filingsWhich: 'Intrastate filing' }, null],
+    [{}, 'Needs a state filing'], [{}, 'Intrastate filings only']]);
+  // Anything federal or another filing beside them: the agent's. "State" alone, and a state filing
+  // beside a Form E or H, aren't settled by T9: the agent's, as before.
+  filingAgents([[{ filingsWhich: 'State and federal filings' }, null, /"State and federal filings"/], [{ filingsWhich: 'Intrastate and interstate' }, null, /"Intrastate and interstate"/],
+    [{}, 'State filing, BMC-91', /"State filing, BMC-91"/], [{}, 'State filing and other filings', /"State filing and other filings"/],
+    [{ filingsWhich: 'State' }, null, /"State"/], [{ filingsWhich: 'State filing and Form E' }, null, /"State filing and Form E"/]]);
+  filingKept('State filing');
+});
+
+test('AmWINS filing required: an SR-22 beside an MC number on the same line is TNI\'s No (T9)', () => {
+  filingTniNo([[{}, 'SR-22, MC 123456'], [{}, 'Owner needs an SR-22 filing. MC# 123456'], [{ filingsWhich: 'SR-22 / MC-123456' }, null], [{ filingsWhich: 'MC number 123456, SR22' }, null],
+    [{}, 'Hauls general freight.\nFR-44 - MC123456']]);
+  // An MC filing beside it, with or without the number, and anything else federal: the agent's.
+  filingAgents([[{}, 'SR-22, MC 123456, needs MCS-90', /"SR-22, MC 123456, needs MCS-90"/], [{}, 'SR-22, MC 123456 filing', /"SR-22, MC 123456 filing"/],
+    [{ filingsWhich: 'SR-22, MC filing' }, null, /"SR-22, MC filing"/], [{}, 'SR-22, MC 123456, interstate', /"SR-22, MC 123456, interstate"/]]);
+  filingKept('SR-22, MC 123456');
+});
+
+test('AmWINS filing required: "SR-22 and filings" is TNI\'s No (T9)', () => {
+  filingTniNo([[{ filingsWhich: 'SR-22 and filings' }, null], [{}, 'SR-22 and filings'], [{}, 'SR22 & filings needed'], [{ filingsWhich: 'FR-44 and filings' }, null]]);
+  // Other, federal or named filings beside it: the agent's. A bare "filings" with no SR-22 or FR-44
+  // named isn't settled by T9: the agent's, as before.
+  filingAgents([[{ filingsWhich: 'SR-22 and other filings' }, null, /"SR-22 and other filings"/], [{}, 'SR-22 and federal filings', /"SR-22 and federal filings"/],
+    [{}, 'SR-22 and filings, MCS-90', /"SR-22 and filings, MCS-90"/], [{}, 'SR-22 and BMC-91 filings', /"SR-22 and BMC-91 filings"/],
+    [{ filingsWhich: 'Filings' }, null, /"Filings"/], [{}, 'Filings needed', /"Filings needed"/]]);
+  filingKept('SR-22 and filings');
+});
+
+// The same texts on Progressive (T9 counterexample): its "Are state or federal filings required?"
+// (`CA`) asks about state filings too, so the which-filings box naming any of them still leaves a
+// blank to the agent, as before T9. (Progressive doesn't read the notes for this question.)
+test('Progressive filings required: T9\'s texts in the which-filings box stay the agent\'s (state or federal)', () => {
+  for (const which of ['SR-22 and Form E', 'State filing', 'Intrastate', 'SR-22, MC 123456', 'SR-22 and filings']) {
+    const r = baseRecord();
+    Object.assign(r.operations, { filingsRequired: null, filingsWhich: which, needSr22: null });
+    const s = byQ(buildPlan(r, progressive, {}), 'CA');
+    assert.deepEqual([s.value, s.source, s.standard], [null, 'derived', false], which);
+    assert.match(s.note, new RegExp(`names filings \\("${which}"\\)`));
+  }
 });
 
 // TNI's AmWINS coverage standards, recorded as TNI's on 2026-10-26 (W44-32: "limits are fine").

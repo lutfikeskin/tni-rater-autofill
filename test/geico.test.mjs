@@ -772,6 +772,25 @@ test('filings: the kind and the boxes from which filings the intake names', () =
   }
 });
 
+// The texts AmWINS' "Is a Federal Filing Required?" answers No since T9 (TNI, 2026-10-26: an SR-22
+// beside a Form E or H, "State filing" or "Intrastate" alone, an SR-22 beside an MC number, "SR-22
+// and filings"): GEICO asks about proof of insurance or filings to a state or federal agency, so they
+// stay as before T9. In the which-filings box each is the agent's.
+test('filings required: AmWINS\' T9 texts stay the agent\'s in GEICO\'s which-filings box (state or federal)', () => {
+  const FILINGS = 'Filings required (TNI: No unless the intake says otherwise)';
+  for (const which of ['SR-22 and Form E', 'State filing', 'Intrastate', 'SR-22, MC 123456', 'SR-22 and filings']) {
+    const s = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': which })), FILINGS);
+    agents(s);
+    assert.match(s.note, new RegExp(`names filings \\("${which}"\\)`));
+  }
+  // A notes line naming a Form E or H, a state filing or a bare "filings" beside an SR-22: also the agent's.
+  for (const notes of ['SR-22 and Form E', 'Needs a state filing', 'SR-22 and filings']) {
+    const s = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': null, 'notes.text': notes })), FILINGS);
+    agents(s);
+    assert.match(s.note, new RegExp(`"${notes}"`));
+  }
+});
+
 // --- Drivers ------------------------------------------------------------------------------------
 
 test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel\'s driver', () => {
