@@ -1,7 +1,7 @@
 #!/bin/sh
 # Before a push, runs this repository's pull-request checks on this computer (`npm run ci`,
-# scripts/ci-local.mjs), since GitHub's minutes are paid. `npm ci` / `npm install` installs it:
-# the prepare script points core.hooksPath at .githooks.
+# scripts/ci-local.mjs), so a failure shows before GitHub runs them. `npm ci` / `npm install`
+# installs it: the prepare script points core.hooksPath at .githooks.
 #
 #   git push                -> npm run ci -- --quick (lint, type check, unit tests, package)
 #   TNI_CI=full git push    -> npm run ci (adds the packaged-extension E2E and the mocks)
