@@ -95,7 +95,8 @@
  */
 
 /**
- * The general part, or one carrier's. Its section headings name the page; Luna gets them with each rule.
+ * The general part, or one carrier's. Its section headings name the page for whoever edits it; Luna
+ * gets each entry's text only, without its heading (src/ai/common.js evidenceFor).
  * @typedef {object} RulebookPart
  * @property {string} title
  * @property {{ heading: string, rules: RulebookEntry[] }[]} sections

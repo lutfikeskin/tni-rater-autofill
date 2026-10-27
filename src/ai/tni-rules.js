@@ -25,10 +25,11 @@ export const GENERAL = general;
 /** @type {Record<string, RulebookPart>} */
 export const CARRIER_PARTS = { progressive, amwins, geico };
 
-// The general part, then the carrier's, each entry with its section heading.
-/** @param {string} carrier @returns {(RulebookEntry & { section: string })[]} */
+// The general part's entries, then the carrier's. Luna reads each entry's text only, not its
+// section heading (the headings would add about 3,000 characters on Progressive).
+/** @param {string} carrier @returns {RulebookEntry[]} */
 export function rulebookFor(carrier) {
   const part = Object.hasOwn(CARRIER_PARTS, carrier) ? CARRIER_PARTS[carrier] : null;
   if (!part) return [];
-  return [general, part].flatMap((p) => p.sections.flatMap((s) => s.rules.map((rule) => ({ ...rule, section: s.heading }))));
+  return [general, part].flatMap((p) => p.sections.flatMap((s) => s.rules));
 }
