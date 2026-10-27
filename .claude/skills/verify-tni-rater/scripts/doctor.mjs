@@ -20,7 +20,13 @@ function findRoot(start) {
 const root = findRoot(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist', 'tni-rater-autofill', 'manifest.json');
 const intake = path.join(root, 'test', 'fixtures', 'sample-intake.pdf');
-const playwright = path.join(root, 'node_modules', 'playwright', 'package.json');
+const fixture = path.join(root, 'test', 'fixtures', 'amwins', 'application.html');
+// Resolved as the scripts resolve it: a checkout under .claude/worktrees/ uses the main checkout's node_modules.
+const require = createRequire(path.join(root, 'package.json'));
+let playwright = '';
+try {
+  playwright = require.resolve('playwright');
+} catch {}
 
 const lines = [];
 const fail = [];
@@ -43,11 +49,10 @@ else {
   fail.push('intake');
 }
 
-if (fs.existsSync(playwright)) {
+if (playwright) {
   let browser = '';
   try {
-    const require = createRequire(path.join(root, 'package.json'));
-    browser = require('playwright').chromium.executablePath();
+    browser = require(playwright).chromium.executablePath();
   } catch (err) {
     lines.push(`playwright package present, executablePath failed (${err.message})`);
     fail.push('playwright-browser');
@@ -89,6 +94,9 @@ if (replay.error) {
 } else if (replay.status !== 200 || !replay.body.includes('CL - Business Auto (mock)')) {
   lines.push(`port 8792 answered ${replay.status} but is not this repo's replay. Do not start a second listener. Stop whatever owns the port, then npm run replay.`);
   fail.push('replay-wrong');
+} else if (replay.body !== fs.readFileSync(fixture, 'utf8')) {
+  lines.push('port 8792 is another checkout\'s replay: its AmWINS fixture differs from this checkout\'s. Run npm run replay here once that one is stopped by whoever started it.');
+  fail.push('replay-other-checkout');
 } else {
   lines.push('replay ready http://127.0.0.1:8792/test/fixtures/amwins/application.html');
 }

@@ -38,7 +38,7 @@ When you need a product or TNI decision from the user, ask one question at a tim
 
 Done for a code change means the related tests passed, and the claim was proven on the same surface that showed the bug.
 
-- `npm test` on code changes. `npm run typecheck` when types or behavior docs changed.
+- `npm test` on code changes. `npm run typecheck` when `types.js` or a `// @ts-check` file changed.
 - The pull request's GitHub Checks are the gate: every `npm run ci` step runs there for each PR. Push, then watch them (`gh pr checks <n>`), and report their result. Do not run `npm run ci` locally before pushing; use it only to debug a failing job, and say so when you do.
 - A skill, doc, or asset-only change needs no local checks beyond the ones it touches; its PR's Checks still run.
 - Reproduce a fill or UI bug on the real page first. Prove the fix the same way.
