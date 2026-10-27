@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo } from '../src/normalize.js';
+import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance } from '../src/util.js';
 import { progressive, owner } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
+import { geico } from '../src/carriers/geico.js';
 
 // test/fixtures/sample-intake.pdf is the real TNI form filled with made-up data, including the
 // kinds of mess real clients produce (stray tabs, "45,000$", state prefix on the license, etc.).
@@ -404,6 +405,7 @@ test('progressive: intake answers are translated into Progressive wording', () =
   assert.equal(byQ('22D').value, 'Corporation or LLC / Non-Profit', 'LLC in the company name');
   // Owner "Jordan Avery Sample" matches driver 1 by last name.
   assert.equal(byQ('295').value, 'Jordan Avery');
+  assert.equal(byQ('1B7F').value, 'Jordan', 'NoHit: the first word only (TNI 2026-10-26, W44-30)');
   assert.equal(byQ('297').value, 'Sample');
   assert.equal(byQ('2BB').value, '02/03/1988');
   assert.deepEqual(['2DB', '2DD', '2DF'].map((q) => byQ(q).value), [null, null, null]);
@@ -445,9 +447,10 @@ test('progressive: fixes from the first live usage log', () => {
   const commercial = structuredClone(record);
   commercial.priorInsurance[0].type = 'Commercial Auto';
   assert.equal(buildPlan(commercial, carrier).find((s) => s.q === '198').value, true);
+  // Without a limit too (TNI, 2026-10-26: answer to PR question 9: any box filled is proof of prior).
   const noLimit = structuredClone(commercial);
   noLimit.priorInsurance[0].limit = null;
-  assert.equal(buildPlan(noLimit, carrier).find((s) => s.q === '198').value, false);
+  assert.equal(buildPlan(noLimit, carrier).find((s) => s.q === '198').value, true);
   const other = structuredClone(commercial);
   other.priorInsurance[0].carrier = 'GEICO';
   assert.equal(buildPlan(other, carrier).find((s) => s.q === '198').value, false);
@@ -616,6 +619,34 @@ test('"no POP" or "No" as the carrier without an expiration date is no prior, wh
   assert.equal(named.record.priorInsurance[0].carrier, 'Nationwide');
 });
 
+// TNI, 2026-10-26 (answers to PR #189's questions 9 and 18): the intake check screen, shown when the
+// intake loads and before any carrier page, says in red when the current insurance is a commercial
+// auto policy with a carrier the panel quotes (GEICO, Progressive: util.js sameCarrier), so the agent
+// doesn't fill that carrier's pages for nothing. The intake isn't tied to one carrier: it names it.
+test('the intake check says when the current commercial auto policy is with GEICO or Progressive', () => {
+  const read = (type, carrier, exp = '12/31/2026') => normalizeIntake({ ...raw, ins_type_1: type, ins_carrier_1: carrier, ins_limit_1: '$1M CSL', ins_exp_1: exp }, { today: new Date('2026-10-26') })
+    .warnings.filter((w) => w.code === 'prior.carrier-is-quoted');
+  for (const [carrier, name] of [['GEICO', 'GEICO'], ['Gieco', 'GEICO'], ['Progresive', 'Progressive'], ['Progressive Commercial', 'Progressive']]) {
+    const said = read('Commercial Auto', carrier);
+    assert.equal(said.length, 1, carrier);
+    assert.deepEqual([said[0].level, said[0].path, said[0].alert], ['check', 'priorInsurance[0].carrier', true], carrier);
+    assert.match(said[0].msg, new RegExp(`^Current insurance is with ${name}: a ${name} quote may be declined or routed\\.`), carrier);
+    if (carrier !== name) assert.doesNotMatch(said[0].msg, new RegExp(carrier), 'named as the carrier, not as the intake spells it');
+  }
+  // Undated, a policy of no type (only a warning), and expired (as the carrier page's card): said too.
+  // Expired and of no type with Progressive too, whose own question is then No (T10).
+  for (const [type, carrier, exp] of [['Commercial Auto', 'GEICO', ''], ['Select*', 'GEICO', '12/31/2026'], ['Commercial Auto', 'Progressive', '01/31/2026'],
+    ['Select*', 'Progressive', '01/31/2026']]) {
+    assert.equal(read(type, carrier, exp).length, 1, `${type} ${carrier} ${exp}`);
+  }
+  // Not: a personal auto, GL, cargo or other policy with it, another insurer, no prior insurance.
+  for (const type of ['Personal Auto', 'General Liability', 'Cargo', 'Other']) assert.deepEqual(read(type, 'GEICO'), [], type);
+  for (const carrier of ['Gainsco', 'Protective', 'Other Mutual']) assert.deepEqual(read('Commercial Auto', carrier), [], carrier);
+  assert.deepEqual(read('Commercial Auto', 'No GEICO', ''), [], 'no prior insurance');
+  // The sample intake's Progressive personal auto policy: nothing.
+  assert.ok(!warnings.some((w) => w.code === 'prior.carrier-is-quoted'));
+});
+
 test('blank years in business and year established: a warning, and the record stays blank', () => {
   const r = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'N/A' }, { today: new Date('2026-10-09') });
   assert.equal(r.record.applicant.yearsInBusiness, null);
@@ -639,19 +670,43 @@ test('AmWINS pages are recognised as a carrier, not as practice', () => {
 test('an owner whose surname has two words is found in the driver list', () => {
   const people = { ...raw, owner_drives: true, owner_name_1: 'SAMPLE VINICIUS TESTA EXAMPLO',
     drv_first_1: 'SAMPLE VINICIUS', drv_last_1: 'TESTA EXAMPLO', drv_first_2: '', drv_last_2: '', drv_first_3: '', drv_last_3: '', drv_first_4: '', drv_last_4: '' };
+  // The first driver is the owner (TNI, 2026-10-27: answer to PR question V4): a first row under
+  // another name is still the owner, with the check `drivers.owner-name-differs` (before V4: the
+  // owner wasn't in the driver list, `drivers.owner-not-listed`, which now needs no driver rows).
+  const differs = (r) => r.warnings.some((w) => w.code === 'drivers.owner-name-differs');
+  const notListed = (r) => r.warnings.some((w) => w.code === 'drivers.owner-not-listed');
   const listed = normalizeIntake(people, { today: new Date('2026-09-30') });
-  assert.ok(!listed.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'same person across the name boxes');
+  assert.ok(!differs(listed) && !notListed(listed), 'same person across the name boxes');
   const lastOnly = normalizeIntake({ ...people, owner_name_1: 'SAMPLE EXAMPLO' }, { today: new Date('2026-09-30') });
-  assert.ok(!lastOnly.warnings.some((w) => w.code === 'drivers.owner-not-listed'), "owner's surname is one of the driver's last-name words");
+  assert.ok(!differs(lastOnly), "owner's surname is one of the driver's last-name words");
   const other = normalizeIntake({ ...people, owner_name_1: 'SOMEONE ELSE' }, { today: new Date('2026-09-30') });
-  assert.ok(other.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a different person still warns');
+  assert.ok(differs(other) && !notListed(other), 'a different name still warns');
   const sharedWord = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO' }, { today: new Date('2026-09-30') });
-  assert.ok(sharedWord.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a surname word with another first name still warns');
+  assert.ok(differs(sharedWord), 'a surname word with another first name still warns');
   // Audit 2026-10-08: a one-word surname alone linked another person ("Alice Sample" to "Bob Sample").
   const family = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO', drv_first_1: 'BOB', drv_last_1: 'EXAMPLO' }, { today: new Date('2026-09-30') });
-  assert.ok(family.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'the same one-word surname with another first name is another person');
+  assert.ok(differs(family), 'the same one-word surname with another first name is another name');
   const same = normalizeIntake({ ...people, owner_name_1: 'BOB EXAMPLO', drv_first_1: 'BOB', drv_last_1: 'EXAMPLO' }, { today: new Date('2026-09-30') });
-  assert.ok(!same.warnings.some((w) => w.code === 'drivers.owner-not-listed'));
+  assert.ok(!differs(same));
+});
+
+// TNI, 2026-10-26 (W44-25): a blank "owner drives" box is TNI's Yes on the carriers, so an owner
+// missing from the driver list is listed as a driver without their details, as with the intake's
+// Yes. The record keeps the box as read. Since the owner is always the first driver (TNI, 2026-10-27:
+// answer to PR question V4), the owner is missing only from an intake with no driver rows; a first
+// row under another name is the owner, with its own check (the V4 test below).
+test('a blank "owner drives" box: the record stays blank, and an owner missing from the driver list is a check', () => {
+  const noDrivers = Object.fromEntries(Object.keys(raw).filter((k) => /^drv_/.test(k)).map((k) => [k, '']));
+  const people = { ...raw, ...noDrivers, owner_name_1: 'SOMEONE ELSE' };
+  const read = (extra) => normalizeIntake({ ...people, ...extra }, { today: new Date('2026-09-30') });
+  const notListed = (r) => r.warnings.find((w) => w.code === 'drivers.owner-not-listed');
+  const blank = read({ owner_drives: '' });
+  assert.equal(blank.record.applicant.ownerDrives, null, 'blank stays blank on the record');
+  assert.deepEqual([notListed(blank)?.level, notListed(blank)?.path], ['check', 'drivers']);
+  assert.match(notListed(blank).msg, /"Owner drives" is blank.*TNI's standard Yes.*"SOMEONE ELSE" isn't in the driver list/);
+  assert.match(notListed(read({ owner_drives: true })).msg, /^Owner drives, but "SOMEONE ELSE" isn't in the driver list\.$/);
+  assert.equal(notListed(read({ owner_drives: false })), undefined, 'the intake\'s No: no driver details needed');
+  assert.equal(notListed(read({ owner_drives: '', drv_first_1: 'SAMPLE', drv_last_1: 'EXAMPLO' })), undefined, 'a driver row: the owner\'s, the first');
 });
 
 // AR 2026-10-19 (live run): a driver's first-name box read "<first>, JR". Progressive's name box
@@ -745,6 +800,120 @@ test('"Excluded" in a license-number box marks the driver excluded and is left o
   const said = (box) => one(box).warnings.find((w) => w.code === 'license.excluded').msg;
   assert.match(said('12345678 EXCLUDED'), /Progressive's exclude question gets Yes; on AmWINS, which has no such question, their license number gets "\(Excluded\)" after it\./);
   assert.match(said('Excluded'), /on AmWINS, which has no such question, type "\(Excluded\)" after the license number you enter\./);
+});
+
+// TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives;
+// if the owner's row is marked Excluded, or the answer is No, the owner is excluded. So the intake's
+// No makes the owner's driver row an excluded driver on every carrier, as an "Excluded" mark does,
+// while the record keeps the row as read. The owner's row is the first (TNI, 2026-10-27: answer to PR
+// question V4, which replaces T2's row by the owner's exact full name and its `drivers.owner-unclear`).
+test('"owner drives" No: the owner\'s driver row, the first, is an excluded driver on every carrier; blank, Yes and other drivers unchanged', () => {
+  const today = { today: new Date('2026-09-30') };
+  // The sample intake's owner is its driver 1 (the same name), driver 2 someone else.
+  const read = (extra) => normalizeIntake({ ...raw, ...extra }, today);
+  const item = (r, i = 0) => r.warnings.find((w) => w.code === 'drivers.owner-excluded' && w.path === `drivers[${i}].excluded`);
+  const exclude = (r, drivers) => buildPlan(r.record, progressive, { drivers }).find((s) => s.q === '28C1').value;
+  const amwinsLicense = (r, drivers) => buildPlan(r.record, amwins, { drivers }).find((s) => s.path === `drivers[${drivers}].licenseNumber`);
+  const no = read({ owner_drives: 'No' });
+  // The record keeps the intake as read: the row isn't marked, the box stays No.
+  assert.deepEqual([no.record.applicant.ownerDrives, no.record.drivers[0].excluded, no.record.drivers[1].excluded], [false, null, null]);
+  // The Intake step says so, on the owner's row only, and what each carrier gets.
+  assert.equal(item(no)?.level, 'check');
+  assert.match(item(no).msg, /"Owner drives" is No, and the first driver is the owner.*excluded.*Progressive's exclude question gets Yes; on AmWINS, which has no such question, their license number gets "\(Excluded\)" after it\..*GEICO/);
+  // GEICO's quote leaves the owner's row out (TNI, 2026-10-26: answer to PR question, T1).
+  assert.match(item(no).msg, /GEICO's quote leaves the owner out: the fill doesn't add this driver/);
+  assert.doesNotMatch(item(no).msg, /filled with a warning/);
+  assert.equal(item(no, 1), undefined, 'another driver is never affected');
+  assert.match(item(no).msg, /To keep this driver on the quote, set Excluded driver to No\.$/);
+  // The owner's name on two rows (a Sr and a Jr), in either order: the No decides, and only the first
+  // row is excluded (V4; before, T2's row with exactly the owner's full name, and the agent's for a Sr
+  // and a Jr neither exactly it).
+  for (const extra of [{ drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Jr' }, { drv_last_1: 'Sample Sr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Jr' },
+    { drv_last_1: 'Sample Jr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Sr' }]) {
+    const family = read({ owner_drives: 'No', ...extra });
+    const why = JSON.stringify(extra);
+    assert.ok(item(family, 0), why);
+    assert.equal(item(family, 1), undefined, `${why}: the second row isn't the owner`);
+    assert.ok(!family.warnings.some((w) => w.code === 'drivers.owner-unclear'), `${why}: no unclear rows any more`);
+    assert.deepEqual([exclude(family, 0), exclude(family, 1)], [true, false], why);
+    assert.deepEqual([amwinsLicense(family, 0).value, amwinsLicense(family, 1).value], ['ILS12345678901 (Excluded)', 'E98765432101'], why);
+  }
+  // The owner's date of birth on AmWINS: the owner's row's (T3, asked of GEICO; AmWINS asks it too: V2).
+  const ownerDob = (r) => buildPlan(r.record, amwins, {}).find((s) => s.selector === '#ownerDob');
+  assert.equal(ownerDob(no).value, no.record.drivers[0].dob);
+  const second = read({ owner_drives: 'No', drv_last_1: 'Sample Jr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample' });
+  assert.equal(ownerDob(second).value, second.record.drivers[0].dob, 'the first row\'s, even with the exact name on the second');
+  // Progressive: the exclude question Yes for the owner's row, No for the other driver.
+  assert.deepEqual([exclude(no, 0), exclude(no, 1)], [true, false]);
+  // AmWINS: "(Excluded)" after the owner's license number, the other driver's as written.
+  assert.deepEqual([amwinsLicense(no, 0).value, amwinsLicense(no, 0).source], ['ILS12345678901 (Excluded)', 'derived']);
+  assert.equal(amwinsLicense(no, 1).value, 'E98765432101');
+  // No license number on the owner's row: the box is the agent's, with the reason.
+  const noNumber = read({ owner_drives: 'No', drv_lic_1: '' });
+  assert.equal(amwinsLicense(noNumber, 0).value, null);
+  assert.match(amwinsLicense(noNumber, 0).note, /owner doesn't drive.*type their license number yourself, then "\(Excluded\)" after it/);
+  assert.match(item(noNumber).msg, /type "\(Excluded\)" after the license number you enter/);
+  // A row the intake marks excluded keeps its own item (license.excluded), not this one.
+  const marked = read({ owner_drives: 'No', drv_lic_1: 'IL - S12345678901 EXCLUDED' });
+  assert.deepEqual([item(marked), exclude(marked, 0)], [undefined, true]);
+  // ... which says GEICO's quote leaves the owner out (T1), also over a blank box or a Yes (TNI,
+  // 2026-10-27: answer to PR question V3; before, "filled with a warning"); another driver's mark
+  // keeps GEICO's warning.
+  const licenseItem = (r, i) => r.warnings.find((w) => w.code === 'license.excluded' && w.path === `drivers[${i}].excluded`).msg;
+  for (const box of ['No', '', 'Yes']) {
+    const r = read({ owner_drives: box, drv_lic_1: 'IL - S12345678901 EXCLUDED' });
+    assert.match(licenseItem(r, 0), /GEICO's quote leaves the owner out: the fill doesn't add this driver/, box);
+    assert.doesNotMatch(licenseItem(r, 0), /filled with a warning/, box);
+  }
+  assert.match(licenseItem(read({ owner_drives: 'No', drv_lic_2: 'E98765432101 EXCLUDED' }), 1), /GEICO asks nothing about it: the driver's answers are filled with a warning/);
+  assert.match(licenseItem(read({ owner_drives: '', drv_lic_2: 'E98765432101 EXCLUDED' }), 1), /filled with a warning/);
+  // Counterexamples: a blank box or the intake's Yes leaves the owner's unmarked row a listed driver.
+  for (const box of ['', 'Yes']) {
+    const r = read({ owner_drives: box });
+    assert.deepEqual([item(r), exclude(r, 0), exclude(r, 1), amwinsLicense(r, 0).value], [undefined, false, false, 'ILS12345678901'], box);
+  }
+  // No with an owner no driver row's name matches: the first row is the owner's all the same (V4;
+  // before, nobody was excluded), with the name check (the V4 test below).
+  const other = read({ owner_drives: 'No', owner_name_1: 'Someone Else' });
+  assert.deepEqual([!!item(other), item(other, 1), exclude(other, 0), exclude(other, 1)], [true, undefined, true, false]);
+});
+
+// TNI, 2026-10-27 (answer to PR question V4): the owner is always the first driver on the intake's
+// list. A first row whose name isn't the owner's is still the owner, with a check saying it was taken
+// as the owner; a Sr, a Jr, a middle name, or an owner box holding only the first name is the owner's
+// name. The item names no one (the row is its path).
+test('the owner is the first driver (V4): a first row with another name is taken as the owner, with a check', () => {
+  const today = { today: new Date('2026-09-30') };
+  const read = (extra) => normalizeIntake({ ...raw, ...extra }, today);
+  const item = (r) => r.warnings.find((w) => w.code === 'drivers.owner-name-differs');
+  const excludedItem = (r, i) => r.warnings.find((w) => w.code === 'drivers.owner-excluded' && w.path === `drivers[${i}].excluded`);
+  const exclude = (r, drivers) => buildPlan(r.record, progressive, { drivers }).find((s) => s.q === '28C1').value;
+  // The sample intake: the owner box's name is driver 1's.
+  assert.equal(item(read({})), undefined);
+  // A first row with another name: the owner, with the check.
+  const other = read({ drv_first_1: 'Riley', drv_last_1: 'Example' });
+  assert.deepEqual([item(other)?.level, item(other)?.path], ['check', 'drivers[0]']);
+  assert.match(item(other).msg, /first driver's name differs from the owner's.*taken as the owner/);
+  assert.doesNotMatch(item(other).msg, /Riley|Example|Jordan|Avery|Sample/, 'no names in the item');
+  assert.equal(other.warnings.find((w) => w.code === 'drivers.owner-not-listed'), undefined, 'the owner is on the list: the first row');
+  // The owner's name on row 2 only: row 1 is still the owner (the check), row 2 an ordinary driver.
+  const second = read({ owner_drives: 'No', drv_first_1: 'Riley', drv_last_1: 'Example', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample' });
+  assert.ok(item(second));
+  assert.deepEqual([!!excludedItem(second, 0), !!excludedItem(second, 1), exclude(second, 0), exclude(second, 1)], [true, false, true, false]);
+  // A Sr and a Jr in either order, two rows with the exact name, a one-word owner box: no check.
+  for (const extra of [{ drv_last_1: 'Sample Sr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Jr' },
+    { drv_last_1: 'Sample Jr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Sr' },
+    { drv_first_2: 'Jordan Avery', drv_last_2: 'Sample' }, { owner_name_1: 'Jordan' }]) {
+    assert.equal(item(read(extra)), undefined, JSON.stringify(extra));
+  }
+  // Another first name with the owner's surname is another name: the check.
+  assert.ok(item(read({ owner_name_1: 'Alice Sample' })));
+  // A blank owner box: no name to compare, no check.
+  assert.equal(item(read({ owner_name_1: '' })), undefined);
+  // No driver rows: no owner row, and no check; the owner missing from the list is the item it was.
+  const noRows = read({ ...Object.fromEntries(Object.keys(raw).filter((k) => /^drv_/.test(k)).map((k) => [k, ''])), owner_drives: 'Yes' });
+  assert.deepEqual([noRows.record.drivers.length, item(noRows)], [0, undefined]);
+  assert.ok(noRows.warnings.some((w) => w.code === 'drivers.owner-not-listed'));
 });
 
 // PR #17 review: a mention ("no bobtail") must never become NTL coverage. The agent sets it.
@@ -889,6 +1058,85 @@ test('NTL with cargo asked for is a check for the agent, on every carrier', () =
   assert.equal(ntlWithCargo({ coverage: { ntl: null, cargo: true } }), false, 'NTL only mentioned, not decided: no');
 });
 
+// The maintainer, 2026-10-26 (W44-28): "US DOT is not added and filings not added if its NTL, in
+// every case". An NTL intake asking for filings, or giving a USDOT number, says so (info): the
+// carriers' filings answers then differ from the intake on purpose.
+test('NTL with filings or a USDOT number on the intake: an info item says TNI adds neither', () => {
+  const today = { today: new Date('2026-10-26') };
+  const item = (changes) => normalizeIntake({ ...raw, ...changes }, today).warnings.find((x) => x.code === 'coverage.ntl-filings');
+  const filings = item({ auto_liability: 'Non-Trucking', fed_state_filings: 'Yes', dot_number: '1234567' });
+  assert.equal(filings?.level, 'info');
+  assert.equal(filings.path, 'operations.filingsRequired');
+  assert.match(filings.msg, /non-trucking liability/i);
+  assert.match(filings.msg, /no filings/i);
+  assert.match(filings.msg, /USDOT/);
+  // A USDOT number without filings: said on the number.
+  const dot = item({ auto_liability: 'Non-Trucking', fed_state_filings: 'No', dot_number: '1234567' });
+  assert.equal(dot?.level, 'info');
+  assert.equal(dot.path, 'applicant.dot');
+  assert.match(dot.msg, /USDOT/);
+  // Nothing to leave out (no USDOT, no filings), no NTL, or NTL with primary auto liability too
+  // (not settled: filled as before): nothing.
+  for (const changes of [{ auto_liability: 'Non-Trucking', fed_state_filings: 'No', dot_number: '' }, { auto_liability: 'Non-Trucking', fed_state_filings: '', dot_number: '' },
+    { auto_liability: 'Yes', fed_state_filings: 'Yes', dot_number: '1234567' }]) {
+    assert.equal(item(changes), undefined, JSON.stringify(changes));
+  }
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: true, autoLiability: 'Non-Trucking' } }), true);
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: true, autoLiability: null } }), true, 'NTL set by the agent, auto liability blank');
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: true, autoLiability: 'Yes' } }), false, 'NTL and primary auto liability: not settled');
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: null, autoLiability: 'Non-Trucking' } }), false, 'NTL not set (the agent changed it): no');
+  assert.equal(ntlNoDotFilings(null), false);
+});
+
+// (TNI, 2026-10-26: answer to PR question, #192 "intake checks on an NTL quote") On an NTL intake asking for filings, the
+// "filings without a number" and "which filings" checks are dropped; the info item above says why
+// the carriers answer No. Not NTL: both checks as before.
+test('an NTL intake asking for filings: no "filings without a number" or "which filings" check', () => {
+  const today = { today: new Date('2026-10-26') };
+  const codes = (changes) => normalizeIntake({ ...raw, fed_state_filings: 'Yes', filings_which: '', dot_number: '', mc_number: '', mc_dot_60days: 'No', ...changes }, today).warnings.map((x) => x.code);
+  const ntl = codes({ auto_liability: 'Non-Trucking' });
+  assert.ok(!ntl.includes('filings.no-number'), 'filings without a number: dropped on NTL');
+  assert.ok(!ntl.includes('filings-which.missing'), 'which filings: dropped on NTL');
+  assert.ok(ntl.includes('coverage.ntl-filings'), 'the NTL info item explains instead');
+  // Not NTL (auto liability Yes, NTL only mentioned in the notes, or nothing): both checks stay.
+  for (const changes of [{ auto_liability: 'Yes' }, { auto_liability: 'Yes', additional_notes: 'Asked about NTL' }, {}]) {
+    const c = codes(changes);
+    assert.ok(c.includes('filings.no-number') && c.includes('filings-which.missing'), JSON.stringify(changes));
+  }
+});
+
+// (TNI, 2026-10-26: answers to PR questions, #192 "NTL and primary auto liability" and "NTL not answered yet") NTL with primary auto liability (auto
+// liability Yes) is an intake check naming the conflict, and its USDOT and filings questions are
+// the agent's on every carrier; NTL mentioned and not answered yet makes them wait for the answer.
+test('NTL with primary auto liability, or NTL mentioned and not answered: the USDOT and filings questions are the agent\'s', () => {
+  assert.equal(ntlWithPrimary({ coverage: { ntl: true, autoLiability: 'Yes' } }), true);
+  for (const coverage of [{ ntl: true, autoLiability: 'Non-Trucking' }, { ntl: true, autoLiability: null }, { ntl: false, autoLiability: 'Yes' }, { ntl: null, autoLiability: 'Yes' }]) {
+    assert.equal(ntlWithPrimary({ coverage }), false, JSON.stringify(coverage));
+  }
+  // A mention in the claims box or the Additional Notes, or Luna's flag, with NTL not answered.
+  assert.equal(ntlUndecided({ coverage: { ntl: null }, claims: { text: 'No\nNeeds NTL' } }), true);
+  assert.equal(ntlUndecided({ coverage: { ntl: null }, notes: { text: 'bobtail coverage?' } }), true);
+  assert.equal(ntlUndecided({ coverage: { ntl: null }, claims: { aiNtl: true } }), true);
+  for (const ntl of [true, false]) assert.equal(ntlUndecided({ coverage: { ntl }, notes: { text: 'Needs NTL' } }), false, `answered ${ntl}`);
+  assert.equal(ntlUndecided({ coverage: { ntl: null }, claims: { text: 'No' } }), false, 'no mention');
+  // The note the carriers give their USDOT and filings questions: why, or nothing.
+  assert.match(ntlDotFilingsHold({ coverage: { ntl: true, autoLiability: 'Yes' } }), /primary auto liability/);
+  assert.match(ntlDotFilingsHold({ coverage: { ntl: null, autoLiability: 'Yes' }, notes: { text: 'Needs NTL' } }), /Intake step/);
+  for (const r of [{ coverage: { ntl: true, autoLiability: 'Non-Trucking' } }, { coverage: { ntl: false, autoLiability: 'Yes' }, notes: { text: 'Needs NTL' } }, { coverage: { ntl: null, autoLiability: 'Yes' } }, null]) {
+    assert.equal(ntlDotFilingsHold(r), null, JSON.stringify(r));
+  }
+  // The intake check: made with the others from the record (`coverage.ntl-primary`, on auto
+  // liability). Today's form can't ask for both (Non-Trucking is its auto liability answer), so
+  // from a PDF it is never made; the agent's NTL Yes in the panel makes it (sidepanel ntlPrimaryEdited).
+  assert.match(NTL_PRIMARY_MESSAGE, /non-trucking liability \(NTL\)/i);
+  assert.match(NTL_PRIMARY_MESSAGE, /primary auto liability/i);
+  assert.match(NTL_PRIMARY_MESSAGE, /USDOT/);
+  const today = { today: new Date('2026-10-26') };
+  for (const changes of [{ auto_liability: 'Yes', additional_notes: 'Needs NTL' }, { auto_liability: 'Non-Trucking' }, { auto_liability: 'Yes' }]) {
+    assert.ok(!normalizeIntake({ ...raw, ...changes }, today).warnings.some((x) => x.code === 'coverage.ntl-primary'), JSON.stringify(changes));
+  }
+});
+
 // AmWINS has no NTL option the filler knows: TNI writes it in the disclosure details, the big box
 // at the end of Underwriting where the cargo, radius, trailers and POP lines go (the maintainer,
 // 2026-10-26). First, with the intake's liability limit.
@@ -916,4 +1164,843 @@ test('cargo with a limit but no deductible is a check on the Intake step', () =>
   assert.match(w.msg, /usually \$1,000 or \$2,500/);
   assert.equal(check('$100K/$1K Ded'), undefined);
   assert.equal(check(''), undefined, 'no limit either: cargo-limit.missing instead');
+});
+
+// W44-09 (TNI, 2026-10-26: the reader takes it from the notes). A PA intake had year established
+// and years under own authority N/A and "3+ years in business" in its notes: every quote got 0
+// (AmWINS New Venture) until the agent typed 3. A form box with a value wins over the notes.
+const W44 = { today: new Date('2026-10-26') };
+const noYears = (notes, claims = 'No') => normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'N/A', claims_details: claims, additional_notes: notes }, W44);
+
+test('years in business the notes state fill a blank form, with a check quoting them (W44-09)', () => {
+  const r = noYears('In Biz for 3+ years \n\nPOP is for 1+ year\n\n');
+  assert.equal(r.record.applicant.yearsInBusiness, 3, 'a plus is at least that many');
+  assert.equal(r.record.applicant.yearEstablished, null);
+  assert.equal(r.record.applicant.yearsExperience, null, 'years under own authority are never read from a business phrase');
+  const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+  assert.equal(w?.level, 'check');
+  assert.equal(w.path, 'applicant.yearsInBusiness');
+  assert.match(w.msg, /Additional Notes.*"In Biz for 3\+ years"/);
+  assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.default'), 'not the blank standard');
+  assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'] });
+  // Every carrier that asks it (Progressive doesn't).
+  const amwinsYears = buildPlan(r.record, amwins).find((s) => s.selector === '#yrsInBusiness');
+  assert.equal(amwinsYears.value, '3');
+  assert.equal(amwinsYears.source, 'derived');
+  const geicoYears = buildPlan(r.record, geico).find((s) => s.name === 'Years in business');
+  assert.equal(geicoYears.value, '3-6');
+  assert.equal(geicoYears.note, null);
+  // The claims box's other lines too.
+  const claims = noYears('', 'No \n\nin Biz for 3+ years ');
+  assert.equal(claims.record.applicant.yearsInBusiness, 3);
+  assert.deepEqual(claims.readFrom, { 'applicant.yearsInBusiness': ['claims_details'] });
+  assert.match(claims.warnings.find((x) => x.code === 'years-in-business.notes').msg, /claims box.*"in Biz for 3\+ years"/);
+});
+
+test('the notes\' wordings of years in business, and of a start year (W44-09)', () => {
+  for (const [notes, years] of [['5 years in business', 5], ['in business for 5 years', 5], ['In business 2 yrs.', 2], ['6+ yrs in biz', 6],
+    ['Owner operator, in business for 4 years, 2 trucks', 4], ['0 years in business', 0]]) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearsInBusiness, years, notes);
+    assert.equal(r.record.applicant.yearEstablished, null, notes);
+  }
+  for (const notes of ['Established 2019', 'Business established in 2019', 'In business since 2019', 'Company founded in 2019']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearEstablished, 2019, notes);
+    assert.equal(r.record.applicant.yearsInBusiness, 7, notes);
+    assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'], 'applicant.yearEstablished': ['additional_notes'] }, notes);
+  }
+  assert.equal(buildPlan(noYears('Established 2019').record, amwins).find((s) => s.selector === '#yearBusinessEstablished').value, 2019);
+  // Two statements that agree are one answer.
+  assert.equal(noYears('Established 2019\nIn business for 7 years').record.applicant.yearsInBusiness, 7);
+});
+
+test('numbers in the notes about something else stay out of years in business (W44-09)', () => {
+  for (const notes of ['10 years driving', 'CDL for 5 years', '5 years experience in business', 'Driver experience: 3+ years in business', 'POP is for 1+ year',
+    'WITH STATEFARM A YEAR', 'insured for 14 month', 'Policy term 1 year', 'Accident in 2019', 'Insured since 2019', '20 years in the business',
+    'MC authority established 2020', 'less than 1 year driving', '3 Years', '11 Years']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearsInBusiness, null, notes);
+    assert.equal(r.record.applicant.yearEstablished, null, notes);
+    assert.ok(r.warnings.some((x) => x.code === 'years-in-business.default'), `${notes}: still TNI's blank standard`);
+    assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.notes'), notes);
+    assert.deepEqual(r.readFrom, {}, notes);
+  }
+  // Statements of years in business it doesn't read are the agent's, named (round-6 answer 4, below): a
+  // negation, a start year after this year, more than 100 years, "less than N" and "under N" (other
+  // than R10, T8 and U1), "almost", "nearly", the signs, and figures that disagree, also in one clause.
+  for (const notes of ['Not in business for 3 years yet', 'Established 2031', 'in business for 300 years',
+    'under 3 years in business', 'in business for less than 3 years', 'In biz for under 2 yrs', 'almost 3 years in business',
+    'in business for nearly 3 years', '~3 years in business', '>3 years in business']) leavesUnread(notes);
+  for (const [notes, lines] of [['In biz for 3+ years\nIn business for 6 years', ['In biz for 3+ years', 'In business for 6 years']],
+    ['In business for over 3 years\nIn business for 6 years', ['In business for over 3 years', 'In business for 6 years']],
+    ['3 years in business and 4 years in business', undefined], ['in business for 3 years and in business for 4 years', undefined]]) leavesUnread(notes, lines);
+  // A decimal is rounded down like months (round-6 answer 3): "2.5 years" is 2.
+  readsYears('2.5 years in business', 2, '2.5 years');
+});
+
+test('a form box with years wins over the notes (W44-09)', () => {
+  const est = normalizeIntake({ ...raw, year_established: '2021', years_experience: '5+ years', claims_details: 'No', additional_notes: 'In Biz for 6+ years' }, W44);
+  assert.equal(est.record.applicant.yearsInBusiness, 5);
+  assert.ok(!est.warnings.some((x) => /^years-in-business\./.test(x.code)));
+  assert.deepEqual(est.readFrom, {});
+  // Years under own authority given and the notes silent about the business's years: AmWINS' years
+  // in business come from that box, as before.
+  const authority = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: '4', claims_details: 'No', additional_notes: '10 years driving' }, W44);
+  assert.equal(authority.record.applicant.yearsInBusiness, null);
+  assert.ok(!authority.warnings.some((x) => /^years-in-business\./.test(x.code)));
+  assert.equal(buildPlan(authority.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, '4');
+});
+
+// Q24 (TNI, 2026-10-26: answer to PR question): years under own authority on the form, year
+// established blank, and years in business in the notes: the notes win for years in business. Years
+// under own authority is a different fact and stays as the form gives it, for its own questions.
+test('the notes\' years in business win over years under own authority, which stay for their own questions (W44-09)', () => {
+  const r = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: '2', claims_details: 'No', additional_notes: 'In Biz for 6+ years' }, W44);
+  assert.equal(r.record.applicant.yearsInBusiness, 6);
+  assert.equal(r.record.applicant.yearsExperience, 2, 'years under own authority as the form gives them');
+  assert.equal(r.record.applicant.yearEstablished, null);
+  assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'] });
+  const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+  assert.equal(w?.level, 'check');
+  assert.match(w.msg, /"In Biz for 6\+ years".*years in business is 6/);
+  assert.match(w.msg, /years under own authority \(2\)/, 'the check says the authority years stay');
+  const amwinsPlan = buildPlan(r.record, amwins);
+  assert.equal(amwinsPlan.find((s) => s.selector === '#yrsInBusiness').value, '5+', 'the notes\' 6, not the authority\'s 2');
+  assert.equal(amwinsPlan.find((s) => s.selector === '#howLongFederalOperatingAuthorityActive').value, '2 TO 3 YEARS', 'the authority\'s own question keeps the form\'s 2');
+  assert.equal(buildPlan(r.record, geico).find((s) => s.name === 'Years in business').value, '3-6');
+  // A start year in the notes, the same way.
+  const since = normalizeIntake({ ...raw, year_established: '', years_experience: '1', claims_details: 'No', additional_notes: 'In business since 2019' }, W44);
+  assert.deepEqual([since.record.applicant.yearsInBusiness, since.record.applicant.yearEstablished, since.record.applicant.yearsExperience], [7, 2019, 1]);
+  // Counterexamples: a filled year established still wins, and driving or CDL years are never business years.
+  const est = normalizeIntake({ ...raw, year_established: '2024', years_experience: '2', claims_details: 'No', additional_notes: 'In Biz for 6+ years' }, W44);
+  assert.equal(est.record.applicant.yearsInBusiness, 2);
+  assert.ok(!est.warnings.some((x) => x.code === 'years-in-business.notes'));
+  for (const notes of ['10 years driving', 'CDL for 5 years', 'Driver experience: 6+ years in business']) {
+    const drv = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: '2', claims_details: 'No', additional_notes: notes }, W44);
+    assert.equal(drv.record.applicant.yearsInBusiness, null, notes);
+    assert.equal(buildPlan(drv.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, '2', notes);
+  }
+});
+
+// Q25 (TNI, 2026-10-26: answer to PR question): "NEW" in the years-under-own-authority box is 0
+// years. AmWINS' "federal authority active" is then LESS THAN 1 YEAR; GEICO and Progressive don't
+// read the years under own authority.
+test('"NEW" in years under own authority is 0 years (W44-15)', () => {
+  for (const box of ['NEW', 'New', 'new.', ' NEW ']) {
+    const r = normalizeIntake({ ...raw, years_experience: box }, W44);
+    assert.equal(r.record.applicant.yearsExperience, 0, box);
+    assert.ok(!r.warnings.some((x) => x.code === 'years-experience.invalid'), box);
+    assert.equal(r.warnings.find((x) => x.code === 'years-experience.new')?.level, 'info', box);
+  }
+  const r = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'NEW', claims_details: 'No', additional_notes: '' }, W44);
+  const amwinsPlan = buildPlan(r.record, amwins);
+  assert.equal(amwinsPlan.find((s) => s.selector === '#howLongFederalOperatingAuthorityActive').value, 'LESS THAN 1 YEAR');
+  assert.equal(amwinsPlan.find((s) => s.selector === '#yrsInBusiness').value, 'New Venture', 'the authority\'s 0, as before from the blank standard');
+  assert.equal(buildPlan(r.record, geico).find((s) => s.name === 'Years in business').value, null, 'GEICO reads years in business only');
+  // The notes still give years in business (Q24).
+  const notes = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'NEW', claims_details: 'No', additional_notes: 'in business for 3 years' }, W44);
+  assert.deepEqual([notes.record.applicant.yearsInBusiness, notes.record.applicant.yearsExperience], [3, 0]);
+  assert.equal(buildPlan(notes.record, amwins).find((s) => s.selector === '#howLongFederalOperatingAuthorityActive').value, 'LESS THAN 1 YEAR');
+  // Counterexamples: other words are still not a number, and a blank stays blank.
+  for (const box of ['new trucks', 'Newark', 'abc']) {
+    const other = normalizeIntake({ ...raw, years_experience: box }, W44);
+    assert.equal(other.record.applicant.yearsExperience, null, box);
+    assert.ok(other.warnings.some((x) => x.code === 'years-experience.invalid'), box);
+  }
+  assert.equal(normalizeIntake({ ...raw, years_experience: '' }, W44).record.applicant.yearsExperience, null);
+});
+
+// Q26 (TNI, 2026-10-26: answer to PR question): "no" in the USDOT or MC box is an explicit No, the
+// client has no USDOT (or MC) number, which a blank box is not. The has-a-USDOT-number questions
+// answer No.
+test('"no" in the USDOT or MC box is an explicit No (W44-15)', () => {
+  const intake = (fields) => normalizeIntake({ ...raw, mc_number: '', mc_dot_60days: '', ...fields }, W44);
+  const progressiveDot = (r) => buildPlan(r.record, progressive).find((s) => s.q === '1ED').value;
+  const geicoDot = (r) => buildPlan(r.record, geico).find((s) => s.name === 'Has a USDOT number').value;
+  const amwinsStep = (r, sel) => buildPlan(r.record, amwins).find((s) => s.selector === sel).value;
+  for (const box of ['no', 'No', 'NO', 'no.']) {
+    const r = intake({ dot_number: box });
+    assert.equal(r.record.applicant.dot, null, box);
+    assert.equal(r.record.applicant.noDot, true, box);
+    assert.ok(!r.warnings.some((x) => x.code === 'id.invalid'), box);
+    assert.equal(r.warnings.find((x) => x.code === 'dot.none')?.level, 'info', box);
+    assert.equal(progressiveDot(r), 'No - and the customer will not have a USDOT number', box);
+    assert.equal(geicoDot(r), 'No', box);
+    assert.equal(amwinsStep(r, '#hasDotNumber'), false, box);
+    assert.equal(amwinsStep(r, '#noNumber'), true, box);
+  }
+  const mc = intake({ mc_number: 'NO' });
+  assert.equal(mc.record.applicant.mc, null);
+  assert.equal(mc.record.applicant.noMc, true);
+  assert.ok(!mc.warnings.some((x) => x.code === 'id.invalid'));
+  assert.equal(mc.warnings.find((x) => x.code === 'mc.none')?.level, 'info');
+  assert.equal(amwinsStep(mc, '#hasMcNumber'), false);
+  assert.equal(geicoDot(mc), 'Yes', 'the USDOT number is still the intake\'s');
+  // The 60-day answer saying one is coming still decides: Progressive's Not Yet, GEICO's agent.
+  const coming = intake({ dot_number: 'no', mc_dot_60days: 'Yes' });
+  assert.equal(progressiveDot(coming), 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days');
+  assert.equal(geicoDot(coming), null);
+  // Counterexamples: a blank box is not a No, and a real number is unaffected.
+  const blank = intake({ dot_number: '' });
+  assert.equal(blank.record.applicant.noDot, null);
+  assert.equal(progressiveDot(blank), null);
+  assert.equal(geicoDot(blank), null);
+  const number = intake({ dot_number: 'USDOT 1234567' });
+  assert.deepEqual([number.record.applicant.dot, number.record.applicant.noDot], ['1234567', null]);
+  assert.equal(progressiveDot(number), 'Yes - the customer has a USDOT number');
+  assert.equal(geicoDot(number), 'Yes');
+  assert.equal(amwinsStep(number, '#hasDotNumber'), true);
+  assert.ok(intake({ dot_number: 'none yet' }).warnings.some((x) => x.code === 'id.invalid'), 'other words are still not a number');
+});
+
+// Q27 (TNI, 2026-10-26: answer to PR question): "over N", "about N", "around N", "more than N" and
+// "approximately N" years in business in the notes are N, with the check quoting the phrase.
+test('qualified years in business in the notes read as the figure, with the check quoting them (W44-09)', () => {
+  for (const notes of ['over 3 years in business', 'In business for over 3 years', 'about 3 years in business', 'in biz for around 3 yrs',
+    'More than 3 years in business', 'Approximately 3 years in business', 'in business for approx. 3 years', 'In business for about 3+ years']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearsInBusiness, 3, notes);
+    const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+    assert.ok(w?.msg.includes(`"${notes}"`), `${notes}: the check quotes the phrase`);
+    assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.default'), notes);
+  }
+  // A qualified figure and a plain one that agree are one answer.
+  assert.equal(noYears('over 3 years in business\nIn business for 3 years').record.applicant.yearsInBusiness, 3);
+});
+
+// R10 (TNI, 2026-10-26: answer to PR question): "less than 1 year" or "under 1 year" in business,
+// in the notes, is 0 years (New Venture). Any other "less than N" or "under N" stays the agent's.
+test('"less than 1 year" or "under 1 year" in business in the notes is 0 years (W44-09, R10)', () => {
+  for (const notes of ['less than 1 year in business', 'In business for less than 1 year', 'Under 1 yr in biz', 'in biz for under 1 year']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearsInBusiness, 0, notes);
+    assert.equal(r.record.applicant.yearEstablished, null, notes);
+    const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+    assert.equal(w?.level, 'check', notes);
+    assert.ok(w.msg.includes(`"${notes}"`), `${notes}: the check quotes the phrase`);
+    assert.match(w.msg, /years in business is 0 \("(?:less than|under) 1 y\w*" read as 0\)/i, notes);
+    assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.default'), notes);
+    assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'] }, notes);
+    const amwinsYears = buildPlan(r.record, amwins).find((s) => s.selector === '#yrsInBusiness');
+    assert.deepEqual([amwinsYears.value, amwinsYears.source], ['New Venture', 'derived'], notes);
+    assert.equal(buildPlan(r.record, geico).find((s) => s.name === 'Years in business').value, 'Less than 1', notes);
+  }
+  // Counterexamples: any other figure after "less than" or "under" stays the agent's (named since
+  // round-6 answer 4), as does a 0 disagreeing with a start year; a clause about something else is
+  // silent.
+  for (const notes of ['less than 3 years in business', 'In business for under 2 years', 'under 10 yrs in biz']) leavesUnread(notes);
+  leavesUnread('less than 1 year in business\nEstablished 2019', ['less than 1 year in business', 'Established 2019']);
+  leavesYears('less than 1 year driving');
+});
+
+// R11 (TNI, 2026-10-26: answer to PR question): a duration in months converts to whole years,
+// rounded down ("18 months" is 1, "6 months" is 0). "almost", "nearly", "~" and ">" stay unread.
+// T7 (TNI, 2026-10-26: answer to PR question, confirmed): "over 18 months" and "about 6 months" are
+// those months, rounded down (1, 0), in either wording.
+test('months in business in the notes are whole years, rounded down (W44-09, R11, T7)', () => {
+  for (const [notes, years] of [['18 months in business', 1], ['In business for 6 months', 0], ['in biz 24 mos', 2], ['12 months in business', 1],
+    ['11 months in business', 0], ['In business for 30+ months', 2], ['over 18 months in business', 1], ['in business for about 6 months', 0],
+    ['In business for over 18 months', 1], ['about 6 months in business', 0]]) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearsInBusiness, years, notes);
+    assert.equal(r.record.applicant.yearEstablished, null, notes);
+    const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+    assert.equal(w?.level, 'check', notes);
+    assert.ok(w.msg.includes(`"${notes}"`), `${notes}: the check quotes the phrase`);
+    assert.match(w.msg, new RegExp(`years in business is ${years} \\("[^"]*\\d+ mo\\w*" read as ${years}\\)`), `${notes}: says how it was read`);
+  }
+  for (const notes of ['18 months in business', 'over 18 months in business']) {
+    const r = noYears(notes);
+    assert.equal(buildPlan(r.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, '1', notes);
+    assert.equal(buildPlan(r.record, geico).find((s) => s.name === 'Years in business').value, '1', notes);
+  }
+  for (const notes of ['in business for 6 months', 'about 6 months in business']) {
+    const r = noYears(notes);
+    assert.equal(buildPlan(r.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, 'New Venture', notes);
+    assert.equal(buildPlan(r.record, geico).find((s) => s.name === 'Years in business').value, 'Less than 1', notes);
+  }
+  // Agreeing with a figure in years is one answer.
+  assert.equal(noYears('18 months in business\nIn business for 1 year').record.applicant.yearsInBusiness, 1);
+  // Counterexamples: the undecided qualifiers, "under" or "less than" more than 12 months (T8), and
+  // months disagreeing with years stay the agent's (named since round-6 answer 4); months of something else
+  // and a bare duration are silent. A decimal is rounded down (round-6 answer 3): "2.5 months" is 0.
+  for (const notes of ['almost 18 months in business', 'in business for nearly 6 months', '~18 months in business', '>18 months in business',
+    'In business for under 18 months']) leavesUnread(notes);
+  leavesUnread('18 months in business\nIn business for 3 years', ['18 months in business', 'In business for 3 years']);
+  for (const notes of ['18 months of driving experience', '18 months in business driving for Amazon', '18 months']) leavesYears(notes);
+  readsYears('2.5 months in business', 0, '2.5 months');
+});
+
+// T8 (TNI, 2026-10-26: answer to PR question): three more forms of years in business in the notes
+// are read: "less than N months" with N up to 12 is 0; a number in words is read as its digits
+// ("less than a year" is 0, "two years" is 2); years plus months are the whole years ("1 year 6
+// months" is 1). What the answer doesn't name stays as it was.
+const readsYears = (notes, years, reading) => {
+  const r = noYears(notes);
+  assert.equal(r.record.applicant.yearsInBusiness, years, notes);
+  assert.equal(r.record.applicant.yearEstablished, null, notes);
+  const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+  assert.equal(w?.level, 'check', notes);
+  assert.ok(w.msg.includes(`"${notes}"`), `${notes}: the check quotes the phrase`);
+  if (reading) assert.ok(w.msg.includes(`years in business is ${years} ("${reading}" read as ${years})`), `${notes}: says how it was read: ${w.msg}`);
+  assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.default'), notes);
+  assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'] }, notes);
+  return r;
+};
+const leavesYears = (notes) => {
+  const r = noYears(notes);
+  assert.equal(r.record.applicant.yearsInBusiness, null, notes);
+  assert.ok(r.warnings.some((x) => x.code === 'years-in-business.default'), `${notes}: still TNI's blank standard`);
+  assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.notes'), notes);
+};
+// The figure read from a note that holds another number too, and the phrase the check quotes.
+const readsOnly = (notes, years, quote) => {
+  const r = noYears(notes);
+  assert.equal(r.record.applicant.yearsInBusiness, years, notes);
+  assert.ok(r.warnings.find((x) => x.code === 'years-in-business.notes')?.msg.includes(`"${quote}"`), `${notes}: quotes "${quote}"`);
+};
+const plansYears = (notes) => {
+  const r = noYears(notes).record;
+  const step = buildPlan(r, amwins).find((s) => s.selector === '#yrsInBusiness');
+  return [step.value, step.source, buildPlan(r, geico).find((s) => s.name === 'Years in business').value];
+};
+
+test('"less than N months" in business, N up to 12, is 0 years (W44-09, T8)', () => {
+  for (const [notes, reading] of [['less than 6 months in business', 'less than 6 months'], ['In business for less than 6 months', 'less than 6 months'],
+    ['less than 12 months in business', 'less than 12 months'], ['in biz for less than 1 month', 'less than 1 month'],
+    ['Less than 11 mos in biz', 'Less than 11 mos'], ['less than six months in business', 'less than six months'],
+    ['in business for less than twelve months', 'less than twelve months']]) {
+    readsYears(notes, 0, reading);
+    assert.deepEqual(plansYears(notes), ['New Venture', 'derived', 'Less than 1'], notes);
+  }
+  // Counterexamples: more than 12 months stays the agent's, as before (named since round-6 answer 4), and a
+  // clause about something else is silent. "under" months: U1, below; "less than a month": V11, below.
+  for (const notes of ['less than 13 months in business', 'In business for less than 18 months', 'less than 24 mos in biz']) leavesUnread(notes);
+  leavesYears('less than 6 months driving');
+  // Another number in the same note is not taken: a vehicle count, a driver's experience, a date.
+  readsOnly('3 trucks, less than 6 months in business', 0, 'less than 6 months in business');
+  readsOnly('Driver has 10 years experience; less than 6 months in business', 0, 'less than 6 months in business');
+  readsOnly('less than 6 months in business, truck bought 03/2026', 0, 'less than 6 months in business');
+});
+
+test('numbers in words in the notes read as their digits (W44-09, T8)', () => {
+  const words = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+  words.forEach((word, i) => {
+    const unit = i === 0 ? 'year' : 'years';
+    readsYears(`${word} ${unit} in business`, i + 1, `${word} ${unit}`);
+    const capital = `${word[0].toUpperCase()}${word.slice(1)}`;
+    readsYears(`In business for ${capital} ${unit}`, i + 1, `${capital} ${unit}`);
+  });
+  for (const [notes, years, reading] of [['eleven yrs in biz', 11, 'eleven yrs'], ['Twelve years in business', 12, 'Twelve years'],
+    ['twenty-five years in business', 25, 'twenty-five years'], ['in business for twenty five years', 25, 'twenty five years'],
+    ['over five years in business', 5, 'over five years'], ['in business for about two years', 2, 'about two years'],
+    ['eighteen months in business', 1, 'eighteen months'], ['In business for six months', 0, 'six months'],
+    ['less than a year in business', 0, 'less than a year'], ['In business for less than a year', 0, 'less than a year'],
+    ['less than one year in business', 0, 'less than one year'], ['under one year in business', 0, 'under one year']]) {
+    readsYears(notes, years, reading);
+  }
+  assert.deepEqual(plansYears('less than a year in business'), ['New Venture', 'derived', 'Less than 1']);
+  assert.deepEqual(plansYears('two years in business'), ['2', 'derived', '2']);
+  // In words and in digits, agreeing or not.
+  assert.equal(noYears('two years in business\nIn business for 2 years').record.applicant.yearsInBusiness, 2);
+  leavesUnread('two years in business\nIn business for 3 years', ['two years in business', 'In business for 3 years']);
+  // Counterexamples: "a few years" and other qualifiers stay the agent's (named since round-6 answer 4), and
+  // clauses about something else are silent. "a year", "half a year", "first year" (V11), ranges in
+  // words (V7) and "one and a half years" (round-6 answer 3): below.
+  for (const notes of ['a few years in business', 'several years in business', 'almost three years in business']) leavesUnread(notes);
+  for (const notes of ['three years driving', 'CDL for two years', 'Driver experience: three years in business',
+    'insured for two years', 'three years', 'less than a year driving']) leavesYears(notes);
+  // Another number in the same note is not taken: a vehicle count, a driver's experience, a date.
+  readsOnly('Two trucks, three years in business', 3, 'three years in business');
+  readsOnly('Three drivers; in business for two years', 2, 'in business for two years');
+  readsOnly('In business for two years, 3 trucks', 2, 'In business for two years');
+  readsOnly('One driver with five years experience. In business for two years', 2, 'In business for two years');
+  readsOnly('Owner has ten years driving, in business for one year', 1, 'in business for one year');
+  readsOnly('in business for two years, started 10/2024', 2, 'in business for two years');
+});
+
+test('years plus months in business in the notes are the whole years (W44-09, T8)', () => {
+  for (const [notes, years, reading] of [['1 year 6 months in business', 1, '1 year 6 months'], ['2 years, 6 months in business', 2, '2 years 6 months'],
+    ['In business for 1 year 6 months', 1, '1 year 6 months'], ['in business for 2 years, 6 months', 2, '2 years 6 months'],
+    ['3 years and 2 months in business', 3, '3 years 2 months'], ['1 yr 11 mos in biz', 1, '1 yr 11 mos'],
+    ['one year six months in business', 1, 'one year six months'], ['two years and six months in business', 2, 'two years six months'],
+    ['In business for 4 yrs. 3 mos.', 4, '4 yrs 3 mos']]) {
+    readsYears(notes, years, reading);
+  }
+  assert.deepEqual(plansYears('1 year 6 months in business'), ['1', 'derived', '1']);
+  assert.deepEqual(plansYears('2 years, 6 months in business'), ['2', 'derived', '2']);
+  // Agreeing with months alone, or not agreeing with years.
+  assert.equal(noYears('1 year 6 months in business\n18 months in business').record.applicant.yearsInBusiness, 1);
+  leavesUnread('1 year 6 months in business\nIn business for 3 years', ['1 year 6 months in business', 'In business for 3 years']);
+  // Counterexamples: a qualifier not read before years stays the agent's (named since round-6 answer 4);
+  // "less than 1 year 6 months" is not under a year. A clause about something else and a bare
+  // duration are silent.
+  for (const notes of ['less than 1 year 6 months in business', 'almost 2 years 6 months in business']) leavesUnread(notes);
+  for (const notes of ['1 year 6 months driving', 'Driver experience 10 years, 6 months in business', '1 year 6 months']) leavesYears(notes);
+  // Another number in the same note is not taken: a vehicle count, a driver's experience, a date.
+  readsOnly('3 trucks, 1 year 6 months in business', 1, '1 year 6 months in business');
+  readsOnly('10 years driving experience, 2 years 6 months in business', 2, '2 years 6 months in business');
+  readsOnly('1 year 6 months in business as of 10/2026', 1, '1 year 6 months in business as of 10/2026');
+  readsOnly('2 trucks, 6 months in business', 0, '6 months in business');
+});
+
+// U1 (TNI, 2026-10-27: answer to PR question U1): "under" reads as "less than" does after T8.
+// "under N months" with N from 1 to 12 is 0, "under a year" is 0, and numbers in words work after
+// "under" too. R10's "under 1 year" stays 0. More than 12 months, "under 1 year 6 months", and
+// "under" before another number in the same note (a vehicle count, a driver's experience, an age)
+// are left as they were.
+test('"under N months" (N up to 12) and "under a year" in business are 0 years (W44-09, U1)', () => {
+  for (const [notes, reading] of [['under 6 months in business', 'under 6 months'], ['In business for under 6 months', 'under 6 months'],
+    ['in business for under 12 months', 'under 12 months'], ['Under 1 month in biz', 'Under 1 month'], ['under 11 mos in biz', 'under 11 mos'],
+    ['under six months in business', 'under six months'], ['in business for under twelve months', 'under twelve months'],
+    ['under a year in business', 'under a year'], ['In business for under a year', 'under a year'], ['Under a yr in biz', 'Under a yr'],
+    ['under one year in business', 'under one year'], ['Under 1 yr in biz', 'Under 1 yr']]) {
+    readsYears(notes, 0, reading);
+    assert.deepEqual(plansYears(notes), ['New Venture', 'derived', 'Less than 1'], notes);
+  }
+  // Agreeing with "less than", or with months alone, is one answer; disagreeing settles nothing.
+  assert.equal(noYears('under 6 months in business\nIn business for less than a year').record.applicant.yearsInBusiness, 0);
+  assert.equal(noYears('under a year in business\n6 months in business').record.applicant.yearsInBusiness, 0);
+  leavesUnread('under 6 months in business\nIn business for 3 years', ['under 6 months in business', 'In business for 3 years']);
+  // Counterexamples, unread as they were (named since round-6 answer 4): more than 12 months, years plus
+  // months, other figures after "under", "a" before anything but a year or a month (V11, below). A
+  // clause about something else is silent.
+  for (const notes of ['under 13 months in business', 'In business for under 18 months', 'under 24 mos in biz', 'under eighteen months in business',
+    'under 1 year 6 months in business', 'under a year 6 months in business', 'under one year six months in business',
+    'under 2 years in business', 'under two years in business', 'under a few years in business']) leavesUnread(notes);
+  leavesUnread('in business for under 1 year, 6 months', ['in business for under 1 year, 6 months']);
+  for (const notes of ['under 6 months driving', 'under a year of driving experience']) leavesYears(notes);
+  // "under" before another number in the same note is not taken: a vehicle count, a driver's
+  // experience, an age. The years come only from the phrase beside "in business".
+  readsOnly('under 5 trucks, 3 years in business', 3, '3 years in business');
+  readsOnly('Driver has under 2 years experience; in business for 4 years', 4, 'in business for 4 years');
+  readsOnly('Owner under 25 years old, in business for 2 years', 2, 'in business for 2 years');
+  readsOnly('under 5 trucks, under 6 months in business', 0, 'under 6 months in business');
+  readsOnly('Driver has under 2 years experience; under a year in business', 0, 'under a year in business');
+  readsOnly('Owner under 25 years old, in business for under 6 months', 0, 'in business for under 6 months');
+  for (const notes of ['under 5 trucks', 'Driver has under 2 years experience', 'Owner under 25 years old']) leavesYears(notes);
+});
+
+// V7 (TNI, 2026-10-27: answer to PR question V7): a range gives an answer only when both ends give
+// the same one. Years in business is a number, so "2-3 years in business" is the agent's, with the
+// years-in-business.notes check naming the line, in digits or in words. Before, "2-3 years in
+// business" and "2 to 3 years in business" read the last figure (3). A range whose ends round to the
+// same whole years ("18-20 months", both 1) gives that number.
+const leavesRange = (notes, reading, fields = { year_established: 'N/A', years_experience: 'N/A' }, line = notes) => {
+  const r = normalizeIntake({ ...raw, ...fields, claims_details: 'No', additional_notes: notes }, W44);
+  assert.equal(r.record.applicant.yearsInBusiness, null, notes);
+  assert.equal(r.record.applicant.yearEstablished, null, notes);
+  assert.equal(r.record.applicant.yearsInBusinessRange, true, notes);
+  const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+  assert.equal(w?.level, 'check', notes);
+  assert.ok(w.msg.includes(`"${line}"`), `${notes}: the check names the line: ${w?.msg}`);
+  assert.ok(w.msg.includes(`a range ("${reading}")`), `${notes}: says it is a range: ${w.msg}`);
+  assert.match(w.msg, /left to you/, notes);
+  assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.default'), `${notes}: not the blank standard`);
+  assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'] }, notes);
+  // The agent's on every carrier that asks it: AmWINS neither New Venture nor the authority years.
+  const amwinsYears = buildPlan(r.record, amwins).find((s) => s.selector === '#yrsInBusiness');
+  assert.equal(amwinsYears.value, null, notes);
+  assert.match(amwinsYears.note, /range/, notes);
+  const geicoYears = buildPlan(r.record, geico).find((s) => s.name === 'Years in business');
+  assert.equal(geicoYears.value, null, notes);
+  assert.match(geicoYears.note, /range/, notes);
+  return r;
+};
+
+test('a range of years in business in the notes gives an answer only when both ends give the same one (W44-09, V7)', () => {
+  // Ends that differ: the agent's. In digits, and in words (ranges in words count too).
+  for (const [notes, reading] of [['2-3 years in business', '2-3 years'], ['2 to 3 years in business', '2 to 3 years'],
+    ['in business for 2-3 years', '2-3 years'], ['In business for 2 to 3 years', '2 to 3 years'], ['2–3 yrs in biz', '2–3 yrs'],
+    ['2 - 3 years in business', '2 - 3 years'], ['2 or 3 years in business', '2 or 3 years'], ['between 2 and 3 years in business', 'between 2 and 3 years'],
+    ['6-8 years in business', '6-8 years'], ['3-5+ years in business', '3-5+ years'], ['about 2-3 years in business', 'about 2-3 years'],
+    ['in business for 18-24 months', '18-24 months'], ['6-18 months in business', '6-18 months'],
+    ['two to three years in business', 'two to three years'], ['two-three years in business', 'two-three years'],
+    ['in business for two to three years', 'two to three years'], ['two or three years in business', 'two or three years'],
+    ['between two and three years in business', 'between two and three years'], ['two - three years in business', 'two - three years'],
+    ['Twenty to thirty years in business', 'Twenty to thirty years'], ['in biz for 2 to three yrs', '2 to three yrs']]) {
+    leavesRange(notes, reading);
+  }
+  // Years under own authority on the form: the notes still win for years in business (Q24), so the
+  // range is the agent's, not the authority years.
+  const authority = leavesRange('in business for 2-3 years', '2-3 years', { year_established: 'N/A', years_experience: '4' });
+  assert.match(authority.warnings.find((x) => x.code === 'years-in-business.notes').msg, /years under own authority \(4\)/);
+  assert.equal(buildPlan(authority.record, amwins).find((s) => s.selector === '#howLongFederalOperatingAuthorityActive').value, 'MORE THAN 3 YEARS', 'the authority\'s own question keeps the form\'s 4');
+  // A range beside a plain statement: still the agent's, the range named.
+  leavesRange('In business for 3 years\n2-3 years in business', '2-3 years', undefined, '2-3 years in business');
+  // Ends that round to the same whole years: that number, with the check saying how it was read.
+  for (const [notes, years, reading] of [['18-20 months in business', 1, '18-20 months'], ['in business for 18-20 months', 1, '18-20 months'],
+    ['6-8 months in business', 0, '6-8 months'], ['In business for 13 to 23 months', 1, '13 to 23 months'],
+    ['eighteen to twenty months in business', 1, 'eighteen to twenty months'], ['about 18-20 months in business', 1, 'about 18-20 months']]) {
+    const r = readsYears(notes, years, reading);
+    assert.equal(r.record.applicant.yearsInBusinessRange, undefined, notes);
+  }
+  assert.deepEqual(plansYears('18-20 months in business'), ['1', 'derived', '1']);
+  assert.deepEqual(plansYears('6-8 months in business'), ['New Venture', 'derived', 'Less than 1']);
+  // Counterexamples: a range of something else isn't a range of years in business, nor are a
+  // compound number in words ("twenty-five"), years plus months, or a range with no "in business".
+  readsYears('twenty-five years in business', 25, 'twenty-five years');
+  readsYears('3 years and 2 months in business', 3, '3 years 2 months');
+  readsOnly('2-3 trucks, 4 years in business', 4, '4 years in business');
+  readsOnly('Driver experience 2-3 years; in business for 5 years', 5, 'in business for 5 years');
+  readsOnly('1 to 2 loads a week, in business for 2 years', 2, 'in business for 2 years');
+  for (const notes of ['2-3 years driving', 'CDL for 2-3 years', '2-3 years', 'two to three years', 'Insured 2-3 years', '20-25 years in the business']) {
+    leavesYears(notes);
+    assert.equal(noYears(notes).record.applicant.yearsInBusinessRange, undefined, notes);
+  }
+});
+
+// V10 (TNI, 2026-10-27: answer to PR question V10, confirmed): "over" or "about" before years plus
+// months in business is the whole years: "over 1 year 6 months" is 1, "about 2 years, 3 months" is 2.
+test('"over" or "about" before years plus months in business is the whole years (W44-09, V10)', () => {
+  for (const [notes, years, reading] of [['over 1 year 6 months in business', 1, 'over 1 year 6 months'],
+    ['about 2 years, 3 months in business', 2, 'about 2 years 3 months'], ['In business for over 1 year 6 months', 1, 'over 1 year 6 months'],
+    ['in business for about 2 years 3 months', 2, 'about 2 years 3 months'], ['over one year six months in business', 1, 'over one year six months']]) {
+    readsYears(notes, years, reading);
+  }
+  assert.deepEqual(plansYears('over 1 year 6 months in business'), ['1', 'derived', '1']);
+  assert.deepEqual(plansYears('about 2 years, 3 months in business'), ['2', 'derived', '2']);
+  // Counterexamples: a qualifier not read and "less than" before years plus months stay the agent's
+  // (named since round-6 answer 4); a clause about something else is silent.
+  for (const notes of ['almost 1 year 6 months in business', 'nearly 2 years, 3 months in business', 'less than 1 year 6 months in business']) leavesUnread(notes);
+  leavesYears('over 1 year 6 months driving');
+});
+
+// V11 (TNI, 2026-10-27: answer to PR question V11): the definite phrases are read in business: "a
+// year" is 1, "half a year" 0, "a year and a half" 1, "less than a month" and "under a month" 0, and
+// "first year in business" 0. "a few years" and "several years" stay the agent's.
+test('the definite phrases of years in business in the notes are read (W44-09, V11)', () => {
+  for (const [notes, years, reading] of [['a year in business', 1, 'a year'], ['In business for a year', 1, 'a year'], ['A yr in biz', 1, 'A yr'],
+    ['half a year in business', 0, 'half a year'], ['in business for half a year', 0, 'half a year'],
+    ['a year and a half in business', 1, 'a year and a half'], ['In business for a year and a half', 1, 'a year and a half'],
+    ['less than a month in business', 0, 'less than a month'], ['in business for less than a month', 0, 'less than a month'],
+    ['under a month in business', 0, 'under a month'], ['In business for under a month', 0, 'under a month'],
+    ['first year in business', 0, 'first year'], ['First year in biz', 0, 'First year'], ['In our first year in business', 0, 'first year'],
+    // A word read as the figure before "a year" (answer 4 with V11; confirmed in round-6 answer 1).
+    ['about a year in business', 1, 'about a year'], ['in business for over a year', 1, 'over a year'], ['More than a year in business', 1, 'More than a year']]) {
+    readsYears(notes, years, reading);
+  }
+  assert.deepEqual(plansYears('a year in business'), ['1', 'derived', '1']);
+  assert.deepEqual(plansYears('a year and a half in business'), ['1', 'derived', '1']);
+  for (const notes of ['half a year in business', 'less than a month in business', 'under a month in business', 'first year in business']) {
+    assert.deepEqual(plansYears(notes), ['New Venture', 'derived', 'Less than 1'], notes);
+  }
+  // Agreeing is one answer; disagreeing settles nothing ("a year" now reads, so it blocks 3).
+  assert.equal(noYears('a year in business\nIn business for 1 year').record.applicant.yearsInBusiness, 1);
+  assert.equal(noYears('half a year in business\n6 months in business').record.applicant.yearsInBusiness, 0);
+  assert.equal(noYears('first year in business\nless than a year in business').record.applicant.yearsInBusiness, 0);
+  leavesUnread('a year in business\nIn business for 3 years', ['a year in business', 'In business for 3 years']);
+  // Stay the agent's (named since round-6 answer 4): "a few years", "several years", and what V11
+  // and round-6 answer 3 don't read. What answer 3 reads ("a month", "one and a half years" …): its
+  // test, below.
+  for (const notes of ['a few years in business', 'In business for a few years', 'several years in business', 'in business for several years',
+    'a couple of years in business', 'under a year and a half in business', 'almost a year in business']) leavesUnread(notes);
+  // "a year" doesn't catch other phrases: alone, and beside a statement of years in business. Those
+  // that state the business's time, though not as a figure read, are the agent's (round-6 answer 4).
+  // "a year-old business" is 1 since round-7 answer 3 (its test, below).
+  for (const notes of ['Started a year ago', 'Truck inspected once a year', 'Owns a year-old truck', 'Driver has a year of experience',
+    'a year', 'first year driving', 'First year with Progressive']) leavesYears(notes);
+  for (const notes of ['Went into business a year ago', 'in business a year ago']) leavesUnread(notes);
+  readsOnly('Bought the truck a year ago, in business for 3 years', 3, 'in business for 3 years');
+  readsOnly('Inspected once a year; 2 years in business', 2, '2 years in business');
+  readsOnly('Owns a year-old truck, in business for 4 years', 4, 'in business for 4 years');
+  readsOnly('Driver has a year of experience. In business for 2 years', 2, 'In business for 2 years');
+  readsOnly('first year driving, in business for 5 years', 5, 'in business for 5 years');
+  readsOnly('Truck is a year old; in business for 6 years', 6, 'in business for 6 years');
+});
+
+// Round-6 answer 4 (TNI, 2026-10-27): an in-business statement the reader doesn't
+// take leaves AmWINS' years in business to the agent, with the years-in-business.notes check naming
+// the line, like a range (V7): not the blank standard's New Venture with years-in-business.default.
+// GEICO's years band is the agent's, as it already was, with its note unchanged.
+const leavesUnread = (notes, lines = [notes], fields = { year_established: 'N/A', years_experience: 'N/A' }) => {
+  const r = normalizeIntake({ ...raw, ...fields, claims_details: 'No', additional_notes: notes }, W44);
+  const a = r.record.applicant;
+  assert.equal(a.yearsInBusiness, null, notes);
+  assert.equal(a.yearEstablished, null, notes);
+  assert.equal(a.yearsInBusinessUnread, true, notes);
+  assert.equal(a.yearsInBusinessRange, undefined, notes);
+  const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+  assert.equal(w?.level, 'check', notes);
+  for (const line of lines) assert.ok(w.msg.includes(`"${line}"`), `${notes}: the check names "${line}": ${w.msg}`);
+  assert.match(w.msg, /so years in business is left to you/, notes);
+  assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.default'), `${notes}: not the blank standard`);
+  assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'] }, notes);
+  const amwinsYears = buildPlan(r.record, amwins).find((s) => s.selector === '#yrsInBusiness');
+  assert.equal(amwinsYears.value, null, `${notes}: AmWINS leaves it to the agent, not New Venture`);
+  assert.match(amwinsYears.note, /answer it yourself/, notes);
+  assert.doesNotMatch(amwinsYears.note, /range/, notes);
+  const geicoYears = buildPlan(r.record, geico).find((s) => s.name === 'Years in business');
+  assert.equal(geicoYears.value, null, notes);
+  assert.match(geicoYears.note, /^The intake has no years in business/, `${notes}: GEICO as before`);
+  return r;
+};
+
+// Round-6 answer 3 (TNI, 2026-10-27): the clear phrases V11 doesn't name are read,
+// with the check saying how: "a month", "about a month", "1st year" and "less than half a year" in
+// business are 0; "one and a half years", "1 year and a half", "1.5 years" and "second year in
+// business" are 1, rounded down like months. The vague ones, "a couple of years" and "under a year
+// and a half", stay unread: the agent's (round-6 answer 4).
+test('the clear phrases V11 doesn\'t name are read, the vague ones left to the agent (W44-09, round-6 answer 3)', () => {
+  for (const [notes, years, reading] of [['a month in business', 0, 'a month'], ['In business for a month', 0, 'a month'], ['A month in biz', 0, 'A month'],
+    ['about a month in business', 0, 'about a month'], ['in business for about a month', 0, 'about a month'],
+    ['1st year in business', 0, '1st year'], ['In our 1st year in biz', 0, '1st year'],
+    ['less than half a year in business', 0, 'less than half a year'], ['In business for less than half a year', 0, 'less than half a year'],
+    ['one and a half years in business', 1, 'one and a half years'], ['In business for one and a half years', 1, 'one and a half years'],
+    ['1 year and a half in business', 1, '1 year and a half'], ['in business for 1 year and a half', 1, '1 year and a half'],
+    ['1.5 years in business', 1, '1.5 years'], ['In business for 1.5 yrs', 1, '1.5 yrs'],
+    ['second year in business', 1, 'second year'], ['In our second year in business', 1, 'second year']]) {
+    readsYears(notes, years, reading);
+  }
+  for (const notes of ['a month in business', 'about a month in business', '1st year in business', 'less than half a year in business']) {
+    assert.deepEqual(plansYears(notes), ['New Venture', 'derived', 'Less than 1'], notes);
+  }
+  for (const notes of ['one and a half years in business', '1 year and a half in business', '1.5 years in business', 'second year in business']) {
+    assert.deepEqual(plansYears(notes), ['1', 'derived', '1'], notes);
+  }
+  // The same readings with the rules already decided: "under" as "less than" (U1), digits and words
+  // alike (T8), and rounded down like months for any whole years.
+  readsYears('under half a year in business', 0, 'under half a year');
+  readsYears('2nd year in business', 1, '2nd year');
+  readsYears('2.5 years in business', 2, '2.5 years');
+  readsYears('two and a half years in business', 2, 'two and a half years');
+  readsYears('about 1.5 years in business', 1, 'about 1.5 years');
+  // Agreeing is one answer.
+  assert.equal(noYears('1.5 years in business\n18 months in business').record.applicant.yearsInBusiness, 1);
+  assert.equal(noYears('a month in business\nfirst year in business').record.applicant.yearsInBusiness, 0);
+  // Still unread, as the vague ones and what has more than a year after "under" or "less than": the
+  // agent's, with the check naming the line (round-6 answer 4).
+  for (const notes of ['a couple of years in business', 'In business for a couple of years', 'under a year and a half in business',
+    'under one and a half years in business', 'less than 1.5 years in business', 'almost a month in business']) leavesUnread(notes);
+  // "a month", the ordinals and the halves catch nothing else.
+  for (const notes of ['Started a month ago', 'Truck serviced once a month', 'Owns a month-old truck', 'Driver has a month of experience',
+    'a month', 'second year driving', '1st year with Progressive', '1.5 years driving', 'one and a half years of experience']) leavesYears(notes);
+  readsOnly('Serviced once a month, in business for 3 years', 3, 'in business for 3 years');
+  readsOnly('2 trucks, 1.5 years in business', 1, '1.5 years in business');
+});
+
+test('an in-business statement the reader doesn\'t take leaves years in business to the agent, like a range (W44-09, round-6 answer 4)', () => {
+  for (const notes of ['a few years in business', 'In business for a few years', 'several years in business', 'in business for several years',
+    'less than 3 years in business', 'In business for under 2 years', 'almost 3 years in business', 'in business for nearly 3 years',
+    '~3 years in business', '>3 years in business', '<2 years in business', 'almost a year in business', 'less than 18 months in business',
+    'under 1 year 6 months in business', 'third year in business', 'in business for 300 years', 'In business since last year',
+    'In business a long time', 'Went into business a year ago', 'Not in business for 3 years yet', 'Established 2031']) {
+    const r = leavesUnread(notes);
+    assert.match(r.warnings.find((x) => x.code === 'years-in-business.notes').msg, /not read as a number of years/, notes);
+  }
+  // Two figures that disagree, on two lines or in one clause: each named.
+  for (const [notes, lines] of [['In biz for 3+ years\nIn business for 6 years', ['In biz for 3+ years', 'In business for 6 years']],
+    ['3 years in business and 4 years in business', ['3 years in business and 4 years in business']],
+    ['a year in business\nIn business for 3 years', ['a year in business', 'In business for 3 years']],
+    ['less than 1 year in business\nEstablished 2019', ['less than 1 year in business', 'Established 2019']]]) {
+    const r = leavesUnread(notes, lines);
+    assert.match(r.warnings.find((x) => x.code === 'years-in-business.notes').msg, /figures that disagree/, notes);
+  }
+  // A figure not read beside one read: the agent's, the one not read named.
+  leavesUnread('In business for 3 years\nalmost 4 years in business', ['almost 4 years in business']);
+  // In the claims box, named there.
+  const claims = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'N/A', claims_details: 'No\nin business for several years', additional_notes: '' }, W44);
+  assert.equal(claims.record.applicant.yearsInBusinessUnread, true);
+  assert.match(claims.warnings.find((x) => x.code === 'years-in-business.notes').msg, /claims box says "in business for several years"/);
+  assert.deepEqual(claims.readFrom, { 'applicant.yearsInBusiness': ['claims_details'] });
+  // Years under own authority on the form: the notes still win for years in business (Q24), so the
+  // agent's, not the authority years, which stay for the authority's own question.
+  const authority = leavesUnread('in business for several years', undefined, { year_established: 'N/A', years_experience: '4' });
+  assert.match(authority.warnings.find((x) => x.code === 'years-in-business.notes').msg, /years under own authority \(4\)/);
+  assert.equal(buildPlan(authority.record, amwins).find((s) => s.selector === '#howLongFederalOperatingAuthorityActive').value, 'MORE THAN 3 YEARS');
+  // Counterexamples: notes silent about the business's years keep the blank standard, as before: no
+  // notes, other subjects, "in the business" (a career in the trade), a bare duration, and "in
+  // business" with no time.
+  for (const notes of ['', 'Needs cargo', '10 years driving', 'CDL for 5 years', 'Driver experience: 3+ years in business',
+    '18 months in business driving for Amazon', '20 years in the business', '3 Years', 'Started a year ago',
+    'Owner operator, new in business', 'Insured 2-3 years']) {
+    leavesYears(notes);
+    assert.equal(noYears(notes).record.applicant.yearsInBusinessUnread, undefined, notes);
+  }
+  // Years under own authority and silent notes: AmWINS takes the authority years, as before.
+  const silent = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: '4', claims_details: 'No', additional_notes: '10 years driving' }, W44);
+  assert.equal(buildPlan(silent.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, '4');
+  // A statement with no figure beside one read: the agent's too since round-7 answer 2 (its test, below).
+});
+
+// Round-7 answer 2 (TNI, 2026-10-27): a statement of years in business the reader doesn't take
+// stops a figure it reads beside it, as two figures that disagree do: the agent's, with the check
+// naming the lines. Before, "In business for 3 years" with "several years in business" read 3.
+test('a statement not read beside a figure read leaves years in business to the agent (W44-09, round-7 answer 2)', () => {
+  for (const [notes, lines] of [['In business for 3 years\nseveral years in business', ['In business for 3 years', 'several years in business']],
+    ['a couple of years in business\nIn business for 5 years', ['a couple of years in business', 'In business for 5 years']],
+    ['In business for 3 years. A few years in business', ['In business for 3 years', 'A few years in business']],
+    ['Not in business for 3 years yet\nIn business for 2 years', ['Not in business for 3 years yet', 'In business for 2 years']],
+    ['In business for 3 years\nalmost 4 years in business', ['In business for 3 years', 'almost 4 years in business']]]) {
+    const r = leavesUnread(notes, lines);
+    assert.match(r.warnings.find((x) => x.code === 'years-in-business.notes').msg, /not all read as a number of years/, notes);
+  }
+  // Across the two boxes: both named, and the answer points at both.
+  const both = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'N/A', claims_details: 'No\nin business for 3 years', additional_notes: 'several years in business' }, W44);
+  assert.equal(both.record.applicant.yearsInBusinessUnread, true);
+  assert.match(both.warnings.find((x) => x.code === 'years-in-business.notes').msg, /the claims box and the Additional Notes box say "in business for 3 years" and "several years in business"/);
+  assert.deepEqual(both.readFrom, { 'applicant.yearsInBusiness': ['claims_details', 'additional_notes'] });
+  assert.equal(buildPlan(both.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, null);
+  // Counterexamples: a figure beside notes about something else, or agreeing figures, still reads.
+  for (const notes of ['In business for 3 years\n10 years driving', 'In business for 3 years\nStarted a year ago', 'In business for 3 years\n20 years in the business',
+    'In business for 3 years\nNeeds cargo', 'In business for 3 years\n3 years in business']) {
+    readsOnly(notes, 3, 'In business for 3 years');
+  }
+});
+
+// Round-7 answer 3 (TNI, 2026-10-27): "a year-old business" is 1 and "N-year-old business" is N, with
+// the check saying how it was read. A vehicle's or a person's age stays out, as before.
+test('"a year-old business" and "N-year-old business" read as 1 and N (W44-09, round-7 answer 3)', () => {
+  for (const [notes, years, reading] of [['a year-old business', 1, 'a year-old'], ['A year old business', 1, 'A year old'],
+    ['3-year-old business', 3, '3-year-old'], ['a 3-year-old business', 3, '3-year-old'], ['3 year old business', 3, '3 year old'],
+    ['three-year-old business', 3, 'three-year-old'], ['5 yr old business', 5, '5 yr old'], ['We are a 10-year-old business', 10, '10-year-old'],
+    ['twenty-five-year-old business', 25, 'twenty-five-year-old'], ['2.5-year-old business', 2, '2.5-year-old']]) {
+    readsYears(notes, years, reading);
+  }
+  assert.deepEqual(plansYears('a year-old business'), ['1', 'derived', '1']);
+  assert.deepEqual(plansYears('3-year-old business'), ['3', 'derived', '3-6']);
+  // Agreeing is one answer; disagreeing is the agent's.
+  assert.equal(noYears('a year-old business\nIn business for 1 year').record.applicant.yearsInBusiness, 1);
+  leavesUnread('a 3-year-old business\nIn business for 5 years', ['a 3-year-old business', 'In business for 5 years']);
+  // Not read, so the agent's: a qualifier, a range.
+  for (const notes of ['almost a year-old business', '2-3 year old business']) leavesUnread(notes);
+  // A vehicle's or a person's age stays out: silent, or only the business's age taken.
+  for (const notes of ['Truck is 10 years old', 'Owns a year-old truck', '10-year-old business truck', 'a 5 year old trailer', 'Driver is 45 years old',
+    'Owner is 40 years old']) leavesYears(notes);
+  readsOnly('Truck is 10 years old, 3-year-old business', 3, '3-year-old business');
+});
+
+// R12 (TNI, 2026-10-26: answer to PR question): "no" in the USDOT box with an MC number on the
+// intake: GEICO's has-a-USDOT-number answers No too, as Progressive's already did. A 60-day Yes
+// still decides (R13).
+test('"no" in the USDOT box answers GEICO\'s USDOT question No also with an MC number (W44-15, R12)', () => {
+  const intake = (fields) => normalizeIntake({ ...raw, mc_number: '7654321', mc_dot_60days: '', ...fields }, W44);
+  const geicoStep = (r) => buildPlan(r.record, geico).find((s) => s.name === 'Has a USDOT number');
+  const progressiveDot = (r) => buildPlan(r.record, progressive).find((s) => s.q === '1ED').value;
+  for (const box of ['no', 'NO', 'No.']) {
+    const r = intake({ dot_number: box });
+    assert.equal(r.record.applicant.mc, '7654321', box);
+    assert.equal(geicoStep(r).value, 'No', box);
+    assert.equal(geicoStep(r).note, null, box);
+    assert.deepEqual(geicoStep(r).from, ['applicant.noDot'], `${box}: read from the USDOT box`);
+    assert.equal(progressiveDot(r), 'No - and the customer will not have a USDOT number', box);
+  }
+  // R13: the 60-day answer saying one is coming still decides (GEICO's agent, Progressive's Not Yet).
+  const coming = intake({ dot_number: 'no', mc_dot_60days: 'Yes' });
+  assert.equal(geicoStep(coming).value, null);
+  assert.match(geicoStep(coming).note, /MC number/);
+  assert.equal(progressiveDot(coming), 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days');
+  // Counterexamples: a blank USDOT box with an MC number is still the agent's, also with the
+  // 60-day No; a real USDOT number is Yes.
+  for (const fields of [{ dot_number: '' }, { dot_number: '', mc_dot_60days: 'No' }]) {
+    const r = intake(fields);
+    assert.equal(geicoStep(r).value, null, JSON.stringify(fields));
+    assert.match(geicoStep(r).note, /MC number but no USDOT number/, JSON.stringify(fields));
+  }
+  assert.equal(geicoStep(intake({ dot_number: '1234567' })).value, 'Yes');
+});
+
+// R14 (TNI, 2026-10-26: answer to PR question): "None" or "N/A" in the USDOT or MC box, in any
+// case, with or without a dot or slash, is an explicit No, exactly like "no".
+test('"None" or "N/A" in the USDOT or MC box is an explicit No (W44-15, R14)', () => {
+  const intake = (fields) => normalizeIntake({ ...raw, mc_number: '', mc_dot_60days: '', ...fields }, W44);
+  const progressiveDot = (r) => buildPlan(r.record, progressive).find((s) => s.q === '1ED').value;
+  const geicoDot = (r) => buildPlan(r.record, geico).find((s) => s.name === 'Has a USDOT number').value;
+  const amwinsStep = (r, sel) => buildPlan(r.record, amwins).find((s) => s.selector === sel).value;
+  const boxes = ['None', 'none', 'NONE.', 'N/A', 'n/a', 'NA', 'N.A.', 'n.a', 'N/A.'];
+  for (const box of boxes) {
+    const r = intake({ dot_number: box });
+    assert.equal(r.record.applicant.dot, null, box);
+    assert.equal(r.record.applicant.noDot, true, box);
+    assert.ok(!r.warnings.some((x) => x.code === 'id.invalid'), box);
+    const w = r.warnings.find((x) => x.code === 'dot.none');
+    assert.equal(w?.level, 'info', box);
+    assert.ok(w.msg.includes(`"${box}"`), `${box}: the note quotes the box`);
+    assert.equal(progressiveDot(r), 'No - and the customer will not have a USDOT number', box);
+    assert.equal(geicoDot(r), 'No', box);
+    assert.equal(amwinsStep(r, '#hasDotNumber'), false, box);
+    // With an MC number too (R12).
+    assert.equal(geicoDot(intake({ dot_number: box, mc_number: '7654321' })), 'No', `${box} with an MC number`);
+  }
+  for (const box of boxes) {
+    const mc = intake({ mc_number: box });
+    assert.equal(mc.record.applicant.mc, null, box);
+    assert.equal(mc.record.applicant.noMc, true, box);
+    assert.ok(!mc.warnings.some((x) => x.code === 'id.invalid'), box);
+    assert.ok(mc.warnings.find((x) => x.code === 'mc.none')?.msg.includes(`"${box}"`), box);
+    assert.equal(amwinsStep(mc, '#hasMcNumber'), false, box);
+  }
+  // Counterexamples: a real number is unaffected, a blank box is not a No, a cut-off "N/" stays as
+  // it is (W44-08, not decided), and other words are still not a number.
+  const number = intake({ dot_number: 'USDOT 1234567', mc_number: 'MC 7654321' });
+  assert.deepEqual([number.record.applicant.dot, number.record.applicant.noDot, number.record.applicant.mc, number.record.applicant.noMc], ['1234567', null, '7654321', null]);
+  assert.equal(progressiveDot(number), 'Yes - the customer has a USDOT number');
+  const blank = intake({ dot_number: '' });
+  assert.deepEqual([blank.record.applicant.noDot, progressiveDot(blank), geicoDot(blank)], [null, null, null]);
+  const cut = intake({ dot_number: 'N/' });
+  assert.equal(cut.record.applicant.noDot, null);
+  assert.ok(cut.warnings.some((x) => x.code === 'id.invalid'), '"N/" as before');
+  for (const box of ['none yet', 'Nan', 'N/A pending']) {
+    const other = intake({ dot_number: box });
+    assert.equal(other.record.applicant.noDot, null, box);
+    assert.ok(other.warnings.some((x) => x.code === 'id.invalid'), box);
+  }
+});
+
+// R15 (TNI, 2026-10-26: answer to PR question): "New", "New authority", "Brand new" and "New
+// venture" as the whole answer in years under own authority are 0 years, as "NEW" is.
+test('"New authority", "Brand new" and "New venture" in years under own authority are 0 years (W44-15, R15)', () => {
+  for (const box of ['New authority', 'NEW AUTHORITY.', 'Brand new', 'brand new.', 'New venture', 'NEW VENTURE', 'New']) {
+    const r = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: box, claims_details: 'No', additional_notes: '' }, W44);
+    assert.equal(r.record.applicant.yearsExperience, 0, box);
+    assert.ok(!r.warnings.some((x) => x.code === 'years-experience.invalid'), box);
+    assert.ok(r.warnings.find((x) => x.code === 'years-experience.new')?.msg.includes(`"${box.trim()}"`), box);
+    assert.equal(buildPlan(r.record, amwins).find((s) => s.selector === '#howLongFederalOperatingAuthorityActive').value, 'LESS THAN 1 YEAR', box);
+  }
+  // Counterexamples: "new" in a longer answer or a sentence is not 0.
+  for (const box of ['new trucks', 'Brand new trucks', 'New authority pending', 'new venture soon', 'Not new']) {
+    const r = normalizeIntake({ ...raw, years_experience: box }, W44);
+    assert.equal(r.record.applicant.yearsExperience, null, box);
+    assert.ok(r.warnings.some((x) => x.code === 'years-experience.invalid'), box);
+    assert.ok(!r.warnings.some((x) => x.code === 'years-experience.new'), box);
+  }
+});
+
+// W44-32 (TNI, 2026-10-26: "CLEAN" claims = none): CLEAN as the claims box's answer is an explicit
+// No for claims and losses, for every carrier, as "Clean record" already counted for Progressive.
+test('"CLEAN" as the claims box\'s answer is no claims; "clean" in a sentence is not (W44-32)', () => {
+  const claims = (box, notes = '') => normalizeIntake({ ...raw, claims_details: box, additional_notes: notes }, W44).record;
+  for (const box of ['CLEAN ', 'Clean.', 'clean record', 'Clean MVR', 'Clean driving record', 'all clean \r']) {
+    assert.equal(claims(box).claims.hasClaims, false, box);
+    assert.equal(claims(box).claims.notes, null, box);
+  }
+  const more = claims('CLEAN\nFinanced');
+  assert.equal(more.claims.hasClaims, false);
+  assert.equal(more.claims.notes, 'Financed', 'the other lines stay notes');
+  assert.equal(more.operations.vehicleOwnership, 'Financed');
+  for (const box of ['Clean-up company', 'Clean record except 1 speeding ticket', 'Accident 2024, otherwise clean', 'Cleaning supplies\nNo', 'Clean up']) {
+    assert.equal(claims(box).claims.hasClaims, null, box);
+  }
+  assert.equal(claims('', 'CLEAN').claims.hasClaims, null, 'only the claims box answers the claims question');
+  // Every carrier that asks it: AmWINS prior loss No (was the agent's), Progressive's driver
+  // question from the intake (was its standard No). GEICO maps no claims question.
+  const r = claims('CLEAN');
+  const loss = buildPlan(r, amwins).find((s) => s.name === 'Any prior loss');
+  assert.equal(loss.value, false);
+  assert.equal(loss.note, null);
+  const driver = buildPlan(r, progressive).find((s) => s.q === '28F5');
+  assert.equal(driver.value, false);
+  assert.equal(driver.source, 'intake');
+});
+
+// W44-15: "no" in the FEIN box is no FEIN, as "N/A" is, not a malformed number.
+test('"no" in the FEIN box is no FEIN (W44-15)', () => {
+  for (const box of ['no', 'NO', 'No.']) {
+    const r = normalizeIntake({ ...raw, fein: box }, W44);
+    assert.equal(r.record.applicant.fein, null, box);
+    assert.ok(!r.warnings.some((w) => w.code === 'fein.invalid'), box);
+  }
+  assert.equal(normalizeIntake({ ...raw, fein: '12-345' }, W44).warnings.find((w) => w.code === 'fein.invalid')?.level, 'check', 'a short number is still checked');
+  assert.equal(normalizeIntake({ ...raw, fein: '12-3456789' }, W44).record.applicant.fein, '12-3456789');
 });

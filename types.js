@@ -34,6 +34,8 @@
  * @property {string} path  the record path it is about
  * @property {'check' | 'info'} level
  * @property {string} msg
+ * @property {boolean} [alert]  said in red and first on the Intake step (`prior.carrier-is-quoted`:
+ *   the current commercial auto policy is with a carrier the panel quotes); still a check, no stop
  */
 
 /**
@@ -43,6 +45,10 @@
  * @property {IntakeWarning[]} warnings
  * @property {{ fields: number, filled: number }} stats
  * @property {{ drivers: number[], vehicles: number[], trailers: number[] }} rows  the form row (1-4) each unit was read from
+ * @property {Record<string, string[]>} readFrom  record path -> the form fields an answer was read
+ *   from when that isn't its own box (years in business stated in the notes: `claims_details`,
+ *   `additional_notes`); the panel marks it there on the PDF (intake-source.js sourcePlace). Empty
+ *   otherwise; absent on an intake saved before it.
  */
 
 /** @typedef {'vehicles' | 'drivers' | 'trailers'} UnitList */
@@ -75,10 +81,12 @@
 /**
  * What a list offers, for a rule answered only when one of its conditions holds (a rule's
  * `onlyIf`): a limit is a choice with an amount ("$2,500", "$10,000/No deductible"), never a
- * placeholder, GEICO's hidden stand-in, "Not Included" or "I decline".
+ * placeholder, GEICO's hidden stand-in, "Not Included" or "I decline". The first condition that
+ * holds answers: its `value`, or the rule's own.
  * @typedef {object} ListCondition
- * @property {string | null} [path]  another question's plan path, whose list is read (GEICO's Medical Payments reads Basic PIP's); none: the rule's own list
+ * @property {string | null} [path]  another question's plan path, whose list is read (GEICO's Basic PIP reads Medical Payments'); none: the rule's own list
  * @property {boolean} limit  true: the list offers a limit; false: it offers none (a list off the page offers none)
+ * @property {string | null} [value]  the answer when this condition holds, in place of the rule's (GEICO's Medical Payments: Not Included where it offers no limit; Basic PIP: I decline where Medical Payments offers one)
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -149,9 +157,11 @@
  * @property {boolean} [optional]
  * @property {boolean} [each]
  * @property {boolean} [hidden]
- * @property {boolean} [replace]
+ * @property {ClientValue<boolean>} [replace]  our answer replaces a differing one already on the page (a
+ *   lookup's, or a bulk helper's such as AmWINS' "Default all answers to No"); a function: only for these clients
  * @property {boolean} [trustPage]
  * @property {boolean} [keepChoice]
+ * @property {boolean} [keepPreset]  a choice the carrier already made (a pre-selection, such as Progressive's anti-theft device from its VIN lookup) is kept as it is, without a check, also with Replace existing answers: only an empty one is answered
  * @property {boolean} [keepUnlisted]
  * @property {boolean} [whenOffered]
  * @property {{ count: string, one?: string, after: string, name: string }} [orMost]
@@ -160,9 +170,9 @@
  * @property {(record: ClientRecord, active: ActiveUnits) => string[] | null} [businessNames]
  * @property {(record: ClientRecord, active: ActiveUnits) => string[] | null} [labelHas]
  * @property {string} [labelNote]
- * @property {ClientValue<ListCondition[] | null>} [onlyIf]  answered only when one of these holds (GEICO's Medical Payments, Not Included: Basic PIP offers a limit, or Medical Payments none); otherwise the agent's alone (manual only), with `onlyNote`
+ * @property {ClientValue<ListCondition[] | null>} [onlyIf]  answered only when one of these holds, with the first one's value if it has one (GEICO's Medical Payments: $5,000 where it offers a limit, Not Included where it offers none); otherwise the agent's alone (manual only), with `onlyNote`
  * @property {string} [onlyNote]
- * @property {ClientValue<string | null>} [unofferedNote]  a list without the answer, which no helper shows later (GEICO's Basic PIP without $2,500): the agent's alone at once, with this note, instead of a failure
+ * @property {ClientValue<string | null>} [unofferedNote]  a list without the answer, which no helper shows later (GEICO's Medical Payments without $5,000): the agent's alone at once, with this note, instead of a failure
  * @property {boolean} [checkNumber]
  * @property {'section' | 'limit' | true} [cargo]
  * @property {'section' | 'limit'} [gl]
@@ -225,6 +235,7 @@
  * @property {boolean} [once]  once a quote
  * @property {boolean} [keepAnswers]  answers checked once its result shows (GEICO's Recalculate)
  * @property {boolean} [kitClick]  clicked by the kit even where the carrier presses its buttons from the page's own world (`pressInPage`): GEICO's Print Quote Proposal
+ * @property {boolean} [onBlankPage]  clicked even while its page shows no field (a page of tiles: Progressive's Most Common Vehicles); any other helper on a page the plan has questions for waits until one shows (W44-03)
  */
 
 /**
@@ -264,6 +275,7 @@
  * @property {string[]} steps
  * @property {string} selector
  * @property {UnitList[]} lists
+ * @property {(record: ClientRecord, list: UnitList, index: number) => string} [missing]  what the panel says of an intake unit the list on screen doesn't have and no helper adds (src/units.js unitMissing, W44-01)
  */
 
 /**
@@ -271,6 +283,13 @@
  * @property {string} page
  * @property {UnitList} list
  * @property {string} text  a pattern whose first group is the name
+ */
+
+/**
+ * @typedef {object} StopButton  a screen without a step of its own, known by a button only it shows (src/carriers.js stopScreen)
+ * @property {string} button  a pattern on the button's words
+ * @property {string | ((record: ClientRecord) => string)} note  what the panel says there
+ * @property {boolean} [stopped]  the carrier's stop, not the agent's step (GEICO's referral, W44-04): the dock and the note above the answers are red, as a stop page's
  */
 
 /**
@@ -309,10 +328,12 @@
  * @property {UnitListSpec[]} [unitLists]
  * @property {UnitNameSpec[]} [unitNames]
  * @property {(record: ClientRecord) => number} [listedDriver]  the intake driver the carrier lists itself, -1 for none
+ * @property {(record: ClientRecord) => number} [omittedDriver]  the intake driver the carrier's quote leaves out (GEICO: the owner's row, the first, when the intake says the owner doesn't drive or marks that row Excluded): never added, never an Add Driver form's, not a row of its driver list; -1 for none
  * @property {{ [page: string]: string | null | ((record: ClientRecord) => string | null) }} [agentPages]
+ * @property {{ [page: string]: string }} [warnPages]  agent pages whose note is a yellow warning box with this title, not a line of text (Progressive's NoHit: "Owner not verified", W44-14)
  * @property {{ [page: string]: string }} [stopPages]
  * @property {{ [step: string]: string }} [stopSteps]
- * @property {{ [name: string]: { button: string, note: string | ((record: ClientRecord) => string) } }} [stopButtons]
+ * @property {{ [name: string]: StopButton }} [stopButtons]
  * @property {{ [step: string]: string }} [stepNotes]
  * @property {string} [finishedBy]  the action (its id) whose click ends the quote where TNI stops on this rater (GEICO's Print Quote Proposal, Progressive's Print, Email, Fax): clicked, on its step or page, with nothing left for the agent, the panel says "Quote done" (sidepanel quoteFinished); its click where it wasn't done, or was changed or re-armed since, chimes (noteQuoteDone)
  * @property {{ id: string, steps: string[], left: string[], said: string, sub: string }} [finishedAt]  where the quote ends at a step instead of a button (AmWINS: Underwriting, with only the Declaration left for the agent): a fill there that leaves the agent nothing but the `left` items (by rule name) is the quote done: Review page says "Quote done", the dock says `said` and `sub`, and the chime sounds once a quote (`id` kept with the tab's done actions; sidepanel quoteFinished, rememberFill)
@@ -366,6 +387,7 @@
  * @property {boolean} replace
  * @property {boolean} trustPage
  * @property {boolean} keepChoice
+ * @property {boolean} keepPreset
  * @property {boolean} keepUnlisted
  * @property {boolean} whenOffered
  * @property {{ count: string, one: string | null, after: string, name: string } | null} orMost
@@ -382,7 +404,7 @@
  * @property {string[] | null} businessNames
  * @property {string[] | null} labelHas
  * @property {string | null} labelNote
- * @property {{ path: string | null, limit: boolean }[] | null} onlyIf
+ * @property {{ path: string | null, limit: boolean, value: string | null }[] | null} onlyIf
  * @property {string | null} onlyNote
  * @property {string | null} unofferedNote
  * @property {string | null} fallback
@@ -434,6 +456,7 @@
  * @property {boolean} once
  * @property {boolean} keepAnswers
  * @property {boolean} kitClick
+ * @property {boolean} onBlankPage
  * @property {string | null} unfinished
  * @property {string[]} unlessActions
  * @property {string[]} afterActions
@@ -729,6 +752,32 @@
  * @property {'recalculate'} reason
  * @property {{ action: string | null, ms: number | null, press: 'page' | 'late' | 'kit' | null, premiumMs: number | null, requests: ([number, number] | [number, number, 1])[] }} context
  * @property {{ label: string, key: string | null, selected: string, agents: boolean, seen: [number, string][], putBack: boolean }[]} fields
+ */
+
+/**
+ * @typedef {object} AiSuggestEvent  sidepanel.js runAssist: one Luna page review (counts only)
+ * @property {'ai_suggest'} type
+ * @property {string} model
+ * @property {string} carrier
+ * @property {string} [page]
+ * @property {number} items  questions sent
+ * @property {number} blocked  questions kept from Luna (never-list, manual-only)
+ * @property {number} [ms]  time the review took
+ * @property {number} [suggested]
+ * @property {number} [autoOk]  answers allowed as automatic picks
+ * @property {number} [leave]  questions left to the agent; the leave* counts below say why
+ * @property {number} [leaveMissing]  Luna said information is missing
+ * @property {number} [leaveConflict]  Luna saw conflicting facts
+ * @property {number} [leaveChose]  Luna left it without either
+ * @property {number} [leaveNoSource]  it answered but cited nothing usable
+ * @property {number} [leaveUnverified]  the evidence check refused its answer
+ * @property {number} [tokensIn]
+ * @property {number} [tokensOut]
+ * @property {number} [modelCalls]
+ * @property {number} [reasoningTokens]
+ * @property {number} [cachedTokens]
+ * @property {number} [cacheWriteTokens]
+ * @property {string} [error]
  */
 
 /**

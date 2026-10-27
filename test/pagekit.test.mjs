@@ -8,6 +8,7 @@ import { collectItems } from '../src/ai/common.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
+import { advanceFor } from '../src/units.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
 import { assistContextKey } from '../src/ai/common.js';
 
@@ -657,6 +658,21 @@ test('DOT lookup chooses the matching business, not the first returned name', as
   const report = await h.kit.fill(plan, {});
   assert.equal(field.cmp.getValue(), 'Sample Test LLC');
   assert.equal(report.failed.length, 0);
+});
+
+// W44-30: Progressive's NoHit page arrives with the owner's name from Business Owner Info already
+// in its boxes (every logged NoHit first name was "kept", never "filled"). The first word replaces
+// the whole first name there; the last name, which agrees, is kept as it is.
+test('NoHit: the first word replaces the whole first name Progressive put there (W44-30)', async () => {
+  const h = harness({ ext: true, search: '?pageName=NoHit' });
+  const first = addExtText(h, 'f', '1B7F', { caption: 'Business Owner\'s Name', required: true, value: 'Amina Sample' });
+  const last = addExtText(h, 'l', '1B81', { caption: 'Last Name', required: true, value: 'Kone' });
+  const record = { applicant: { owner1: 'Amina Sample Kone', ownerDrives: true }, garaging: {}, operations: {}, drivers: [{ first: 'Amina Sample', middle: null, last: 'Kone' }], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => ['1B7F', '1B81'].includes(s.q)), {});
+  assert.equal(first.cmp.getValue(), 'Amina', 'the first word, not the page\'s whole first name');
+  assert.equal(last.cmp.getValue(), 'Kone');
+  assert.ok(!report.kept.some((x) => x.differs), 'not "the page says something different"');
+  assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
 });
 
 test('vehicle-named additional coverage q200F is mapped and does not block Rates filling', async () => {
@@ -3289,6 +3305,94 @@ test('a question whose wording carries a date is not flagged as reworded when th
   assert.equal(report.unknown.length, 0);
 });
 
+// KY live run, 2026-10-26 (W44-32): Progressive asked the defensive driver discount about an Armed
+// Forces course, with No pre-selected; the fill kept it but held Continue on a reworded check, and the
+// agent confirmed No. That wording is now one of the rule's: TNI's No, no check.
+test('the defensive driver discount asked about an Armed Forces course is TNI\'s No, not a reworded check (W44-32)', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+  const plan = buildPlan(record, progressive).filter((s) => s.q === '299D');
+  for (const preset of [null, 'No']) {
+    const h = harness({ search: '?pageName=AddDriver' });
+    const radios = ['Yes', 'No'].map((value) => makeInput({ name: 'r_defensive', type: 'radio', value, checked: value === preset, attrs: { fieldref: 'DriverInput.DefensiveDriverDiscount' } }));
+    h.document.body.append(radioGroup('Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?', ...radios));
+    const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+    assert.equal(radios.find((r) => r.checked)?.value, 'No', String(preset));
+    assert.deepEqual([report.reworded.length, report.checks.length, report.unknown.length], [0, 0, 0], String(preset));
+  }
+});
+
+// TNI, 2026-10-26 (answer to PR question, W44-32): the Armed Forces wording is No also when the notes
+// mention a defensive driving course that isn't said to be military. The old wording keeps such a
+// course the agent's, and a military course stays the agent's in either wording.
+test('a civilian defensive driving course in the notes: the Armed Forces wording stays TNI\'s No, the old wording the agent\'s', async () => {
+  const ARMED = 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?';
+  const fillWith = async (question, notes) => {
+    const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false }, notes: { text: notes } };
+    const h = harness({ search: '?pageName=AddDriver' });
+    const radios = ['Yes', 'No'].map((value) => makeInput({ name: 'r_defensive', type: 'radio', value, attrs: { fieldref: 'DriverInput.DefensiveDriverDiscount' } }));
+    h.document.body.append(radioGroup(question, ...radios));
+    const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => s.q === '299D'), { maxRounds: 4, replaceChoices: true });
+    return { picked: radios.find((r) => r.checked)?.value ?? null, report, theirs: [...report.noData, ...report.checks].map((x) => x.note).join(' ') };
+  };
+  const civilian = 'Driver took a defensive driving course last year.';
+  const armed = await fillWith(ARMED, civilian);
+  assert.equal(armed.picked, 'No');
+  assert.deepEqual([armed.report.reworded.length, armed.report.checks.length, armed.report.noData.length, armed.report.unknown.length], [0, 0, 0, 0]);
+  const old = await fillWith('Defensive Driver Discount', civilian);
+  assert.equal(old.picked, null, 'the old wording: the agent\'s');
+  assert.match(old.theirs, /defensive driving course/);
+  const military = await fillWith(ARMED, 'Completed the Army defensive driving course in 2024.');
+  assert.equal(military.picked, null, 'a military course: the agent\'s');
+  assert.match(military.theirs, /Army defensive driving course/);
+});
+
+// KY live run, 2026-10-26 (W44-32): Progressive's anti-theft list (no caption of its own) was
+// unfamiliar and required, with nothing selected; the agent picked None. TNI: None when Progressive
+// hasn't selected one, and its own choice (the VIN lookup's) kept as it is, without a check, also with
+// Replace existing answers; Progressive's other pre-selected answers are still replaced.
+test('Progressive\'s anti-theft device: None when nothing is selected, Progressive\'s own choice kept (keepPreset, W44-32)', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [{ type: 'Van' }], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive, { vehicles: 0 }).filter((s) => s.q === '2CFA');
+  assert.equal(plan.length, 1);
+  for (const overwrite of [false, true]) {
+    for (const [current, kept] of [['', 'None'], ['Anti-Theft Device 2', 'Anti-Theft Device 2'], ['None', 'None']]) {
+      const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+      const list = addExtText(h, 'c', '2CFA', { caption: ' ', ref: 'RiskInputNonShredded.AntiTheftDeviceAgentOptions', required: true, value: current });
+      const records = ['', 'None', 'Anti-Theft Device 1', 'Anti-Theft Device 2', 'Anti-Theft Device 3'].map((label) => ({ get: () => label }));
+      Object.assign(list.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+      const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true, overwrite });
+      const where = `${current || 'empty'}${overwrite ? ', replace existing answers' : ''}`;
+      assert.equal(list.cmp.getValue(), kept, where);
+      assert.equal(report.filled.length, current ? 0 : 1, where);
+      assert.deepEqual([report.checks.length, report.unknown.length, report.leftRequired.length, report.blockers.length], [0, 0, 0, 0], where);
+    }
+  }
+});
+
+// The same rule when Progressive selects a device a moment after the fill gave None (a late answer
+// from its VIN lookup): Progressive's choice is kept, not overwritten with None again (PR #196 review).
+test('Progressive\'s anti-theft device selected by the page after the fill gave None: its choice is kept, not given None again (keepPreset)', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [{ type: 'Van' }], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive, { vehicles: 0 }).filter((s) => s.q === '2CFA');
+  // 20 ms: while the fill is still on the page (this harness's pages settle at once).
+  for (const [overwrite, ms] of [[false, 20], [true, 20]]) {
+    const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+    let late = false;
+    const list = addExtText(h, 'c', '2CFA', { caption: ' ', ref: 'RiskInputNonShredded.AntiTheftDeviceAgentOptions', required: true, value: '',
+      onSet: (cmp, v) => {
+        if (v !== 'None' || late) return;
+        late = true;
+        setTimeout(() => { cmp._value = 'Anti-Theft Device 2'; cmp.el.dom.value = cmp._value; }, ms);
+      } });
+    const records = ['', 'None', 'Anti-Theft Device 1', 'Anti-Theft Device 2', 'Anti-Theft Device 3'].map((label) => ({ get: () => label }));
+    Object.assign(list.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+    const report = await h.kit.fill(plan, { maxRounds: 6, replaceChoices: true, overwrite });
+    const where = `${ms} ms${overwrite ? ', replace existing answers' : ''}`;
+    assert.equal(list.cmp.getValue(), 'Anti-Theft Device 2', where);
+    assert.deepEqual([report.filled.length, report.failed.length, report.checks.length], [0, 0, 0], `${where}: ${JSON.stringify(report.failed)}`);
+  }
+});
+
 // AmWINS' vehicle rows after Import Valid Records: each row shows a VIN, in the import's order,
 // not the intake's. A step with a `witness` takes the row whose VIN is its unit's; a unit whose
 // VIN is on no row (rejected by the import) or on two stays the agent's, named without its VIN.
@@ -4155,6 +4259,38 @@ test('a bulk helper is not clicked while an answer the agent gave is on the page
   assert.equal(plain.button._clicks, 1);
   assert.deepEqual([...run.actions].map((a) => a.id), ['defaultNo']);
   assert.deepEqual(Object.keys(questions).map((n) => plain.groups[n].no.checked), [true, true, true]);
+});
+
+// TNI, 2026-10-26: answer to PR question (#188, question 20): AmWINS' "hazard exposure" is Yes when
+// the intake's hazmat is Yes. "Default all answers to No" answers it No first; the intake's Yes must
+// replace that No (AmWINS keeps a differing choice otherwise), and every other answer stays No.
+test('AmWINS hazard exposure: the intake\'s hazmat Yes replaces the No that "Default all answers to No" gave; otherwise it stays No', async () => {
+  const questions = { hazardExposure: 'Hazard exposure', safetyInfo: 'Safety info' };
+  const run = async (hazmat) => {
+    const h = harness({ pathname: '/application/businessauto' });
+    const groups = Object.fromEntries(Object.entries(questions).map(([name, label]) => {
+      const yes = makeInput({ type: 'radio', name, value: 'Yes' });
+      const no = makeInput({ type: 'radio', name, value: 'No' });
+      h.document.body.append(radioGroup(label, yes, no));
+      return [name, { yes, no }];
+    }));
+    const button = addButton(h, 'Default all answers to "No"');
+    button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; for (const g of Object.values(groups)) g.no.click(); };
+    const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter', hazmat }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+    const plan = buildPlan(record, amwins).filter((s) => s.re === '^hazard exposure$' || s.re === '^safety info$' || s.action === 'defaultNo');
+    assert.equal(plan.length, 3, 'the real carrier plan: both questions and the helper');
+    const report = await h.kit.fill(plan, { batch: true, maxRounds: 6 });
+    const answer = (name) => (groups[name].yes.checked ? 'Yes' : groups[name].no.checked ? 'No' : '');
+    return { clicks: button._clicks, answers: Object.keys(questions).map(answer), report };
+  };
+  const yes = await run(true);
+  assert.equal(yes.clicks, 1, 'the helper still answers the section');
+  assert.deepEqual(yes.answers, ['Yes', 'No'], 'the intake\'s hazmat Yes; the other question stays No');
+  assert.ok(yes.report.filled.some((x) => /hazard exposure/.test(x.name) && !x.standard), 'reported as the intake\'s answer');
+  for (const hazmat of [false, null]) {
+    const no = await run(hazmat);
+    assert.deepEqual(no.answers, ['No', 'No'], `hazmat ${hazmat}: No`);
+  }
 });
 
 
@@ -5498,6 +5634,24 @@ function geicoBar(h, current, { title } = {}) {
 const geicoBox = (stem, n, ariaLabel, props = {}) => makeInput({ id: `Id_${stem}_${n}`, name: `Id_${stem}_${n}`, ariaLabel, ...props });
 const geicoList = (stem, n, ariaLabel, options, props = {}) => new SelectNode(options, { id: `Id_${stem}_${n}`, name: `Id_${stem}_${n}`, ariaLabel, ...props });
 
+// PA live run, 2026-10-26 (W44-32): an intake "Box Truck" was the agent's, who picked Box/Straight
+// Truck. TNI: GEICO's Box Truck where it offers one, else its Box/Straight Truck (shown so, valued
+// "Straight Truck").
+test('GEICO\'s vehicle type for an intake box truck: Box Truck where offered, else Box/Straight Truck (W44-32)', async () => {
+  const record = { ...geicoRecord(), operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Box Truck', year: 2021, make: 'FORD', model: 'F-650', vin: null }] };
+  const step = buildPlan(record, geico, { vehicles: 0 }).find((s) => s.field === 'GiveOtherVehicleType' && s.value != null);
+  assert.deepEqual([step.value, step.choiceAliases, step.standard], ['Box Truck', ['Box/Straight Truck'], true]);
+  const LIST = ['Please Select', 'Full Size Van', 'Delivery Van', 'Pickup Truck', { text: 'Box/Straight Truck', value: 'Straight Truck' }, 'Flatbed Truck', 'Tractor'];
+  for (const [options, picked] of [[LIST, 'Straight Truck'], [[...LIST, 'Box Truck'], 'Box Truck']]) {
+    const h = harness({ pathname: '/quote' });
+    const list = geicoList('GiveOtherVehicleType', 7, 'Which of the following best describes the customer\'s vehicle?', options, { required: true });
+    h.document.body.append(list);
+    const report = await h.kit.fill([{ ...step, steps: null, whenShown: null, waitFor: null }], { maxRounds: 2, replaceChoices: true });
+    assert.equal(list.value, picked);
+    assert.equal(report.failed.length, 0);
+  }
+});
+
 test('GEICO\'s step is its progress bar\'s part under way while the title names it too; pages without a bar read their headings', async () => {
   const h = harness({ pathname: '/quote' });
   // GEICO's headings read "Dashboard" on every step: never the step.
@@ -6261,6 +6415,38 @@ test('a Continue kept to steps, never inside the chooser, and continued per form
   p = page('Business Class & USDOT');
   report = await p.h.kit.fill(plan, { maxRounds: 4, advance: { text: '^next$' } });
   assert.deepEqual(plain([p.clicks, report.advanceKey ?? null]), [['Next'], null]);
+});
+
+// TNI, 2026-10-27 (answer to PR question V1): on GEICO, the owner the intake's only driver and not
+// driving, the fill adds no driver, and the empty driver list's Looks Good would be clicked. GEICO's
+// `noOtherDriver` item, which has no button, is a "needs you" blocker on Drivers & Incidents instead:
+// Continue (Looks Good) waits for the agent.
+test('GEICO\'s owner the only driver, not driving (V1): a needs-you item on Drivers & Incidents holds Looks Good', async () => {
+  const record = { applicant: { owner1: 'Pat Owner', ownerDrives: false }, operations: {}, garaging: {}, coverage: {}, claims: {}, notes: {}, priorInsurance: [],
+    vehicles: [], trailers: [], drivers: [{ first: 'Pat', last: 'Owner', excluded: null }] };
+  const steps = (r) => buildPlan(r, geico, { vehicles: 0, drivers: 0, trailers: 0 }).filter((s) => s.kind === 'action' && s.action === 'noOtherDriver');
+  const page = () => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Drivers & Incidents');
+    const clicks = [];
+    const looksGood = gdsButton('Looks Good');
+    looksGood.button.onclick = () => clicks.push('Looks Good');
+    h.document.body.append(looksGood.host);
+    return { h, clicks };
+  };
+  // The list holds every unit GEICO's quote has (none): Looks Good is offered (`unitsListed`).
+  const advance = advanceFor(geico, true);
+  let p = page();
+  let report = await p.h.kit.fill(steps(record), { maxRounds: 4, advance });
+  assert.match(plain(report.noData)[0]?.note ?? '', /no driver besides the owner, who doesn't drive/);
+  assert.ok(report.blockers.includes('needs you: Drivers'), Array.from(report.blockers).join(' | '));
+  assert.deepEqual(plain([p.clicks, report.advanced ?? null]), [[], null]);
+  // Counterexample: another driver to add, no item: Looks Good is clicked once the list is complete.
+  const two = { ...record, drivers: [...record.drivers, { first: 'Casey', last: 'Example', excluded: null }] };
+  assert.deepEqual(steps(two), []);
+  p = page();
+  report = await p.h.kit.fill(steps(two), { maxRounds: 4, advance });
+  assert.deepEqual(plain(p.clicks), ['Looks Good']);
 });
 
 // GEICO draws a question a moment after an answer (the USDOT record's address check, after the
@@ -7210,6 +7396,43 @@ test('a page the plan has questions for that shows none yet is reported not draw
   assert.equal(report.advanceDue, undefined);
 });
 
+// W44-03, Progressive Business Owner Info in KY and OH (2026-10-26, 0.9.25 code): the arrival fill
+// read no field, clicked the business type's Search (the only thing it could do on the page before it
+// drew its questions), and that click let "Ok, start quote." go with every question unanswered: the
+// check above held only where nothing was clicked. The page's helpers wait for its questions, and a
+// fill that read none on its page is never continued, whatever it clicked.
+test('a helper on a page the plan has questions for waits until they show, and an undrawn page is never continued', async () => {
+  const search = { id: 'action:businessTypeSearch', kind: 'action', action: 'businessTypeSearch', baseAction: 'businessTypeSearch', path: 'action.businessTypeSearch', name: 'Click businessTypeSearch', pages: ['BusinessOwnerInfo'], text: '^search$',
+    after: [], afterAny: [], unless: [], unlessActions: [], afterActions: [], afterPages: [], heldBy: [], doneWhen: [], settledByPages: [] };
+  const name = { id: 'name', path: 'applicant.name', kind: 'text', value: 'Sample Freight', pages: ['BusinessOwnerInfo'], label: '^business name$' };
+  const advance = { text: '^(continue|ok,? start quote\\.?)\\W*$' };
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const button = addButton(h, 'Search');
+  button.onclick = () => { button._clicked = (button._clicked ?? 0) + 1; };
+  const start = addButton(h, 'Ok, start quote.');
+  start.onclick = () => { start._clicked = true; };
+  let report = await h.kit.fill([name, search], { maxRounds: 2, advance });
+  assert.equal(report.fields, 0);
+  assert.equal(button._clicked, undefined, 'nothing clicked on the undrawn page');
+  assert.equal(report.actions.length, 0);
+  assert.equal(report.notDrawn, true, 'said still drawing, so the panel fills it again in a moment');
+  assert.equal(!!start._clicked, false);
+  // Drawn: the helper runs, as before.
+  h.document.body.append(makeInput({ id: 'name', ariaLabel: 'Business name' }));
+  report = await h.kit.fill([name, search], { maxRounds: 3, advance });
+  assert.equal(button._clicked, 1);
+  assert.equal(report.notDrawn, undefined);
+  // A page of tiles the plan also has questions for (Most Common Vehicles; the MD layout draws no
+  // field there): its pick (`onBlankPage`) is clicked, as before.
+  const tiles = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  const van = addButton(tiles, 'Cargo Van');
+  van.onclick = () => { van._clicked = true; };
+  const tile = { ...search, id: 'action:vehicleTile', action: 'vehicleTile:0', baseAction: 'vehicleTile', path: 'action.vehicleTile', name: 'Click vehicleTile', pages: ['MostCommonVehicles'], text: '^cargo van$', onBlankPage: true };
+  report = await tiles.kit.fill([{ ...name, pages: ['AddVehicle', 'MostCommonVehicles'] }, tile], { maxRounds: 2 });
+  assert.equal(van._clicked, true);
+  assert.equal(report.notDrawn, undefined);
+});
+
 // The panel's live list said "Working…" through every wait (the maintainer, 2026-10-23). progress()
 // says what the fill waits on (`phase`): null while it answers; 'reading' the page as it begins,
 // 'waiting' for the page after an answer, a 'helper' it clicked, the 'premium', or 'continue'.
@@ -7314,57 +7537,96 @@ test('a choice with onlyIf is answered only when its list offers no limit', asyn
   assert.deepEqual(plain(report.noData.map((x) => [x.note, x.manualOnly])), [['Pick one yourself.', true]]);
 });
 
-// The maintainer, 2026-10-26 (GEICO, outside Florida): "If there is personal injury protection
-// available, we always prefer PIP", ideally $2,500; without PIP, Medical Payments with a limit is
-// preferred, Not Included where that is its only choice. GEICO's own rules, on a Quote & Coverages
-// with a Print that waits until nothing is left for the agent (`whenClear`). What is left to the
-// agent here is a limit TNI doesn't name: manual only, never the AI's.
-test('GEICO outside Florida: PIP where GEICO offers it, $2,500, and Medical Payments then Not Included; what is left is the agent\'s alone', async () => {
+// A condition with a `value` (TNI, 2026-10-26, W44-26: GEICO's Medical Payments is $5,000, Not
+// Included where its list offers no limit; Basic PIP $2,500, I decline where Medical Payments lists
+// a limit): the first condition that holds gives the answer, read from the lists on the page, and a
+// later fill agrees with what it gave (kept, never "a later server response changed this answer").
+test('a choice with onlyIf answers the value of the condition that holds, and a later fill agrees with it', async () => {
+  const list = (options, id) => new SelectNode(['Please Select', ...options].map((t) => ({ text: t, value: t === 'Please Select' ? '' : t })), { id, ariaLabel: id });
+  const rules = [
+    { q: 'A', selector: '#a', name: 'A', kind: 'choice', source: 'standard', value: () => '$5,000', onlyIf: [{ limit: true }, { limit: false, value: 'Not Included' }] },
+    { q: 'B', selector: '#b', name: 'B', kind: 'choice', source: 'standard', value: () => '$2,500', onlyIf: [{ path: 'test.qA', limit: true, value: 'I decline' }, { path: 'test.qA', limit: false }] },
+  ];
+  const plan = buildPlan({}, { id: 'test', useGenericRules: false, rules });
+  const run = async (a, b) => {
+    const h = harness();
+    const lists = [list(a, 'a'), list(b, 'b')];
+    h.document.body.append(...lists);
+    const first = await h.kit.fill(plan, { maxRounds: 4 });
+    const again = await h.kit.fill(plan, { maxRounds: 4 });
+    return { values: lists.map((x) => x.value), first: plain(first.filled.map((x) => x.name)), again: plain([again.filled.length, again.kept.length, again.failed.length, again.noData.length]) };
+  };
+  // A offers a limit: its own answer, and B the value of A's limit condition.
+  let r = await run(['Not Included', '$500', '$5,000'], ['I decline', '$2,500']);
+  assert.deepEqual(r.values, ['$5,000', 'I decline']);
+  assert.deepEqual(r.first, ['A', 'B']);
+  assert.deepEqual(r.again, [0, 2, 0, 0], 'the next fill keeps both');
+  // A offers none: A's no-limit value, and B its own.
+  r = await run(['Not Included'], ['I decline', '$2,500']);
+  assert.deepEqual(r.values, ['Not Included', '$2,500']);
+  assert.deepEqual(r.again, [0, 2, 0, 0], 'the next fill keeps both');
+});
+
+// TNI, 2026-10-26, W44-26 (the maintainer: "Always add medical payments at $5K, there is no medical
+// payments, choose PIP"; GEICO offering both: "MedPay $5K, PIP yok"), replacing the morning's "If
+// there is personal injury protection available, we always prefer PIP": Medical Payments $5,000
+// wherever GEICO offers it, PIP declined beside it, and PIP $2,500 where GEICO offers no medical
+// payments. GEICO's own rules, on a Quote & Coverages with a Print that waits until nothing is left
+// for the agent (`whenClear`). What is left to the agent here is manual only, never the AI's.
+test('GEICO: Medical Payments $5,000 wherever offered and PIP declined beside it; PIP $2,500 without it; Florida keeps its PIP', async () => {
   const rules = geico.rules.filter((r) => r.q === 'MedicalPayments' || r.q === 'BasicPip');
   assert.equal(rules.length, 2);
   const actions = [{ id: 'printProposal', text: '^print quote proposal$', whenClear: true }];
-  const run = async ({ med, pip }) => {
+  const run = async ({ med, pip, state = 'TX', pipHas = '' }) => {
     const h = harness({ pathname: '/quote' });
     geicoBar(h, 'Quote & Coverages');
-    const list = (options, ariaLabel, id) => new SelectNode(['Please Select', ...options].map((t) => ({ text: t, value: t === 'Please Select' ? '' : t })), { id, ariaLabel });
+    const list = (options, ariaLabel, id, has = '') => new SelectNode(['Please Select', ...options].map((t) => ({ text: t, value: t === 'Please Select' ? '' : t })), { id, ariaLabel, value: has });
     const medList = med && list(med, 'Medical Payments (MED)', 'Id_med_11');
-    const pipList = pip && list(pip, 'Basic Personal Injury Protection', 'Id_pip_12');
+    const pipList = pip && list(pip, 'Basic Personal Injury Protection', 'Id_pip_12', pipHas);
     const print = gdsButton('Print Quote Proposal');
     const clicks = [];
     print.button.onclick = () => clicks.push('print');
     h.document.body.append(...[medList, pipList].filter(Boolean), print.host);
-    const plan = buildPlan({ ...geicoRecord(), garaging: { state: 'TX' } }, { id: 'geico', useGenericRules: false, rules, actions });
+    const plan = buildPlan({ ...geicoRecord(), garaging: { state } }, { id: 'geico', useGenericRules: false, rules, actions });
     const report = await h.kit.fill(plan, { maxRounds: 8 });
-    return { med: medList?.value ?? null, pip: pipList?.value ?? null, clicks, left: plain(report.noData.concat(report.failed).map((x) => [x.label, x.manualOnly])),
-      notes: plain(report.noData.map((x) => x.note)) };
+    const first = [...clicks];
+    // A later fill agrees with what this one gave (nothing failed as changed since).
+    const again = await h.kit.fill(plan, { maxRounds: 4 });
+    return { med: medList?.value ?? null, pip: pipList?.value ?? null, clicks: first, left: plain(report.noData.concat(report.failed).map((x) => [x.label, x.manualOnly])),
+      notes: plain(report.noData.map((x) => x.note)), againFailed: plain(again.failed.map((x) => x.label)) };
   };
-  // Basic PIP with $2,500: PIP, and Medical Payments Not Included, whatever limits it lists.
-  let r = await run({ med: ['Not Included'], pip: ['I decline', '$2,500'] });
-  assert.deepEqual([r.med, r.pip, r.left, r.clicks], ['Not Included', '$2,500', [], ['print']], 'the TX run');
-  r = await run({ med: ['Not Included', '$500', '$5,000'], pip: ['I decline', '$2,500'] });
-  assert.deepEqual([r.med, r.pip, r.left, r.clicks], ['Not Included', '$2,500', [], ['print']], 'PIP over medical payments limits');
+  const NE = ['Not Included', '$500', '$1,000', '$2,000', '$5,000'];
+  // GEICO's Nebraska page (no PIP): Medical Payments $5,000, and Print.
+  let r = await run({ med: NE, pip: null, state: 'NE' });
+  assert.deepEqual([r.med, r.left, r.clicks, r.againFailed], ['$5,000', [], ['print'], []], 'NE: $5,000 medical payments');
+  // Both offered: Medical Payments $5,000, PIP declined.
+  r = await run({ med: NE, pip: ['I decline', '$2,500'] });
+  assert.deepEqual([r.med, r.pip, r.left, r.clicks, r.againFailed], ['$5,000', 'I decline', [], ['print'], []], 'medical payments over PIP');
+  // The TX run: Medical Payments lists only Not Included (GEICO offers none there), so PIP $2,500.
+  r = await run({ med: ['Not Included'], pip: ['I decline', '$2,500'] });
+  assert.deepEqual([r.med, r.pip, r.left, r.clicks, r.againFailed], ['Not Included', '$2,500', [], ['print'], []], 'the TX run');
+  // Counterexample: a page offering no Medical Payments at all takes PIP $2,500.
   r = await run({ med: null, pip: ['I decline', '$2,500'] });
-  assert.deepEqual([r.pip, r.clicks], ['$2,500', ['print']]);
-  // PIP limits without $2,500: still PIP, its limit the agent's at once, so Print waits for it
-  // (`whenOffered` waited instead, and Print went out with GEICO's own PIP).
-  r = await run({ med: ['Not Included', '$500'], pip: ['I decline', '$5,000', '$10,000'] });
+  assert.deepEqual([r.pip, r.left, r.clicks], ['$2,500', [], ['print']]);
+  // Medical Payments limits without $5,000: the agent's at once (Print waits); PIP still declined.
+  r = await run({ med: ['Not Included', '$500', '$1,000'], pip: ['I decline', '$2,500'] });
+  assert.deepEqual([r.med, r.pip, r.clicks, r.left], ['', 'I decline', [], [['Medical Payments (MED)', true]]]);
+  assert.match(r.notes[0], /doesn't list \$5,000 medical payments/);
+  // Medical Payments offered, but GEICO offers no PIP decline (a state where PIP is required): PIP is
+  // the agent's at once, never a limit TNI doesn't name.
+  r = await run({ med: NE, pip: ['$10,000/No deductible'] });
+  assert.deepEqual([r.med, r.pip, r.clicks, r.left], ['$5,000', '', [], [['Basic Personal Injury Protection', true]]]);
+  assert.match(r.notes[0], /basic personal injury protection/);
+  // No Medical Payments, PIP limits without $2,500: PIP is the agent's at once, as before.
+  r = await run({ med: ['Not Included'], pip: ['I decline', '$5,000', '$10,000'] });
   assert.deepEqual([r.med, r.pip, r.clicks, r.left], ['Not Included', '', [], [['Basic Personal Injury Protection', true]]]);
-  assert.match(r.notes[0], /doesn't offer \$2,500/);
-  // No PIP on the page: Medical Payments Not Included only where that is its only choice; with a
-  // limit it is the agent's (TNI prefers it then).
-  r = await run({ med: ['Not Included'], pip: null });
-  assert.deepEqual([r.med, r.left, r.clicks], ['Not Included', [], ['print']]);
-  r = await run({ med: ['Not Included', '$500', '$5,000'], pip: null });
-  assert.deepEqual([r.med, r.left, r.clicks], ['', [['Medical Payments (MED)', true]], []]);
-  assert.match(r.notes[0], /no personal injury protection/);
-  // Basic PIP with no limit (only I decline): no PIP. Medical Payments as above, and Basic PIP is
-  // the agent's to check, said so.
-  r = await run({ med: ['Not Included', '$500'], pip: ['I decline'] });
-  assert.deepEqual([r.med, r.pip, r.clicks, r.left], ['', '', [], [['Medical Payments (MED)', true], ['Basic Personal Injury Protection', true]]]);
-  assert.match(r.notes[1], /no basic personal injury protection limit/);
-  // Medical Payments with no choice at all: said so, not "limits".
+  // Medical Payments with no choice at all: the agent's, said so.
   r = await run({ med: [], pip: ['I decline', '$2,500'] });
-  assert.deepEqual([r.pip, r.notes], ['$2,500', ['GEICO lists no medical payments choice here: check it yourself.']]);
+  assert.deepEqual([r.pip, r.left], ['$2,500', [['Medical Payments (MED)', true]]]);
+  // Florida requires PIP: Medical Payments $5,000 there too (no longer Not Included: the 2026-10-21
+  // answer), and Basic PIP kept as GEICO has it.
+  r = await run({ med: NE, pip: ['$10,000/No deductible'], pipHas: '$10,000/No deductible', state: 'FL' });
+  assert.deepEqual([r.med, r.pip, r.left, r.clicks, r.againFailed], ['$5,000', '$10,000/No deductible', [], ['print'], []], 'FL');
 });
 
 // Speed (PR 178, 2026-10-26): every wait wakes when its quiet time is over, not on its next 60 ms

@@ -73,6 +73,7 @@ const one = (p, name, step) => {
 const value = (r, name, step, active) => one(plan(r, active), name, step).value;
 // The agent's: not filled, with a note saying why.
 const agents = (s) => { assert.equal(s.value, null, `${s.name}: not filled`); assert.ok(s.note, `${s.name}: has a note`); };
+const VEHICLE_TYPE = 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, Box Truck or else Box/Straight Truck for a box truck, else the agent\'s pick)';
 
 // --- The carrier --------------------------------------------------------------------------------
 
@@ -218,12 +219,12 @@ test('the gateway ZIP replaces a carried-over one; a city GEICO doesn\'t list ke
 
 // TNI's GEICO standards (FL live run, 2026-10-21): only these rules may be one.
 const STANDARDS = [
-  'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
+  VEHICLE_TYPE, 'Customizations (from the attached equipment value)',
   'Comprehensive or collision wanted (TNI: Yes)', 'Trailer comprehensive or collision wanted (TNI: Yes)',
   'Driver\'s relationship to the business (Owner, else Employee)', 'Number of employees (the drivers besides the owner)',
   'Years with the current auto insurer (1-3 with a current policy)', 'Liability insurance the business has (None unless the notes say)',
   'Named additional insured or waiver of subrogation (TNI: No)', 'Blanket additional insured by contract (TNI: No)', 'Blanket waiver of subrogation by contract (TNI: No)',
-  'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)', 'Basic personal injury protection (TNI: $2,500, PIP over medical payments; FL: as GEICO has it)', 'Comprehensive', 'Collision', 'Refrigeration breakdown (Yes with a reefer)',
+  'Medical payments (TNI: $5,000; Not Included where GEICO offers no limit)', 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)', 'Comprehensive', 'Collision', 'Refrigeration breakdown (Yes with a reefer)',
   'Business description (For Hire Trucking for an expediter or freight hauler)', 'More about the business (Other For-Hire Trucking for an expediter or freight hauler)',
   'Start quote: Commercial Auto/Trucking (TNI: ticked)',
   // FL live run 4, 2026-10-21 (W43-17, W43-18): GEICO in every state.
@@ -242,6 +243,10 @@ const STANDARDS = [
   'Filings required (TNI: No unless the intake says otherwise)', 'Driver has a CDL (TNI: No when the intake leaves it blank)',
   'Owner has a CDL (TNI: No when the intake leaves it blank)',
 ];
+// TNI, 2026-10-26 (W44-25): "Owner Drivers if not excluded, in every case".
+const OWNER_DRIVES = 'Owner is a driver (TNI: Yes when the intake leaves it blank, unless excluded)';
+const OWNER_DRIVES_ADD = 'Owner is a driver (Add Driver; TNI: Yes when the intake leaves it blank, unless excluded)';
+STANDARDS.push(OWNER_DRIVES, OWNER_DRIVES_ADD);
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
   const seen = new Set();
@@ -301,8 +306,9 @@ test('a blank intake answers nothing but TNI\'s standards', () => {
     'Filings required (TNI: No unless the intake says otherwise)', 'SR-22 (the owner; TNI: No unless the intake says otherwise)',
     'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)',
     'Customization value (the attached equipment value, else TNI: 0)'].map((n) => one(p, n, n.startsWith('Customization') ? VEH : undefined).value), [false, false, false, false, false, 0]);
-  // ELD and the owner question have no standard.
-  for (const name of ['Electronic logging device (ELD)', 'Owner is a driver']) agents(one(p, name));
+  // ELD has no standard; whether the owner drives is TNI's Yes (W44-25).
+  agents(one(p, 'Electronic logging device (ELD)'));
+  assert.deepEqual([one(p, OWNER_DRIVES).value, one(p, OWNER_DRIVES).source], [true, 'standard']);
 });
 
 test('the plan is plain data: steps and form conditions included', () => {
@@ -354,19 +360,23 @@ test('a vehicle\'s form and a trailer\'s never answer each other\'s questions', 
   assert.match(one(p, 'Trailer type (the agent\'s pick)').note, /"Dry Van"/);
 });
 
-test('vehicle type: a cargo van is GEICO\'s Delivery Van and a semi truck its Tractor (TNI); any other type is the agent\'s pick', () => {
-  const type = (t) => one(plan(with_({ 'vehicles.0.type': t })), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)');
-  for (const t of ['Van', 'Cargo Van', 'cargo van ']) assert.deepEqual([type(t).value, type(t).source, type(t).standard], ['Delivery Van', 'standard', true], t);
-  for (const t of ['Semi Truck', 'semi-truck']) assert.deepEqual([type(t).value, type(t).source, type(t).standard], ['Tractor', 'standard', true], t);
-  for (const t of ['Box Truck', 'Passenger Van', 'Semi Trailer', 'Van Trailer', null]) {
+// TNI, 2026-10-26, W44-32 (PA live run: an intake "Box Truck" was the agent's, who picked
+// Box/Straight Truck; the maintainer: "If Box Truck is available, yes, if no, Box/Straight Truck").
+test('vehicle type: a cargo van is GEICO\'s Delivery Van, a semi truck its Tractor, a box truck its Box Truck or else Box/Straight Truck (TNI); any other type is the agent\'s pick', () => {
+  const type = (t) => one(plan(with_({ 'vehicles.0.type': t })), VEHICLE_TYPE);
+  const answer = (t) => [type(t).value, type(t).choiceAliases, type(t).source, type(t).standard];
+  for (const t of ['Van', 'Cargo Van', 'cargo van ']) assert.deepEqual(answer(t), ['Delivery Van', [], 'standard', true], t);
+  for (const t of ['Semi Truck', 'semi-truck']) assert.deepEqual(answer(t), ['Tractor', [], 'standard', true], t);
+  for (const t of ['Box Truck', 'box truck', ' Box  Truck ']) assert.deepEqual(answer(t), ['Box Truck', ['Box/Straight Truck'], 'standard', true], t);
+  for (const t of ['Straight Truck', 'Box Truck Trailer', 'Flatbed', 'Passenger Van', 'Semi Trailer', 'Van Trailer', null]) {
     agents(type(t));
     assert.equal(type(t).standard, false, String(t));
   }
-  assert.match(type('Box Truck').note, /"Box Truck"/);
-  // Per vehicle: the second one, a cargo van.
-  const two = with_({ vehicles: [intake().vehicles[0], SECOND_VEHICLE] });
-  assert.equal(one(plan(two, { vehicles: 1 }), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)').value, 'Delivery Van');
-  agents(one(plan(two, { vehicles: 0 }), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)'));
+  assert.match(type('Flatbed').note, /"Flatbed"/);
+  // Per vehicle: a flatbed (the agent's), then a cargo van.
+  const two = with_({ vehicles: [{ ...intake().vehicles[0], type: 'Flatbed' }, SECOND_VEHICLE] });
+  assert.equal(one(plan(two, { vehicles: 1 }), VEHICLE_TYPE).value, 'Delivery Van');
+  agents(one(plan(two, { vehicles: 0 }), VEHICLE_TYPE));
 });
 
 test('with a VIN the year, make and model are checked, never typed; without one they are typed', () => {
@@ -552,7 +562,13 @@ test('a current GEICO commercial auto policy: only one on the intake, current', 
   assert.equal(current(geicoRow()), true);
   assert.equal(current(geicoRow({ type: 'Personal Auto' })), false, 'a personal auto policy');
   assert.equal(current({ priorInsurance: [{ type: null, carrier: 'None', limit: null, expiration: null }] }), false, 'no prior insurance');
-  for (const changes of [geicoRow({ expiration: '01/31/2026' }), geicoRow({ expiration: null }), { priorInsurance: [] },
+  // GEICO misspelled or with a suffix is GEICO (TNI, 2026-10-26, W44-06): never "no current GEICO
+  // policy" for it; another insurer with a similar name stays No.
+  for (const carrier of ['GICO', 'Gieco', 'Geico Commercial', 'GEICO Ins.']) assert.equal(current(geicoRow({ carrier })), true, carrier);
+  for (const carrier of ['Gainsco', 'Gateway', 'GAIC']) assert.equal(current(geicoRow({ carrier })), false, carrier);
+  // An expired misspelled GEICO policy is the agent's, as GEICO's is.
+  for (const carrier of ['GICO', 'Gieco']) agents(one(plan(with_(geicoRow({ carrier, expiration: '01/31/2026' }))), 'Current GEICO commercial auto policy'));
+  for (const changes of [geicoRow({ expiration: '01/31/2026' }), { priorInsurance: [] },
     { priorInsurance: [{ type: 'General Liability', carrier: 'Other Mutual', limit: null, expiration: '12/31/2026' }] }]) {
     const s = one(plan(with_(changes)), 'Current GEICO commercial auto policy');
     agents(s);
@@ -560,30 +576,96 @@ test('a current GEICO commercial auto policy: only one on the intake, current', 
   }
 });
 
-test('the owner: from their driver row or the owner box, never the first driver', () => {
-  // The first driver isn't the owner.
+// TNI, 2026-10-26: answer to PR question 9 (#189, #194): a commercial auto policy with GEICO itself
+// is a current GEICO policy also when the intake gives no usable expiration date (blank, or a remark
+// in the date box), as W44-29 reads proof of prior insurance: any box filled and no date already
+// passed. TNI's answer, so a standard; a dated one stays derived. An expired one stays the agent's.
+test('an undated GEICO commercial auto policy is a current GEICO policy (TNI, 2026-10-26)', () => {
+  const geicoRow = (more = {}) => ({ priorInsurance: [{ type: 'Commercial Auto', carrier: 'GEICO', limit: '$1M CSL', expiration: null, ...more }] });
+  const step = (changes) => one(plan(with_(changes)), 'Current GEICO commercial auto policy');
+  for (const more of [{}, { carrier: 'Gieco' }, { carrier: 'Geico Commercial' }, { limit: null }, { expiration: 'renews in spring' }]) {
+    const s = step(geicoRow(more));
+    assert.deepEqual([s.value, s.source, s.note], [true, 'standard', null], JSON.stringify(more));
+  }
+  assert.deepEqual([step(geicoRow({ expiration: '12/31/2026' })).value, step(geicoRow({ expiration: '12/31/2026' })).source], [true, 'derived'], 'a dated one: derived, as before');
+  // Unchanged: expired (the agent's), a personal auto policy (No), no prior insurance (No), another
+  // insurer's commercial auto policy (No), a GL policy with GEICO and one of no type (the agent's).
+  agents(step(geicoRow({ expiration: '01/31/2026' })));
+  assert.equal(step(geicoRow({ type: 'Personal Auto' })).value, false);
+  assert.equal(step(geicoRow({ type: null, carrier: 'No GEICO', limit: null })).value, false, 'no prior insurance');
+  assert.equal(step(geicoRow({ carrier: 'Gainsco' })).value, false);
+  for (const type of ['General Liability', null]) agents(step(geicoRow({ type })));
+  assert.equal(step(geicoRow({ carrier: 'Gainsco' })).source, 'derived');
+});
+
+// TNI, 2026-10-26: answer to PR question R9 (#189): a policy with GEICO itself whose policy type is
+// left blank is the agent's (a `fact`, never filled), with a note that the type isn't on the intake,
+// dated, undated or expired. A commercial auto policy with GEICO keeps its Yes; personal auto and
+// another insurer's commercial auto policy keep No.
+test('a GEICO policy of no type: the current GEICO policy question is the agent\'s (TNI, 2026-10-26, R9)', () => {
+  const geicoRow = (more = {}) => ({ priorInsurance: [{ type: null, carrier: 'GEICO', limit: '$1M CSL', expiration: '12/31/2026', ...more }] });
+  const step = (changes) => one(plan(with_(changes)), 'Current GEICO commercial auto policy');
+  for (const more of [{}, { type: '' }, { type: '  ' }, { carrier: 'Gieco' }, { expiration: null }, { limit: null, expiration: 'see notes' }, { expiration: '01/31/2026' }]) {
+    const s = step(geicoRow(more));
+    agents(s);
+    assert.deepEqual([s.source, s.manualOnly], ['fact', true], JSON.stringify(more));
+    assert.match(s.note, /policy type isn't on the intake/, JSON.stringify(more));
+  }
+  // Counterexamples: a commercial auto policy with GEICO keeps its Yes (dated derived, undated
+  // standard); personal auto keeps No; another insurer's commercial auto policy keeps No; no prior
+  // insurance ("No GEICO" without a date) keeps No; another insurer's policy of no type is unchanged
+  // (the agent's, derived, its own note).
+  assert.deepEqual([step(geicoRow({ type: 'Commercial Auto' })).value, step(geicoRow({ type: 'Commercial Auto' })).source], [true, 'derived']);
+  assert.deepEqual([step(geicoRow({ type: 'Commercial Auto', expiration: null })).value, step(geicoRow({ type: 'Commercial Auto', expiration: null })).source], [true, 'standard']);
+  assert.deepEqual([step(geicoRow({ type: 'Personal Auto' })).value, step(geicoRow({ type: 'Personal Auto' })).source], [false, 'derived']);
+  assert.deepEqual([step(geicoRow({ type: 'Commercial Auto', carrier: 'Gainsco' })).value, step(geicoRow({ type: 'Commercial Auto', carrier: 'Gainsco' })).source], [false, 'derived']);
+  assert.equal(step(geicoRow({ carrier: 'No GEICO', limit: null, expiration: null })).value, false, 'no prior insurance');
+  const other = step(geicoRow({ carrier: 'Other Mutual' }));
+  agents(other);
+  assert.equal(other.source, 'derived');
+  assert.doesNotMatch(other.note, /policy type/);
+});
+
+// TNI, 2026-10-27 (answer to PR question V4): the owner is always the first driver on the intake's
+// list. Before, this test said "never the first driver": the owner's details came from the row their
+// name matched (TNI, 2026-10-20), and an owner no row matched got none. The names still never come
+// from a row carrying another name (the FL generic run put the first driver in the owner boxes).
+test('the owner: names from the owner box (or their row when it carries the name), details from the first driver row (V4)', () => {
+  // The first driver has another name: still the owner's row, for the details; the names are the owner box's.
   const r = with_({ drivers: [CASEY, intake().drivers[0]] });
   const p = plan(r);
-  assert.deepEqual(['Owner first name', 'Owner last name', 'Owner date of birth', 'Owner marital status'].map((n) => one(p, n, BOI).value), ['Amina', 'Kone', '01/02/1980', 'Married']);
-  assert.deepEqual(['Owner first name', 'Owner date of birth'].map((n) => one(p, n, VEH).value), ['Amina', '01/02/1980'], 'and again with the SSN');
-  // The owner doesn't drive: the names from the owner box (a lone middle initial left out), the
-  // rest the agent's.
-  const box = plan(with_({ 'applicant.owner1': 'Amina K. Kone', 'applicant.ownerDrives': false }));
+  assert.deepEqual(['Owner first name', 'Owner last name', 'Owner date of birth', 'Owner marital status'].map((n) => one(p, n, BOI).value), ['Amina', 'Kone', '07/09/1995', 'Single']);
+  assert.deepEqual(['Owner first name', 'Owner date of birth'].map((n) => one(p, n, VEH).value), ['Amina', '07/09/1995'], 'and again with the SSN');
+  // The owner doesn't drive: the names from the owner box (a lone middle initial left out); the date
+  // of birth and marital status from the owner's driver row (TNI, 2026-10-26: answer to PR question,
+  // T3; the first row since V4), and the agent's when no row is theirs.
+  // (The row as the intake reads it: `excluded` null. This file's intake() has the agent's No.)
+  const box = plan(with_({ 'applicant.owner1': 'Amina K. Kone', 'applicant.ownerDrives': false, 'drivers.0.excluded': null }));
   assert.deepEqual([one(box, 'Owner first name', BOI).value, one(box, 'Owner last name', BOI).value], ['Amina', 'Kone']);
+  assert.deepEqual([one(box, 'Owner date of birth', BOI).value, one(box, 'Owner marital status', BOI).value], ['01/02/1980', 'Married']);
+  // The first row under another name is still the owner's (V4); the agent's Excluded driver No on it
+  // (CASEY's here) leaves no owner's row, and the details are the agent's.
+  const firstRow = plan(with_({ 'applicant.owner1': 'Amina K. Kone', 'applicant.ownerDrives': false, drivers: [{ ...CASEY, excluded: null }] }));
+  assert.deepEqual([one(firstRow, 'Owner date of birth', BOI).value, one(firstRow, 'Owner marital status', BOI).value], ['07/09/1995', 'Single']);
+  const noRow = plan(with_({ 'applicant.owner1': 'Amina K. Kone', 'applicant.ownerDrives': false, drivers: [CASEY] }));
   for (const name of ['Owner date of birth', 'Owner marital status']) {
-    agents(one(box, name, BOI));
-    assert.equal(one(box, name, BOI).manualOnly, true);
+    agents(one(noRow, name, BOI));
+    assert.equal(one(noRow, name, BOI).manualOnly, true);
   }
   assert.equal(value(with_({ 'applicant.owner1': 'Mary Ann Kone', 'applicant.ownerDrives': false }), 'Owner first name', BOI), 'Mary Ann');
   agents(one(plan(with_({ 'applicant.owner1': 'Bartholomew-Alexander Kone', 'applicant.ownerDrives': false })), 'Owner first name', BOI));
   agents(one(plan(with_({ 'drivers.0.dob': '1980' })), 'Owner date of birth', BOI));
-  // No driver matches the owner: the date of birth is never another driver's (TNI, 2026-10-20).
-  const unmatched = one(plan(with_({ 'applicant.owner1': 'Jordan Sample' })), 'Owner date of birth', BOI);
+  // No driver's name is the owner's: the first row's date of birth all the same (V4; before, never
+  // another driver's: TNI, 2026-10-20). With no driver rows: the agent's.
+  assert.equal(value(with_({ 'applicant.owner1': 'Jordan Sample' }), 'Owner date of birth', BOI), '01/02/1980');
+  const unmatched = one(plan(with_({ 'applicant.owner1': 'Jordan Sample', drivers: [] })), 'Owner date of birth', BOI);
   agents(unmatched);
-  assert.match(unmatched.note, /No driver matches the owner/);
-  // A blank owner box: the note says there is no owner name (never quotes an empty one).
+  assert.match(unmatched.note, /The intake lists no drivers, so no driver row gives the owner.s date of birth/);
+  // A blank owner box: the first row's too (V4); with no driver rows, the note says there is no owner
+  // name (never quotes an empty one).
   for (const name of [null, '', '  ']) {
-    const blank = one(plan(with_({ 'applicant.owner1': name })), 'Owner date of birth', BOI);
+    assert.equal(value(with_({ 'applicant.owner1': name }), 'Owner date of birth', BOI), '01/02/1980', String(name));
+    const blank = one(plan(with_({ 'applicant.owner1': name, drivers: [] })), 'Owner date of birth', BOI);
     agents(blank);
     assert.match(blank.note, /no owner name/, String(name));
   }
@@ -591,8 +673,333 @@ test('the owner: from their driver row or the owner box, never the first driver'
   // The business name: the company's, else the owner's (also for a company box saying there is none).
   assert.equal(value(intake(), 'Business name (company, else the owner)', BOI), 'Synthetic Expediter LLC');
   for (const name of [null, 'NO', 'N/A', 'None.']) assert.equal(value(with_({ 'applicant.name': name }), 'Business name (company, else the owner)', BOI), 'Amina Kone', String(name));
-  assert.equal(value(intake(), 'Owner is a driver'), true);
-  agents(one(plan(with_({ 'applicant.ownerDrives': null })), 'Owner is a driver'));
+  assert.equal(value(intake(), OWNER_DRIVES), true);
+});
+
+// W44-01: an OH quote printed with one of the intake's two drivers: the "owner drives" box was
+// blank, so the owner-driver question and Add Driver were left to the agent. TNI, 2026-10-26
+// (W44-25): "Owner Drivers if not excluded, in every case".
+test('owner drives (W44-25): blank is TNI\'s Yes and GEICO adds the other drivers; the intake\'s No, or an excluded owner, is No', () => {
+  const two = (changes = {}) => with_(changes, with_({ drivers: [intake().drivers[0], CASEY] }));
+  const drives = (r, step = BOI, active = {}) => one(plan(r, active), step === BOI ? OWNER_DRIVES : OWNER_DRIVES_ADD, step);
+  const said = (s) => [s.value, s.source, s.standard, s.manualOnly, s.note, s.warn];
+  // Blank: TNI's standard Yes, on Business & Owner Info and again on Add Driver.
+  const blank = two({ 'applicant.ownerDrives': null, 'applicant.owner2': 'Casey Example' });
+  assert.deepEqual(said(drives(blank)), [true, 'standard', true, false, null, null]);
+  assert.deepEqual(said(drives(blank, DRV, { drivers: 1 })), [true, 'standard', true, false, null, null]);
+  // ... so GEICO lists the owner (their row is never added again) and adds every other intake driver.
+  assert.equal(geico.listedDriver(two({ 'applicant.ownerDrives': null })), 0);
+  const adding = { vehicles: 1, drivers: 1, trailers: 0, adding: { list: 'drivers', index: 1, click: true } };
+  const addDriver = (r) => buildPlan(r, geico, adding).filter((s) => s.kind === 'action' && !s.steps.includes(QC)).map((s) => s.action);
+  assert.deepEqual(addDriver(two({ 'applicant.ownerDrives': null })), ['addDriver:1']);
+  // The owner as the panel's driver: GEICO already lists them, so Add Driver isn't filled.
+  assert.match(one(plan(two({ 'applicant.ownerDrives': null }), { drivers: 0 }), 'Driver first name').note, /already lists/);
+  // The intake's own answer: Yes and No as written.
+  assert.deepEqual(said(drives(two())), [true, 'intake', false, false, null, null]);
+  assert.deepEqual(said(drives(two({ 'applicant.ownerDrives': false }))), [false, 'intake', false, false, null, null]);
+  // Another driver marked excluded doesn't change the owner's answer.
+  assert.deepEqual(said(drives(two({ 'applicant.ownerDrives': null, 'drivers.1.excluded': true }))), [true, 'standard', true, false, null, null]);
+  // The owner's own driver row marked excluded: the owner isn't a driver, No (from the exclusion);
+  // GEICO lists no driver itself, and its quote leaves the owner's row out (TNI, 2026-10-27: answer to
+  // PR question V3; before, the fill added it, flagged as excluded): the fill adds the other drivers.
+  const excluded = two({ 'applicant.ownerDrives': null, 'drivers.0.excluded': true });
+  assert.deepEqual(said(drives(excluded)), [false, 'derived', false, false, null, null]);
+  assert.deepEqual([geico.listedDriver(excluded), geico.omittedDriver(excluded)], [-1, 0]);
+  assert.deepEqual(addDriver(excluded), ['addDriver:1']);
+  assert.deepEqual([one(plan(excluded, { drivers: 0 }), 'Driver first name').warn, one(plan(excluded, { drivers: 0 }), 'Driver first name').value], [null, null]);
+  assert.match(one(plan(excluded, { drivers: 0 }), 'Driver first name').note, /owner, who doesn't drive/);
+  // The intake says No and marks them excluded: No, the intake's.
+  assert.deepEqual(said(drives(two({ 'applicant.ownerDrives': false, 'drivers.0.excluded': true }))), [false, 'intake', false, false, null, null]);
+  // The intake says Yes but marks the owner's row excluded: No, flagged for the agent to confirm.
+  const both = drives(two({ 'drivers.0.excluded': true }));
+  assert.deepEqual([both.value, both.source, both.note], [false, 'derived', null]);
+  assert.match(both.warn, /says the owner drives.*excluded/);
+  // A blank box with an owner no driver row's name matches: Yes, and the first row is the owner
+  // (TNI, 2026-10-27: answer to PR question V4), so the fill adds the second. (Before V4, adding the
+  // drivers stayed the agent's: the owner might be one of them spelled otherwise.)
+  const unmatched = two({ 'applicant.ownerDrives': null, 'applicant.owner1': 'Jordan Sample' });
+  assert.deepEqual(said(drives(unmatched)), [true, 'standard', true, false, null, null]);
+  assert.deepEqual([geico.listedDriver(unmatched), addDriver(unmatched)], [0, ['addDriver:1']]);
+  // In review mode (a class the standards weren't set on) the standard Yes is a check item.
+  const review = drives(two({ 'applicant.ownerDrives': null, 'operations.businessClass': 'Dump Truck' }));
+  assert.deepEqual([review.value, review.standard, review.reviewRequired], [true, true, true]);
+});
+
+// TNI, 2026-10-26 (answer to PR question): the owner's name matched two driver rows (a Sr and a Jr)
+// and only one was marked excluded: which row was the owner, and so whether the owner drives, wasn't
+// on the intake, so it was the agent's. TNI, 2026-10-27 (answer to PR question V4) replaces it: the
+// owner is the first row, so its "Excluded" mark decides, and the second is an ordinary driver.
+test('owner drives: the owner\'s name on two driver rows, one excluded: the first row decides (V4 replaces the agent\'s)', () => {
+  // The owner box's own name (no suffix), and a Jr with the same name: both carry the owner's name.
+  const senior = intake().drivers[0];
+  const junior = { ...senior, suffix: 'Jr', dob: '03/04/2004', cdl: false, cdlYear: null, maritalStatus: 'Single' };
+  const family = (excluded, changes = {}) => with_(changes, with_({ drivers: [{ ...senior, excluded: excluded[0] }, { ...junior, excluded: excluded[1] }] }));
+  const drives = (r, step = BOI, active = {}) => one(plan(r, active), step === BOI ? OWNER_DRIVES : OWNER_DRIVES_ADD, step);
+  const said = (s) => [s.value, s.source, s.standard, s.manualOnly, s.note];
+  const adding = { vehicles: 1, drivers: 1, trailers: 0, adding: { list: 'drivers', index: 1, click: true } };
+  const addDriver = (r) => buildPlan(r, geico, adding).filter((s) => s.kind === 'action' && !s.steps.includes(QC)).map((s) => s.action);
+  for (const box of [null, true]) {
+    const why = String(box);
+    // The first row marked: the owner doesn't drive, No; GEICO's quote leaves that row out (V3) and
+    // adds the Jr.
+    const first = family([true, false], { 'applicant.ownerDrives': box });
+    assert.deepEqual(said(drives(first)).slice(0, 2), [false, 'derived'], why);
+    assert.deepEqual([geico.listedDriver(first), geico.omittedDriver(first), addDriver(first)], [-1, 0, ['addDriver:1']], why);
+    // The Jr marked: the owner drives (the box's answer), GEICO lists them, and the Jr is added with the
+    // excluded-driver warning, as any excluded driver.
+    const second = family([false, true], { 'applicant.ownerDrives': box });
+    assert.deepEqual(said(drives(second)), [true, box ? 'intake' : 'standard', !box, false, null], why);
+    assert.deepEqual([geico.listedDriver(second), geico.omittedDriver(second), addDriver(second)], [0, -1, ['addDriver:1']], why);
+    assert.match(one(plan(second, { drivers: 1 }), 'Driver first name', DRV).warn, /^The intake marks this driver to be excluded/, why);
+  }
+  // The intake's No stands: the owner isn't a driver, and the fill adds the other driver.
+  const no = family([true, false], { 'applicant.ownerDrives': false });
+  assert.deepEqual(said(drives(no)), [false, 'intake', false, false, null]);
+  assert.deepEqual(addDriver(no), ['addDriver:1']);
+  // Counterexamples: none excluded keeps the standard Yes (GEICO lists the first row and adds the
+  // other); both excluded keeps No (the first left out, the second added).
+  const none = family([false, false], { 'applicant.ownerDrives': null });
+  assert.deepEqual(said(drives(none)), [true, 'standard', true, false, null]);
+  assert.deepEqual([geico.listedDriver(none), addDriver(none)], [0, ['addDriver:1']]);
+  const all = family([true, true], { 'applicant.ownerDrives': null });
+  assert.deepEqual(said(drives(all)), [false, 'derived', false, false, null]);
+  assert.deepEqual([geico.listedDriver(all), geico.omittedDriver(all), addDriver(all)], [-1, 0, ['addDriver:1']]);
+});
+
+// TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives; if
+// the owner's row is marked Excluded, or the answer is No, the owner is excluded. GEICO asks nothing
+// about exclusion, and doesn't list the owner as a driver. Since T1 (TNI, 2026-10-26: answer to PR
+// question) the owner's row isn't on GEICO's quote at all: no Add Driver form is filled for it (the
+// test below); before, it carried the excluded-driver warning.
+test('owner drives No: the owner\'s driver row is left off GEICO\'s quote (T1), never listed by GEICO; other drivers unchanged', () => {
+  const two = (changes = {}) => with_(changes, with_({ drivers: [{ ...intake().drivers[0], excluded: null }, { ...CASEY, excluded: null }] }));
+  const firstName = (r, drivers) => one(plan(r, { drivers }), 'Driver first name', DRV);
+  const no = two({ 'applicant.ownerDrives': false });
+  // GEICO isn't told the owner drives, on Business & Owner Info or on another driver's Add Driver form.
+  for (const s of [one(plan(no), OWNER_DRIVES, BOI), one(plan(no, { drivers: 1 }), OWNER_DRIVES_ADD, DRV)]) assert.deepEqual([s.value, s.source, s.note, s.warn], [false, 'intake', null, null]);
+  assert.equal(geico.listedDriver(no), -1);
+  // The owner's row: no Add Driver form is filled for it (T1), so no exclusion warning either.
+  assert.deepEqual([firstName(no, 0).value, firstName(no, 0).warn], [null, null]);
+  assert.match(firstName(no, 0).note, /owner, who doesn't drive/, 'not the "GEICO already lists" note: GEICO doesn\'t list the owner');
+  assert.equal(firstName(no, 1).warn, null);
+  assert.equal(no.drivers[0].excluded, null, 'the record keeps the row as read');
+  // Counterexamples: a blank box or the intake's Yes, the owner's row unmarked: GEICO lists the owner,
+  // and no form carries the warning.
+  for (const box of [null, true]) {
+    const r = two({ 'applicant.ownerDrives': box });
+    assert.equal(geico.listedDriver(r), 0, String(box));
+    assert.deepEqual([firstName(r, 0).warn, firstName(r, 1).warn], [null, null], String(box));
+  }
+  // The agent's No for the owner's row in client details stands: no warning.
+  assert.equal(firstName(two({ 'applicant.ownerDrives': false, 'drivers.0.excluded': false }), 0).warn, null);
+  // A row the intake marks excluded keeps its own warning.
+  assert.match(firstName(two({ 'applicant.ownerDrives': false, 'drivers.1.excluded': true }), 1).warn, /^The intake marks this driver to be excluded/);
+  // The owner's name on two rows (a Sr and a Jr), one marked excluded: with the intake's No the No
+  // decides, so there is no mixed case. Both owner-driver questions are the intake's No without the
+  // mixed-rows note. Since T2 only the row with exactly the owner's full name (here the first) is the
+  // owner's, left off the quote (T1); the Jr is excluded only by their own mark, the other driver never.
+  for (const [marked, warned] of [[0, [false, false, false]], [1, [false, true, false]]]) {
+    const senior = { ...intake().drivers[0], excluded: null };
+    const family = with_({ 'applicant.ownerDrives': false, drivers: [senior, { ...senior, suffix: 'Jr', dob: '03/04/2004' }, { ...CASEY, excluded: null }] });
+    family.drivers[marked].excluded = true;
+    for (const s of [one(plan(family), OWNER_DRIVES, BOI), one(plan(family, { drivers: 1 }), OWNER_DRIVES_ADD, DRV)]) {
+      assert.deepEqual([s.value, s.source, s.manualOnly, s.note], [false, 'intake', false, null], `row ${marked} marked`);
+    }
+    assert.deepEqual([geico.listedDriver(family), geico.omittedDriver(family)], [-1, 0]);
+    assert.deepEqual([0, 1, 2].map((i) => /excluded/.test(firstName(family, i).warn ?? '')), warned, `row ${marked} marked`);
+  }
+});
+
+// TNI, 2026-10-26 (answers to PR questions, T1, T3), the intake's "owner drives" No:
+// - T1: GEICO's quote leaves the owner's row out. The fill doesn't add it, nor fills an Add Driver
+//   form for it; only the other intake drivers are added. (R1 had it added, as an excluded driver
+//   GEICO asks nothing about.)
+// - T3: the owner's date of birth, marital status, license state and CDL come from that row.
+// The owner's row is the first (TNI, 2026-10-27: answer to PR question V4, which replaces T2's row by
+// the owner's exact full name, and the agent's with none: the test after this one).
+test('owner drives No (T1, T3): GEICO leaves the owner\'s row, the first, out and adds the others; the owner\'s details from that row', () => {
+  const owner = { ...intake().drivers[0], excluded: null };
+  const casey = { ...CASEY, excluded: null };
+  const no = (drivers, changes = {}) => with_({ 'applicant.ownerDrives': false, drivers, ...changes });
+  const added = (r, index) => buildPlan(r, geico, { vehicles: 0, drivers: index, trailers: 0, adding: { list: 'drivers', index, click: true } })
+    .filter((s) => s.kind === 'action' && !s.steps.includes(QC)).map((s) => s.action);
+  const form = (r, drivers, name = 'Driver first name') => one(plan(r, { drivers }), name, DRV);
+  const ADD_DRIVER = ['Driver first name', 'Driver last name', 'Driver date of birth', 'Driver license state', 'Driver has a CDL (TNI: No when the intake leaves it blank)',
+    'Driver\'s relationship to the business (Owner, else Employee)', OWNER_DRIVES_ADD];
+  const DETAILS = ['Owner date of birth', 'Owner marital status', 'Owner\'s license state', 'Owner has a CDL (TNI: No when the intake leaves it blank)'];
+  const details = (r) => DETAILS.map((name) => one(plan(r), name, name.startsWith('Owner\'s') || name.startsWith('Owner has') ? DRV : BOI));
+
+  // T1: the owner's row is never added, and no Add Driver form is filled for it; the other driver is.
+  const r = no([owner, casey]);
+  assert.deepEqual([geico.omittedDriver(r), geico.listedDriver(r)], [0, -1]);
+  assert.deepEqual(added(r, 1), ['addDriver:1']);
+  assert.deepEqual(added(r, 0), [], 'never the owner\'s "+"');
+  for (const name of ADD_DRIVER) {
+    agents(form(r, 0, name));
+    assert.match(form(r, 0, name).note, /owner, who doesn't drive.*GEICO's quote leaves them out.*pick the driver this form is for/, name);
+  }
+  assert.equal(form(r, 0).warn, null, 'no exclusion warning: the row isn\'t added');
+  assert.deepEqual([form(r, 1).value, form(r, 1).note, form(r, 1).warn], ['Casey', null, null]);
+  // Both owner-driver questions stay the intake's No.
+  assert.deepEqual([one(plan(r), OWNER_DRIVES, BOI).value, form(r, 1, OWNER_DRIVES_ADD).value], [false, false]);
+  // The owner's name on the second row: the first row is the owner's all the same (V4; before, the
+  // second was, by name); the owner's row the intake also marks excluded: left out the same way.
+  assert.deepEqual([geico.omittedDriver(no([casey, owner])), added(no([casey, owner]), 0), added(no([casey, owner]), 1)], [0, [], ['addDriver:1']]);
+  const marked = no([{ ...owner, excluded: true }, casey]);
+  assert.deepEqual([geico.omittedDriver(marked), added(marked, 0), form(marked, 0).warn], [0, [], null]);
+  // Counterexamples. A blank box or the intake's Yes: GEICO lists the owner itself (W44-25), and the
+  // other driver is added.
+  for (const box of [null, true]) {
+    const yes = no([owner, casey], { 'applicant.ownerDrives': box });
+    assert.deepEqual([geico.omittedDriver(yes), geico.listedDriver(yes), added(yes, 1)], [-1, 0, ['addDriver:1']], String(box));
+  }
+  // The owner's row marked excluded with the box blank: left out too since V3 (TNI, 2026-10-27; before,
+  // added with the 2026-10-20 warning): the test of V3 below.
+  const blankMarked = no([{ ...owner, excluded: true }, casey], { 'applicant.ownerDrives': null });
+  assert.deepEqual([geico.omittedDriver(blankMarked), added(blankMarked, 0)], [0, []]);
+  // The agent's No for the owner's row in client details: added as any.
+  const corrected = no([{ ...owner, excluded: false }, casey]);
+  assert.deepEqual([geico.omittedDriver(corrected), added(corrected, 0), form(corrected, 0).value], [-1, ['addDriver:0'], 'Amina']);
+  // An owner no driver row's name matches: the first row is still the owner's (V4; before, every
+  // intake driver was added).
+  const unmatched = no([owner, casey], { 'applicant.owner1': 'Jordan Sample' });
+  assert.deepEqual([geico.omittedDriver(unmatched), added(unmatched, 0), added(unmatched, 1)], [0, [], ['addDriver:1']]);
+
+  // T3: the owner's details from their row, with the source the row's value has (not TNI's standard).
+  assert.deepEqual(details(r).map((s) => [s.value, s.source, s.note]), [['01/02/1980', 'derived', null], ['Married', 'derived', null], ['NE', 'derived', null], [true, 'derived', null]]);
+  // The owner's names stay the owner box's.
+  assert.deepEqual([one(plan(no([owner], { 'applicant.owner1': 'Amina K. Kone' })), 'Owner first name', BOI).value, details(no([owner], { 'applicant.owner1': 'Amina K. Kone' }))[0].value], ['Amina', '01/02/1980']);
+  // The first row under another name: its details (V4; before, the agent's).
+  assert.deepEqual(details(unmatched).map((s) => s.value), ['01/02/1980', 'Married', 'NE', true]);
+  // No driver rows, or the agent's No for the owner's row: the agent's, with the reason.
+  for (const s of [...details(no([])), ...details(corrected)]) {
+    agents(s);
+    assert.match(s.note, /owner doesn't drive/, s.name);
+  }
+});
+
+// TNI, 2026-10-27 (answer to PR question V4): "The owner is always the first driver on the intake's
+// driver list", Sr or Jr regardless. The owner's details, the "Excluded" mark and the relationship
+// Owner come from the first row; the rows after it are ordinary drivers and employees, even with the
+// owner's name, and a first row with another name is still the owner (the Intake step warns:
+// normalize.test.mjs). It replaces T2's exact-full-name match. V5 (confirmed): the owner's row with a
+// blank CDL box gets TNI's CDL standard No, as every driver.
+test('the owner is the first driver (V4): details, "Excluded" and relationship from row 1; later rows ordinary, even with the owner\'s name', () => {
+  const owner = { ...intake().drivers[0], excluded: null };
+  const casey = { ...CASEY, excluded: null };
+  const riley = { ...CASEY, first: 'Riley', last: 'Sample', dob: '11/12/1985', licenseState: 'KS', maritalStatus: 'Divorced', excluded: null };
+  const senior = { ...owner, suffix: 'Sr' };
+  const junior = { ...owner, suffix: 'Jr', dob: '03/04/2004', maritalStatus: 'Single', licenseState: 'IA', cdl: false, cdlYear: null };
+  const twin = { ...owner, dob: '05/06/1990', maritalStatus: 'Single', licenseState: 'IA', cdl: false, cdlYear: null };
+  const rec = (drivers, changes = {}) => with_({ drivers, 'applicant.ownerDrives': null, ...changes });
+  const added = (r, index) => buildPlan(r, geico, { vehicles: 0, drivers: index, trailers: 0, adding: { list: 'drivers', index, click: true } })
+    .filter((s) => s.kind === 'action' && !s.steps.includes(QC)).map((s) => s.action);
+  const RELATION = 'Driver\'s relationship to the business (Owner, else Employee)';
+  const relation = (r, i) => one(plan(r, { drivers: i }), RELATION, DRV);
+  const employees = (r) => value(r, 'Number of employees (the drivers besides the owner)', ABI);
+  const DETAILS = ['Owner date of birth', 'Owner marital status', 'Owner\'s license state', 'Owner has a CDL (TNI: No when the intake leaves it blank)'];
+  const details = (r) => DETAILS.map((name) => one(plan(r), name, name.startsWith('Owner\'s') || name.startsWith('Owner has') ? DRV : BOI).value);
+  const names = (r) => ['Owner first name', 'Owner last name'].map((n) => value(r, n, BOI));
+  // Each case: the drivers, whose details are the owner's, and the second row an ordinary driver.
+  const cases = [
+    ['Sr first, Jr second', [senior, junior], ['01/02/1980', 'Married', 'NE', true]],
+    ['Jr first, Sr second', [junior, senior], ['03/04/2004', 'Single', 'IA', false]],
+    ['a first row with another name', [riley, casey], ['11/12/1985', 'Divorced', 'KS', false]],
+    ['the owner\'s name on row 2 only', [casey, owner], ['07/09/1995', 'Single', 'IA', false]],
+    ['two rows with the owner\'s exact name', [owner, twin], ['01/02/1980', 'Married', 'NE', true]],
+  ];
+  for (const [why, drivers, ownerDetails] of cases) {
+    // A blank box (TNI's Yes) and the intake's Yes: GEICO lists the first row as the owner and adds the second.
+    for (const box of [null, true]) {
+      const r = rec(drivers, { 'applicant.ownerDrives': box });
+      assert.deepEqual([geico.listedDriver(r), geico.omittedDriver(r), added(r, 1)], [0, -1, ['addDriver:1']], `${why}, box ${box}`);
+      assert.deepEqual([relation(r, 1).value, relation(r, 1).source], ['Employee', 'standard'], `${why}: the second row is an employee`);
+      assert.equal(employees(r), '1', `${why}: the owner isn't counted, the second row is`);
+      assert.deepEqual(details(r), ownerDetails, why);
+      assert.deepEqual([one(plan(r), OWNER_DRIVES, BOI).value, one(plan(r), OWNER_DRIVES, BOI).note], [true, null], why);
+    }
+    // The intake's No: the first row is the owner's, left off GEICO's quote (T1); the second is added,
+    // and the owner's details still come from the first.
+    const no = rec(drivers, { 'applicant.ownerDrives': false });
+    assert.deepEqual([geico.listedDriver(no), geico.omittedDriver(no), added(no, 0), added(no, 1)], [-1, 0, [], ['addDriver:1']], `${why}, box No`);
+    assert.deepEqual([one(plan(no, { drivers: 1 }), 'Driver first name', DRV).note, one(plan(no, { drivers: 1 }), 'Driver first name', DRV).warn], [null, null], why);
+    assert.deepEqual(details(no), ownerDetails, `${why}, box No`);
+    assert.equal(employees(no), '1', `${why}, box No`);
+  }
+  // The owner's names stay the owner box's when the first row carries another name.
+  assert.deepEqual(names(rec([riley, casey])), ['Amina', 'Kone']);
+  assert.deepEqual(names(rec([casey, owner])), ['Amina', 'Kone']);
+  // The "Excluded" mark is the first row's: a later row with the owner's name, marked or not, is an
+  // ordinary driver (no longer the agent's: V4 replaces the 2026-10-26 answer for several rows).
+  const markedJr = rec([senior, { ...junior, excluded: true }]);
+  assert.deepEqual([one(plan(markedJr), OWNER_DRIVES, BOI).value, one(plan(markedJr), OWNER_DRIVES, BOI).source, one(plan(markedJr), OWNER_DRIVES, BOI).note], [true, 'standard', null]);
+  assert.deepEqual([geico.listedDriver(markedJr), added(markedJr, 1)], [0, ['addDriver:1']]);
+  assert.match(one(plan(markedJr, { drivers: 1 }), 'Driver first name', DRV).warn, /^The intake marks this driver to be excluded/);
+  const markedSr = rec([{ ...senior, excluded: true }, junior]);
+  assert.deepEqual([one(plan(markedSr), OWNER_DRIVES, BOI).value, one(plan(markedSr), OWNER_DRIVES, BOI).source], [false, 'derived']);
+  // A second owner (the owner box's second name) on a later row is still their Owner (unchanged).
+  assert.equal(relation(rec([owner, casey], { 'applicant.owner2': 'Casey Example' }), 1).value, 'Owner');
+  // V5 (confirmed): the owner's row with a blank CDL box: TNI's CDL standard No, as every driver.
+  for (const box of [null, false]) {
+    const blankCdl = rec([{ ...owner, cdl: null, cdlYear: null }, casey], { 'applicant.ownerDrives': box });
+    const cdl = one(plan(blankCdl), DETAILS[3], DRV);
+    assert.deepEqual([cdl.value, cdl.source, cdl.note], [false, 'standard', null], `box ${box}`);
+  }
+});
+
+// TNI, 2026-10-27 (answer to PR question V3): the owner's row (the first) marked "Excluded" with the
+// "owner drives" box blank or Yes: GEICO leaves the row out, as T1 does for the box's No (R1: Excluded
+// means the owner doesn't drive). Progressive and AmWINS keep it as an excluded driver
+// (progressive.test.mjs). Before, GEICO added it with the excluded-driver warning (2026-10-20 rule).
+test('the owner\'s row marked Excluded over a blank box or Yes (V3): GEICO leaves it out and adds the others', () => {
+  const owner = { ...intake().drivers[0], excluded: true };
+  const casey = { ...CASEY, excluded: null };
+  const added = (r, index) => buildPlan(r, geico, { vehicles: 0, drivers: index, trailers: 0, adding: { list: 'drivers', index, click: true } })
+    .filter((s) => s.kind === 'action' && !s.steps.includes(QC)).map((s) => s.action);
+  const form = (r, drivers) => one(plan(r, { drivers }), 'Driver first name', DRV);
+  for (const box of [null, true]) {
+    const r = with_({ drivers: [owner, casey], 'applicant.ownerDrives': box });
+    assert.deepEqual([geico.omittedDriver(r), geico.listedDriver(r), added(r, 0), added(r, 1)], [0, -1, [], ['addDriver:1']], String(box));
+    assert.equal(form(r, 0).value, null, 'no Add Driver form is filled for the owner');
+    assert.match(form(r, 0).note, /owner, who doesn't drive.*GEICO's quote leaves them out/);
+    assert.equal(form(r, 0).warn, null, 'no exclusion warning: the row isn\'t added');
+    assert.deepEqual([form(r, 1).value, form(r, 1).warn], ['Casey', null]);
+    assert.deepEqual([one(plan(r), OWNER_DRIVES, BOI).value, one(plan(r), OWNER_DRIVES, BOI).source], [false, 'derived']);
+  }
+  // The intake's Yes still asks the agent to confirm the No.
+  assert.match(one(plan(with_({ drivers: [owner, casey], 'applicant.ownerDrives': true })), OWNER_DRIVES, BOI).warn, /says the owner drives.*excluded/);
+  // Counterexamples: another driver marked Excluded is added with the warning; the owner's row
+  // unmarked is listed by GEICO.
+  const other = with_({ drivers: [{ ...owner, excluded: null }, { ...casey, excluded: true }], 'applicant.ownerDrives': null });
+  assert.deepEqual([geico.omittedDriver(other), geico.listedDriver(other), added(other, 1)], [-1, 0, ['addDriver:1']]);
+  assert.match(form(other, 1).warn, /^The intake marks this driver to be excluded/);
+});
+
+// TNI, 2026-10-27 (answer to PR question V1): on GEICO, the owner the intake's only driver and not
+// driving (the box's No, or V3's Excluded): no driver is added (T1, V3), and a "needs you" item on
+// Drivers & Incidents says so and holds Continue: which driver GEICO's quote has is the agent's.
+test('the owner the intake\'s only driver, who doesn\'t drive (V1): GEICO adds no driver, and a needs-you item holds Continue', () => {
+  const owner = { ...intake().drivers[0], excluded: null };
+  const steps = (r) => buildPlan(r, geico, { vehicles: 0, drivers: 0, trailers: 0, adding: { list: 'drivers', index: 0, click: true } }).filter((s) => s.kind === 'action');
+  const item = (r) => steps(r).find((s) => s.action === 'noOtherDriver');
+  for (const [why, r] of [['box No', with_({ drivers: [owner], 'applicant.ownerDrives': false })],
+    ['row marked Excluded, box blank', with_({ drivers: [{ ...owner, excluded: true }], 'applicant.ownerDrives': null })],
+    ['row marked Excluded, box Yes', with_({ drivers: [{ ...owner, excluded: true }], 'applicant.ownerDrives': true })]]) {
+    assert.equal(geico.omittedDriver(r), 0, why);
+    assert.ok(!steps(r).some((s) => /^addDriver/.test(s.action)), `${why}: no driver added`);
+    const s = item(r);
+    assert.ok(s, `${why}: the item`);
+    assert.deepEqual([s.text, s.token, s.steps, s.markable], [null, null, [DRV], false], `${why}: never clicked, on Drivers & Incidents`);
+    assert.match(s.missing, /no driver besides the owner, who doesn't drive.*GEICO's quote.*yours/, why);
+  }
+  // Counterexamples: another driver to add; the owner who drives; the agent's Excluded driver No on
+  // the owner's row; no driver rows at all (the Intake step's own item).
+  for (const [why, r] of [['another driver', with_({ drivers: [owner, CASEY], 'applicant.ownerDrives': false })],
+    ['the owner drives', with_({ drivers: [owner], 'applicant.ownerDrives': null })],
+    ['the agent\'s No', with_({ drivers: [{ ...owner, excluded: false }], 'applicant.ownerDrives': false })],
+    ['no drivers', with_({ drivers: [], 'applicant.ownerDrives': false })]]) {
+    assert.equal(item(r), undefined, why);
+  }
 });
 
 test('ownership type from the company name; no suffix, or no name, is the agent\'s', () => {
@@ -767,6 +1174,29 @@ test('filings: the kind and the boxes from which filings the intake names', () =
   }
 });
 
+// The texts AmWINS' "Is a Federal Filing Required?" answers No since T9 (TNI, 2026-10-26: an SR-22
+// beside a Form E or H, "State filing" or "Intrastate" alone, an SR-22 beside an MC number, "SR-22
+// and filings"): GEICO asks about proof of insurance or filings to a state or federal agency, so they
+// stay as before T9. In the which-filings box each is the agent's. So do V12's (TNI, 2026-10-27: a
+// Form E or H, a lone "State", a state filing beside an MC number, "Filings and SR-22").
+test('filings required: AmWINS\' T9 texts stay the agent\'s in GEICO\'s which-filings box (state or federal)', () => {
+  const FILINGS = 'Filings required (TNI: No unless the intake says otherwise)';
+  // V12's texts too (TNI, 2026-10-27: GEICO unchanged).
+  for (const which of ['SR-22 and Form E', 'State filing', 'Intrastate', 'SR-22, MC 123456', 'SR-22 and filings',
+    'Form E', 'State', 'State filing, MC 123456', 'Filings and SR-22', 'SR-22 and additional filings', 'Filings and FR-44']) {
+    const s = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': which })), FILINGS);
+    agents(s);
+    assert.match(s.note, new RegExp(`names filings \\("${which}"\\)`));
+  }
+  // A notes line naming a Form E or H, a state filing or a bare "filings" beside an SR-22: also the agent's.
+  for (const notes of ['SR-22 and Form E', 'Needs a state filing', 'SR-22 and filings',
+    'Needs a Form H filing', 'State filing, MC 123456', 'Filings and SR-22', 'SR-22 and additional filings']) {
+    const s = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': null, 'notes.text': notes })), FILINGS);
+    agents(s);
+    assert.match(s.note, new RegExp(`"${notes}"`));
+  }
+});
+
 // --- Drivers ------------------------------------------------------------------------------------
 
 test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel\'s driver', () => {
@@ -786,32 +1216,36 @@ test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel
     agents(one(owner, name));
     assert.match(one(owner, name).note, /already lists/);
   }
-  // Unless the intake doesn't say the owner drives: then an owner's row is the owner.
-  const unsaid = plan(with_({ 'applicant.ownerDrives': null }, r), { drivers: 0 });
-  const unsaidRel = one(unsaid, 'Driver\'s relationship to the business (Owner, else Employee)');
-  assert.deepEqual([one(unsaid, 'Driver first name').value, unsaidRel.value, unsaidRel.source], ['Amina', 'Owner', 'derived']);
+  // The intake says the owner doesn't drive: GEICO's quote leaves the owner's row out, so Add Driver
+  // isn't filled for them either (TNI, 2026-10-26: answer to PR question, T1). A blank box is TNI's
+  // Yes (W44-25): GEICO lists them, as above.
+  const unsaid = plan(with_({ 'applicant.ownerDrives': false, 'drivers.0.excluded': null }, r), { drivers: 0 });
+  agents(one(unsaid, 'Driver first name'));
+  assert.match(one(unsaid, 'Driver\'s relationship to the business (Owner, else Employee)').note, /owner, who doesn't drive/);
+  assert.match(one(plan(with_({ 'applicant.ownerDrives': null }, r), { drivers: 0 }), 'Driver first name').note, /already lists/);
   const second = plan(with_({ 'applicant.owner2': 'Casey Example' }, r), { drivers: 1 });
   assert.equal(one(second, 'Driver\'s relationship to the business (Owner, else Employee)').value, 'Owner', 'the second owner');
   // GEICO lists the owner who drives itself: an Add Driver form is never theirs (sidepanel pickUnitForm).
   const two = () => with_({ drivers: [intake().drivers[0], CASEY] });
-  assert.deepEqual([geico.listedDriver(two()), geico.listedDriver(with_({ 'applicant.ownerDrives': false }, two())), geico.listedDriver(with_({ 'applicant.owner1': 'Jordan Sample' }, two()))], [0, -1, -1]);
-  assert.equal(geico.listedDriver(with_({ drivers: [CASEY, intake().drivers[0]] })), 1);
+  // The owner's row is the first, whatever its name (TNI, 2026-10-27: answer to PR question V4;
+  // before, the row the owner's name matched, and none for an owner no row matched).
+  assert.deepEqual([geico.listedDriver(two()), geico.listedDriver(with_({ 'applicant.ownerDrives': false }, two())), geico.listedDriver(with_({ 'applicant.owner1': 'Jordan Sample' }, two()))], [0, -1, 0]);
+  assert.equal(geico.listedDriver(with_({ drivers: [CASEY, intake().drivers[0]] })), 0);
   // An excluded driver: filled, flagged.
   assert.match(one(plan(with_({ 'drivers.1.excluded': true }, r), { drivers: 1 }), 'Driver first name').warn, /excluded/);
   assert.equal(one(p, 'Driver first name').warn, null);
   // Add Driver for a driver who is the owner asks again whether the owner drives, and the owner's
   // mobile phone (PA live run, 2026-10-21, W43-29): the intake's answer and its phone.
   const ownerForm = plan(with_({ 'applicant.ownerDrives': false, 'applicant.owner2': 'Casey Example' }, two()), { drivers: 1 });
-  const drives = one(ownerForm, 'Owner is a driver (Add Driver)');
+  const drives = one(ownerForm, OWNER_DRIVES_ADD);
   assert.deepEqual([drives.value, drives.field, drives.ask, drives.steps], [false, 'GiveOwnerActiveDriverStatusYesNo', ['Is the owner a driver on the policy?'], [DRV]]);
   const mobile = one(ownerForm, 'Owner\'s mobile phone (the intake\'s phone)');
   assert.deepEqual([mobile.value, mobile.field, mobile.steps], ['(555) 010-0100', 'GiveMobilePhoneNumber', [DRV]]);
-  // Not on the intake, or a phone that isn't 10 digits: the agent's.
-  agents(one(plan(with_({ 'applicant.ownerDrives': null }, two()), { drivers: 1 }), 'Owner is a driver (Add Driver)'));
+  // A phone that isn't 10 digits: the agent's. (A blank owner-drives box is TNI's Yes: W44-25, above.)
   agents(one(plan(with_({ 'applicant.phone': '555-0100' }, two()), { drivers: 1 }), 'Owner\'s mobile phone (the intake\'s phone)'));
   // Business & Owner Info's own question stays the intake's answer there.
   assert.deepEqual(plan(two(), { drivers: 1 }).filter((s) => s.field === 'GiveOwnerActiveDriverStatusYesNo').map((s) => [s.name, s.steps, s.value]),
-    [['Owner is a driver', [BOI], true], ['Owner is a driver (Add Driver)', [DRV], true]]);
+    [[OWNER_DRIVES, [BOI], true], [OWNER_DRIVES_ADD, [DRV], true]]);
 });
 
 test('ELD: the intake\'s answer; blank is the agent\'s (W43-29)', () => {
@@ -865,17 +1299,22 @@ test('adding units: the chooser answers the unit the panel adds; its "+" and Nex
   const [addDriver, ...rest] = actions(driver);
   assert.deepEqual([addDriver.action, addDriver.within, addDriver.steps, rest], ['addDriver:1', '#summaryPage-AddDriver > li.add-state', [DRV], []]);
   agents(chooser(driver));
-  // An owner who drives under a name no driver row matches, or "owner drives" unanswered: GEICO's
-  // own driver row may be one of the intake's, so Add Driver is the agent's.
-  for (const changes of [{ 'applicant.owner1': 'Jordan Sample' }, { 'applicant.ownerDrives': null }]) {
-    assert.deepEqual(buildPlan(with_(changes, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action' && !s.steps.includes(QC)), []);
+  // An owner who drives under a name no driver row matches (an answered or a blank box, TNI's Yes):
+  // the first row is still the owner, GEICO's own (TNI, 2026-10-27: answer to PR question V4), so the
+  // second is added. (Before V4: Add Driver was the agent's, the owner perhaps one of them.)
+  for (const changes of [{ 'applicant.owner1': 'Jordan Sample' }, { 'applicant.owner1': 'Jordan Sample', 'applicant.ownerDrives': null }]) {
+    assert.deepEqual(buildPlan(with_(changes, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action' && !s.steps.includes(QC)).map((s) => s.action), ['addDriver:1']);
   }
-  assert.equal(buildPlan(with_({ 'applicant.ownerDrives': false }, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action' && !s.steps.includes(QC)).length, 1);
+  // The owner matched, the box blank (W44-01, W44-25: TNI's Yes), or the owner not driving: added.
+  for (const changes of [{ 'applicant.ownerDrives': null }, { 'applicant.ownerDrives': false }]) {
+    assert.equal(buildPlan(with_(changes, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action' && !s.steps.includes(QC)).length, 1, JSON.stringify(changes));
+  }
   // Never a button that leaves a step or commits: on the unit steps only the add icon and Next inside
   // the chooser; on Quote & Coverages the cargo card's chevron, View More Payment Plans and Print
   // Quote Proposal (TNI, 2026-10-21), Recalculate once a quote (W43-31), never its Next (MVR & CLUE).
+  // A "needs you" item with no button at all (V1's noOtherDriver) is never clicked.
   for (const a of geico.actions) {
-    assert.ok(a.token === 'addIcon' || (a.text === '^next$' && a.moveOn && /VehicleOrTrailer/.test(a.within))
+    assert.ok(a.token === 'addIcon' || (a.text === '^next$' && a.moveOn && /VehicleOrTrailer/.test(a.within)) || (!a.text && !a.token && !!a.missing)
       || (a.steps.includes(QC) && (a.token === 'editIcon' || ['^recalculate$', '^view more payment plans$', '^print quote proposal$', '^yes,?\\s*under permanent lease$'].includes(a.text))), a.id);
   }
 });
@@ -887,17 +1326,21 @@ test('SR-22: No for everyone; Yes only when GEICO lists one driver', () => {
   agents(one(plan(two), 'SR-22 (the owner; TNI: No unless the intake says otherwise)'));
   agents(one(plan(two, { drivers: 1 }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)'));
   assert.equal(value(with_({ drivers: [intake().drivers[0], CASEY] }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)', DRV, { drivers: 1 }), false);
-  // The owner listed besides the intake's only driver: GEICO has two, so neither is answered.
+  // The intake's only driver under another name than the owner box's: still the owner, the first
+  // driver (TNI, 2026-10-27: answer to PR question V4), so GEICO lists one driver and the owner's form
+  // gets the Yes. (Before V4: the owner listed besides that driver, two, so neither was answered.)
   const other = with_({ 'operations.needSr22': true, 'applicant.owner1': 'Jordan Sample' });
-  agents(one(plan(other), 'SR-22 (the owner; TNI: No unless the intake says otherwise)'));
+  assert.equal(value(other, 'SR-22 (the owner; TNI: No unless the intake says otherwise)'), true);
   agents(one(plan(other, { drivers: 0 }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)'));
-  assert.match(one(plan(other), 'SR-22 (the owner; TNI: No unless the intake says otherwise)').note, /drivers GEICO lists/);
-  // The owner doesn't drive: the intake's only driver is GEICO's only one.
+  // The owner doesn't drive, but the agent set the only row's Excluded driver to No (this file's
+  // intake): the row is added, GEICO's only driver.
   assert.equal(value(with_({ 'operations.needSr22': true, 'applicant.ownerDrives': false, 'applicant.owner1': 'Jordan Sample' }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)', DRV, { drivers: 0 }), true);
-  // Whether the owner drives isn't on the intake: Add Driver's is the agent's.
+  // A blank owner-drives box is TNI's Yes (W44-25): GEICO lists the owner, the only row, so no Add
+  // Driver form is theirs.
   agents(one(plan(with_({ 'operations.needSr22': true, 'applicant.ownerDrives': null, 'applicant.owner1': 'Jordan Sample' }), { drivers: 0 }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)'));
-  // The owner's own form: the owner isn't matched to a driver.
-  agents(one(plan(with_({ 'applicant.owner1': 'Jordan Sample' })), 'Owner\'s license state'));
+  // The owner's own form: from the first row, whatever its name (V4); no driver rows: the agent's.
+  assert.equal(value(with_({ 'applicant.owner1': 'Jordan Sample' }), 'Owner\'s license state'), 'NE');
+  agents(one(plan(with_({ drivers: [] })), 'Owner\'s license state'));
   // Blank: TNI's No for every driver (W43-34), unless the filings or the notes name an SR-22, an FR-44
   // or financial responsibility: then the agent's, quoted.
   const silent = with_({ 'operations.needSr22': null, drivers: [intake().drivers[0], CASEY] });
@@ -925,7 +1368,9 @@ test('years in business, current insurance and its limits', () => {
   assert.equal(auto({}).value, 'Yes');
   assert.equal(auto({ 'priorInsurance.0.type': 'Personal Auto' }).value, 'Yes');
   assert.equal(auto({ priorInsurance: [{ type: null, carrier: 'No', limit: null, expiration: null }] }).value, 'No');
-  for (const changes of [{ 'priorInsurance.0.expiration': '01/31/2026' }, { 'priorInsurance.0.expiration': null }, { priorInsurance: [] },
+  // Undated: proof of prior insurance assumed (TNI, 2026-10-26, W44-29; the agent's before).
+  assert.deepEqual([auto({ 'priorInsurance.0.expiration': null }).value, auto({ 'priorInsurance.0.expiration': null }).source], ['Yes', 'standard']);
+  for (const changes of [{ 'priorInsurance.0.expiration': '01/31/2026' }, { priorInsurance: [] },
     { 'priorInsurance.0.type': 'General Liability' }]) {
     agents(auto(changes));
     assert.equal(auto(changes).manualOnly, true);
@@ -943,7 +1388,11 @@ test('employees, years with the insurer, additional insureds: TNI\'s answers', (
   const employees = (drivers, changes = {}) => one(plan(with_({ drivers, ...changes })), 'Number of employees (the drivers besides the owner)');
   const owner = intake().drivers[0];
   const others = (n) => Array.from({ length: n }, (_, i) => ({ ...CASEY, first: `Casey${i}` }));
-  assert.deepEqual([[owner], [owner, CASEY], [owner, ...others(3)], [owner, ...others(5)], others(1), others(21)].map((d) => employees(d).value), ['None', '1', '2-3', '4-5', '1', '21+']);
+  // The owner is the first driver, whatever its name (TNI, 2026-10-27: answer to PR question V4), so
+  // a list with no row carrying the owner's name counts all but its first (before V4: all of them).
+  assert.deepEqual([[owner], [owner, CASEY], [owner, ...others(3)], [owner, ...others(5)], others(1), others(21)].map((d) => employees(d).value), ['None', '1', '2-3', '4-5', 'None', '11-20']);
+  // A Jr after the owner is an employee (V4).
+  assert.equal(employees([owner, { ...owner, suffix: 'Jr' }]).value, '1');
   assert.deepEqual([employees([owner, CASEY]).source, employees([owner, CASEY]).standard], ['standard', true]);
   // The second owner isn't an employee either.
   assert.equal(employees([owner, CASEY], { 'applicant.owner2': 'Casey Example' }).value, 'None');
@@ -1016,32 +1465,39 @@ test('liability coverage and its limit from the intake; an NTL mention not answe
   }
 });
 
-test('Florida: medical payments Not Included, PIP kept as GEICO offers it (TNI)', () => {
+// TNI, 2026-10-26, W44-26 (the maintainer: "Always add medical payments at $5K, there is no medical
+// payments, choose PIP"; GEICO offering both: "MedPay $5K, PIP yok"), replacing that morning's "If
+// there is personal injury protection available, we always prefer PIP" and Florida's Medical
+// Payments Not Included (2026-10-21). What the page kit does with the lists: test/pagekit.test.mjs.
+const MED = 'Medical payments (TNI: $5,000; Not Included where GEICO offers no limit)';
+const BASIC_PIP = 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)';
+test('Medical Payments $5,000 wherever GEICO offers it, PIP declined beside it and $2,500 without it; Florida keeps its PIP (TNI)', () => {
+  // Every state, Florida too: $5,000, and Not Included where GEICO's list offers no limit (TX).
+  for (const r of [intake(), with_({ 'garaging.state': 'TX' }), with_({ 'garaging.state': 'FL' }), with_({ 'garaging.state': ' fl ' }), blank()]) {
+    const med = one(plan(r), MED);
+    assert.deepEqual([med.value, med.source, med.standard, med.kind, med.ignore, med.onlyIf], ['$5,000', 'standard', true, 'choice', false,
+      [{ path: null, limit: true, value: null }, { path: null, limit: false, value: 'Not Included' }]], r.garaging.state ?? 'blank');
+    assert.match(med.unofferedNote, /doesn't list \$5,000 medical payments/, 'a list without $5,000 is the agent\'s at once');
+  }
+  // Basic PIP outside Florida: I decline where Medical Payments lists a limit, else $2,500 (read from
+  // the Medical Payments list, or none off the page). A list without the answer is the agent's at once.
+  for (const r of [intake(), with_({ 'garaging.state': 'TX' })]) {
+    const p = plan(r);
+    const pip = one(p, BASIC_PIP);
+    const med = one(p, MED);
+    assert.deepEqual([pip.value, pip.source, pip.standard, pip.ignore, pip.whenOffered, pip.emptyNote, pip.onlyIf], ['$2,500', 'standard', true, false, false, null,
+      [{ path: med.path, limit: true, value: 'I decline' }, { path: med.path, limit: false, value: null }]], r.garaging.state);
+    assert.match(pip.unofferedNote, /basic personal injury protection/);
+    // The other PIP lists stay the agent's outside Florida.
+    for (const name of ['Excluded work loss', 'PIP options']) agents(one(p, name));
+  }
+  // Florida requires PIP: the PIP lists (one choice each) are kept as GEICO has them.
   const fl = plan(with_({ 'garaging.state': 'FL' }));
-  const med = one(fl, 'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)');
-  assert.deepEqual([med.value, med.source, med.kind, med.onlyIf, med.unofferedNote], ['Not Included', 'standard', 'choice', null, null], 'FL: whatever else GEICO lists');
-  for (const name of ['Basic personal injury protection (TNI: $2,500, PIP over medical payments; FL: as GEICO has it)', 'PIP options', 'Excluded work loss', 'Stacked uninsured motorist']) {
+  for (const name of [BASIC_PIP, 'PIP options', 'Excluded work loss', 'Stacked uninsured motorist']) {
     const s = one(fl, name);
     assert.deepEqual([s.ignore, s.value, s.source, s.note, s.onlyIf], [true, null, null, null, null], name);
     assert.match(s.emptyNote, /left .* empty/);
   }
-  assert.equal(one(plan(with_({ 'garaging.state': ' fl ' })), 'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)').value, 'Not Included');
-  // Elsewhere (the maintainer, 2026-10-26, a TX live run: "If there is personal injury protection
-  // available, we always prefer PIP", ideally $2,500; without it, Medical Payments with a limit):
-  // Basic PIP $2,500 where it offers a limit, and Medical Payments Not Included where Basic PIP offers
-  // a limit or it offers none (the page kit reads the lists, `onlyIf`; test/pagekit.test.mjs). A list
-  // without the answer is the agent's at once (`unofferedNote`), never waited for (`whenOffered`:
-  // Print went out without it).
-  const tx = plan(intake());
-  const txMed = one(tx, 'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)');
-  const txPip = one(tx, 'Basic personal injury protection (TNI: $2,500, PIP over medical payments; FL: as GEICO has it)');
-  assert.deepEqual([txMed.value, txMed.source, txMed.onlyIf], ['Not Included', 'standard', [{ path: txPip.path, limit: true }, { path: null, limit: false }]], 'read from the Basic PIP list, then its own');
-  assert.match(txMed.onlyNote, /no personal injury protection, so TNI takes medical payments/);
-  assert.match(txMed.unofferedNote, /no medical payments choice/);
-  assert.deepEqual([txPip.value, txPip.source, txPip.whenOffered, txPip.ignore, txPip.emptyNote, txPip.onlyIf], ['$2,500', 'standard', false, false, null, [{ path: null, limit: true }]]);
-  assert.match(txPip.onlyNote, /no basic personal injury protection limit/);
-  assert.match(txPip.unofferedNote, /doesn't offer \$2,500/);
-  for (const name of ['Excluded work loss', 'PIP options']) agents(one(tx, name));
 });
 
 test('cargo: the intake\'s limit and deductible as one pair; never a default deductible', () => {
@@ -1173,7 +1629,7 @@ test('notes are short and plain', () => {
 // FL live run 2, 2026-10-21: GEICO's VIN decode redrew the vehicle form and cleared the type (the
 // Cascadia's Tractor, three times), distance and personal use given before it.
 test('with a VIN, the vehicle form\'s answers wait for GEICO\'s decoded year; without one, nothing waits', () => {
-  const WAITING = ['Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
+  const WAITING = [VEHICLE_TYPE, 'Customizations (from the attached equipment value)',
     'Customization value (the attached equipment value, else TNI: 0)', 'Vehicle value without customizations', 'Comprehensive or collision wanted (TNI: Yes)',
     'Farthest one-way distance (from the radius)', 'Personal use'];
   const withVin = plan(intake());
@@ -1207,6 +1663,95 @@ test('an NTL quote: Non-Trucking Liability, the permanent lease Yes, the intake\
   assert.deepEqual([lease.immediate, lease.verify], [true, 'gone']);
   assert.ok(new RegExp(lease.text, 'i').test('Yes, under permanent lease'));
   assert.ok(!buildPlan(intake(), geico, {}).some((s) => s.action === 'ntlLease'), 'not without NTL');
+});
+
+// The maintainer, 2026-10-26 (W44-28): "US DOT is not added and filings not added if its NTL, in
+// every case" (W44-07: with the federal filing ticked Progressive offered only primary liability).
+// On GEICO: no USDOT number on the gateway or on Business Class & USDOT, "has a USDOT number" No,
+// filings No and Neither, no filing box ticked. The Add USDOT Number screen stays the agent's.
+test('an NTL quote: no USDOT number and no filings on GEICO (W44-28)', () => {
+  const NTL = { 'coverage.ntl': true, 'coverage.autoLiability': 'Non-Trucking' };
+  const FILINGS = 'Filings required (TNI: No unless the intake says otherwise)';
+  const USDOT_BOXES = ['USDOT #', 'Start quote: USDOT number', 'Start quote: USDOT number (Search Products)'];
+  const got = (s) => [s.value, s.source, s.standard, s.note ?? null];
+  // With cargo or GL too, NTL the agent set with auto liability blank, an MC number, a notes line
+  // naming a filing, a USDOT number coming within 60 days and none now: still none of either.
+  for (const changes of [NTL, { ...NTL, 'coverage.cargo': false }, { ...NTL, 'coverage.gl': true }, { ...NTL, 'coverage.autoLiability': null },
+    { ...NTL, 'applicant.mc': 'MC-765432' }, { ...NTL, 'operations.filingsRequired': null, 'operations.filingsWhich': null, 'notes.text': 'Needs MCS-90 for the broker' },
+    { ...NTL, 'applicant.dot': null, 'applicant.mcDotWithin60Days': true }]) {
+    const p = plan(with_(changes));
+    const what = JSON.stringify(changes);
+    assert.deepEqual(got(one(p, 'Has a USDOT number')), ['No', 'standard', true, null], `"Does the customer have a USDOT Number registered to themselves or their business?" ${what}`);
+    for (const name of USDOT_BOXES) assert.equal(one(p, name).ignore, true, `${name}: never typed ${what}`);
+    assert.deepEqual(got(one(p, FILINGS)), [false, 'standard', true, null], `"Is the customer required to provide proof of insurance/filings to a state or federal agency?" ${what}`);
+    assert.deepEqual(got(one(p, 'State or federal filing')), ['Neither', 'standard', true, null], what);
+    for (const name of ['Federal liability filing', 'State filing']) assert.equal(one(p, name).ignore, true, `${name}: never ticked ${what}`);
+  }
+  // Not an NTL quote: as before. (NTL with primary auto liability too: the agent's, the next test.)
+  for (const changes of [{}, { 'coverage.ntl': false }]) {
+    const p = plan(with_(changes));
+    const what = JSON.stringify(changes);
+    assert.deepEqual(got(one(p, 'Has a USDOT number')), ['Yes', 'derived', false, null], what);
+    for (const name of USDOT_BOXES) assert.equal(one(p, name).ignore, false, `${name} ${what}`);
+    assert.deepEqual(got(one(p, FILINGS)), [true, 'intake', false, null], what);
+    assert.deepEqual(got(one(p, 'State or federal filing')), ['Federal', 'derived', false, null], what);
+    assert.deepEqual([one(p, 'Federal liability filing').value, one(p, 'Federal liability filing').ignore], [true, false], what);
+  }
+  // An NTL intake with no USDOT or MC number, none coming and no filings: nothing changes.
+  const none = { 'applicant.dot': null, 'applicant.mc': null, 'applicant.mcDotWithin60Days': false, 'operations.filingsRequired': false, 'operations.filingsWhich': null };
+  const [withNtl, without] = [plan(with_({ ...NTL, ...none })), plan(with_(none))];
+  for (const name of ['Has a USDOT number', ...USDOT_BOXES, FILINGS, 'State or federal filing', 'Federal liability filing', 'State filing']) {
+    const [a, b] = [one(withNtl, name), one(without, name)];
+    assert.deepEqual([a.value, a.source, a.standard, a.ignore, a.note], [b.value, b.source, b.standard, b.ignore, b.note], name);
+  }
+  // GEICO's "Add USDOT Number / Skip" screen: still the agent's (nothing clicked); on an NTL quote its
+  // note says TNI adds no USDOT number there. Elsewhere it says what it said.
+  const note = geico.stopButtons['USDOT Number'].note;
+  assert.match(note(with_(NTL)), /non-trucking liability \(NTL\) quote/i);
+  assert.match(note(with_(NTL)), /TNI adds no USDOT number/);
+  assert.match(note(with_(NTL)), /yours/);
+  assert.equal(note(intake()), 'GEICO asks for a USDOT number; the intake\'s is "1234567". Add USDOT Number or Skip is yours.');
+  assert.equal(note(with_({ 'applicant.dot': null })), 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.');
+  assert.equal(note(null), 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.');
+});
+
+// (TNI, 2026-10-26: answers to PR questions, #192) NTL with primary auto liability too (auto
+// liability Yes): the USDOT and filings questions are the agent's, with a note naming the conflict.
+// NTL mentioned in the claims box or the notes (or flagged by Luna) and not answered yet: they wait
+// for the answer, with a note to answer NTL on the Intake step first. Answered, the PR's rules.
+test('NTL with primary auto liability, or NTL mentioned and not answered: the USDOT and filings questions are the agent\'s on GEICO', () => {
+  const FILINGS = 'Filings required (TNI: No unless the intake says otherwise)';
+  const USDOT_BOXES = ['USDOT #', 'Start quote: USDOT number', 'Start quote: USDOT number (Search Products)'];
+  const got = (s) => [s.value, s.source, s.standard, s.note ?? null];
+  const held = [[{ 'coverage.ntl': true, 'coverage.autoLiability': 'Yes' }, /primary auto liability/], [{ 'claims.text': 'No\nAsked about NTL too' }, /Intake step/],
+    [{ 'notes.text': 'Client may want bobtail' }, /Intake step/], [{ 'claims.aiNtl': true }, /Intake step/], [{ 'notes.text': 'Needs NTL', 'coverage.autoLiability': null }, /Intake step/]];
+  for (const [changes, why] of held) {
+    const p = plan(with_(changes));
+    const what = JSON.stringify(changes);
+    for (const name of ['Has a USDOT number', FILINGS, 'State or federal filing', 'Federal liability filing']) {
+      const s = one(p, name);
+      assert.deepEqual([s.value, s.source, s.standard, s.manualOnly], [null, 'fact', false, true], `${name}: the agent's ${what}`);
+      assert.match(s.note ?? '', why, `${name}: the note says why ${what}`);
+    }
+    for (const name of USDOT_BOXES) {
+      const s = one(p, name);
+      assert.deepEqual([s.value, s.ignore], [null, false], `${name}: not typed ${what}`);
+      assert.match(s.note ?? '', why, `${name} ${what}`);
+    }
+    // The Add USDOT Number screen: still the agent's, its note says why.
+    assert.match(geico.stopButtons['USDOT Number'].note(with_(changes)), why, what);
+  }
+  // Answered No (with the mention still there): as on any quote. Answered Yes (Non-Trucking): the NTL quote's.
+  const no = plan(with_({ 'notes.text': 'Needs NTL', 'coverage.ntl': false }));
+  assert.deepEqual(got(one(no, 'Has a USDOT number')), ['Yes', 'derived', false, null]);
+  assert.deepEqual(got(one(no, FILINGS)), [true, 'intake', false, null]);
+  for (const name of USDOT_BOXES) assert.deepEqual([one(no, name).ignore, one(no, name).note], [false, null], name);
+  const yes = plan(with_({ 'notes.text': 'Needs NTL', 'coverage.ntl': true, 'coverage.autoLiability': 'Non-Trucking' }));
+  assert.deepEqual(got(one(yes, 'Has a USDOT number')), ['No', 'standard', true, null]);
+  assert.deepEqual(got(one(yes, FILINGS)), [false, 'standard', true, null]);
+  // Neither NTL nor a mention: unchanged, the stop screen's note too.
+  assert.deepEqual(got(one(plan(intake()), 'Has a USDOT number')), ['Yes', 'derived', false, null]);
+  assert.equal(geico.stopButtons['USDOT Number'].note(with_({ 'notes.text': 'Needs NTL', 'coverage.ntl': false })), 'GEICO asks for a USDOT number; the intake\'s is "1234567". Add USDOT Number or Skip is yours.');
 });
 
 // The same live run: in Texas with a CSL liability or NTL, GEICO lists UM in CSL only, so the split

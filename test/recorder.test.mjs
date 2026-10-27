@@ -717,6 +717,19 @@ test('a button the agent clicks is reported by its text; the extension\'s own cl
   const clicks = h.sent.filter((m) => m.event === 'agent_click');
   assert.deepEqual(clicks.map((m) => m.text), ['Recalculate'], 'one trusted click on a button; nothing for an untrusted click or one on no button');
   assert.ok(clicks[0].page);
+  assert.equal(clicks[0].forms, null, 'no kit in this world: no forms');
+});
+
+// W44-05, GEICO PA (2026-10-26): "Yes, Discard Changes" on the van's form; the panel kept the van bound
+// to that form. A click carries the unit forms on screen (element names), so a discard lets go of them.
+test('a click carries the unit forms on screen as the kit reads them', () => {
+  const h = harness();
+  const forms = [{ list: 'vehicles', id: 'Id_GiveOtherVehicleType_25339', blank: false }];
+  h.context.__raterKit = { unitFormsNow: () => forms };
+  const button = { value: '', textContent: 'Yes, Discard Changes', closest: (sel) => (/button/.test(sel) ? button : null) };
+  h.emit('click', button, true);
+  const click = h.sent.find((m) => m.event === 'agent_click');
+  assert.deepEqual([click.text, click.forms], ['Yes, Discard Changes', forms]);
 });
 
 // Duck Creek (Progressive) ids: f_<letter><32 hex group><question id>_<page>_<row>, a radio's

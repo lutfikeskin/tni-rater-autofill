@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildPlan } from '../src/plan.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
-import { priorPolicyExpired } from '../src/util.js';
+import { priorPolicyExpired, sameCarrier, quotedCarrierPolicy, quotedCarriersOf } from '../src/util.js';
 
 const record = () => ({
   applicant: { name: 'Sample Test LLC', owner1: 'Alex Example', applicationDate: '10/02/2026' },
@@ -31,23 +31,28 @@ test('expired policy is not currently insured; proof availability is independent
 });
 
 // Audit 2026-10-08: AmWINS imports owner() from the Progressive rules, so a borrowed identity
-// reached both carriers. A non-driving owner keeps the owner box's name and no date of birth.
-test('an owner who shares a surname with a driver keeps their own identity on both carriers', () => {
+// reached both carriers. An owner keeps the owner box's name. The date of birth is the first driver
+// row's since TNI, 2026-10-27 (answer to PR question V4: "The owner is always the first driver on the
+// intake's driver list", whatever its name; the Intake step says so). Before, none (no row's name
+// matched), or the row with the owner's full name.
+test('an owner who shares a surname with a driver keeps their own name on both carriers; the date of birth is the first row\'s (V4)', () => {
   const r = record();
   r.applicant.owner1 = 'Alice Example';
   r.applicant.ownerDrives = false;
   r.drivers = [{ first: 'Bob', last: 'Example', dob: '01/02/1990', licenseNumber: 'SYNTHETIC-ONE' }];
   const progressivePlan = buildPlan(r, progressive);
   assert.equal(progressivePlan.find((s) => s.q === '295').value, 'Alice');
-  assert.equal(progressivePlan.find((s) => s.q === '2BB').value, null);
+  assert.equal(progressivePlan.find((s) => s.q === '2BB').value, '01/02/1990');
   const amwinsPlan = buildPlan(r, amwins);
   assert.equal(amwinsPlan.find((s) => s.selector === '#ownerName').value, 'Alice Example');
-  assert.equal(amwinsPlan.find((s) => s.selector === '#ownerDob').value, null);
+  assert.equal(amwinsPlan.find((s) => s.selector === '#ownerDob').value, '01/02/1990');
   assert.equal(amwinsPlan.find((s) => s.selector === '#inspectionContactName').value, 'Alice Example');
+  // The owner's full name on the second row: an ordinary driver; the first row stays the owner's.
   r.applicant.ownerDrives = true;
   r.drivers.push({ first: 'Alice', last: 'Example', dob: '03/04/1985', licenseNumber: 'SYNTHETIC-TWO' });
-  assert.equal(buildPlan(r, amwins).find((s) => s.selector === '#ownerDob').value, '03/04/1985', 'the driver with the same full name');
-  assert.equal(buildPlan(r, progressive).find((s) => s.q === '2BB').value, '03/04/1985');
+  assert.equal(buildPlan(r, amwins).find((s) => s.selector === '#ownerDob').value, '01/02/1990', 'the first row, not the second with the same full name');
+  assert.equal(buildPlan(r, progressive).find((s) => s.q === '2BB').value, '01/02/1990');
+  assert.equal(buildPlan(r, amwins).find((s) => s.selector === '#ownerName').value, 'Alice Example');
 });
 
 test('AmWINS maps each repeated row independently and adds only missing driver rows', () => {
@@ -64,4 +69,114 @@ test('AmWINS maps each repeated row independently and adds only missing driver r
   // The previous row being filled is enough: a driver without a license number can't block later rows.
   assert.deepEqual(actions[0].afterAny, ['drivers[0].first', 'drivers[0].last', 'drivers[0].dob', 'drivers[0].licenseNumber']);
   assert.match(actions[0].unlessSelector, /data-id="1"/);
+});
+
+// The intake's current carrier names the carrier being quoted (TNI, 2026-10-26, W44-27, W44-06):
+// GEICO and Progressive, spelling variants and suffixes included; another insurer with a similar
+// name never. AmWINS, a wholesaler, is never the intake's current carrier.
+test('sameCarrier: a carrier\'s name, misspelled or with a suffix, and never another insurer', () => {
+  const yes = {
+    geico: ['GEICO', 'Geico', 'Geico Commercial', 'GEICO Ins.', 'GICO', 'Gieco', 'Geico Indemnity Co', 'GEICO/Berkshire', 'Government Employees Insurance Company'],
+    progressive: ['Progressive', 'PROGRESSIVE COMMERCIAL', 'Progresive', 'Progessive', 'Porgressive', 'Progressive Casualty Ins Co', 'Progressive Express', 'progressive commercial auto'],
+  };
+  const no = {
+    geico: ['Gainsco', 'Gateway', 'GAIC', 'Great West Casualty', 'Gecko Mutual', 'Progressive', 'Other Mutual', 'Employees Mutual', 'None', 'N/A', '', null, undefined],
+    progressive: ['Protective', 'Protective Insurance', 'Professional Ins', 'Prime Insurance', 'Preferred', 'Progress Mutual', 'Aggressive', 'GEICO', 'Other Mutual', 'No', '', null],
+  };
+  for (const [carrier, names] of Object.entries(yes)) for (const name of names) assert.equal(sameCarrier(name, carrier), true, `${name} is ${carrier}`);
+  for (const [carrier, names] of Object.entries(no)) for (const name of names) assert.equal(sameCarrier(name, carrier), false, `${name} isn't ${carrier}`);
+  // A carrier with no names to match (AmWINS, the local test page, an unknown id): never.
+  for (const carrier of ['amwins', 'test', 'nobody', 'toString', null]) assert.equal(sameCarrier('AmWINS', carrier), false, String(carrier));
+});
+
+test('Progressive: a misspelled Progressive commercial auto policy is currently insured with Progressive', () => {
+  const insured = (carrier) => {
+    const r = record();
+    r.priorInsurance[0].carrier = carrier;
+    r.priorInsurance[0].expiration = '12/01/2026';
+    return buildPlan(r, progressive).find((s) => s.q === '198').value;
+  };
+  for (const name of ['Progressive', 'Progresive', 'Progressive Commercial', 'PROGESSIVE']) assert.equal(insured(name), true, name);
+  for (const name of ['Protective', 'GEICO', 'Other Mutual']) assert.equal(insured(name), false, name);
+});
+
+// TNI, 2026-10-26: answer to PR question 9 (#189, #194): a commercial auto policy with Progressive
+// itself is "currently insured with Progressive Commercial Auto" also without a usable expiration
+// date or a limit, as W44-29 reads proof of prior insurance (any box filled, no date already
+// passed). TNI's answer, so a standard; with a limit and a date it stays derived. Expired stays No.
+test('Progressive: an undated Progressive commercial auto policy is currently insured with Progressive (TNI, 2026-10-26)', () => {
+  const step = (more) => {
+    const r = record();
+    Object.assign(r.priorInsurance[0], { expiration: '12/01/2026', ...more });
+    return buildPlan(r, progressive).find((s) => s.q === '198');
+  };
+  for (const more of [{ expiration: null }, { expiration: 'see notes' }, { limit: null }, { limit: null, expiration: null }, { carrier: 'Progresive', expiration: null }]) {
+    assert.deepEqual([step(more).value, step(more).source], [true, 'standard'], JSON.stringify(more));
+  }
+  assert.deepEqual([step({}).value, step({}).source], [true, 'derived'], 'a limit and a date: derived, as before');
+  // Unchanged, No: expired, a personal auto policy, another insurer, and no prior insurance ("No
+  // Progressive" without a date). A policy of no type is the agent's since R9 (next test).
+  for (const more of [{ expiration: '09/01/2026' }, { type: 'Personal Auto', expiration: null }, { carrier: 'Protective', expiration: null },
+    { carrier: 'No Progressive', expiration: null }]) {
+    assert.deepEqual([step(more).value, step(more).source], [false, 'derived'], JSON.stringify(more));
+  }
+});
+
+// TNI, 2026-10-26: answer to PR question R9 (#189): a policy with Progressive itself whose policy type
+// is left blank is the agent's (a `fact`, never filled), with a note that the type isn't on the
+// intake, dated or undated: Progressive no longer answers No. An expired one is No (T10, next test).
+// A commercial auto policy with Progressive keeps its Yes; personal auto and another insurer keep No.
+test('Progressive: a Progressive policy of no type is the agent\'s (TNI, 2026-10-26, R9)', () => {
+  const step = (more) => {
+    const r = record();
+    Object.assign(r.priorInsurance[0], { type: null, expiration: '12/01/2026', ...more });
+    return buildPlan(r, progressive).find((s) => s.q === '198');
+  };
+  for (const more of [{}, { type: '' }, { type: '  ' }, { carrier: 'Progresive' }, { expiration: null }, { limit: null, expiration: 'see notes' }]) {
+    const s = step(more);
+    assert.deepEqual([s.value, s.source, s.manualOnly], [null, 'fact', true], JSON.stringify(more));
+    assert.match(s.note, /policy type isn't on the intake/, JSON.stringify(more));
+  }
+  // Counterexamples: commercial auto with Progressive keeps Yes; personal auto, another insurer (of
+  // no type too) and no prior insurance ("No Progressive" without a date) keep No.
+  assert.deepEqual([step({ type: 'Commercial Auto' }).value, step({ type: 'Commercial Auto' }).source], [true, 'derived']);
+  assert.deepEqual([step({ type: 'Commercial Auto', expiration: null }).value, step({ type: 'Commercial Auto', expiration: null }).source], [true, 'standard']);
+  for (const more of [{ type: 'Personal Auto' }, { type: 'Commercial Auto', carrier: 'Protective' }, { carrier: 'Protective' }, { carrier: 'GEICO' },
+    { carrier: 'No Progressive', limit: null, expiration: null }]) {
+    const s = step(more);
+    assert.deepEqual([s.value, s.source, s.note], [false, 'derived', null], JSON.stringify(more));
+  }
+});
+
+// TNI, 2026-10-26: answer to PR question T10 (#189): a policy with Progressive itself whose policy
+// type is left blank and whose expiration date has already passed is No, as any expired Progressive
+// policy: an expired policy isn't current. R9 had made it the agent's; before R9 it was No. One not
+// expired (dated today or later, undated, a remark or an impossible date in the date box) stays the
+// agent's (R9), a typed one is as before, and the red warning (the intake check and the carrier
+// page's card, both quotedCarrierPolicy) still shows for it.
+test('Progressive: an expired Progressive policy of no type is No (TNI, 2026-10-26, T10)', () => {
+  const step = (more) => {
+    const r = record(); // application date 10/02/2026
+    Object.assign(r.priorInsurance[0], { type: null, expiration: '09/01/2026', ...more });
+    return { p: r.priorInsurance[0], s: buildPlan(r, progressive).find((x) => x.q === '198') };
+  };
+  for (const more of [{}, { type: '' }, { type: '  ' }, { carrier: 'Progresive' }, { carrier: 'Progressive Commercial' }, { limit: null }, { expiration: '10/01/2026' }]) {
+    const { p, s } = step(more);
+    assert.deepEqual([s.value, s.source, s.note, s.manualOnly], [false, 'derived', null, false], JSON.stringify(more));
+    assert.equal(quotedCarrierPolicy(p, 'progressive'), true, `the red warning still shows: ${JSON.stringify(more)}`);
+    assert.deepEqual(quotedCarriersOf(p), ['Progressive'], JSON.stringify(more));
+  }
+  // Counterexamples, R9 unchanged: not expired, of no type, the agent's.
+  for (const more of [{ expiration: '10/02/2026' }, { expiration: '12/01/2026' }, { expiration: null }, { limit: null, expiration: 'see notes' }, { expiration: '02/31/2026' }]) {
+    const { s } = step(more);
+    assert.deepEqual([s.value, s.source, s.manualOnly], [null, 'fact', true], JSON.stringify(more));
+    assert.match(s.note, /policy type isn't on the intake/, JSON.stringify(more));
+  }
+  // A typed policy as before: commercial auto expired No, current Yes; personal auto expired No.
+  const typed = (more) => { const { s } = step(more); return [s.value, s.source, s.note]; };
+  assert.deepEqual(typed({ type: 'Commercial Auto' }), [false, 'derived', null]);
+  assert.deepEqual(typed({ type: 'Commercial Auto', expiration: '12/01/2026' }), [true, 'derived', null]);
+  assert.deepEqual(typed({ type: 'Personal Auto' }), [false, 'derived', null]);
+  // Another insurer's expired policy of no type: No, as before.
+  assert.deepEqual(typed({ carrier: 'Protective' }), [false, 'derived', null]);
 });

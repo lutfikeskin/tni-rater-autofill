@@ -5,6 +5,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields, readIntakePlaces } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { sourceFields, sourcePlace } from '../src/intake-source.js';
+import { buildPlan } from '../src/plan.js';
 import { SECTIONS, NOT_ON_INTAKE } from '../src/schema.js';
 import { quoteProgress, carrierForUrl } from '../src/carriers.js';
 import { progressive } from '../src/carriers/progressive.js';
@@ -89,6 +90,36 @@ test('a place for several answers marks each one, and the paths the PDF has no f
   for (const r of both.rects) assert.ok(both.rect[0] <= r[0] && both.rect[1] <= r[1] && both.rect[2] >= r[2] && both.rect[3] >= r[3], 'the box covers each mark');
   assert.deepEqual(sourcePlace(['applicant.dot', 'applicant.dot'], intake).rects, [places.fields.dot_number.rect], 'one mark per field');
   assert.equal(sourcePlace([], intake), null);
+});
+
+// W44-09: years in business read from the notes, when the form leaves them blank, are shown on the
+// notes box they were read from, not on the blank year-established box.
+test('an answer the reader took from the notes points at that notes box (W44-09)', () => {
+  const today = { today: new Date('2026-10-26') };
+  const blank = { ...rawNew, year_established: 'N/A', years_experience: 'N/A' };
+  const fromNotes = { ...normalizeIntake({ ...blank, claims_details: 'No', additional_notes: 'In Biz for 3+ years' }, today), places: placesNew };
+  assert.deepEqual(sourcePlace('applicant.yearsInBusiness', fromNotes).rects, [placesNew.fields.additional_notes.rect]);
+  const fromClaims = { ...normalizeIntake({ ...blank, claims_details: 'No\nIn Biz for 3+ years', additional_notes: '' }, today), places: placesNew };
+  assert.deepEqual(sourcePlace('applicant.yearsInBusiness', fromClaims).rects, [placesNew.fields.claims_details.rect]);
+  // Read from its own box: that box.
+  const boxed = { ...normalizeIntake({ ...rawNew, year_established: '2020' }, today), places: placesNew };
+  assert.deepEqual(sourcePlace('applicant.yearsInBusiness', boxed).rects, [placesNew.fields.year_established.rect]);
+  // An intake saved before readFrom: its own box.
+  const { readFrom, ...saved } = fromNotes;
+  assert.ok(readFrom);
+  assert.deepEqual(sourcePlace('applicant.yearsInBusiness', saved).rects, [placesNew.fields.year_established.rect]);
+});
+
+// "No" in the USDOT box (TNI, 2026-10-26: answer to PR question): the has-a-USDOT-number answers
+// it gives are shown on that box.
+test('a USDOT answer read from "no" in the USDOT box points at that box', () => {
+  // Without the form's "Needs NTL too", which holds the USDOT questions for the agent (W44-28).
+  const intake = { ...normalizeIntake({ ...rawNew, dot_number: 'No', mc_number: '', mc_dot_60days: '', additional_notes: '' }, { today: new Date('2026-10-26') }), places: placesNew };
+  for (const step of [buildPlan(intake.record, progressive).find((s) => s.q === '1ED'), buildPlan(intake.record, geico).find((s) => s.name === 'Has a USDOT number')]) {
+    assert.deepEqual(step.from, ['applicant.noDot']);
+    assert.deepEqual(sourcePlace(step.from, intake).rects, [placesNew.fields.dot_number.rect]);
+  }
+  assert.deepEqual(sourceFields('applicant.noMc'), ['mc_number']);
 });
 
 test('the page strip names the quote step a page or a one-address step is on', () => {

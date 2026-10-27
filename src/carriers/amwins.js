@@ -41,15 +41,18 @@
 // - GVW is required unless the body type is a trailer.
 // - Filing required Yes shows BMC-91, MCS-90, BMC-32, how long the authority has been active, how
 //   long with the current carrier, and "can provide claim-free loss runs"; the DOT / MC boxes
-//   show their number fields. How long with the current carrier (only asked with a DOT number)
-//   and claim-free loss runs aren't on the intake: TNI's standards (1 TO 2 YEARS, No).
+//   show their number fields. How long with the current carrier (answered wherever it shows, a
+//   DOT or MC number or not) and claim-free loss runs aren't on the intake: TNI's standards
+//   (1 TO 2 YEARS, No).
 // - Personal Injury Protection shows for FL HI KS KY MA MI MN NJ NY ND PA UT AR DE MD OR TX NH SD
-//   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred.
+//   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred (again on
+//   2026-10-26, W44-26: Medical Payments $5,000 wherever offered, PIP not selected).
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
-import { owner, ownerDobNote } from './progressive.js';
-import { isLongHaul, otherNotes } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE } from '../util.js';
+import { owner, ownerDobNote, HAZ_HAUL } from './progressive.js';
+import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
+import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE } from '../util.js';
+import { driverExcluded, ownerRowExcluded } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -75,11 +78,13 @@ const equipment = (r) => (r.operations?.equipVehicle > 0 ? null : false);
 const equipmentSource = (r) => (r.operations?.equipVehicle == null ? 'standard' : 'derived');
 const equipmentNote = (r) => (r.operations?.equipVehicle > 0 ? `The intake gives $${r.operations.equipVehicle.toLocaleString('en-US')} of attached equipment: answer it (and its details) yourself.` : null);
 
-// Owner's full name from their driver row when found (the owner box sometimes has only the first
-// name); a lone middle initial is left out.
+// Owner's full name from their driver row when it carries the owner box's name (progressive.js
+// owner `named`: the owner box sometimes has only the first name); a lone middle initial is left out.
+// A first row with another name is still the owner's row (TNI, 2026-10-27: answer to PR question V4)
+// but gives no name: the owner box's.
 const ownerFull = (r) => {
   const o = owner(r);
-  const first = o.driver?.first ? o.driver.first.replace(/\s+[A-Za-z]\.?$/, '') : o.first;
+  const first = o.named?.first ? o.named.first.replace(/\s+[A-Za-z]\.?$/, '') : o.first;
   const name = [first, o.last].filter(Boolean).join(' ');
   return name || r.applicant.owner1 || null;
 };
@@ -87,12 +92,22 @@ const ownerFull = (r) => {
 // Years in business: the intake's years in business, else its years under own authority; neither
 // is TNI's standard 0, a new venture established this year (2026-10-09). The Intake step warns
 // (years-in-business.default), and Luna points out a claims-box line saying how long it has run.
+// Years the notes state, with none on the form, are the intake's years in business (normalize.js, W44-09),
+// also over years under own authority (TNI, 2026-10-26: answer to PR question).
+// A range in the notes whose ends differ ("2-3 years in business") is the agent's, neither New
+// Venture nor the authority years (TNI, 2026-10-27: answer to PR question V7). So is any other
+// statement of it the reader doesn't take ("a few years", "almost 3 years", figures that disagree):
+// TNI, 2026-10-27: round-6 answer 4.
 const businessYears = (r) => r.applicant.yearsInBusiness ?? r.applicant.yearsExperience ?? null;
+const yearsRange = (r) => r.applicant.yearsInBusiness == null && r.applicant.yearsInBusinessRange === true;
+const yearsUnread = (r) => r.applicant.yearsInBusiness == null && r.applicant.yearsInBusinessUnread === true;
 const yearsInBusiness = (r) => {
   const n = businessYears(r) ?? 0;
   return n < 1 ? 'New Venture' : n >= 5 ? '5+' : String(n);
 };
-const yearsSource = (r) => (businessYears(r) == null ? 'standard' : 'derived');
+const yearsSource = (r) => (yearsRange(r) || yearsUnread(r) || businessYears(r) != null ? 'derived' : 'standard');
+const yearsNote = (r) => (yearsRange(r) ? 'The notes give years in business as a range: answer it yourself.'
+  : yearsUnread(r) ? 'The notes say how long the business has run, but not as one number of years: answer it yourself.' : null);
 // Year established: the intake's, else this year (TNI's standard, as on the recorded quotes).
 const yearEstablished = (r) => r.applicant.yearEstablished ?? new Date().getFullYear();
 const establishedSource = (r) => (r.applicant.yearEstablished == null ? 'standard' : 'derived');
@@ -143,13 +158,18 @@ const disclosure = (r) => {
   const miles = radius(r);
   if (miles) lines.push(miles > 500 ? 'More than 500 miles radius of operation' : `${miles} miles radius of operation`);
   for (const t of r.trailers ?? []) { const line = trailerLine(t); if (line) lines.push(line); }
+  // The prior policy is disclosed here; the prior-carrier rows are always NO PRIOR (TNI, 2026-10-26,
+  // W44-32). With a carrier as before, and without one when proof of prior insurance is assumed from
+  // the other boxes (TNI, 2026-10-26, W44-29), the part the intake lacks left out. A remark in the
+  // date box is no date: no "Exp Date" (TNI, 2026-10-26: answer to PR question).
   const p = r.priorInsurance?.[0];
-  if (p?.carrier && !noPriorInsurance(p)) {
+  if (p && !noPriorInsurance(p) && (p.carrier || priorInsuranceAssumed(r))) {
     const kind = /commercial/i.test(p.type ?? '') ? 'Commercial' : /personal/i.test(p.type ?? '') ? 'Personal' : p.type;
-    const carrier = p.carrier.toLowerCase().replace(/\b\w/g, (x) => x.toUpperCase());
+    const carrier = p.carrier ? p.carrier.toLowerCase().replace(/\b\w/g, (x) => x.toUpperCase()) : null;
     const unavailable = /\b(?:pop|proof of prior)(?:\s+(?:insurance|document))?\s+(?:unavailable|missing|not available)\b/i.test(otherNotes(r) ?? '');
     const prefix = unavailable ? 'Prior insurance; POP document unavailable' : 'POP';
-    lines.push([prefix, kind].filter(Boolean).join(' ') + ` - ${carrier}${p.limit ? ` - ${p.limit}` : ''}${p.expiration ? ` - Exp Date ${p.expiration}` : ''}${priorPolicyExpired(r, p) ? ' - EXPIRED; confirm renewal or lapse' : ''}`);
+    lines.push([[prefix, kind].filter(Boolean).join(' '), carrier, p.limit, /^\d{2}\/\d{2}\/\d{4}$/.test(p.expiration ?? '') ? `Exp Date ${p.expiration}` : null].filter(Boolean).join(' - ')
+      + (priorPolicyExpired(r, p) ? ' - EXPIRED; confirm renewal or lapse' : ''));
   }
   return lines.join('\n') || null;
 };
@@ -186,24 +206,67 @@ const licenseYearNote = (r, a) => (birthYear(r, a) == null
 // A driver the intake marks excluded ("Excluded" in their license-number box, normalize.js; or set
 // in client details). AmWINS asks nothing about excluding a driver, so TNI (2026-10-20) writes
 // "(Excluded)" after their license number. With no number to write it after, the box is the agent's.
-const excludedDriver = (r, a) => driverOf(r, a)?.excluded === true;
+// The owner's row when the intake says the owner doesn't drive counts too (TNI, 2026-10-26: answer
+// to PR question, R1: util.js driverExcluded): the first row, whatever its name (TNI, 2026-10-27:
+// answer to PR question V4); a later row with the owner's name only by its own mark. The owner's row
+// marked over a blank box or a Yes stays an excluded driver here (V3: only GEICO leaves it out).
+const excludedDriver = (r, a) => driverExcluded(r, driverOf(r, a));
 const licenseNumber = (r, a) => {
   const number = driverOf(r, a)?.licenseNumber ?? null;
   return number && excludedDriver(r, a) ? `${number} (Excluded)` : number;
 };
 const licenseNumberNote = (r, a) => (excludedDriver(r, a) && !driverOf(r, a)?.licenseNumber
-  ? 'The intake marks this driver as excluded and gives no license number: type their license number yourself, then "(Excluded)" after it.' : null);
+  ? `${ownerRowExcluded(r, driverOf(r, a)) ? 'The intake says the owner doesn\'t drive, so this driver, the owner, is excluded (TNI),' : 'The intake marks this driver as excluded'} and gives no license number: type their license number yourself, then "(Excluded)" after it.` : null);
 // Underwriting questions TNI answers No (both sections), by the field names AmWINS uses.
-// The second section's vehicle, MVR and conviction questions have their own rules below.
+// The second section's vehicle, MVR and conviction questions, and hazard exposure, have their own
+// rules below.
 const UNDERWRITING_NO = [
-  'subsidiary to other', 'subsidiary', 'safety info', 'hazard exposure', 'other insurance', 'coverage denial',
+  'subsidiary to other', 'subsidiary', 'safety info', 'other insurance', 'coverage denial',
   'past criminal activity', 'criminal activity in past ?5 ?years', 'code vo\\w*ation', 'finacial default', 'financial default',
   'finacial judgement', 'financial judgement', 'trust', 'foreign operations', 'other venture', 'own drones',
   'hire other to operate drones', 'use their auto', 'vehicle maintenance program', 'vehicle used by family',
   'recruiting method', 'covered by wc',
 ];
 
-const filings = (r) => (r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
+// An NTL quote gets no filings and no DOT number (TNI, 2026-10-26, W44-28: "US DOT is not added and
+// filings not added if its NTL, in every case"): Filing required No, the DOT box unticked and its
+// number never typed, NONE ticked when there is no MC number either; the intake's own No and an MC
+// number stay the intake's. The federal filings (shown after a Yes) are then never ticked. NONE is
+// accepted also when the client has a USDOT number (TNI, 2026-10-26: answer to PR question).
+const filings = (r) => (ntlNoDotFilings(r) ? false : r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
+const filingsSource = (r) => (ntlNoDotFilings(r) && r.operations.filingsRequired !== false ? 'standard' : 'derived');
+const dot = (r) => (ntlNoDotFilings(r) ? null : r.applicant.dot);
+const dotSource = (r) => (ntlNoDotFilings(r) && r.applicant.dot ? 'standard' : 'derived');
+// (TNI, 2026-10-26: answers to PR questions) NTL with primary auto liability too, or NTL mentioned
+// and not answered yet (AmWINS has no NTL question: the claims box, the notes or Luna's flag):
+// Filing required, the DOT box, its number, NONE (without an MC number) and the federal filings
+// are the agent's, with a note saying why (`ntlDotFilingsHold`). An MC number stays the intake's.
+const held = (source) => (r) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r) : source);
+const holdOr = (note) => (r) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r) : note ?? null);
+
+// Transporting hazardous material (TNI, 2026-10-26, W44-32), the maintainer: "Hazmat is always no,
+// if its not specifically selected" (GEICO's W43-34 rule): the intake's Yes or No; blank is No (standard),
+// unless the intake points to hazardous freight: its placard answer is Yes, or what they haul or a
+// line of its notes names something that may be hazardous (Progressive's HAZ_HAUL: fuel, propane,
+// chemicals…; "non-hazardous" and "no hazmat" don't count). Then it's the agent's, with the reason.
+const hazNotesLine = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => HAZ_HAUL.test(s))?.slice(0, 80) ?? null;
+const hazmatNote = (r) => {
+  if (typeof r.operations.hazmat === 'boolean') return null;
+  if (r.operations.hazPlacard === true) return 'The intake says a hazardous material placard is required but doesn\'t say whether they haul hazardous material: answer it yourself.';
+  const what = String(r.operations.whatHaul ?? '').trim();
+  if (HAZ_HAUL.test(what)) return `What they haul ("${what.slice(0, 60)}") may be hazardous material, but the intake doesn't answer the hazmat question: answer it yourself.`;
+  const line = hazNotesLine(r);
+  return line ? `The intake doesn't answer the hazmat question, and its notes say "${line}": answer it yourself.` : null;
+};
+const hazmat = (r) => (typeof r.operations.hazmat === 'boolean' ? r.operations.hazmat : hazmatNote(r) ? null : false);
+const hazmatSource = (r) => (typeof r.operations.hazmat === 'boolean' ? 'intake' : hazmatNote(r) ? 'fact' : 'standard');
+// General Information "hazard exposure" (storing, treating, discharging, applying, disposing or
+// transporting hazardous material; TNI, 2026-10-26: answer to PR question, #188): Yes, the intake's
+// answer, when the intake's hazmat answer is Yes. Otherwise TNI's standard No (2026-10-09), also when
+// the box is blank and what they haul, the notes or the placard point to hazardous freight: that
+// hand-off to the agent is the transporting question's alone. "Default all answers to No" answers it
+// No first, so the Yes replaces that No; the standard No replaces nothing, as before.
+const hazardExposure = (r) => r.operations.hazmat === true;
 
 // Radius bands: "< 50 MILES", "51 - 100 MILES", "101- 200 MILES", "201 + MILES". Unlimited / long
 // haul is the top band.
@@ -218,12 +281,46 @@ const DRIVER = '#driversPanel';
 const VEHICLE = '#vehiclesPanel';
 
 // "How long has the insured's current federal operating authority been active?", from the
-// intake's years under its own authority.
+// intake's years under its own authority ("NEW" there is 0: LESS THAN 1 YEAR; TNI, 2026-10-26:
+// answer to PR question).
 const authorityAge = (r) => {
   const n = r.applicant.yearsExperience;
   if (n == null) return !r.applicant.mc && !r.applicant.dot ? 'NO AUTHORITY' : null;
   return n < 1 ? 'LESS THAN 1 YEAR' : n < 2 ? '1 TO 2 YEARS' : n < 3 ? '2 TO 3 YEARS' : 'MORE THAN 3 YEARS';
 };
+// A time with the insurer the intake's notes give beyond the 1 TO 2 YEARS standard (W44-29), and
+// its band (TNI, 2026-10-26: answer to PR question): 3 years is 2 TO 3 (not MORE THAN 3); null when
+// the time could be in two bands ("since 2023" in 2026), the agent's. Exactly 2 years, the edge
+// 1 TO 2 and 2 TO 3 share, takes the upper band, 2 TO 3 YEARS (TNI, 2026-10-26: answer to PR
+// question, round 2, R5: a time on a band edge takes the upper band; GEICO keeps exactly 3 at 1-3
+// because the decision names 1-3, and 1 TO 2 and 2 TO 3 are both within it). 3 is no edge here:
+// MORE THAN 3 doesn't include it. TNI, 2026-10-26 (answer to PR question, round 3, T4): exactly
+// 2 years is 2 TO 3 YEARS, the upper band: confirmed.
+// An expired policy with a time with the insurer in the notes (any time the notes give, shorter
+// ones too): the agent's, as GEICO's years with the insurer is (TNI, 2026-10-26: answer to PR
+// question, round 3, T6; until then the band, or 1 TO 2 YEARS). An expired policy isn't current
+// (answer 7), so the notes' time may not be with a current carrier. With no time in the notes it
+// stays 1 TO 2 YEARS (answer 11: asked whatever the prior insurance). TNI, 2026-10-27 (answer to
+// PR question, round 5, V9): confirmed, any time, under 2 years too ("about 1 year": the agent's).
+// A General Liability, Cargo or Other policy (not proof of prior, answer 8) with a time with the
+// insurer in the notes, any time as for an expired one: the agent's too, as GEICO's years with
+// the insurer is (TNI, 2026-10-27: answer to PR question, round 5, V8; until then the band, or
+// 1 TO 2 YEARS). With no time in the notes it stays 1 TO 2 YEARS (answer 11); an auto or untyped
+// policy with a time keeps its band. A range of years in the notes ("3-5 years") is answered only
+// when both ends fall in one band (TNI, 2026-10-27: answer to PR question, round 5, V7).
+const AMWINS_TENURE = (n) => (n < 2 ? '1 TO 2 YEARS' : n <= 3 ? '2 TO 3 YEARS' : 'MORE THAN 3 YEARS');
+const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years >= 2 ? t : null; };
+const expiredWithTenure = (r) => priorPolicyExpired(r, r.priorInsurance?.[0]) && !!insurerTenure(r);
+const notAutoWithTenure = (r) => priorPolicyNotAuto(r.priorInsurance?.[0]) && !!insurerTenure(r);
+const withCurrentCarrier = (r) => {
+  if (expiredWithTenure(r) || notAutoWithTenure(r)) return null;
+  const t = longerTenure(r);
+  return t ? tenureBand(t, AMWINS_TENURE) : '1 TO 2 YEARS';
+};
+const withCurrentCarrierNote = (r) => (withCurrentCarrier(r) ? null
+  : expiredWithTenure(r) ? `The intake's current policy has expired, and its notes give the time with the insurer ("${insurerTenure(r)?.line.slice(0, 80)}"): pick it yourself.`
+    : notAutoWithTenure(r) ? `The intake's current insurance is ${String(r.priorInsurance[0].type).trim().slice(0, 30)}, not proof of prior insurance, and its notes give the time with the insurer ("${insurerTenure(r)?.line.slice(0, 80)}"): pick it yourself.`
+      : `The intake's notes give the time with the current carrier ("${longerTenure(r)?.line.slice(0, 80)}"), and more than one of AmWINS' bands could fit it: pick it yourself.`);
 // Federal filings from the intake's "which filings": liability means BMC-91 (MCS-90 comes with
 // it); cargo means BMC-32. Unknown when the intake doesn't say which.
 const filingsText = (r) => (filings(r) ? r.operations.filingsWhich ?? null : null);
@@ -250,6 +347,65 @@ const vehicleValueNote = (r, a) => {
   const v = r.vehicles?.[a.vehicles ?? 0]?.value;
   return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
 };
+
+// "Is a Federal Filing Required?" (the intake's own Yes or No: `filings`) left blank on the intake:
+// TNI's No when the intake doesn't ask for filings (TNI, 2026-10-26, W44-32: "Your recommendations
+// good", the "No unless the intake says otherwise" of W43-34). Filings named in its which-filings
+// box or a line of its notes naming a filing leave it to the agent, quoted. An SR-22 alone (the
+// intake's SR-22 box) doesn't: it is a state filing, and the question asks about a federal one (TNI,
+// 2026-10-26: answer to PR question). A Non-Trucking quote is W44-28's, never this standard.
+// Nor does a which-filings box or a notes line naming only an SR-22 or FR-44, state filings, with
+// words that only describe them ("state", "filing": "Owner needs an SR-22 filing", "Filings: SR22 /
+// FR-44") (TNI, 2026-10-26: answer to PR question, R16). One naming anything federal (MCS-90, BMC-91,
+// BMC-34, BMC-32, "federal" or "fed", ICC, MC, interstate, FMCSA, BOC-3, UCR, authority) or another filing
+// (a Form E or H, "other filings") beside it still leaves a blank to the agent.
+// These are state filings too, so No with the box blank, the same `standard` (TNI, 2026-10-26: answer
+// to PR question, T9): beside an SR-22 or FR-44, a Form E or H ("SR-22 and Form E": `FORM_EH`),
+// the client's MC number on the same line ("SR-22, MC 123456"; an MC filing, "MC 123456 filing", stays
+// federal) and a bare "filings" joined by "and", "&", "+", "plus", a comma or a slash ("SR-22 and
+// filings", "SR-22 for the owner and filings"; "other filings" stays another); and a state filing or
+// intrastate alone, with no SR-22 or FR-44 named ("State filing", "Intrastate"). Anything federal
+// beside them still leaves a blank to the agent.
+// And these, the cases T9 left to the agent, are state filings too: No with the box blank, the same
+// `standard` (TNI, 2026-10-27: answer to PR question V12): a Form E or H with no SR-22 or FR-44 named
+// ("Form E", "Needs a Form H filing", "State filing and Form E": `FORM_EH`); a lone "State" in the
+// which-filings box (`LONE_STATE`; "State" in any other phrase, "State and federal filings" or "United
+// States DOT", isn't); a state filing or intrastate beside the client's MC number ("State filing, MC
+// 123456": `MC_NUMBER`); a bare or "additional" "filings" before or after the SR-22 or FR-44 ("Filings
+// and SR-22": `FILINGS_AND_SR_FR`; "SR-22 and additional filings"). Anything federal beside them
+// (MCS-90, BMC-91, "federal", interstate, an MC filing, the list above) and "other filings" still leave
+// a blank to the agent. FR-44 counts as SR-22 throughout (TNI, 2026-10-27: answer to PR question V13).
+const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\b|\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
+const SR_FR = /\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
+const SR_FR_NAMED = /(?:\bfilings?\s*(?:needed|required)?\s*:\s*)?(?:\bstate\s+)?\b(?:sr[\s-]?22|fr[\s-]?44)\b(?:\s+(?:state\s+)?filings?\b)?|\bstate\s+filings?\b/gi;
+const FORM_EH = /\bforms?[\s-]*[eh](?:\s*(?:,|\/|&|\band\b|\bor\b)\s*[eh])?\b(?:\s+filings?\b)?/gi;
+const MC_NUMBER = /\bmc\s*(?:#|no\.?|number)?\s*[:-]?\s*\d{3,8}\b(?!\s*filings?\b)/gi;
+const SR_FR_AND_FILINGS = /(?:\band\b|&|\+|\bplus\b|,|\/)\s*(?:additional\s+)?filings?\b/gi;
+// "filings" before the SR-22 or FR-44, at the start of the line, after punctuation or after a verb:
+// "Filings and SR-22", "Needs filings & FR44"; not "Other filings and SR-22" or "MC filings and SR-22".
+const FILINGS_AND_SR_FR = /(?:^\s*|[,;:.(]\s*|\b(?:needs?|wants?|requires?|with|also)\s+)(?:additional\s+)?filings?\s*(?:\band\b|&|\+|\bplus\b|,|\/)\s*(?=(?:an?\s+)?(?:state\s+)?(?:sr[\s-]?22|fr[\s-]?44)\b)/gi;
+const STATE_ONLY = /\bstate\s+filings?\b|\bintra[\s-]?state\b/i;
+const LONE_STATE = /^\s*state\s*\.?\s*$/i;
+const INTRASTATE_NAMED = /\bintra[\s-]?state(?:\s+filings?)?\b/gi;
+const FEDERAL = /\bfed(?:eral)?\b|\bicc\b|\bmc\b|\binterstate\b|\bfmcsa\b|\bboc[\s-]?3\b|\bucr\b|\bauthority\b/i;
+const onlyStateFilings = (text) => {
+  if (LONE_STATE.test(text)) return true;
+  const srFr = SR_FR.test(text);
+  const state = STATE_ONLY.test(text);
+  if (!srFr && !state && !/\bforms?[\s-]*[eh]\b/i.test(text)) return false;
+  let t = srFr ? text.replace(FILINGS_AND_SR_FR, ' ').replace(SR_FR_AND_FILINGS, ' ') : text;
+  if (srFr || state) t = t.replace(MC_NUMBER, ' ');
+  t = t.replace(FORM_EH, ' ');
+  return !FEDERAL.test(t) && !FILING_WORDS.test(t.replace(SR_FR_NAMED, ' ').replace(INTRASTATE_NAMED, ' '));
+};
+const filingLine = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => FILING_WORDS.test(s) && !onlyStateFilings(s))?.slice(0, 80) ?? null;
+const filingsAsked = (r) => (r.operations.filingsWhich && !onlyStateFilings(String(r.operations.filingsWhich)) ? `names filings ("${String(r.operations.filingsWhich).slice(0, 40)}")`
+  : filingLine(r) ? `its notes say "${filingLine(r)}"` : null);
+const filingsBlankNo = (r) => filings(r) == null && r.coverage?.ntl !== true && !filingsAsked(r);
+const filingRequired = (r) => (filingsBlankNo(r) ? false : filings(r));
+// An NTL quote keeps its own No and source (filingsSource, W44-28) (integration of #192 and #196).
+const filingRequiredSource = (r) => (filingsBlankNo(r) ? 'standard' : filingsSource(r));
+const filingRequiredNote = (r) => (filings(r) == null && filingsAsked(r) ? `The intake leaves "filings required" blank but ${filingsAsked(r)}: answer it yourself.` : null);
 
 // AmWINS shows several repeater rows on one page. Give every row its own values;
 // the active-driver picker is for carriers that show one driver page at a time.
@@ -360,7 +516,7 @@ export const amwins = {
     { selector: '#mailingZip', path: 'garaging.zip' },
     { selector: '#businessPhone', name: 'Business phone', source: 'derived', value: (r) => digits(r.applicant.phone) },
     { selector: '#entityType', name: 'Entity type (from the company name)', kind: 'choice', source: 'derived', clientFact: true, value: entityType, note: entityTypeNote, warn: entityTypeWarn },
-    { selector: '#yrsInBusiness', tni: 'amwins.years', name: 'Years in business (standard when blank: New Venture)', kind: 'choice', source: yearsSource, value: yearsInBusiness },
+    { selector: '#yrsInBusiness', tni: 'amwins.years', name: 'Years in business (standard when blank: New Venture)', kind: 'choice', source: yearsSource, value: yearsInBusiness, note: yearsNote },
     { selector: '#yearBusinessEstablished', tni: 'amwins.years', name: 'Year established (standard when blank: this year)', kind: 'int', source: establishedSource, value: yearEstablished },
     { tni: 'amwins.retail-nonprofit', name: 'Non-profit (standard: No)', label: '^is non profit$', kind: 'bool', source: 'standard', value: () => false },
     { tni: 'amwins.contact', name: 'Single contact (standard: Yes)', label: '^is single contact$', kind: 'bool', source: 'standard', value: () => true },
@@ -380,28 +536,43 @@ export const amwins = {
     // Filing counts: skipped (TNI).
     ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map(/** @returns {CarrierRule} */ (selector) => ({ selector, name: 'Filing count (skipped)', ignore: true })),
     // Prior insurance section only: every carrier dropdown is NO PRIOR (the proof of prior insurance goes in the disclosure).
+    // TNI's standard, with prior insurance on the intake too (TNI, 2026-10-26, W44-32).
     // AmWINS rebuilds the year panels when Years in Business changes and on the reload after
     // Save & Continue, collapses them all when there is more than one, and a year can have more
     // than one coverage row. So: every carrier dropdown in a prior-carrier coverage panel (not the hidden
     // template), in page order, visible or collapsed, up to six (live IL run: years 1 and 2 were
     // never filled and the agent set one by hand).
     ...Array.from({ length: 6 }, (_, n) => ({ selector: '#priorCarrierPanel .coveragePanel [data-id="carrierName"]', tni: 'amwins.prior-carrier', name: `Prior carrier ${n + 1} (standard: NO PRIOR)`, kind: 'choice', source: 'standard', value: () => 'NO PRIOR', hidden: true })),
-    { name: 'Filings required', label: '^filling required$', kind: 'bool', source: 'derived', value: filings },
-    { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.dot },
+    { tni: 'amwins.federal-filing', name: 'Filings required (TNI: No when the intake is silent)', label: '^filling required$', kind: 'bool', source: held(filingRequiredSource), value: filingRequired, note: holdOr(filingRequiredNote) },
+    // "Does the insured have a DOT or MC number?": the NONE, DOT and MC boxes.
+    { selector: '#hasDotNumber', tni: 'amwins.ntl', name: 'Has a DOT number', kind: 'bool', source: held(dotSource), value: (r) => !!dot(r), note: holdOr() },
     { selector: '#hasMcNumber', name: 'Has an MC number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.mc },
-    { selector: '#noNumber', name: 'No DOT / MC number', kind: 'bool', source: 'derived', value: (r) => !r.applicant.dot && !r.applicant.mc },
-    { selector: '#dotNumber', name: 'DOT number', source: 'derived', value: (r) => digits(r.applicant.dot) },
+    { selector: '#noNumber', name: 'No DOT / MC number', kind: 'bool', source: (r) => (r.applicant.mc ? 'derived' : held(dotSource)(r)), value: (r) => !dot(r) && !r.applicant.mc,
+      note: (r) => (r.applicant.mc ? null : ntlDotFilingsHold(r)) },
+    { selector: '#dotNumber', name: 'DOT number', source: held('derived'), value: (r) => digits(dot(r)), note: holdOr() },
     { selector: '#mcNumber', name: 'MC number', source: 'derived', value: (r) => digits(r.applicant.mc) },
     // Shown with Filing required Yes.
     { selector: '#howLongFederalOperatingAuthorityActive', name: 'Federal authority active for (years under own authority)', kind: 'choice', source: 'derived', value: authorityAge },
-    { name: 'Federal BMC-91', label: '^federal bmc91$', kind: 'bool', source: 'derived', value: federalLiability },
-    { name: 'Federal liability MCS-90', label: '^federal liability mcs90$', kind: 'bool', source: 'derived', value: federalLiability },
-    { name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', source: 'derived', value: federalCargo },
+    { name: 'Federal BMC-91', label: '^federal bmc91$', kind: 'bool', source: held('derived'), value: federalLiability, note: holdOr() },
+    { name: 'Federal liability MCS-90', label: '^federal liability mcs90$', kind: 'bool', source: held('derived'), value: federalLiability, note: holdOr() },
+    { name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', source: held('derived'), value: federalCargo, note: holdOr() },
     // The client's insurance history the intake doesn't give. TNI's standards (2026-10-19, after a
     // live run; may change later): 1 TO 2 YEARS with the current carrier and no claim-free loss
-    // runs. The current-carrier question is only asked of clients with a DOT number. Valued loss
-    // runs: No too (TNI, 2026-10-19, a later AmWINS run: "valued loss runs are always NO").
-    { selector: '#howLongWithCurrentCarrier', tni: 'amwins.current-carrier-tenure', name: 'How long with the current carrier (standard: 1 TO 2 YEARS)', kind: 'choice', source: 'standard', ignore: (r) => !r.applicant.dot, value: () => '1 TO 2 YEARS' },
+    // runs. Valued loss runs: No too (TNI, 2026-10-19, a later AmWINS run: "valued loss runs are
+    // always NO").
+    // TNI (2026-10-26, W44-29: proof of prior insurance is "1-3 years at least"): 1 TO 2 YEARS
+    // stays, and a longer time with the insurer than that the notes give isn't shortened: its band
+    // (TNI, 2026-10-26: answer to PR question; the Intake step quotes the line, `prior.tenure`), or
+    // the agent's, with the line quoted, when two bands could fit it. No prior insurance on the
+    // intake doesn't change it (TNI, 2026-10-26: answer to PR question).
+    // Answered wherever the page shows it: with "Is a Federal Filing Required?" Yes, also without a
+    // DOT or MC number (TNI, 2026-10-26: answer to PR question, round 2, R7; until then only with a
+    // DOT or MC number). Without a filing the page hides it, and hidden fields aren't filled.
+    // An expired policy with a time in the notes: the agent's, as on GEICO (TNI, 2026-10-26: answer
+    // to PR question, round 3, T6; withCurrentCarrier above).
+    { selector: '#howLongWithCurrentCarrier', tni: 'amwins.current-carrier-tenure', name: 'How long with the current carrier (standard: 1 TO 2 YEARS)', kind: 'choice',
+      source: (r) => (!withCurrentCarrier(r) ? 'fact' : longerTenure(r) ? 'derived' : 'standard'),
+      value: withCurrentCarrier, note: withCurrentCarrierNote },
     { tni: 'amwins.loss-runs', name: 'Claim-free loss runs (standard: No)', label: '^can provide claim free loss run$', kind: 'bool', source: 'standard', value: () => false },
     { tni: 'amwins.loss-runs', name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', source: 'standard', value: () => false },
     // Preserve the intake's explicit claims answer; unknown history stays with the agent.
@@ -455,6 +626,8 @@ export const amwins = {
 
     // --- Coverages -------------------------------------------------------------------------------
     { name: 'CSL liability limit', label: '^csl liability limit$', path: 'coverage.autoLiabLimit' },
+    // Uninsured motorists Yes at $100K, rental $40 a day ($1,200) and towing $75: TNI's (recorded
+    // 2026-10-26, W44-32: "limits are fine").
     { tni: 'amwins.um', name: 'Uninsured motorists (standard: Yes)', label: '^uninsured motorists$', kind: 'bool', source: 'standard', value: () => true },
     { tni: 'amwins.rental', name: 'Rental reimbursement (standard: $40/day, $1,200)', label: 'transportation expense|rental reimbursement', kind: 'choice', source: 'standard', value: () => '$40 day / $1,200 total' },
     { selector: '#uninsuredMotoristsLimit', tni: 'amwins.um', name: 'UM limit (standard: $100K)', kind: 'choice', source: 'standard', value: () => '$100K' },
@@ -464,8 +637,10 @@ export const amwins = {
     { tni: 'amwins.waiver-collision', name: 'Waiver of collision (standard: No)', label: '^has waiver of collision$', kind: 'bool', source: 'standard', value: () => false },
     { selector: '#towingAndLaborReimbursement', tni: 'amwins.towing', name: 'Towing and labor (standard: $75)', kind: 'choice', source: 'standard', value: () => '$75' },
     // PIP: No whenever Medical Payments is offered, which on AmWINS is always (the Coverages step
-    // has #medicalPayment, $5,000 above). The page pre-selects Yes, so ours replaces it. The limit
-    // box only shows with Yes.
+    // has #medicalPayment, $5,000 above; TNI, 2026-10-26, W44-26). The page pre-selects Yes, so ours
+    // replaces it. The limit box only shows with Yes. The same in every state, no-fault states (FL,
+    // NY, MI) too: AmWINS, as the broker, picks the right coverage on its side when it prepares the
+    // quote (TNI, 2026-10-26: answer to PR question).
     { tni: 'amwins.medpay-pip', name: 'Personal Injury Protection (standard: No, Medical Payments is offered)', label: '^personal injury protection$', kind: 'bool', source: 'standard', value: () => false, replace: true },
     { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit (only with PIP Yes)', ignore: true },
     // Liability auto symbol: 6 only.
@@ -476,13 +651,20 @@ export const amwins = {
 
     // --- Underwriting questions --------------------------------------------------------------------
     // TNI answers this section No (2026-10-09), also when the intake reports claims or leased
-    // vehicles; hazardous material is the intake's answer.
+    // vehicles; hazardous material is the intake's answer, and blank is No unless the intake points
+    // to hazardous freight (hazmat above; TNI, 2026-10-26, W44-32); hazard exposure is Yes when the
+    // intake's hazmat is Yes (hazardExposure above; TNI, 2026-10-26: answer to PR question).
     { tni: 'amwins.underwriting-second', name: 'Vehicles not owned (standard: No)', label: '^any vehicle not owned$', kind: 'bool', source: 'standard', value: () => false },
     { tni: 'amwins.underwriting-second', name: 'Vehicles leased to others (standard: No)', label: '^vehicle leased$', kind: 'bool', source: 'standard', value: () => false },
     { tni: 'amwins.underwriting-second', name: 'MVR verification (standard: No)', label: '^mvr verification$', kind: 'bool', source: 'standard', value: () => false },
     { tni: 'amwins.underwriting-second', name: 'Owned unscheduled vehicles (standard: No)', label: '^owned unscheduled vehicle$', kind: 'bool', source: 'standard', value: () => false },
     { tni: 'amwins.underwriting-second', name: 'Convictions / moving violations (standard: No)', label: '^convictions moving violations$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'Hazardous material', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat' },
+    { tni: 'amwins.hazmat', name: 'Hazardous material (standard: No unless the intake says otherwise)', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat',
+      source: hazmatSource, value: hazmat, note: hazmatNote },
+    // Hazard exposure: Yes when the intake's hazmat is Yes, otherwise No (hazardExposure above;
+    // TNI, 2026-10-26: answer to PR question).
+    { tni: 'amwins.hazard-exposure', name: 'Underwriting: hazard exposure (standard: No; Yes when the intake\'s hazmat is Yes)', label: '^hazard exposure$', kind: 'bool',
+      source: (r) => (hazardExposure(r) ? 'intake' : 'standard'), value: hazardExposure, replace: hazardExposure },
     ...UNDERWRITING_NO.map(/** @returns {CarrierRule} */ (q) => ({ tni: 'amwins.underwriting-general', name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
     // Yes again after "Default all answers to No".
     { tni: 'amwins.disclose', name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', source: 'standard', value: () => true, replace: true },
