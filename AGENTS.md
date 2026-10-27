@@ -22,6 +22,8 @@ Start with the relevant source. Read the matching document when the task affects
 | If the action affects… | Read… |
 | --- | --- |
 | Project goals, shared boundaries, or general architecture | [Architecture](docs/architecture.md) |
+| Working in the maintainer's style, or `/lutfy-mode` | Skill [lutfy-mode](.claude/skills/lutfy-mode/SKILL.md) |
+| Driving the packaged extension or carrier mocks to prove a fill | Skill [verify-tni-rater](.claude/skills/verify-tni-rater/SKILL.md) |
 | Intake parsing, mappings, defaults, applicability, or state/vehicle/coverage exceptions | [Intake and rules](docs/intake-and-rules.md) |
 | Live controls, page changes, helper actions, navigation, or fill verification | [Browser filling](docs/browser-filling.md) |
 | Learning from new fields, corrections, exceptions, layouts, or usage events | [Learning](docs/learning.md) |
