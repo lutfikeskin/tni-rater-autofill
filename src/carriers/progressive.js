@@ -30,7 +30,7 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent } from '../util.js';
+import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -89,14 +89,20 @@ export function ownerDobNote(r) {
 // ("Progresive", "Progressive Commercial") is Progressive (sameCarrier; TNI, 2026-10-26, W44-06).
 // Without a limit or a usable expiration date too (TNI, 2026-10-26: answer to PR question 9, by
 // W44-29's proof of prior: priorPolicyCurrent), TNI's answer, a standard: it used to be No unless
-// both were filled. An expired policy or one of no type stays No.
+// both were filled. An expired policy stays No. A Progressive policy whose type is left blank is the
+// agent's, a `fact` with a note that the type isn't on the intake, dated, undated or expired (TNI,
+// 2026-10-26: answer to PR question R9: untypedCarrierPolicy): it used to be No.
 const insuredWithProgressive = (r) => {
   const p = r.priorInsurance[0];
   return !!(p && /commercial\s+auto/i.test(p.type ?? '') && sameCarrier(p.carrier, 'progressive') && priorPolicyCurrent(r, p));
 };
-// Derived with a limit and a date, as before; TNI's standard when the Yes is question 9's answer.
-const insuredWithProgressiveSource = (r) => (insuredWithProgressive(r)
+const untypedProgressive = (r) => untypedCarrierPolicy(r.priorInsurance?.[0], 'progressive');
+// Derived with a limit and a date, as before; TNI's standard when the Yes is question 9's answer; a
+// fact, the agent's, for a Progressive policy of no type (R9).
+const insuredWithProgressiveSource = (r) => (untypedProgressive(r) ? 'fact' : insuredWithProgressive(r)
   && !(r.priorInsurance[0].limit && /^\d{2}\/\d{2}\/\d{4}$/.test(r.priorInsurance[0].expiration ?? '')) ? 'standard' : 'derived');
+const insuredWithProgressiveNote = (r) => (untypedProgressive(r)
+  ? 'The intake\'s current policy is with Progressive, but its policy type isn\'t on the intake: answer it yourself.' : null);
 
 // After a USDOT lookup Progressive offers the registered business name / address as a choice,
 // next to "Enter a different …". Agents pick the registered one. Without a USDOT number there is
@@ -639,7 +645,7 @@ export const progressive = {
     ...onPage(['BusinessOwnerInfo', 'BECAPopup'], [
       { q: '18F', field: 'AgencyInfo.AgencyCodeAgent', ask: 'Agent Code', name: 'Agent code (preserve prefilled value)', ignore: true },
       { q: '194', field: 'PolicyInput.EffectiveDate', ask: 'When should this Progressive Commercial Auto policy start?', name: 'Policy start date (preserve prefilled value)', ignore: true },
-      { q: '198', source: insuredWithProgressiveSource, field: 'AccountInput.PGRInsuredIndicator', ask: 'Is the customer currently insured with Progressive Commercial Auto?', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive },
+      { q: '198', source: insuredWithProgressiveSource, field: 'AccountInput.PGRInsuredIndicator', ask: 'Is the customer currently insured with Progressive Commercial Auto?', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive, note: insuredWithProgressiveNote },
       { q: '1CC', field: 'Warehouse.QuoteVendorCode', ask: 'Quote Vendor Code', optional: true, name: 'Quote vendor code (optional)', ignore: true },
       { q: '1ED', source: 'derived', clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: hasUsdotNote },
       { q: '1F3', field: 'USDOTInput.NumberCollection', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !r.applicant.dot },

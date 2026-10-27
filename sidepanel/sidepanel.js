@@ -3307,7 +3307,8 @@ function renderDock() {
 // stays there (TNI, 2026-10-26, W44-27: the carrier may decline or route the quote). It is about the
 // intake, not the tab's quote, so it needs no evidence the tab holds this client's quote. No stop:
 // filling, follow-ups, helpers, Continue and the AI go on as elsewhere, the carrier's own question is
-// answered from the intake, and Progressive's DeclinationNotice stays its stop page. Not logged: a
+// answered from the intake (the agent's for a policy of no type: TNI, 2026-10-26, R9), and
+// Progressive's DeclinationNotice stays its stop page. Not logged: a
 // fill run that stopped would count a page nothing stopped. Only for a commercial auto policy, or one
 // of no type (util.js quotedCarrierPolicy; TNI, 2026-10-26: answer to PR question 18: not a personal
 // auto or GL-only policy). The intake check screen says it first (prior.carrier-is-quoted).

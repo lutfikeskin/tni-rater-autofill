@@ -588,6 +588,34 @@ test('an undated GEICO commercial auto policy is a current GEICO policy (TNI, 20
   assert.equal(step(geicoRow({ carrier: 'Gainsco' })).source, 'derived');
 });
 
+// TNI, 2026-10-26: answer to PR question R9 (#189): a policy with GEICO itself whose policy type is
+// left blank is the agent's (a `fact`, never filled), with a note that the type isn't on the intake,
+// dated, undated or expired. A commercial auto policy with GEICO keeps its Yes; personal auto and
+// another insurer's commercial auto policy keep No.
+test('a GEICO policy of no type: the current GEICO policy question is the agent\'s (TNI, 2026-10-26, R9)', () => {
+  const geicoRow = (more = {}) => ({ priorInsurance: [{ type: null, carrier: 'GEICO', limit: '$1M CSL', expiration: '12/31/2026', ...more }] });
+  const step = (changes) => one(plan(with_(changes)), 'Current GEICO commercial auto policy');
+  for (const more of [{}, { type: '' }, { type: '  ' }, { carrier: 'Gieco' }, { expiration: null }, { limit: null, expiration: 'see notes' }, { expiration: '01/31/2026' }]) {
+    const s = step(geicoRow(more));
+    agents(s);
+    assert.deepEqual([s.source, s.manualOnly], ['fact', true], JSON.stringify(more));
+    assert.match(s.note, /policy type isn't on the intake/, JSON.stringify(more));
+  }
+  // Counterexamples: a commercial auto policy with GEICO keeps its Yes (dated derived, undated
+  // standard); personal auto keeps No; another insurer's commercial auto policy keeps No; no prior
+  // insurance ("No GEICO" without a date) keeps No; another insurer's policy of no type is unchanged
+  // (the agent's, derived, its own note).
+  assert.deepEqual([step(geicoRow({ type: 'Commercial Auto' })).value, step(geicoRow({ type: 'Commercial Auto' })).source], [true, 'derived']);
+  assert.deepEqual([step(geicoRow({ type: 'Commercial Auto', expiration: null })).value, step(geicoRow({ type: 'Commercial Auto', expiration: null })).source], [true, 'standard']);
+  assert.deepEqual([step(geicoRow({ type: 'Personal Auto' })).value, step(geicoRow({ type: 'Personal Auto' })).source], [false, 'derived']);
+  assert.deepEqual([step(geicoRow({ type: 'Commercial Auto', carrier: 'Gainsco' })).value, step(geicoRow({ type: 'Commercial Auto', carrier: 'Gainsco' })).source], [false, 'derived']);
+  assert.equal(step(geicoRow({ carrier: 'No GEICO', limit: null, expiration: null })).value, false, 'no prior insurance');
+  const other = step(geicoRow({ carrier: 'Other Mutual' }));
+  agents(other);
+  assert.equal(other.source, 'derived');
+  assert.doesNotMatch(other.note, /policy type/);
+});
+
 test('the owner: from their driver row or the owner box, never the first driver', () => {
   // The first driver isn't the owner.
   const r = with_({ drivers: [CASEY, intake().drivers[0]] });

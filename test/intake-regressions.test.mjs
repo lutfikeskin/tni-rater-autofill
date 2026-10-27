@@ -109,10 +109,36 @@ test('Progressive: an undated Progressive commercial auto policy is currently in
     assert.deepEqual([step(more).value, step(more).source], [true, 'standard'], JSON.stringify(more));
   }
   assert.deepEqual([step({}).value, step({}).source], [true, 'derived'], 'a limit and a date: derived, as before');
-  // Unchanged, No: expired, a personal auto policy, another insurer, no prior insurance ("No
-  // Progressive" without a date), and a policy of no type.
+  // Unchanged, No: expired, a personal auto policy, another insurer, and no prior insurance ("No
+  // Progressive" without a date). A policy of no type is the agent's since R9 (next test).
   for (const more of [{ expiration: '09/01/2026' }, { type: 'Personal Auto', expiration: null }, { carrier: 'Protective', expiration: null },
-    { carrier: 'No Progressive', expiration: null }, { type: null, expiration: null }]) {
+    { carrier: 'No Progressive', expiration: null }]) {
     assert.deepEqual([step(more).value, step(more).source], [false, 'derived'], JSON.stringify(more));
+  }
+});
+
+// TNI, 2026-10-26: answer to PR question R9 (#189): a policy with Progressive itself whose policy type
+// is left blank is the agent's (a `fact`, never filled), with a note that the type isn't on the
+// intake, dated, undated or expired: Progressive no longer answers No. A commercial auto policy with
+// Progressive keeps its Yes; personal auto and another insurer keep No.
+test('Progressive: a Progressive policy of no type is the agent\'s (TNI, 2026-10-26, R9)', () => {
+  const step = (more) => {
+    const r = record();
+    Object.assign(r.priorInsurance[0], { type: null, expiration: '12/01/2026', ...more });
+    return buildPlan(r, progressive).find((s) => s.q === '198');
+  };
+  for (const more of [{}, { type: '' }, { type: '  ' }, { carrier: 'Progresive' }, { expiration: null }, { limit: null, expiration: 'see notes' }, { expiration: '09/01/2026' }]) {
+    const s = step(more);
+    assert.deepEqual([s.value, s.source, s.manualOnly], [null, 'fact', true], JSON.stringify(more));
+    assert.match(s.note, /policy type isn't on the intake/, JSON.stringify(more));
+  }
+  // Counterexamples: commercial auto with Progressive keeps Yes; personal auto, another insurer (of
+  // no type too) and no prior insurance ("No Progressive" without a date) keep No.
+  assert.deepEqual([step({ type: 'Commercial Auto' }).value, step({ type: 'Commercial Auto' }).source], [true, 'derived']);
+  assert.deepEqual([step({ type: 'Commercial Auto', expiration: null }).value, step({ type: 'Commercial Auto', expiration: null }).source], [true, 'standard']);
+  for (const more of [{ type: 'Personal Auto' }, { type: 'Commercial Auto', carrier: 'Protective' }, { carrier: 'Protective' }, { carrier: 'GEICO' },
+    { carrier: 'No Progressive', limit: null, expiration: null }]) {
+    const s = step(more);
+    assert.deepEqual([s.value, s.source, s.note], [false, 'derived', null], JSON.stringify(more));
   }
 });

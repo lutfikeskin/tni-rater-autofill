@@ -93,13 +93,22 @@ export function sameCarrier(name, carrierId) {
 // The intake's current policy is one the carrier being quoted may decline or route (W44-27): with
 // that carrier (sameCarrier), not no prior insurance, and a commercial auto policy (TNI, 2026-10-26:
 // answer to PR question 18: a personal auto, GL-only, cargo or other policy with it is not). A policy
-// of no type is said too: it is only a warning, and the carrier's question stays as it was. Expired
-// or undated, it is said, as before. The side panel's red card on the carrier's pages and the intake
-// check (prior.carrier-is-quoted, normalize.js) both read it.
+// of no type is said too: it is only a warning, and the carrier's own question for it is the agent's
+// (untypedCarrierPolicy). Expired or undated, it is said, as before. The side panel's red card on the
+// carrier's pages and the intake check (prior.carrier-is-quoted, normalize.js) both read it.
 export function quotedCarrierPolicy(policy, carrierId) {
   if (!policy || noPriorInsurance(policy) || !sameCarrier(policy.carrier, carrierId)) return false;
   const type = String(policy.type ?? '').trim();
   return !type || /commercial\s+auto/i.test(type);
+}
+
+// The intake's current policy is with the carrier being quoted (quotedCarrierPolicy) but its policy
+// type is left blank. The carrier's own question (GEICO's current GEICO commercial auto policy,
+// Progressive's "insured with Progressive Commercial Auto") is then the agent's on both carriers, a
+// `fact` with a note that the type isn't on the intake, dated, undated or expired (TNI, 2026-10-26:
+// answer to PR question R9). Progressive used to answer No; GEICO already left it to the agent.
+export function untypedCarrierPolicy(policy, carrierId) {
+  return quotedCarrierPolicy(policy, carrierId) && !String(policy?.type ?? '').trim();
 }
 
 // The carriers the panel quotes that the intake's current policy is with (quotedCarrierPolicy), by
