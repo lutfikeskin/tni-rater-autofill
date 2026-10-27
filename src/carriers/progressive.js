@@ -150,6 +150,8 @@ const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
 const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').trim());
 const isArkansas = (r) => /^(ar|arkansas)$/i.test(String(r.garaging?.state ?? '').trim());
+const isTexas = (r) => /^(tx|texas)$/i.test(String(r.garaging?.state ?? '').trim());
+const isMaryland = (r) => /^(md|maryland)$/i.test(String(r.garaging?.state ?? '').trim());
 
 // A trailer's attached equipment: the intake's amount when it gives one (not "N/A" or 0), else
 // none (TNI standard: "Trailer has no equipment").
@@ -893,14 +895,24 @@ export const progressive = {
       // FL: the CSL already covers property damage; PIP is required, $10k with no deductible (TNI).
       // Changing PIP makes Progressive invalidate the liability limit, which is picked again.
       { q: '1DB8', source: 'standard', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
-      // PIP shares its data-model name across states: other states' lists (TX $2,500–$25,000, MD
-      // "Full PIP") are left as Progressive set them (TNI 2026-10-07: no standard there).
-      { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r), emptyNote: (r) => (isFlorida(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida and Arkansas only: choose it yourself.') },
+      // PIP shares its data-model name across states. TX (TNI, 2026-10-26, W44-26: Medical Payments
+      // $5,000 wherever offered, PIP not selected unless the state requires it): Progressive offers
+      // medical payments there (1FE4), so PIP is Not Selected, from its list of Not Selected and
+      // $2,500 to $25,000. Other states' lists are left as Progressive set them: KY (base PIP is
+      // required there, so Progressive's stays), UT (required, "$3k Basic" its only option, no medical
+      // payments: it stays) (TNI, 2026-10-26: answers to PR questions) and MD (its own list, 1E7C).
+      { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; TX: Not Selected; other states: as Progressive set it)', kind: 'choice',
+        value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : isTexas(r) ? 'Not Selected' : null), ignore: (r) => !isFlorida(r) && !isTexas(r),
+        emptyNote: (r) => (isFlorida(r) || isTexas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida, Texas and Arkansas only: choose it yourself.') },
+      // Guest and Optional Personal Injury Protection (KY live run, 2026-10-26: no rule knew them, and
+      // Guest PIP was left required and empty): Not selected (TNI, 2026-10-26, W44-32).
+      { q: '1EE4', source: 'standard', field: 'LineInput.GuestPIPLimit', ask: 'Guest Personal Injury Protection', name: 'Guest personal injury protection (TNI: Not selected)', kind: 'choice', value: () => 'Not selected' },
+      { q: '1EE8', source: 'standard', field: 'LineInput.OptionalPIPLimit', ask: 'Optional Personal Injury Protection', name: 'Optional personal injury protection (TNI: Not selected)', kind: 'choice', value: () => 'Not selected' },
       // AR (TNI, 2026-10-19, after a live run): personal injury protection is its own control there
       // (PIPInput.Limit, captioned only "Limit", so it was unfamiliar), offering 5k medical, income
       // loss and 5k accidental death alone or together. Progressive picked all three; TNI's standard
       // is 5k Medical and Hospital alone. Other states with this control keep Progressive's choice.
-      { q: '1FB2', source: 'standard', field: 'PIPInput.Limit', name: 'Personal injury protection, AR (standard: 5k Medical and Hospital; other states: as Progressive set it)', kind: 'choice', value: (r) => (isArkansas(r) ? '5k Medical and Hospital' : null), ignore: (r) => !isArkansas(r), emptyNote: (r) => (isArkansas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida and Arkansas only: choose it yourself.') },
+      { q: '1FB2', source: 'standard', field: 'PIPInput.Limit', name: 'Personal injury protection, AR (standard: 5k Medical and Hospital; other states: as Progressive set it)', kind: 'choice', value: (r) => (isArkansas(r) ? '5k Medical and Hospital' : null), ignore: (r) => !isArkansas(r), emptyNote: (r) => (isArkansas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida, Texas and Arkansas only: choose it yourself.') },
       { q: '1DEE', source: 'standard', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
       // SC (2026-10-07): uninsured and underinsured motorist as BI & PD together, each $100k CSL with
       // the deductible Progressive lists for it (the agent's picks on that quote).
@@ -919,8 +931,12 @@ export const progressive = {
       ...[['1E69', 'Extraordinary Medical Expense'], ['1E6E', 'Income Loss'], ['1E71', 'Funeral Expense'], ['1E74', 'Accidental Death']]
         .map(/** @returns {CarrierRule} */ ([q, what]) => ({ q, source: 'standard', ask: `${what} Benefits`, name: `PA ${what.toLowerCase()} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
       // PIP's state choice (MD): its box has no question text and its fieldref isn't recorded yet; it's
-      // the list offering "$2,500 Full PIP". Other states' (TX: plain amounts) stay the agent's.
-      { q: '1E7C', withOption: '$2,500 Full PIP', name: 'PIP (preserve prefilled state choice)', ignore: true },
+      // the list offering "$2,500 Full PIP" (Not selected, $2,500 Full PIP, $2,500 Guest PIP). Its MD
+      // page offers no medical payments, so W44-26 takes PIP $2,500 there: "$2,500 Full PIP", not
+      // Guest PIP (TNI, 2026-10-26: answer to PR question). Another state showing this list (none
+      // captured) keeps Progressive's choice.
+      { q: '1E7C', source: 'standard', withOption: '$2,500 Full PIP', name: 'PIP, MD (standard: $2,500 Full PIP; other states: as Progressive set it)', kind: 'choice',
+        value: (r) => (isMaryland(r) ? '$2,500 Full PIP' : null), ignore: (r) => !isMaryland(r) },
       // SC (2026-10-07) lists comprehensive with a $0 glass deductible ("$1,000 Deductible w/ $0
       // Glass Deductible"): the same deductible.
       // TNI's standard deductibles (the intake has no deductible field).
@@ -933,7 +949,8 @@ export const progressive = {
       { q: '200F', source: 'standard', field: 'FireAndTheftInput.Deductible', name: 'Additional fire / theft coverage (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       // One per vehicle (UT 2026-10-07: two vehicles, two rows, no caption on either).
       { q: '1FDD', source: 'standard', field: 'UMPDInput.Limit', ask: 'UMPDInput.Limit', name: 'UMPD limit (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle' },
-      // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle).
+      // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle):
+      // $5,000 wherever Progressive offers it (TNI, 2026-10-26, W44-26).
       { q: '1FE4', source: 'standard', field: 'MedicalPaymentInput.Limit', name: 'Medical payments per person (standard: $5,000)', kind: 'choice', value: () => '$5,000 per person', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '2158', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
       { q: '215A', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },

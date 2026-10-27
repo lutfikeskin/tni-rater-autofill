@@ -1,7 +1,7 @@
 {
  "test/bakeoff/course-MD-expediter-van.json": {
   "questions": 79,
-  "filled": 59,
+  "filled": 60,
   "failed": 2,
   "unmapped": 2,
   "issues": [],
@@ -85,7 +85,7 @@
    },
    "CoveragesRates": {
     "questions": 9,
-    "filled": 14,
+    "filled": 15,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -93,7 +93,7 @@
     "clicked": [
      "+"
     ],
-    "outcomes": "d27f88cccc90"
+    "outcomes": "3eb6aab45aeb"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -299,7 +299,7 @@
     "unmapped": 5,
     "blockers": 4,
     "clicked": [],
-    "outcomes": "c4b7d5a943c0"
+    "outcomes": "dec4e9c86b9c"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -622,7 +622,7 @@
  },
  "test/fixtures/progressive/progressive_MD_expediter_van.json": {
   "questions": 105,
-  "filled": 68,
+  "filled": 69,
   "failed": 4,
   "unmapped": 3,
   "issues": [],
@@ -680,7 +680,7 @@
    },
    "CoveragesRates": {
     "questions": 15,
-    "filled": 14,
+    "filled": 15,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -688,7 +688,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f0b3f4d786f6"
+    "outcomes": "1b1e08e5ae56"
    },
    "ChangePaymentPlan": {
     "questions": 4,

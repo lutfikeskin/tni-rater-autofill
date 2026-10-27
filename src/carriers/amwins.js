@@ -44,7 +44,8 @@
 //   show their number fields. How long with the current carrier (only asked with a DOT number)
 //   and claim-free loss runs aren't on the intake: TNI's standards (1 TO 2 YEARS, No).
 // - Personal Injury Protection shows for FL HI KS KY MA MI MN NJ NY ND PA UT AR DE MD OR TX NH SD
-//   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred.
+//   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred (again on
+//   2026-10-26, W44-26: Medical Payments $5,000 wherever offered, PIP not selected).
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { owner, ownerDobNote, HAZ_HAUL } from './progressive.js';
@@ -546,8 +547,10 @@ export const amwins = {
     { name: 'Waiver of collision (standard: No)', label: '^has waiver of collision$', kind: 'bool', source: 'standard', value: () => false },
     { selector: '#towingAndLaborReimbursement', name: 'Towing and labor (standard: $75)', kind: 'choice', source: 'standard', value: () => '$75' },
     // PIP: No whenever Medical Payments is offered, which on AmWINS is always (the Coverages step
-    // has #medicalPayment, $5,000 above). The page pre-selects Yes, so ours replaces it. The limit
-    // box only shows with Yes.
+    // has #medicalPayment, $5,000 above; TNI, 2026-10-26, W44-26). The page pre-selects Yes, so ours
+    // replaces it. The limit box only shows with Yes. The same in every state, no-fault states (FL,
+    // NY, MI) too: AmWINS, as the broker, picks the right coverage on its side when it prepares the
+    // quote (TNI, 2026-10-26: answer to PR question).
     { name: 'Personal Injury Protection (standard: No, Medical Payments is offered)', label: '^personal injury protection$', kind: 'bool', source: 'standard', value: () => false, replace: true },
     { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit (only with PIP Yes)', ignore: true },
     // Liability auto symbol: 6 only.

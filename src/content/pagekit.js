@@ -766,6 +766,14 @@
         if (c) take(s, c, field === 'text' ? 'label' : 'name');
       }
     }
+    // A list condition with a value (`onlyIf`: GEICO's Medical Payments is Not Included where it
+    // offers no limit, Basic PIP I decline where Medical Payments offers one; TNI, 2026-10-26,
+    // W44-26) answers in place of the rule's, read from the lists on the page now, so every check of
+    // the answer (kept, accepted, changed since it was given) agrees with what was given.
+    for (const p of pairs) {
+      const value = p.step.onlyIf && p.step.value != null && !p.step.note ? holdingCondition(p.step, p.control, pairs)?.value : null;
+      if (value != null) p.step = { ...p.step, value };
+    }
     pairs.unwitnessed = unwitnessed;
     pairs.witnessed = witnessed;
     pairs.held = held;
@@ -966,6 +974,14 @@
       return true;
     });
   }
+
+  // Whether a list offers a limit: a choice with an amount ("$2,500", "$10,000/No deductible"),
+  // never a placeholder, a stand-in, "Not Included" or "I decline". No list offers none.
+  const offersLimit = (list) => !!list && usableOptions(optionsOf(list)).some((o) => moneyTokens(o.text).length > 0);
+
+  // A step's `onlyIf` condition that holds first, its list read from its own field or, with a
+  // `path`, from that question's among `pairs` (a question off the page offers none); none holding: null.
+  const holdingCondition = (step, control, pairs) => step.onlyIf?.find((x) => offersLimit(x.path ? pairs.find((p) => p.step.path === x.path)?.control : control) === x.limit) ?? null;
 
   function matchOption(options, step) {
     const usable = usableOptions(options);
@@ -2370,16 +2386,11 @@
         }
         // `onlyIf`: answered only when one of its conditions holds: a list, its own or another
         // question's (`path`; off the page it offers none), offers a limit (a choice with an amount)
-        // or none (GEICO's Medical Payments Not Included where Basic PIP offers a limit or it offers
-        // none: the maintainer, 2026-10-26, "If there is personal injury protection available, we
-        // always prefer PIP"). Otherwise the agent's alone, with `onlyNote`: a limit TNI doesn't
-        // name is never the AI's.
+        // or none, the first one holding giving its `value` (assign; GEICO's Medical Payments $5,000,
+        // Not Included where it offers no limit: TNI, 2026-10-26, W44-26). Otherwise the agent's
+        // alone, with `onlyNote`: a limit TNI doesn't name is never the AI's.
         if (step.onlyIf && step.value != null && !step.note) {
-          const offersLimit = (path) => {
-            const list = path ? allPairs.find((p) => p.step.path === path)?.control : c;
-            return !!list && usableOptions(optionsOf(list)).some((o) => moneyTokens(o.text).length > 0);
-          };
-          if (!step.onlyIf.some((x) => offersLimit(x.path) === x.limit)) {
+          if (!holdingCondition(step, c, allPairs)) {
             report.noData.push({ ...item, note: step.onlyNote, manualOnly: true, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.onlyNote });
             continue;
