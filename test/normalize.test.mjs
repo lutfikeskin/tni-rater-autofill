@@ -405,6 +405,7 @@ test('progressive: intake answers are translated into Progressive wording', () =
   assert.equal(byQ('22D').value, 'Corporation or LLC / Non-Profit', 'LLC in the company name');
   // Owner "Jordan Avery Sample" matches driver 1 by last name.
   assert.equal(byQ('295').value, 'Jordan Avery');
+  assert.equal(byQ('1B7F').value, 'Jordan', 'NoHit: the first word only (TNI 2026-10-26, W44-30)');
   assert.equal(byQ('297').value, 'Sample');
   assert.equal(byQ('2BB').value, '02/03/1988');
   assert.deepEqual(['2DB', '2DD', '2DF'].map((q) => byQ(q).value), [null, null, null]);
