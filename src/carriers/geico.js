@@ -563,9 +563,12 @@ const employees = (r) => {
 // 2026-10-26, W44-29, W44-02: "1-3 years at least"): 1-3 Years whenever the customer currently has
 // auto insurance (above), also when the notes say the policy started within the year. A longer
 // time the notes give (insurerTenure) isn't shortened: its band (TNI, 2026-10-26: answer to PR
-// question; the Intake step quotes the line, `prior.tenure`). A time two bands could fit (exactly
-// 5 or 10 years, "since 2021" in 2026) stays the agent's, with the line quoted.
-const GEICO_TENURE = (n) => (n <= 3 ? '1-3 Years' : n < 5 ? '3-5 Years' : n > 5 && n < 10 ? '5-10 Years' : n > 10 ? '10+ Years' : null);
+// question; the Intake step quotes the line, `prior.tenure`). A time on a band edge takes the upper
+// band: exactly 5 years is 5-10, exactly 10 or "10+" is 10+ (TNI, 2026-10-26: answer to PR
+// question, round 2, R5; until then the agent's). Exactly 3 stays 1-3, the decision's "1-3 at
+// least". A time two bands could fit ("since 2021" in 2026: 4.7 to 5.7 years) stays the agent's,
+// with the line quoted.
+const GEICO_TENURE = (n) => (n <= 3 ? '1-3 Years' : n < 5 ? '3-5 Years' : n < 10 ? '5-10 Years' : '10+ Years');
 const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years > 3 ? t : null; };
 const yearsWithInsurer = (r) => {
   if (currentAuto(r) !== 'Yes') return null;

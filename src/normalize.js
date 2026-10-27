@@ -221,7 +221,10 @@ export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.tex
 // 2025"). The longest such time, in years to one decimal, its line, and the least it could mean
 // (TNI, 2026-10-26: answer to PR question: the carriers pick the band a longer time falls in, so
 // a year alone runs from its first day to its last, "over 10 years" has no end, "almost 5 years"
-// is under 5, "about 4 years" half a year either side); null when no line gives one.
+// is under 5, "roughly 4 years" half a year either side); null when no line gives one. "About",
+// "around" or "approximately" N is N (TNI, 2026-10-26: answer to PR question, round 2, R8, as
+// "about N" is N for the intake's other figures); "over N" (more than N) and "N+" (N or more)
+// stay as before, with no end. The carriers place a time on a band edge (tenureBand).
 const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const INSURANCE_WORDS = /\b(?:insur\w*|polic(?:y|ies)|pop|proof of prior)\b/i;
@@ -234,7 +237,10 @@ const saidSpan = (n, qualifier, plus) => {
   if (q === 'over' || q === 'more than') return [n + 0.1, Infinity];
   if (q === 'almost' || q === 'nearly' || q === 'close to') return [n - 1, n - 0.1];
   if (q === 'under' || q === 'less than') return [0, n - 0.1];
-  return q ? [n - 0.5, n + 0.5] : [n, n];
+  // TNI, 2026-10-26 (answer to PR question, round 2, R8): "about 3 years" counts as 3. "Roughly"
+  // isn't named in the answer: as before, half a year either side.
+  if (q === 'roughly') return [n - 0.5, n + 0.5];
+  return [n, n];
 };
 const tenth = (n) => Math.round(n * 10) / 10;
 /** @param {any} record @returns {{ years: number, least: number, line: string } | null} */
@@ -267,9 +273,10 @@ export const insurerTenure = (record) => {
   return longest;
 };
 // The carrier's band for a time with the insurer read from the notes (insurerTenure), by its
-// `band` (a number of years to its band's label; null where two bands share it, as GEICO's 3-5 and
-// 5-10 share 5): the one band both the least and the most the time could mean fall in, else null
-// (TNI, 2026-10-26: answer to PR question: a time the bands can't place stays the agent's).
+// `band` (a number of years to its band's label; a time on the edge two bands share, as GEICO's
+// 3-5 and 5-10 share 5, takes the upper one, TNI, 2026-10-26: answer to PR question, round 2, R5):
+// the one band both the least and the most the time could mean fall in, else null (TNI,
+// 2026-10-26: answer to PR question: a time the bands can't place stays the agent's).
 /** @param {{ years: number, least: number }} tenure @param {(years: number) => string | null} band @returns {string | null} */
 export const tenureBand = (tenure, band) => { const label = band(tenure.least); return label != null && label === band(tenure.years) ? label : null; };
 
@@ -753,9 +760,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   }
   // A time with the current insurer beyond the 1-3 years standard (AmWINS' 1 TO 2 YEARS): the
   // carriers' how-long questions take its band, the line shown here, where it was read (TNI,
-  // 2026-10-26: answer to PR question, W44-29).
+  // 2026-10-26: answer to PR question, W44-29). From 2 years: AmWINS' 1 TO 2 and 2 TO 3 YEARS share
+  // 2, and a time on a band edge takes the upper band (TNI, 2026-10-26: answer to PR question, round 2, R5).
   const tenure = insurerTenure(record);
-  if (tenure && tenure.years > 2) {
+  if (tenure && tenure.years >= 2) {
     const inNotes = String(record.notes?.text ?? '').split('\n').map((s) => s.trim()).includes(tenure.line);
     check('prior.tenure', inNotes ? 'notes.text' : 'claims.text', `The claims box or Additional Notes give the time with the current insurer: "${tenure.line.slice(0, 160)}". The carriers' questions on how long with the current insurer take the band for it, never under 1-3 years (TNI); a time two bands could fit is left to you.`);
   }

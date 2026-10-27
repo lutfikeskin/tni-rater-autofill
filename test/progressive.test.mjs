@@ -493,7 +493,7 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
   assert.ok(!new RegExp(amwins.advance.text, 'i').test('Save & Exit'));
 });
 
-test('AmWINS: current carrier tenure (asked with a DOT only) 1 TO 2 YEARS and claim-free loss runs No are TNI standards; marital status the agent\'s; PIP No', async () => {
+test('AmWINS: current carrier tenure (asked with a federal filing required) 1 TO 2 YEARS and claim-free loss runs No are TNI standards; marital status the agent\'s; PIP No', async () => {
   const { amwins } = await import('../src/carriers/amwins.js');
   const record = baseRecord();
   record.applicant.dot = '1234567';
@@ -515,7 +515,9 @@ test('AmWINS: current carrier tenure (asked with a DOT only) 1 TO 2 YEARS and cl
   assert.equal(marital().warn, null);
   record.applicant.dot = null;
   plan = buildPlan(record, amwins, {});
-  assert.equal(sel('#howLongWithCurrentCarrier').ignore, true, 'only asked of clients with a DOT number');
+  // TNI, 2026-10-26 (round 2, R7): AmWINS asks it with a federal filing required (this record's),
+  // also with no DOT or MC number; it is answered wherever the page shows it (until then: only with a DOT number).
+  assert.deepEqual([sel('#howLongWithCurrentCarrier').ignore, sel('#howLongWithCurrentCarrier').value, sel('#howLongWithCurrentCarrier').source], [false, '1 TO 2 YEARS', 'standard']);
   record.drivers[0].maritalStatus = 'Single';
   plan = buildPlan(record, amwins, {});
   assert.equal(marital().value, 'Single', 'the intake\'s answer is filled');

@@ -41,8 +41,9 @@
 // - GVW is required unless the body type is a trailer.
 // - Filing required Yes shows BMC-91, MCS-90, BMC-32, how long the authority has been active, how
 //   long with the current carrier, and "can provide claim-free loss runs"; the DOT / MC boxes
-//   show their number fields. How long with the current carrier (answered with a DOT or MC number)
-//   and claim-free loss runs aren't on the intake: TNI's standards (1 TO 2 YEARS, No).
+//   show their number fields. How long with the current carrier (answered wherever it shows, a
+//   DOT or MC number or not) and claim-free loss runs aren't on the intake: TNI's standards
+//   (1 TO 2 YEARS, No).
 // - Personal Injury Protection shows for FL HI KS KY MA MI MN NJ NY ND PA UT AR DE MD OR TX NH SD
 //   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred.
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
@@ -228,9 +229,13 @@ const authorityAge = (r) => {
 };
 // A time with the insurer the intake's notes give beyond the 1 TO 2 YEARS standard (W44-29), and
 // its band (TNI, 2026-10-26: answer to PR question): 3 years is 2 TO 3 (not MORE THAN 3); null when
-// the time could be in two bands ("since 2023" in 2026), the agent's.
-const AMWINS_TENURE = (n) => (n <= 2 ? '1 TO 2 YEARS' : n <= 3 ? '2 TO 3 YEARS' : 'MORE THAN 3 YEARS');
-const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years > 2 ? t : null; };
+// the time could be in two bands ("since 2023" in 2026), the agent's. Exactly 2 years, the edge
+// 1 TO 2 and 2 TO 3 share, takes the upper band, 2 TO 3 YEARS (TNI, 2026-10-26: answer to PR
+// question, round 2, R5: a time on a band edge takes the upper band; GEICO keeps exactly 3 at 1-3
+// because the decision names 1-3, and 1 TO 2 and 2 TO 3 are both within it). 3 is no edge here:
+// MORE THAN 3 doesn't include it.
+const AMWINS_TENURE = (n) => (n < 2 ? '1 TO 2 YEARS' : n <= 3 ? '2 TO 3 YEARS' : 'MORE THAN 3 YEARS');
+const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years >= 2 ? t : null; };
 const withCurrentCarrier = (r) => { const t = longerTenure(r); return t ? tenureBand(t, AMWINS_TENURE) : '1 TO 2 YEARS'; };
 // Federal filings from the intake's "which filings": liability means BMC-91 (MCS-90 comes with
 // it); cargo means BMC-32. Unknown when the intake doesn't say which.
@@ -408,16 +413,18 @@ export const amwins = {
     { name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', source: 'derived', value: federalCargo },
     // The client's insurance history the intake doesn't give. TNI's standards (2026-10-19, after a
     // live run; may change later): 1 TO 2 YEARS with the current carrier and no claim-free loss
-    // runs. The current-carrier question is only asked of clients with a DOT (or MC) number. Valued loss
-    // runs: No too (TNI, 2026-10-19, a later AmWINS run: "valued loss runs are always NO").
+    // runs. Valued loss runs: No too (TNI, 2026-10-19, a later AmWINS run: "valued loss runs are
+    // always NO").
     // TNI (2026-10-26, W44-29: proof of prior insurance is "1-3 years at least"): 1 TO 2 YEARS
     // stays, and a longer time with the insurer than that the notes give isn't shortened: its band
     // (TNI, 2026-10-26: answer to PR question; the Intake step quotes the line, `prior.tenure`), or
-    // the agent's, with the line quoted, when two bands could fit it. Asked of a client with a DOT
-    // or an MC number (TNI, 2026-10-26: answer to PR question; the page shows it with a federal
-    // filing required), so no prior insurance on the intake doesn't change it.
+    // the agent's, with the line quoted, when two bands could fit it. No prior insurance on the
+    // intake doesn't change it (TNI, 2026-10-26: answer to PR question).
+    // Answered wherever the page shows it: with "Is a Federal Filing Required?" Yes, also without a
+    // DOT or MC number (TNI, 2026-10-26: answer to PR question, round 2, R7; until then only with a
+    // DOT or MC number). Without a filing the page hides it, and hidden fields aren't filled.
     { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier (standard: 1 TO 2 YEARS)', kind: 'choice',
-      source: (r) => (!withCurrentCarrier(r) ? 'fact' : longerTenure(r) ? 'derived' : 'standard'), ignore: (r) => !r.applicant.dot && !r.applicant.mc,
+      source: (r) => (!withCurrentCarrier(r) ? 'fact' : longerTenure(r) ? 'derived' : 'standard'),
       value: withCurrentCarrier, note: (r) => (withCurrentCarrier(r) ? null : `The intake's notes give the time with the current carrier ("${longerTenure(r)?.line.slice(0, 80)}"), and more than one of AmWINS' bands could fit it: pick it yourself.`) },
     { name: 'Claim-free loss runs (standard: No)', label: '^can provide claim free loss run$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', source: 'standard', value: () => false },
