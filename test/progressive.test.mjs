@@ -642,21 +642,19 @@ const filingKept = (text) => {
 test('AmWINS filing required: an SR-22 beside a Form E or H is TNI\'s No (T9)', () => {
   filingTniNo([[{ filingsWhich: 'SR-22 and Form E' }, null], [{ filingsWhich: 'SR-22, Form H' }, null], [{ filingsWhich: 'SR22 / Form E / Form H' }, null],
     [{ filingsWhich: 'FR-44 and Forms E and H' }, null], [{}, 'Owner needs an SR-22 and a Form E filing'], [{}, 'SR-22 plus Form H'], [{ needSr22: true }, 'SR-22, Form E/H']]);
-  // Anything federal beside them: the agent's. A Form E or H with no SR-22 or FR-44 named isn't
-  // settled by T9: the agent's, as before.
-  filingAgents([[{ filingsWhich: 'SR-22, Form E and MCS-90' }, null, /names filings \("SR-22, Form E and MCS-90"\)/], [{}, 'SR-22 and Form H, BMC-91', /its notes say "SR-22 and Form H, BMC-91"/],
-    [{ filingsWhich: 'Form E' }, null, /"Form E"/], [{}, 'Needs a Form H filing', /"Needs a Form H filing"/]]);
+  // Anything federal beside them: the agent's. (A Form E or H with no SR-22 or FR-44 named is No
+  // since V12: the V12 tests below.)
+  filingAgents([[{ filingsWhich: 'SR-22, Form E and MCS-90' }, null, /names filings \("SR-22, Form E and MCS-90"\)/], [{}, 'SR-22 and Form H, BMC-91', /its notes say "SR-22 and Form H, BMC-91"/]]);
   filingKept('SR-22 and Form E');
 });
 
 test('AmWINS filing required: "State filing" or "Intrastate" alone is TNI\'s No (T9)', () => {
   filingTniNo([[{ filingsWhich: 'State filing' }, null], [{ filingsWhich: 'State filings' }, null], [{ filingsWhich: 'Intrastate' }, null], [{ filingsWhich: 'Intrastate filing' }, null],
     [{ filingsWhich: 'Intra-state' }, null], [{}, 'Needs a state filing'], [{}, 'Intrastate filings only']]);
-  // Anything federal or another filing beside them: the agent's. "State" alone, and a state filing
-  // beside a Form E or H, aren't settled by T9: the agent's, as before.
+  // Anything federal or another filing beside them: the agent's. (A lone "State", and a state filing
+  // beside a Form E or H, are No since V12: the V12 tests below.)
   filingAgents([[{ filingsWhich: 'State and federal filings' }, null, /"State and federal filings"/], [{ filingsWhich: 'Intrastate and interstate' }, null, /"Intrastate and interstate"/],
-    [{}, 'State filing, BMC-91', /"State filing, BMC-91"/], [{}, 'State filing and other filings', /"State filing and other filings"/],
-    [{ filingsWhich: 'State' }, null, /"State"/], [{ filingsWhich: 'State filing and Form E' }, null, /"State filing and Form E"/]]);
+    [{}, 'State filing, BMC-91', /"State filing, BMC-91"/], [{}, 'State filing and other filings', /"State filing and other filings"/]]);
   filingKept('State filing');
 });
 
@@ -673,20 +671,71 @@ test('AmWINS filing required: "SR-22 and filings" is TNI\'s No (T9)', () => {
   filingTniNo([[{ filingsWhich: 'SR-22 and filings' }, null], [{}, 'SR-22 and filings'], [{}, 'SR22 & filings needed'], [{ filingsWhich: 'FR-44 and filings' }, null],
     [{}, 'SR-22 for the owner and filings'], [{ filingsWhich: 'SR-22, Form E, MC 123456 and filings' }, null]]);
   // Other, federal or named filings beside it: the agent's. A bare "filings" with no SR-22 or FR-44
-  // named isn't settled by T9: the agent's, as before.
+  // named isn't settled by T9 or V12: the agent's, as before. ("filings" before the SR-22, or
+  // "additional filings", is No since V12: the V12 tests below.)
   filingAgents([[{ filingsWhich: 'SR-22 and other filings' }, null, /"SR-22 and other filings"/], [{}, 'SR-22 and federal filings', /"SR-22 and federal filings"/],
     [{}, 'SR-22 and filings, MCS-90', /"SR-22 and filings, MCS-90"/], [{}, 'SR-22 and BMC-91 filings', /"SR-22 and BMC-91 filings"/],
-    [{ filingsWhich: 'Filings' }, null, /"Filings"/], [{}, 'Filings needed', /"Filings needed"/],
-    // Not settled by T9 either: "filings" before the SR-22, or qualified.
-    [{}, 'Filings and SR-22', /"Filings and SR-22"/], [{}, 'SR-22 and additional filings', /"SR-22 and additional filings"/]]);
+    [{ filingsWhich: 'Filings' }, null, /"Filings"/], [{}, 'Filings needed', /"Filings needed"/]]);
   filingKept('SR-22 and filings');
+});
+
+// TNI, 2026-10-27 (answer to PR question V12): with "filings required" blank, the cases T9 left to the
+// agent are state filings too, so TNI's No (`standard`, as T9's) on AmWINS' "Is a Federal Filing
+// Required?": a Form E or H with no SR-22 or FR-44 named; a lone "State" in the which-filings box; a
+// state filing or intrastate beside the client's MC number; a bare or "additional" "filings" before or
+// after the SR-22. Anything federal beside them stays the agent's, quoted; an intake that asks for
+// filings keeps its Yes; a Non-Trucking quote is never this standard. FR-44 counts as SR-22 throughout
+// (V13, confirmed).
+test('AmWINS filing required: a Form E or H with no SR-22 or FR-44 named is TNI\'s No (V12)', () => {
+  filingTniNo([[{ filingsWhich: 'Form E' }, null], [{}, 'Needs a Form H filing'], [{ filingsWhich: 'State filing and Form E' }, null], [{ filingsWhich: 'Form H' }, null],
+    [{ filingsWhich: 'Forms E and H' }, null], [{}, 'Form E filing for the state'], [{ filingsWhich: 'Intrastate, Form E' }, null], [{ filingsWhich: 'FR-44, Form E' }, null]]);
+  // Anything federal or another filing beside them: the agent's.
+  filingAgents([[{ filingsWhich: 'Form E and MCS-90' }, null, /names filings \("Form E and MCS-90"\)/], [{}, 'Form H, BMC-91', /its notes say "Form H, BMC-91"/],
+    [{ filingsWhich: 'Form E and federal filings' }, null, /"Form E and federal filings"/], [{}, 'Form E, interstate', /"Form E, interstate"/],
+    [{ filingsWhich: 'Form E and other filings' }, null, /"Form E and other filings"/], [{}, 'Form H, MC filing', /"Form H, MC filing"/],
+    [{ filingsWhich: 'State filing, Form E and BMC-34' }, null, /"State filing, Form E and BMC-34"/]]);
+  filingKept('Form E');
+});
+
+test('AmWINS filing required: a lone "State" in the which-filings box is TNI\'s No (V12)', () => {
+  filingTniNo([[{ filingsWhich: 'State' }, null], [{ filingsWhich: 'state' }, null], [{ filingsWhich: ' STATE ' }, null], [{ filingsWhich: 'State.' }, null]]);
+  // "State" beside anything federal, or in another phrase, doesn't make the box No: the agent's.
+  filingAgents([[{ filingsWhich: 'State and federal filings' }, null, /"State and federal filings"/], [{ filingsWhich: 'United States DOT' }, null, /"United States DOT"/],
+    [{ filingsWhich: 'State, MCS-90' }, null, /"State, MCS-90"/], [{ filingsWhich: 'State and interstate' }, null, /"State and interstate"/],
+    [{ filingsWhich: 'State and federal' }, null, /"State and federal"/], [{ filingsWhich: 'Interstate' }, null, /"Interstate"/],
+    [{ filingsWhich: 'State' }, 'Broker wants BMC-91', /its notes say "Broker wants BMC-91"/]]);
+  filingKept('State');
+});
+
+test('AmWINS filing required: "State filing" or "Intrastate" beside an MC number is TNI\'s No (V12)', () => {
+  filingTniNo([[{}, 'State filing, MC 123456'], [{ filingsWhich: 'Intrastate, MC# 123456' }, null], [{}, 'Hauls general freight.\nIntrastate filing - MC-123456'],
+    [{ filingsWhich: 'MC number 123456, state filing' }, null], [{}, 'FR44, state filing, MC 123456']]);
+  // An MC filing beside it, with or without the number, and anything else federal: the agent's.
+  filingAgents([[{}, 'State filing, MC 123456 filing', /"State filing, MC 123456 filing"/], [{ filingsWhich: 'Intrastate, MC filing' }, null, /"Intrastate, MC filing"/],
+    [{}, 'State filing, MC 123456, interstate', /"State filing, MC 123456, interstate"/], [{}, 'State filing, MC 123456, BMC-91', /"State filing, MC 123456, BMC-91"/],
+    [{ filingsWhich: 'State and federal filings, MC 123456' }, null, /"State and federal filings, MC 123456"/]]);
+  filingKept('State filing, MC 123456');
+});
+
+test('AmWINS filing required: a bare or "additional" "filings" before or after the SR-22 or FR-44 is TNI\'s No (V12, V13)', () => {
+  filingTniNo([[{}, 'Filings and SR-22'], [{}, 'SR-22 and additional filings'], [{ filingsWhich: 'Filings and FR-44' }, null], [{ filingsWhich: 'FR-44 and additional filings' }, null],
+    [{}, 'Additional filings and SR-22'], [{ filingsWhich: 'Filings, SR22' }, null], [{}, 'Needs filings & FR44'], [{ filingsWhich: 'Filings / SR-22 / Form E' }, null]]);
+  // Other, federal or named filings, before or after it: the agent's.
+  filingAgents([[{}, 'Other filings and SR-22', /"Other filings and SR-22"/], [{ filingsWhich: 'Federal filings and SR-22' }, null, /"Federal filings and SR-22"/],
+    [{}, 'Filings and SR-22, MCS-90', /"Filings and SR-22, MCS-90"/], [{}, 'BMC-91 filings and FR-44', /"BMC-91 filings and FR-44"/],
+    [{}, 'MC filings and SR-22', /"MC filings and SR-22"/], [{}, 'SR-22 and additional federal filings', /"SR-22 and additional federal filings"/],
+    [{ filingsWhich: 'FR-44 and other filings' }, null, /"FR-44 and other filings"/], [{ filingsWhich: 'Additional filings' }, null, /"Additional filings"/]]);
+  filingKept('Filings and SR-22');
+  filingKept('FR-44 and additional filings');
 });
 
 // The same texts on Progressive (T9 counterexample): its "Are state or federal filings required?"
 // (`CA`) asks about state filings too, so the which-filings box naming any of them still leaves a
 // blank to the agent, as before T9. (Progressive doesn't read the notes for this question.)
 test('Progressive filings required: T9\'s texts in the which-filings box stay the agent\'s (state or federal)', () => {
-  for (const which of ['SR-22 and Form E', 'State filing', 'Intrastate', 'SR-22, MC 123456', 'SR-22 and filings']) {
+  // V12's texts too (TNI, 2026-10-27: Progressive unchanged).
+  for (const which of ['SR-22 and Form E', 'State filing', 'Intrastate', 'SR-22, MC 123456', 'SR-22 and filings',
+    'Form E', 'State', 'State filing, MC 123456', 'Filings and SR-22', 'SR-22 and additional filings', 'Filings and FR-44']) {
     const r = baseRecord();
     Object.assign(r.operations, { filingsRequired: null, filingsWhich: which, needSr22: null });
     const s = byQ(buildPlan(r, progressive, {}), 'CA');

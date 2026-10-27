@@ -260,25 +260,42 @@ const vehicleValueNote = (r, a) => {
 // BMC-34, BMC-32, "federal" or "fed", ICC, MC, interstate, FMCSA, BOC-3, UCR, authority) or another filing
 // (a Form E or H, "other filings") beside it still leaves a blank to the agent.
 // These are state filings too, so No with the box blank, the same `standard` (TNI, 2026-10-26: answer
-// to PR question, T9): beside an SR-22 or FR-44 (`SR_FR_BESIDE`), a Form E or H ("SR-22 and Form E"),
+// to PR question, T9): beside an SR-22 or FR-44, a Form E or H ("SR-22 and Form E": `FORM_EH`),
 // the client's MC number on the same line ("SR-22, MC 123456"; an MC filing, "MC 123456 filing", stays
 // federal) and a bare "filings" joined by "and", "&", "+", "plus", a comma or a slash ("SR-22 and
 // filings", "SR-22 for the owner and filings"; "other filings" stays another); and a state filing or
 // intrastate alone, with no SR-22 or FR-44 named ("State filing", "Intrastate"). Anything federal
-// beside them still leaves a blank to the agent, and so do a Form E or H or a lone "State" with no SR-22
-// or FR-44 named (T9 doesn't settle those).
+// beside them still leaves a blank to the agent.
+// And these, the cases T9 left to the agent, are state filings too: No with the box blank, the same
+// `standard` (TNI, 2026-10-27: answer to PR question V12): a Form E or H with no SR-22 or FR-44 named
+// ("Form E", "Needs a Form H filing", "State filing and Form E": `FORM_EH`); a lone "State" in the
+// which-filings box (`LONE_STATE`; "State" in any other phrase, "State and federal filings" or "United
+// States DOT", isn't); a state filing or intrastate beside the client's MC number ("State filing, MC
+// 123456": `MC_NUMBER`); a bare or "additional" "filings" before or after the SR-22 or FR-44 ("Filings
+// and SR-22": `FILINGS_AND_SR_FR`; "SR-22 and additional filings"). Anything federal beside them
+// (MCS-90, BMC-91, "federal", interstate, an MC filing, the list above) and "other filings" still leave
+// a blank to the agent. FR-44 counts as SR-22 throughout (TNI, 2026-10-27: answer to PR question V13).
 const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\b|\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
 const SR_FR = /\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
 const SR_FR_NAMED = /(?:\bfilings?\s*(?:needed|required)?\s*:\s*)?(?:\bstate\s+)?\b(?:sr[\s-]?22|fr[\s-]?44)\b(?:\s+(?:state\s+)?filings?\b)?|\bstate\s+filings?\b/gi;
-const SR_FR_BESIDE = /\bforms?[\s-]*[eh](?:\s*(?:,|\/|&|\band\b|\bor\b)\s*[eh])?\b(?:\s+filings?\b)?|\bmc\s*(?:#|no\.?|number)?\s*[:-]?\s*\d{3,8}\b(?!\s*filings?\b)/gi;
-const SR_FR_AND_FILINGS = /(?:\band\b|&|\+|\bplus\b|,|\/)\s*filings?\b/gi;
+const FORM_EH = /\bforms?[\s-]*[eh](?:\s*(?:,|\/|&|\band\b|\bor\b)\s*[eh])?\b(?:\s+filings?\b)?/gi;
+const MC_NUMBER = /\bmc\s*(?:#|no\.?|number)?\s*[:-]?\s*\d{3,8}\b(?!\s*filings?\b)/gi;
+const SR_FR_AND_FILINGS = /(?:\band\b|&|\+|\bplus\b|,|\/)\s*(?:additional\s+)?filings?\b/gi;
+// "filings" before the SR-22 or FR-44, at the start of the line, after punctuation or after a verb:
+// "Filings and SR-22", "Needs filings & FR44"; not "Other filings and SR-22" or "MC filings and SR-22".
+const FILINGS_AND_SR_FR = /(?:^\s*|[,;:.(]\s*|\b(?:needs?|wants?|requires?|with|also)\s+)(?:additional\s+)?filings?\s*(?:\band\b|&|\+|\bplus\b|,|\/)\s*(?=(?:an?\s+)?(?:state\s+)?(?:sr[\s-]?22|fr[\s-]?44)\b)/gi;
 const STATE_ONLY = /\bstate\s+filings?\b|\bintra[\s-]?state\b/i;
+const LONE_STATE = /^\s*state\s*\.?\s*$/i;
 const INTRASTATE_NAMED = /\bintra[\s-]?state(?:\s+filings?)?\b/gi;
 const FEDERAL = /\bfed(?:eral)?\b|\bicc\b|\bmc\b|\binterstate\b|\bfmcsa\b|\bboc[\s-]?3\b|\bucr\b|\bauthority\b/i;
 const onlyStateFilings = (text) => {
+  if (LONE_STATE.test(text)) return true;
   const srFr = SR_FR.test(text);
-  if (!srFr && !STATE_ONLY.test(text)) return false;
-  const t = srFr ? text.replace(SR_FR_BESIDE, ' ').replace(SR_FR_AND_FILINGS, ' ') : text;
+  const state = STATE_ONLY.test(text);
+  if (!srFr && !state && !/\bforms?[\s-]*[eh]\b/i.test(text)) return false;
+  let t = srFr ? text.replace(FILINGS_AND_SR_FR, ' ').replace(SR_FR_AND_FILINGS, ' ') : text;
+  if (srFr || state) t = t.replace(MC_NUMBER, ' ');
+  t = t.replace(FORM_EH, ' ');
   return !FEDERAL.test(t) && !FILING_WORDS.test(t.replace(SR_FR_NAMED, ' ').replace(INTRASTATE_NAMED, ' '));
 };
 const filingLine = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => FILING_WORDS.test(s) && !onlyStateFilings(s))?.slice(0, 80) ?? null;
