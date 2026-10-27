@@ -1,9 +1,14 @@
-# By hand only (Actions > Windows browser smoke > Run workflow): the repository is private and
-# Windows minutes are billed double. `npm run ci` runs the same steps on a local Windows computer.
+# The browser steps of checks.yml on Windows, in one job, with the store ZIP extracted by Windows
+# itself. By hand only (Actions > Windows browser smoke > Run workflow): checks.yml runs the same
+# steps on Ubuntu for every pull request. The repository is public, so a run costs nothing.
+# `npm run ci` runs the same steps on a local Windows computer. No secrets.
 name: Windows browser smoke
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: windows-smoke-${{ github.event.pull_request.number || github.ref }}
