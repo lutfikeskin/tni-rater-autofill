@@ -36,4 +36,10 @@ fi
 if [ -n "$dirty" ]; then
   echo "pre-push: tracked files have uncommitted changes; the checks run on them too, not only on what is pushed."
 fi
+# git runs this hook with GIT_DIR set (an absolute path when the push comes from a linked worktree),
+# and with it set, a git command the checks run in a temporary folder acts on this repository
+# instead: the ledger tests' `git init` set core.bare = true in the shared .git/config on 2026-10-27.
+# Without git's per-repository variables, the checks find their repository from their folder, as
+# they do outside a push.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
 if [ "$mode" = full ]; then npm run ci; else npm run ci -- --quick; fi
