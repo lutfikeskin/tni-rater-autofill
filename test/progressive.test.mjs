@@ -537,8 +537,9 @@ test('AmWINS filing required: blank is TNI\'s No unless the intake asks for fili
     assert.deepEqual([s.value, s.source, s.standard], [answer, 'derived', false], String(answer));
   }
   // Blank, while the intake asks for filings: the agent's, with what it says.
+  // (A notes line naming only an SR-22 is No since R16, in the next test.)
   for (const [changes, notes, says] of [[{ filingsWhich: 'BMC-91' }, null, /"BMC-91"/], [{ filingsWhich: 'BMC-91', needSr22: true }, null, /"BMC-91"/],
-    [{}, 'Needs MCS-90 for the broker', /"Needs MCS-90 for the broker"/], [{}, 'Owner needs an SR-22 filing', /"Owner needs an SR-22 filing"/]]) {
+    [{}, 'Needs MCS-90 for the broker', /"Needs MCS-90 for the broker"/]]) {
     const s = filing(changes, { notes });
     assert.deepEqual([s.value, s.standard], [null, false], JSON.stringify([changes, notes]));
     assert.match(s.note, says);
@@ -552,6 +553,56 @@ test('AmWINS filing required: blank is TNI\'s No unless the intake asks for fili
   assert.deepEqual([filing({ needSr22: true, filingsRequired: true, filingsWhich: 'Federal Liability Filing' }).value, filing({ needSr22: true, filingsRequired: true }).source], [true, 'derived']);
   // Non-Trucking: never this standard.
   assert.equal(filing({}, { ntl: true }).standard, false);
+});
+
+// TNI, 2026-10-26 (answer to PR question, R16): a notes line or a which-filings box naming only an
+// SR-22 or FR-44 (state filings) is No too, as the SR-22 box alone is. One naming anything federal, or
+// another filing, stays the agent's; an intake that asks for filings keeps its Yes.
+test('AmWINS filing required: a notes line or which-filings box naming only an SR-22 or FR-44 is TNI\'s No (R16)', () => {
+  const filing = (changes = {}, { notes = null, ntl = null, applicant = {} } = {}) => {
+    const r = baseRecord();
+    Object.assign(r.operations, { filingsRequired: null, filingsWhich: null, needSr22: null }, changes);
+    Object.assign(r.applicant, applicant);
+    if (notes) r.notes = { text: notes };
+    r.coverage.ntl = ntl;
+    return buildPlan(r, amwins, {}).find((s) => s.re === '^filling required$');
+  };
+  // Only an SR-22 or FR-44, with words that only describe it: No.
+  for (const [changes, notes, applicant] of [
+    [{ filingsWhich: 'SR-22' }, null], [{ filingsWhich: 'SR22 / FR-44' }, null], [{ filingsWhich: 'FR-44' }, null], [{ filingsWhich: 'State SR-22 filing' }, null],
+    [{}, 'Owner needs an SR-22 filing'], [{}, 'Driver 2 needs an FR44'], [{}, 'Filings: SR-22'], [{}, 'SR-22 and FR-44 filings needed (state filings)'],
+    [{ needSr22: true }, 'SR-22 for the owner'], [{ filingsWhich: 'SR-22' }, 'Hauls general freight.\nOwner needs an SR-22 filing'],
+    [{}, 'Owner needs an SR-22 filing', { dot: '1234567', mc: 'MC-765432' }],
+  ]) {
+    const s = filing(changes, { notes, applicant });
+    assert.deepEqual([s.value, s.source, s.standard, s.note], [false, 'standard', true, null], JSON.stringify([changes, notes]));
+  }
+  // Anything federal, or another filing, beside it: the agent's, with what it says (as before R16).
+  for (const [changes, notes, says] of [
+    [{ filingsWhich: 'SR-22 and MCS-90' }, null, /names filings \("SR-22 and MCS-90"\)/], [{}, 'SR-22 and MCS-90', /"SR-22 and MCS-90"/],
+    [{ filingsWhich: 'SR-22, BMC-91' }, null, /"SR-22, BMC-91"/], [{ filingsWhich: 'SR-22 and federal' }, null, /"SR-22 and federal"/],
+    [{}, 'FR-44 and BMC-34 cargo', /"FR-44 and BMC-34 cargo"/], [{}, 'SR-22 plus BMC-32', /"SR-22 plus BMC-32"/],
+    [{}, 'SR-22 plus ICC filing', /"SR-22 plus ICC filing"/], [{}, 'SR-22 and MC filing', /"SR-22 and MC filing"/], [{}, 'SR-22 and Federal', /"SR-22 and Federal"/],
+    [{}, 'SR-22 plus other filings', /"SR-22 plus other filings"/],
+    // The which-filings box names only an SR-22, but a notes line names a federal filing: that line.
+    [{ filingsWhich: 'SR-22' }, 'Needs MCS-90 for the broker', /its notes say "Needs MCS-90 for the broker"/],
+    [{}, 'Owner needs SR-22\nBroker wants BMC-91', /its notes say "Broker wants BMC-91"/],
+    // Not settled by R16, kept as before: a Form E or H, and a state filing with no SR-22 or FR-44 named.
+    [{ filingsWhich: 'SR-22 and Form E' }, null, /"SR-22 and Form E"/], [{ filingsWhich: 'State filing' }, null, /"State filing"/],
+  ]) {
+    const s = filing(changes, { notes });
+    assert.deepEqual([s.value, s.source, s.standard], [null, 'derived', false], JSON.stringify([changes, notes]));
+    assert.match(s.note, says);
+  }
+  // An intake that asks for filings keeps its Yes, also naming only an SR-22.
+  for (const changes of [{ filingsRequired: true, filingsWhich: 'SR-22' }, { filingsRequired: true }]) {
+    const s = filing(changes, { notes: 'Owner needs an SR-22 filing' });
+    assert.deepEqual([s.value, s.source, s.standard], [true, 'derived', false], JSON.stringify(changes));
+  }
+  // A notes line about something else entirely changes nothing.
+  assert.deepEqual([filing({}, { notes: 'Hauls general freight. Clean record.' }).value, filing({ filingsWhich: 'BMC-91' }, { notes: 'Hauls general freight.' }).value], [false, null]);
+  // Non-Trucking: never this standard.
+  assert.equal(filing({ filingsWhich: 'SR-22' }, { ntl: true }).standard, false);
 });
 
 // TNI's AmWINS coverage standards, recorded as TNI's on 2026-10-26 (W44-32: "limits are fine").
