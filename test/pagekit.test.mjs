@@ -7210,6 +7210,43 @@ test('a page the plan has questions for that shows none yet is reported not draw
   assert.equal(report.advanceDue, undefined);
 });
 
+// W44-03, Progressive Business Owner Info in KY and OH (2026-10-26, 0.9.25 code): the arrival fill
+// read no field, clicked the business type's Search (the only thing it could do on the page before it
+// drew its questions), and that click let "Ok, start quote." go with every question unanswered: the
+// check above held only where nothing was clicked. The page's helpers wait for its questions, and a
+// fill that read none on its page is never continued, whatever it clicked.
+test('a helper on a page the plan has questions for waits until they show, and an undrawn page is never continued', async () => {
+  const search = { id: 'action:businessTypeSearch', kind: 'action', action: 'businessTypeSearch', baseAction: 'businessTypeSearch', path: 'action.businessTypeSearch', name: 'Click businessTypeSearch', pages: ['BusinessOwnerInfo'], text: '^search$',
+    after: [], afterAny: [], unless: [], unlessActions: [], afterActions: [], afterPages: [], heldBy: [], doneWhen: [], settledByPages: [] };
+  const name = { id: 'name', path: 'applicant.name', kind: 'text', value: 'Sample Freight', pages: ['BusinessOwnerInfo'], label: '^business name$' };
+  const advance = { text: '^(continue|ok,? start quote\\.?)\\W*$' };
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const button = addButton(h, 'Search');
+  button.onclick = () => { button._clicked = (button._clicked ?? 0) + 1; };
+  const start = addButton(h, 'Ok, start quote.');
+  start.onclick = () => { start._clicked = true; };
+  let report = await h.kit.fill([name, search], { maxRounds: 2, advance });
+  assert.equal(report.fields, 0);
+  assert.equal(button._clicked, undefined, 'nothing clicked on the undrawn page');
+  assert.equal(report.actions.length, 0);
+  assert.equal(report.notDrawn, true, 'said still drawing, so the panel fills it again in a moment');
+  assert.equal(!!start._clicked, false);
+  // Drawn: the helper runs, as before.
+  h.document.body.append(makeInput({ id: 'name', ariaLabel: 'Business name' }));
+  report = await h.kit.fill([name, search], { maxRounds: 3, advance });
+  assert.equal(button._clicked, 1);
+  assert.equal(report.notDrawn, undefined);
+  // A page of tiles the plan also has questions for (Most Common Vehicles; the MD layout draws no
+  // field there): its pick (`onBlankPage`) is clicked, as before.
+  const tiles = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  const van = addButton(tiles, 'Cargo Van');
+  van.onclick = () => { van._clicked = true; };
+  const tile = { ...search, id: 'action:vehicleTile', action: 'vehicleTile:0', baseAction: 'vehicleTile', path: 'action.vehicleTile', name: 'Click vehicleTile', pages: ['MostCommonVehicles'], text: '^cargo van$', onBlankPage: true };
+  report = await tiles.kit.fill([{ ...name, pages: ['AddVehicle', 'MostCommonVehicles'] }, tile], { maxRounds: 2 });
+  assert.equal(van._clicked, true);
+  assert.equal(report.notDrawn, undefined);
+});
+
 // The panel's live list said "Working…" through every wait (the maintainer, 2026-10-23). progress()
 // says what the fill waits on (`phase`): null while it answers; 'reading' the page as it begins,
 // 'waiting' for the page after an answer, a 'helper' it clicked, the 'premium', or 'continue'.

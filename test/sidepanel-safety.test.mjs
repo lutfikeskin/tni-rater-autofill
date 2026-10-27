@@ -2216,14 +2216,13 @@ test('a page without form fields still shows what needs the agent', () => {
   assert.equal(state.reportFor.empty, true);
 });
 
-function assistHarness({ suggest, cfg = {} } = {}) {
+function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
   const logged = [], rendered = [], applied = [];
   const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat(), isConnected: true,
     replaceChildren(...next) { this.children = next; }, remove() { this.isConnected = false; }, before() {} });
   const report = { append(child) { child.isConnected = true; this.children = [...(this.children ?? []), child]; }, querySelector: () => null };
-  const record = { vehicles: [] };
   const state = { intake: { record }, active: { drivers: 0, vehicles: 0 }, tab: { id: 1, url: 'https://rater.test/Default.aspx?pageName=CoveragesRates' },
-    aiRun: 0, aiCache: new Map(), agentKeys: new Map(), filling: false };
+    aiRun: 0, aiCache: new Map(), aiSettingsRun: 0, aiAsking: new Map(), agentKeys: new Map(), filling: false };
   const context = {
     state, assistContextKey, pageOf: (url) => new URL(url).searchParams.get('pageName'), h: node, $: () => report,
     aiSettings: async () => ({ on: true, apiKey: 'synthetic', ready: true, model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
@@ -2233,7 +2232,7 @@ function assistHarness({ suggest, cfg = {} } = {}) {
     aiCacheSignature: (x) => JSON.stringify(x), runKit: async () => [{ frameId: 0, result: 'snapshot' }],
     suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events) },
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
-    syncAiBanner: () => {}, pendingAi: () => [],
+    syncAiBanner: () => {}, pendingAi: () => [], redactor: () => (s) => s, redactionTerms: () => [],
   };
   vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
@@ -2262,6 +2261,105 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   await fresh.context.runAssist([{}], fresh.ctx);
   assert.equal(fresh.rendered.length, 1);
   assert.equal(fresh.logged[0].error, undefined);
+});
+
+// 2026-10-09 to 10-26: 12 of 58 page reviews ended "The page or intake changed", most on GEICO's
+// quote page: a fill of the same page redrew the report and asked Luna again while it answered,
+// so its answer was thrown away and the same questions were asked (and paid for) twice.
+const lunaAnswer = { suggestions: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125', choice: 'Yes', autoOk: false }], tokensIn: 10, tokensOut: 2, modelCalls: 1 };
+function lunaCalls(answers = [lunaAnswer]) {
+  const calls = [];
+  const suggest = (items, context, cfg, opts) => new Promise((resolve, reject) => calls.push({ items, opts, resolve: () => resolve(answers[calls.length - 1] ?? lunaAnswer), reject }));
+  return { calls, suggest };
+}
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+// What a fill's renderReport does to the report on screen: the holder is no longer in it.
+const redraw = (t) => { for (const child of t.report.children ?? []) child.isConnected = false; t.report.children = []; };
+
+test('a Luna answer that comes after a fill of the same page redrew it is kept, and the newer request shows it without asking again', async () => {
+  const luna = lunaCalls();
+  const t = assistHarness({ suggest: luna.suggest });
+  const first = t.context.runAssist([{}], t.ctx);
+  await settle();
+  assert.equal(luna.calls.length, 1);
+  // The fill redraws the report and asks about the same page again.
+  redraw(t);
+  const second = t.context.runAssist([{}], t.ctx);
+  await settle();
+  assert.equal(luna.calls.length, 1, 'the same questions are not asked twice while the first request answers them');
+  assert.equal(luna.calls[0].opts.isStale(), false, 'Luna is not stopped between its calls for a newer request of the same page');
+  assert.match(JSON.stringify(t.holder().children), /Asking Luna about 1 question left for you/);
+  luna.calls[0].resolve();
+  await Promise.all([first, second]);
+  assert.equal(t.logged.length, 1);
+  assert.equal(t.logged[0].error, undefined, 'the answer is used, not discarded');
+  assert.equal(t.state.aiCache.size, 1, 'and cached');
+  assert.equal(t.rendered.length, 1, 'shown once, in the redrawn report');
+  const [holder, suggestions, ctx] = t.rendered[0];
+  assert.equal(holder, t.holder());
+  assert.equal(holder.isConnected, true);
+  assert.deepEqual(suggestions.map((x) => x.choice), ['Yes']);
+  // Applying it checks the newer request's own page snapshot and run (applyAi).
+  assert.equal(ctx.run, t.state.aiRun);
+  assert.equal(ctx.snapshots[0].result, 'snapshot');
+});
+
+test('a Luna answer that comes after the report was redrawn is cached, and the next Fill shows it without asking again', async () => {
+  const luna = lunaCalls();
+  const t = assistHarness({ suggest: luna.suggest });
+  const first = t.context.runAssist([{}], t.ctx);
+  await settle();
+  redraw(t);
+  luna.calls[0].resolve();
+  await first;
+  assert.equal(t.logged[0].error, undefined);
+  assert.equal(t.state.aiCache.size, 1);
+  assert.equal(t.rendered.length, 0, 'never shown in a report that is gone');
+  await t.context.runAssist([{}], t.ctx);
+  assert.equal(luna.calls.length, 1, 'asked once');
+  assert.equal(t.rendered.length, 1);
+});
+
+test('a Luna answer is still discarded when the driver/vehicle, page or assistant settings changed while it answered', async () => {
+  const record = { vehicles: [{ year: 2016 }, { year: 2019 }] };
+  for (const [scenario, change, error] of [
+    ['vehicle', (t) => { t.state.active = { ...t.state.active, vehicles: 1 }; }, 'Answer discarded: the intake or driver/vehicle changed.'],
+    ['intake', (t) => { t.state.intake = { record: { ...record } }; }, 'Answer discarded: the tab or page changed.'],
+    ['page', (t) => { t.state.tab = { ...t.state.tab, url: 'https://rater.test/Default.aspx?pageName=ChangePaymentPlan' }; }, 'Answer discarded: the tab or page changed.'],
+    ['settings', (t) => { t.state.aiSettingsRun = ++t.state.aiRun; t.state.aiAsking.clear(); }, 'Answer discarded: the assistant settings changed.'],
+  ]) {
+    const luna = lunaCalls();
+    const t = assistHarness({ suggest: luna.suggest, record });
+    const first = t.context.runAssist([{}], t.ctx);
+    await settle();
+    change(t);
+    redraw(t);
+    assert.equal(luna.calls[0].opts.isStale(), true, `${scenario}: Luna stops between its calls`);
+    luna.calls[0].resolve();
+    await first;
+    assert.equal(t.logged[0].error, error, scenario);
+    assert.equal(t.state.aiCache.size, 0, `${scenario}: nothing cached`);
+    assert.equal(t.state.aiAsking.size, 0, `${scenario}: nothing left waiting`);
+    assert.equal(t.rendered.length, 0, `${scenario}: nothing shown`);
+  }
+});
+
+test('a newer request that waited for a Luna request that failed asks the questions itself', async () => {
+  const luna = lunaCalls();
+  const t = assistHarness({ suggest: luna.suggest });
+  const first = t.context.runAssist([{}], t.ctx);
+  await settle();
+  redraw(t);
+  const second = t.context.runAssist([{}], t.ctx);
+  await settle();
+  luna.calls[0].reject(new t.context.AssistError('Luna is rate-limited. Try again shortly.'));
+  await first;
+  await settle();
+  assert.equal(luna.calls.length, 2);
+  luna.calls[1].resolve();
+  await second;
+  assert.equal(t.rendered.length, 1);
+  assert.equal(t.state.aiAsking.size, 0);
 });
 
 test('Luna waits for the follow-up fill of a helper it clicked, and is not asked about a page the fill left', async () => {
@@ -2909,6 +3007,48 @@ test('a change in a child frame schedules the layout of the quote page around it
   await context.pending();
   await context.state.layoutChain;
   assert.deepEqual(logged.map((e) => [e.type, e.page, e.reason]), [['page_layout', 'Vehicles', 'appeared']]);
+});
+
+// W44-11 (2026-10-26): GEICO's first step arrived before it drew its questions (6 of 8 quotes; the
+// arrival read 0 fields), so "Fill each new page as soon as it opens" filled nothing until the agent
+// clicked Fill (3–127 s). Such an arrival is filled when its questions show (new_fields), once; an
+// arrival with fields is filled at once, as before, and with the setting off nothing is.
+test('an arrival before its questions drew is filled when they show, once, with "Fill each new page" on', () => {
+  const { context } = layoutHarness(() => []);
+  const fills = [];
+  let autoPages = true;
+  Object.assign(context, { samePage: (p) => p, $: (id) => ({ checked: id === 'auto-pages' ? autoPages : false }), redactor: () => (s) => s,
+    scheduleAutoFill: () => {}, fieldChangeEvent: () => ({ type: 'field_change' }), knownStep, stopNoteFor: () => null, scheduleLayout: () => {},
+    fillPage: (o) => fills.push(o), setTimeout: (fn) => fn(), currentReportKey: () => 'k' });
+  context.state.tab = { id: 1, url: '/quote', carrier: { ...geico, layoutUrl: /./ } };
+  Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set(), filled: new Map(), labels: new Map(), reports: new Map(), drawPending: null });
+  vm.runInContext(extractFunction('onRecorderMessage'), context);
+  const sender = { tab: { id: 1 } };
+  const arrive = (page, fields = 0) => context.onRecorderMessage({ ra: 'usage', event: 'page_view', page, from: '/', fields }, sender);
+  const drawn = (page = '/quote') => context.onRecorderMessage({ ra: 'usage', event: 'new_fields', page, keys: ['x'] }, sender);
+  arrive('/quote');
+  assert.equal(fills.length, 0, 'nothing to fill yet');
+  drawn();
+  assert.deepEqual(fills.map((o) => o.auto), ['page'], 'filled as on arriving');
+  drawn();
+  assert.equal(fills.length, 1, 'once: questions drawn later are the follow-ups\'');
+  // Another page in between: that wait is over.
+  arrive('/quote');
+  context.state.tab.url = '/elsewhere';
+  arrive('/elsewhere');
+  context.state.tab.url = '/quote';
+  drawn();
+  assert.equal(fills.length, 1);
+  // An arrival with its questions: filled at once, nothing waits.
+  arrive('/quote', 7);
+  assert.equal(fills.length, 2);
+  drawn();
+  assert.equal(fills.length, 2);
+  // With the setting off: neither.
+  autoPages = false;
+  arrive('/quote');
+  drawn();
+  assert.equal(fills.length, 2);
 });
 
 test('layout errors are logged by kind, never with their message', () => {
@@ -7463,7 +7603,12 @@ test('nothing scrolls the panel\'s body: it is clipped, and the dock shrinks bef
   assert.match(body, /overflow: clip;/);
   assert.doesNotMatch(body, /overflow: hidden/);
   assert.match(css, /\.foot \{ flex: 0 1 auto; min-height: 0; overflow-y: auto;/);
-  assert.match(css, /\.view \{ flex: 1; min-height: 96px;/);
+  assert.match(css, /\.view \{ position: relative; flex: 1; min-height: 96px;/);
+  // W44-10 (AmWINS' declaration, 2026-10-26): body's overflow passes to the viewport, where clip is
+  // hidden, which code still scrolls; html is clipped too. The middle is positioned, so the
+  // screen-reader text in its rows (absolutely placed) doesn't make the document taller than the
+  // window (npm run e2e:extension fails if the panel's document scrolls).
+  assert.match(css, /\nhtml \{[^}]*overflow: clip;/);
   // The PDF sheet is a column: its hint row comes and goes with a marked item, and with fixed grid
   // rows the whole-PDF view (no hint) had the footer over the page controls (zoom unreachable).
   assert.match(css, /\.sheet-panel \{[^}]*display: flex; flex-direction: column;/);

@@ -492,7 +492,8 @@ export const progressive = {
     // the business type list (BECAPopup).
     { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
     // Two tiles matching (two reefer tiles) means it's the agent's pick.
-    { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
+    // A page of tiles: picked even where the page shows no field (onBlankPage; the MD layout has none).
+    { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, onBlankPage: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
     // Done once the decoded vehicle shows (year, make, model, the safety boxes): same again.
     // Already decoded for the VIN on the page (the agent looked it up before Fill): done.
     { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle', verify: 'revealed', shownBy: { all: ['vehicles[].year', 'vehicles[].make', 'vehicles[].model'], answered: true } },

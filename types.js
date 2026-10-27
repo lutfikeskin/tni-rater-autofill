@@ -200,6 +200,7 @@
  * @property {boolean} [once]  once a quote
  * @property {boolean} [keepAnswers]  answers checked once its result shows (GEICO's Recalculate)
  * @property {boolean} [kitClick]  clicked by the kit even where the carrier presses its buttons from the page's own world (`pressInPage`): GEICO's Print Quote Proposal
+ * @property {boolean} [onBlankPage]  clicked even while its page shows no field (a page of tiles: Progressive's Most Common Vehicles); any other helper on a page the plan has questions for waits until one shows (W44-03)
  */
 
 /**
@@ -417,6 +418,7 @@
  * @property {boolean} once
  * @property {boolean} keepAnswers
  * @property {boolean} kitClick
+ * @property {boolean} onBlankPage
  * @property {string | null} unfinished
  * @property {string[]} unlessActions
  * @property {string[]} afterActions
