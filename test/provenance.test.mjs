@@ -52,6 +52,12 @@ const RECORDS = () => [
   with_({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel', 'trailerInfo.ownership': null, 'drivers.0.maritalStatus': null, 'applicant.yearEstablished': null }),
   // General liability on the intake, no current insurance, no date of birth, a gender set by the agent.
   with_({ 'coverage.gl': true, priorInsurance: [], 'drivers.0.dob': null, 'drivers.0.gender': 'FEMALE' }),
+  // An NTL quote asking for filings, with a USDOT number: TNI's No to both (W44-28).
+  with_({ 'coverage.ntl': true, 'coverage.autoLiability': 'Non-Trucking' }),
+  // NTL with primary auto liability too, and NTL mentioned and not answered: the USDOT and filings
+  // questions are the agent's (TNI, 2026-10-26: answers to PR questions, #192).
+  with_({ 'coverage.ntl': true, 'coverage.autoLiability': 'Yes' }),
+  with_({ 'claims.text': 'No\nAsked about NTL too' }),
 ];
 
 test('every rule that computes an answer declares a valid source', () => {
@@ -129,7 +135,6 @@ const NOT_MAPPED = {
     'trailerInfo.hitch': 'not asked by Progressive',
     'trailerInfo.interchange': 'trailer interchange is not mapped (no live quote has asked it)',
     'trailerInfo.interchangeLimit': 'trailer interchange is not mapped (no live quote has asked it)',
-    'coverage.autoLiability': 'liability is always quoted; only its limit is entered',
   },
   amwins: {
     'applicant.mcDotWithin60Days': 'AmWINS asks for the numbers themselves (has DOT / has MC / no number)',
@@ -153,12 +158,10 @@ const NOT_MAPPED = {
     'trailerInfo.interchange': 'AmWINS has no trailer section',
     'trailerInfo.interchangeLimit': 'AmWINS has no trailer section',
     'trailerInfo.equipTrailer': 'AmWINS has no trailer section',
-    'coverage.autoLiability': 'liability is always quoted; only its CSL limit is entered',
     'coverage.gl': 'AmWINS Business Auto has no general liability section',
     'coverage.glLimit': 'AmWINS Business Auto has no general liability section',
     'coverage.reeferBreakdown': 'no reefer breakdown question on the Business Auto application',
     'coverage.hasGl': 'AmWINS Business Auto has no other-coverages question',
-    'claims.text': 'the claims box is read by the intake reader into hasClaims and notes',
   },
   geico: {
     'applicant.fein': 'not asked before Final Quote Details, which is the agent\'s (stopSteps)',
@@ -184,21 +187,24 @@ const NOT_MAPPED = {
 const READ_INDIRECTLY = {
   progressive: {
     'applicant.applicationDate': 'util.priorPolicyExpired (currently insured, insured with Progressive)',
-    'claims.text': 'normalize.intakeNotes (an NTL mention in the claims box holds Rates)',
+    'claims.text': 'normalize.ntlUndecided (an NTL mention not answered yet holds Rates, and the USDOT and filings questions)',
     'claims.notes': 'normalize.otherNotes (the defensive driver course, a claim the notes mention)',
-    'notes.text': 'normalize.intakeNotes and otherNotes (NTL, the defensive driver course, a claim the notes mention)',
+    'notes.text': 'normalize.ntlUndecided and otherNotes (NTL, the defensive driver course, a claim the notes mention)',
+    'coverage.autoLiability': 'normalize.ntlNoDotFilings and ntlDotFilingsHold (an NTL quote: no USDOT number or filings; with auto liability Yes too, they are the agent\'s); otherwise only the liability limit is entered',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag)',
     'applicant.ownerDrives': 'owner() in progressive.js (the owner\'s driver row)',
     'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
-    'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
+    'claims.text': 'normalize.ntlDotFilingsHold (an NTL mention not answered yet holds Filing required and the DOT boxes)',
+    'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure) and ntlDotFilingsHold (an NTL mention not answered yet)',
+    'coverage.autoLiability': 'normalize.ntlNoDotFilings and ntlDotFilingsHold (an NTL quote: no DOT number or filings; with auto liability Yes too, they are the agent\'s); otherwise only the CSL limit is entered',
   },
   geico: {
     'applicant.applicationDate': 'util.priorPolicyExpired (current GEICO policy, current auto insurance, current GL)',
-    'claims.text': 'normalize.intakeNotes (an NTL mention holds the liability coverage)',
+    'claims.text': 'normalize.ntlUndecided (an NTL mention not answered yet holds the liability coverage, and the USDOT and filings questions)',
     'claims.notes': 'normalize.otherNotes (no physical damage, and a mention that leaves a TNI standard to the agent)',
-    'notes.text': 'normalize.intakeNotes and otherNotes (NTL, no physical damage, a mention that leaves a TNI standard to the agent)',
+    'notes.text': 'normalize.ntlUndecided and otherNotes (NTL, no physical damage, a mention that leaves a TNI standard to the agent)',
   },
 };
 

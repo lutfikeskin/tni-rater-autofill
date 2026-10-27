@@ -8392,6 +8392,30 @@ test('the NTL-with-cargo check follows the agent\'s edits', () => {
   assert.match(extractFunction('agentEdit'), /if \(\['coverage\.ntl', 'coverage\.cargo', 'coverage\.autoLiability'\]\.includes\(path\)\) \{ ntlCargoEdited\(state\.intake\); await save\(\); render\(\); \}/);
 });
 
+// (TNI, 2026-10-26: answer to PR question, #192) NTL and primary auto liability both asked for is
+// an intake check naming the conflict. Today's form can't ask for both (Non-Trucking is its auto
+// liability answer): the agent's NTL Yes with auto liability Yes does, so the check follows the
+// agent's edits of NTL or auto liability, as the NTL-with-cargo check does.
+test('the NTL-with-primary-liability check follows the agent\'s edits', () => {
+  const intake = { record: { coverage: { ntl: true, autoLiability: 'Yes' } }, warnings: [], done: [] };
+  const context = { ntlWithPrimary: (r) => r.coverage.ntl === true && r.coverage.autoLiability === 'Yes', NTL_PRIMARY_MESSAGE: 'ntl and primary' };
+  vm.runInNewContext(extractFunction('ntlPrimaryEdited'), context);
+  context.ntlPrimaryEdited(intake);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level, w.path, w.msg]), [['coverage.ntl-primary', 'check', 'coverage.autoLiability', 'ntl and primary']]);
+  intake.done = [0];
+  intake.record.coverage.ntl = false;
+  context.ntlPrimaryEdited(intake);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['coverage.ntl-primary', 'info']], 'retired');
+  intake.record.coverage.ntl = true;
+  context.ntlPrimaryEdited(intake);
+  assert.deepEqual([intake.warnings.map((w) => [w.code, w.level]), intake.done], [[['coverage.ntl-primary', 'check']], []], 'asked again, not checked');
+  // Never asked while they aren't both asked for.
+  const other = { record: { coverage: { ntl: true, autoLiability: 'Non-Trucking' } }, warnings: [], done: [] };
+  context.ntlPrimaryEdited(other);
+  assert.deepEqual(other.warnings, []);
+  assert.match(extractFunction('agentEdit'), /if \(\['coverage\.ntl', 'coverage\.autoLiability'\]\.includes\(path\)\) ntlPrimaryEdited\(state\.intake\);/);
+});
+
 // The review of PR #176: auto liability edited away from Non-Trucking left "NTL is set to Yes" on
 // the intake (NTL was unset) and asked nothing about an NTL mention in the notes, the only warning
 // AmWINS gives; edited to Non-Trucking, the notes' question stayed, asking to set what is set.

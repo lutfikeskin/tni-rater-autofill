@@ -31,7 +31,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
-import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
+import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -245,7 +245,7 @@ const filings = (r) => (r.operations.filingsRequired === true ? true : r.operati
 const filingsHint = (r) => (r.operations.filingsRequired != null ? null
   : r.operations.filingsWhich ? `names filings ("${String(r.operations.filingsWhich).slice(0, 40)}")`
     : r.operations.needSr22 === true ? 'says an SR-22 is needed' : null);
-const filingsNote = (r) => (r.operations.filingsRequired === true && !r.applicant.dot
+const filingsNote = (r) => (ntlNoDotFilings(r) ? null : r.operations.filingsRequired === true && !r.applicant.dot
   ? 'Filings are requested but the intake has no USDOT number; Progressive may not allow filings without one.'
   : filingsHint(r) ? `The intake leaves "filings required" blank but ${filingsHint(r)}: answer it yourself.` : null);
 // "Are state or federal filings required?" TNI (2026-10-19, after a live run): left blank on an
@@ -256,8 +256,18 @@ const filingsNote = (r) => (r.operations.filingsRequired === true && !r.applican
 // SR-22 needed leave a blank to the agent. (The Filings page's answers keep `filings`: that page
 // shows only after a Yes. `filingsBlankNoNumber` keeps the 2026-10-19 rule's name.)
 const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && (notNtl(r) || (!r.applicant.dot && !r.applicant.mc)) && !filingsHint(r);
-const filingsAsked = (r) => (filingsBlankNoNumber(r) ? false : filings(r));
-const filingsSource = (r) => (filingsBlankNoNumber(r) ? 'standard' : 'derived');
+// An NTL quote (TNI, 2026-10-26, W44-28: "US DOT is not added and filings not added if its NTL, in
+// every case"): No, whatever the intake asks; the intake's own No stays the intake's (`derived`).
+// The Federal filing on the Filings page (reached only after a Yes) is No there too.
+const ntlNoFilings = (r) => ntlNoDotFilings(r) && r.operations.filingsRequired !== false;
+const filingsAsked = (r) => (ntlNoDotFilings(r) || filingsBlankNoNumber(r) ? false : filings(r));
+// (TNI, 2026-10-26: answers to PR questions) NTL with primary auto liability too, or NTL mentioned
+// and not answered yet: the USDOT and filings questions (`1ED`, `1F3`, `CA`, the Federal filing)
+// are the agent's, with a note saying why (`ntlDotFilingsHold`), and Verify USDOT isn't clicked.
+// Business Owner Info comes before Rates, so the USDOT number waits for the NTL answer there too.
+const held = (source) => (r) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r) : source);
+const holdOr = (note) => (r) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r) : note ?? null);
+const filingsSource = (r) => (ntlNoFilings(r) || filingsBlankNoNumber(r) ? 'standard' : 'derived');
 const usesEld = (r) => explicitBoolean(r, 'operations.usesEld');
 const eldNote = (r) => (usesEld(r) == null ? 'The intake does not answer the ELD question.' : null);
 const cargoNote = (r) => r.coverage.cargo === true && !r.coverage.cargoLimit
@@ -330,9 +340,16 @@ const forHire = (r) => (isExpediter(r) || isFreightHauler(r) ? true : null);
 const forHireNote = (r) => (forHire(r) == null ? `Whether a ${r.operations.businessClass || 'business of this class'} hauls goods for hire isn't known: answer it yourself.` : null);
 // Has a USDOT number: Yes with one; without one, the intake's 60-day answer decides, and no answer
 // is the agent's (2026-10-09; until then "will not" was asserted).
-const hasUsdot = (r) => (r.applicant.dot ? 'Yes - the customer has a USDOT number'
+// On an NTL quote No, and the number is neither typed nor verified (TNI, 2026-10-26, W44-28: "US DOT
+// is not added … if its NTL, in every case"); the intake's own No ("will not have one") stays `derived`.
+// This wording is accepted also when the client has a USDOT number (TNI, 2026-10-26: answer to PR
+// question).
+const USDOT_NO = 'No - and the customer will not have a USDOT number';
+const hasUsdot = (r) => (ntlNoDotFilings(r) ? USDOT_NO : r.applicant.dot ? 'Yes - the customer has a USDOT number'
   : r.applicant.mcDotWithin60Days === true ? 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days'
-    : r.applicant.mcDotWithin60Days === false ? 'No - and the customer will not have a USDOT number' : null);
+    : r.applicant.mcDotWithin60Days === false ? USDOT_NO : null);
+const hasUsdotSource = (r) => (ntlNoDotFilings(r) && (r.applicant.dot || r.applicant.mcDotWithin60Days !== false) ? 'standard' : 'derived');
+const dotOnQuote = (r) => !!r.applicant.dot && !ntlNoDotFilings(r);
 const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT number and doesn\'t say whether one is expected within 60 days: answer it yourself.' : null);
 
 // Rates as TNI agents work it (cargo and GL added, bill plan, back, Recalculate, Print). With NTL
@@ -341,8 +358,8 @@ const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT numb
 // while its new questions are open).
 // An NTL mention in the claims box the agent hasn't answered yet (Yes or No) is not a No: Rates
 // waits for it like for NTL itself.
-// Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl).
-const ntlUndecided = (r) => r.coverage.ntl == null && (!!ntlMention(intakeNotes(r)) || r.claims?.aiNtl === true);
+// Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl):
+// `ntlUndecided` in normalize.js, which holds the USDOT and filings questions too.
 const notNtl = (r) => r.coverage.ntl !== true && !ntlUndecided(r);
 // An NTL quote asking for neither cargo nor general liability: the fill does Rates as on any quote
 // (the maintainer, 2026-10-26, live run: NTL, then Done with this coverage, Recalculate, the bill
@@ -485,7 +502,10 @@ export const progressive = {
     // Done once the page shows the lookup's result (the registered names to pick, or the 60-day
     // question when the number is new): a click without one is tried again, then the agent's.
     // Already showing them for the number on the page (the agent verified it before Fill): done.
-    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] } },
+    // Never on an NTL quote, whose USDOT number isn't entered (TNI, 2026-10-26, W44-28), nor while the
+    // USDOT number is the agent's: NTL with primary auto liability, or NTL not answered yet (TNI,
+    // 2026-10-26: answers to PR questions).
+    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] }, when: (r) => !ntlNoDotFilings(r) && !ntlDotFilingsHold(r) },
     // Vehicle summary: "Add a Vehicle" for a vehicle not entered yet (its VIN lookup not done).
     // The vehicles found by the USDOT lookup are listed there too; ours is added with Add Vehicle,
     // which sits in the "Add" menu.
@@ -647,8 +667,8 @@ export const progressive = {
       { q: '194', field: 'PolicyInput.EffectiveDate', ask: 'When should this Progressive Commercial Auto policy start?', name: 'Policy start date (preserve prefilled value)', ignore: true },
       { q: '198', source: 'derived', field: 'AccountInput.PGRInsuredIndicator', ask: 'Is the customer currently insured with Progressive Commercial Auto?', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive },
       { q: '1CC', field: 'Warehouse.QuoteVendorCode', ask: 'Quote Vendor Code', optional: true, name: 'Quote vendor code (optional)', ignore: true },
-      { q: '1ED', source: 'derived', clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: hasUsdotNote },
-      { q: '1F3', field: 'USDOTInput.NumberCollection', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !r.applicant.dot },
+      { q: '1ED', source: held(hasUsdotSource), clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: holdOr(hasUsdotNote) },
+      { q: '1F3', field: 'USDOTInput.NumberCollection', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !dotOnQuote(r), note: holdOr() },
       // Shown when Verify USDOT finds no record for the number (a brand-new USDOT). TNI's standard
       // Yes (2026-10-19, after a live run): a number the lookup doesn't know yet is a new one.
       { q: '21E', source: 'standard', field: 'USDOTInput.SixtyDayQuestion', ask: 'Did the customer obtain their USDOT Number within the last 60 days?', name: 'USDOT obtained within the last 60 days (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, value: () => true },
@@ -760,7 +780,7 @@ export const progressive = {
       { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
       { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },
       { q: 'C1', field: 'AccountInput.BlanketWOSQuestion', ask: 'Is a Blanket Waiver of Subrogation endorsement needed by contract?', name: 'Blanket waiver of subrogation (preserve prefilled value)', ignore: true },
-      { q: 'CA', source: filingsSource, field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank)', kind: 'bool', value: filingsAsked, note: filingsNote },
+      { q: 'CA', source: held(filingsSource), field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank)', kind: 'bool', value: filingsAsked, note: holdOr(filingsNote) },
       { q: 'D1', source: 'derived', field: 'PolicyInput.ELDHoursOfServiceRecords', ask: 'Is an Electronic Logging Device (ELD) required to record hours of service?', name: 'Electronic logging', kind: 'bool', value: usesEld, note: eldNote },
     ]),
 
@@ -768,7 +788,7 @@ export const progressive = {
     ...onPage('Filings', [
       // TNI's 2026-10-01 decision, kept as a standard: the quote covers all the customer's vehicles.
       { q: 'F11', source: 'standard', field: 'FilingsInput.AllVehiclesUsedOwned', ask: 'Will this quote include all the customer\'s commercially owned and operated vehicles?', name: 'All commercially owned vehicles on this quote (standard: Yes)', kind: 'bool', value: filings },
-      { source: 'derived', field: 'FilingsInput.FederalOpAuthorityIndicator', label: '^federal( liability)?( filing)?$', name: 'Federal filing', kind: 'bool', value: filings },
+      { source: held((r) => (ntlNoFilings(r) ? 'standard' : 'derived')), field: 'FilingsInput.FederalOpAuthorityIndicator', label: '^federal( liability)?( filing)?$', name: 'Federal filing', kind: 'bool', value: (r) => (ntlNoDotFilings(r) ? false : filings(r)), note: holdOr() },
       { field: 'FilingsInput.MCS90Indicator', label: '^mcs ?-?90$', name: 'MCS-90 (ticked by the page with Federal)', kind: 'bool', ignore: true },
       { field: 'FilingsInput.StateIndicator', label: '^state( filing)?$', name: 'State filing', kind: 'bool', ignore: true },
     ]),

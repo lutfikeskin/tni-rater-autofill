@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo } from '../src/normalize.js';
+import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance } from '../src/util.js';
@@ -888,6 +888,85 @@ test('NTL with cargo asked for is a check for the agent, on every carrier', () =
   }
   assert.equal(ntlWithCargo({ coverage: { ntl: true, cargo: true } }), true);
   assert.equal(ntlWithCargo({ coverage: { ntl: null, cargo: true } }), false, 'NTL only mentioned, not decided: no');
+});
+
+// The maintainer, 2026-10-26 (W44-28): "US DOT is not added and filings not added if its NTL, in
+// every case". An NTL intake asking for filings, or giving a USDOT number, says so (info): the
+// carriers' filings answers then differ from the intake on purpose.
+test('NTL with filings or a USDOT number on the intake: an info item says TNI adds neither', () => {
+  const today = { today: new Date('2026-10-26') };
+  const item = (changes) => normalizeIntake({ ...raw, ...changes }, today).warnings.find((x) => x.code === 'coverage.ntl-filings');
+  const filings = item({ auto_liability: 'Non-Trucking', fed_state_filings: 'Yes', dot_number: '1234567' });
+  assert.equal(filings?.level, 'info');
+  assert.equal(filings.path, 'operations.filingsRequired');
+  assert.match(filings.msg, /non-trucking liability/i);
+  assert.match(filings.msg, /no filings/i);
+  assert.match(filings.msg, /USDOT/);
+  // A USDOT number without filings: said on the number.
+  const dot = item({ auto_liability: 'Non-Trucking', fed_state_filings: 'No', dot_number: '1234567' });
+  assert.equal(dot?.level, 'info');
+  assert.equal(dot.path, 'applicant.dot');
+  assert.match(dot.msg, /USDOT/);
+  // Nothing to leave out (no USDOT, no filings), no NTL, or NTL with primary auto liability too
+  // (not settled: filled as before): nothing.
+  for (const changes of [{ auto_liability: 'Non-Trucking', fed_state_filings: 'No', dot_number: '' }, { auto_liability: 'Non-Trucking', fed_state_filings: '', dot_number: '' },
+    { auto_liability: 'Yes', fed_state_filings: 'Yes', dot_number: '1234567' }]) {
+    assert.equal(item(changes), undefined, JSON.stringify(changes));
+  }
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: true, autoLiability: 'Non-Trucking' } }), true);
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: true, autoLiability: null } }), true, 'NTL set by the agent, auto liability blank');
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: true, autoLiability: 'Yes' } }), false, 'NTL and primary auto liability: not settled');
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: null, autoLiability: 'Non-Trucking' } }), false, 'NTL not set (the agent changed it): no');
+  assert.equal(ntlNoDotFilings(null), false);
+});
+
+// (TNI, 2026-10-26: answer to PR question, #192 "intake checks on an NTL quote") On an NTL intake asking for filings, the
+// "filings without a number" and "which filings" checks are dropped; the info item above says why
+// the carriers answer No. Not NTL: both checks as before.
+test('an NTL intake asking for filings: no "filings without a number" or "which filings" check', () => {
+  const today = { today: new Date('2026-10-26') };
+  const codes = (changes) => normalizeIntake({ ...raw, fed_state_filings: 'Yes', filings_which: '', dot_number: '', mc_number: '', mc_dot_60days: 'No', ...changes }, today).warnings.map((x) => x.code);
+  const ntl = codes({ auto_liability: 'Non-Trucking' });
+  assert.ok(!ntl.includes('filings.no-number'), 'filings without a number: dropped on NTL');
+  assert.ok(!ntl.includes('filings-which.missing'), 'which filings: dropped on NTL');
+  assert.ok(ntl.includes('coverage.ntl-filings'), 'the NTL info item explains instead');
+  // Not NTL (auto liability Yes, NTL only mentioned in the notes, or nothing): both checks stay.
+  for (const changes of [{ auto_liability: 'Yes' }, { auto_liability: 'Yes', additional_notes: 'Asked about NTL' }, {}]) {
+    const c = codes(changes);
+    assert.ok(c.includes('filings.no-number') && c.includes('filings-which.missing'), JSON.stringify(changes));
+  }
+});
+
+// (TNI, 2026-10-26: answers to PR questions, #192 "NTL and primary auto liability" and "NTL not answered yet") NTL with primary auto liability (auto
+// liability Yes) is an intake check naming the conflict, and its USDOT and filings questions are
+// the agent's on every carrier; NTL mentioned and not answered yet makes them wait for the answer.
+test('NTL with primary auto liability, or NTL mentioned and not answered: the USDOT and filings questions are the agent\'s', () => {
+  assert.equal(ntlWithPrimary({ coverage: { ntl: true, autoLiability: 'Yes' } }), true);
+  for (const coverage of [{ ntl: true, autoLiability: 'Non-Trucking' }, { ntl: true, autoLiability: null }, { ntl: false, autoLiability: 'Yes' }, { ntl: null, autoLiability: 'Yes' }]) {
+    assert.equal(ntlWithPrimary({ coverage }), false, JSON.stringify(coverage));
+  }
+  // A mention in the claims box or the Additional Notes, or Luna's flag, with NTL not answered.
+  assert.equal(ntlUndecided({ coverage: { ntl: null }, claims: { text: 'No\nNeeds NTL' } }), true);
+  assert.equal(ntlUndecided({ coverage: { ntl: null }, notes: { text: 'bobtail coverage?' } }), true);
+  assert.equal(ntlUndecided({ coverage: { ntl: null }, claims: { aiNtl: true } }), true);
+  for (const ntl of [true, false]) assert.equal(ntlUndecided({ coverage: { ntl }, notes: { text: 'Needs NTL' } }), false, `answered ${ntl}`);
+  assert.equal(ntlUndecided({ coverage: { ntl: null }, claims: { text: 'No' } }), false, 'no mention');
+  // The note the carriers give their USDOT and filings questions: why, or nothing.
+  assert.match(ntlDotFilingsHold({ coverage: { ntl: true, autoLiability: 'Yes' } }), /primary auto liability/);
+  assert.match(ntlDotFilingsHold({ coverage: { ntl: null, autoLiability: 'Yes' }, notes: { text: 'Needs NTL' } }), /Intake step/);
+  for (const r of [{ coverage: { ntl: true, autoLiability: 'Non-Trucking' } }, { coverage: { ntl: false, autoLiability: 'Yes' }, notes: { text: 'Needs NTL' } }, { coverage: { ntl: null, autoLiability: 'Yes' } }, null]) {
+    assert.equal(ntlDotFilingsHold(r), null, JSON.stringify(r));
+  }
+  // The intake check: made with the others from the record (`coverage.ntl-primary`, on auto
+  // liability). Today's form can't ask for both (Non-Trucking is its auto liability answer), so
+  // from a PDF it is never made; the agent's NTL Yes in the panel makes it (sidepanel ntlPrimaryEdited).
+  assert.match(NTL_PRIMARY_MESSAGE, /non-trucking liability \(NTL\)/i);
+  assert.match(NTL_PRIMARY_MESSAGE, /primary auto liability/i);
+  assert.match(NTL_PRIMARY_MESSAGE, /USDOT/);
+  const today = { today: new Date('2026-10-26') };
+  for (const changes of [{ auto_liability: 'Yes', additional_notes: 'Needs NTL' }, { auto_liability: 'Non-Trucking' }, { auto_liability: 'Yes' }]) {
+    assert.ok(!normalizeIntake({ ...raw, ...changes }, today).warnings.some((x) => x.code === 'coverage.ntl-primary'), JSON.stringify(changes));
+  }
 });
 
 // AmWINS has no NTL option the filler knows: TNI writes it in the disclosure details, the big box
