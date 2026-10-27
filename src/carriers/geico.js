@@ -1183,7 +1183,7 @@ export const geico = {
       { tni: 'general.owner-daily-ops', field: 'GiveOwnerInvolvedInDailyOperationsYesNo',
         ask: 'Is the owner involved in the daily operations of the business?',
         name: 'Owner involved in daily operations (Yes when the owner drives)', kind: 'bool',
-        source: ownerDailyOpsSource, value: ownerDailyOps },
+        source: ownerDailyOpsSource, value: ownerDailyOps, warn: ownerDrivesWarn },
     ]),
     // Never filled, wherever GEICO asks it (and never logged: typed values never are).
     fact('GiveSocialSecurityNumber', 'Owner Social Security number (never filled)', { steps: [BUSINESS_OWNER, VEHICLES], ask: 'Business Owner Social Security Number',

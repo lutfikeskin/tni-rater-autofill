@@ -311,9 +311,12 @@ export function ownerDailyOps(r) {
   return ownerDrives(r) === true;
 }
 
-/** @returns {'derived'} */
-export function ownerDailyOpsSource() {
-  return 'derived';
+// Where ownerDailyOps' answer comes from: TNI's standard when the owner-drives box is blank and
+// nothing excludes the owner (ownerDrivesSource), else derived from the intake's box or exclusion.
+// The intake's "owner drives, but excluded" warning goes with the No (ownerDrivesWarn).
+/** @returns {'standard' | 'derived'} */
+export function ownerDailyOpsSource(r) {
+  return ownerDrivesSource(r) === 'standard' ? 'standard' : 'derived';
 }
 
 // A company-name box saying there is no company ("NO", "N/A", "N.A.", "None.", "No company"): the

@@ -1012,9 +1012,11 @@ test('owner daily operations (2D7): Yes when the owner drives; No otherwise', ()
   };
   const said = (s) => [s.value, s.source, s.manualOnly, s.note];
   assert.deepEqual(said(daily(true)), [true, 'derived', false, null]);
-  assert.deepEqual(said(daily(null)), [true, 'derived', false, null]);
+  assert.deepEqual(said(daily(null)), [true, 'standard', false, null], 'blank box: TNI\'s Yes');
   assert.deepEqual(said(daily(false)), [false, 'derived', false, null]);
   assert.deepEqual(said(daily(null, true)), [false, 'derived', false, null]);
+  assert.match(daily(true, true).warn ?? '', /marks their driver row excluded/, 'says Yes, excluded: warned');
+  assert.equal(daily(true).warn ?? null, null);
 });
 
 // TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives; if

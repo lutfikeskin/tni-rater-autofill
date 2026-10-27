@@ -777,7 +777,7 @@ export const progressive = {
       { tni: 'general.owner-daily-ops', q: '2D7', field: 'AccountInput.DailyOperations',
         ask: ['The president or CEO is involved in the daily operations of the business.', 'Is the owner involved in the daily operations of the business?'],
         name: 'Owner involved in daily operations (Yes when the owner drives)', kind: 'bool',
-        source: ownerDailyOpsSource, value: ownerDailyOps },
+        source: ownerDailyOpsSource, value: ownerDailyOps, warn: ownerDrivesWarn },
       { tni: 'progressive.owner', q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
       // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
       { q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },

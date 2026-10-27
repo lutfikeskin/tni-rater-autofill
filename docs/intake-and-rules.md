@@ -159,8 +159,8 @@ TNI on 2026-10-26 (W44-25; the maintainer: "Owner Drivers if not excluded, in ev
 
 TNI on 2026-10-27 (the maintainer: Yes when the owner will drive, not excluded; No otherwise), wherever a carrier asks whether the owner is involved in the daily operations of the business (Progressive's `AccountInput.DailyOperations` checkbox on Business Owner Info, "The president or CEO is involved…"; GEICO's `GiveOwnerInvolvedInDailyOperationsYesNo` on Business & Owner Info; AmWINS doesn't ask it):
 
-- Yes (`derived`) when the owner drives and isn't excluded (`ownerDrives` in [util.js](../src/util.js); `ownerDailyOps`, `ownerDailyOpsSource`).
-- No (`derived`) when the owner doesn't drive or is excluded (same helpers).
+- Yes when the owner drives and isn't excluded (`ownerDrives` in [util.js](../src/util.js); `ownerDailyOps`, `ownerDailyOpsSource`): `derived` from the intake's Yes, and `standard` when the owner-drives box is blank (TNI's Yes there).
+- No (`derived`) when the owner doesn't drive or is excluded (same helpers). When the intake says the owner drives but marks their row excluded, the No carries the owner-drives warning for the agent to confirm (`ownerDrivesWarn`).
 
 TNI on 2026-10-26 (the maintainer, W44-28: "US DOT is not added and filings not added if its NTL, in every case"; W44-07, an OH intake asking for NTL $1M and federal filings, where with the federal filing ticked Progressive offered only $750k to $2M CSL primary liability and NTL couldn't be rated): an NTL quote gets no USDOT number and no filings, on every carrier.
 
