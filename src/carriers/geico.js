@@ -499,6 +499,19 @@ const listedDriver = (r) => (r.applicant?.ownerDrives === true && owner(r).drive
 // (or an unanswered "owner drives") may be one of them spelled otherwise: adding the drivers is then
 // the agent's, so no driver is added twice.
 const driversKnown = (r) => r.applicant?.ownerDrives === false || listedDriver(r) >= 0;
+// What the driver list says of an intake driver it doesn't have, with GEICO's own driver rows unknown
+// (the panel, src/units.js unitMissing; W44-01, OH 2026-10-26: "owner drives" blank, the quote printed
+// with the owner alone and the panel silent).
+const driverMissing = (r, list, i) => {
+  const d = r.drivers?.[i];
+  const who = [d?.first, d?.last].filter(Boolean).join(' ') || `Driver ${i + 1}`;
+  // GEICO's rows known, the extension adds them once the panel has that driver picked (the picker
+  // stays where it was until a form is read on this page).
+  if (driversKnown(r)) return `${who} (driver ${i + 1} of the intake) isn't on GEICO's driver list: pick them in the panel and Fill again, or add them with "+" yourself.`;
+  const why = typeof r.applicant?.ownerDrives !== 'boolean' ? 'the intake doesn\'t say whether the owner drives'
+    : 'the owner drives, but no driver on the intake has the owner\'s name';
+  return `${who} (driver ${i + 1} of the intake) isn't on GEICO's driver list: add them with "+" yourself. The extension adds no driver here because ${why}, so GEICO may already list one of them under the owner.`;
+};
 // An Add Driver form while the panel's driver is the owner, whom GEICO already lists as a driver
 // (Business & Owner Info: the owner drives): filling it would add the owner twice. The panel's
 // picker starts on the first driver, often the owner.
@@ -804,7 +817,9 @@ export const geico = {
   // shows (a VIN, a driver's name), how many it lists, and so the next unit to add.
   unitLists: [
     { steps: [VEHICLES], selector: VEHICLE_LIST, lists: ['vehicles', 'trailers'] },
-    { steps: [DRIVERS], selector: DRIVER_LIST, lists: ['drivers'] },
+    // An intake driver the list doesn't have, while the extension adds none (driversKnown): said in
+    // red with why (W44-01).
+    { steps: [DRIVERS], selector: DRIVER_LIST, lists: ['drivers'], missing: driverMissing },
   ],
   // The units the fill adds itself, behind the panel's "Fill the pages" or "Click Continue when the
   // page is done" (TNI, FL live run 5, 2026-10-21, W43-20; FL live run 2026-10-21: "click + and add the new vehicle", "click Next after choosing Vehicle or
@@ -880,17 +895,27 @@ export const geico = {
     byForm: true,
     quietMs: 800,
   },
-  // Screens that are the agent's, without a step of their own (the kit reads none there), by a button
-  // only they show: said in red, nothing filled or clicked there. GEICO's "Add USDOT Number / Skip"
-  // (TNI, 2026-10-21, W43-27: SC and PA, after Business & Owner Info on quotes without a USDOT
-  // number; the panel said nothing, and the agent asked for "a red warning and blocker"). Add or
-  // Skip is the agent's.
+  // Screens without a step of their own (the kit reads none there), by a button only they show:
+  // nothing filled or clicked there, and the panel says so above the page's answers, in a quiet card
+  // for a screen that is the agent's, in red as a stop page's for one that is GEICO's stop (`stopped`).
+  // The first that matches names the screen.
   stopButtons: {
+    // GEICO's "Add USDOT Number / Skip" (TNI, 2026-10-21, W43-27: SC and PA, after Business & Owner
+    // Info on quotes without a USDOT number; the panel said nothing, and the agent asked for "a red
+    // warning and blocker"). Add or Skip is the agent's.
     'USDOT Number': {
       button: '^add usdot number$',
       note: (r) => (r?.applicant?.dot
         ? `GEICO asks for a USDOT number; the intake's is ${quote(r.applicant.dot)}. Add USDOT Number or Skip is yours.`
         : 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.'),
+    },
+    // GEICO's referral (TNI, 2026-10-26, W44-04: IL, after Additional Business Info): a page with no
+    // questions, only Menu, GEICO's phone number and "Return to GEICO Gateway", and the panel said
+    // nothing. GEICO won't quote the business online: GEICO's stop, in red.
+    'GEICO referral': {
+      button: '^return to geico gateway$',
+      stopped: true,
+      note: 'GEICO won\'t quote this business online: its page asks you to call GEICO at the number it shows. The quote is yours from here.',
     },
   },
   // Steps that are the agent's: nothing is filled or clicked there (not even on Fill this page), and

@@ -499,7 +499,8 @@ export const progressive = {
     // the business type list (BECAPopup).
     { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
     // Two tiles matching (two reefer tiles) means it's the agent's pick.
-    { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
+    // A page of tiles: picked even where the page shows no field (onBlankPage; the MD layout has none).
+    { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, onBlankPage: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
     // Done once the decoded vehicle shows (year, make, model, the safety boxes): same again.
     // Already decoded for the VIN on the page (the agent looked it up before Fill): done.
     { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle', verify: 'revealed', shownBy: { all: ['vehicles[].year', 'vehicles[].make', 'vehicles[].model'], answered: true } },
@@ -621,6 +622,9 @@ export const progressive = {
       ? 'Non-trucking liability (NTL) quote with cargo or general liability: the filler adds NTL, answers the permanent lease question Yes, picks the intake\'s limit for NTL and leaves Bodily Injury and Property Damage Liability Not selected. The rest of this page is yours: cargo, general liability, the bill plan, Recalculate and Print.'
       : null),
   },
+  // Agent pages whose note is a yellow warning box with this title, not a line of text (TNI,
+  // 2026-10-26, W44-14: NoHit should get more attention).
+  warnPages: { NoHit: 'Owner not verified' },
   // Pages where Progressive has stopped the quote. Nothing is filled or clicked there (not even on
   // Fill this page) and Luna isn't asked: the panel shows the note and the page is the agent's.
   // DeclinationNotice follows Business Owner Info when the customer already has a Progressive
@@ -705,7 +709,13 @@ export const progressive = {
     // --- Owner not found by Progressive's lookup (NoHit) ----------------------------------------
     ...onPage('NoHit', [
       // The owner's details again, for a second search. The SSN is never filled.
-      { q: '1B7F', source: 'derived', field: 'NoHitCredit.FirstName', ask: 'Business Owner\'s Name', name: 'Owner first name (NoHit)', value: (r) => owner(r).first },
+      // The first name is its first word only, split on spaces ("Mary-Ann" stays whole): TNI's
+      // decision (TNI, 2026-10-26, W44-30), after NoHit intakes whose owner first-name box held
+      // several words; Progressive's own advice here is to drop the middle name. Only on NoHit:
+      // Business Owner Info and the driver forms keep the whole first name. The page arrives with
+      // the whole first name from Business Owner Info already in the box, so the first word
+      // replaces it (`replace`); an agent's edit on this box stays protected as on any other.
+      { q: '1B7F', source: 'derived', replace: true, field: 'NoHitCredit.FirstName', ask: 'Business Owner\'s Name', name: 'Owner first name (NoHit: its first word)', value: (r) => owner(r).first?.trim().split(/\s+/)[0] || null },
       { q: '1B80', field: 'NoHitCredit.MiddleInitial', ask: 'MIMiddle initial', optional: true, name: 'Owner middle initial (NoHit, optional)', ignore: true },
       { q: '1B81', source: 'derived', field: 'NoHitCredit.LastName', ask: 'Last Name', name: 'Owner last name (NoHit)', value: (r) => owner(r).last },
       { q: '1B82', field: 'NoHitCredit.Suffix', ask: 'Suffix', optional: true, name: 'Owner suffix (NoHit, optional)', ignore: true },
