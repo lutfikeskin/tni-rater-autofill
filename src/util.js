@@ -56,6 +56,12 @@ export function noPriorInsurance(policy) {
 // carrier the cargo limit and deductible are the agent's, told what it usually is (TNI, 2026-10-27;
 // before, Progressive and AmWINS took $1,000).
 export const noCargoDeductible = (record) => !!record.coverage?.cargoLimit && record.coverage?.cargoDeductible == null;
+// General freight is Consumer Goods, and Other Consumer Goods where a carrier asks which, on every
+// carrier (TNI). Misspelled ("General Fright", "Frieght", "freigt") or cut ("Gen. Freight") too
+// (TNI, 2026-10-27: a live intake's "General Fright" was left to the agent).
+export const GENERAL_FREIGHT = /\bgen(?:eral|\.)?\s*f[re]{1,3}[ie]{0,2}g?h?t\b/i;
+// What they haul names general freight, or, left blank, the business class does.
+export const haulsGeneralFreight = (record) => GENERAL_FREIGHT.test(String(record.operations?.whatHaul ?? '').trim() || String(record.operations?.businessClass ?? ''));
 export const CARGO_DEDUCTIBLE_NOTE = 'The intake gives a cargo limit but no deductible: choose the cargo limit and deductible yourself (the deductible is usually $1,000 or $2,500).';
 
 // The names a carrier being quoted goes by as an intake's current carrier (sameCarrier): one word
@@ -301,6 +307,22 @@ export function ownerDrivesSource(r) {
 export function ownerDrivesWarn(r) {
   return r?.applicant?.ownerDrives === true && ownerExcluded(r)
     ? 'The intake says the owner drives, but marks their driver row excluded: answered No (TNI: an excluded owner isn\'t a driver). Confirm it with the client.' : null;
+}
+
+// Whether the owner is involved in daily operations (Progressive's president/CEO checkbox;
+// GEICO's owner Yes/No). TNI, 2026-10-27: Yes when the owner drives and isn't excluded
+// (`ownerDrives`); No when they don't drive or are excluded.
+/** @returns {boolean} */
+export function ownerDailyOps(r) {
+  return ownerDrives(r) === true;
+}
+
+// Where ownerDailyOps' answer comes from: TNI's standard when the owner-drives box is blank and
+// nothing excludes the owner (ownerDrivesSource), else derived from the intake's box or exclusion.
+// The intake's "owner drives, but excluded" warning goes with the No (ownerDrivesWarn).
+/** @returns {'standard' | 'derived'} */
+export function ownerDailyOpsSource(r) {
+  return ownerDrivesSource(r) === 'standard' ? 'standard' : 'derived';
 }
 
 // A company-name box saying there is no company ("NO", "N/A", "N.A.", "None.", "No company"): the
