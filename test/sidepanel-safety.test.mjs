@@ -7398,7 +7398,12 @@ test('nothing scrolls the panel\'s body: it is clipped, and the dock shrinks bef
   assert.match(body, /overflow: clip;/);
   assert.doesNotMatch(body, /overflow: hidden/);
   assert.match(css, /\.foot \{ flex: 0 1 auto; min-height: 0; overflow-y: auto;/);
-  assert.match(css, /\.view \{ flex: 1; min-height: 96px;/);
+  assert.match(css, /\.view \{ position: relative; flex: 1; min-height: 96px;/);
+  // W44-10 (AmWINS' declaration, 2026-10-26): body's overflow passes to the viewport, where clip is
+  // hidden, which code still scrolls; html is clipped too. The middle is positioned, so the
+  // screen-reader text in its rows (absolutely placed) doesn't make the document taller than the
+  // window (npm run e2e:extension fails if the panel's document scrolls).
+  assert.match(css, /\nhtml \{[^}]*overflow: clip;/);
   // The PDF sheet is a column: its hint row comes and goes with a marked item, and with fixed grid
   // rows the whole-PDF view (no hint) had the footer over the page controls (zoom unreachable).
   assert.match(css, /\.sheet-panel \{[^}]*display: flex; flex-direction: column;/);
