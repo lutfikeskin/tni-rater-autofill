@@ -632,7 +632,9 @@ test('the intake check says when the current commercial auto policy is with GEIC
     if (carrier !== name) assert.doesNotMatch(said[0].msg, new RegExp(carrier), 'named as the carrier, not as the intake spells it');
   }
   // Undated, a policy of no type (only a warning), and expired (as the carrier page's card): said too.
-  for (const [type, carrier, exp] of [['Commercial Auto', 'GEICO', ''], ['Select*', 'GEICO', '12/31/2026'], ['Commercial Auto', 'Progressive', '01/31/2026']]) {
+  // Expired and of no type with Progressive too, whose own question is then No (T10).
+  for (const [type, carrier, exp] of [['Commercial Auto', 'GEICO', ''], ['Select*', 'GEICO', '12/31/2026'], ['Commercial Auto', 'Progressive', '01/31/2026'],
+    ['Select*', 'Progressive', '01/31/2026']]) {
     assert.equal(read(type, carrier, exp).length, 1, `${type} ${carrier} ${exp}`);
   }
   // Not: a personal auto, GL, cargo or other policy with it, another insurer, no prior insurance.

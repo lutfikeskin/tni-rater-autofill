@@ -107,6 +107,8 @@ export function quotedCarrierPolicy(policy, carrierId) {
 // Progressive's "insured with Progressive Commercial Auto") is then the agent's on both carriers, a
 // `fact` with a note that the type isn't on the intake, dated, undated or expired (TNI, 2026-10-26:
 // answer to PR question R9). Progressive used to answer No; GEICO already left it to the agent.
+// Progressive answers an expired one No again, as any expired policy (TNI, 2026-10-26: answer to PR
+// question T10: priorPolicyCurrent, in progressive.js); GEICO's expired policies stay the agent's.
 export function untypedCarrierPolicy(policy, carrierId) {
   return quotedCarrierPolicy(policy, carrierId) && !String(policy?.type ?? '').trim();
 }

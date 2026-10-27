@@ -90,15 +90,17 @@ export function ownerDobNote(r) {
 // Without a limit or a usable expiration date too (TNI, 2026-10-26: answer to PR question 9, by
 // W44-29's proof of prior: priorPolicyCurrent), TNI's answer, a standard: it used to be No unless
 // both were filled. An expired policy stays No. A Progressive policy whose type is left blank is the
-// agent's, a `fact` with a note that the type isn't on the intake, dated, undated or expired (TNI,
-// 2026-10-26: answer to PR question R9: untypedCarrierPolicy): it used to be No.
+// agent's, a `fact` with a note that the type isn't on the intake, dated or undated (TNI,
+// 2026-10-26: answer to PR question R9: untypedCarrierPolicy): it used to be No. An expired one of
+// no type is No again, `derived`, as any expired Progressive policy: an expired policy isn't current
+// (TNI, 2026-10-26: answer to PR question T10: priorPolicyCurrent). The red warning still shows.
 const insuredWithProgressive = (r) => {
   const p = r.priorInsurance[0];
   return !!(p && /commercial\s+auto/i.test(p.type ?? '') && sameCarrier(p.carrier, 'progressive') && priorPolicyCurrent(r, p));
 };
-const untypedProgressive = (r) => untypedCarrierPolicy(r.priorInsurance?.[0], 'progressive');
+const untypedProgressive = (r) => untypedCarrierPolicy(r.priorInsurance?.[0], 'progressive') && priorPolicyCurrent(r);
 // Derived with a limit and a date, as before; TNI's standard when the Yes is question 9's answer; a
-// fact, the agent's, for a Progressive policy of no type (R9).
+// fact, the agent's, for a Progressive policy of no type not expired (R9, T10).
 const insuredWithProgressiveSource = (r) => (untypedProgressive(r) ? 'fact' : insuredWithProgressive(r)
   && !(r.priorInsurance[0].limit && /^\d{2}\/\d{2}\/\d{4}$/.test(r.priorInsurance[0].expiration ?? '')) ? 'standard' : 'derived');
 const insuredWithProgressiveNote = (r) => (untypedProgressive(r)

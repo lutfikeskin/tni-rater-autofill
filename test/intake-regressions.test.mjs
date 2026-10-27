@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildPlan } from '../src/plan.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
-import { priorPolicyExpired, sameCarrier } from '../src/util.js';
+import { priorPolicyExpired, sameCarrier, quotedCarrierPolicy, quotedCarriersOf } from '../src/util.js';
 
 const record = () => ({
   applicant: { name: 'Sample Test LLC', owner1: 'Alex Example', applicationDate: '10/02/2026' },
@@ -119,15 +119,15 @@ test('Progressive: an undated Progressive commercial auto policy is currently in
 
 // TNI, 2026-10-26: answer to PR question R9 (#189): a policy with Progressive itself whose policy type
 // is left blank is the agent's (a `fact`, never filled), with a note that the type isn't on the
-// intake, dated, undated or expired: Progressive no longer answers No. A commercial auto policy with
-// Progressive keeps its Yes; personal auto and another insurer keep No.
+// intake, dated or undated: Progressive no longer answers No. An expired one is No (T10, next test).
+// A commercial auto policy with Progressive keeps its Yes; personal auto and another insurer keep No.
 test('Progressive: a Progressive policy of no type is the agent\'s (TNI, 2026-10-26, R9)', () => {
   const step = (more) => {
     const r = record();
     Object.assign(r.priorInsurance[0], { type: null, expiration: '12/01/2026', ...more });
     return buildPlan(r, progressive).find((s) => s.q === '198');
   };
-  for (const more of [{}, { type: '' }, { type: '  ' }, { carrier: 'Progresive' }, { expiration: null }, { limit: null, expiration: 'see notes' }, { expiration: '09/01/2026' }]) {
+  for (const more of [{}, { type: '' }, { type: '  ' }, { carrier: 'Progresive' }, { expiration: null }, { limit: null, expiration: 'see notes' }]) {
     const s = step(more);
     assert.deepEqual([s.value, s.source, s.manualOnly], [null, 'fact', true], JSON.stringify(more));
     assert.match(s.note, /policy type isn't on the intake/, JSON.stringify(more));
@@ -141,4 +141,37 @@ test('Progressive: a Progressive policy of no type is the agent\'s (TNI, 2026-10
     const s = step(more);
     assert.deepEqual([s.value, s.source, s.note], [false, 'derived', null], JSON.stringify(more));
   }
+});
+
+// TNI, 2026-10-26: answer to PR question T10 (#189): a policy with Progressive itself whose policy
+// type is left blank and whose expiration date has already passed is No, as any expired Progressive
+// policy: an expired policy isn't current. R9 had made it the agent's; before R9 it was No. One not
+// expired (dated today or later, undated, a remark or an impossible date in the date box) stays the
+// agent's (R9), a typed one is as before, and the red warning (the intake check and the carrier
+// page's card, both quotedCarrierPolicy) still shows for it.
+test('Progressive: an expired Progressive policy of no type is No (TNI, 2026-10-26, T10)', () => {
+  const step = (more) => {
+    const r = record(); // application date 10/02/2026
+    Object.assign(r.priorInsurance[0], { type: null, expiration: '09/01/2026', ...more });
+    return { p: r.priorInsurance[0], s: buildPlan(r, progressive).find((x) => x.q === '198') };
+  };
+  for (const more of [{}, { type: '' }, { type: '  ' }, { carrier: 'Progresive' }, { carrier: 'Progressive Commercial' }, { limit: null }, { expiration: '10/01/2026' }]) {
+    const { p, s } = step(more);
+    assert.deepEqual([s.value, s.source, s.note, s.manualOnly], [false, 'derived', null, false], JSON.stringify(more));
+    assert.equal(quotedCarrierPolicy(p, 'progressive'), true, `the red warning still shows: ${JSON.stringify(more)}`);
+    assert.deepEqual(quotedCarriersOf(p), ['Progressive'], JSON.stringify(more));
+  }
+  // Counterexamples, R9 unchanged: not expired, of no type, the agent's.
+  for (const more of [{ expiration: '10/02/2026' }, { expiration: '12/01/2026' }, { expiration: null }, { limit: null, expiration: 'see notes' }, { expiration: '02/31/2026' }]) {
+    const { s } = step(more);
+    assert.deepEqual([s.value, s.source, s.manualOnly], [null, 'fact', true], JSON.stringify(more));
+    assert.match(s.note, /policy type isn't on the intake/, JSON.stringify(more));
+  }
+  // A typed policy as before: commercial auto expired No, current Yes; personal auto expired No.
+  const typed = (more) => { const { s } = step(more); return [s.value, s.source, s.note]; };
+  assert.deepEqual(typed({ type: 'Commercial Auto' }), [false, 'derived', null]);
+  assert.deepEqual(typed({ type: 'Commercial Auto', expiration: '12/01/2026' }), [true, 'derived', null]);
+  assert.deepEqual(typed({ type: 'Personal Auto' }), [false, 'derived', null]);
+  // Another insurer's expired policy of no type: No, as before.
+  assert.deepEqual(typed({ carrier: 'Protective' }), [false, 'derived', null]);
 });
