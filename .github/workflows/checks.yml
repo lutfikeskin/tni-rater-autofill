@@ -65,31 +65,26 @@ jobs:
             http://127.0.0.1:8792/test/fixtures/amwins/application.html
           npm run e2e:extension
 
-  # The mocks and replays, one job each. Each needs no network service of its own beyond its own
-  # local server.
+  # The mocks and replays, one job each; each starts its own local server where it needs one.
   browser:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.timeout }}
+    # Installing Chromium's system libraries took from 30 s to 3.6 min on the first runs.
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: AmWINS mock
             run: npm run mock:amwins
-            timeout: 8
           - name: AmWINS mock, reversed
             run: npm run mock:amwins -- --reversed
-            timeout: 8
           - name: GEICO mock
             run: npm run mock:geico
-            timeout: 10
           - name: Progressive fixtures
             run: npm run e2e -- --fixtures
-            timeout: 10
           - name: Luna mock
             run: npm run package && npm run mock:luna
-            timeout: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
