@@ -7,10 +7,18 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  buildContains, cellNumber, combine, compareVersions, fixOf, gitReader, judgeItem, markdown, matches,
+  buildContains, cellNumber, combine, compareVersions, fixOf, gitEnv, gitReader, judgeItem, markdown, matches,
   parseItemLine, parseLedger, parsePattern, parseSignature, scenarioOf, unknownField, weeklyRows,
 } from '../scripts/lib/ledger.mjs';
 import { NO_TEST_LIST } from '../scripts/lib/signals.mjs';
+
+// git in `dir` for these tests: a fixed author, no signing, and none of the caller's per-repository
+// variables (gitEnv), so a run from the pre-push hook can't act on the repository being pushed.
+const gitIn = (dir) => (...a) => {
+  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8', env: gitEnv() });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.trim();
+};
 
 // ---------- the ledger's text ----------
 
@@ -199,11 +207,7 @@ test('gitReader finds the first release after a fix in a real repository', (t) =
   if (spawnSync('git', ['--version']).status !== 0) { t.skip('git is not available here'); return; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-git-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const git = (...a) => {
-    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8' });
-    assert.equal(r.status, 0, r.stderr);
-    return r.stdout.trim();
-  };
+  const git = gitIn(dir);
   const commit = (version, file, msg) => {
     if (version) fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ version }));
     if (file) fs.writeFileSync(path.join(dir, file), msg);
@@ -229,6 +233,48 @@ test('gitReader finds the first release after a fix in a real repository', (t) =
   assert.equal(buildContains({ version: '0.9.9', commit: a.slice(0, 10) }, fix, r), 'no');
   assert.equal(buildContains({ version: '0.9.10', commit: 'deadbeef00' }, fix, r), 'yes');
   assert.equal(buildContains({ version: '0.9.9', commit: 'deadbeef00' }, fix, r), 'unknown');
+});
+
+// The pre-push hook runs the tests with git's GIT_DIR set, an absolute path when the push comes from
+// a linked worktree. With it, the git helper's `git init` and commits in a temporary folder acted on
+// the repository being pushed: core.bare = true in the shared .git/config (2026-10-27).
+test('the tests\' git and gitReader leave alone the repository GIT_DIR names', (t) => {
+  if (spawnSync('git', ['--version']).status !== 0) { t.skip('git is not available here'); return; }
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-env-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const pushed = path.join(base, 'pushed');
+  const dir = path.join(base, 'dir');
+  fs.mkdirSync(pushed);
+  fs.mkdirSync(dir);
+  const p = gitIn(pushed);
+  p('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(pushed, 'manifest.json'), JSON.stringify({ version: '1.0.0' }));
+  p('add', '-A');
+  p('commit', '-q', '-m', 'pushed');
+  const state = () => ({
+    config: fs.readFileSync(path.join(pushed, '.git', 'config'), 'utf8'),
+    head: fs.readFileSync(path.join(pushed, '.git', 'HEAD'), 'utf8'),
+    commit: p('rev-parse', 'HEAD'),
+    status: p('status', '--porcelain'),
+  });
+  const before = state();
+
+  // Synchronous throughout, so no other test runs with GIT_DIR set.
+  const saved = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(pushed, '.git');
+  try {
+    const git = gitIn(dir);
+    git('init', '-q', '-b', 'main');
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ version: '0.9.9' }));
+    git('add', '-A');
+    git('commit', '-q', '-m', 'in the temporary folder');
+    assert.equal(gitReader(dir, 'main').versionAt(git('rev-parse', 'HEAD')), '0.9.9');
+  } finally {
+    if (saved === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = saved;
+  }
+  assert.deepEqual(state(), before);
+  assert.ok(fs.existsSync(path.join(dir, '.git', 'HEAD')), 'the temporary folder has its own repository');
 });
 
 // ---------- judging the items ----------
@@ -399,10 +445,7 @@ test('the ledger reads the test-run list as the review does, and says when it ha
   // repository's, naming the `listed` and `decoy` quotes; --tests names `listed` only.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-cli-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  for (const a of [['init', '-q'], ['commit', '-q', '--allow-empty', '-m', 'empty']]) {
-    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8' });
-    assert.equal(r.status, 0, r.stderr);
-  }
+  for (const a of [['init', '-q'], ['commit', '-q', '--allow-empty', '-m', 'empty']]) gitIn(dir)(...a);
   fs.mkdirSync(path.join(dir, 'reviews'));
   fs.writeFileSync(path.join(dir, 'reviews', 'test-intakes.txt'), 'aaaaaaaa\ndddddddd\n');
   const list = path.join(dir, 'tests.txt');
@@ -420,7 +463,7 @@ test('the ledger reads the test-run list as the review does, and says when it ha
   // A saved ledger body without open items: nothing for gh to look up.
   const body = path.join(dir, 'ledger.md');
   fs.writeFileSync(body, '# Weekly review W42 (2026-10-06 – 2026-10-13)\n\n## Weekly numbers\n\n| Number | W42 |\n| --- | --- |\n| Quotes (any carrier · per carrier) | 35 · 42 |\n');
-  const ledger = (...args) => spawnSync(process.execPath, [path.join(root, 'scripts', 'ledger.mjs'), data, '--ledger', body, '--main', 'HEAD', ...args], { cwd: dir, encoding: 'utf8' });
+  const ledger = (...args) => spawnSync(process.execPath, [path.join(root, 'scripts', 'ledger.mjs'), data, '--ledger', body, '--main', 'HEAD', ...args], { cwd: dir, encoding: 'utf8', env: gitEnv() });
   const json = (r) => { assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
   const repoList = fs.existsSync(path.join(root, 'reviews', 'test-intakes.txt'));
 
