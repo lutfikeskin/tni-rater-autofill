@@ -238,6 +238,7 @@ const STANDARDS = [
   'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)',
   'Rental reimbursement with downtime (TNI: Not Included)',
   'Uninsured motorist bodily injury, UMBI (TNI: $100,000 CSL)', 'Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)',
+  'Uninsured motorist deductible (TNI: $1,000)', 'UM/UIM type (TNI: Add-On)',
   'SR-22 (the owner; TNI: No unless the intake says otherwise)', 'SR-22 (this driver; TNI: No unless the intake says otherwise)',
   'Hazardous material placard (TNI: No unless the intake says otherwise)', 'Team driving or slip seating (TNI: No unless the intake says otherwise)',
   'Filings required (TNI: No unless the intake says otherwise)', 'Driver has a CDL (TNI: No when the intake leaves it blank)',
@@ -246,7 +247,9 @@ const STANDARDS = [
 // TNI, 2026-10-26 (W44-25): "Owner Drivers if not excluded, in every case".
 const OWNER_DRIVES = 'Owner is a driver (TNI: Yes when the intake leaves it blank, unless excluded)';
 const OWNER_DRIVES_ADD = 'Owner is a driver (Add Driver; TNI: Yes when the intake leaves it blank, unless excluded)';
-STANDARDS.push(OWNER_DRIVES, OWNER_DRIVES_ADD);
+// TNI, 2026-10-27: Yes when the owner drives, No otherwise; with the owner-drives box blank, TNI's.
+const OWNER_DAILY = 'Owner involved in daily operations (Yes when the owner drives)';
+STANDARDS.push(OWNER_DRIVES, OWNER_DRIVES_ADD, OWNER_DAILY);
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
   const seen = new Set();
@@ -306,9 +309,11 @@ test('a blank intake answers nothing but TNI\'s standards', () => {
     'Filings required (TNI: No unless the intake says otherwise)', 'SR-22 (the owner; TNI: No unless the intake says otherwise)',
     'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)',
     'Customization value (the attached equipment value, else TNI: 0)'].map((n) => one(p, n, n.startsWith('Customization') ? VEH : undefined).value), [false, false, false, false, false, 0]);
-  // ELD has no standard; whether the owner drives is TNI's Yes (W44-25).
+  // ELD has no standard; whether the owner drives is TNI's Yes (W44-25), and daily operations
+  // follows it (TNI, 2026-10-27), TNI's too.
   agents(one(p, 'Electronic logging device (ELD)'));
   assert.deepEqual([one(p, OWNER_DRIVES).value, one(p, OWNER_DRIVES).source], [true, 'standard']);
+  assert.deepEqual([one(p, OWNER_DAILY, BOI).value, one(p, OWNER_DAILY, BOI).source], [true, 'standard']);
 });
 
 test('the plan is plain data: steps and form conditions included', () => {
@@ -723,6 +728,22 @@ test('owner drives (W44-25): blank is TNI\'s Yes and GEICO adds the other driver
   // In review mode (a class the standards weren't set on) the standard Yes is a check item.
   const review = drives(two({ 'applicant.ownerDrives': null, 'operations.businessClass': 'Dump Truck' }));
   assert.deepEqual([review.value, review.standard, review.reviewRequired], [true, true, true]);
+});
+
+// TNI, 2026-10-27: "Is the owner involved in the daily operations of the business?" is Yes when the
+// owner drives and isn't excluded; No when they don't drive or are excluded.
+test('owner daily operations: Yes when the owner drives; No otherwise', () => {
+  const daily = (r) => one(plan(r), OWNER_DAILY, BOI);
+  const said = (s) => [s.value, s.source, s.manualOnly, s.note];
+  // Drives: the intake's Yes (derived from it), or a blank box (TNI's Yes, so TNI's standard).
+  assert.deepEqual(said(daily(intake())), [true, 'derived', false, null]);
+  assert.deepEqual(said(daily(with_({ 'applicant.ownerDrives': null }))), [true, 'standard', false, null]);
+  // Doesn't drive, or excluded: No.
+  assert.deepEqual(said(daily(with_({ 'applicant.ownerDrives': false }))), [false, 'derived', false, null]);
+  assert.deepEqual(said(daily(with_({ 'applicant.ownerDrives': null, 'drivers.0.excluded': true }))), [false, 'derived', false, null]);
+  // The intake says the owner drives but excludes them: No, with the warning to confirm it.
+  assert.match(daily(with_({ 'applicant.ownerDrives': true, 'drivers.0.excluded': true })).warn ?? '', /marks their driver row excluded/);
+  assert.equal(daily(intake()).warn ?? null, null);
 });
 
 // TNI, 2026-10-26 (answer to PR question): the owner's name matched two driver rows (a Sr and a Jr)
@@ -1401,10 +1422,16 @@ test('employees, years with the insurer, additional insureds: TNI\'s answers', (
   const years = (changes) => one(plan(with_(changes)), 'Years with the current auto insurer (1-3 with a current policy)');
   assert.deepEqual([years({}).value, years({}).source, years({ 'priorInsurance.0.type': 'Personal Auto' }).value], ['1-3 Years', 'standard', '1-3 Years']);
   for (const changes of [{ priorInsurance: [] }, { 'priorInsurance.0.expiration': '01/31/2026' }, { priorInsurance: [{ type: null, carrier: 'No', limit: null, expiration: null }] }]) agents(years(changes));
-  // Additional insureds and waivers: No.
+  // Additional insureds and waivers: No (TNI, 2026-10-27: after the policy starts, not at quote).
   for (const name of ['Named additional insured or waiver of subrogation (TNI: No)', 'Blanket additional insured by contract (TNI: No)', 'Blanket waiver of subrogation by contract (TNI: No)']) {
     assert.deepEqual([one(plan(intake()), name).value, one(plan(intake()), name).source], [false, 'standard'], name);
   }
+  // Both GEICO wordings of the named-AI question (it dropped "or a designated insured").
+  const named = one(plan(intake()), 'Named additional insured or waiver of subrogation (TNI: No)');
+  assert.deepEqual(named.ask, [
+    'Does the customer need to add a named additional insured? Or do they need a named waiver of subrogation?',
+    'Does the customer need to add a named additional insured or a designated insured? Or do they need a named waiver of subrogation?',
+  ]);
 });
 
 test('liability insurance the business has: GL from a current GL policy on the intake, else TNI\'s None', () => {
@@ -1455,8 +1482,13 @@ test('liability coverage and its limit from the intake; an NTL mention not answe
     const pay = plan(r).filter((s) => s.field === 'GivePayPlanV2');
     assert.deepEqual(pay.map((s) => [s.each, s.value, s.source, s.whenOffered]), [[true, '11 Payments', 'standard', true], [true, '11 Payments', 'standard', true]]);
   }
-  // The rest of the uninsured motorist and property damage lists stay the agent's (W43-33).
-  for (const name of ['Uninsured motorist deductible', 'UM/UIM type', 'Property damage liability', 'Uninsured motorist property damage']) {
+  // TNI, 2026-10-27: when asked, UM/UIM type is Add-On and deductible $1,000.
+  for (const r of [intake(), with_({ 'garaging.state': 'TX' }), blank()]) {
+    assert.deepEqual([one(plan(r), 'UM/UIM type (TNI: Add-On)').value, one(plan(r), 'UM/UIM type (TNI: Add-On)').source], ['Add-On', 'standard']);
+    assert.deepEqual([one(plan(r), 'Uninsured motorist deductible (TNI: $1,000)').value, one(plan(r), 'Uninsured motorist deductible (TNI: $1,000)').source], ['$1,000', 'standard']);
+  }
+  // Property damage liability and UMPD stay the agent's (W43-33).
+  for (const name of ['Property damage liability', 'Uninsured motorist property damage']) {
     for (const r of [intake(), with_({ 'garaging.state': 'TX' })]) {
       const s = one(plan(r), name);
       agents(s);
