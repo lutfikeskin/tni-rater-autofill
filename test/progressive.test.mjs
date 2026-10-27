@@ -583,6 +583,7 @@ test('AmWINS filing required: a notes line or which-filings box naming only an S
     [{ filingsWhich: 'SR-22, BMC-91' }, null, /"SR-22, BMC-91"/], [{ filingsWhich: 'SR-22 and federal' }, null, /"SR-22 and federal"/],
     [{}, 'FR-44 and BMC-34 cargo', /"FR-44 and BMC-34 cargo"/], [{}, 'SR-22 plus BMC-32', /"SR-22 plus BMC-32"/],
     [{}, 'SR-22 plus ICC filing', /"SR-22 plus ICC filing"/], [{}, 'SR-22 and MC filing', /"SR-22 and MC filing"/], [{}, 'SR-22 and Federal', /"SR-22 and Federal"/],
+    [{ filingsWhich: 'SR-22 & Fed.' }, null, /"SR-22 & Fed\."/], [{}, 'SR-22 and interstate', /"SR-22 and interstate"/],
     [{}, 'SR-22 plus other filings', /"SR-22 plus other filings"/],
     // The which-filings box names only an SR-22, but a notes line names a federal filing: that line.
     [{ filingsWhich: 'SR-22' }, 'Needs MCS-90 for the broker', /its notes say "Needs MCS-90 for the broker"/],

@@ -257,12 +257,12 @@ const vehicleValueNote = (r, a) => {
 // Nor does a which-filings box or a notes line naming only an SR-22 or FR-44, state filings, with
 // words that only describe them ("state", "filing": "Owner needs an SR-22 filing", "Filings: SR22 /
 // FR-44") (TNI, 2026-10-26: answer to PR question, R16). One naming anything federal (MCS-90, BMC-91,
-// BMC-34, BMC-32, "federal", ICC, MC, interstate, FMCSA, BOC-3, UCR, authority) or another filing
+// BMC-34, BMC-32, "federal" or "fed", ICC, MC, interstate, FMCSA, BOC-3, UCR, authority) or another filing
 // (a Form E or H, "other filings") beside it still leaves a blank to the agent.
 const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\b|\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
 const SR_FR = /\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
 const SR_FR_NAMED = /(?:\bfilings?\s*(?:needed|required)?\s*:\s*)?(?:\bstate\s+)?\b(?:sr[\s-]?22|fr[\s-]?44)\b(?:\s+(?:state\s+)?filings?\b)?|\bstate\s+filings?\b/gi;
-const FEDERAL = /\bfederal\b|\bicc\b|\bmc\b|\binterstate\b|\bfmcsa\b|\bboc[\s-]?3\b|\bucr\b|\bauthority\b/i;
+const FEDERAL = /\bfed(?:eral)?\b|\bicc\b|\bmc\b|\binterstate\b|\bfmcsa\b|\bboc[\s-]?3\b|\bucr\b|\bauthority\b/i;
 const onlyStateFilings = (text) => SR_FR.test(text) && !FEDERAL.test(text) && !FILING_WORDS.test(text.replace(SR_FR_NAMED, ' '));
 const filingLine = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => FILING_WORDS.test(s) && !onlyStateFilings(s))?.slice(0, 80) ?? null;
 const filingsAsked = (r) => (r.operations.filingsWhich && !onlyStateFilings(String(r.operations.filingsWhich)) ? `names filings ("${String(r.operations.filingsWhich).slice(0, 40)}")`
