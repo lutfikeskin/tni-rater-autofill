@@ -1659,7 +1659,9 @@ function onRecorderMessage(msg, sender) {
     const step = state.tab.carrier?.layoutSteps ? knownStep(state.tab.carrier, msg.step) : undefined;
     log({ type: 'agent_click', carrier, page, view: viewOf(sender.tab.id, page), ...(step ? { step } : {}), text: redactor(redactionTerms(state.intake.record))(String(msg.text ?? '')).slice(0, 60) });
     agentHelperDone(state.tab.carrier, page, step, msg.text);
-    if (/\bdiscard\b/i.test(String(msg.text ?? '')) && Array.isArray(msg.forms)) releaseDiscardedForms(msg.forms);
+    // Only the Yes to GEICO's discard question: "Discard Changes" only asks it, and "No, please don't
+    // discard." keeps the form, which would otherwise be filled as the next unit picked.
+    if (/^\s*yes\b.*\bdiscard\b/i.test(String(msg.text ?? '')) && Array.isArray(msg.forms)) releaseDiscardedForms(msg.forms);
   }
   // An error or validation message appeared (a refused Continue): the layout carries the messages.
   if (msg.event === 'new_messages') scheduleLayout(layoutPage, 'messages');

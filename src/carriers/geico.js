@@ -501,6 +501,9 @@ const driversKnown = (r) => r.applicant?.ownerDrives === false || listedDriver(r
 const driverMissing = (r, list, i) => {
   const d = r.drivers?.[i];
   const who = [d?.first, d?.last].filter(Boolean).join(' ') || `Driver ${i + 1}`;
+  // GEICO's rows known, the extension adds them once the panel has that driver picked (the picker
+  // stays where it was until a form is read on this page).
+  if (driversKnown(r)) return `${who} (driver ${i + 1} of the intake) isn't on GEICO's driver list: pick them in the panel and Fill again, or add them with "+" yourself.`;
   const why = typeof r.applicant?.ownerDrives !== 'boolean' ? 'the intake doesn\'t say whether the owner drives'
     : 'the owner drives, but no driver on the intake has the owner\'s name';
   return `${who} (driver ${i + 1} of the intake) isn't on GEICO's driver list: add them with "+" yourself. The extension adds no driver here because ${why}, so GEICO may already list one of them under the owner.`;

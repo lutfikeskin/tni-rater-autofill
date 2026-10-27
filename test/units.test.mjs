@@ -122,6 +122,15 @@ test('a unit the list doesn\'t have and no helper adds is named; one the plan ad
   const onForm = unitToAdd(geico, record, DRV, { forms: [{ list: 'drivers', id: 'F', blank: true }], lists: [null, null] });
   assert.equal(onForm.onList, false);
   assert.equal(unitMissing(onForm, planFor(record, onForm)), null);
+  // GEICO's driver rows known (the owner doesn't drive), but the picker not on driver 2 (no form read
+  // yet, so the list didn't move it): nothing adds them in this fill, and the note doesn't blame the
+  // owner question.
+  const notOwner = { ...record, applicant: { ownerDrives: false, owner1: 'Pat Owner' } };
+  const stayed = unitMissing(nextKnown, buildPlan(notOwner, geico, { drivers: 0, vehicles: 0, trailers: 0, adding: { ...nextKnown.adding, click: true } }));
+  assert.deepEqual(stayed, { list: 'drivers', index: 1 });
+  const stayedNote = unitMissingItem(geico, notOwner, stayed).note;
+  assert.doesNotMatch(stayedNote, /owner/);
+  assert.match(stayedNote, /^Sam Second \(driver 2 of the intake\) isn't on GEICO's driver list: pick them in the panel and Fill again/);
   // Every driver listed: nothing to add, nothing named.
   assert.equal(unitMissing(unitToAdd(geico, record, DRV, { forms: [], lists: [null, { rows: 2, shown: [true, true] }] }), []), null);
 });

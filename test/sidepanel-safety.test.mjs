@@ -8303,9 +8303,29 @@ test('a unit form the agent discards no longer holds its unit; other forms and c
   context.releaseDiscardedForms([{ list: 'vehicles', id: 'NEW', blank: true }]);
   context.releaseDiscardedForms([]);
   assert.equal(persisted.length, 1);
-  // Only a Discard click with the forms on screen lets go (the agent_click handler).
-  const handler = extractFunction('onRecorderMessage');
-  assert.match(handler, /\/\\bdiscard\\b\/i\.test\(String\(msg\.text \?\? ''\)\) && Array\.isArray\(msg\.forms\)\) releaseDiscardedForms\(msg\.forms\)/);
+});
+
+// W44-05: only the agent's Yes to GEICO's discard question lets go of the forms on screen. "Discard
+// Changes" only opens the question, and "No, please don't discard." keeps the form and its answers: let
+// go there, the form the agent kept would be filled as the next unit picked (the mock's #action-modal).
+test('only a confirmed discard, with the forms on screen, lets go of their units', () => {
+  const state = { intake: { record: {} }, tab: { id: 4, carrier: { id: 'geico' } }, unitForms: { vehicles: { VAN: 0 }, drivers: {}, trailers: {} } };
+  const context = { state, usage: { log() {} }, pageOf: (u) => u, samePage: (p) => p, viewOf: () => 't1', knownStep: () => undefined,
+    redactor: () => (s) => s, redactionTerms: () => [], agentHelperDone() {}, persistUnitForms() {} };
+  vm.createContext(context);
+  vm.runInContext(['releaseDiscardedForms', 'onRecorderMessage'].map(extractFunction).join('\n'), context);
+  const click = (text, forms = [{ list: 'vehicles', id: 'VAN', blank: false }]) => context.onRecorderMessage({ ra: 'usage', event: 'agent_click', page: '/quote', text, forms }, { tab: { id: 4 }, frameId: 0 });
+  for (const text of ['Discard Changes', 'No, please don\'t discard.', 'Save and Continue']) {
+    click(text);
+    assert.deepEqual(Object.keys(state.unitForms.vehicles), ['VAN'], text);
+  }
+  click('Yes, please discard.', null);
+  assert.deepEqual(Object.keys(state.unitForms.vehicles), ['VAN'], 'no forms sent');
+  click('Yes, please discard.');
+  assert.deepEqual(Object.keys(state.unitForms.vehicles), [], 'the confirm lets go');
+  state.unitForms.vehicles.VAN = 0;
+  click('Yes, Discard Changes');
+  assert.deepEqual(Object.keys(state.unitForms.vehicles), [], 'the live run\'s words');
 });
 
 // W44-01: the unit pickUnitToAdd found missing from the list with nothing to add it is an item the top
