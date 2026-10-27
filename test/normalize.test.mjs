@@ -1871,6 +1871,17 @@ test('"a year-old business" and "N-year-old business" read as 1 and N (W44-09, r
   readsOnly('Truck is 10 years old, 3-year-old business', 3, '3-year-old business');
 });
 
+// The maintainer, 2026-10-27 (answer to PR #191's open question): a company, and up to two words between
+// "old" and the business ("a 3-year-old trucking business"), read too; a vehicle word between stays out.
+test('"a 3-year-old company" and "a 3-year-old trucking business" read as 3', () => {
+  for (const [notes, years, reading] of [['a 3-year-old company', 3, '3-year-old'], ['a 3-year-old trucking business', 3, '3-year-old'],
+    ['We are a five year old family trucking company', 5, 'five year old'], ['a year-old hauling biz', 1, 'a year-old']]) {
+    readsYears(notes, years, reading);
+  }
+  for (const notes of ['almost a 3-year-old trucking company', 'almost a 3-year-old business']) leavesUnread(notes);
+  for (const notes of ['10-year-old company truck', 'a 3-year-old truck business', 'Owns a 5 year old box truck company']) leavesYears(notes);
+});
+
 // R12 (TNI, 2026-10-26: answer to PR question): "no" in the USDOT box with an MC number on the
 // intake: GEICO's has-a-USDOT-number answers No too, as Progressive's already did. A 60-day Yes
 // still decides (R13).
