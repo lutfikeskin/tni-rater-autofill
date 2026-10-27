@@ -1132,10 +1132,11 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   } else if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
     // The current commercial auto policy is with a carrier the panel quotes (TNI, 2026-10-26: answer
-    // to PR question 9: said on the intake check screen, before any carrier page, so the agent
-    // doesn't fill that carrier's pages for nothing; question 18: commercial auto only, util.js
-    // quotedCarrierPolicy). Named, since an intake isn't tied to one carrier; in red (`alert`), and
-    // a warning only (question 19): filling goes on. The carrier's pages say it again (W44-27).
+    // to PR question 9: said on the intake check screen, so the agent doesn't fill that carrier's
+    // pages for nothing; question 18: commercial auto only, util.js quotedCarrierPolicy). Named,
+    // since an intake isn't tied to one carrier; in red (`alert`), and a warning only (question 19):
+    // filling goes on. The panel shows it only on that carrier's site (checkShown; TNI, 2026-10-27),
+    // and the carrier's pages say it again (W44-27).
     const quoted = quotedCarriersOf(prior);
     if (quoted.length) {
       warnings.push({ code: 'prior.carrier-is-quoted', path: 'priorInsurance[0].carrier', level: 'check', alert: true,
