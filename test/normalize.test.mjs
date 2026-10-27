@@ -1440,8 +1440,9 @@ test('the definite phrases of years in business in the notes are read (W44-09, V
     'a couple of years in business', 'under a year and a half in business', 'almost a year in business']) leavesUnread(notes);
   // "a year" doesn't catch other phrases: alone, and beside a statement of years in business. Those
   // that state the business's time, though not as a figure read, are the agent's (round-6 answer 4).
+  // "a year-old business" is 1 since round-7 answer 3 (its test, below).
   for (const notes of ['Started a year ago', 'Truck inspected once a year', 'Owns a year-old truck', 'Driver has a year of experience',
-    'a year', 'first year driving', 'First year with Progressive', 'a year-old business']) leavesYears(notes);
+    'a year', 'first year driving', 'First year with Progressive']) leavesYears(notes);
   for (const notes of ['Went into business a year ago', 'in business a year ago']) leavesUnread(notes);
   readsOnly('Bought the truck a year ago, in business for 3 years', 3, 'in business for 3 years');
   readsOnly('Inspected once a year; 2 years in business', 2, '2 years in business');
@@ -1554,7 +1555,7 @@ test('an in-business statement the reader doesn\'t take leaves years in business
   // notes, other subjects, "in the business" (a career in the trade), a bare duration, and "in
   // business" with no time.
   for (const notes of ['', 'Needs cargo', '10 years driving', 'CDL for 5 years', 'Driver experience: 3+ years in business',
-    '18 months in business driving for Amazon', '20 years in the business', '3 Years', 'a year-old business', 'Started a year ago',
+    '18 months in business driving for Amazon', '20 years in the business', '3 Years', 'Started a year ago',
     'Owner operator, new in business', 'Insured 2-3 years']) {
     leavesYears(notes);
     assert.equal(noYears(notes).record.applicant.yearsInBusinessUnread, undefined, notes);
@@ -1562,9 +1563,54 @@ test('an in-business statement the reader doesn\'t take leaves years in business
   // Years under own authority and silent notes: AmWINS takes the authority years, as before.
   const silent = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: '4', claims_details: 'No', additional_notes: '10 years driving' }, W44);
   assert.equal(buildPlan(silent.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, '4');
-  // A statement with no figure doesn't stop one read: the figure stands, as before.
-  readsOnly('In business for 3 years\nseveral years in business', 3, 'In business for 3 years');
-  readsOnly('Not in business for 3 years yet\nIn business for 2 years', 2, 'In business for 2 years');
+  // A statement with no figure beside one read: the agent's too since round-7 answer 2 (its test, below).
+});
+
+// Round-7 answer 2 (TNI, 2026-10-27): a statement of years in business the reader doesn't take
+// stops a figure it reads beside it, as two figures that disagree do: the agent's, with the check
+// naming the lines. Before, "In business for 3 years" with "several years in business" read 3.
+test('a statement not read beside a figure read leaves years in business to the agent (W44-09, round-7 answer 2)', () => {
+  for (const [notes, lines] of [['In business for 3 years\nseveral years in business', ['In business for 3 years', 'several years in business']],
+    ['a couple of years in business\nIn business for 5 years', ['a couple of years in business', 'In business for 5 years']],
+    ['In business for 3 years. A few years in business', ['In business for 3 years', 'A few years in business']],
+    ['Not in business for 3 years yet\nIn business for 2 years', ['Not in business for 3 years yet', 'In business for 2 years']],
+    ['In business for 3 years\nalmost 4 years in business', ['In business for 3 years', 'almost 4 years in business']]]) {
+    const r = leavesUnread(notes, lines);
+    assert.match(r.warnings.find((x) => x.code === 'years-in-business.notes').msg, /not all read as a number of years/, notes);
+  }
+  // Across the two boxes: both named, and the answer points at both.
+  const both = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'N/A', claims_details: 'No\nin business for 3 years', additional_notes: 'several years in business' }, W44);
+  assert.equal(both.record.applicant.yearsInBusinessUnread, true);
+  assert.match(both.warnings.find((x) => x.code === 'years-in-business.notes').msg, /the claims box and the Additional Notes box say "in business for 3 years" and "several years in business"/);
+  assert.deepEqual(both.readFrom, { 'applicant.yearsInBusiness': ['claims_details', 'additional_notes'] });
+  assert.equal(buildPlan(both.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, null);
+  // Counterexamples: a figure beside notes about something else, or agreeing figures, still reads.
+  for (const notes of ['In business for 3 years\n10 years driving', 'In business for 3 years\nStarted a year ago', 'In business for 3 years\n20 years in the business',
+    'In business for 3 years\nNeeds cargo', 'In business for 3 years\n3 years in business']) {
+    readsOnly(notes, 3, 'In business for 3 years');
+  }
+});
+
+// Round-7 answer 3 (TNI, 2026-10-27): "a year-old business" is 1 and "N-year-old business" is N, with
+// the check saying how it was read. A vehicle's or a person's age stays out, as before.
+test('"a year-old business" and "N-year-old business" read as 1 and N (W44-09, round-7 answer 3)', () => {
+  for (const [notes, years, reading] of [['a year-old business', 1, 'a year-old'], ['A year old business', 1, 'A year old'],
+    ['3-year-old business', 3, '3-year-old'], ['a 3-year-old business', 3, '3-year-old'], ['3 year old business', 3, '3 year old'],
+    ['three-year-old business', 3, 'three-year-old'], ['5 yr old business', 5, '5 yr old'], ['We are a 10-year-old business', 10, '10-year-old'],
+    ['twenty-five-year-old business', 25, 'twenty-five-year-old'], ['2.5-year-old business', 2, '2.5-year-old']]) {
+    readsYears(notes, years, reading);
+  }
+  assert.deepEqual(plansYears('a year-old business'), ['1', 'derived', '1']);
+  assert.deepEqual(plansYears('3-year-old business'), ['3', 'derived', '3-6']);
+  // Agreeing is one answer; disagreeing is the agent's.
+  assert.equal(noYears('a year-old business\nIn business for 1 year').record.applicant.yearsInBusiness, 1);
+  leavesUnread('a 3-year-old business\nIn business for 5 years', ['a 3-year-old business', 'In business for 5 years']);
+  // Not read, so the agent's: a qualifier, a range.
+  for (const notes of ['almost a year-old business', '2-3 year old business']) leavesUnread(notes);
+  // A vehicle's or a person's age stays out: silent, or only the business's age taken.
+  for (const notes of ['Truck is 10 years old', 'Owns a year-old truck', '10-year-old business truck', 'a 5 year old trailer', 'Driver is 45 years old',
+    'Owner is 40 years old']) leavesYears(notes);
+  readsOnly('Truck is 10 years old, 3-year-old business', 3, '3-year-old business');
 });
 
 // R12 (TNI, 2026-10-26: answer to PR question): "no" in the USDOT box with an MC number on the
