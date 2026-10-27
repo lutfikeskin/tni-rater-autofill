@@ -16,6 +16,7 @@ import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { quoteProgress, stopScreen } from '../src/carriers.js';
 import { quotedCarrierPolicy } from '../src/util.js';
+import { SECTIONS, fieldInfo } from '../src/schema.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
@@ -5211,7 +5212,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   const yearsInput = { value: '', closest: () => milesRow };
   const sandbox = {
     state: { intake: { record, warnings: [] } },
-    get, set, parseEdit, rederive, h: fake,
+    get, set, parseEdit, rederive, h: fake, fieldInfo,
     document: { getElementById: (id) => ({ 'f-operations_radiusMiles': milesInput, 'f-applicant_yearsInBusiness': yearsInput })[id] ?? null },
     intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
     usage: { log: (e) => calls.push(['log', e.type, e.path]) },
@@ -7960,13 +7961,33 @@ test('an agent change on the finishing step after the print, or a stopped fill, 
 test('client details never hide a field the agent edited, and a derived row that empties stays until the next render', () => {
   const made = [];
   const fake = (tag, props = {}, ...children) => { const el = { tag, props, children, addEventListener() {}, removeAttribute() {}, setAttribute() {} }; made.push(el); return el; };
-  const context = { state: { intake: { record: { x: { a: null, b: null, c: 'kept' } }, agentEdited: ['x.a'] } }, get: (o, p) => p.split('.').reduce((v, k) => v?.[k], o), h: fake, agentEdit() {}, parseEdit: (k, v) => v };
+  const context = { state: { intake: { record: { x: { a: null, b: null, c: 'kept' } }, agentEdited: ['x.a'] } }, get: (o, p) => p.split('.').reduce((v, k) => v?.[k], o), h: fake, agentEdit() {}, parseEdit: (k, v) => v, fieldInfo };
   vm.runInNewContext(extractFunction('fieldRow'), context);
   const row = (path) => context.fieldRow(path, path, 'text', false).props.class;
   assert.equal(row('x.a'), 'field', 'emptied by the agent: shown');
   assert.equal(row('x.b'), 'field empty', 'blank on the intake: hidden unless flagged');
   assert.equal(row('x.c'), 'field');
   assert.match(extractFunction('agentEdit'), /if \(value != null\) row\.closest\('\.field'\)\?\.classList\.remove\('empty'\);/);
+});
+
+// TNI, 2026-10-27: the intake's dropdowns (business class, vehicle type, limits …) were plain text
+// boxes in client details. They are the form's dropdown, a value off the list kept as written.
+test('client details offer the intake form\'s dropdown options, and keep a value off the list', () => {
+  const fake = (tag, props = {}, ...children) => ({ tag, props, children: children.flat(), addEventListener() {}, removeAttribute() {}, setAttribute() {} });
+  const record = { operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], coverage: { autoLiabLimit: null }, drivers: [{ licenseState: 'TX' }], applicant: { name: 'X' } };
+  const context = { state: { intake: { record, agentEdited: [] } }, get: (o, p) => p.split(/[.[\]]+/).filter(Boolean).reduce((v, k) => v?.[k], o), h: fake, agentEdit() {}, parseEdit: (k, v) => v, fieldInfo, STATES: { TX: 'Texas', MD: 'Maryland' } };
+  vm.runInNewContext(extractFunction('fieldRow'), context);
+  const input = (path) => { const { kind } = fieldInfo(path); return context.fieldRow(path, path, kind, false).children[1]; };
+  const options = (el) => el.children.map((o) => [o.props.value, !!o.props.selected]);
+  const cls = input('operations.businessClass');
+  assert.equal(cls.tag, 'select');
+  assert.deepEqual(options(cls).slice(0, 3), [['', false], ['Expediter', true], ['Freight Hauler', false]]);
+  assert.deepEqual(options(input('vehicles[0].type')).slice(0, 3), [['', false], ['Cargo Van', true], ['Van', false]], 'off the list: kept, first');
+  assert.deepEqual(options(input('coverage.autoLiabLimit')).filter(([, on]) => on), [], 'blank: nothing picked');
+  assert.deepEqual(options(input('drivers[0].licenseState')), [['', false], ['TX', true], ['MD', false]]);
+  assert.equal(input('applicant.name').tag, 'input', 'a text box stays one');
+  // Every choice field has its list.
+  for (const s of SECTIONS) for (const [path, , kind] of s.fields) if (kind === 'choice') assert.ok(fieldInfo(path).options?.length, path);
 });
 
 // Review of PR #170: a drag whose pointerup the panel never heard (the button went up on the

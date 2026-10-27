@@ -1292,6 +1292,15 @@ function fieldRow(path, label, kind, flagged, layout = 'row') {
   } else if (kind === 'textarea') {
     input = h('textarea', { id, rows: 4 });
     input.value = value ?? '';
+  } else if (kind === 'state' || fieldInfo(path).options) {
+    // The intake form's dropdown, its options in client details too. Its boxes also take typed
+    // text, so a value off the list stays, as written, among the options.
+    const options = kind === 'state' ? Object.keys(STATES) : fieldInfo(path).options;
+    const shown = value == null ? null : String(value);
+    input = h('select', { id },
+      h('option', { value: '' }, '—'),
+      ...(shown != null && !options.includes(shown) ? [h('option', { value: shown, selected: true }, shown)] : []),
+      ...options.map((o) => h('option', { value: o, selected: o === shown }, o)));
   } else {
     input = h('input', { id, type: 'text', placeholder: 'not on form', maxLength: kind === 'state' ? 2 : 200 });
     input.value = value ?? '';

@@ -1,5 +1,9 @@
 // Every field in the client record: where it lives, what to call it, and what kind of value it is.
-// Kinds: text, int, money, date, bool, state, phone, choice, textarea.
+// Kinds: text, int, money, date, bool, state, phone, choice, textarea. A choice lists the intake
+// form's own dropdown options (the TNI intake PDF, 2026-10), so client details offer the same list.
+
+const LIMITS = ['$25K/$50K', '$50K/$100K', '$100K/$300K', '$250K/$500K', '$500K/$1M', '$1M CSL', 'Other'];
+const OWNERSHIP = ['Owned', 'Leased', 'Financed', 'Rented'];
 
 export const SECTIONS = [
   { id: 'applicant', title: 'Business', fields: [
@@ -26,11 +30,11 @@ export const SECTIONS = [
     ['garaging.zip', 'ZIP'],
   ] },
   { id: 'operations', title: 'Operations', fields: [
-    ['operations.businessClass', 'Business class', 'choice'],
+    ['operations.businessClass', 'Business class', 'choice', ['Expediter', 'Freight Hauler', 'Reefer', 'Auto Hauler', 'Hotshot', 'Hazmat', 'Household Goods Mover', 'Oversize Loads', 'Tanker', 'Boat Hauler', 'Flat Bed/Step Deck', 'Dry Van', 'Other']],
     ['operations.whatHaul', 'What they haul'],
     ['operations.radius', 'Radius (as written)'],
     ['operations.radiusMiles', 'Radius (miles)', 'int'],
-    ['operations.vehicleOwnership', 'Vehicle ownership', 'choice'],
+    ['operations.vehicleOwnership', 'Vehicle ownership', 'choice', OWNERSHIP],
     ['operations.personalUse', 'Vehicle for personal use', 'bool'],
     ['operations.usesEld', 'Uses ELD', 'bool'],
     ['operations.eldBrand', 'ELD brand'],
@@ -57,17 +61,17 @@ export const SECTIONS = [
     ['drivers[].licenseState', 'License state', 'state'],
     ['drivers[].cdl', 'CDL', 'bool'],
     ['drivers[].cdlYear', 'CDL year', 'int'],
-    ['drivers[].maritalStatus', 'Marital status', 'choice'],
+    ['drivers[].maritalStatus', 'Marital status', 'choice', ['Married', 'Single']],
     // Not on the intake PDF (NOT_ON_INTAKE): the agent sets it (MALE / FEMALE) in client details or
     // by accepting an AI suggestion; normalizeIntake leaves it null.
-    ['drivers[].gender', 'Gender', 'choice'],
+    ['drivers[].gender', 'Gender', 'choice', ['MALE', 'FEMALE']],
     // "Excluded" written in the license-number box: the client wants this driver excluded.
     // Progressive's exclude question is Yes; AmWINS has none and gets "(Excluded)" after the license
     // number (TNI 2026-10-20). GEICO's Add Driver form asks nothing about it: filled, with a warning.
     ['drivers[].excluded', 'Excluded driver', 'bool'],
   ] },
   { id: 'vehicles', title: 'Vehicles', list: 'vehicles', item: 'Vehicle', fields: [
-    ['vehicles[].type', 'Type', 'choice'],
+    ['vehicles[].type', 'Type', 'choice', ['Van', 'Box Truck', 'Reefer Truck', 'Semi Truck', 'Pickup Truck', 'Flatbed', 'Tanker', 'Dump Truck', 'Other']],
     ['vehicles[].year', 'Year', 'int'],
     ['vehicles[].make', 'Make'],
     ['vehicles[].model', 'Model'],
@@ -75,7 +79,7 @@ export const SECTIONS = [
     ['vehicles[].value', 'Value ($)', 'money'],
   ] },
   { id: 'trailers', title: 'Trailers', list: 'trailers', item: 'Trailer', fields: [
-    ['trailers[].type', 'Type', 'choice'],
+    ['trailers[].type', 'Type', 'choice', ['Flatbed', 'Enclosed', 'Reefer', 'Tanker', 'Lowboy', 'Step Deck', 'Dry Van', 'Other']],
     ['trailers[].year', 'Year', 'int'],
     ['trailers[].make', 'Make'],
     ['trailers[].model', 'Model'],
@@ -83,27 +87,27 @@ export const SECTIONS = [
     ['trailers[].value', 'Value ($)', 'money'],
   ] },
   { id: 'trailerInfo', title: 'Trailer details', fields: [
-    ['trailerInfo.ownership', 'Trailer ownership', 'choice'],
-    ['trailerInfo.hitch', 'Hitch type', 'choice'],
+    ['trailerInfo.ownership', 'Trailer ownership', 'choice', OWNERSHIP],
+    ['trailerInfo.hitch', 'Hitch type', 'choice', ['Gooseneck', '5th Wheel', 'Bumper Pull', 'Pintle', 'Other']],
     ['trailerInfo.interchange', 'Trailer interchange needed', 'bool'],
     ['trailerInfo.interchangeLimit', 'Interchange limit'],
     ['trailerInfo.equipTrailer', 'Attached equipment value (trailer)', 'money'],
   ] },
   { id: 'priorInsurance', title: 'Current insurance', list: 'priorInsurance', item: 'Policy', fields: [
-    ['priorInsurance[].type', 'Policy type', 'choice'],
+    ['priorInsurance[].type', 'Policy type', 'choice', ['Commercial Auto', 'Personal Auto', 'General Liability', 'Cargo', 'Other']],
     ['priorInsurance[].carrier', 'Carrier'],
-    ['priorInsurance[].limit', 'Liability limit', 'choice'],
+    ['priorInsurance[].limit', 'Liability limit', 'choice', LIMITS],
     ['priorInsurance[].expiration', 'Expiration', 'date'],
   ] },
   { id: 'coverage', title: 'Requested coverage', fields: [
-    ['coverage.autoLiability', 'Auto liability', 'choice'],
-    ['coverage.autoLiabLimit', 'Auto liability limit', 'choice'],
+    ['coverage.autoLiability', 'Auto liability', 'choice', ['Yes', 'No', 'Non-Trucking']],
+    ['coverage.autoLiabLimit', 'Auto liability limit', 'choice', LIMITS],
     ['coverage.cargo', 'Cargo', 'bool'],
     ['coverage.cargoLimit', 'Cargo limit', 'money'],
     ['coverage.cargoDeductible', 'Cargo deductible', 'money'],
     ['coverage.gl', 'General liability', 'bool'],
     ['coverage.hasGl', 'Already has general liability (claims box)', 'bool'],
-    ['coverage.glLimit', 'GL limit', 'choice'],
+    ['coverage.glLimit', 'GL limit', 'choice', ['$1M/$2M', '$500K/$1M', '$300K/$600K', 'Other']],
     ['coverage.reeferBreakdown', 'Reefer breakdown', 'bool'],
     ['coverage.ntl', 'Non-trucking liability (NTL)', 'bool'],
   ] },
@@ -123,7 +127,7 @@ export const SECTIONS = [
 export const NOT_ON_INTAKE = new Set(['drivers[].gender']);
 
 const FIELDS = new Map(
-  SECTIONS.flatMap((s) => s.fields.map(([path, label, kind = 'text']) => [path, { path, label, kind, section: s }])),
+  SECTIONS.flatMap((s) => s.fields.map(([path, label, kind = 'text', options]) => [path, { path, label, kind, section: s, ...(options ? { options } : {}) }])),
 );
 
 // Accepts "drivers[0].first" or "drivers[].first".
