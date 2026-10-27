@@ -56,9 +56,14 @@ test('general freight, also misspelled or as the business class, is Consumer Goo
   }
   assert.deepEqual(goods({ businessClass: 'General Freight', whatHaul: null }), CONSUMER, 'the class, with what they haul blank');
   // What they haul wins over the class; neither general freight: the agent's.
-  const [category, , , disclosure] = goods({ businessClass: 'General Freight Hauler', whatHaul: 'Furniture' });
+  const [category, , commodities, disclosure] = goods({ businessClass: 'General Freight Hauler', whatHaul: 'Furniture' });
   assert.equal(category, null);
+  assert.equal(commodities, null, 'GEICO too');
   assert.equal(disclosure, 'Motor Truck Cargo $100K with $1K Ded - Furniture');
+  for (const businessClass of ['Freight Hauler', 'Dry Freight', 'General']) {
+    assert.equal(goods({ businessClass, whatHaul: 'Furniture' })[2], null, `GEICO: ${businessClass} hauling furniture`);
+  }
+  assert.equal(goods({ businessClass: 'Expediter', whatHaul: 'Dry freight' })[2], CONSUMER[2], 'GEICO: dry freight hauled');
   assert.equal(goods({ whatHaul: 'General fleet maintenance parts' })[0], null);
 });
 

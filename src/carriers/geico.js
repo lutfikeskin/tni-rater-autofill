@@ -50,7 +50,7 @@
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, GENERAL_FREIGHT } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight } from '../util.js';
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
@@ -813,10 +813,12 @@ const COMMODITIES = [
     picks: ['Consumer Goods - Pharmaceuticals (Over The Counter)', 'Food & Beverage - Other Food & Beverages', 'Refrigerated Goods - Dairy', 'Refrigerated Goods - Frozen Seafood'] },
   // Cars themselves, never their parts or accessories ("auto parts" is general freight or the agent's).
   { test: (r) => /\b(?:auto(?:mobile)?s?|cars?)\b(?!\s*(?:parts?|accessories)\b)|\bcar\s*haul/i.test(freightWords(r)), picks: ['Aircraft/Auto/Boats - Automobiles'] },
-  { test: (r) => GENERAL_FREIGHT.test(freightWords(r)) || /freight\s*haul|consumer\s*goods|dry\s*freight|^\s*general\s*$/i.test(freightWords(r))
-      || [r.operations.businessClass, r.operations.whatHaul].some((v) => /^\s*general\s*$/i.test(String(v ?? ''))),
+  // What they haul wins over the class, as on Progressive and AmWINS (haulsGeneralFreight).
+  { test: (r) => haulsGeneralFreight(r) || /freight\s*haul|consumer\s*goods|dry\s*freight|^\s*general\s*$/i.test(hauled(r)),
     picks: ['Consumer Goods - Other Consumer Goods'] },
 ];
+// What they haul, or, left blank, the business class.
+const hauled = (r) => String(r.operations.whatHaul ?? '').trim() || String(r.operations.businessClass ?? '');
 const commodities = (r) => COMMODITIES.find((c) => c.test(r))?.picks.join('; ') ?? null;
 
 // Motor truck general liability: the intake's GL request (coverage.gl, never coverage.hasGl, GL the
