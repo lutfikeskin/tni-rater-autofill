@@ -446,9 +446,10 @@ test('progressive: fixes from the first live usage log', () => {
   const commercial = structuredClone(record);
   commercial.priorInsurance[0].type = 'Commercial Auto';
   assert.equal(buildPlan(commercial, carrier).find((s) => s.q === '198').value, true);
+  // Without a limit too (TNI, 2026-10-26: answer to PR question 9: any box filled is proof of prior).
   const noLimit = structuredClone(commercial);
   noLimit.priorInsurance[0].limit = null;
-  assert.equal(buildPlan(noLimit, carrier).find((s) => s.q === '198').value, false);
+  assert.equal(buildPlan(noLimit, carrier).find((s) => s.q === '198').value, true);
   const other = structuredClone(commercial);
   other.priorInsurance[0].carrier = 'GEICO';
   assert.equal(buildPlan(other, carrier).find((s) => s.q === '198').value, false);
@@ -615,6 +616,34 @@ test('"no POP" or "No" as the carrier without an expiration date is no prior, wh
   assert.ok(!noPriorInsurance(dated.record.priorInsurance[0]));
   const named = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: 'Nationwide', ins_limit_1: 'State Minimum', ins_exp_1: '' }, { today: new Date('2026-10-09') });
   assert.equal(named.record.priorInsurance[0].carrier, 'Nationwide');
+});
+
+// TNI, 2026-10-26 (answers to PR #189's questions 9 and 18): the intake check screen, shown when the
+// intake loads and before any carrier page, says in red when the current insurance is a commercial
+// auto policy with a carrier the panel quotes (GEICO, Progressive: util.js sameCarrier), so the agent
+// doesn't fill that carrier's pages for nothing. The intake isn't tied to one carrier: it names it.
+test('the intake check says when the current commercial auto policy is with GEICO or Progressive', () => {
+  const read = (type, carrier, exp = '12/31/2026') => normalizeIntake({ ...raw, ins_type_1: type, ins_carrier_1: carrier, ins_limit_1: '$1M CSL', ins_exp_1: exp }, { today: new Date('2026-10-26') })
+    .warnings.filter((w) => w.code === 'prior.carrier-is-quoted');
+  for (const [carrier, name] of [['GEICO', 'GEICO'], ['Gieco', 'GEICO'], ['Progresive', 'Progressive'], ['Progressive Commercial', 'Progressive']]) {
+    const said = read('Commercial Auto', carrier);
+    assert.equal(said.length, 1, carrier);
+    assert.deepEqual([said[0].level, said[0].path, said[0].alert], ['check', 'priorInsurance[0].carrier', true], carrier);
+    assert.match(said[0].msg, new RegExp(`^Current insurance is with ${name}: a ${name} quote may be declined or routed\\.`), carrier);
+    if (carrier !== name) assert.doesNotMatch(said[0].msg, new RegExp(carrier), 'named as the carrier, not as the intake spells it');
+  }
+  // Undated, a policy of no type (only a warning), and expired (as the carrier page's card): said too.
+  // Expired and of no type with Progressive too, whose own question is then No (T10).
+  for (const [type, carrier, exp] of [['Commercial Auto', 'GEICO', ''], ['Select*', 'GEICO', '12/31/2026'], ['Commercial Auto', 'Progressive', '01/31/2026'],
+    ['Select*', 'Progressive', '01/31/2026']]) {
+    assert.equal(read(type, carrier, exp).length, 1, `${type} ${carrier} ${exp}`);
+  }
+  // Not: a personal auto, GL, cargo or other policy with it, another insurer, no prior insurance.
+  for (const type of ['Personal Auto', 'General Liability', 'Cargo', 'Other']) assert.deepEqual(read(type, 'GEICO'), [], type);
+  for (const carrier of ['Gainsco', 'Protective', 'Other Mutual']) assert.deepEqual(read('Commercial Auto', carrier), [], carrier);
+  assert.deepEqual(read('Commercial Auto', 'No GEICO', ''), [], 'no prior insurance');
+  // The sample intake's Progressive personal auto policy: nothing.
+  assert.ok(!warnings.some((w) => w.code === 'prior.carrier-is-quoted'));
 });
 
 test('blank years in business and year established: a warning, and the record stays blank', () => {

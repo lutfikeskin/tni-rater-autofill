@@ -5,7 +5,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, noPriorInsurance, ownerRow, ownerRowNameDiffers, set, companyName, priorInsuranceAssumed, priorPolicyExpired, priorPolicyNotAuto } from './util.js';
+import { STATES, noPriorInsurance, ownerRow, ownerRowNameDiffers, set, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyNotAuto } from './util.js';
 
 /** @import { IntakeResult } from '../types.js' */
 
@@ -826,6 +826,16 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     info('prior.none', 'priorInsurance', `Current insurance says "${carrierAsWritten}": treated as not currently insured.`);
   } else if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
+    // The current commercial auto policy is with a carrier the panel quotes (TNI, 2026-10-26: answer
+    // to PR question 9: said on the intake check screen, before any carrier page, so the agent
+    // doesn't fill that carrier's pages for nothing; question 18: commercial auto only, util.js
+    // quotedCarrierPolicy). Named, since an intake isn't tied to one carrier; in red (`alert`), and
+    // a warning only (question 19): filling goes on. The carrier's pages say it again (W44-27).
+    const quoted = quotedCarriersOf(prior);
+    if (quoted.length) {
+      warnings.push({ code: 'prior.carrier-is-quoted', path: 'priorInsurance[0].carrier', level: 'check', alert: true,
+        msg: `Current insurance is with ${quoted.join(' and ')}: a ${quoted.join(' or ')} quote may be declined or routed. Check with the client before filling ${quoted.join(' or ')}'s pages; filling goes on as usual.` });
+    }
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
     // TNI (2026-10-26, W44-29): any box filled is proof of prior insurance, 1-3 years (util.js
     // priorInsuranceAssumed), and the agent is told at the start which boxes are blank.

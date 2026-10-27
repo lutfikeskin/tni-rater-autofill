@@ -254,6 +254,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .checks { display: grid; gap: 8px; }
 .check { background: var(--surface); border: 1px solid var(--warning-line); border-radius: var(--radius-md); padding: 9px 10px; display: grid; gap: 6px; }
 .check .bang { background: var(--warning-soft); color: var(--warning-ink); }
+/* An alert check (prior.carrier-is-quoted): red, as the carrier page's card says it */
+.check.alert { border-color: var(--signal-line); }
+.check.alert .bang { background: var(--signal-soft); color: var(--signal); }
+.check.alert .check-text span { color: var(--signal-dark); }
 .check-text { flex: 1; min-width: 0; display: grid; gap: 1px; }
 .check-text b { font-weight: 600; color: var(--ink-strong); font-size: 13px; }
 .check-text span { font-size: 12px; color: var(--warning-ink); text-wrap: pretty; overflow-wrap: anywhere; }
