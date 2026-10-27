@@ -30,7 +30,8 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, driverExcluded, nonDrivingOwnerRow } from '../util.js';
 import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -44,43 +45,54 @@ const explicitBoolean = (record, path) => {
   return typeof value === 'boolean' ? value : null;
 };
 
-// The business owner, matched to their driver row (for date of birth and a clean name split).
-// An intake saying the owner doesn't drive links no row, whatever the names: the name parts come
-// from the owner box alone and the date of birth stays the agent's (a driver with the owner's
-// surname is another person). The date of birth (`dob`) is the matched driver's, or the first
-// of several drivers matching the owner's name; with none it is the agent's, with a warning
-// (ownerDobNote; TNI, 2026-10-20: never another driver's).
+// The business owner and their driver row (for date of birth and a clean name split). TNI,
+// 2026-10-27 (answer to PR question V4): "The owner is always the first driver on the intake's driver
+// list", Sr or Jr regardless, so the owner's row is the first (util.js ownerRow), whatever its name;
+// the rows after it are ordinary drivers, even with the owner's name. This replaces finding the row
+// by the owner's name (and, of several, T2's exact full name), and the 2026-10-20 rule that an owner
+// no row's name matched got no date of birth: a first row with another name is still the owner's,
+// and the Intake step says so (normalize.js `drivers.owner-name-differs`).
+// - `driver`: the owner's row while the owner drives (as their driver row); none when the intake
+//   says the owner doesn't drive.
+// - `dob` from `dobDriver`: that row, or with the intake's No the owner's row all the same
+//   (util.js nonDrivingOwnerRow; TNI, 2026-10-26: answer to PR question, T3, asked of GEICO, and V2,
+//   2026-10-27: confirmed here and on AmWINS). None with no driver rows: the agent's (ownerDobNote).
+// - The name parts come from the row only when it carries the owner box's name (`named`: the same
+//   words, the owner's first name and surname by util.js ownerIsDriver, the first name repeated in the
+//   sole driver's last-name box, or an owner box holding only the first name); otherwise, and when the
+//   owner doesn't drive, from the owner box (never another person's name: the FL run that put the
+//   first driver in the owner boxes, the 2026-10-08 audit's "Alice Sample" and "Bob Sample").
 export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
-  const candidates = r.applicant.ownerDrives === false ? [] : r.drivers;
-  const fullMatches = candidates.filter((d) => nameKey(full) && nameKey(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''} ${d.suffix ?? ''}`) === nameKey(full));
-  // The owner's surname (or a word of a two-word surname) with a matching first name (util.js).
-  const lastMatches = candidates.filter((d) => ownerIsDriver(full, d));
+  const row = ownerRow(r);
+  const driver = r.applicant.ownerDrives === false ? null : row;
+  const fullMatch = !!driver && !!nameKey(full) && nameKey(`${driver.first ?? ''} ${driver.middle ?? ''} ${driver.last ?? ''} ${driver.suffix ?? ''}`) === nameKey(full);
   // Some intakes repeat the first name in the sole driver's last-name box. Only connect
-  // that DOB when the intake explicitly says the owner drives and the owner's first name agrees.
+  // that row's name when the intake explicitly says the owner drives and the owner's first name agrees.
+  // A blank box, TNI's Yes for the owner-driver question (W44-25), is no evidence of the name.
   const sole = r.drivers.length === 1 ? r.drivers[0] : null;
-  const repeatedFirst = sole && r.applicant.ownerDrives === true && nameKey(sole.first)
+  const repeatedFirst = !!driver && driver === sole && r.applicant.ownerDrives === true && !!nameKey(sole.first)
     && nameKey(sole.first) === nameKey(sole.last)
     && nameKey(sole.first) === nameKey(full.split(/\s+/).slice(0, -1).join(' '));
-  // The owner box sometimes holds only the first name ("IBRAHIM"): the one driver whose first
-  // name starts with it is the owner.
-  const firstOnly = !/\s/.test(full.trim()) && full.trim()
-    ? candidates.filter((d) => (d.first ?? '').trim().split(/\s+/)[0].toLowerCase() === full.trim().toLowerCase()) : [];
-  const driver = fullMatches.length === 1 ? fullMatches[0] : fullMatches.length ? null : lastMatches.length === 1 ? lastMatches[0]
-    : repeatedFirst ? sole : firstOnly.length === 1 ? firstOnly[0] : null;
-  const first = driver?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
-  const dobDriver = driver ?? fullMatches[0] ?? lastMatches[0] ?? null;
-  return { driver, dob: dobDriver?.dob ?? null, dobDriver, first: first || null, middle: driver?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : driver?.last ?? full.split(/\s+/).at(-1) ?? null };
+  // The owner box sometimes holds only the first name ("IBRAHIM"): the row whose first name starts
+  // with it gives the rest of the name.
+  const firstOnly = !!driver && !/\s/.test(full.trim()) && !!full.trim()
+    && (driver.first ?? '').trim().split(/\s+/)[0].toLowerCase() === full.trim().toLowerCase();
+  const named = driver && (fullMatch || ownerIsDriver(full, driver) || repeatedFirst || firstOnly) ? driver : null;
+  const first = named?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
+  const dobDriver = r.applicant.ownerDrives === false ? nonDrivingOwnerRow(r) : driver;
+  return { driver, named, dob: dobDriver?.dob ?? null, dobDriver, first: first || null, middle: named?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : named?.last ?? full.split(/\s+/).at(-1) ?? null };
 }
 
 // The owner's date of birth left to the agent, and why (Progressive and AmWINS).
 export function ownerDobNote(r) {
   const o = owner(r);
   if (o.dob) return null;
-  if (r.applicant.ownerDrives === false) return 'The intake says the owner doesn\'t drive, so no driver row gives their date of birth: enter it yourself.';
   if (o.dobDriver) return 'The owner\'s driver row has no date of birth: enter it yourself.';
-  return `No driver matches the owner "${r.applicant.owner1 ?? ''}": check the names and enter the owner's date of birth yourself.`;
+  if (r.applicant.ownerDrives === false) return 'The intake says the owner doesn\'t drive, and no driver row is theirs (TNI: the owner\'s is the first driver; none on the intake, or set as not excluded in client details), so none gives their date of birth: enter it yourself.';
+  // The owner's row is the first (V4), so only an intake with no driver rows gets here.
+  return 'The intake lists no drivers, so no driver row gives the owner\'s date of birth: enter it yourself.';
 }
 
 // "Is the customer currently insured with Progressive Commercial Auto?" Yes only when the
@@ -160,8 +172,12 @@ const trailerEquipment = (r) => (r.trailerInfo?.equipTrailer > 0 ? r.trailerInfo
 const trailerEquipmentSource = (r) => (r.trailerInfo?.equipTrailer == null ? 'standard' : 'derived');
 
 // A driver the intake marks excluded ("Excluded" in their license-number box, normalize.js; or set
-// in client details). TNI (2026-10-20): the exclude question is Yes for them.
-const excludedDriver = (r, a) => r.drivers?.[a.drivers ?? 0]?.excluded === true;
+// in client details). TNI (2026-10-20): the exclude question is Yes for them. The owner's row when
+// the intake says the owner doesn't drive counts too (TNI, 2026-10-26: answer to PR question, R1:
+// util.js driverExcluded). The owner's row is the first, whatever its name (TNI, 2026-10-27: answer
+// to PR question V4); a later row with the owner's name is excluded only by its own mark. It stays
+// an excluded driver here, also marked over a blank box or a Yes (V3: only GEICO leaves it out).
+const excludedDriver = (r, a) => driverExcluded(r, r.drivers?.[a.drivers ?? 0]);
 
 // TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
 // the driver took a course (or the Additional Notes box does); then it's the agent's.
@@ -718,7 +734,13 @@ export const progressive = {
       { q: '296', source: 'derived', field: 'AccountInput.BusinessOwnerMiddleInitial', ask: 'MIMiddle initial', optional: true, name: 'Owner middle initial', value: (r) => owner(r).middle?.[0] ?? null, ignore: true },
       { q: '297', source: 'derived', field: 'AccountInput.BusinessOwnerLastName', ask: 'Last Name', name: 'Owner last name', value: (r) => owner(r).last },
       { q: '298', field: 'AccountInput.BusinessOwnerSuffix', ask: 'Suffix', optional: true, name: 'Owner suffix (optional)', ignore: true },
-      { q: '29F', field: 'AccountInput.DriverInPolicyIndicator', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives' },
+      // The intake's answer; a blank box is TNI's standard Yes, and an owner whose driver row the
+      // intake marks excluded is not a driver, No (TNI, 2026-10-26, W44-25: util.js ownerDrives).
+      // The owner's row is the first (TNI, 2026-10-27: answer to PR question V4), so a later row with
+      // the owner's name, marked or not, changes nothing: V4 replaces the 2026-10-26 answer that left
+      // the owner's name on several rows, only some excluded, to the agent.
+      { q: '29F', field: 'AccountInput.DriverInPolicyIndicator', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives',
+        source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn },
       { q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
       // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
       { q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
@@ -891,7 +913,9 @@ export const progressive = {
       { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', whenShown: ARMED_FORCES_COURSE,
         ask: 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?', name: 'Armed Forces defensive driving course (standard: No)', kind: 'bool', value: (r) => (militaryCourse(r) ? null : false), note: (r) => (militaryCourse(r) ? `The intake's notes mention a military defensive driving course ("${militaryCourse(r)}"): answer it yourself.` : null) },
       // No: the driver is listed on the intake to be covered. Yes for a driver the intake marks
-      // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver).
+      // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver), and for the
+      // owner's row when the intake says the owner doesn't drive (TNI, 2026-10-26: answer to PR
+      // question, R1): the first row (TNI, 2026-10-27: answer to PR question V4).
       { q: '28C1', source: 'derived', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (No unless the intake marks them excluded)', kind: 'bool', value: excludedDriver },
       // The claims box's Yes or No; neither: TNI's standard No unless the notes mention one (hasClaims, 2026-10-19).
       { q: '28F5', source: hasClaimsSource, field: 'DriverInput.AnyAccidentsViolationsPastExpYears', label: '^has this driver had any accidents claims or violations in the past', path: 'claims.hasClaims', name: 'Accidents / claims / violations (standard: No unless the intake says otherwise)', kind: 'bool', value: hasClaims, note: hasClaimsNote },

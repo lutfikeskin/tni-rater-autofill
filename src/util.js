@@ -76,13 +76,123 @@ export function nameWords(name) {
 // too: "SAMPLE EXAMPLO JR"), or the owner's last word is the driver's surname or one of its words
 // (two-word surnames: "CAMPELO KRAYCHETE") and the owner's first name is one of the driver's given
 // names. A surname alone is a family, not a person: owner "Alice Sample" is not driver "Bob
-// Sample" (nor "Bob Jones Sample").
+// Sample" (nor "Bob Jones Sample"). It says whether a row carries the owner's name, not which row is
+// the owner's: that is the first (ownerRow).
 export function ownerIsDriver(ownerName, d) {
   const owner = nameWords(ownerName);
   if (!owner.length || !d) return false;
   const driver = nameWords(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''} ${d.suffix ?? ''}`);
   if (owner.length === driver.length && [...owner].sort().join(' ') === [...driver].sort().join(' ')) return true;
   return nameWords(d.last).includes(owner.at(-1)) && nameWords(`${d.first ?? ''} ${d.middle ?? ''}`).includes(owner[0]);
+}
+
+// The owner's own driver row: the first row of the intake's driver list. TNI, 2026-10-27 (answer to
+// PR question V4): "The owner is always the first driver on the intake's driver list", Sr or Jr
+// regardless. The owner's details (date of birth, marital status, license state, CDL), the
+// "Excluded" mark and, on GEICO, the relationship Owner come from it; the rows after it are ordinary
+// drivers and employees, even with the owner's name. Its name differing from the owner box's keeps
+// it the owner, with an Intake-step check (ownerRowNameDiffers). This replaces the owner's row by
+// name (T2's exact full name of several, and the agent's with none). null with no driver rows.
+/** @returns {any} */
+export function ownerRow(r) {
+  return r?.drivers?.[0] ?? null;
+}
+
+// The owner's row (the first, ownerRow) whose name isn't the owner box's (ownerIsDriver), nor the
+// owner box's single word as its first name (an owner box holding only the first name): the row is
+// still the owner (TNI, 2026-10-27: answer to PR question V4), and the Intake step says it was taken
+// as the owner (normalize.js `drivers.owner-name-differs`). A Sr or Jr, or a middle name, on the row
+// is the owner's name. false for a blank owner box (no name to compare) or no driver rows.
+/** @param {any} r @returns {boolean} */
+export function ownerRowNameDiffers(r) {
+  const d = ownerRow(r);
+  const owner = nameWords(r?.applicant?.owner1);
+  if (!d || !owner.length || ownerIsDriver(r.applicant.owner1, d)) return false;
+  return !(owner.length === 1 && nameWords(d.first)[0] === owner[0]);
+}
+
+// The owner's row while the intake says the owner doesn't drive (`applicant.ownerDrives` No): the
+// first row (ownerRow; TNI, 2026-10-27: answer to PR question V4), unless the agent set its Excluded
+// driver to No in client details (the agent's correction stands). It is excluded (driverExcluded:
+// R1), and the owner's details come from it (progressive.js owner, geico.js ownerDetails: T3, and V2
+// on Progressive and AmWINS). null for none.
+/** @returns {any} */
+export function nonDrivingOwnerRow(r) {
+  if (r?.applicant?.ownerDrives !== false) return null;
+  const d = ownerRow(r);
+  return d && d.excluded !== false ? d : null;
+}
+
+// A driver row the quote treats as excluded, on every carrier (Progressive's exclude question Yes,
+// AmWINS' "(Excluded)" after the license number; GEICO's quote leaves the owner's row out and asks
+// nothing about another's):
+// - the intake marks it ("Excluded" in the license-number box, normalize.js licenseBox:
+//   `drivers[].excluded` true), or the agent sets it in client details;
+// - or it is the owner's row and the intake says the owner doesn't drive (`applicant.ownerDrives`
+//   No). TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner
+//   drives; if the owner's row is marked Excluded, or the answer is No, the owner is excluded. The
+//   owner's row is the first (TNI, 2026-10-27: answer to PR question V4: nonDrivingOwnerRow; before,
+//   T2's row by the owner's exact full name). The Intake step names it (normalize.js
+//   `drivers.owner-excluded`). GEICO's quote leaves the owner's row out (T1, V3: geico.js
+//   omittedDriver).
+// Derived here rather than marked on the record at reading, so the record keeps the intake as read
+// (the panel, the usage log and the warehouse show what the intake says) and an edit of either box
+// in client details applies at quote time. A row's own No (`excluded` false, which only the agent
+// sets: the intake leaves it null) is the agent's correction and stands. Other drivers are never
+// affected.
+/** @param {any} r @param {any} d @returns {boolean} */
+export function driverExcluded(r, d) {
+  if (!d) return false;
+  if (d.excluded != null) return d.excluded === true;
+  return d === nonDrivingOwnerRow(r);
+}
+
+// Excluded only because the owner doesn't drive (driverExcluded), not by the row's own mark: what
+// the carriers' notes and warnings say then.
+/** @param {any} r @param {any} d @returns {boolean} */
+export function ownerRowExcluded(r, d) {
+  return driverExcluded(r, d) && d.excluded !== true;
+}
+
+// The owner is an excluded driver: the owner's row (the first: TNI, 2026-10-27, answer to PR
+// question V4) is excluded, marked so or because the intake says the owner doesn't drive. No driver
+// rows is no exclusion. A later row with the owner's name, marked or not, is an ordinary driver: it
+// never makes the owner excluded, nor leaves whether the owner drives to the agent (V4 replaces the
+// 2026-10-26 answer for the owner's name on several rows, only some excluded: the first row decides).
+export function ownerExcluded(r) {
+  return driverExcluded(r, ownerRow(r));
+}
+
+// Whether the owner is a driver on the policy, wherever a carrier asks it (GEICO's Business & Owner
+// Info and Add Driver, Progressive's Business Owner Info; AmWINS doesn't ask). TNI, 2026-10-26
+// (W44-25): "Owner Drivers if not excluded, in every case". The intake's No stays No, and makes the
+// owner's driver row an excluded driver (driverExcluded; TNI, 2026-10-26: answer to PR question,
+// R1); an owner whose driver row (the first: TNI, 2026-10-27, V4) the intake marks excluded is not a
+// driver, No, also over the intake's Yes, with a warning the agent confirms (ownerDrivesWarn; TNI,
+// 2026-10-26: answer to PR question); otherwise Yes: the intake's, or TNI's standard for a blank box.
+// The record keeps the box as read (null when blank), so the answer's source stays right
+// (ownerDrivesSource).
+/** @returns {boolean} */
+export function ownerDrives(r) {
+  if (r?.applicant?.ownerDrives === false) return false;
+  return !ownerExcluded(r);
+}
+
+// Where ownerDrives' answer comes from (plan.js `source`): the intake's box when it answers and the
+// answer stands; the exclusion when it makes the owner not a driver over a blank box or a Yes
+// (`derived`); TNI's standard for a blank box.
+export function ownerDrivesSource(r) {
+  const said = r?.applicant?.ownerDrives;
+  if (said === false) return 'intake';
+  if (ownerExcluded(r)) return 'derived';
+  return said === true ? 'intake' : 'standard';
+}
+
+// The intake says the owner drives but marks their driver row excluded: ownerDrives is No, and the
+// agent confirms it.
+export function ownerDrivesWarn(r) {
+  return r?.applicant?.ownerDrives === true && ownerExcluded(r)
+    ? 'The intake says the owner drives, but marks their driver row excluded: answered No (TNI: an excluded owner isn\'t a driver). Confirm it with the client.' : null;
 }
 
 // A company-name box saying there is no company ("NO", "N/A", "N.A.", "None.", "No company"): the

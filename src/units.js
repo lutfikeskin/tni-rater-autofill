@@ -30,7 +30,9 @@ const MARKER = { vehicles: 'vehicleEntered', trailers: 'trailerEntered', drivers
 // unit, and `done` the quote's done actions: the unit to add next, `adding` ({ list, index }), by the
 // intake's order (vehicles, then trailers), and the `marks` to add to the done actions
 // (`<unit>Entered:<i>`, as Progressive's are). A unit is on the quote once a fill answered a form for
-// it or the list shows it; the driver GEICO lists itself (listedDriver) is never added. Nothing is
+// it or the list shows it; the driver GEICO lists itself (listedDriver) is never added, and the one
+// its quote leaves out (omittedDriver: the owner's row, the first, when the intake says the owner
+// doesn't drive or marks that row Excluded, TNI 2026-10-26 and 2026-10-27, T1, V3, V4) is no unit of the list at all, neither added nor counted. Nothing is
 // added while the list holds as many units as the intake or more. A unit the list can't be read for
 // (no VIN, a name another driver's holds), while the list has a row no intake unit is known to be
 // on, may be that row (added by hand): it is taken as on the quote, left to the agent, never added
@@ -48,11 +50,15 @@ export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = 
   const spec = specs[at];
   const shown = seen.lists?.[at] ?? null;
   const listed = spec.lists.includes('drivers') ? carrier.listedDriver?.(record) ?? -1 : -1;
+  const omitted = spec.lists.includes('drivers') ? carrier.omittedDriver?.(record) ?? -1 : -1;
   const bound = (list, i) => Object.values(unitForms[list] ?? {}).includes(i);
   const units = [];
   let offset = 0;
   for (const list of spec.lists) {
-    (record[list] ?? []).forEach((_, i) => units.push({ list, i, item: spec.items[offset + i], shown: !!shown?.shown?.[offset + i] }));
+    (record[list] ?? []).forEach((_, i) => {
+      if (list === 'drivers' && i === omitted) return;
+      units.push({ list, i, item: spec.items[offset + i], shown: !!shown?.shown?.[offset + i] });
+    });
     offset += record[list]?.length ?? 0;
   }
   const mark = (u) => `${MARKER[u.list]}:${u.i}`;
@@ -75,7 +81,8 @@ export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = 
 
 // A unit the list on screen doesn't have that no helper of `plan` adds: unitToAdd's `adding` (`next`)
 // when the plan built for it, its clicks allowed, has no action its marker finishes (doneWhen):
-// GEICO's Add Driver while the owner's driver rows are unknown (driversKnown). The panel names it
+// GEICO's Add Driver while the panel's driver is another one (no form read on the page yet; GEICO's
+// own driver rows are known whenever the intake has a driver: W44-25, V4). The panel names it
 // as left for the agent instead of saying nothing (W44-01, OH 2026-10-26: the quote printed with one
 // of the intake's two drivers). Null otherwise, and off the list (a unit's form on screen).
 export function unitMissing(next, plan) {

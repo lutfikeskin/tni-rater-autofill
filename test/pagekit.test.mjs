@@ -8,6 +8,7 @@ import { collectItems } from '../src/ai/common.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
+import { advanceFor } from '../src/units.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
 import { assistContextKey } from '../src/ai/common.js';
 
@@ -6414,6 +6415,38 @@ test('a Continue kept to steps, never inside the chooser, and continued per form
   p = page('Business Class & USDOT');
   report = await p.h.kit.fill(plan, { maxRounds: 4, advance: { text: '^next$' } });
   assert.deepEqual(plain([p.clicks, report.advanceKey ?? null]), [['Next'], null]);
+});
+
+// TNI, 2026-10-27 (answer to PR question V1): on GEICO, the owner the intake's only driver and not
+// driving, the fill adds no driver, and the empty driver list's Looks Good would be clicked. GEICO's
+// `noOtherDriver` item, which has no button, is a "needs you" blocker on Drivers & Incidents instead:
+// Continue (Looks Good) waits for the agent.
+test('GEICO\'s owner the only driver, not driving (V1): a needs-you item on Drivers & Incidents holds Looks Good', async () => {
+  const record = { applicant: { owner1: 'Pat Owner', ownerDrives: false }, operations: {}, garaging: {}, coverage: {}, claims: {}, notes: {}, priorInsurance: [],
+    vehicles: [], trailers: [], drivers: [{ first: 'Pat', last: 'Owner', excluded: null }] };
+  const steps = (r) => buildPlan(r, geico, { vehicles: 0, drivers: 0, trailers: 0 }).filter((s) => s.kind === 'action' && s.action === 'noOtherDriver');
+  const page = () => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Drivers & Incidents');
+    const clicks = [];
+    const looksGood = gdsButton('Looks Good');
+    looksGood.button.onclick = () => clicks.push('Looks Good');
+    h.document.body.append(looksGood.host);
+    return { h, clicks };
+  };
+  // The list holds every unit GEICO's quote has (none): Looks Good is offered (`unitsListed`).
+  const advance = advanceFor(geico, true);
+  let p = page();
+  let report = await p.h.kit.fill(steps(record), { maxRounds: 4, advance });
+  assert.match(plain(report.noData)[0]?.note ?? '', /no driver besides the owner, who doesn't drive/);
+  assert.ok(report.blockers.includes('needs you: Drivers'), Array.from(report.blockers).join(' | '));
+  assert.deepEqual(plain([p.clicks, report.advanced ?? null]), [[], null]);
+  // Counterexample: another driver to add, no item: Looks Good is clicked once the list is complete.
+  const two = { ...record, drivers: [...record.drivers, { first: 'Casey', last: 'Example', excluded: null }] };
+  assert.deepEqual(steps(two), []);
+  p = page();
+  report = await p.h.kit.fill(steps(two), { maxRounds: 4, advance });
+  assert.deepEqual(plain(p.clicks), ['Looks Good']);
 });
 
 // GEICO draws a question a moment after an answer (the USDOT record's address check, after the

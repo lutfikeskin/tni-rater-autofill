@@ -640,19 +640,43 @@ test('AmWINS pages are recognised as a carrier, not as practice', () => {
 test('an owner whose surname has two words is found in the driver list', () => {
   const people = { ...raw, owner_drives: true, owner_name_1: 'SAMPLE VINICIUS TESTA EXAMPLO',
     drv_first_1: 'SAMPLE VINICIUS', drv_last_1: 'TESTA EXAMPLO', drv_first_2: '', drv_last_2: '', drv_first_3: '', drv_last_3: '', drv_first_4: '', drv_last_4: '' };
+  // The first driver is the owner (TNI, 2026-10-27: answer to PR question V4): a first row under
+  // another name is still the owner, with the check `drivers.owner-name-differs` (before V4: the
+  // owner wasn't in the driver list, `drivers.owner-not-listed`, which now needs no driver rows).
+  const differs = (r) => r.warnings.some((w) => w.code === 'drivers.owner-name-differs');
+  const notListed = (r) => r.warnings.some((w) => w.code === 'drivers.owner-not-listed');
   const listed = normalizeIntake(people, { today: new Date('2026-09-30') });
-  assert.ok(!listed.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'same person across the name boxes');
+  assert.ok(!differs(listed) && !notListed(listed), 'same person across the name boxes');
   const lastOnly = normalizeIntake({ ...people, owner_name_1: 'SAMPLE EXAMPLO' }, { today: new Date('2026-09-30') });
-  assert.ok(!lastOnly.warnings.some((w) => w.code === 'drivers.owner-not-listed'), "owner's surname is one of the driver's last-name words");
+  assert.ok(!differs(lastOnly), "owner's surname is one of the driver's last-name words");
   const other = normalizeIntake({ ...people, owner_name_1: 'SOMEONE ELSE' }, { today: new Date('2026-09-30') });
-  assert.ok(other.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a different person still warns');
+  assert.ok(differs(other) && !notListed(other), 'a different name still warns');
   const sharedWord = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO' }, { today: new Date('2026-09-30') });
-  assert.ok(sharedWord.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a surname word with another first name still warns');
+  assert.ok(differs(sharedWord), 'a surname word with another first name still warns');
   // Audit 2026-10-08: a one-word surname alone linked another person ("Alice Sample" to "Bob Sample").
   const family = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO', drv_first_1: 'BOB', drv_last_1: 'EXAMPLO' }, { today: new Date('2026-09-30') });
-  assert.ok(family.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'the same one-word surname with another first name is another person');
+  assert.ok(differs(family), 'the same one-word surname with another first name is another name');
   const same = normalizeIntake({ ...people, owner_name_1: 'BOB EXAMPLO', drv_first_1: 'BOB', drv_last_1: 'EXAMPLO' }, { today: new Date('2026-09-30') });
-  assert.ok(!same.warnings.some((w) => w.code === 'drivers.owner-not-listed'));
+  assert.ok(!differs(same));
+});
+
+// TNI, 2026-10-26 (W44-25): a blank "owner drives" box is TNI's Yes on the carriers, so an owner
+// missing from the driver list is listed as a driver without their details, as with the intake's
+// Yes. The record keeps the box as read. Since the owner is always the first driver (TNI, 2026-10-27:
+// answer to PR question V4), the owner is missing only from an intake with no driver rows; a first
+// row under another name is the owner, with its own check (the V4 test below).
+test('a blank "owner drives" box: the record stays blank, and an owner missing from the driver list is a check', () => {
+  const noDrivers = Object.fromEntries(Object.keys(raw).filter((k) => /^drv_/.test(k)).map((k) => [k, '']));
+  const people = { ...raw, ...noDrivers, owner_name_1: 'SOMEONE ELSE' };
+  const read = (extra) => normalizeIntake({ ...people, ...extra }, { today: new Date('2026-09-30') });
+  const notListed = (r) => r.warnings.find((w) => w.code === 'drivers.owner-not-listed');
+  const blank = read({ owner_drives: '' });
+  assert.equal(blank.record.applicant.ownerDrives, null, 'blank stays blank on the record');
+  assert.deepEqual([notListed(blank)?.level, notListed(blank)?.path], ['check', 'drivers']);
+  assert.match(notListed(blank).msg, /"Owner drives" is blank.*TNI's standard Yes.*"SOMEONE ELSE" isn't in the driver list/);
+  assert.match(notListed(read({ owner_drives: true })).msg, /^Owner drives, but "SOMEONE ELSE" isn't in the driver list\.$/);
+  assert.equal(notListed(read({ owner_drives: false })), undefined, 'the intake\'s No: no driver details needed');
+  assert.equal(notListed(read({ owner_drives: '', drv_first_1: 'SAMPLE', drv_last_1: 'EXAMPLO' })), undefined, 'a driver row: the owner\'s, the first');
 });
 
 // AR 2026-10-19 (live run): a driver's first-name box read "<first>, JR". Progressive's name box
@@ -746,6 +770,120 @@ test('"Excluded" in a license-number box marks the driver excluded and is left o
   const said = (box) => one(box).warnings.find((w) => w.code === 'license.excluded').msg;
   assert.match(said('12345678 EXCLUDED'), /Progressive's exclude question gets Yes; on AmWINS, which has no such question, their license number gets "\(Excluded\)" after it\./);
   assert.match(said('Excluded'), /on AmWINS, which has no such question, type "\(Excluded\)" after the license number you enter\./);
+});
+
+// TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives;
+// if the owner's row is marked Excluded, or the answer is No, the owner is excluded. So the intake's
+// No makes the owner's driver row an excluded driver on every carrier, as an "Excluded" mark does,
+// while the record keeps the row as read. The owner's row is the first (TNI, 2026-10-27: answer to PR
+// question V4, which replaces T2's row by the owner's exact full name and its `drivers.owner-unclear`).
+test('"owner drives" No: the owner\'s driver row, the first, is an excluded driver on every carrier; blank, Yes and other drivers unchanged', () => {
+  const today = { today: new Date('2026-09-30') };
+  // The sample intake's owner is its driver 1 (the same name), driver 2 someone else.
+  const read = (extra) => normalizeIntake({ ...raw, ...extra }, today);
+  const item = (r, i = 0) => r.warnings.find((w) => w.code === 'drivers.owner-excluded' && w.path === `drivers[${i}].excluded`);
+  const exclude = (r, drivers) => buildPlan(r.record, progressive, { drivers }).find((s) => s.q === '28C1').value;
+  const amwinsLicense = (r, drivers) => buildPlan(r.record, amwins, { drivers }).find((s) => s.path === `drivers[${drivers}].licenseNumber`);
+  const no = read({ owner_drives: 'No' });
+  // The record keeps the intake as read: the row isn't marked, the box stays No.
+  assert.deepEqual([no.record.applicant.ownerDrives, no.record.drivers[0].excluded, no.record.drivers[1].excluded], [false, null, null]);
+  // The Intake step says so, on the owner's row only, and what each carrier gets.
+  assert.equal(item(no)?.level, 'check');
+  assert.match(item(no).msg, /"Owner drives" is No, and the first driver is the owner.*excluded.*Progressive's exclude question gets Yes; on AmWINS, which has no such question, their license number gets "\(Excluded\)" after it\..*GEICO/);
+  // GEICO's quote leaves the owner's row out (TNI, 2026-10-26: answer to PR question, T1).
+  assert.match(item(no).msg, /GEICO's quote leaves the owner out: the fill doesn't add this driver/);
+  assert.doesNotMatch(item(no).msg, /filled with a warning/);
+  assert.equal(item(no, 1), undefined, 'another driver is never affected');
+  assert.match(item(no).msg, /To keep this driver on the quote, set Excluded driver to No\.$/);
+  // The owner's name on two rows (a Sr and a Jr), in either order: the No decides, and only the first
+  // row is excluded (V4; before, T2's row with exactly the owner's full name, and the agent's for a Sr
+  // and a Jr neither exactly it).
+  for (const extra of [{ drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Jr' }, { drv_last_1: 'Sample Sr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Jr' },
+    { drv_last_1: 'Sample Jr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Sr' }]) {
+    const family = read({ owner_drives: 'No', ...extra });
+    const why = JSON.stringify(extra);
+    assert.ok(item(family, 0), why);
+    assert.equal(item(family, 1), undefined, `${why}: the second row isn't the owner`);
+    assert.ok(!family.warnings.some((w) => w.code === 'drivers.owner-unclear'), `${why}: no unclear rows any more`);
+    assert.deepEqual([exclude(family, 0), exclude(family, 1)], [true, false], why);
+    assert.deepEqual([amwinsLicense(family, 0).value, amwinsLicense(family, 1).value], ['ILS12345678901 (Excluded)', 'E98765432101'], why);
+  }
+  // The owner's date of birth on AmWINS: the owner's row's (T3, asked of GEICO; AmWINS asks it too: V2).
+  const ownerDob = (r) => buildPlan(r.record, amwins, {}).find((s) => s.selector === '#ownerDob');
+  assert.equal(ownerDob(no).value, no.record.drivers[0].dob);
+  const second = read({ owner_drives: 'No', drv_last_1: 'Sample Jr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample' });
+  assert.equal(ownerDob(second).value, second.record.drivers[0].dob, 'the first row\'s, even with the exact name on the second');
+  // Progressive: the exclude question Yes for the owner's row, No for the other driver.
+  assert.deepEqual([exclude(no, 0), exclude(no, 1)], [true, false]);
+  // AmWINS: "(Excluded)" after the owner's license number, the other driver's as written.
+  assert.deepEqual([amwinsLicense(no, 0).value, amwinsLicense(no, 0).source], ['ILS12345678901 (Excluded)', 'derived']);
+  assert.equal(amwinsLicense(no, 1).value, 'E98765432101');
+  // No license number on the owner's row: the box is the agent's, with the reason.
+  const noNumber = read({ owner_drives: 'No', drv_lic_1: '' });
+  assert.equal(amwinsLicense(noNumber, 0).value, null);
+  assert.match(amwinsLicense(noNumber, 0).note, /owner doesn't drive.*type their license number yourself, then "\(Excluded\)" after it/);
+  assert.match(item(noNumber).msg, /type "\(Excluded\)" after the license number you enter/);
+  // A row the intake marks excluded keeps its own item (license.excluded), not this one.
+  const marked = read({ owner_drives: 'No', drv_lic_1: 'IL - S12345678901 EXCLUDED' });
+  assert.deepEqual([item(marked), exclude(marked, 0)], [undefined, true]);
+  // ... which says GEICO's quote leaves the owner out (T1), also over a blank box or a Yes (TNI,
+  // 2026-10-27: answer to PR question V3; before, "filled with a warning"); another driver's mark
+  // keeps GEICO's warning.
+  const licenseItem = (r, i) => r.warnings.find((w) => w.code === 'license.excluded' && w.path === `drivers[${i}].excluded`).msg;
+  for (const box of ['No', '', 'Yes']) {
+    const r = read({ owner_drives: box, drv_lic_1: 'IL - S12345678901 EXCLUDED' });
+    assert.match(licenseItem(r, 0), /GEICO's quote leaves the owner out: the fill doesn't add this driver/, box);
+    assert.doesNotMatch(licenseItem(r, 0), /filled with a warning/, box);
+  }
+  assert.match(licenseItem(read({ owner_drives: 'No', drv_lic_2: 'E98765432101 EXCLUDED' }), 1), /GEICO asks nothing about it: the driver's answers are filled with a warning/);
+  assert.match(licenseItem(read({ owner_drives: '', drv_lic_2: 'E98765432101 EXCLUDED' }), 1), /filled with a warning/);
+  // Counterexamples: a blank box or the intake's Yes leaves the owner's unmarked row a listed driver.
+  for (const box of ['', 'Yes']) {
+    const r = read({ owner_drives: box });
+    assert.deepEqual([item(r), exclude(r, 0), exclude(r, 1), amwinsLicense(r, 0).value], [undefined, false, false, 'ILS12345678901'], box);
+  }
+  // No with an owner no driver row's name matches: the first row is the owner's all the same (V4;
+  // before, nobody was excluded), with the name check (the V4 test below).
+  const other = read({ owner_drives: 'No', owner_name_1: 'Someone Else' });
+  assert.deepEqual([!!item(other), item(other, 1), exclude(other, 0), exclude(other, 1)], [true, undefined, true, false]);
+});
+
+// TNI, 2026-10-27 (answer to PR question V4): the owner is always the first driver on the intake's
+// list. A first row whose name isn't the owner's is still the owner, with a check saying it was taken
+// as the owner; a Sr, a Jr, a middle name, or an owner box holding only the first name is the owner's
+// name. The item names no one (the row is its path).
+test('the owner is the first driver (V4): a first row with another name is taken as the owner, with a check', () => {
+  const today = { today: new Date('2026-09-30') };
+  const read = (extra) => normalizeIntake({ ...raw, ...extra }, today);
+  const item = (r) => r.warnings.find((w) => w.code === 'drivers.owner-name-differs');
+  const excludedItem = (r, i) => r.warnings.find((w) => w.code === 'drivers.owner-excluded' && w.path === `drivers[${i}].excluded`);
+  const exclude = (r, drivers) => buildPlan(r.record, progressive, { drivers }).find((s) => s.q === '28C1').value;
+  // The sample intake: the owner box's name is driver 1's.
+  assert.equal(item(read({})), undefined);
+  // A first row with another name: the owner, with the check.
+  const other = read({ drv_first_1: 'Riley', drv_last_1: 'Example' });
+  assert.deepEqual([item(other)?.level, item(other)?.path], ['check', 'drivers[0]']);
+  assert.match(item(other).msg, /first driver's name differs from the owner's.*taken as the owner/);
+  assert.doesNotMatch(item(other).msg, /Riley|Example|Jordan|Avery|Sample/, 'no names in the item');
+  assert.equal(other.warnings.find((w) => w.code === 'drivers.owner-not-listed'), undefined, 'the owner is on the list: the first row');
+  // The owner's name on row 2 only: row 1 is still the owner (the check), row 2 an ordinary driver.
+  const second = read({ owner_drives: 'No', drv_first_1: 'Riley', drv_last_1: 'Example', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample' });
+  assert.ok(item(second));
+  assert.deepEqual([!!excludedItem(second, 0), !!excludedItem(second, 1), exclude(second, 0), exclude(second, 1)], [true, false, true, false]);
+  // A Sr and a Jr in either order, two rows with the exact name, a one-word owner box: no check.
+  for (const extra of [{ drv_last_1: 'Sample Sr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Jr' },
+    { drv_last_1: 'Sample Jr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Sr' },
+    { drv_first_2: 'Jordan Avery', drv_last_2: 'Sample' }, { owner_name_1: 'Jordan' }]) {
+    assert.equal(item(read(extra)), undefined, JSON.stringify(extra));
+  }
+  // Another first name with the owner's surname is another name: the check.
+  assert.ok(item(read({ owner_name_1: 'Alice Sample' })));
+  // A blank owner box: no name to compare, no check.
+  assert.equal(item(read({ owner_name_1: '' })), undefined);
+  // No driver rows: no owner row, and no check; the owner missing from the list is the item it was.
+  const noRows = read({ ...Object.fromEntries(Object.keys(raw).filter((k) => /^drv_/.test(k)).map((k) => [k, ''])), owner_drives: 'Yes' });
+  assert.deepEqual([noRows.record.drivers.length, item(noRows)], [0, undefined]);
+  assert.ok(noRows.warnings.some((w) => w.code === 'drivers.owner-not-listed'));
 });
 
 // PR #17 review: a mention ("no bobtail") must never become NTL coverage. The agent sets it.

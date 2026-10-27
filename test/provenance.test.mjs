@@ -191,10 +191,12 @@ const READ_INDIRECTLY = {
     'claims.notes': 'normalize.otherNotes (the defensive driver course, a claim the notes mention)',
     'notes.text': 'normalize.ntlUndecided and otherNotes (NTL, the defensive driver course, a claim the notes mention)',
     'coverage.autoLiability': 'normalize.ntlNoDotFilings and ntlDotFilingsHold (an NTL quote: no USDOT number or filings; with auto liability Yes too, they are the agent\'s); otherwise only the liability limit is entered',
+    'drivers[].excluded': 'util.driverExcluded (the exclude question: the intake\'s mark, or the owner\'s row when the owner doesn\'t drive)',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag)',
     'applicant.ownerDrives': 'owner() in progressive.js (the owner\'s driver row)',
+    'drivers[].excluded': 'util.driverExcluded ("(Excluded)" after the license number)',
     'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
     'claims.text': 'normalize.ntlDotFilingsHold (an NTL mention not answered yet holds Filing required and the DOT boxes)',
     'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure) and ntlDotFilingsHold (an NTL mention not answered yet)',
@@ -205,6 +207,7 @@ const READ_INDIRECTLY = {
     'claims.text': 'normalize.ntlUndecided (an NTL mention not answered yet holds the liability coverage, and the USDOT and filings questions)',
     'claims.notes': 'normalize.otherNotes (no physical damage, and a mention that leaves a TNI standard to the agent)',
     'notes.text': 'normalize.ntlUndecided and otherNotes (NTL, no physical damage, a mention that leaves a TNI standard to the agent)',
+    'drivers[].excluded': 'util.driverExcluded (the excluded-driver warning on Add Driver)',
   },
 };
 

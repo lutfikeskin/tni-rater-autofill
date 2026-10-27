@@ -51,6 +51,7 @@
 import { owner, ownerDobNote, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { driverExcluded, ownerRowExcluded } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -76,11 +77,13 @@ const equipment = (r) => (r.operations?.equipVehicle > 0 ? null : false);
 const equipmentSource = (r) => (r.operations?.equipVehicle == null ? 'standard' : 'derived');
 const equipmentNote = (r) => (r.operations?.equipVehicle > 0 ? `The intake gives $${r.operations.equipVehicle.toLocaleString('en-US')} of attached equipment: answer it (and its details) yourself.` : null);
 
-// Owner's full name from their driver row when found (the owner box sometimes has only the first
-// name); a lone middle initial is left out.
+// Owner's full name from their driver row when it carries the owner box's name (progressive.js
+// owner `named`: the owner box sometimes has only the first name); a lone middle initial is left out.
+// A first row with another name is still the owner's row (TNI, 2026-10-27: answer to PR question V4)
+// but gives no name: the owner box's.
 const ownerFull = (r) => {
   const o = owner(r);
-  const first = o.driver?.first ? o.driver.first.replace(/\s+[A-Za-z]\.?$/, '') : o.first;
+  const first = o.named?.first ? o.named.first.replace(/\s+[A-Za-z]\.?$/, '') : o.first;
   const name = [first, o.last].filter(Boolean).join(' ');
   return name || r.applicant.owner1 || null;
 };
@@ -184,13 +187,17 @@ const licenseYearNote = (r, a) => (birthYear(r, a) == null
 // A driver the intake marks excluded ("Excluded" in their license-number box, normalize.js; or set
 // in client details). AmWINS asks nothing about excluding a driver, so TNI (2026-10-20) writes
 // "(Excluded)" after their license number. With no number to write it after, the box is the agent's.
-const excludedDriver = (r, a) => driverOf(r, a)?.excluded === true;
+// The owner's row when the intake says the owner doesn't drive counts too (TNI, 2026-10-26: answer
+// to PR question, R1: util.js driverExcluded): the first row, whatever its name (TNI, 2026-10-27:
+// answer to PR question V4); a later row with the owner's name only by its own mark. The owner's row
+// marked over a blank box or a Yes stays an excluded driver here (V3: only GEICO leaves it out).
+const excludedDriver = (r, a) => driverExcluded(r, driverOf(r, a));
 const licenseNumber = (r, a) => {
   const number = driverOf(r, a)?.licenseNumber ?? null;
   return number && excludedDriver(r, a) ? `${number} (Excluded)` : number;
 };
 const licenseNumberNote = (r, a) => (excludedDriver(r, a) && !driverOf(r, a)?.licenseNumber
-  ? 'The intake marks this driver as excluded and gives no license number: type their license number yourself, then "(Excluded)" after it.' : null);
+  ? `${ownerRowExcluded(r, driverOf(r, a)) ? 'The intake says the owner doesn\'t drive, so this driver, the owner, is excluded (TNI),' : 'The intake marks this driver as excluded'} and gives no license number: type their license number yourself, then "(Excluded)" after it.` : null);
 // Underwriting questions TNI answers No (both sections), by the field names AmWINS uses.
 // The second section's vehicle, MVR and conviction questions, and hazard exposure, have their own
 // rules below.

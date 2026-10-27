@@ -65,6 +65,39 @@ test('a unit list is complete only on screen, with as many rows as the intake an
   assert.equal(unitToAdd(geico, drivers, DRV, { forms: [], lists: [null, { rows: 1, shown: [true, false] }] }).complete, false);
 });
 
+// TNI, 2026-10-26 (answer to PR question, T1): with the intake's "owner drives" No, GEICO's quote
+// leaves the owner's row out. It is never the driver added next, and the list is complete without it.
+test('owner drives No: the owner\'s row is never added, and GEICO\'s driver list is complete without it', () => {
+  const record = (ownerDrives, drivers = [{ first: 'Pat', last: 'Owner' }, { first: 'Casey', last: 'Example' }]) =>
+    ({ applicant: { ownerDrives, owner1: 'Pat Owner' }, vehicles: [], trailers: [], drivers });
+  const list = (rows, shown) => ({ forms: [], lists: [null, { rows, shown }] });
+  const no = record(false);
+  // The list empty: Casey is added next, never the owner.
+  assert.deepEqual(unitToAdd(geico, no, DRV, list(0, [false, false])).adding, { list: 'drivers', index: 1 });
+  // Casey on the list: nothing left to add, and the list holds every driver GEICO's quote has.
+  let out = unitToAdd(geico, no, DRV, list(1, [false, true]));
+  assert.deepEqual([out.adding, out.complete, out.read], [null, true, { rows: 1, units: 1, shown: 1, saved: 0 }]);
+  // A row that isn't Casey (the agent added the owner by hand): not complete, and nothing added.
+  out = unitToAdd(geico, no, DRV, list(1, [true, false]));
+  assert.deepEqual([out.adding, out.complete], [null, false]);
+  // The owner's name on the second row: the first row is the owner's all the same (TNI, 2026-10-27:
+  // answer to PR question V4), so the second is added (before V4: the first, by name).
+  assert.deepEqual(unitToAdd(geico, record(false, [{ first: 'Casey', last: 'Example' }, { first: 'Pat', last: 'Owner' }]), DRV, list(0, [false, false])).adding, { list: 'drivers', index: 1 });
+  // The owner's row marked Excluded over a blank box or a Yes: left out too (TNI, 2026-10-27: answer to
+  // PR question V3), the list complete with Casey on it.
+  for (const box of [null, true]) {
+    const marked = record(box, [{ first: 'Pat', last: 'Owner', excluded: true }, { first: 'Casey', last: 'Example' }]);
+    assert.deepEqual(unitToAdd(geico, marked, DRV, list(0, [false, false])).adding, { list: 'drivers', index: 1 }, String(box));
+    assert.equal(unitToAdd(geico, marked, DRV, list(1, [false, true])).complete, true, String(box));
+  }
+  // Counterexamples: a blank box or the intake's Yes, GEICO lists the owner itself, as a row of its own.
+  for (const box of [null, true]) {
+    assert.deepEqual(unitToAdd(geico, record(box), DRV, list(1, [true, false])).adding, { list: 'drivers', index: 1 }, String(box));
+    assert.equal(unitToAdd(geico, record(box), DRV, list(1, [false, true])).complete, false, String(box));
+    assert.equal(unitToAdd(geico, record(box), DRV, list(2, [true, true])).complete, true, String(box));
+  }
+});
+
 test('a carrier\'s Continue for one fill: its list button only once the list is complete', () => {
   assert.equal(advanceFor({ id: 'none' }), null);
   const amwins = { advance: { text: '^save & continue$' } };
@@ -92,45 +125,101 @@ test('a unit list is complete with every unit shown or saved from a form a fill 
   assert.equal(unitToAdd(geico, record, VEH, { forms: [], lists: [null, null] }, saved).read, null, 'no list: no read');
 });
 
-// W44-01, GEICO OH (2026-10-26): "owner drives" blank, so the extension adds no driver on GEICO's
-// list (driversKnown: the owner may be one of them under another name), and the quote printed with
-// the owner alone while the panel said nothing. The list on screen without an intake driver that no
-// helper of the plan adds is named, as left for the agent.
+// W44-01, GEICO OH (2026-10-26): "owner drives" blank, so the extension added no driver on GEICO's
+// list (driversKnown), and the quote printed with the owner alone while the panel said nothing. Since
+// W44-25 a blank box is TNI's Yes and the owner's row is the first (V4), so the plan adds the other
+// drivers itself. The list on screen without an intake driver that no helper of the plan adds (the
+// picker still on another driver: no form read on the page yet) is named, as left for the agent.
 test('a unit the list doesn\'t have and no helper adds is named; one the plan adds, or off the list, isn\'t', () => {
   const record = { applicant: { ownerDrives: null, owner1: 'Pat Owner' }, garaging: { state: 'OH' }, operations: {}, coverage: {}, claims: {}, priorInsurance: [],
     vehicles: [], trailers: [], drivers: [{ first: 'Pat', last: 'Owner' }, { first: 'Sam', last: 'Second' }] };
   const seen = { forms: [], lists: [null, { rows: 1, shown: [true, false] }] };
   const next = unitToAdd(geico, record, DRV, seen);
   assert.deepEqual([next.adding, next.onList], [{ list: 'drivers', index: 1 }, true]);
-  const planFor = (r, n) => buildPlan(r, geico, { drivers: n.adding.index, vehicles: 0, trailers: 0, adding: { ...n.adding, click: true } });
-  assert.equal(planFor(record, next).some((s) => s.baseAction === 'addDriver'), false, 'the "+" is the agent\'s here');
-  const missing = unitMissing(next, planFor(record, next));
-  assert.deepEqual(missing, { list: 'drivers', index: 1 });
-  const item = unitMissingItem(geico, record, missing);
-  assert.deepEqual([item.label, item.path, item.key], ['Add Driver', 'drivers[1]', null]);
-  assert.match(item.note, /^Sam Second \(driver 2 of the intake\) isn't on GEICO's driver list/);
-  assert.match(item.note, /doesn't say whether the owner drives/);
-  // The owner drives under a name no driver has: the same, with that reason.
+  const planFor = (r, n, drivers = n.adding.index) => buildPlan(r, geico, { drivers, vehicles: 0, trailers: 0, adding: { ...n.adding, click: true } });
+  // The box blank (TNI's Yes: W44-25, the W44-01 case), the intake's Yes, or the owner under a name no
+  // row has (the first row is the owner's: V4): the plan adds driver 2 itself, so nothing is named.
+  const blank = record;
+  const yes = { ...record, applicant: { ownerDrives: true, owner1: 'Pat Owner' } };
   const unmatched = { ...record, applicant: { ownerDrives: true, owner1: 'Someone Else' } };
-  assert.match(unitMissingItem(geico, unmatched, missing).note, /no driver on the intake has the owner's name/);
-  // Owner drives and is driver 1 (the plan adds driver 2 itself): nothing named.
-  const known = { ...record, applicant: { ownerDrives: true, owner1: 'Pat Owner' } };
-  const nextKnown = unitToAdd(geico, known, DRV, seen);
-  assert.deepEqual(nextKnown.adding, { list: 'drivers', index: 1 });
-  assert.equal(unitMissing(nextKnown, planFor(known, nextKnown)), null);
+  for (const [why, r] of [['blank', blank], ['Yes', yes], ['unmatched', unmatched]]) {
+    const n = unitToAdd(geico, r, DRV, seen);
+    assert.deepEqual(n.adding, { list: 'drivers', index: 1 }, why);
+    assert.equal(planFor(r, n).some((s) => s.baseAction === 'addDriver'), true, `${why}: the fill adds driver 2`);
+    assert.equal(unitMissing(n, planFor(r, n)), null, why);
+  }
   // A driver's form on screen, not the list: nothing named (the agent may be adding them).
   const onForm = unitToAdd(geico, record, DRV, { forms: [{ list: 'drivers', id: 'F', blank: true }], lists: [null, null] });
   assert.equal(onForm.onList, false);
   assert.equal(unitMissing(onForm, planFor(record, onForm)), null);
-  // GEICO's driver rows known (the owner doesn't drive), but the picker not on driver 2 (no form read
-  // yet, so the list didn't move it): nothing adds them in this fill, and the note doesn't blame the
-  // owner question.
+  // The picker not on driver 2 (no form read yet, so the list didn't move it): nothing adds them in
+  // this fill. The note says to pick them, and never blames the owner question: with any driver row
+  // GEICO's own are known (driversKnown), the box blank, Yes, No, or the owner under another name.
   const notOwner = { ...record, applicant: { ownerDrives: false, owner1: 'Pat Owner' } };
-  const stayed = unitMissing(nextKnown, buildPlan(notOwner, geico, { drivers: 0, vehicles: 0, trailers: 0, adding: { ...nextKnown.adding, click: true } }));
-  assert.deepEqual(stayed, { list: 'drivers', index: 1 });
-  const stayedNote = unitMissingItem(geico, notOwner, stayed).note;
-  assert.doesNotMatch(stayedNote, /owner/);
-  assert.match(stayedNote, /^Sam Second \(driver 2 of the intake\) isn't on GEICO's driver list: pick them in the panel and Fill again/);
+  const NOTE = 'Sam Second (driver 2 of the intake) isn\'t on GEICO\'s driver list: pick them in the panel and Fill again, or add them with "+" yourself.';
+  for (const [why, r, s] of [['blank', blank, seen], ['Yes', yes, seen], ['unmatched', unmatched, seen], ['No', notOwner, { forms: [], lists: [null, { rows: 0, shown: [false, false] }] }]]) {
+    const n = unitToAdd(geico, r, DRV, s);
+    const stayed = unitMissing(n, planFor(r, n, 0));
+    assert.deepEqual(stayed, { list: 'drivers', index: 1 }, why);
+    const item = unitMissingItem(geico, r, stayed);
+    assert.deepEqual([item.label, item.path, item.key], ['Add Driver', 'drivers[1]', null], why);
+    assert.equal(item.note, NOTE, why);
+  }
   // Every driver listed: nothing to add, nothing named.
   assert.equal(unitMissing(unitToAdd(geico, record, DRV, { forms: [], lists: [null, { rows: 2, shown: [true, true] }] }), []), null);
+});
+
+// The owner's row GEICO's quote leaves out (omittedDriver: the intake's "owner drives" No, TNI
+// 2026-10-26, T1; or the row marked Excluded over a blank box or a Yes, 2026-10-27, V3) is no unit of
+// GEICO's driver list, so the panel never names it missing from the list (W44-01's unitMissing),
+// whatever the list shows or the panel picked. With that owner the intake's only driver (V1) the list
+// has no unit: nothing is named, and noOtherDriver's "needs you" item is what holds Continue.
+test('the owner GEICO\'s quote leaves out is never named missing from its driver list; the only driver (V1): nothing named, noOtherDriver holds Continue', () => {
+  const base = { garaging: { state: 'OH' }, operations: {}, coverage: {}, claims: {}, notes: {}, priorInsurance: [], vehicles: [], trailers: [] };
+  const owner = (excluded) => ({ first: 'Pat', last: 'Owner', excluded });
+  const casey = { first: 'Casey', last: 'Example', excluded: null };
+  const shows = [[false, false], [true, false], [false, true], [true, true]];
+  const planAt = (r, drivers, adding) => buildPlan(r, geico, { drivers, vehicles: 0, trailers: 0, ...(adding ? { adding: { ...adding, click: true } } : {}) });
+  // The box's No (row unmarked); the row marked Excluded over a blank box or a Yes.
+  for (const [box, mark] of [[false, null], [null, true], [true, true]]) {
+    const why = `box ${box}, row ${mark ? 'marked' : 'unmarked'}`;
+    const r = { ...base, applicant: { ownerDrives: box, owner1: 'Pat Owner' }, drivers: [owner(mark), casey] };
+    assert.equal(geico.omittedDriver(r), 0, why);
+    for (const rows of [0, 1, 2]) for (const shown of shows) for (const opts of [{}, { done: new Set(['driverEntered:1']) }, { unitForms: { drivers: { F: 1 } } }]) {
+      const next = unitToAdd(geico, r, DRV, { forms: [], lists: [null, { rows, shown }] }, opts);
+      const at = `${why}, ${rows} rows, shown ${shown}, ${JSON.stringify(opts.unitForms ?? [...(opts.done ?? [])])}`;
+      assert.notEqual(next.adding?.index, 0, `${at}: never the owner's row next`);
+      // Whichever driver the panel has picked, the owner's row is never the one named missing.
+      for (const picked of [0, 1]) {
+        const missing = next.adding ? unitMissing(next, planAt(r, picked, next.adding)) : null;
+        assert.notEqual(missing?.index, 0, `${at}, picked ${picked}`);
+        if (missing) assert.match(unitMissingItem(geico, r, missing).note, /^Casey Example \(driver 2 of the intake\) isn't on GEICO's driver list: pick them/, at);
+      }
+    }
+    // The empty list: Casey is next, added by the plan once picked; with the owner's row picked he is
+    // the one named, never the owner.
+    const next = unitToAdd(geico, r, DRV, { forms: [], lists: [null, { rows: 0, shown: [false, false] }] });
+    assert.deepEqual(next.adding, { list: 'drivers', index: 1 }, why);
+    assert.equal(unitMissing(next, planAt(r, 1, next.adding)), null, why);
+    assert.deepEqual(unitMissing(next, planAt(r, 0, next.adding)), { list: 'drivers', index: 1 }, why);
+    // Casey listed: the list is complete without the owner, nothing named.
+    const done = unitToAdd(geico, r, DRV, { forms: [], lists: [null, { rows: 1, shown: [false, true] }] });
+    assert.deepEqual([done.adding, done.complete, unitMissing(done, planAt(r, 0))], [null, true, null], why);
+  }
+  // V1: the owner who doesn't drive is the only driver. The list has no unit: nothing added or named,
+  // and the plan's noOtherDriver item ("needs you", pagekit.test.mjs) holds Looks Good.
+  for (const [box, mark] of [[false, null], [null, true], [true, true]]) {
+    const why = `only driver: box ${box}, row ${mark ? 'marked' : 'unmarked'}`;
+    const r = { ...base, applicant: { ownerDrives: box, owner1: 'Pat Owner' }, drivers: [owner(mark)] };
+    for (const [rows, shown] of [[0, [false]], [1, [true]], [1, [false]]]) {
+      const next = unitToAdd(geico, r, DRV, { forms: [], lists: [null, { rows, shown }] });
+      assert.equal(next.adding, null, `${why}, ${rows} rows`);
+      assert.equal(unitMissing(next, planAt(r, 0)), null, `${why}, ${rows} rows`);
+    }
+    const plan = planAt(r, 0);
+    assert.ok(!plan.some((s) => s.baseAction === 'addDriver'), `${why}: no "+"`);
+    const item = plan.find((s) => s.kind === 'action' && s.action === 'noOtherDriver');
+    assert.ok(item, `${why}: the needs-you item`);
+    assert.match(item.missing, /no driver besides the owner, who doesn't drive/, why);
+  }
 });
