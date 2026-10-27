@@ -343,6 +343,10 @@ const state = {
   // per page and set of questions, so a refill doesn't ask again.
   aiRun: 0,
   aiCache: new Map(),
+  // The request whose settings change discarded every earlier request's answer (wireAi), and the
+  // questions being asked now (cache signature -> promise settled when the answer is in).
+  aiSettingsRun: 0,
+  aiAsking: new Map(),
   // Which screen shows: Settings over everything; otherwise the start screen, or the quote with its
   // three steps and the view they picked: step 1's checks ('check') or the page's answers ('page'),
   // all of them or a filter's ('all' | 'needs' | 'done'). The intake PDF opens in a sheet over it.
@@ -5119,10 +5123,16 @@ async function runAssist(frames, ctx) {
   try {
     ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
   } catch { return; }
-  // Why this request (or its answer) no longer fits what the panel shows; null while it does.
-  const staleWhy = () => (run !== state.aiRun ? 'a newer request'
+  // Why this request's answer can't be used at all: its settings, tab, page, intake or
+  // driver/vehicle are no longer the panel's. Null while they are.
+  const discardWhy = () => (run < state.aiSettingsRun ? 'the assistant settings changed'
     : !aiActionCurrent(ctx, []) ? 'the tab or page changed'
-    : ctx.contextKey !== assistContextKey(state.intake?.record, state.active) ? 'the intake or driver/vehicle changed'
+    : ctx.contextKey !== assistContextKey(state.intake?.record, state.active) ? 'the intake or driver/vehicle changed' : null);
+  // Why this request (or its answer) no longer fits what the panel shows; null while it does. A
+  // newer request or a redrawn report alone doesn't make the answer wrong: it is cached, and the
+  // newer request waits for it (2026-10-09 to 10-26: 12 of 58 page reviews were thrown away, most
+  // on GEICO's quote page while a fill of the same page redrew it).
+  const staleWhy = () => discardWhy() ?? (run !== state.aiRun ? 'a newer request'
     : !holder.isConnected ? 'the panel was redrawn' : null);
   const stale = () => !!staleWhy();
   // A dropped answer never leaves "Asking…" on screen (2026-10-05 FL run: Luna answered in 17 s,
@@ -5138,17 +5148,31 @@ async function runAssist(frames, ctx) {
   // checks the page snapshot (applyAi), and approving checks it again.
   const contextHash = aiFingerprint(ctx.contextKey);
   const sigOf = x => aiCacheSignature({ tabId: ctx.tabId, page: ctx.page, model: cfg.model, policy: provider.policy, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl) });
+  const asking = (n) => holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking ${provider.name} about ${n} question${n === 1 ? '' : 's'} left for you…`));
+  // Questions an earlier request is still asking (same signature: this page as it shows them now)
+  // are waited for, not asked again: its answer is cached when it comes.
+  const earlier = [...new Set(items.map((x) => state.aiAsking.get(sigOf(x))).filter(Boolean))];
+  if (earlier.length) {
+    asking(items.filter((x) => !state.aiCache.has(sigOf(x))).length);
+    await Promise.all(earlier);
+    if (stale()) { dropped(`${staleWhy()} while it was answering, so nothing was applied`); return; }
+  }
   const missing = items.filter((x) => !state.aiCache.has(sigOf(x)));
   if (missing.length) {
-    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking ${provider.name} about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
+    asking(missing.length);
     const started = Date.now();
     const context = { record, carrier: ctx.carrier.id, page: ctx.page, active };
     const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
+    let answered = () => {};
+    const sigs = missing.map(sigOf);
+    const pending = new Promise((resolve) => { answered = resolve; });
+    sigs.forEach((sig) => state.aiAsking.set(sig, pending));
     try {
-      const result = await suggest(missing, context, cfg, { isStale: stale });
+      // Stopped between model calls only for an answer that would be discarded.
+      const result = await suggest(missing, context, cfg, { isStale: () => !!discardWhy() });
       const fresh = result.suggestions;
       // An answer that came too late is still logged (its tokens were spent), with the reason.
-      const why = staleWhy();
+      const why = discardWhy();
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length,
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
@@ -5164,6 +5188,9 @@ async function runAssist(frames, ctx) {
       if (!stale()) holder.replaceChildren(h('p', { class: 'card bad small' }, `AI assistant: ${msg}`));
       else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;
+    } finally {
+      sigs.forEach((sig) => { if (state.aiAsking.get(sig) === pending) state.aiAsking.delete(sig); });
+      answered();
     }
   }
   const suggestions = items.map((x) => state.aiCache.get(sigOf(x))).filter(Boolean);
@@ -5592,7 +5619,9 @@ function renderAi(holder, suggestions, ctx) {
 
 function wireAi() {
   const save = async patch => {
-    state.aiRun++;
+    // Answers to requests made before are discarded, never kept for a later one (runAssist).
+    state.aiSettingsRun = ++state.aiRun;
+    state.aiAsking.clear();
     if (Object.hasOwn(patch, 'lunaKey')) {
       for (const [key, value] of state.aiCache) if (!value.done) state.aiCache.delete(key);
     }
