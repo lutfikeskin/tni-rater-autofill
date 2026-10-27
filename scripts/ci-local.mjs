@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// The pull-request checks (checks.yml, windows-smoke.yml) on this computer, in the same order,
-// before a push spends paid GitHub minutes on them. Stops at the first failure.
+// The pull-request checks (checks.yml, windows-smoke.yml) on this computer, in windows-smoke.yml's
+// order, before a push. Stops at the first failure.
 //
 //   npm run ci           -> lint, type check, unit tests, package, store ZIP check, packaged-extension
 //                           E2E with the replay server, AmWINS (normal and reversed), GEICO mock,

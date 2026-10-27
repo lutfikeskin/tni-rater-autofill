@@ -71,7 +71,7 @@ git push                                             # the pre-push hook skips t
 git fetch origin && git rev-parse HEAD origin/<branch>   # both the same: the push landed
 ```
 
-Never push with `--no-verify` unless the maintainer said so; if you did, say so in the report. Whether GitHub Actions ran: `gh pr checks <n>`. Don't dispatch `windows-smoke.yml` (paid minutes; local CI covers it). If Actions didn't run or failed for runner reasons, say so; local CI is the evidence, and the PR is not "CI-verified on GitHub".
+Never push with `--no-verify` unless the maintainer said so; if you did, say so in the report. Whether GitHub Actions ran: `gh pr checks <n>`. They run every step of the local CI on Ubuntu. Don't dispatch `windows-smoke.yml` unless asked (local CI covers Windows). If Actions didn't run or failed for runner reasons, say so; local CI is the evidence, and the PR is not "CI-verified on GitHub".
 
 Then post one comment on the PR (`gh pr review <n> --comment --body-file <file>`; `--approve` isn't possible on your own PR): the findings and what was decided for each, the tests added (and that each failed before the fix), the local CI result, the GitHub checks state, and what remains unverified. No client data.
 
