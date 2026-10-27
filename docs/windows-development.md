@@ -32,9 +32,10 @@ packaging. The two PDF.js runtime files are already committed in `lib/`;
 `npm run vendor` is only for deliberately refreshing them after a dependency
 update. Do not copy `node_modules` from the Mac.
 
-`npm ci` also turns on the repository's pre-push hook (`.githooks/pre-push`):
-every `git push` first runs `npm run ci -- --quick`, or the full `npm run ci`
-with `TNI_CI=full`. See [Testing](testing.md#ci-and-authorized-releases).
+`npm ci` also turns on the repository's pre-push hook (`.githooks/pre-push`).
+A plain `git push` runs no checks: the pull request's Checks on GitHub are the
+gate. `TNI_CI=full git push` runs the full `npm run ci` on this computer first.
+See [Testing](testing.md#ci-and-authorized-releases).
 
 ## Load and develop the extension
 
