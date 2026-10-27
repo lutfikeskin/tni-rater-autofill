@@ -121,7 +121,7 @@
  },
  "test/fixtures/progressive/progressive_IA_expediter_van.json": {
   "questions": 101,
-  "filled": 65,
+  "filled": 73,
   "failed": 1,
   "unmapped": 5,
   "issues": [],
@@ -174,17 +174,17 @@
    },
    "NoHit": {
     "questions": 19,
-    "filled": 11,
+    "filled": 15,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
     "clicked": [],
-    "outcomes": "b70507193ec4"
+    "outcomes": "5c84427b3ae1"
    },
    "MoreAboutBusiness": {
     "questions": 12,
-    "filled": 7,
+    "filled": 11,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -192,7 +192,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "e48928e5870c"
+    "outcomes": "a4ea8096af36"
    },
    "CoveragesRates": {
     "questions": 22,
@@ -220,7 +220,7 @@
  },
  "test/fixtures/progressive/progressive_FL_expediter_van.json": {
   "questions": 110,
-  "filled": 70,
+  "filled": 74,
   "failed": 1,
   "unmapped": 5,
   "issues": [],
@@ -281,7 +281,7 @@
    },
    "MoreAboutBusiness": {
     "questions": 13,
-    "filled": 8,
+    "filled": 12,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -289,7 +289,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "6b26ac51911c"
+    "outcomes": "99e9b8b40e87"
    },
    "CoveragesRates": {
     "questions": 22,
@@ -327,7 +327,7 @@
  },
  "test/fixtures/progressive/progressive_IN_expediter_van.json": {
   "questions": 112,
-  "filled": 74,
+  "filled": 78,
   "failed": 2,
   "unmapped": 0,
   "issues": [],
@@ -392,7 +392,7 @@
    },
    "MoreAboutBusiness": {
     "questions": 29,
-    "filled": 19,
+    "filled": 23,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -400,7 +400,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "fa967b28cb04"
+    "outcomes": "38ca72fded61"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -430,7 +430,7 @@
  },
  "test/fixtures/progressive/progressive_NJ_expediter_van.json": {
   "questions": 78,
-  "filled": 45,
+  "filled": 49,
   "failed": 1,
   "unmapped": 0,
   "issues": [],
@@ -481,7 +481,7 @@
    },
    "MoreAboutBusiness": {
     "questions": 9,
-    "filled": 4,
+    "filled": 8,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -489,7 +489,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "c6ab2a919317"
+    "outcomes": "13cbe32f2c43"
    },
    "CoveragesRates": {
     "questions": 15,
@@ -517,7 +517,7 @@
  },
  "test/fixtures/progressive/progressive_NC_freight-hauler_box-truck.json": {
   "questions": 95,
-  "filled": 59,
+  "filled": 63,
   "failed": 4,
   "unmapped": 0,
   "issues": [],
@@ -572,7 +572,7 @@
    },
    "MoreAboutBusiness": {
     "questions": 11,
-    "filled": 6,
+    "filled": 10,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -580,7 +580,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "9c67d63996db"
+    "outcomes": "afb8368f13dc"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -622,7 +622,7 @@
  },
  "test/fixtures/progressive/progressive_MD_expediter_van.json": {
   "questions": 105,
-  "filled": 69,
+  "filled": 73,
   "failed": 4,
   "unmapped": 3,
   "issues": [],
@@ -668,7 +668,7 @@
    },
    "MoreAboutBusiness": {
     "questions": 12,
-    "filled": 7,
+    "filled": 11,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -676,7 +676,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "e48928e5870c"
+    "outcomes": "a4ea8096af36"
    },
    "CoveragesRates": {
     "questions": 15,
@@ -748,7 +748,7 @@
  },
  "test/fixtures/progressive/progressive_OH_expediter_van.json": {
   "questions": 104,
-  "filled": 64,
+  "filled": 68,
   "failed": 5,
   "unmapped": 0,
   "issues": [],
@@ -816,7 +816,7 @@
    },
    "MoreAboutBusiness": {
     "questions": 12,
-    "filled": 7,
+    "filled": 11,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -824,7 +824,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "e48928e5870c"
+    "outcomes": "a4ea8096af36"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -864,7 +864,7 @@
  },
  "test/fixtures/progressive/progressive_PA_expediter_van.json": {
   "questions": 111,
-  "filled": 73,
+  "filled": 77,
   "failed": 1,
   "unmapped": 7,
   "issues": [],
@@ -927,13 +927,13 @@
    },
    "MoreAboutBusiness": {
     "questions": 30,
-    "filled": 13,
+    "filled": 17,
     "failed": [],
     "noData": 0,
     "unmapped": 7,
     "blockers": 14,
     "clicked": [],
-    "outcomes": "bc3a0793c9ba"
+    "outcomes": "22bf94cca15d"
    },
    "CoveragesRates": {
     "questions": 25,
