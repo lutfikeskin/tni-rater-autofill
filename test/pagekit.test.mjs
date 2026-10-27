@@ -659,6 +659,21 @@ test('DOT lookup chooses the matching business, not the first returned name', as
   assert.equal(report.failed.length, 0);
 });
 
+// W44-30: Progressive's NoHit page arrives with the owner's name from Business Owner Info already
+// in its boxes (every logged NoHit first name was "kept", never "filled"). The first word replaces
+// the whole first name there; the last name, which agrees, is kept as it is.
+test('NoHit: the first word replaces the whole first name Progressive put there (W44-30)', async () => {
+  const h = harness({ ext: true, search: '?pageName=NoHit' });
+  const first = addExtText(h, 'f', '1B7F', { caption: 'Business Owner\'s Name', required: true, value: 'Amina Sample' });
+  const last = addExtText(h, 'l', '1B81', { caption: 'Last Name', required: true, value: 'Kone' });
+  const record = { applicant: { owner1: 'Amina Sample Kone', ownerDrives: true }, garaging: {}, operations: {}, drivers: [{ first: 'Amina Sample', middle: null, last: 'Kone' }], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => ['1B7F', '1B81'].includes(s.q)), {});
+  assert.equal(first.cmp.getValue(), 'Amina', 'the first word, not the page\'s whole first name');
+  assert.equal(last.cmp.getValue(), 'Kone');
+  assert.ok(!report.kept.some((x) => x.differs), 'not "the page says something different"');
+  assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+});
+
 test('vehicle-named additional coverage q200F is mapped and does not block Rates filling', async () => {
   for (const current of ['', 'Not selected']) {
     const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
