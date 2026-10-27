@@ -381,16 +381,20 @@ const businessStructureWarn = (r) => companyStructureWarn(r.applicant.name);
 const forHire = (r) => (isExpediter(r) || isFreightHauler(r) ? true : null);
 const forHireNote = (r) => (forHire(r) == null ? `Whether a ${r.operations.businessClass || 'business of this class'} hauls goods for hire isn't known: answer it yourself.` : null);
 // Has a USDOT number: Yes with one; without one, the intake's 60-day answer decides, and no answer
-// is the agent's (2026-10-09; until then "will not" was asserted).
+// is the agent's (2026-10-09; until then "will not" was asserted). "No" in the intake's USDOT box
+// (`noDot`) is No too (TNI, 2026-10-26: answer to PR question), unless the 60-day answer says one is coming.
+// So are "None" and "N/A" there (R14), and an MC number on the intake changes nothing (R12).
 // On an NTL quote No, and the number is neither typed nor verified (TNI, 2026-10-26, W44-28: "US DOT
 // is not added … if its NTL, in every case"); the intake's own No ("will not have one") stays `derived`.
 // This wording is accepted also when the client has a USDOT number (TNI, 2026-10-26: answer to PR
 // question).
 const USDOT_NO = 'No - and the customer will not have a USDOT number';
+const intakeUsdotNo = (r) => !r.applicant.dot && r.applicant.mcDotWithin60Days !== true
+  && (r.applicant.mcDotWithin60Days === false || r.applicant.noDot === true);
 const hasUsdot = (r) => (ntlNoDotFilings(r) ? USDOT_NO : r.applicant.dot ? 'Yes - the customer has a USDOT number'
   : r.applicant.mcDotWithin60Days === true ? 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days'
-    : r.applicant.mcDotWithin60Days === false ? USDOT_NO : null);
-const hasUsdotSource = (r) => (ntlNoDotFilings(r) && (r.applicant.dot || r.applicant.mcDotWithin60Days !== false) ? 'standard' : 'derived');
+    : intakeUsdotNo(r) ? USDOT_NO : null);
+const hasUsdotSource = (r) => (ntlNoDotFilings(r) && !intakeUsdotNo(r) ? 'standard' : 'derived');
 const dotOnQuote = (r) => !!r.applicant.dot && !ntlNoDotFilings(r);
 const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT number and doesn\'t say whether one is expected within 60 days: answer it yourself.' : null);
 

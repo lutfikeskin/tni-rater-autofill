@@ -237,8 +237,8 @@ export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.tex
 // runs from its first figure to its last, so a carrier answers it only when both ends give the
 // same answer there (TNI, 2026-10-27: answer to PR question, round 5, V7; until then the last
 // figure alone was read). The carriers place a time on a band edge (tenureBand).
-const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const TENURE_NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
+const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const INSURANCE_WORDS = /\b(?:insur\w*|polic(?:y|ies)|pop|proof of prior)\b/i;
 const OTHER_YEARS = /\b(?:claims?|accidents?|violations?|tickets?|cdl|licen[cs]ed?|driv(?:e|es|ing|er|ers)|experience|business|established|trucks?|vehicles?|vans?|trailers?|record|laps\w*|uninsured|no insurance|not insured|without insurance|ago|expir\w*|renew\w*)\b/i;
 const NUMBER_SAID = String.raw`\d{1,2}(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty`;
@@ -248,7 +248,7 @@ const NUMBER_SAID = String.raw`\d{1,2}(?:\.\d+)?|one|two|three|four|five|six|sev
 // hedge after "years" ("or so", "give or take", "maybe", "or more").
 const YEARS_SAID = new RegExp(String.raw`(?:([~><])\s*|\b(over|more than|at least|almost|nearly|close to|under|less than|about|around|approximately|approx\.?|abt\.?|est\.?|estimated|circa|ca\.|some|roughly|give or take|maybe|perhaps|possibly|up to)\s+)?(?:\bbetween\s+(${NUMBER_SAID})(?:\s*(?:years?|yrs?))?\s+and\s+|\b(${NUMBER_SAID})(?:\s*(?:years?|yrs?))?\s*(?:[-–—]|to\b|or\b)\s*)?\b(${NUMBER_SAID})(?:\s*(\+)|\s+(plus)\b|-?(ish)\b|\s+(or so)\b)?\s*(?:years?|yrs?)\b(?:,?\s+(or so|give or take|maybe|or more)\b)?(?![\s-]*(?:old|in business|of experience|experience|exp\b))`, 'gi');
 /** @param {string} s */
-const yearsNumber = (s) => NUMBER_WORDS[s.toLowerCase()] ?? Number(s);
+const yearsNumber = (s) => TENURE_NUMBER_WORDS[s.toLowerCase()] ?? Number(s);
 const START_SAID = /\b(?:since|started|began|start(?:ing)?)\s+(?:(?:in|on)\s+)?(?:(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:(\d{1,2})(?:st|nd|rd|th)?,?\s+)?|(\d{1,2})\/(?:(\d{1,2})\/)?)?((?:19|20)\d{2})\b/gi;
 // The least and the most a number of years said with its qualifier ("over", "+", "almost", …) can
 // mean. TNI, 2026-10-27 (answer to PR question, round 5, V6): a hedge reads as its word: ">", "+"
@@ -306,7 +306,7 @@ export const insurerTenure = (record) => {
     /** @type {number[][]} [least, most] */
     const spans = [...line.matchAll(YEARS_SAID)].map(yearsSpan);
     for (const m of line.matchAll(START_SAID)) {
-      const month = m[1] ? MONTHS.indexOf(m[1].toLowerCase()) : m[3] ? Number(m[3]) - 1 : null;
+      const month = m[1] ? MONTH_NAMES.indexOf(m[1].toLowerCase()) : m[3] ? Number(m[3]) - 1 : null;
       if (month != null && (month < 0 || month > 11)) continue;
       const year = Number(m[5]);
       const day = Number(m[2] ?? m[4]) || null;
@@ -392,6 +392,250 @@ const OWNERSHIP_ANSWERS = { owned: 'Owned', leased: 'Leased', financed: 'Finance
 const NEGATION = /\b(not|no|never|without|none)\b|n't\b/i;
 const TRAILER_WORD = /\btrailers?\b/i;
 const ownershipLines = (text) => String(text ?? '').split('\n').filter((line) => new RegExp(OWNERSHIP_WORDS.source, 'i').test(line));
+
+// The claims box's first line saying the client's record is clean ("CLEAN", "Clean record",
+// "all clean"): no claims, an explicit No like "No" (TNI, 2026-10-26, W44-32). Only as the line's
+// whole answer: "Clean-up company" or "clean except one ticket" don't answer it.
+const CLAIMS_CLEAN = /^(?:all\s+)?clean(?:\s+(?:record|mvr|driving\s+record))?\.?$/i;
+
+// "NEW" as the whole answer in the years-under-own-authority box: 0 years, a new authority (TNI,
+// 2026-10-26: answer to PR question). AmWINS' "federal authority active" is then LESS THAN 1 YEAR.
+// Also "New authority", "Brand new" and "New venture", as the whole answer, in any case, with a
+// final period (TNI, 2026-10-26: answer to PR question, R15); "new trucks" or "New authority
+// pending" is not 0.
+const NEW_AUTHORITY = /^(?:(?:brand[\s-]+)?new|new[\s-]+(?:authority|venture))\.?$/i;
+
+// Years in business stated in the notes, read when the form gives no year established (TNI,
+// 2026-10-26, W44-09: "the reader takes it from the notes"; also over years under own authority): "3+ years in business", "in Biz for 3+ years",
+// "in business for 5 years" (a plus is at least that many: 3+ is 3), and a start year:
+// "established 2019", "founded in 2019", "in business since 2019". Narrow on purpose: only a
+// whole number of years or months, in digits or words (T8, below), right beside "in business" /
+// "in biz" ("in the business" is a career in
+// the trade), in a clause saying nothing about driving, a CDL, experience, authority, insurance or
+// claims, and with no negation. Two figures that disagree settle nothing. What settles nothing is
+// the agent's with the check naming the line (TNI, 2026-10-27: round-6 answer 4, like a
+// range), not the blank standard, which is for notes that say nothing of the business's time.
+// A word before the figure: "over", "about", "around", "more than" and "approximately" (or
+// "approx.") read as the figure itself, "over 3 years" is 3, with the check quoting the phrase
+// (TNI, 2026-10-26: answer to PR question). "less than 1 year" and "under 1 year" are 0, a new
+// venture (TNI, 2026-10-26: answer to PR question, R10); any other "less than N" or "under N"
+// settles nothing, nor do "almost", "nearly" and ~ < >. A decimal is rounded down ("1.5 years" is
+// 1: round-6 answer 3, below).
+const QUALIFIER = '(?:(?:less|more)\\s+than|over|under|almost|nearly|about|around|approx(?:imately|\\.)?|[~<>])';
+const AS_THE_FIGURE = /^(?:over|about|around|more\s+than|approx(?:imately|\.)?)$/i;
+const BELOW = /^(?:less\s+than|under)$/i;
+// Months are whole years, rounded down: "18 months" is 1, "6 months" is 0 (TNI, 2026-10-26: answer
+// to PR question, R11), also after a word read as the figure: "over 18 months" is 1, "about 6
+// months" is 0 (TNI, 2026-10-26: answer to PR question, T7, confirmed).
+// "less than N months" with N up to 12 is 0 (TNI, 2026-10-26: answer to PR question, T8); more
+// than 12 months settles nothing. "under" reads exactly as "less than" does: "under 6 months" is 0
+// (TNI, 2026-10-27: answer to PR question U1), "under 18 months" settles nothing.
+const MAX_MONTHS_BELOW_A_YEAR = 12;
+// A number in words reads as its digits (TNI, 2026-10-26: answer to PR question, T8): "two years
+// in business" is 2, "less than one year" is 0, up to ninety-nine ("twenty-five"). A word
+// right after a hyphen ("five" in "twenty-five") is never a figure of its own, nor is the end of a
+// range ("two-three", "two to three", "two or three", "two and three years"): a range is read whole
+// (V7, below).
+// The definite phrases (TNI, 2026-10-27: answer to PR question V11): "a year" is 1, "half a year" 0,
+// "a year and a half" 1, "less than a month" and "under a month" 0 (and "less than a year", "under a
+// year" 0, U1), "first year in business" 0. "a" is a figure only before year (or yr), not in "a year
+// ago", "once a year" or "a year-old truck", and before a month only after "less than" or "under"
+// (until round-6 answer 3, below). "a few years" and "several years" settle nothing.
+// The clear phrases V11 doesn't name (TNI, 2026-10-27: round-6 answer 3): "a month" and
+// "about a month" in business are 0 ("a" before a month as before a year, not in "a month ago" or
+// "once a month"), "1st year" 0 and "second year" 1, "less than half a year" 0 (and "under", U1), and
+// "one and a half years", "1 year and a half" and "1.5 years" 1, rounded down like months (so "2.5
+// years" is 2). "a couple of years" and "under a year and a half" settle nothing: the agent's
+// (round-6 answer 4, below).
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
+  'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS_WORDS = ['twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+const UNIT_WORDS = NUMBER_WORDS.slice(1, 10);
+const WORD_NUMBER = `(?:(?:${TENS_WORDS.join('|')})(?:[\\s-]+(?:${UNIT_WORDS.join('|')}))?|${NUMBER_WORDS.join('|')})`;
+const RANGE_SEP = '\\s*(?:[-–—]|\\b(?:to|or|and)\\b)\\s*';
+const RANGE_END = `(?<!(?:\\d|\\b(?:${[...NUMBER_WORDS, ...TENS_WORDS].join('|')}))\\s*\\+?${RANGE_SEP})`;
+const IN_WORDS = `(?<![\\w-])${RANGE_END}${WORD_NUMBER}(?![\\w-])`;
+const A_YEAR = '(?=\\s+(?:year|yr)\\b(?!-)(?!\\.?\\s+ago\\b))';
+const A_MONTH = '(?=\\s+(?:months?|mos?)\\b(?!-)(?!\\.?\\s+ago\\b))';
+const DIGITS = '\\d{1,3}(?:\\.\\d{1,2})?';
+const NUMBER = `${DIGITS}|${IN_WORDS}|(?<![\\w-])half\\s+a${A_YEAR}|(?<![\\w-])(?<!\\b(?:half|once|twice)\\s+)a${A_YEAR}`
+  + `|(?<![\\w-])(?<!\\b(?:half|once|twice)\\s+)a${A_MONTH}`;
+const numberValue = (s) => {
+  if (/^\d+(?:\.\d+)?$/.test(s)) return Number(s);
+  if (/^a$/i.test(s)) return 1;
+  if (/^half/i.test(s)) return 0.5;
+  const [tens, units] = s.toLowerCase().split(/[\s-]+/);
+  const t = TENS_WORDS.indexOf(tens);
+  return t < 0 ? NUMBER_WORDS.indexOf(tens) : 20 + t * 10 + (units ? NUMBER_WORDS.indexOf(units) : 0);
+};
+// Years plus months are the whole years, the months dropped: "1 year 6 months" and "2 years, 6
+// months" in business are 1 and 2 (TNI, 2026-10-26: answer to PR question, T8), also after "over"
+// or "about": "over 1 year 6 months" is 1 (TNI, 2026-10-27: answer to PR question V10, confirmed).
+const MONTHS = /^mo/i;
+const YEARS_UNIT = '(?:years?|yrs?)';
+const MONTHS_UNIT = '(?:months?|mos?)';
+const AND_MONTHS = `[\\s,&]*(?:and\\s+)?(?<months>${NUMBER})\\s*\\+?\\s*(?<monthsUnit>${MONTHS_UNIT})\\b\\.?`;
+// "a year and a half" (V11): 1; also "1 year and a half" and "one and a half years" (round-6 answer 3).
+const AND_A_HALF = '(?:(?<=(?:year|yr)s?\\.?)(?<half>\\s+and\\s+a\\s+half)\\b)?';
+const YEARS = `(?:(?<word>${QUALIFIER})\\s*)?(?<n>${NUMBER})(?<halfBefore>\\s+and\\s+a\\s+half)?\\s*\\+?\\s*(?<unit>${YEARS_UNIT}|${MONTHS_UNIT})\\b\\.?${AND_A_HALF}(?:(?<=${YEARS_UNIT}\\.?)${AND_MONTHS})?`;
+// A range (TNI, 2026-10-27: answer to PR question V7): an answer only when both ends give the same
+// one. Years in business is a number, so "2-3 years in business" is the agent's, with the check
+// naming the line (before, it read the last figure, 3), in words too ("two to three years"); ends
+// that round to the same whole years ("18-20 months", both 1) give that number.
+const RANGE_FIRST = `${DIGITS}|(?<![\\w-])${WORD_NUMBER}(?!\\w)`;
+const RANGE_SECOND = `${DIGITS}|(?<![\\w])${WORD_NUMBER}(?![\\w-])`;
+const RANGE = `(?<span>(?:(?<word>${QUALIFIER})\\s*)?(?:between\\s+)?(?<a>${RANGE_FIRST})\\s*\\+?(?<sep>${RANGE_SEP})(?<b>${RANGE_SECOND})\\s*\\+?\\s*(?<unit>${YEARS_UNIT}|${MONTHS_UNIT})\\b)\\.?`;
+// "twenty-five" and "twenty five" are one number, not a range from twenty to five.
+const TENS_WORD = new RegExp(`^(?:${TENS_WORDS.join('|')})$`, 'i');
+const ONES_WORD = new RegExp(`^(?:${UNIT_WORDS.join('|')})$`, 'i');
+const compound = (a, sep, b) => TENS_WORD.test(a) && /^\s*-?\s*$/.test(sep) && ONES_WORD.test(b);
+// "first year in business" (V11): 0; "1st year" 0 and "second year" (or "2nd") 1 (round-6 answer 3).
+const ORDINAL_YEAR = /(?<![\w-])(?<reading>(?<ordinal>first|1st|second|2nd)\s+(?:year|yr))\s+in\s+(?:business|biz)\b/i;
+const ORDINAL_YEARS = { first: 0, '1st': 0, second: 1, '2nd': 1 };
+// "a year-old business" is 1 and "3-year-old business" 3 (TNI, 2026-10-27: round-7 answer 3), in
+// digits or words, rounded down like the other figures. A vehicle's age ("truck is 10 years old",
+// "a year-old truck", "10-year-old business truck") is never one.
+const BUSINESS_NOT_VEHICLE = '(?:business|biz)\\b(?!\\s+(?:trucks?|vehicles?|vans?|trailers?|cars?|tractors?)\\b)';
+const AGED_BUSINESS = new RegExp(`(?<![\\w-])(?<!\\bhalf\\s)(?<reading>(?<n>${DIGITS}|${WORD_NUMBER}|a)[\\s-]+(?:year|yr)s?[\\s-]+old)\\s+${BUSINESS_NOT_VEHICLE}`, 'i');
+// Months right after years on a line, outside one figure read as above: a months figure there
+// settles nothing.
+const FIGURE = `(?:\\d{1,3}|${IN_WORDS})\\s*\\+?\\s*`;
+const YEARS_THEN_MONTHS = new RegExp(`${FIGURE}${YEARS_UNIT}\\b\\.?[\\s,&]*(?:and\\s+)?${FIGURE}${MONTHS_UNIT}\\b`, 'i');
+// Clauses: semicolons, commas, and full stops before a new sentence ("3 yrs. in biz" is one). A
+// comma between years and months ("2 years, 6 months") joins one figure, not two clauses.
+const ENDS_WITH_YEARS = new RegExp(`${FIGURE}${YEARS_UNIT}\\b\\.?$`, 'i');
+const STARTS_WITH_MONTHS = new RegExp(`^(?:and\\s+)?${FIGURE}${MONTHS_UNIT}\\b`, 'i');
+const clausesOf = (line) => {
+  const parts = line.split(/(;|,\s|\.\s+(?=[A-Z]))/);
+  const clauses = [parts[0]];
+  for (let i = 1; i < parts.length; i += 2) {
+    if (parts[i].startsWith(',') && ENDS_WITH_YEARS.test(clauses.at(-1)) && STARTS_WITH_MONTHS.test(parts[i + 1])) clauses.push(`${clauses.pop()}${parts[i]}${parts[i + 1]}`);
+    else clauses.push(parts[i + 1]);
+  }
+  return clauses;
+};
+const BIZ = '(?:business|biz)\\b';
+const BIZ_PHRASES = [
+  new RegExp(`(?<![\\w.,])${YEARS}\\s+in\\s+${BIZ}`, 'gi'),
+  new RegExp(`\\bin\\s+${BIZ}\\s+(?:for\\s+)?${YEARS}`, 'gi'),
+];
+const RANGE_PHRASES = [
+  new RegExp(`(?<![\\w.,])${RANGE}\\s+in\\s+${BIZ}`, 'i'),
+  new RegExp(`\\bin\\s+${BIZ}\\s+(?:for\\s+)?${RANGE}`, 'i'),
+];
+const BIZ_START = new RegExp(`\\b(?:established|founded|in\\s+${BIZ}\\s+since)\\s+(?:in\\s+)?(\\d{4})\\b`, 'i');
+// A clause about something else than the business (driving, a CDL, insurance …), or negated.
+const OTHER_SUBJECT = /\b(?:driv\w*|cdl|licen[cs]\w*|experienced?|authority|mc|dot|usdot|insur\w*|polic(?:y|ies)|pop|coverage|carriers?|claims?|accidents?|tickets?|violations?)\b/i;
+const NEGATED = /\b(?:not|never|no)\b|n't\b/i;
+// A statement of how long the business has run, read or not (TNI, 2026-10-27: round-6 answer 4):
+// "in business" or "in biz" (also "into business", "established", "founded", "… old business") with
+// a time in the same clause ("a few years", "almost 3 years", "since last year", "a long time",
+// 2019). One the reader doesn't take is the agent's, like a range; notes with none are the blank
+// standard.
+const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded)\\b|\\bold\\s+${BUSINESS_NOT_VEHICLE}`, 'i');
+const BIZ_TIME = /\b(?:years?|yrs?|months?|mos?|decades?|since|ago|long|while|(?:19|20)\d{2})\b/i;
+const statesBusinessTime = (clause) => BIZ_MENTION.test(clause) && BIZ_TIME.test(clause);
+// A qualifier just before the match that the match itself doesn't hold (",less than 3 years").
+const QUALIFIED = new RegExp(`(?:^|[^\\w])${QUALIFIER}\\s*$`, 'i');
+const MAX_BUSINESS_YEARS = 100;
+
+/**
+ * Years in business the notes state, from the boxes given in order ([form field, text]): one
+ * statement, or several that agree. `reading`: the figure as written when it isn't plain whole years
+ * in digits ("over 3 years", "less than 1 year", "18 months", "two years", "1 year 6 months"), for
+ * the first one. A range whose ends give different years (V7) gives `years` null and `range` true,
+ * quoting it: the agent's, whatever else the notes say. A statement it doesn't read ("a few years",
+ * "less than 3 years"), also beside one it reads (round-7 answer 2), or figures that disagree, give
+ * `years` null and `unread` true, with `kind` and `quotes` (up to three): the agent's too (round-6
+ * answer 4). Notes stating no time in business: null.
+ * @param {[string, string|null|undefined][]} boxes
+ * @param {number} year  this year, for a start year
+ * @returns {{ years: number|null, range?: true, unread?: true, kind?: 'unread'|'disagree'|'mixed', quotes?: string[], established: number|null, quote: string, fields: string[], reading: string|null } | null}
+ */
+export function yearsInBusinessFromNotes(boxes, year) {
+  const found = [];
+  for (const [field, text] of boxes) {
+    for (const line of String(text ?? '').split('\n')) {
+      const yearsThenMonths = YEARS_THEN_MONTHS.test(line);
+      // The years one figure gives, with the word before it, or null when it settles nothing.
+      const yearsOf = (word, figure, unit, more, before) => {
+        const months = MONTHS.test(unit);
+        // "less than 1 year", "under 1 year": 0 (R10), and "less than half a year" (round-6 answer 3);
+        // "less than N months", N up to 12: 0 (T8), and "under N months" alike (U1). Not with more
+        // after the year ("less than 1 year 6 months", "under 1 year 6 months" and "under a year
+        // and a half" are more than a year).
+        const belowOne = Boolean(word) && BELOW.test(word) && !months && !more && figure > 0 && figure <= 1;
+        const belowAYear = Boolean(word) && BELOW.test(word) && months && figure > 0 && figure <= MAX_MONTHS_BELOW_A_YEAR;
+        const read = word ? AS_THE_FIGURE.test(word) || belowOne || belowAYear : !QUALIFIED.test(before);
+        return !read || (months && yearsThenMonths) ? null : belowOne || belowAYear ? 0 : Math.floor(months ? figure / 12 : figure);
+      };
+      for (const clause of clausesOf(line)) {
+        const quote = clause.trim();
+        if (!quote || OTHER_SUBJECT.test(quote)) continue;
+        // A statement of the business's time that gives no figure read below: the agent's (round-6
+        // answer 4).
+        const unread = () => { if (statesBusinessTime(quote)) found.push({ unread: true, years: null, established: null, quote, field, reading: null }); };
+        // A negated one is never read ("Not in business for 3 years yet").
+        if (NEGATED.test(quote)) { unread(); continue; }
+        const before = found.length;
+        const range = RANGE_PHRASES.map((re) => quote.match(re)).find((m) => m?.groups && !compound(m.groups.a, m.groups.sep, m.groups.b));
+        if (range?.groups) {
+          // Both ends read as one figure would be, with the same word and unit (V7).
+          const { span, word, a, b, unit } = range.groups;
+          const before = quote.slice(0, range.index);
+          const ends = [a, b].map((n) => yearsOf(word, numberValue(n), unit, null, before));
+          const same = ends[0] != null && ends[0] === ends[1];
+          found.push({ years: same ? ends[0] : null, range: !same, established: null, quote, field, reading: span.replace(/\s+/g, ' ') });
+          continue;
+        }
+        const ordinal = quote.match(ORDINAL_YEAR);
+        if (ordinal?.groups) found.push({ years: ORDINAL_YEARS[ordinal.groups.ordinal.toLowerCase()], established: null, quote, field, reading: ordinal.groups.reading.replace(/\s+/g, ' ') });
+        // "a 3-year-old business" (round-7 answer 3); after a qualifier ("almost a year-old"), not read.
+        const aged = quote.match(AGED_BUSINESS);
+        if (aged?.groups) {
+          const years = QUALIFIED.test(quote.slice(0, aged.index)) ? null : Math.floor(numberValue(aged.groups.n));
+          found.push({ years, established: null, quote, field, reading: aged.groups.reading.replace(/\s+/g, ' ') });
+        }
+        // Every statement in the clause, so two that disagree settle nothing.
+        for (const m of BIZ_PHRASES.flatMap((re) => [...quote.matchAll(re)])) {
+          if (!m.groups) continue;
+          const { word, n, unit, months: andMonths, monthsUnit, half, halfBefore } = m.groups;
+          const years = yearsOf(word, numberValue(n) + (half || halfBefore ? 0.5 : 0), unit, andMonths || half || halfBefore, quote.slice(0, m.index));
+          // How it was read, when it isn't plain whole years in digits.
+          const reading = word || MONTHS.test(unit) || andMonths || half || halfBefore || !/^\d+$/.test(n)
+            ? `${word ? `${word} ` : ''}${n.replace(/\s+/g, ' ')}${halfBefore ? ' and a half' : ''} ${unit}${half ? ' and a half' : ''}${andMonths ? ` ${andMonths} ${monthsUnit}` : ''}` : null;
+          found.push({ years, established: null, quote, field, reading });
+        }
+        const start = quote.match(BIZ_START);
+        if (start) found.push({ years: year - Number(start[1]), established: Number(start[1]), quote, field, reading: null });
+        if (found.length === before) unread();
+      }
+    }
+  }
+  // A range whose ends differ is the agent's, whatever else the notes say (V7).
+  const open = found.find((f) => f.range);
+  if (open) return { years: null, range: true, established: null, quote: open.quote, fields: [open.field], reading: open.reading };
+  // The figures read: one, or several that agree, is the answer, when nothing else the notes say of
+  // the business's time is left unread (a statement with no figure, "several years", stops it too:
+  // TNI, 2026-10-27, round-7 answer 2).
+  const isRead = (f) => !f.unread && Number.isInteger(f.years) && f.years >= 0 && f.years <= MAX_BUSINESS_YEARS;
+  if (!found.length) return null;
+  if (found.every(isRead) && new Set(found.map((f) => f.years)).size === 1) {
+    return {
+      years: found[0].years, established: found.find((f) => f.established != null)?.established ?? null,
+      quote: found[0].quote, fields: [...new Set(found.map((f) => f.field))], reading: found[0].reading,
+    };
+  }
+  // Nothing settles (TNI, 2026-10-27: round-6 answer 4): a statement not read ("a few years",
+  // "almost 3 years", a start year after this year), figures that disagree, or both, is the agent's,
+  // each line quoted (`kind`: 'unread', 'disagree', or 'mixed' for statements read and not read).
+  // Notes with no statement of the business's time give null: the blank standard.
+  const read = found.filter(isRead).length;
+  return {
+    years: null, unread: true, kind: !read ? 'unread' : read === found.length ? 'disagree' : 'mixed', established: null, quote: found[0].quote,
+    quotes: [...new Set(found.map((f) => f.quote))].slice(0, 3), fields: [...new Set(found.map((f) => f.field))], reading: null,
+  };
+}
 
 // A generational suffix written into a driver's name box ("SAMPLE, JR", "EXAMPLO III"), and a
 // lone letter after the first name ("JORDAN L"), its middle initial. Carriers' driver name boxes
@@ -517,10 +761,19 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // "NO", "N.A.", "None." in the company-name box: no company (util.js companyName).
   const companyAsWritten = txt('company_name');
 
+  // "No" in the FEIN, USDOT or MC box: the client has none, an explicit No, which a blank box is
+  // not (FEIN: W44-15; USDOT and MC: TNI, 2026-10-26: answer to PR question). Not a malformed number.
+  const saysNo = (k) => /^no\.?$/i.test(txt(k) ?? '');
+  // The USDOT and MC boxes: "None" and "N/A" (any case, with or without a dot or slash: n/a, NA,
+  // N.A.) are an explicit No too, exactly like "no" (TNI, 2026-10-26: answer to PR question, R14).
+  // `txt` reads "N/A", "NA" and "None" as blank, so the box is read as written. A cut-off "N/" is
+  // not one of them (W44-08, not decided): it stays a malformed number, as before.
+  const asWritten = (k) => (typeof raw[k] === 'string' ? raw[k].replace(/\s+/g, ' ').trim() : '');
+  const saysNoNumber = (k) => /^(?:no|none|n\s*[./]?\s*a)\.?$/i.test(asWritten(k));
   // Numbers that should be digits only: note when stray characters were dropped.
   const idNumber = (k, path, label, pattern) => {
     const s = txt(k);
-    if (s == null) return null;
+    if (s == null || saysNoNumber(k)) return null;
     const digits = s.replace(/^(us\s*dot|dot|mc|mx)\b/i, '').replace(/\D/g, '');
     if (!pattern.test(digits)) { check('id.invalid', path, `${label} "${s}" doesn't look like a valid number.`); return s; }
     return digits;
@@ -529,11 +782,19 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // The form row (1-4) each driver, vehicle and trailer was read from: blank rows are skipped, so
   // drivers[1] can be the form's row 3 (the panel shows an answer where it is on the PDF).
   const rows = { drivers: [], vehicles: [], trailers: [] };
+  // An answer read from another box than its own (years in business from the notes): its path and
+  // the form fields it was read from, so the panel shows it there (intake-source.js sourcePlace).
+  /** @type {Record<string, string[]>} */
+  const readFrom = {};
   const record = {
     applicant: {
       name: companyName(companyAsWritten),
       dot: idNumber('dot_number', 'applicant.dot', 'USDOT #', /^\d{1,8}$/),
       mc: idNumber('mc_number', 'applicant.mc', 'MC #', /^\d{1,8}$/),
+      // The USDOT or MC box says No (or None, N/A: R14): true; null for a blank box or a number
+      // (unanswered is not No).
+      noDot: saysNoNumber('dot_number') || null,
+      noMc: saysNoNumber('mc_number') || null,
       mcDotWithin60Days: yesNo(raw.mc_dot_60days),
       fein: null,
       yearEstablished: null,
@@ -543,7 +804,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       owner1: txt('owner_name_1'),
       owner2: txt('owner_name_2'),
       ownerDrives: yesNo(raw.owner_drives),
-      yearsExperience: toInt(raw.years_experience),
+      // "NEW" in years under own authority: 0 years, a new authority (TNI, 2026-10-26: answer to PR question);
+      // also "New authority", "Brand new" and "New venture" (R15).
+      yearsExperience: NEW_AUTHORITY.test(txt('years_experience') ?? '') ? 0 : toInt(raw.years_experience),
       applicationDate: toDate(raw.date_of_application),
     },
     garaging: null,
@@ -608,7 +871,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const ops = record.operations;
 
   // --- Business -------------------------------------------------------------------------------
-  if (txt('fein')) {
+  // "No" in the FEIN box: no FEIN, as "N/A" is (W44-15), not a malformed number.
+  if (saysNo('fein')) info('fein.none', 'applicant.fein', `FEIN "${txt('fein')}": no FEIN.`);
+  else if (txt('fein')) {
     const d = txt('fein').replace(/\D/g, '');
     if (d.length === 9) a.fein = `${d.slice(0, 2)}-${d.slice(2)}`;
     else { a.fein = txt('fein'); check('fein.invalid', 'applicant.fein', `FEIN "${a.fein}" should be 9 digits.`); }
@@ -626,10 +891,50 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (!a.dot && !a.mc && a.mcDotWithin60Days === true) {
     info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
   }
-  if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
+  if (a.noDot) info('dot.none', 'applicant.dot', `USDOT # "${asWritten('dot_number')}": the client has no USDOT number.`);
+  if (a.noMc) info('mc.none', 'applicant.mc', `MC # "${asWritten('mc_number')}": the client has no MC number.`);
+  if (NEW_AUTHORITY.test(txt('years_experience') ?? '')) info('years-experience.new', 'applicant.yearsExperience', `Years under own authority "${txt('years_experience')}": 0 years, a new authority.`);
+  else if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
+  // No year established on the form: the years in business the claims box or Additional Notes state,
+  // with a check quoting them (TNI, 2026-10-26, W44-09). They win over years under own authority
+  // for years in business (TNI, 2026-10-26: answer to PR question); the authority years are another
+  // fact and stay as the form gives them, for their own questions. Never read from a business phrase.
+  const stated = a.yearsInBusiness == null
+    ? yearsInBusinessFromNotes([['claims_details', record.claims.text], ['additional_notes', record.notes.text]], year) : null;
+  if (stated) {
+    readFrom['applicant.yearsInBusiness'] = stated.fields;
+    const boxName = (field) => (field === 'additional_notes' ? 'Additional Notes box' : 'claims box');
+    const box = boxName(stated.fields[0]);
+    const short = (q) => (q.length > 80 ? `${q.slice(0, 79).trimEnd()}…` : q);
+    const quote = short(stated.quote);
+    const form = a.yearsExperience == null ? 'The form gives no years in business'
+      : `The form gives no year established, only years under own authority (${a.yearsExperience}), which stay for the authority questions`;
+    if (stated.range) {
+      // A range whose ends differ (TNI, 2026-10-27: answer to PR question V7): the agent's on every
+      // carrier, neither the blank standard nor the authority years; the check names the line.
+      a.yearsInBusinessRange = true;
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `${form}, and the ${box} says "${quote}": a range ("${stated.reading}"), so years in business is left to you. Enter Years in business or Year established here.`);
+    } else if (stated.unread) {
+      // A statement it doesn't read, or figures that disagree (TNI, 2026-10-27: round-6 answer 4):
+      // the agent's like a range, neither the blank standard nor the authority years.
+      a.yearsInBusinessUnread = true;
+      const boxes = stated.fields.map(boxName).join(' and the ');
+      const said = (stated.quotes ?? [stated.quote]).map((q) => `"${short(q)}"`).join(' and ');
+      const why = { disagree: 'figures that disagree', mixed: 'not all read as a number of years' }[stated.kind ?? ''] ?? 'not read as a number of years';
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `${form}, and the ${boxes} ${stated.fields.length > 1 ? 'say' : 'says'} ${said}: ${why}, so years in business is left to you. Enter Years in business or Year established here.`);
+    } else {
+      a.yearsInBusiness = stated.years;
+      if (stated.established != null) { a.yearEstablished = stated.established; readFrom['applicant.yearEstablished'] = stated.fields; }
+      // How a figure that isn't plain years was read: "over 3 years" as 3, "18 months" as 1 (R11).
+      const reading = stated.reading ? ` ("${stated.reading}" read as ${stated.years})` : '';
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `${form}, and the ${box} says "${quote}": years in business is ${stated.years}${reading}${stated.established != null ? `, established ${stated.established}` : ''}. Check it (a plus counts as at least that many); a corrected answer here replaces it.`);
+    }
+  }
   // TNI's standard for a blank (2026-10-09): 0 years, established this year (AmWINS' rules fill
   // it, GEICO's leave it to the agent; the record stays blank, so a later answer here replaces it).
-  if (a.yearsInBusiness == null && a.yearsExperience == null) {
+  // Not for a range in the notes (V7) or a statement of years in business they don't settle
+  // (round-6 answer 4), which are the agent's: only for notes that say nothing of the business's time.
+  if (a.yearsInBusiness == null && a.yearsExperience == null && !a.yearsInBusinessRange && !a.yearsInBusinessUnread) {
     check('years-in-business.default', 'applicant.yearsInBusiness', `Years in business and year established are blank: the AmWINS quote gets 0 years (New Venture), established ${year}; GEICO's question about it is left to you. If the client has been in business longer, enter Years in business or Year established.`);
   }
 
@@ -864,11 +1169,12 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
 
   // --- Claims box -----------------------------------------------------------------------------
   // Clients use this box for answers to other questions too. A leading yes/no answers the claims
-  // question; everything else is kept as notes (no warning) for the agent and the AI assistant.
+  // question ("CLEAN" is a No: CLAIMS_CLEAN); everything else is kept as notes (no warning) for
+  // the agent and the AI assistant.
   const claims = record.claims.text;
   if (claims) {
     const lines = claims.split('\n');
-    if (/^(no|none|no claims?)\.?$/i.test(lines[0])) record.claims.hasClaims = false;
+    if (/^(no|none|no claims?)\.?$/i.test(lines[0]) || CLAIMS_CLEAN.test(lines[0])) record.claims.hasClaims = false;
     else if (/^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
     const notes = (record.claims.hasClaims == null ? lines : lines.slice(1)).filter(Boolean);
     record.claims.notes = notes.length ? notes.join('\n') : null;
@@ -924,7 +1230,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (unknown.length) info('form.unknown-fields', '', `The PDF has filled fields this tool doesn't read yet: ${unknown.join(', ')}.`);
 
   const filled = Object.values(raw).filter((v) => v === true || (typeof v === 'string' && clean(v) != null)).length;
-  return { record, warnings, stats: { fields: Object.keys(raw).length, filled }, rows };
+  return { record, warnings, stats: { fields: Object.keys(raw).length, filled }, rows, readFrom };
 }
 
 // Parses a value typed into the review panel, according to the field's kind.

@@ -123,10 +123,14 @@ const zipNote = (r) => (r.garaging?.zip && !zip5(r) ? `The intake's ZIP ${quote(
 // "Does the customer have a USDOT Number registered to themselves or their business?" Yes with a
 // number; No only when the intake says none is coming within 60 days and there is no MC number.
 // "Not yet, but the customer has applied for one." is never derived: a number expected within 60
-// days doesn't say one was applied for.
+// days doesn't say one was applied for. "No" in the intake's USDOT box (`noDot`, also "None" or
+// "N/A") is No too (TNI, 2026-10-26: answer to PR question), unless the 60-day answer says one is
+// coming (R13). With an MC number too (TNI, 2026-10-26: answer to PR question, R12): the box's
+// explicit No answers it, where an MC number with a blank USDOT box stays the agent's.
 // On an NTL quote No, and the number is typed nowhere, the gateway included (TNI, 2026-10-26, W44-28:
 // "US DOT is not added … if its NTL, in every case"); the intake's own No stays `derived`.
-const intakeDotNo = (r) => !r.applicant.dot && !r.applicant.mc && r.applicant.mcDotWithin60Days === false;
+const intakeDotNo = (r) => !r.applicant.dot && (r.applicant.noDot === true && r.applicant.mcDotWithin60Days !== true
+  || !r.applicant.mc && r.applicant.mcDotWithin60Days === false);
 const dotStatus = (r) => (ntlNoDotFilings(r) ? 'No' : r.applicant.dot ? 'Yes' : intakeDotNo(r) ? 'No' : null);
 const dotStatusSource = (r) => (ntlNoDotFilings(r) && !intakeDotNo(r) ? 'standard' : 'derived');
 const noDotOnQuote = (r) => !r.applicant.dot || ntlNoDotFilings(r);
@@ -1281,7 +1285,10 @@ export const geico = {
     // --- Additional Business Info --------------------------------------------------------------
     ...on(MORE_BUSINESS, {}, [
       { field: 'GiveBusinessStartDate', ask: 'How many years has this business been operating?', path: 'applicant.yearsInBusiness', name: 'Years in business', kind: 'choice', source: 'derived',
-        value: (r) => startBucket(r.applicant.yearsInBusiness), note: (r) => (startBucket(r.applicant.yearsInBusiness) == null ? 'The intake has no years in business (or year established): answer it yourself.' : null) },
+        value: (r) => startBucket(r.applicant.yearsInBusiness), note: (r) => (startBucket(r.applicant.yearsInBusiness) != null ? null
+          // A range in the notes whose ends differ (TNI, 2026-10-27: answer to PR question V7).
+          : r.applicant.yearsInBusinessRange === true ? 'The notes give years in business as a range: answer it yourself.'
+            : 'The intake has no years in business (or year established): answer it yourself.') },
       { field: 'GiveNumberOfEmployees', ask: 'How many employees does the customer\'s business have, including part-time employees?', name: 'Number of employees (the drivers besides the owner)', kind: 'choice',
         source: (r) => (employees(r) ? 'standard' : 'fact'), value: employees, note: (r) => (employees(r) ? null : 'The intake lists no drivers: answer how many employees the business has yourself.') },
       { field: 'GiveCurrentAutoInsuranceStatus', ask: 'Does the customer currently have personal or commercial auto insurance?', name: 'Currently has auto insurance', kind: 'choice', source: currentAutoSource, clientFact: true, value: currentAuto, note: currentAutoNote },

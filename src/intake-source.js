@@ -10,6 +10,9 @@ const FIELDS = {
   'applicant.name': ['company_name'],
   'applicant.dot': ['dot_number'],
   'applicant.mc': ['mc_number'],
+  // "No" in the USDOT or MC box (normalizeIntake).
+  'applicant.noDot': ['dot_number'],
+  'applicant.noMc': ['mc_number'],
   'applicant.mcDotWithin60Days': ['mc_dot_60days'],
   'applicant.fein': ['fein'],
   'applicant.yearEstablished': ['year_established'],
@@ -115,14 +118,16 @@ const around = (rects) => [
  * Where a record path is on the intake PDF: its page (0-based), the rectangle around its fields
  * there (PDF units), and one rectangle per path in `rects`; null when the PDF doesn't show it.
  * Several paths (a derived answer's evidence, plan.js `from`) are each marked on the first one's
- * page; `rect` is the box around all of them.
+ * page; `rect` is the box around all of them. An answer this intake read from another box than
+ * its own (`readFrom`, normalizeIntake: years in business from the notes) is marked there.
  * @param {string | string[]} paths
- * @param {{ rows?: object, places?: { fields: Record<string, { page: number, rect: number[] }> } }} intake
+ * @param {{ rows?: object, readFrom?: Record<string, string[]>, places?: { fields: Record<string, { page: number, rect: number[] }> } }} intake
  */
 export function sourcePlace(paths, intake) {
   const fields = intake?.places?.fields;
   if (!fields) return null;
-  const groups = [].concat(paths ?? []).map((path) => sourceFields(path, intake.rows).map((name) => fields[name]).filter(Boolean))
+  const fieldsOf = (path) => intake.readFrom?.[path] ?? sourceFields(path, intake.rows);
+  const groups = [].concat(paths ?? []).map((path) => fieldsOf(path).map((name) => fields[name]).filter(Boolean))
     .filter((found) => found.length);
   if (!groups.length) return null;
   // Several fields of one path (an address split in four, a whole driver row): the box around
