@@ -121,23 +121,25 @@ const zip5 = (r) => String(r.garaging?.zip ?? '').trim().match(/^(\d{5})(?:-?\d{
 const zipNote = (r) => (r.garaging?.zip && !zip5(r) ? `The intake's ZIP ${quote(r.garaging.zip)} isn't a 5-digit ZIP: enter it yourself.` : null);
 
 // "Does the customer have a USDOT Number registered to themselves or their business?" Yes with a
-// number; No only when the intake says none is coming within 60 days and there is no MC number.
-// "Not yet, but the customer has applied for one." is never derived: a number expected within 60
-// days doesn't say one was applied for. "No" in the intake's USDOT box (`noDot`, also "None" or
-// "N/A") is No too (TNI, 2026-10-26: answer to PR question), unless the 60-day answer says one is
-// coming (R13). With an MC number too (TNI, 2026-10-26: answer to PR question, R12): the box's
-// explicit No answers it, where an MC number with a blank USDOT box stays the agent's.
+// number; No only when the intake says none is coming within 60 days and there is no MC number;
+// "Not yet, but the customer has applied for one." when the intake's 60-day box is Yes (TNI,
+// 2026-10-27: that Yes means they will apply / have applied — same idea as Progressive's "Not Yet";
+// until then it was the agent's). "No" in the intake's USDOT box (`noDot`, also "None" or "N/A")
+// is No too (TNI, 2026-10-26: answer to PR question), unless the 60-day answer says one is coming
+// (R13). With an MC number too (TNI, 2026-10-26: answer to PR question, R12): the box's explicit No
+// answers it, where an MC number with a blank USDOT box stays the agent's.
 // On an NTL quote No, and the number is typed nowhere, the gateway included (TNI, 2026-10-26, W44-28:
 // "US DOT is not added … if its NTL, in every case"); the intake's own No stays `derived`.
+const DOT_NOT_YET = 'Not yet, but the customer has applied for one.';
 const intakeDotNo = (r) => !r.applicant.dot && (r.applicant.noDot === true && r.applicant.mcDotWithin60Days !== true
   || !r.applicant.mc && r.applicant.mcDotWithin60Days === false);
-const dotStatus = (r) => (ntlNoDotFilings(r) ? 'No' : r.applicant.dot ? 'Yes' : intakeDotNo(r) ? 'No' : null);
+const dotStatus = (r) => (ntlNoDotFilings(r) ? 'No' : r.applicant.dot ? 'Yes'
+  : r.applicant.mcDotWithin60Days === true ? DOT_NOT_YET : intakeDotNo(r) ? 'No' : null);
 const dotStatusSource = (r) => (ntlNoDotFilings(r) && !intakeDotNo(r) ? 'standard' : 'derived');
 const noDotOnQuote = (r) => !r.applicant.dot || ntlNoDotFilings(r);
 const dotStatusNote = (r) => (dotStatus(r) ? null
   : r.applicant.mc ? 'The intake has an MC number but no USDOT number: answer it yourself.'
-    : r.applicant.mcDotWithin60Days === true ? 'The intake says a USDOT or MC number is coming within 60 days; whether the customer has applied for one is yours to answer.'
-      : 'The intake has no USDOT number and doesn\'t say whether one is coming: answer it yourself.');
+    : 'The intake has no USDOT number and doesn\'t say whether one is coming: answer it yourself.');
 const dotNumberNote = (r) => (!noDotOnQuote(r) && !/^\d+$/.test(r.applicant.dot) ? 'The intake\'s USDOT number isn\'t digits only: enter it yourself.' : null);
 
 // "Does the customer's business have a current GEICO commercial auto policy?" from the intake's

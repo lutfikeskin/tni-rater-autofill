@@ -1340,7 +1340,7 @@ test('"no" in the USDOT or MC box is an explicit No (W44-15)', () => {
   // The 60-day answer saying one is coming still decides: Progressive's Not Yet, GEICO's agent.
   const coming = intake({ dot_number: 'no', mc_dot_60days: 'Yes' });
   assert.equal(progressiveDot(coming), 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days');
-  assert.equal(geicoDot(coming), null);
+  assert.equal(geicoDot(coming), 'Not yet, but the customer has applied for one.', '60-day Yes: Not yet on GEICO too (TNI, 2026-10-27)');
   // Counterexamples: a blank box is not a No, and a real number is unaffected.
   const blank = intake({ dot_number: '' });
   assert.equal(blank.record.applicant.noDot, null);
@@ -1888,8 +1888,7 @@ test('"no" in the USDOT box answers GEICO\'s USDOT question No also with an MC n
   }
   // R13: the 60-day answer saying one is coming still decides (GEICO's agent, Progressive's Not Yet).
   const coming = intake({ dot_number: 'no', mc_dot_60days: 'Yes' });
-  assert.equal(geicoStep(coming).value, null);
-  assert.match(geicoStep(coming).note, /MC number/);
+  assert.equal(geicoStep(coming).value, 'Not yet, but the customer has applied for one.', '60-day Yes wins over the box\'s No (R13), also with an MC');
   assert.equal(progressiveDot(coming), 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days');
   // Counterexamples: a blank USDOT box with an MC number is still the agent's, also with the
   // 60-day No; a real USDOT number is Yes.
