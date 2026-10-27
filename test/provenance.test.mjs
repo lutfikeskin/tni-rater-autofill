@@ -188,10 +188,12 @@ const READ_INDIRECTLY = {
     'claims.text': 'normalize.intakeNotes (an NTL mention in the claims box holds Rates)',
     'claims.notes': 'normalize.otherNotes (the defensive driver course, a claim the notes mention)',
     'notes.text': 'normalize.intakeNotes and otherNotes (NTL, the defensive driver course, a claim the notes mention)',
+    'drivers[].excluded': 'util.driverExcluded (the exclude question: the intake\'s mark, or the owner\'s row when the owner doesn\'t drive)',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag)',
     'applicant.ownerDrives': 'owner() in progressive.js (the owner\'s driver row)',
+    'drivers[].excluded': 'util.driverExcluded ("(Excluded)" after the license number)',
     'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
     'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
   },
@@ -200,6 +202,7 @@ const READ_INDIRECTLY = {
     'claims.text': 'normalize.intakeNotes (an NTL mention holds the liability coverage)',
     'claims.notes': 'normalize.otherNotes (no physical damage, and a mention that leaves a TNI standard to the agent)',
     'notes.text': 'normalize.intakeNotes and otherNotes (NTL, no physical damage, a mention that leaves a TNI standard to the agent)',
+    'drivers[].excluded': 'util.driverExcluded (the excluded-driver warning on Add Driver)',
   },
 };
 

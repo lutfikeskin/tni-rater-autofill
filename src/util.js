@@ -85,15 +85,44 @@ export function ownerIsDriver(ownerName, d) {
   return nameWords(d.last).includes(owner.at(-1)) && nameWords(`${d.first ?? ''} ${d.middle ?? ''}`).includes(owner[0]);
 }
 
-// The driver rows the owner's name matches (ownerIsDriver), and how many of them the intake marks
-// excluded ("Excluded" in the license-number box, normalize.js licenseBox: `drivers[].excluded`).
+// A driver row the quote treats as excluded, on every carrier (Progressive's exclude question Yes,
+// AmWINS' "(Excluded)" after the license number, GEICO's warning on Add Driver):
+// - the intake marks it ("Excluded" in the license-number box, normalize.js licenseBox:
+//   `drivers[].excluded` true), or the agent sets it in client details;
+// - or it is the owner's row (the owner's name matches it, ownerIsDriver) and the intake says the
+//   owner doesn't drive (`applicant.ownerDrives` No). TNI, 2026-10-26 (answer to PR question, R1):
+//   "owner drives" says only whether the owner drives; if the owner's row is marked Excluded, or the
+//   answer is No, the owner is excluded. Every row the owner's name matches counts (a Sr and a Jr
+//   both), as in ownerRows below; the Intake step names each (normalize.js
+//   `drivers.owner-excluded`).
+// Derived here rather than marked on the record at reading, so the record keeps the intake as read
+// (the panel, the usage log and the warehouse show what the intake says) and an edit of either box
+// in client details applies at quote time. A row's own No (`excluded` false, which only the agent
+// sets: the intake leaves it null) is the agent's correction and stands. Other drivers are never
+// affected.
+/** @param {any} r @param {any} d @returns {boolean} */
+export function driverExcluded(r, d) {
+  if (!d) return false;
+  if (d.excluded != null) return d.excluded === true;
+  return r?.applicant?.ownerDrives === false && ownerIsDriver(r.applicant.owner1, d);
+}
+
+// Excluded only because the owner doesn't drive (driverExcluded), not by the row's own mark: what
+// the carriers' notes and warnings say then.
+/** @param {any} r @param {any} d @returns {boolean} */
+export function ownerRowExcluded(r, d) {
+  return driverExcluded(r, d) && d.excluded !== true;
+}
+
+// The driver rows the owner's name matches (ownerIsDriver), and how many of them are excluded
+// (driverExcluded: the intake's mark, or the intake's No for whether the owner drives).
 const ownerRows = (r) => {
   const rows = (r?.drivers ?? []).filter((d) => ownerIsDriver(r?.applicant?.owner1, d));
-  return { rows: rows.length, excluded: rows.filter((d) => d?.excluded === true).length };
+  return { rows: rows.length, excluded: rows.filter((d) => driverExcluded(r, d)).length };
 };
 
-// The intake marks the owner's driver row excluded: every driver row the owner's name matches is
-// marked so. No row matching the owner is no exclusion.
+// The owner is an excluded driver: every driver row the owner's name matches is excluded (marked
+// so, or the intake says the owner doesn't drive). No row matching the owner is no exclusion.
 export function ownerExcluded(r) {
   const { rows, excluded } = ownerRows(r);
   return rows > 0 && excluded === rows;
@@ -102,16 +131,20 @@ export function ownerExcluded(r) {
 // The owner's name matches two or more driver rows (a Sr and a Jr) and only some of them are marked
 // excluded: which row is the owner, and so whether the owner drives, isn't on the intake. TNI,
 // 2026-10-26 (answer to PR question): the agent's, with the reason (ownerDrivesNote); none of them
-// excluded keeps the standard Yes, all of them excluded the No (ownerExcluded).
+// excluded keeps the standard Yes, all of them excluded the No (ownerExcluded). The intake's No
+// decides, so with it there is no mixed case (TNI, 2026-10-26: answer to PR question, R1): every
+// row the owner's name matches is then excluded (driverExcluded).
 export function ownerRowsMixed(r) {
+  if (r?.applicant?.ownerDrives === false) return false;
   const { rows, excluded } = ownerRows(r);
   return excluded > 0 && excluded < rows;
 }
 
 // Whether the owner is a driver on the policy, wherever a carrier asks it (GEICO's Business & Owner
 // Info and Add Driver, Progressive's Business Owner Info; AmWINS doesn't ask). TNI, 2026-10-26
-// (W44-25): "Owner Drivers if not excluded, in every case". The intake's No stays No; an owner
-// whose driver row the intake marks excluded is not a driver, No, also over the intake's Yes, with a
+// (W44-25): "Owner Drivers if not excluded, in every case". The intake's No stays No, and makes the
+// owner's driver rows excluded drivers (driverExcluded; TNI, 2026-10-26: answer to PR question,
+// R1); an owner whose driver row the intake marks excluded is not a driver, No, also over the intake's Yes, with a
 // warning the agent confirms (ownerDrivesWarn; TNI, 2026-10-26: answer to PR question); otherwise
 // Yes: the intake's, or TNI's standard for a blank box. null (the agent's) when the owner's name
 // matches several driver rows and only some are excluded (ownerRowsMixed). The record keeps the box

@@ -51,7 +51,7 @@
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDrivesNote } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDrivesNote, driverExcluded, ownerRowExcluded } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -499,7 +499,10 @@ const listedDriver = (r) => (r?.applicant && ownerDrives(r) === true && owner(r)
 // drivers, the box blank). The owner's name on several driver rows with only some excluded (a Sr and
 // a Jr) leaves whether the owner drives to the agent (ownerDrives null), so the owner's rows are
 // unknown and adding the drivers is the agent's too, as for an unmatched owner (TNI, 2026-10-26:
-// answer to PR question).
+// answer to PR question). With the intake's No that can't happen: the No decides, and the owner's
+// rows are excluded drivers (util.js driverExcluded; TNI, 2026-10-26: answer to PR question, R1),
+// added with the other drivers and warned on their form (excludedWarn), as for any driver the intake
+// marks excluded.
 const driversKnown = (r) => ownerDrives(r) === false || listedDriver(r) >= 0;
 // An Add Driver form while the panel's driver is the owner, whom GEICO already lists as a driver
 // (Business & Owner Info: the owner drives): filling it would add the owner twice. The panel's
@@ -530,8 +533,13 @@ const sr22Note = (value) => (r) => (r.operations.needSr22 == null ? (sr22Mention
   : r.operations.needSr22 !== true || value(r) != null ? null
     : (r.drivers?.length ?? 0) > 1 ? `The intake says an SR-22 is needed but not for which of the ${r.drivers.length} drivers: answer it for this driver yourself.`
       : 'The intake says an SR-22 is needed but not for which of the drivers GEICO lists (the owner and the intake\'s driver): answer it for this driver yourself.');
-const excludedWarn = (r, a) => (driverOf(r, a)?.excluded === true
-  ? 'The intake marks this driver to be excluded, and GEICO asks nothing about it here: handle the exclusion yourself.' : null);
+// A driver to be excluded (util.js driverExcluded): GEICO asks nothing about it, so the form is
+// filled with a warning (TNI, 2026-10-20). The owner's row when the intake says the owner doesn't
+// drive counts too (TNI, 2026-10-26: answer to PR question, R1); GEICO doesn't list that owner
+// (ownerDrives No, listedDriver), and both owner-driver questions answer No.
+const excludedWarn = (r, a) => (!driverExcluded(r, driverOf(r, a)) ? null
+  : ownerRowExcluded(r, driverOf(r, a)) ? 'The intake says the owner doesn\'t drive, so this driver, the owner, is excluded (TNI), and GEICO asks nothing about it here: handle the exclusion yourself.'
+    : 'The intake marks this driver to be excluded, and GEICO asks nothing about it here: handle the exclusion yourself.');
 const dobNote = (r, a) => (driverOf(r, a)?.dob && !DATE.test(driverOf(r, a).dob) ? 'This driver\'s date of birth on the intake isn\'t a valid date: enter it yourself.' : null);
 
 // --- Additional business info ------------------------------------------------------------------

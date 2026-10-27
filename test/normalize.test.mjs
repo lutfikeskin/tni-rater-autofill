@@ -763,6 +763,52 @@ test('"Excluded" in a license-number box marks the driver excluded and is left o
   assert.match(said('Excluded'), /on AmWINS, which has no such question, type "\(Excluded\)" after the license number you enter\./);
 });
 
+// TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives;
+// if the owner's row is marked Excluded, or the answer is No, the owner is excluded. So the intake's
+// No makes the owner's driver row an excluded driver on every carrier, as an "Excluded" mark does,
+// while the record keeps the row as read.
+test('"owner drives" No: the owner\'s driver row is an excluded driver on every carrier; blank, Yes and other drivers unchanged', () => {
+  const today = { today: new Date('2026-09-30') };
+  // The sample intake's owner is its driver 1 (the same name), driver 2 someone else.
+  const read = (extra) => normalizeIntake({ ...raw, ...extra }, today);
+  const item = (r, i = 0) => r.warnings.find((w) => w.code === 'drivers.owner-excluded' && w.path === `drivers[${i}].excluded`);
+  const exclude = (r, drivers) => buildPlan(r.record, progressive, { drivers }).find((s) => s.q === '28C1').value;
+  const amwinsLicense = (r, drivers) => buildPlan(r.record, amwins, { drivers }).find((s) => s.path === `drivers[${drivers}].licenseNumber`);
+  const no = read({ owner_drives: 'No' });
+  // The record keeps the intake as read: the row isn't marked, the box stays No.
+  assert.deepEqual([no.record.applicant.ownerDrives, no.record.drivers[0].excluded, no.record.drivers[1].excluded], [false, null, null]);
+  // The Intake step says so, on the owner's row only, and what each carrier gets.
+  assert.equal(item(no)?.level, 'check');
+  assert.match(item(no).msg, /"Owner drives" is No.*matches the owner "Jordan Avery Sample".*excluded.*Progressive's exclude question gets Yes; on AmWINS, which has no such question, their license number gets "\(Excluded\)" after it\..*GEICO/);
+  assert.equal(item(no, 1), undefined, 'another driver is never affected');
+  assert.match(item(no).msg, /If this driver isn't the owner, set Excluded driver to No\.$/);
+  // The owner's name on two rows (a Sr and a Jr): the No decides, each is excluded, and each item says so.
+  const family = read({ owner_drives: 'No', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Jr' });
+  assert.deepEqual([0, 1].map((i) => /matches 2 drivers, and each is excluded: for one who isn't the owner, set Excluded driver to No\./.test(item(family, i)?.msg ?? '')), [true, true]);
+  assert.deepEqual([exclude(family, 0), exclude(family, 1)], [true, true]);
+  // Progressive: the exclude question Yes for the owner's row, No for the other driver.
+  assert.deepEqual([exclude(no, 0), exclude(no, 1)], [true, false]);
+  // AmWINS: "(Excluded)" after the owner's license number, the other driver's as written.
+  assert.deepEqual([amwinsLicense(no, 0).value, amwinsLicense(no, 0).source], ['ILS12345678901 (Excluded)', 'derived']);
+  assert.equal(amwinsLicense(no, 1).value, 'E98765432101');
+  // No license number on the owner's row: the box is the agent's, with the reason.
+  const noNumber = read({ owner_drives: 'No', drv_lic_1: '' });
+  assert.equal(amwinsLicense(noNumber, 0).value, null);
+  assert.match(amwinsLicense(noNumber, 0).note, /owner doesn't drive.*type their license number yourself, then "\(Excluded\)" after it/);
+  assert.match(item(noNumber).msg, /type "\(Excluded\)" after the license number you enter/);
+  // A row the intake marks excluded keeps its own item (license.excluded), not this one.
+  const marked = read({ owner_drives: 'No', drv_lic_1: 'IL - S12345678901 EXCLUDED' });
+  assert.deepEqual([item(marked), exclude(marked, 0)], [undefined, true]);
+  // Counterexamples: a blank box or the intake's Yes leaves the owner's unmarked row a listed driver.
+  for (const box of ['', 'Yes']) {
+    const r = read({ owner_drives: box });
+    assert.deepEqual([item(r), exclude(r, 0), exclude(r, 1), amwinsLicense(r, 0).value], [undefined, false, false, 'ILS12345678901'], box);
+  }
+  // No with an owner no driver row matches: nobody is excluded.
+  const other = read({ owner_drives: 'No', owner_name_1: 'Someone Else' });
+  assert.deepEqual([item(other), item(other, 1), exclude(other, 0), exclude(other, 1)], [undefined, undefined, false, false]);
+});
+
 // PR #17 review: a mention ("no bobtail") must never become NTL coverage. The agent sets it.
 test('NTL / non-trucking / bobtail in the claims box asks the agent; coverage.ntl stays unset', () => {
   const today = { today: new Date('2026-09-30') };

@@ -50,6 +50,7 @@
 import { owner, ownerDobNote } from './progressive.js';
 import { isLongHaul, otherNotes } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { driverExcluded, ownerRowExcluded } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -183,13 +184,15 @@ const licenseYearNote = (r, a) => (birthYear(r, a) == null
 // A driver the intake marks excluded ("Excluded" in their license-number box, normalize.js; or set
 // in client details). AmWINS asks nothing about excluding a driver, so TNI (2026-10-20) writes
 // "(Excluded)" after their license number. With no number to write it after, the box is the agent's.
-const excludedDriver = (r, a) => driverOf(r, a)?.excluded === true;
+// The owner's row when the intake says the owner doesn't drive counts too (TNI, 2026-10-26: answer
+// to PR question, R1: util.js driverExcluded).
+const excludedDriver = (r, a) => driverExcluded(r, driverOf(r, a));
 const licenseNumber = (r, a) => {
   const number = driverOf(r, a)?.licenseNumber ?? null;
   return number && excludedDriver(r, a) ? `${number} (Excluded)` : number;
 };
 const licenseNumberNote = (r, a) => (excludedDriver(r, a) && !driverOf(r, a)?.licenseNumber
-  ? 'The intake marks this driver as excluded and gives no license number: type their license number yourself, then "(Excluded)" after it.' : null);
+  ? `${ownerRowExcluded(r, driverOf(r, a)) ? 'The intake says the owner doesn\'t drive, so this driver, the owner, is excluded (TNI),' : 'The intake marks this driver as excluded'} and gives no license number: type their license number yourself, then "(Excluded)" after it.` : null);
 // Underwriting questions TNI answers No (both sections), by the field names AmWINS uses.
 // The second section's vehicle, MVR and conviction questions have their own rules below.
 const UNDERWRITING_NO = [

@@ -643,6 +643,51 @@ test('owner is a driver (29F): the owner\'s name on two driver rows, only one ex
   assert.deepEqual(step(null, [true, true]), [false, 'derived', false, null]);
 });
 
+// TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives; if
+// the owner's row is marked Excluded, or the answer is No, the owner is excluded. The intake's No
+// makes the owner's driver row (ownerIsDriver) an excluded driver, as an "Excluded" mark does: the
+// exclude question (28C1) is Yes for it. The record keeps the row as read.
+test('owner drives No: the owner\'s driver row is excluded (28C1 Yes); blank, Yes, the agent\'s No and other drivers unchanged', () => {
+  const record = (box, change = () => {}) => {
+    const r = baseRecord();
+    r.applicant.ownerDrives = box;
+    r.drivers.push({ first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'MD7654321', licenseState: 'MD' });
+    change(r);
+    return r;
+  };
+  const exclude = (r, drivers) => byQ(buildPlan(r, progressive, { drivers }), '28C1');
+  const got = (s) => [s.value, s.source, s.manualOnly, s.note];
+  const no = record(false);
+  assert.deepEqual(got(exclude(no, 0)), [true, 'derived', false, null], 'the owner\'s row: excluded');
+  assert.deepEqual(got(exclude(no, 1)), [false, 'derived', false, null], 'another driver: never');
+  assert.ok(exclude(no, 0).from.includes('applicant.ownerDrives'), 'its evidence: the owner-drives box');
+  assert.equal(no.drivers[0].excluded, undefined, 'the record keeps the row as read');
+  // The owner-driver question stays the intake's No.
+  const owner29F = byQ(buildPlan(no, progressive), '29F');
+  assert.deepEqual([owner29F.value, owner29F.source, owner29F.note, owner29F.warn], [false, 'intake', null, null]);
+  // Counterexamples: a blank box or the intake's Yes, the owner's row unmarked: a listed driver.
+  for (const box of [null, true]) assert.deepEqual([exclude(record(box), 0).value, exclude(record(box), 1).value], [false, false], String(box));
+  // The agent's No for the owner's row in client details stands.
+  assert.equal(exclude(record(false, (r) => { r.drivers[0].excluded = false; }), 0).value, false);
+  // No with an owner no driver row matches: nobody is excluded.
+  const other = record(false, (r) => { r.applicant.owner1 = 'Jordan Sample'; });
+  assert.deepEqual([exclude(other, 0).value, exclude(other, 1).value], [false, false]);
+  // The owner's name on two rows (a Sr and a Jr), only one marked excluded: with the intake's No the
+  // No decides, so there is no mixed case (TNI, 2026-10-26: answer to PR question, R1). 29F is the
+  // intake's No without the mixed-rows note, and every row the owner's name matches is excluded.
+  for (const marked of [0, 1]) {
+    const family = baseRecord();
+    family.applicant.ownerDrives = false;
+    const senior = family.drivers[0];
+    family.drivers = [{ ...senior, excluded: null }, { ...senior, suffix: 'Jr', dob: '03/04/2004', licenseNumber: 'MD7654321', excluded: null },
+      { first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'MD1112223', licenseState: 'MD', excluded: null }];
+    family.drivers[marked].excluded = true;
+    const s = byQ(buildPlan(family, progressive), '29F');
+    assert.deepEqual([s.value, s.source, s.manualOnly, s.note], [false, 'intake', false, null], `row ${marked} marked`);
+    assert.deepEqual([0, 1, 2].map((i) => exclude(family, i).value), [true, true, false], `row ${marked} marked`);
+  }
+});
+
 // Audit 2026-10-08: owner "Alice Sample" who doesn't drive took the first name and date of birth
 // of the sole driver "Bob Sample" (through the surname-only match), on both carriers.
 test('the owner is never another driver: first names must agree, and a non-driving owner links no row', () => {

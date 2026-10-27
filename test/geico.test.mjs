@@ -689,6 +689,48 @@ test('owner drives: the owner\'s name on two driver rows, only one excluded, is 
   assert.deepEqual(addDriver(all), ['addDriver:1']);
 });
 
+// TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives; if
+// the owner's row is marked Excluded, or the answer is No, the owner is excluded. GEICO asks nothing
+// about exclusion: the owner's row carries the excluded-driver warning on its Add Driver form, as an
+// "Excluded" mark does, and GEICO doesn't list the owner as a driver.
+test('owner drives No: the owner\'s driver row is an excluded driver (warned on Add Driver), never listed by GEICO; other drivers unchanged', () => {
+  const two = (changes = {}) => with_(changes, with_({ drivers: [{ ...intake().drivers[0], excluded: null }, { ...CASEY, excluded: null }] }));
+  const firstName = (r, drivers) => one(plan(r, { drivers }), 'Driver first name', DRV);
+  const no = two({ 'applicant.ownerDrives': false });
+  // GEICO isn't told the owner drives, on Business & Owner Info or on the owner's Add Driver form.
+  for (const s of [one(plan(no), OWNER_DRIVES, BOI), one(plan(no, { drivers: 0 }), OWNER_DRIVES_ADD, DRV)]) assert.deepEqual([s.value, s.source, s.note, s.warn], [false, 'intake', null, null]);
+  assert.equal(geico.listedDriver(no), -1);
+  // The owner's Add Driver form: the excluded-driver warning, saying why; the other driver's: none.
+  assert.match(firstName(no, 0).warn, /owner doesn't drive.*excluded.*GEICO asks nothing about it here: handle the exclusion yourself/);
+  assert.equal(firstName(no, 0).note, null, 'not the "GEICO already lists" note: GEICO doesn\'t list the owner');
+  assert.equal(firstName(no, 1).warn, null);
+  assert.equal(no.drivers[0].excluded, null, 'the record keeps the row as read');
+  // Counterexamples: a blank box or the intake's Yes, the owner's row unmarked: GEICO lists the owner,
+  // and no form carries the warning.
+  for (const box of [null, true]) {
+    const r = two({ 'applicant.ownerDrives': box });
+    assert.equal(geico.listedDriver(r), 0, String(box));
+    assert.deepEqual([firstName(r, 0).warn, firstName(r, 1).warn], [null, null], String(box));
+  }
+  // The agent's No for the owner's row in client details stands: no warning.
+  assert.equal(firstName(two({ 'applicant.ownerDrives': false, 'drivers.0.excluded': false }), 0).warn, null);
+  // A row the intake marks excluded keeps its own warning.
+  assert.match(firstName(two({ 'applicant.ownerDrives': false, 'drivers.1.excluded': true }), 1).warn, /^The intake marks this driver to be excluded/);
+  // The owner's name on two rows (a Sr and a Jr), one marked excluded: with the intake's No the No
+  // decides, so there is no mixed case. Both owner-driver questions are the intake's No without the
+  // mixed-rows note, every row the owner's name matches carries the warning, and the other driver none.
+  for (const marked of [0, 1]) {
+    const senior = { ...intake().drivers[0], excluded: null };
+    const family = with_({ 'applicant.ownerDrives': false, drivers: [senior, { ...senior, suffix: 'Jr', dob: '03/04/2004' }, { ...CASEY, excluded: null }] });
+    family.drivers[marked].excluded = true;
+    for (const s of [one(plan(family), OWNER_DRIVES, BOI), one(plan(family, { drivers: 1 }), OWNER_DRIVES_ADD, DRV)]) {
+      assert.deepEqual([s.value, s.source, s.manualOnly, s.note], [false, 'intake', false, null], `row ${marked} marked`);
+    }
+    assert.equal(geico.listedDriver(family), -1);
+    assert.deepEqual([0, 1, 2].map((i) => /excluded/.test(firstName(family, i).warn ?? '')), [true, true, false], `row ${marked} marked`);
+  }
+});
+
 test('ownership type from the company name; no suffix, or no name, is the agent\'s', () => {
   const type = (name, owner1 = 'Amina Kone') => one(plan(with_({ 'applicant.name': name, 'applicant.owner1': owner1 })), 'Business ownership type (from the company name)');
   assert.equal(type('Synthetic Expediter LLC').value, 'Limited Liability Company');

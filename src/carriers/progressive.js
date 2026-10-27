@@ -31,7 +31,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDrivesNote } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDrivesNote, driverExcluded } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -160,8 +160,10 @@ const trailerEquipment = (r) => (r.trailerInfo?.equipTrailer > 0 ? r.trailerInfo
 const trailerEquipmentSource = (r) => (r.trailerInfo?.equipTrailer == null ? 'standard' : 'derived');
 
 // A driver the intake marks excluded ("Excluded" in their license-number box, normalize.js; or set
-// in client details). TNI (2026-10-20): the exclude question is Yes for them.
-const excludedDriver = (r, a) => r.drivers?.[a.drivers ?? 0]?.excluded === true;
+// in client details). TNI (2026-10-20): the exclude question is Yes for them. The owner's row when
+// the intake says the owner doesn't drive counts too (TNI, 2026-10-26: answer to PR question, R1:
+// util.js driverExcluded).
+const excludedDriver = (r, a) => driverExcluded(r, r.drivers?.[a.drivers ?? 0]);
 
 // TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
 // the driver took a course (or the Additional Notes box does); then it's the agent's.
@@ -846,7 +848,9 @@ export const progressive = {
       // after the renumbering.)
       { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
       // No: the driver is listed on the intake to be covered. Yes for a driver the intake marks
-      // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver).
+      // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver), and for the
+      // owner's row when the intake says the owner doesn't drive (TNI, 2026-10-26: answer to PR
+      // question, R1).
       { q: '28C1', source: 'derived', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (No unless the intake marks them excluded)', kind: 'bool', value: excludedDriver },
       // The claims box's Yes or No; neither: TNI's standard No unless the notes mention one (hasClaims, 2026-10-19).
       { q: '28F5', source: hasClaimsSource, field: 'DriverInput.AnyAccidentsViolationsPastExpYears', label: '^has this driver had any accidents claims or violations in the past', path: 'claims.hasClaims', name: 'Accidents / claims / violations (standard: No unless the intake says otherwise)', kind: 'bool', value: hasClaims, note: hasClaimsNote },

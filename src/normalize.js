@@ -572,6 +572,20 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
         : `"Owner drives" is blank, so the carriers answer TNI's standard Yes, but "${a.owner1}" isn't in the driver list: the owner's driver details (date of birth, license) are yours. If the owner doesn't drive, set Owner drives to No.`);
     }
   }
+  // TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives;
+  // the intake's No makes the owner's driver row (every row the owner's name matches, ownerIsDriver)
+  // an excluded driver on every carrier, as an "Excluded" mark does (util.js driverExcluded). The
+  // record keeps the row as read (`excluded` stays null), so this item tells the agent; a row marked
+  // excluded already has its own (license.excluded).
+  if (a.ownerDrives === false && a.owner1) {
+    const owners = record.drivers.map((d, i) => ({ d, i })).filter(({ d }) => ownerIsDriver(a.owner1, d));
+    for (const { d, i } of owners.filter(({ d }) => d.excluded !== true)) {
+      const who = [d.first, d.last].filter(Boolean).join(' ') || `Driver ${rows.drivers[i]}`;
+      const amwins = d.licenseNumber ? 'their license number gets "(Excluded)" after it' : 'type "(Excluded)" after the license number you enter';
+      const which = owners.length > 1 ? ` The owner's name matches ${owners.length} drivers, and each is excluded: for one who isn't the owner, set Excluded driver to No.` : ' If this driver isn\'t the owner, set Excluded driver to No.';
+      check('drivers.owner-excluded', `drivers[${i}].excluded`, `${who}: "Owner drives" is No and the name matches the owner "${a.owner1}", so the driver is excluded (TNI). Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. GEICO is told the owner isn't a driver and asks nothing about exclusion: the driver's answers are filled with a warning, and the exclusion is yours. An exclusion usually needs the insured's signed form.${which}`);
+    }
+  }
 
   // --- Vehicles and trailers ------------------------------------------------------------------
   const units = (prefix, list, label) => {
