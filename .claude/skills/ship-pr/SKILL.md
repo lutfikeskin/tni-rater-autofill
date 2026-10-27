@@ -1,11 +1,11 @@
 ---
 name: ship-pr
-description: Take named TNI Rater Autofill pull requests to ready-to-merge - review only their diffs (with the Claude GitHub review, a pr-review report, and any Cursor or second-session reviews), verify each finding against the code, fix the real ones with tests that fail on the old code, run the full local CI, push, post a review comment, and hand back a verified / not-verified checklist. Use when asked to fix a PR's review findings or get PRs ready to merge; a review that only reports, with or without a Cursor /thermos second opinion, is the pr-review skill's. It never merges, bumps the version, releases or deploys until the maintainer confirms that step in chat.
+description: Take named TNI Rater Autofill pull requests to ready-to-merge - review only their diffs (with the Claude GitHub review, a pr-review report, and any Cursor or second-session reviews), verify each finding against the code, fix the real ones with tests that fail on the old code, push, confirm every GitHub Checks job passed on the pushed head, post a review comment, and hand back a verified / not-verified checklist. Use when asked to fix a PR's review findings or get PRs ready to merge; a review that only reports, with or without a Cursor /thermos second opinion, is the pr-review skill's. It never merges, bumps the version, releases or deploys until the maintainer confirms that step in chat.
 ---
 
 # Getting a pull request ready to merge
 
-The outcome is each named PR with its real findings fixed and proven, the full local CI green on what was pushed, a review comment on the PR saying what was verified, and a checklist for the maintainer. Then stop: **merging waits for the maintainer's confirmation in chat**, given for that PR after the checklist. A request like "fix and merge" still stops at the checklist the first time; the maintainer confirms after reading it.
+The outcome is each named PR with its real findings fixed and proven, every job of the PR's GitHub Checks green on what was pushed, a review comment on the PR saying what was verified, and a checklist for the maintainer. Then stop: **merging waits for the maintainer's confirmation in chat**, given for that PR after the checklist. A request like "fix and merge" still stops at the checklist the first time; the maintainer confirms after reading it.
 
 Read `CLAUDE.md` (identical to `AGENTS.md`) first and follow it: scope, client data, the documents to update, and the restrictions on binding, purchasing, submitting, ordering reports and signing. Approved weekly-review items (`W42-03`) go through the apply-review-fixes skill instead; this skill is for PRs.
 
@@ -57,31 +57,32 @@ Follow `docs/corrections.md` and the document for the layer (the table in `CLAUD
 ## 4. Verify
 
 ```bash
-npm run ci                  # full: lint, type check, unit tests, package, store ZIP, packaged E2E, AmWINS, GEICO, Progressive replays, Luna
+npm test                    # the unit tests, plus the focused checks docs/testing.md names for what changed
 ```
 
-Run the full set, not `--quick`, even when the change looks local: neighbouring E2E and mock runs are what a narrow change usually breaks. Add the extra comparisons `docs/testing.md` and apply-review-fixes step 3 list for the layers touched: the E2E baseline report, the benchmark, TNI's answer key. A check that already fails on the base branch is reported as such, with its output, and not fixed silently.
+The full set (lint, type check, unit tests, package, store ZIP, packaged E2E, AmWINS, GEICO, Progressive replays, Luna) runs on GitHub as the PR's Checks after the push (step 5): that is the gate, so a local `npm run ci` isn't needed. Use it only to reproduce a failing job. Add the extra comparisons `docs/testing.md` and apply-review-fixes step 3 list for the layers touched: the E2E baseline report, the benchmark, TNI's answer key. A check that already fails on the base branch is reported as such, with its output, and not fixed silently.
 
-A step that didn't run (Playwright missing, port 8792 taken) is a failure, not a pass.
+A check that didn't run (Playwright missing, port 8792 taken) is a failure, not a pass.
 
 ## 5. Push and comment
 
 ```bash
-git push                                             # the pre-push hook skips the checks npm run ci just passed on this HEAD
+git push                                             # the pre-push hook runs no checks
 git fetch origin && git rev-parse HEAD origin/<branch>   # both the same: the push landed
+gh pr checks <n> --watch                              # every job passed on that head
 ```
 
-Never push with `--no-verify` unless the maintainer said so; if you did, say so in the report. Whether GitHub Actions ran: `gh pr checks <n>`. Don't dispatch `windows-smoke.yml` (paid minutes; local CI covers it). If Actions didn't run or failed for runner reasons, say so; local CI is the evidence, and the PR is not "CI-verified on GitHub".
+Never push with `--no-verify` unless the maintainer said so; if you did, say so in the report. The Checks run every step of `npm run ci` on Ubuntu; a failed job is fixed and pushed again, reproduced locally with `npm run ci` or the job's own command when its log isn't enough. Don't dispatch `windows-smoke.yml` unless asked. If Actions didn't run or failed for runner reasons, say so: the PR is not ready until its Checks passed.
 
-Then post one comment on the PR (`gh pr review <n> --comment --body-file <file>`; `--approve` isn't possible on your own PR): the findings and what was decided for each, the tests added (and that each failed before the fix), the local CI result, the GitHub checks state, and what remains unverified. No client data.
+Then post one comment on the PR (`gh pr review <n> --comment --body-file <file>`; `--approve` isn't possible on your own PR): the findings and what was decided for each, the tests added (and that each failed before the fix), the local `npm test` result, the GitHub Checks state (each job, on which head), and what remains unverified. No client data.
 
 ## 6. Hand back and wait
 
 Report per PR, then stop:
 
 - **Findings**: real and fixed (test name), not real (why), needs the maintainer (the question).
-- **Local CI**: `npm run ci` passed or which step failed; extra comparisons and their results.
-- **GitHub**: checks ran and passed / didn't run / failed and why.
+- **Local**: `npm test` and the focused checks, and the extra comparisons, with their results.
+- **GitHub**: every Checks job passed on the pushed head (the run URL), or which didn't run or failed and why.
 - **Verified how**: unit, replay or mock, packaged extension, or live carrier page. Live carrier behaviour (GEICO, Progressive, AmWINS server acceptance) is unverified unless it was run on the live site.
 - **Test manually**: exactly what to check on the live site, and the absolute path of a build to load if the maintainer asked for one (`npm run package` in the checkout they'll load; output under `dist/`).
 - **Merge order** for stacked or overlapping PRs.
@@ -90,6 +91,6 @@ Then ask whether to merge. Do nothing further until the maintainer answers.
 
 ## 7. Only after the maintainer confirms
 
-- **Merge** only the PRs confirmed, in the stated order: `gh pr merge <n> --merge` (the repository keeps merge commits). Rebase and re-run `npm run ci` on a child whose base just merged before merging it.
+- **Merge** only the PRs confirmed, in the stated order: `gh pr merge <n> --merge` (the repository keeps merge commits). Rebase a child whose base just merged, push, and wait for its Checks to pass again before merging it.
 - **Version bump, store package, release or deploy** only when the maintainer asks for that step itself (`docs/chrome-web-store.md`, `docs/hosting.md`). Merged to `main` is not yet with the agents; say so.
 - Afterwards, delete the branches you created (`git branch -d`, `git push origin --delete` for those that merged) and leave `main` checked out and up to date. Never delete a branch with commits that aren't merged or pushed elsewhere; list them instead.
