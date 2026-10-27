@@ -261,7 +261,9 @@ test('verification size is checked before paying for proposals', async () => {
 
 test('groups also split for the largest legal verification while every request stays bounded', async () => {
   const notes = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`note${i}`, 'x'.repeat(1000)]));
-  const ctx = { ...context, record: { operations: { hazPlacard: false, ...notes } } };
+  // A carrier with no TNI rules: they go in the first request only (GEICO's take about 13,000
+  // characters), and this checks that the verification's size alone splits the group.
+  const ctx = { ...context, carrier: 'test', record: { operations: { hazPlacard: false, ...notes } } };
   const fields = questions(12).map(x => ({ ...x, label: `${x.label} ${'x'.repeat(1000)}` }));
   assert.ok(JSON.stringify(buildRequest(fields, ctx)).length <= 48000, 'the first request alone would fit all twelve');
   const sizes = [];

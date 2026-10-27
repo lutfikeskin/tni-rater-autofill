@@ -118,7 +118,7 @@ Carrier rules precede generic rules, and exact matching precedes label fallback.
 2. Classify the answer as an explicit fact, supported transformation, approved scoped default, known non-applicability, or unresolved decision. Unknown is not No.
 3. Prefer a shared fact and carrier-specific translation. Add a narrow condition for a real exception; do not copy an entire flow for each combination.
 4. Preserve conflicting or ambiguous notes for review. A tentative coverage mention needs confirmation and an entity target before becoming a selection.
-5. Test the intended case and a nearby case where the rule must not apply. Update [the AI rulebook](../src/ai/tni-rules.js) when a standard represented there changes.
+5. Test the intended case and a nearby case where the rule must not apply. A `standard` rule names the entry of [the AI rulebook](../src/ai/tni-rules.js) that states it (`tni`: the general part for a decision every carrier shares, else the carrier's part); write or change that entry with the rule ([test/rulebook.test.mjs](../test/rulebook.test.mjs) checks both ways).
 
 ## Known gaps to account for
 

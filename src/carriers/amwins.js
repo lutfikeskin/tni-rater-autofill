@@ -357,23 +357,23 @@ export const amwins = {
     { selector: '#mailingZip', path: 'garaging.zip' },
     { selector: '#businessPhone', name: 'Business phone', source: 'derived', value: (r) => digits(r.applicant.phone) },
     { selector: '#entityType', name: 'Entity type (from the company name)', kind: 'choice', source: 'derived', clientFact: true, value: entityType, note: entityTypeNote, warn: entityTypeWarn },
-    { selector: '#yrsInBusiness', name: 'Years in business (standard when blank: New Venture)', kind: 'choice', source: yearsSource, value: yearsInBusiness },
-    { selector: '#yearBusinessEstablished', name: 'Year established (standard when blank: this year)', kind: 'int', source: establishedSource, value: yearEstablished },
-    { name: 'Non-profit (standard: No)', label: '^is non profit$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'Single contact (standard: Yes)', label: '^is single contact$', kind: 'bool', source: 'standard', value: () => true },
-    { name: 'Garage address same as mailing (standard)', label: '^same as mailing address', kind: 'bool', source: 'standard', value: () => true },
+    { selector: '#yrsInBusiness', tni: 'amwins.years', name: 'Years in business (standard when blank: New Venture)', kind: 'choice', source: yearsSource, value: yearsInBusiness },
+    { selector: '#yearBusinessEstablished', tni: 'amwins.years', name: 'Year established (standard when blank: this year)', kind: 'int', source: establishedSource, value: yearEstablished },
+    { tni: 'amwins.retail-nonprofit', name: 'Non-profit (standard: No)', label: '^is non profit$', kind: 'bool', source: 'standard', value: () => false },
+    { tni: 'amwins.contact', name: 'Single contact (standard: Yes)', label: '^is single contact$', kind: 'bool', source: 'standard', value: () => true },
+    { tni: 'amwins.named-insured', name: 'Garage address same as mailing (standard)', label: '^same as mailing address', kind: 'bool', source: 'standard', value: () => true },
     // The box doesn't copy the address over: the garage boxes are filled too.
     { selector: dataId('address', '#garagePanel'), name: 'Garage street', source: 'derived', value: street },
     { selector: dataId('city', '#garagePanel'), name: 'Garage city', path: 'garaging.city' },
     { selector: dataId('state', '#garagePanel'), name: 'Garage state', kind: 'state', source: 'derived', value: (r) => r.garaging?.state ?? null },
     { selector: dataId('zip', '#garagePanel'), name: 'Garage ZIP', path: 'garaging.zip' },
     { selector: '#natureOfBusiness', name: 'Nature of business (TRANSPORTATION for expediters / general freight)', kind: 'choice', source: 'derived', value: (r) => (isFreight(r) ? 'TRANSPORTATION' : null), note: freightNote('The nature of business') },
-    { selector: '#retailOrServiceOperationPert', name: 'Retail / service operations % (standard: 0)', source: 'standard', value: () => '0' },
+    { selector: '#retailOrServiceOperationPert', tni: 'amwins.retail-nonprofit', name: 'Retail / service operations % (standard: 0)', source: 'standard', value: () => '0' },
     { selector: '#classCodeAndDescription', name: 'Classification (484122 for expediters / general freight)', kind: 'search-select', source: 'derived', search: classSearch, value: classChoice, note: freightNote('The classification') },
     { selector: '#operationDescription', name: 'Description of operations (for hire, for expediters / general freight)', source: 'derived', value: operationsDescription, note: freightNote('The description of operations') },
     // Lienholders and lessors are added after the quote (TNI, 2026-10-09).
-    { name: 'Additional interest (standard: No)', label: '^has additional interest$', kind: 'bool', source: 'standard', value: () => false },
-    { selector: '#waiverType', name: 'Waiver type (standard: NONE)', kind: 'choice', source: 'standard', value: () => 'NONE' },
+    { tni: 'amwins.additional-interest', name: 'Additional interest (standard: No)', label: '^has additional interest$', kind: 'bool', source: 'standard', value: () => false },
+    { selector: '#waiverType', tni: 'amwins.waiver-type', name: 'Waiver type (standard: NONE)', kind: 'choice', source: 'standard', value: () => 'NONE' },
     // Filing counts: skipped (TNI).
     ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map(/** @returns {CarrierRule} */ (selector) => ({ selector, name: 'Filing count (skipped)', ignore: true })),
     // Prior insurance section only: every carrier dropdown is NO PRIOR (the proof of prior insurance goes in the disclosure).
@@ -382,7 +382,7 @@ export const amwins = {
     // than one coverage row. So: every carrier dropdown in a prior-carrier coverage panel (not the hidden
     // template), in page order, visible or collapsed, up to six (live IL run: years 1 and 2 were
     // never filled and the agent set one by hand).
-    ...Array.from({ length: 6 }, (_, n) => ({ selector: '#priorCarrierPanel .coveragePanel [data-id="carrierName"]', name: `Prior carrier ${n + 1} (standard: NO PRIOR)`, kind: 'choice', source: 'standard', value: () => 'NO PRIOR', hidden: true })),
+    ...Array.from({ length: 6 }, (_, n) => ({ selector: '#priorCarrierPanel .coveragePanel [data-id="carrierName"]', tni: 'amwins.prior-carrier', name: `Prior carrier ${n + 1} (standard: NO PRIOR)`, kind: 'choice', source: 'standard', value: () => 'NO PRIOR', hidden: true })),
     { name: 'Filings required', label: '^filling required$', kind: 'bool', source: 'derived', value: filings },
     { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.dot },
     { selector: '#hasMcNumber', name: 'Has an MC number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.mc },
@@ -398,9 +398,9 @@ export const amwins = {
     // live run; may change later): 1 TO 2 YEARS with the current carrier and no claim-free loss
     // runs. The current-carrier question is only asked of clients with a DOT number. Valued loss
     // runs: No too (TNI, 2026-10-19, a later AmWINS run: "valued loss runs are always NO").
-    { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier (standard: 1 TO 2 YEARS)', kind: 'choice', source: 'standard', ignore: (r) => !r.applicant.dot, value: () => '1 TO 2 YEARS' },
-    { name: 'Claim-free loss runs (standard: No)', label: '^can provide claim free loss run$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', source: 'standard', value: () => false },
+    { selector: '#howLongWithCurrentCarrier', tni: 'amwins.current-carrier-tenure', name: 'How long with the current carrier (standard: 1 TO 2 YEARS)', kind: 'choice', source: 'standard', ignore: (r) => !r.applicant.dot, value: () => '1 TO 2 YEARS' },
+    { tni: 'amwins.loss-runs', name: 'Claim-free loss runs (standard: No)', label: '^can provide claim free loss run$', kind: 'bool', source: 'standard', value: () => false },
+    { tni: 'amwins.loss-runs', name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', source: 'standard', value: () => false },
     // Preserve the intake's explicit claims answer; unknown history stays with the agent.
     // Yes opens the required Loss History.
     { name: 'Any prior loss', label: '^any prior loss$', kind: 'bool', source: 'derived', clientFact: true,
@@ -423,17 +423,17 @@ export const amwins = {
     // agent's from 2026-10-09): MALE unless the agent set the driver's gender, and birth year + 17
     // (none without a readable date of birth). Marital status from the intake; none there is the
     // agent's (until 2026-10-09 MARRIED, flagged to confirm).
-    { selector: dataId('gender', DRIVER), name: 'Gender (standard: MALE unless set in client details)', kind: 'choice',
+    { selector: dataId('gender', DRIVER), tni: 'general.gender', name: 'Gender (standard: MALE unless set in client details)', kind: 'choice',
       // A value set but not MALE or FEMALE is the agent's to pick, never the AI's (a fact).
       source: (r, a) => (genderSet(r, a) == null ? 'standard' : gender(r, a) == null ? 'fact' : 'derived'), value: gender, note: genderNote },
     { selector: dataId('martialStatus', DRIVER), name: 'Marital status', kind: 'choice', path: 'drivers[].maritalStatus', clientFact: true },
-    { selector: dataId('licenseYear', DRIVER), name: 'Year licensed (standard: birth year + 17)',
+    { selector: dataId('licenseYear', DRIVER), tni: 'general.year-licensed', name: 'Year licensed (standard: birth year + 17)',
       source: (r, a) => (birthYear(r, a) == null ? 'fact' : 'standard'), value: licenseYear, note: licenseYearNote },
 
     // --- Vehicles --------------------------------------------------------------------------------
     { name: 'File upload (not used)', label: '^select files?', ignore: true },
     { selector: '#vehLookupVin', path: 'amwins.vinList', name: 'VINs to look up (one per line)', source: 'derived', value: (r) => r.vehicles.map((v) => v.vin).filter(Boolean).join('\n') || null },
-    { selector: dataId('locationNumber', VEHICLE), name: 'Vehicle location (standard: the first, the insured)', kind: 'first-option', source: 'standard', value: () => 'first option' },
+    { selector: dataId('locationNumber', VEHICLE), tni: 'amwins.vehicle-location', name: 'Vehicle location (standard: the first, the insured)', kind: 'first-option', source: 'standard', value: () => 'first option' },
     // VIN, year, make, model come from Import Data (its wording wins). Each row below is found by
     // its VIN (the witness set at the end of this list), so a vehicle the import didn't add has
     // no row and stays the agent's: nothing is typed into a blank row.
@@ -448,41 +448,41 @@ export const amwins = {
     { selector: '#marketValue', path: 'vehicles[].value', name: 'Vehicle value', note: vehicleValueNote },
     { selector: dataId('usageType', VEHICLE), name: 'Usage type (For hire, for expediters / general freight)', kind: 'choice', source: 'derived', value: (r) => (isFreight(r) ? 'FOR HIRE' : null), note: freightNote('The usage type') },
     { selector: dataId('radius', VEHICLE), name: 'Radius', kind: 'int', source: 'derived', value: radius },
-    { name: 'Permanently attached equipment (standard: No unless the intake gives a value)', label: '^permanently attached equipment', kind: 'bool', source: equipmentSource, clientFact: true, value: equipment, note: equipmentNote },
+    { tni: 'amwins.equipment', name: 'Permanently attached equipment (standard: No unless the intake gives a value)', label: '^permanently attached equipment', kind: 'bool', source: equipmentSource, clientFact: true, value: equipment, note: equipmentNote },
 
     // --- Coverages -------------------------------------------------------------------------------
     { name: 'CSL liability limit', label: '^csl liability limit$', path: 'coverage.autoLiabLimit' },
-    { name: 'Uninsured motorists (standard: Yes)', label: '^uninsured motorists$', kind: 'bool', source: 'standard', value: () => true },
-    { name: 'Rental reimbursement (standard: $40/day, $1,200)', label: 'transportation expense|rental reimbursement', kind: 'choice', source: 'standard', value: () => '$40 day / $1,200 total' },
-    { selector: '#uninsuredMotoristsLimit', name: 'UM limit (standard: $100K)', kind: 'choice', source: 'standard', value: () => '$100K' },
-    { selector: '#medicalPayment', name: 'Medical payments (standard: $5,000)', kind: 'choice', source: 'standard', value: () => '$5,000' },
-    { selector: '#comprehensiveDeductible', name: 'Comprehensive deductible (standard: $1,000)', kind: 'choice', source: 'standard', value: () => '$1,000' },
-    { selector: '#collisionDeductible', name: 'Collision deductible (standard: $1,000)', kind: 'choice', source: 'standard', value: () => '$1,000' },
-    { name: 'Waiver of collision (standard: No)', label: '^has waiver of collision$', kind: 'bool', source: 'standard', value: () => false },
-    { selector: '#towingAndLaborReimbursement', name: 'Towing and labor (standard: $75)', kind: 'choice', source: 'standard', value: () => '$75' },
+    { tni: 'amwins.um', name: 'Uninsured motorists (standard: Yes)', label: '^uninsured motorists$', kind: 'bool', source: 'standard', value: () => true },
+    { tni: 'amwins.rental', name: 'Rental reimbursement (standard: $40/day, $1,200)', label: 'transportation expense|rental reimbursement', kind: 'choice', source: 'standard', value: () => '$40 day / $1,200 total' },
+    { selector: '#uninsuredMotoristsLimit', tni: 'amwins.um', name: 'UM limit (standard: $100K)', kind: 'choice', source: 'standard', value: () => '$100K' },
+    { selector: '#medicalPayment', tni: 'amwins.medpay-pip', name: 'Medical payments (standard: $5,000)', kind: 'choice', source: 'standard', value: () => '$5,000' },
+    { selector: '#comprehensiveDeductible', tni: 'amwins.comp-coll', name: 'Comprehensive deductible (standard: $1,000)', kind: 'choice', source: 'standard', value: () => '$1,000' },
+    { selector: '#collisionDeductible', tni: 'amwins.comp-coll', name: 'Collision deductible (standard: $1,000)', kind: 'choice', source: 'standard', value: () => '$1,000' },
+    { tni: 'amwins.waiver-collision', name: 'Waiver of collision (standard: No)', label: '^has waiver of collision$', kind: 'bool', source: 'standard', value: () => false },
+    { selector: '#towingAndLaborReimbursement', tni: 'amwins.towing', name: 'Towing and labor (standard: $75)', kind: 'choice', source: 'standard', value: () => '$75' },
     // PIP: No whenever Medical Payments is offered, which on AmWINS is always (the Coverages step
     // has #medicalPayment, $5,000 above). The page pre-selects Yes, so ours replaces it. The limit
     // box only shows with Yes.
-    { name: 'Personal Injury Protection (standard: No, Medical Payments is offered)', label: '^personal injury protection$', kind: 'bool', source: 'standard', value: () => false, replace: true },
+    { tni: 'amwins.medpay-pip', name: 'Personal Injury Protection (standard: No, Medical Payments is offered)', label: '^personal injury protection$', kind: 'bool', source: 'standard', value: () => false, replace: true },
     { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit (only with PIP Yes)', ignore: true },
     // Liability auto symbol: 6 only.
-    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(/** @returns {CarrierRule} */ (n) => ({ selector: `#autoSymbol${n}`, name: `Auto symbol ${n}${n === 6 ? ' (standard: 6)' : ' (standard: unticked)'}`, group: 'Liability coverage auto symbol', kind: 'bool', source: 'standard', value: () => n === 6 })),
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(/** @returns {CarrierRule} */ (n) => ({ selector: `#autoSymbol${n}`, tni: 'amwins.auto-symbol', name: `Auto symbol ${n}${n === 6 ? ' (standard: 6)' : ' (standard: unticked)'}`, group: 'Liability coverage auto symbol', kind: 'bool', source: 'standard', value: () => n === 6 })),
     // Nothing is excluded, on every vehicle's row: one rule per box, repeated per vehicle below.
-    ...EXCLUSIONS.map(/** @returns {CarrierRule} */ ([id, title, topic]) => ({ selector: dataId(id, VEHICLE_COVERAGES), name: `Exclude ${title} (standard: No, not excluded)`,
+    ...EXCLUSIONS.map(/** @returns {CarrierRule} */ ([id, title, topic]) => ({ selector: dataId(id, VEHICLE_COVERAGES), tni: 'amwins.no-exclusions', name: `Exclude ${title} (standard: No, not excluded)`,
       label: `^ex\\w*de\\b.*(${topic})`, not: 'waiver', kind: 'bool', source: 'standard', value: () => false })),
 
     // --- Underwriting questions --------------------------------------------------------------------
     // TNI answers this section No (2026-10-09), also when the intake reports claims or leased
     // vehicles; hazardous material is the intake's answer.
-    { name: 'Vehicles not owned (standard: No)', label: '^any vehicle not owned$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'Vehicles leased to others (standard: No)', label: '^vehicle leased$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'MVR verification (standard: No)', label: '^mvr verification$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'Owned unscheduled vehicles (standard: No)', label: '^owned unscheduled vehicle$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'Convictions / moving violations (standard: No)', label: '^convictions moving violations$', kind: 'bool', source: 'standard', value: () => false },
+    { tni: 'amwins.underwriting-second', name: 'Vehicles not owned (standard: No)', label: '^any vehicle not owned$', kind: 'bool', source: 'standard', value: () => false },
+    { tni: 'amwins.underwriting-second', name: 'Vehicles leased to others (standard: No)', label: '^vehicle leased$', kind: 'bool', source: 'standard', value: () => false },
+    { tni: 'amwins.underwriting-second', name: 'MVR verification (standard: No)', label: '^mvr verification$', kind: 'bool', source: 'standard', value: () => false },
+    { tni: 'amwins.underwriting-second', name: 'Owned unscheduled vehicles (standard: No)', label: '^owned unscheduled vehicle$', kind: 'bool', source: 'standard', value: () => false },
+    { tni: 'amwins.underwriting-second', name: 'Convictions / moving violations (standard: No)', label: '^convictions moving violations$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Hazardous material', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat' },
-    ...UNDERWRITING_NO.map(/** @returns {CarrierRule} */ (q) => ({ name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
+    ...UNDERWRITING_NO.map(/** @returns {CarrierRule} */ (q) => ({ tni: 'amwins.underwriting-general', name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
     // Yes again after "Default all answers to No".
-    { name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', source: 'standard', value: () => true, replace: true },
+    { tni: 'amwins.disclose', name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', source: 'standard', value: () => true, replace: true },
     { name: 'Disclosure details (from the intake)', label: '^disclosure details$', source: 'derived', value: disclosure },
     // The declaration is the agent's to make.
     { selector: '#accept', name: 'Declaration', kind: 'bool', source: 'attestation', note: 'The declaration is yours to confirm; never ticked. Then Submit (yours too).' },
