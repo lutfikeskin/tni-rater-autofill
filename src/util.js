@@ -67,6 +67,28 @@ export function priorPolicyExpired(record, policy = record.priorInsurance?.[0]) 
   return expiry != null && expiry < reference;
 }
 
+// Proof of prior insurance (POP) assumed (TNI, 2026-10-26, W44-29: "if any of the policy type,
+// date, carrier or limit boxes is filled, assume POP of 1-3 years directly, and tell the agent at
+// the start which details are missing"): the intake's current insurance is a current policy when
+// any of its four boxes is filled. Not settled by the decision, so as before: no prior insurance
+// (noPriorInsurance), an expiration date already passed, and a policy typed as something other than
+// auto insurance (General Liability, Cargo, Other). TNI, 2026-10-26 (answer to PR question): an
+// expired policy is not current, the agent's; a General Liability, Cargo or Other policy is not POP.
+const AUTO_POLICY = /^(?:commercial|personal)\s+auto$/i;
+export function priorInsuranceAssumed(record, policy = record?.priorInsurance?.[0]) {
+  const filled = (v) => v != null && String(v).trim() !== '';
+  if (!policy || noPriorInsurance(policy) || !['type', 'carrier', 'limit', 'expiration'].some((k) => filled(policy[k]))) return false;
+  if (filled(policy.type) && !AUTO_POLICY.test(String(policy.type).trim())) return false;
+  return !priorPolicyExpired(record, policy);
+}
+// The intake's current insurance typed as something other than auto insurance (General Liability,
+// Cargo, Other): not proof of prior insurance (TNI, 2026-10-26: answer to PR question 8). An
+// untyped policy isn't one.
+export function priorPolicyNotAuto(policy) {
+  const type = String(policy?.type ?? '').trim();
+  return type !== '' && !noPriorInsurance(policy) && !AUTO_POLICY.test(type);
+}
+
 // A person's name as lowercase words without accents ("Campelo Kraychete" -> ["campelo", "kraychete"]).
 export function nameWords(name) {
   return String(name ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().match(/\p{L}+/gu) ?? [];

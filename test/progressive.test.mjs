@@ -67,19 +67,30 @@ test('owner name punctuation and reversed order still match the unique driver DO
   assert.equal(byQ(buildPlan(record, progressive), '2BB').value, '01/02/1980', 'two drivers by that name: the first one listed (TNI, 2026-10-20)');
 });
 
-test('prefilled insurance type without limit or expiry means currently insured No', () => {
+// TNI 2026-10-01: an insurance type without limit or expiry was currently insured No. TNI
+// 2026-10-26 (W44-29): any box filled is proof of prior insurance, so Yes, TNI's assumption, and
+// the limit and date are the agent's.
+test('an insurance type without limit or expiry is currently insured, the limit and date the agent\'s (W44-29)', () => {
   const record = baseRecord();
   record.priorInsurance = [{ type: 'Commercial Auto', carrier: null, limit: null, expiration: null }];
   const plan = buildPlan(record, progressive);
-  assert.equal(byQ(plan, '81').value, false);
-  // Continuous coverage: the agent's when not currently insured; Yes when insured (TNI 2026-10-10).
-  assert.equal(byQ(plan, '83').value, null);
-  assert.match(byQ(plan, '83').note, /continuous coverage/i);
-  for (const q of ['95', '9D']) assert.equal(byQ(plan, q).ignore, true);
+  assert.deepEqual([byQ(plan, '81').value, byQ(plan, '81').source], [true, 'standard']);
+  // Continuous coverage: Yes when insured (TNI 2026-10-10).
+  assert.deepEqual([byQ(plan, '83').value, byQ(plan, '83').source], [true, 'standard']);
+  for (const q of ['95', '9D']) {
+    assert.equal(byQ(plan, q).ignore, false);
+    assert.equal(byQ(plan, q).value, null);
+    assert.match(byQ(plan, q).note, /has no (limit|expiration date)/);
+  }
   record.priorInsurance[0].limit = '$500k CSL';
   record.priorInsurance[0].expiration = '10/31/2026';
-  assert.equal(byQ(buildPlan(record, progressive), '81').value, true);
+  assert.deepEqual([byQ(buildPlan(record, progressive), '81').value, byQ(buildPlan(record, progressive), '81').source], [true, 'derived']);
   assert.equal(byQ(buildPlan(record, progressive), '83').value, true);
+  // Nothing on the intake: not currently insured, as before.
+  record.priorInsurance = [];
+  assert.equal(byQ(buildPlan(record, progressive), '81').value, false);
+  assert.equal(byQ(buildPlan(record, progressive), '83').value, null);
+  assert.match(byQ(buildPlan(record, progressive), '83').note, /continuous coverage/i);
 });
 
 test('sole owner-driver with duplicated first name uses owner surname and driver DOB', () => {
@@ -533,7 +544,7 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
   assert.ok(!new RegExp(amwins.advance.text, 'i').test('Save & Exit'));
 });
 
-test('AmWINS: current carrier tenure (asked with a DOT only) 1 TO 2 YEARS and claim-free loss runs No are TNI standards; marital status the agent\'s; PIP No', async () => {
+test('AmWINS: current carrier tenure (asked with a federal filing required) 1 TO 2 YEARS and claim-free loss runs No are TNI standards; marital status the agent\'s; PIP No', async () => {
   const { amwins } = await import('../src/carriers/amwins.js');
   const record = baseRecord();
   record.applicant.dot = '1234567';
@@ -562,7 +573,9 @@ test('AmWINS: current carrier tenure (asked with a DOT only) 1 TO 2 YEARS and cl
   assert.equal(marital().warn, null);
   record.applicant.dot = null;
   plan = buildPlan(record, amwins, {});
-  assert.equal(sel('#howLongWithCurrentCarrier').ignore, true, 'only asked of clients with a DOT number');
+  // TNI, 2026-10-26 (round 2, R7): AmWINS asks it with a federal filing required (this record's),
+  // also with no DOT or MC number; it is answered wherever the page shows it (until then: only with a DOT number).
+  assert.deepEqual([sel('#howLongWithCurrentCarrier').ignore, sel('#howLongWithCurrentCarrier').value, sel('#howLongWithCurrentCarrier').source], [false, '1 TO 2 YEARS', 'standard']);
   record.drivers[0].maritalStatus = 'Single';
   plan = buildPlan(record, amwins, {});
   assert.equal(marital().value, 'Single', 'the intake\'s answer is filled');

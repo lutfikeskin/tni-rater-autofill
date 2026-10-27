@@ -194,11 +194,11 @@ const READ_INDIRECTLY = {
     'drivers[].excluded': 'util.driverExcluded (the exclude question: the intake\'s mark, or the owner\'s row when the owner doesn\'t drive)',
   },
   amwins: {
-    'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag)',
+    'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag; how long with the current carrier, round 3, T6)',
     'applicant.ownerDrives': 'owner() in progressive.js (the owner\'s driver row)',
     'drivers[].excluded': 'util.driverExcluded ("(Excluded)" after the license number)',
     'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
-    'claims.text': 'normalize.ntlDotFilingsHold (an NTL mention not answered yet holds Filing required and the DOT boxes)',
+    'claims.text': 'normalize.ntlDotFilingsHold (an NTL mention not answered yet holds Filing required and the DOT boxes) and insurerTenure (a longer time with the insurer than the 1 TO 2 YEARS standard, W44-29)',
     'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure) and ntlDotFilingsHold (an NTL mention not answered yet)',
     'coverage.autoLiability': 'normalize.ntlNoDotFilings and ntlDotFilingsHold (an NTL quote: no DOT number or filings; with auto liability Yes too, they are the agent\'s); otherwise only the CSL limit is entered',
   },
