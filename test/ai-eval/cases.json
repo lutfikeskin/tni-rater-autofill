@@ -180,6 +180,105 @@
         { "key": "declaration", "choice": null, "basis": "none" }
       ],
       "expertReviewed": false
+    },
+    {
+      "id": "other-driver-row",
+      "rationale": "A question about the second driver is answered from that driver's row, which the request carries (entity drivers[1]); the active driver's No must not answer it.",
+      "context": {
+        "carrier": "geico",
+        "page": "/quote",
+        "record": {
+          "applicant": { "name": "Synthetic Fleet LLC" },
+          "operations": { "businessClass": "Expediter" },
+          "garaging": { "state": "GA", "zip": "30301" },
+          "coverage": {},
+          "drivers": [{ "first": "Robin", "last": "Driver", "cdl": false }, { "first": "Jordan", "last": "Second", "cdl": true }],
+          "vehicles": [{ "year": 2019, "make": "Ford", "model": "Transit", "type": "Cargo Van" }]
+        },
+        "active": { "drivers": 0, "vehicles": 0 }
+      },
+      "items": [
+        {
+          "key": "second-driver-cdl",
+          "question": "Does this driver have a CDL?",
+          "label": "Does this driver have a CDL?",
+          "section": "Drivers",
+          "controlKind": "radio",
+          "options": ["Yes", "No"],
+          "current": null,
+          "path": "drivers[1].cdl"
+        }
+      ],
+      "expected": [
+        { "key": "second-driver-cdl", "choice": "Yes", "basis": "intake", "intakePath": "drivers[1].cdl" }
+      ],
+      "expertReviewed": false
+    },
+    {
+      "id": "vehicle-named-in-label",
+      "rationale": "A per-vehicle question names the vehicle by year and make; code matches it to the second vehicle row, whose type answers it.",
+      "context": {
+        "carrier": "geico",
+        "page": "/quote",
+        "record": {
+          "applicant": { "name": "Synthetic Fleet LLC" },
+          "operations": { "businessClass": "Expediter" },
+          "garaging": { "state": "GA", "zip": "30301" },
+          "coverage": {},
+          "drivers": [{ "first": "Robin", "last": "Driver" }],
+          "vehicles": [{ "year": 2019, "make": "Ford", "model": "Transit", "type": "Cargo Van" }, { "year": 2021, "make": "Isuzu", "model": "NPR", "type": "Box Truck" }]
+        },
+        "active": { "drivers": 0, "vehicles": 0 }
+      },
+      "items": [
+        {
+          "key": "vehicle-body",
+          "question": "2021 Isuzu NPR: which best describes this vehicle?",
+          "label": "2021 Isuzu NPR: which best describes this vehicle?",
+          "section": "Vehicles",
+          "controlKind": "select",
+          "options": ["Cargo Van", "Box Truck", "Pickup"],
+          "current": null
+        }
+      ],
+      "expected": [
+        { "key": "vehicle-body", "choice": "Box Truck", "basis": "intake", "intakePath": "vehicles[1].type" }
+      ],
+      "expertReviewed": false
+    },
+    {
+      "id": "blank-mapped-field-with-page-context",
+      "rationale": "The rules map the question to an intake field the intake leaves blank; the page's other answers are context, not evidence, so the field stays unanswered with a recommendation.",
+      "context": {
+        "carrier": "geico",
+        "page": "/quote",
+        "record": {
+          "applicant": { "name": "Synthetic Fleet LLC" },
+          "operations": { "businessClass": "Expediter" },
+          "garaging": { "state": "GA", "zip": "30301" },
+          "coverage": {},
+          "drivers": [{ "first": "Robin", "last": "Driver" }],
+          "vehicles": [{ "year": 2019, "make": "Ford", "model": "Transit", "type": "Cargo Van" }]
+        },
+        "active": { "drivers": 0, "vehicles": 0 },
+        "pageAnswers": [{ "section": "Operations", "label": "Are state or federal filings required?", "answer": "Yes" }]
+      },
+      "items": [
+        {
+          "key": "sr22",
+          "question": "Does this driver need an SR-22?",
+          "label": "Does this driver need an SR-22?",
+          "section": "Drivers",
+          "controlKind": "radio",
+          "options": ["Yes", "No"],
+          "current": null,
+          "path": "operations.needSr22"
+        }
+      ],
+      "expected": [
+        { "key": "sr22", "choice": null, "basis": "none" }
+      ],
+      "expertReviewed": false
     }
   ]
 }

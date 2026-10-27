@@ -31,23 +31,28 @@ test('expired policy is not currently insured; proof availability is independent
 });
 
 // Audit 2026-10-08: AmWINS imports owner() from the Progressive rules, so a borrowed identity
-// reached both carriers. A non-driving owner keeps the owner box's name and no date of birth.
-test('an owner who shares a surname with a driver keeps their own identity on both carriers', () => {
+// reached both carriers. An owner keeps the owner box's name. The date of birth is the first driver
+// row's since TNI, 2026-10-27 (answer to PR question V4: "The owner is always the first driver on the
+// intake's driver list", whatever its name; the Intake step says so). Before, none (no row's name
+// matched), or the row with the owner's full name.
+test('an owner who shares a surname with a driver keeps their own name on both carriers; the date of birth is the first row\'s (V4)', () => {
   const r = record();
   r.applicant.owner1 = 'Alice Example';
   r.applicant.ownerDrives = false;
   r.drivers = [{ first: 'Bob', last: 'Example', dob: '01/02/1990', licenseNumber: 'SYNTHETIC-ONE' }];
   const progressivePlan = buildPlan(r, progressive);
   assert.equal(progressivePlan.find((s) => s.q === '295').value, 'Alice');
-  assert.equal(progressivePlan.find((s) => s.q === '2BB').value, null);
+  assert.equal(progressivePlan.find((s) => s.q === '2BB').value, '01/02/1990');
   const amwinsPlan = buildPlan(r, amwins);
   assert.equal(amwinsPlan.find((s) => s.selector === '#ownerName').value, 'Alice Example');
-  assert.equal(amwinsPlan.find((s) => s.selector === '#ownerDob').value, null);
+  assert.equal(amwinsPlan.find((s) => s.selector === '#ownerDob').value, '01/02/1990');
   assert.equal(amwinsPlan.find((s) => s.selector === '#inspectionContactName').value, 'Alice Example');
+  // The owner's full name on the second row: an ordinary driver; the first row stays the owner's.
   r.applicant.ownerDrives = true;
   r.drivers.push({ first: 'Alice', last: 'Example', dob: '03/04/1985', licenseNumber: 'SYNTHETIC-TWO' });
-  assert.equal(buildPlan(r, amwins).find((s) => s.selector === '#ownerDob').value, '03/04/1985', 'the driver with the same full name');
-  assert.equal(buildPlan(r, progressive).find((s) => s.q === '2BB').value, '03/04/1985');
+  assert.equal(buildPlan(r, amwins).find((s) => s.selector === '#ownerDob').value, '01/02/1990', 'the first row, not the second with the same full name');
+  assert.equal(buildPlan(r, progressive).find((s) => s.q === '2BB').value, '01/02/1990');
+  assert.equal(buildPlan(r, amwins).find((s) => s.selector === '#ownerName').value, 'Alice Example');
 });
 
 test('AmWINS maps each repeated row independently and adds only missing driver rows', () => {

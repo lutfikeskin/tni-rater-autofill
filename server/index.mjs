@@ -146,7 +146,10 @@ export const EVENT_FIELDS = {
   client_error: ['where', 'error', 'stack'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
   // setting) acted on. Choices are option texts; typed text suggestions are never logged.
-  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'],
+  // leave*: why questions were left, as counts (missing information, a conflict, Luna's own leave,
+  // no usable citation, an answer the evidence check refused).
+  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens',
+    'leaveMissing', 'leaveConflict', 'leaveChose', 'leaveNoSource', 'leaveUnverified'],
   // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
   ai_decision: ['model', 'policy', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
 };

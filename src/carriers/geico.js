@@ -49,8 +49,9 @@
 // intake unit is on it (`advance`, TNI, FL live run 3, 2026-10-21); off, the agent clicks them.
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
-import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy } from '../util.js';
+import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
+import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -123,12 +124,17 @@ const zipNote = (r) => (r.garaging?.zip && !zip5(r) ? `The intake's ZIP ${quote(
 // number; No only when the intake says none is coming within 60 days and there is no MC number.
 // "Not yet, but the customer has applied for one." is never derived: a number expected within 60
 // days doesn't say one was applied for.
-const dotStatus = (r) => (r.applicant.dot ? 'Yes' : !r.applicant.mc && r.applicant.mcDotWithin60Days === false ? 'No' : null);
+// On an NTL quote No, and the number is typed nowhere, the gateway included (TNI, 2026-10-26, W44-28:
+// "US DOT is not added … if its NTL, in every case"); the intake's own No stays `derived`.
+const intakeDotNo = (r) => !r.applicant.dot && !r.applicant.mc && r.applicant.mcDotWithin60Days === false;
+const dotStatus = (r) => (ntlNoDotFilings(r) ? 'No' : r.applicant.dot ? 'Yes' : intakeDotNo(r) ? 'No' : null);
+const dotStatusSource = (r) => (ntlNoDotFilings(r) && !intakeDotNo(r) ? 'standard' : 'derived');
+const noDotOnQuote = (r) => !r.applicant.dot || ntlNoDotFilings(r);
 const dotStatusNote = (r) => (dotStatus(r) ? null
   : r.applicant.mc ? 'The intake has an MC number but no USDOT number: answer it yourself.'
     : r.applicant.mcDotWithin60Days === true ? 'The intake says a USDOT or MC number is coming within 60 days; whether the customer has applied for one is yours to answer.'
       : 'The intake has no USDOT number and doesn\'t say whether one is coming: answer it yourself.');
-const dotNumberNote = (r) => (r.applicant.dot && !/^\d+$/.test(r.applicant.dot) ? 'The intake\'s USDOT number isn\'t digits only: enter it yourself.' : null);
+const dotNumberNote = (r) => (!noDotOnQuote(r) && !/^\d+$/.test(r.applicant.dot) ? 'The intake\'s USDOT number isn\'t digits only: enter it yourself.' : null);
 
 // "Does the customer's business have a current GEICO commercial auto policy?" from the intake's
 // current-insurance row. No for no prior insurance, a personal auto policy, or a commercial auto
@@ -210,9 +216,13 @@ const CARGO_FILING = /\bbmc[\s-]?3[24]\b|\bcargo\b/i;
 const STATE_FILING = /\bstate\b|\bintrastate\b/i;
 // true, false, or null when "federal" may be the cargo filing.
 const federalLiability = (text) => (FED_LIAB.test(text) ? true : /\bfederal\b/i.test(text) ? (CARGO_FILING.test(text) ? null : true) : false);
+// An NTL quote has no filings (TNI, 2026-10-26, W44-28: "filings not added if its NTL, in every
+// case"): Neither, No, and no Add Filings box ticked, whatever the intake asks; the intake's own No
+// stays the intake's.
+const ntlNoFilings = (r) => ntlNoDotFilings(r) && r.operations.filingsRequired !== false;
 const filingType = (r) => {
   const f = r.operations.filingsRequired;
-  if (f === false) return 'Neither';
+  if (f === false || ntlNoDotFilings(r)) return 'Neither';
   if (f !== true || !which(r) || ONLY_FR.test(which(r))) return null;
   const federal = federalLiability(which(r));
   if (federal == null) return null;
@@ -230,7 +240,7 @@ const filingTypeNote = (r) => {
 };
 // The Add Filings boxes: ticked when the intake names that filing; otherwise left as the page has
 // them (never unticked: a box no filing names isn't a No).
-const filingBoxes = (r) => (r.operations.filingsRequired === true && which(r) && !ONLY_FR.test(which(r))
+const filingBoxes = (r) => (!ntlNoDotFilings(r) && r.operations.filingsRequired === true && which(r) && !ONLY_FR.test(which(r))
   ? { federal: federalLiability(which(r)) || null, state: STATE_FILING.test(which(r)) || null } : { federal: null, state: null });
 // Whether proof of insurance or filings go to an agency: the intake's Yes or No; blank, TNI's No
 // (W43-34) unless the intake names filings or a line of its notes mentions one. An SR-22 or FR-44
@@ -240,13 +250,22 @@ const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\
 const FR_FILINGS = /\b(?:sr[\s-]?22|fr[\s-]?44)(?:\s+filings?)?\b/gi;
 const OTHER_FILING = { test: (s) => FILING_WORDS.test(s.replace(FR_FILINGS, ' ')) };
 const filingsMention = (r) => (which(r) && !ONLY_FR.test(which(r)) ? 'which' : notesLine(OTHER_FILING)(r) ? 'notes' : null);
+const hasFilings = noUnless((r) => r.operations.filingsRequired, filingsMention);
 const filingsNote = (r) => {
   const f = r.operations.filingsRequired;
+  if (ntlNoDotFilings(r)) return null;
   if (f === true && ONLY_FR.test(which(r))) return `The intake names only ${quote(which(r), 40)}, which GEICO doesn't count as a filing here: answer it yourself.`;
   if (f != null) return null;
   return { which: `The intake leaves "filings required" blank but names filings (${quote(which(r), 40)}): answer it yourself.`,
     notes: `The intake leaves "filings required" blank, and its notes say ${quote(notesLine(OTHER_FILING)(r), 80)}: answer it yourself.` }[filingsMention(r)] ?? null;
 };
+// (TNI, 2026-10-26: answers to PR questions) NTL with primary auto liability too, or NTL mentioned
+// and not answered yet: the USDOT questions (the gateway's two boxes, the USDOT number, "has a USDOT
+// number") and the filings questions (filings required, the filing type, the Add Filings boxes) are
+// the agent's, with a note saying why (`ntlDotFilingsHold`). Answered Yes or No, the next fill
+// answers them by the rules above.
+const held = (source) => (r) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r) : source);
+const holdOr = (note) => (r) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r) : note ?? null);
 
 // --- Business owner ----------------------------------------------------------------------------
 
@@ -262,18 +281,27 @@ const ownerName = (r) => [ownerFirst(r), ownerLast(r)].filter(Boolean).join(' ')
 // The business name: the company's, else the owner's (a sole proprietor; a company box saying
 // there is none, util.js companyName), as Progressive and AmWINS.
 const businessName = (r) => companyName(r.applicant.name) || ownerName(r);
-// An owner fact from their driver row: none when the intake says the owner doesn't drive or names
-// no driver as the owner (the agent's, never another driver's).
-const ownerRowNote = (what) => (r) => (owner(r).driver ? null
-  : r.applicant.ownerDrives === false ? `The intake says the owner doesn't drive, so their ${what} isn't on it: answer it yourself.`
-    : `The owner isn't matched to a driver on the intake, so their ${what} isn't known: answer it yourself.`);
+// The owner's own driver row, for their details (marital status; license state and CDL on the
+// owner's form): the first row of the intake's driver list (TNI, 2026-10-27: answer to PR question
+// V4, "The owner is always the first driver on the intake's driver list", Sr or Jr regardless:
+// owner().driver, or, when the intake says the owner doesn't drive, util.js nonDrivingOwnerRow).
+// TNI, 2026-10-26 (answer to PR question, T3): "GEICO's owner details (date of birth, marital status,
+// license state, CDL) come from the matching driver row" (the date of birth through owner().dob).
+// Each keeps the source its rule gives a driving owner's: the row's value, as derived; a blank CDL
+// box is TNI's CDL standard No, as every driver's (V5, 2026-10-27: confirmed). null: the agent's.
+const ownerDetails = (r) => (r.applicant.ownerDrives === false ? nonDrivingOwnerRow(r) : owner(r).driver);
+// An owner fact from their driver row: none with no driver rows, or with the intake's No and the
+// agent's Excluded driver No on the first row (the agent's, never another driver's).
+const ownerRowNote = (what) => (r) => (ownerDetails(r) ? null
+  : r.applicant.ownerDrives === false ? `The intake says the owner doesn't drive, and no driver row is theirs (TNI: the owner's is the first driver; none on the intake, or set as not excluded in client details), so their ${what} isn't known: answer it yourself.`
+    : `The intake lists no drivers, so the owner's ${what} isn't known: answer it yourself.`);
 const DATE = /^\d{2}\/\d{2}\/\d{4}$/;
-// The owner's date of birth (owner().dob: the matched driver's, or the first of several drivers
-// matching the owner's name; never another driver's: TNI, 2026-10-20), as on Progressive and AmWINS,
-// with their note when there is none. A blank owner box has no name to match, which their note
-// would quote as "".
+// The owner's date of birth (owner().dob: the first driver row's, whatever its name: TNI,
+// 2026-10-27, answer to PR question V4; before, the row the owner's name matched, never another
+// driver's: TNI, 2026-10-20), as on Progressive and AmWINS, with their note when there is none. With
+// no driver rows and a blank owner box, their note would quote the name as "".
 const noOwnerName = (r) => !String(r.applicant.owner1 ?? '').trim();
-const ownerDobNote = (r) => (!owner(r).dob && r.applicant.ownerDrives !== false && noOwnerName(r)
+const ownerDobNote = (r) => (!owner(r).dob && !owner(r).dobDriver && r.applicant.ownerDrives !== false && noOwnerName(r)
   ? 'The intake has no owner name, so no driver row gives their date of birth: enter it yourself.' : noOwnerDob(r))
   ?? (!DATE.test(owner(r).dob) ? 'The owner\'s date of birth on the intake isn\'t a valid date: enter it yourself.' : null);
 
@@ -295,7 +323,6 @@ const ownershipWarn = (r) => companyStructureWarn(r.applicant.name);
 // Add Driver: W43-29, PA live run, 2026-10-21); a number that isn't a 10-digit US number stays the
 // agent's.
 const phoneNote = (r) => (r.applicant.phone && !/^\(\d{3}\) \d{3}-\d{4}$/.test(r.applicant.phone) ? 'The intake\'s phone isn\'t a 10-digit number: enter it yourself.' : null);
-const ownerDrivesNote = (r) => (typeof r.applicant.ownerDrives === 'boolean' ? null : 'The intake doesn\'t say whether the owner drives: answer it yourself.');
 
 // The business street: the intake's address typed whole (street, city, state and ZIP; the unit has
 // boxes of its own), and GEICO's suggestion for it picked: one with the intake's house number and
@@ -392,14 +419,18 @@ const typeNote = (unit, of) => (r, a) => {
   return type ? `The ${unit} type is yours to pick: the intake says ${quote(type)}.` : `The intake has no type for this ${unit}: pick it yourself.`;
 };
 // TNI, 2026-10-21: a cargo van (the intake's "Van", or "Cargo Van") is GEICO's Delivery Van, not
-// one of its four other vans, and a Semi Truck is GEICO's Tractor. Any other type stays the
-// agent's pick.
+// one of its four other vans, and a Semi Truck is GEICO's Tractor. Any other type but a box truck
+// (below) stays the agent's pick.
 const CARGO_VAN = /^(?:cargo\s+)?van$/i;
 const SEMI_TRUCK = /^semi[\s-]*truck$/i;
+// TNI, 2026-10-26, W44-32 (PA live run: the agent picked Box/Straight Truck): an intake "Box Truck"
+// is GEICO's Box Truck where GEICO offers one, else its Box/Straight Truck (`choiceAliases`, in order).
+const BOX_TRUCK = /^box\s+truck$/i;
 const vehicleType = (r, a) => {
   const type = String(vehicleOf(r, a)?.type ?? '').trim();
-  return CARGO_VAN.test(type) ? 'Delivery Van' : SEMI_TRUCK.test(type) ? 'Tractor' : null;
+  return CARGO_VAN.test(type) ? 'Delivery Van' : SEMI_TRUCK.test(type) ? 'Tractor' : BOX_TRUCK.test(type) ? 'Box Truck' : null;
 };
+const vehicleTypeAliases = (r, a) => (vehicleType(r, a) === 'Box Truck' ? ['Box/Straight Truck'] : []);
 const valueNote = (unit, of) => (r, a) => {
   const v = of(r, a)?.value;
   return v != null && typeof v !== 'number' ? `The intake's ${unit} value ${quote(v)} isn't a dollar amount: enter it yourself.` : null;
@@ -499,29 +530,75 @@ const parking = (unit) => [
 // --- Drivers -----------------------------------------------------------------------------------
 
 const driverOf = (r, a) => r.drivers?.[a.drivers ?? 0] ?? null;
-// The intake driver GEICO lists itself: the owner who drives, matched to their driver row (GEICO
-// adds them on Business & Owner Info). -1 for none.
-const listedDriver = (r) => (r.applicant?.ownerDrives === true && owner(r).driver ? r.drivers.indexOf(owner(r).driver) : -1);
-// Add Driver by itself only when GEICO's own driver rows are known: the owner doesn't drive, or
-// drives and is one of the intake's drivers. An owner who drives under a name no driver row matches
-// (or an unanswered "owner drives") may be one of them spelled otherwise: adding the drivers is then
-// the agent's, so no driver is added twice.
-const driversKnown = (r) => r.applicant?.ownerDrives === false || listedDriver(r) >= 0;
+// The intake driver GEICO lists itself: the owner who drives (util.js ownerDrives: a blank box is
+// TNI's Yes, W44-25), their driver row the first on the intake (owner().driver; TNI, 2026-10-27:
+// answer to PR question V4) (GEICO adds them on Business & Owner Info). -1 for none.
+const listedDriver = (r) => (r?.applicant && ownerDrives(r) === true && owner(r).driver ? r.drivers.indexOf(owner(r).driver) : -1);
+// Add Driver by itself only when GEICO's own driver rows are known: the owner doesn't drive (the
+// intake's No, or their row marked excluded), or drives and is one of the intake's drivers. A blank
+// "owner drives" box counts as Yes here too (TNI, 2026-10-26, W44-25; W44-01: an OH quote printed
+// with one of the intake's two drivers, the box blank). The owner's row is the first, whatever its
+// name (TNI, 2026-10-27: answer to PR question V4), so with any driver row GEICO's are known: GEICO
+// lists the first and the fill adds the others, or, the owner not driving, the fill adds every row
+// but the owner's (omittedDriver, below). This replaces the owner's row by name, which left adding
+// the drivers to the agent for an owner no row's name matched, for the owner's name on several rows
+// with only some excluded (the 2026-10-26 answer), and, with the intake's No, for a Sr and a Jr
+// neither exactly the owner's full name (T2). No driver rows: nothing to add.
+const driversKnown = (r) => ownerDrives(r) === false || listedDriver(r) >= 0;
+// The intake driver GEICO's quote leaves out: the owner's row (the first: TNI, 2026-10-27, answer to
+// PR question V4) when the owner doesn't drive and the row is excluded (util.js ownerExcluded):
+// - the intake's No (TNI, 2026-10-26: answer to PR question, T1: GEICO "does not add the owner's row
+//   at all; only the other intake drivers are added"), unless the agent set the row's Excluded driver
+//   to No (util.js nonDrivingOwnerRow). Before, R1 had it added with the other drivers and the
+//   excluded-driver warning, but GEICO asks nothing about excluding a driver, so it was on the quote as
+//   one;
+// - the row marked "Excluded" with the box blank or Yes (TNI, 2026-10-27: answer to PR question V3:
+//   "GEICO leaves that row out too, as T1", since an excluded owner doesn't drive, R1). Before, it was
+//   added with the warning (the 2026-10-20 rule, which still holds for any other excluded driver:
+//   excludedWarn).
+// The fill never clicks "+" for it (addUnit), nor fills an Add Driver form for it (ownerOmittedNote);
+// the panel never picks it for a form (sidepanel pickUnitForm) and GEICO's driver list is complete
+// without it (src/units.js unitToAdd). With no other driver, a "needs you" item holds Continue
+// (noOtherDriver, V1). -1 for none.
+/** @param {any} r @returns {number} */
+const omittedDriver = (r) => (r?.applicant && ownerExcluded(r) ? r.drivers.indexOf(ownerRow(r)) : -1);
+// The owner GEICO's quote leaves out is the intake's only driver: no driver is added. TNI, 2026-10-27
+// (answer to PR question V1): the agent's, with a "needs you" item that holds Continue (the action
+// noOtherDriver).
+const noOtherDriver = (r) => omittedDriver(r) >= 0 && r.drivers.length === 1;
+// What the driver list says of an intake driver it doesn't have that no helper adds (the panel,
+// src/units.js unitMissing; W44-01, OH 2026-10-26: "owner drives" blank, the quote printed with the
+// owner alone and the panel silent). With a blank box TNI's Yes (W44-25) and the owner's row the first
+// (V4), GEICO's own driver rows are known whenever the intake has a driver (driversKnown), so the
+// extension adds the driver once the panel has them picked (the picker stays where it was until a form
+// is read on this page). The owner's row GEICO's quote leaves out (omittedDriver) is never named: it is
+// no unit of the list (src/units.js unitToAdd).
+const driverMissing = (r, list, i) => {
+  const d = r.drivers?.[i];
+  const who = [d?.first, d?.last].filter(Boolean).join(' ') || `Driver ${i + 1}`;
+  return `${who} (driver ${i + 1} of the intake) isn't on GEICO's driver list: pick them in the panel and Fill again, or add them with "+" yourself.`;
+};
 // An Add Driver form while the panel's driver is the owner, whom GEICO already lists as a driver
 // (Business & Owner Info: the owner drives): filling it would add the owner twice. The panel's
-// picker starts on the first driver, often the owner.
-const ownerListedNote = (r, a) => (r.applicant.ownerDrives === true && !!owner(r).driver && owner(r).driver === driverOf(r, a)
+// picker starts on the first driver, the owner.
+const ownerListedNote = (r, a) => (ownerDrives(r) && !!owner(r).driver && owner(r).driver === driverOf(r, a)
   ? 'The panel\'s driver is the owner, whom GEICO already lists: pick the driver this form is for in the panel, then Fill again.' : null);
-const driverNote = (more) => (r, a) => ownerListedNote(r, a) ?? (more ? more(r, a) : null);
+// The same while the panel's driver is the owner's row GEICO's quote leaves out (omittedDriver: T1, V3).
+const ownerOmittedNote = (r, a) => (!!driverOf(r, a) && (a.drivers ?? 0) === omittedDriver(r)
+  ? 'The panel\'s driver is the owner, who doesn\'t drive (the intake), and GEICO\'s quote leaves them out (TNI): pick the driver this form is for in the panel, then Fill again.' : null);
+const driverNote = (more) => (r, a) => ownerListedNote(r, a) ?? ownerOmittedNote(r, a) ?? (more ? more(r, a) : null);
 // "What is their relationship to the business?": Owner for a driver who is one of the intake's
-// owners; any other driver is TNI's standard Employee (2026-10-21).
-const isOwner = (r, d) => !!d && (ownerIsDriver(r.applicant.owner1, d) || ownerIsDriver(r.applicant.owner2, d));
+// owners; any other driver is TNI's standard Employee (2026-10-21). The owner's row is the first
+// (TNI, 2026-10-27: answer to PR question V4); a later row is an employee, even with the owner's name
+// (a Jr). A row the owner box's second name matches (owner2, a co-owner) is still Owner, by name.
+const isOwner = (r, d) => !!d && (d === ownerRow(r) || ownerIsDriver(r.applicant.owner2, d));
 const relationship = (r, a) => (!driverOf(r, a) ? null : isOwner(r, driverOf(r, a)) ? 'Owner' : 'Employee');
 const relationshipSource = (r, a) => (driverOf(r, a) && !isOwner(r, driverOf(r, a)) ? 'standard' : 'derived');
 const relationshipNote = (r, a) => (relationship(r, a) ? null : 'The intake has no driver for this form: answer it yourself.');
 // SR-22: the intake's one answer for the business. No is No for every driver; Yes only when GEICO
 // lists one driver: on the owner's form, the owner matched to the intake's only driver; on Add
-// Driver, the intake's only driver when the owner doesn't drive. Otherwise (several drivers, or the
+// Driver, the intake's only driver when the owner doesn't drive (since V4 that row is the owner's,
+// left out, unless the agent set its Excluded driver to No). Otherwise (several drivers, or the
 // owner listed besides the intake's driver) which one needs it isn't on the intake. Blank is TNI's
 // No for every driver (W43-34, 2026-10-21), unless the intake's filings or notes name an SR-22, an
 // FR-44 or financial responsibility: then the agent's, quoted.
@@ -531,13 +608,20 @@ const sr22Mention = (r) => (SR22.test(which(r)) ? which(r).trim().slice(0, 80) :
 const sr22 = (yes) => (r) => (r.operations.needSr22 === false ? false : r.operations.needSr22 === true ? (yes(r) ? true : null) : sr22Mention(r) ? null : false);
 const sr22Source = (r) => (typeof r.operations.needSr22 === 'boolean' ? 'derived' : sr22Mention(r) ? 'fact' : 'standard');
 const sr22Owner = sr22((r) => !!onlyDriver(r) && owner(r).driver === onlyDriver(r));
-const sr22Driver = sr22((r) => !!onlyDriver(r) && r.applicant.ownerDrives === false);
+const sr22Driver = sr22((r) => !!onlyDriver(r) && ownerDrives(r) === false);
 const sr22Note = (value) => (r) => (r.operations.needSr22 == null ? (sr22Mention(r) ? `The intake doesn't answer the SR-22 question but mentions ${quote(sr22Mention(r), 80)}: answer it for this driver yourself.` : null)
   : r.operations.needSr22 !== true || value(r) != null ? null
     : (r.drivers?.length ?? 0) > 1 ? `The intake says an SR-22 is needed but not for which of the ${r.drivers.length} drivers: answer it for this driver yourself.`
       : 'The intake says an SR-22 is needed but not for which of the drivers GEICO lists (the owner and the intake\'s driver): answer it for this driver yourself.');
-const excludedWarn = (r, a) => (driverOf(r, a)?.excluded === true
-  ? 'The intake marks this driver to be excluded, and GEICO asks nothing about it here: handle the exclusion yourself.' : null);
+// A driver to be excluded (util.js driverExcluded): GEICO asks nothing about it, so the form is
+// filled with a warning (TNI, 2026-10-20). The owner's row the quote leaves out (the intake's No, or
+// the owner's row marked Excluded: omittedDriver, T1 and V3; before, R1 and the 2026-10-20 rule
+// warned it here) isn't added at all: its form carries ownerOmittedNote instead.
+const excludedWarn = (r, a) => {
+  const d = driverOf(r, a);
+  if (!d || (a.drivers ?? 0) === omittedDriver(r)) return null;
+  return driverExcluded(r, d) ? 'The intake marks this driver to be excluded, and GEICO asks nothing about it here: handle the exclusion yourself.' : null;
+};
 const dobNote = (r, a) => (driverOf(r, a)?.dob && !DATE.test(driverOf(r, a).dob) ? 'This driver\'s date of birth on the intake isn\'t a valid date: enter it yourself.' : null);
 
 // --- Additional business info ------------------------------------------------------------------
@@ -548,17 +632,21 @@ const startBucket = (n) => (!Number.isInteger(n) || n < 0 ? null
   : n < 1 ? 'Less than 1' : n === 1 ? '1' : n === 2 ? '2' : n <= 6 ? '3-6' : '7+');
 
 // "Does the customer currently have personal or commercial auto insurance?" Yes for a current auto
-// policy on the intake (commercial or personal, with an expiration date not passed), No for no prior
-// insurance. A blank section, an expired or undated policy, or a GL / cargo / other row is the
-// agent's; "deployed" is never derived.
+// policy on the intake (commercial or personal, with an expiration date not passed; derived), No for
+// no prior insurance. Yes too, TNI's assumption, when any other box of an auto or untyped policy is
+// filled: an undated policy, a remark in the date box, a carrier or limit alone (TNI, 2026-10-26,
+// W44-29, W44-12: proof of prior insurance; the Intake step names the blank boxes). A blank
+// section, an expired policy, or a GL / cargo / other row is the agent's; "deployed" is never
+// derived.
 const AUTO = /^(commercial|personal)\s+auto$/i;
+const datedAuto = (r) => { const p = prior(r); return !!p && AUTO.test(String(p.type ?? '').trim()) && DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p); };
 const currentAuto = (r) => {
   const p = prior(r);
   if (!p) return null;
   if (noPriorInsurance(p)) return 'No';
-  if (!AUTO.test(String(p.type ?? '').trim())) return null;
-  return DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p) ? 'Yes' : null;
+  return datedAuto(r) || priorInsuranceAssumed(r) ? 'Yes' : null;
 };
+const currentAutoSource = (r) => (currentAuto(r) === 'Yes' && !datedAuto(r) ? 'standard' : 'derived');
 // "How many employees does the customer's business have…?" TNI (2026-10-21): the intake's drivers
 // other than the owner(s), as GEICO's band. No drivers on the intake is the agent's.
 const employees = (r) => {
@@ -566,14 +654,34 @@ const employees = (r) => {
   const n = r.drivers.filter((d) => !isOwner(r, d)).length;
   return n === 0 ? 'None' : n === 1 ? '1' : n <= 3 ? '2-3' : n <= 5 ? '4-5' : n <= 10 ? '6-10' : n <= 20 ? '11-20' : '21+';
 };
-// "How long has the customer been with their current auto insurance company?" TNI (2026-10-21):
-// 1-3 Years when the intake shows a current auto policy (proof of prior insurance); otherwise the
-// agent's.
-const yearsWithInsurer = (r) => (currentAuto(r) === 'Yes' ? '1-3 Years' : null);
+// "How long has the customer been with their current auto insurance company?" TNI (2026-10-21;
+// 2026-10-26, W44-29, W44-02: "1-3 years at least"): 1-3 Years whenever the customer currently has
+// auto insurance (above), also when the notes say the policy started within the year. A longer
+// time the notes give (insurerTenure) isn't shortened: its band (TNI, 2026-10-26: answer to PR
+// question; the Intake step quotes the line, `prior.tenure`). A time on a band edge takes the upper
+// band: exactly 5 years is 5-10, exactly 10 or "10+" is 10+ (TNI, 2026-10-26: answer to PR
+// question, round 2, R5; until then the agent's). Exactly 3 stays 1-3, the decision's "1-3 at
+// least". A time two bands could fit ("since 2021" in 2026: 4.7 to 5.7 years) stays the agent's,
+// with the line quoted. Hedges read as their words, ">5" and "5 plus" as over 5, "~5" and "5ish"
+// as 5, "<5" as under 5 (TNI, 2026-10-27: answer to PR question, round 5, V6); a range ("3-5
+// years") is a band only when both ends fall in it, "6-8 years" 5-10 Years (TNI, 2026-10-27:
+// answer to PR question, round 5, V7).
+const GEICO_TENURE = (n) => (n <= 3 ? '1-3 Years' : n < 5 ? '3-5 Years' : n < 10 ? '5-10 Years' : '10+ Years');
+const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years > 3 ? t : null; };
+const yearsWithInsurer = (r) => {
+  if (currentAuto(r) !== 'Yes') return null;
+  const t = longerTenure(r);
+  return t ? tenureBand(t, GEICO_TENURE) : '1-3 Years';
+};
+const yearsSource = (r) => (!yearsWithInsurer(r) ? 'fact' : longerTenure(r) ? 'derived' : 'standard');
+const anyPriorBox = (p) => !!p && ['type', 'carrier', 'limit', 'expiration'].some((k) => p[k] != null && String(p[k]).trim() !== '');
 const currentAutoNote = (r) => (currentAuto(r) != null ? null
-  : !prior(r) ? 'The intake\'s current insurance section is blank: answer it yourself.'
-    : prior(r).expiration && priorPolicyExpired(r, prior(r)) ? 'The intake\'s current policy has expired: answer it yourself.'
-      : 'The intake\'s current insurance doesn\'t show a current auto policy: answer it yourself.');
+  : !anyPriorBox(prior(r)) ? 'The intake\'s current insurance section is blank: answer it yourself.'
+    : priorPolicyExpired(r, prior(r)) ? 'The intake\'s current policy has expired: answer it yourself.'
+      : `The intake's current insurance is ${prior(r).type ? quote(prior(r).type, 30) : 'another kind of policy'}, not an auto policy: answer it yourself.`);
+const yearsNote = (r) => (yearsWithInsurer(r) ? null
+  : currentAuto(r) === 'Yes' ? `The intake's notes give the time with the current insurer (${quote(longerTenure(r)?.line, 80)}), and more than one of GEICO's bands could fit it: pick it yourself.`
+    : currentAutoNote(r) ?? 'The intake shows no current auto policy: answer it yourself.');
 // The current bodily injury limits, from the intake's limit, when there is a current auto policy:
 // each intake option to GEICO's, exactly. $500K/$1M and Other have no GEICO match; none is "closest".
 const BI_LIMITS = {
@@ -590,7 +698,8 @@ const BI_LIMITS = {
 const currentBi = (r) => (currentAuto(r) === 'Yes' ? BI_LIMITS[String(prior(r).limit ?? '').trim()] ?? null : null);
 const currentBiNote = (r) => (currentBi(r) != null ? null
   : currentAuto(r) === 'Yes' && prior(r).limit ? `The intake's current limit ${quote(prior(r).limit, 30)} has no exact match in GEICO's list: pick it yourself.`
-    : 'The intake has no current auto policy limit GEICO lists: answer it yourself.');
+    : currentAuto(r) === 'Yes' ? 'The intake\'s current insurance has no limit: answer it yourself.'
+      : 'The intake has no current auto policy limit GEICO lists: answer it yourself.');
 // "What kind of liability insurance does the customer currently have to cover their business?" GL
 // for a current general liability policy on the intake. You marking that the client has GL
 // (coverage.hasGl) doesn't say GL or a business owner's policy: the agent's. Otherwise TNI's
@@ -608,7 +717,8 @@ const otherLiabilityNote = (r) => (r.coverage?.hasGl === true && !currentGl(r) ?
 
 // Non-trucking liability mentioned in the claims box or notes and not yet answered: GEICO's
 // liability coverage and its limit are the agent's until they answer it on the Intake step.
-const ntlUndecided = (r) => r.coverage?.ntl == null && (!!ntlMention(intakeNotes(r)) || r.claims?.aiNtl === true);
+// (`ntlUndecided` in normalize.js: the claims box, the notes or Luna's flag; it holds the USDOT and
+// filings questions too.)
 const ntlQuote = (r) => r.coverage?.ntl === true;
 const ntlNote = (r) => (ntlUndecided(r) ? 'The claims box or notes mention non-trucking liability: set it to Yes or No on the Intake step, then fill this page again.' : null);
 // "Liability Coverage": Non-Trucking Liability on an NTL quote (the maintainer, 2026-10-26, live run:
@@ -627,15 +737,19 @@ const liabilityNote = (r) => ntlNote(r) ?? (liabilityType(r) ? null
     : /^no$/i.test(String(r.coverage?.autoLiability ?? '').trim()) ? 'The intake says no auto liability: answer it yourself.'
       : 'The intake doesn\'t say which liability coverage: answer it yourself.');
 
-// Florida (the garaging state): GEICO offers Basic Personal Injury Protection, which TNI takes over
-// medical payments (2026-10-21): Medical Payments is Not Included, and the PIP lists (one choice
-// each in FL) are kept as GEICO has them. Elsewhere (the maintainer, 2026-10-26, a TX live run:
-// "If there is personal injury protection available, we always prefer PIP", "ideally with 2500";
-// without it, "if Medical Payment is available with limits we prefer that"): where Basic Personal
-// Injury Protection offers a limit, it is $2,500 (TNI's standard; a list without $2,500 is the
-// agent's) and Medical Payments is Not Included, PIP instead (TNI's standard). With no PIP limit on
-// the page, Medical Payments is Not Included where it offers no limit, and otherwise the agent's
-// (its limit). The other PIP lists are the agent's.
+// Medical Payments and PIP (TNI, 2026-10-26, W44-26; the maintainer: "Always add medical payments
+// at $5K, there is no medical payments, choose PIP"; GEICO offering both: "MedPay $5K, PIP yok"),
+// replacing that morning's "If there is personal injury protection available, we always prefer PIP"
+// and, in Florida, the 2026-10-21 Medical Payments Not Included. In every state Medical Payments is
+// $5,000 where GEICO lists limits for it (a list without $5,000 is the agent's at once), and Not
+// Included where its only choice is Not Included (GEICO offers none: the TX live run). Outside
+// Florida, Basic Personal Injury Protection is GEICO's "I decline" where Medical Payments lists a
+// limit, and $2,500 where it lists none or isn't on the page; a list without that answer is the
+// agent's at once (one without "I decline" beside medical payments: PIP may be required there).
+// Florida requires PIP: its PIP lists (one choice each) are kept as GEICO has them. The other PIP
+// lists are the agent's elsewhere.
+const MED_PAY = '$5,000';
+const MED_PATH = 'geico.qMedicalPayments';
 const florida = (r) => String(r.garaging?.state ?? '').trim().toUpperCase() === 'FL';
 const pipKept = (name) => ({ ignore: florida, source: (r) => (florida(r) ? null : 'fact'),
   emptyNote: `GEICO left ${name} empty: pick it yourself.` });
@@ -747,7 +861,10 @@ const UNIT = { vehicles: ['vehicle', 'Vehicle'], trailers: ['trailer', 'Trailer'
 const addUnit = (list, listSelector, how) => ({
   id: `add${UNIT[list][1]}`, steps: [list === 'drivers' ? DRIVERS : VEHICLES], token: 'addIcon', within: `${listSelector} > li.add-state`,
   loads: true, verify: 'revealed', scope: UNIT[list][0], label: list === 'drivers' ? 'Add Driver' : 'Add Vehicle or Trailer',
-  when: (r, a) => adds(list)(r, a) && (list !== 'drivers' || driversKnown(r)),
+  // A driver only while GEICO's drivers are known, and never the owner's row its quote leaves out
+  // (omittedDriver: TNI, 2026-10-26 and 2026-10-27, answers to PR questions T1 and V3), whatever the
+  // panel picked.
+  when: (r, a) => adds(list)(r, a) && (list !== 'drivers' || (driversKnown(r) && a.adding.index !== omittedDriver(r))),
   doneWhen: (r, a) => [`${UNIT[list][0]}Entered:${a[list] ?? 0}`],
   unfinished: (r, a) => `The "+" was clicked for ${UNIT[list][0]} ${(a[list] ?? 0) + 1} of the intake, but no form was filled for it and it isn't on the list: add it yourself (${how}), then fill.`,
 });
@@ -808,11 +925,18 @@ export const geico = {
   // Add Driver form is never theirs, nor is Add Driver clicked for them (sidepanel pickUnitForm,
   // pickUnitToAdd). -1 for none.
   listedDriver,
+  // The intake driver GEICO's quote leaves out (the owner's row, the first, when the intake says the
+  // owner doesn't drive or marks that row Excluded: TNI, 2026-10-26 and 2026-10-27, answers to PR
+  // questions T1, V3 and V4): never added, an Add Driver form never
+  // theirs, and not a row of the driver list (sidepanel pickUnitForm, pickUnitToAdd). -1 for none.
+  omittedDriver,
   // The lists of the units on the quote, by step (sidepanel pickUnitToAdd): which intake units each
   // shows (a VIN, a driver's name), how many it lists, and so the next unit to add.
   unitLists: [
     { steps: [VEHICLES], selector: VEHICLE_LIST, lists: ['vehicles', 'trailers'] },
-    { steps: [DRIVERS], selector: DRIVER_LIST, lists: ['drivers'] },
+    // An intake driver the list doesn't have, while the extension adds none (the panel's driver another
+    // one): said in red with what to do (W44-01).
+    { steps: [DRIVERS], selector: DRIVER_LIST, lists: ['drivers'], missing: driverMissing },
   ],
   // The units the fill adds itself, behind the panel's "Fill the pages" or "Click Continue when the
   // page is done" (TNI, FL live run 5, 2026-10-21, W43-20; FL live run 2026-10-21: "click + and add the new vehicle", "click Next after choosing Vehicle or
@@ -827,6 +951,11 @@ export const geico = {
     addUnit('trailers', VEHICLE_LIST, '+, Trailer, Next'),
     chooseUnit('trailers'),
     addUnit('drivers', DRIVER_LIST, 'the driver list\'s +'),
+    // The owner the intake's only driver, who doesn't drive (omittedDriver): no driver is added, so
+    // GEICO's quote would have none. TNI, 2026-10-27 (answer to PR question V1): a "needs you" item on
+    // Drivers & Incidents, never clicked (no button), that holds Continue: the agent's.
+    { id: 'noOtherDriver', steps: [DRIVERS], label: 'Drivers', when: noOtherDriver,
+      missing: () => 'The intake has no driver besides the owner, who doesn\'t drive (the intake: "owner drives" No, or their driver row marked Excluded), so GEICO\'s quote leaves the owner out and the fill adds no driver. Which driver GEICO\'s quote lists is yours: add it, or answer "Is the owner a driver on the policy?" yourself on Business & Owner Info.' },
 
     // Quote & Coverages (TNI, FL live run 4, 2026-10-21). Motor Truck Cargo is a card under
     // "Optional 12 Mo. GEICO Commercial Policy Add-Ons", collapsed until its chevron is opened; its
@@ -888,17 +1017,33 @@ export const geico = {
     byForm: true,
     quietMs: 800,
   },
-  // Screens that are the agent's, without a step of their own (the kit reads none there), by a button
-  // only they show: said in red, nothing filled or clicked there. GEICO's "Add USDOT Number / Skip"
-  // (TNI, 2026-10-21, W43-27: SC and PA, after Business & Owner Info on quotes without a USDOT
-  // number; the panel said nothing, and the agent asked for "a red warning and blocker"). Add or
-  // Skip is the agent's.
+  // Screens without a step of their own (the kit reads none there), by a button only they show:
+  // nothing filled or clicked there, and the panel says so above the page's answers, in a quiet card
+  // for a screen that is the agent's, in red as a stop page's for one that is GEICO's stop (`stopped`).
+  // The first that matches names the screen.
   stopButtons: {
+    // GEICO's "Add USDOT Number / Skip" (TNI, 2026-10-21, W43-27: SC and PA, after Business & Owner
+    // Info on quotes without a USDOT number; the panel said nothing, and the agent asked for "a red
+    // warning and blocker"). Add or Skip is the agent's. On an NTL quote TNI adds no USDOT number (TNI,
+    // 2026-10-26, W44-28): said, and the screen is still the agent's (nothing clicked). With primary
+    // auto liability too, or NTL not answered yet, the note says why the USDOT number is theirs (TNI,
+    // 2026-10-26: answers to PR questions).
     'USDOT Number': {
       button: '^add usdot number$',
-      note: (r) => (r?.applicant?.dot
+      note: (r) => (ntlNoDotFilings(r)
+        ? 'GEICO asks for a USDOT number. This is a non-trucking liability (NTL) quote, and TNI adds no USDOT number on an NTL quote: Skip is yours.'
+        : ntlDotFilingsHold(r) ? `GEICO asks for a USDOT number. ${ntlDotFilingsHold(r)} Add USDOT Number or Skip is yours.`
+        : r?.applicant?.dot
         ? `GEICO asks for a USDOT number; the intake's is ${quote(r.applicant.dot)}. Add USDOT Number or Skip is yours.`
         : 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.'),
+    },
+    // GEICO's referral (TNI, 2026-10-26, W44-04: IL, after Additional Business Info): a page with no
+    // questions, only Menu, GEICO's phone number and "Return to GEICO Gateway", and the panel said
+    // nothing. GEICO won't quote the business online: GEICO's stop, in red.
+    'GEICO referral': {
+      button: '^return to geico gateway$',
+      stopped: true,
+      note: 'GEICO won\'t quote this business online: its page asks you to call GEICO at the number it shows. The quote is yours from here.',
     },
   },
   // Steps that are the agent's: nothing is filled or clicked there (not even on Fill this page), and
@@ -943,13 +1088,13 @@ export const geico = {
     // 2026-10-21, W43-28: 4 of 5 quotes opened with another ZIP, kept and flagged, and the agent
     // typed it); one the agent typed or marked done is theirs (the fill's skip), never replaced.
     { notPages: GATEWAY_OFF, selector: '#start-quote-zip', name: 'Start quote: ZIP (the garaging ZIP)', path: 'garaging.zip', source: 'derived', value: zip5, note: zipNote, replace: true },
-    { notPages: GATEWAY_OFF, selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
+    { notPages: GATEWAY_OFF, selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
     // The Search Products window (TNI, FL live run 3, 2026-10-21: "after Search Products you should
     // select commercial auto"): Commercial Auto/Trucking ticked, and no other product; its own USDOT
     // box takes the intake's number.
     { notPages: GATEWAY_OFF, selector: `${PRODUCT}#commercial, ${PRODUCT}[value="commercial"]`, name: 'Start quote: Commercial Auto/Trucking (TNI: ticked)', q: 'gatewayCommercial',
       kind: 'bool', source: 'standard', value: () => true },
-    { notPages: GATEWAY_OFF, selector: '#start-quote-usdot', name: 'Start quote: USDOT number (Search Products)', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
+    { notPages: GATEWAY_OFF, selector: '#start-quote-usdot', name: 'Start quote: USDOT number (Search Products)', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
     // The gateway's own controls are never answered: the header search, the other products, the
     // alerts settings. One rule each, as a selector rule answers its first match only (the header
     // search took the one that named the products too, and they were left unfamiliar). The product
@@ -964,7 +1109,7 @@ export const geico = {
       { field: 'GiveInitialZipCode', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'ZIP code (the garaging ZIP)', source: 'derived', value: zip5, note: zipNote },
       { field: 'GiveCurrentGeicoCommercialAutoPolicyYesNo', ask: 'Does the customer\'s business have a current GEICO commercial auto policy?', name: 'Current GEICO commercial auto policy',
         kind: 'bool', source: currentGeicoSource, clientFact: true, value: currentGeico, note: currentGeicoNote },
-      { field: 'GiveDepartmentOfTransportationNumber', ask: 'What is the customer\'s USDOT number?', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
+      { field: 'GiveDepartmentOfTransportationNumber', ask: 'What is the customer\'s USDOT number?', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
       // The business description lists 1,599 kinds of business (too many for the AI assistant), the
       // more detailed one 26. An expediter or a general freight hauler is For Hire Trucking, then
       // Other For-Hire Trucking (TNI, 2026-10-21: forHire). Any other class is the agent's pick,
@@ -984,7 +1129,7 @@ export const geico = {
       { field: 'GiveElectronicLoggingDevice', ask: 'Does the customer have an electronic logging device (ELD) in their vehicle(s)?', path: 'operations.usesEld', name: 'Electronic logging device (ELD)', kind: 'bool',
         note: (r) => (typeof r.operations.usesEld === 'boolean' ? null : 'The intake doesn\'t say whether the vehicles have an ELD: answer it yourself.') },
       // Not shown on the captured quotes (what reveals it isn't known).
-      { field: 'GiveFilingType', name: 'State or federal filing', kind: 'choice', source: 'derived', clientFact: true, value: filingType, note: filingTypeNote },
+      { field: 'GiveFilingType', name: 'State or federal filing', kind: 'choice', source: held((r) => (ntlNoFilings(r) ? 'standard' : 'derived')), clientFact: true, value: filingType, note: holdOr(filingTypeNote) },
       // Questions shown for other kinds of business (hidden on the captured quotes): not on the
       // intake, a general freight class doesn't make them No.
       fact('GiveAnyVehicleTransportFoodYesNo', 'Food delivery (UberEats, DoorDash)'),
@@ -1000,7 +1145,7 @@ export const geico = {
     // Shown with a USDOT number (and hidden on Additional Business Info).
     ...on([BUSINESS_CLASS, MORE_BUSINESS], {}, [
       { field: 'GiveDepartmentOfTransportationNumberStatus', ask: 'Does the customer have a USDOT Number registered to themselves or their business?', name: 'Has a USDOT number',
-        kind: 'choice', source: 'derived', clientFact: true, value: dotStatus, note: dotStatusNote },
+        kind: 'choice', source: held(dotStatusSource), clientFact: true, value: dotStatus, note: holdOr(dotStatusNote) },
       // "USDOT Information: Is this the customer's business?", under GEICO's record of the number:
       // Yes when the record (the question's text) shows the intake's house number, street and ZIP;
       // otherwise the agent checks it against the client (TNI, FL live run 5, 2026-10-21, W43-24).
@@ -1016,13 +1161,18 @@ export const geico = {
       { field: 'GiveEffectiveDate', name: 'Coverage start date (as GEICO has it)', ignore: true,
         emptyNote: 'GEICO left the coverage start date empty, and it isn\'t on the intake: pick it yourself.' },
       { field: 'GiveMaritalStatus', ask: 'Marital Status', name: 'Owner marital status', kind: 'choice', source: 'derived', clientFact: true,
-        value: (r) => owner(r).driver?.maritalStatus ?? null, note: ownerRowNote('marital status') },
+        value: (r) => ownerDetails(r)?.maritalStatus ?? null, note: ownerRowNote('marital status') },
       { field: 'GivePhoneNumber', ask: 'Please confirm the owner\'s phone number', path: 'applicant.phone', name: 'Owner phone (the intake\'s phone)', note: phoneNote },
       { field: 'GiveBusinessPhoneNumber', ask: 'Please confirm the business phone number', path: 'applicant.phone', name: 'Business phone', note: phoneNote },
       { field: 'GiveEmail', ask: 'What\'s the customer\'s email address?', path: 'applicant.email', name: 'Customer email' },
       { field: 'GiveBusinessOwnershipType', ask: 'Business ownership type:', name: 'Business ownership type (from the company name)', kind: 'choice', source: 'derived', clientFact: true, value: ownershipType, note: ownershipNote, warn: ownershipWarn },
-      // Blank is not Yes because the owner is a listed driver.
-      { field: 'GiveOwnerActiveDriverStatusYesNo', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives', name: 'Owner is a driver', kind: 'bool', note: ownerDrivesNote },
+      // The intake's answer; a blank box is TNI's standard Yes, and an owner whose driver row the
+      // intake marks excluded is not a driver, No (TNI, 2026-10-26, W44-25: util.js ownerDrives).
+      // The owner's row is the first (TNI, 2026-10-27: answer to PR question V4), so a later row with
+      // the owner's name, marked or not, changes nothing: V4 replaces the 2026-10-26 answer that left
+      // the owner's name on several rows, only some excluded, to the agent.
+      { field: 'GiveOwnerActiveDriverStatusYesNo', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives', name: 'Owner is a driver (TNI: Yes when the intake leaves it blank, unless excluded)', kind: 'bool',
+        source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn },
     ]),
     // Never filled, wherever GEICO asks it (and never logged: typed values never are).
     fact('GiveSocialSecurityNumber', 'Owner Social Security number (never filled)', { steps: [BUSINESS_OWNER, VEHICLES], ask: 'Business Owner Social Security Number',
@@ -1049,8 +1199,8 @@ export const geico = {
       { field: 'GiveMake', path: 'vehicles[].make', name: 'Vehicle make', kind: 'choice', verifyOnly: hasVin },
       { field: 'GiveModel', path: 'vehicles[].model', name: 'Vehicle model', kind: 'choice', verifyOnly: hasVin },
       // 40 kinds of vehicle: "Van" alone is five of them.
-      { field: 'GiveOtherVehicleType', waitFor: afterDecode, ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', kind: 'choice',
-        source: (r, a) => (vehicleType(r, a) ? 'standard' : null), value: vehicleType, note: (r, a) => (vehicleType(r, a) ? null : typeNote('vehicle', vehicleOf)(r, a)) },
+      { field: 'GiveOtherVehicleType', waitFor: afterDecode, ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, Box Truck or else Box/Straight Truck for a box truck, else the agent\'s pick)', kind: 'choice',
+        source: (r, a) => (vehicleType(r, a) ? 'standard' : null), value: vehicleType, choiceAliases: vehicleTypeAliases, note: (r, a) => (vehicleType(r, a) ? null : typeNote('vehicle', vehicleOf)(r, a)) },
       { field: 'GiveAnyVehicleCustomizationYesNo', waitFor: afterDecode, ask: 'Does the customer have any customizations?', path: 'operations.equipVehicle', name: 'Customizations (from the attached equipment value)',
         kind: 'bool', source: valueSource(noEquipValue), clientFact: true, value: customization, note: customizationNote },
       { field: 'GiveTotalCustomizationValue', waitFor: afterDecode, ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', name: 'Customization value (the attached equipment value, else TNI: 0)',
@@ -1096,12 +1246,12 @@ export const geico = {
     // The driver GEICO adds for an owner who drives (named after the owner): the owner's answers,
     // from their driver row, never the panel's active driver.
     ...on(DRIVERS, { unlessShown: OWNER_DRIVER_FORM }, [
-      { field: 'GiveDriverLicenseState', q: 'GiveDriverLicenseState.owner', name: 'Owner\'s license state', kind: 'state', source: 'derived', value: (r) => owner(r).driver?.licenseState ?? null, note: ownerRowNote('license state') },
+      { field: 'GiveDriverLicenseState', q: 'GiveDriverLicenseState.owner', name: 'Owner\'s license state', kind: 'state', source: 'derived', value: (r) => ownerDetails(r)?.licenseState ?? null, note: ownerRowNote('license state') },
       { field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', ask: 'We just need a little more info about this driver. Do they need a Certificate of Financial Responsibility or SR-22?',
         path: 'operations.needSr22', name: 'SR-22 (the owner; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Owner, note: sr22Note(sr22Owner) },
       // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard; cdlAnswer).
       { field: 'CommercialDriverLicense', q: 'CommercialDriverLicense.owner', ask: 'Does this driver have a CDL?', name: 'Owner has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
-        source: (r) => (cdlStandard(owner(r).driver) ? 'standard' : 'derived'), value: (r) => cdlAnswer(owner(r).driver), note: ownerRowNote('CDL answer') },
+        source: (r) => (cdlStandard(ownerDetails(r)) ? 'standard' : 'derived'), value: (r) => cdlAnswer(ownerDetails(r)), note: ownerRowNote('CDL answer') },
     ]),
     // Add Driver: the panel's active driver.
     ...on(DRIVERS, { whenShown: ADD_DRIVER_FORM }, [
@@ -1119,10 +1269,12 @@ export const geico = {
       { field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', path: 'operations.needSr22', name: 'SR-22 (this driver; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Driver, note: driverNote(sr22Note(sr22Driver)) },
       // Asked again on Add Driver for a driver who is the business's owner, with the owner's mobile
       // phone (PA live run, 2026-10-21, W43-29: both unfamiliar, the first answered by the AI
-      // assistant from the intake): the intake's owner-drives answer and its phone. Open (W43-26): on
-      // that run GEICO redrew this question as Yes after Save and Continue; the answer here is the
-      // same one the agent approved there.
-      { field: 'GiveOwnerActiveDriverStatusYesNo', q: 'GiveOwnerActiveDriverStatusYesNo.driver', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives', name: 'Owner is a driver (Add Driver)', kind: 'bool', note: driverNote(ownerDrivesNote) },
+      // assistant from the intake): the owner-drives answer of Business & Owner Info (a blank box
+      // TNI's Yes, W44-25) and the intake's phone. Open (W43-26): on that run GEICO redrew this
+      // question as Yes after Save and Continue; the answer here is the same one the agent approved
+      // there.
+      { field: 'GiveOwnerActiveDriverStatusYesNo', q: 'GiveOwnerActiveDriverStatusYesNo.driver', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives', name: 'Owner is a driver (Add Driver; TNI: Yes when the intake leaves it blank, unless excluded)', kind: 'bool',
+        source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn, note: driverNote() },
       { field: 'GiveMobilePhoneNumber', ask: 'Owner\'s Mobile Phone Number', path: 'applicant.phone', name: 'Owner\'s mobile phone (the intake\'s phone)', note: driverNote(phoneNote) },
     ]),
 
@@ -1132,10 +1284,10 @@ export const geico = {
         value: (r) => startBucket(r.applicant.yearsInBusiness), note: (r) => (startBucket(r.applicant.yearsInBusiness) == null ? 'The intake has no years in business (or year established): answer it yourself.' : null) },
       { field: 'GiveNumberOfEmployees', ask: 'How many employees does the customer\'s business have, including part-time employees?', name: 'Number of employees (the drivers besides the owner)', kind: 'choice',
         source: (r) => (employees(r) ? 'standard' : 'fact'), value: employees, note: (r) => (employees(r) ? null : 'The intake lists no drivers: answer how many employees the business has yourself.') },
-      { field: 'GiveCurrentAutoInsuranceStatus', ask: 'Does the customer currently have personal or commercial auto insurance?', name: 'Currently has auto insurance', kind: 'choice', source: 'derived', clientFact: true, value: currentAuto, note: currentAutoNote },
+      { field: 'GiveCurrentAutoInsuranceStatus', ask: 'Does the customer currently have personal or commercial auto insurance?', name: 'Currently has auto insurance', kind: 'choice', source: currentAutoSource, clientFact: true, value: currentAuto, note: currentAutoNote },
       fact('GiveInsurancePriorToBeingDeployed', 'Insured before being deployed'),
       { field: 'GiveYearsWithCurrentAutoInsurer', ask: 'How long has the customer been with their current auto insurance company?', name: 'Years with the current auto insurer (1-3 with a current policy)', kind: 'choice',
-        source: (r) => (yearsWithInsurer(r) ? 'standard' : 'fact'), value: yearsWithInsurer, note: (r) => (yearsWithInsurer(r) ? null : currentAutoNote(r) ?? 'The intake shows no current auto policy: answer it yourself.') },
+        source: yearsSource, value: yearsWithInsurer, note: yearsNote },
       { field: 'GiveCurrentBodilyInjuryLimits', ask: 'What bodily injury limits does the customer currently have on their vehicle insurance?', path: 'priorInsurance[0].limit', name: 'Current bodily injury limits',
         kind: 'choice', source: 'derived', value: currentBi, note: currentBiNote },
       { field: 'GiveOtherLiabilityInsurance', ask: 'What kind of liability insurance does the customer currently have to cover their business?', name: 'Liability insurance the business has (None unless the notes say)',
@@ -1145,13 +1297,13 @@ export const geico = {
       { field: 'GiveHasContractForBlanketAiEndorsement', ask: 'Does the customer have a contract that requires a blanket additional insured endorsement?', name: 'Blanket additional insured by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
       { field: 'GiveHasContractForBlanketWosEndorsement', name: 'Blanket waiver of subrogation by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
       { field: 'GiveHasFilingsYesNo', ask: 'Is the customer required to provide proof of insurance/filings to a state or federal agency?', path: 'operations.filingsRequired', name: 'Filings required (TNI: No unless the intake says otherwise)',
-        kind: 'bool', ...noUnless((r) => r.operations.filingsRequired, filingsMention), note: filingsNote },
+        kind: 'bool', value: (r) => (ntlNoDotFilings(r) ? false : hasFilings.value(r)), source: held((r) => (ntlNoFilings(r) ? 'standard' : hasFilings.source(r))), note: holdOr(filingsNote) },
       // Shown after Yes (FL): only a box the intake names is ticked.
-      { field: 'AddFilings.FederalLiability', ask: 'Federal Liability (includes MCS-90)', path: 'operations.filingsWhich', name: 'Federal liability filing', kind: 'bool', source: 'derived',
-        value: (r) => filingBoxes(r).federal, ignore: (r) => !filingBoxes(r).federal },
+      { field: 'AddFilings.FederalLiability', ask: 'Federal Liability (includes MCS-90)', path: 'operations.filingsWhich', name: 'Federal liability filing', kind: 'bool', source: held('derived'),
+        value: (r) => filingBoxes(r).federal, ignore: (r) => !filingBoxes(r).federal, note: holdOr() },
       { field: 'AddFilings.MCS90', ask: 'MCS-90', name: 'MCS-90 filing (as the page has it)', ignore: true },
-      { field: 'AddFilings.StateFiling', ask: 'State', path: 'operations.filingsWhich', name: 'State filing', kind: 'bool', source: 'derived',
-        value: (r) => filingBoxes(r).state, ignore: (r) => !filingBoxes(r).state },
+      { field: 'AddFilings.StateFiling', ask: 'State', path: 'operations.filingsWhich', name: 'State filing', kind: 'bool', source: held('derived'),
+        value: (r) => filingBoxes(r).state, ignore: (r) => !filingBoxes(r).state, note: holdOr() },
     ]),
 
     // --- Quote & Coverages ---------------------------------------------------------------------
@@ -1193,15 +1345,15 @@ export const geico = {
       { q: 'UninsuredMotoristPd', ask: 'Uninsured Motorist Property Damage (UMPD)', control: 'select', name: 'Uninsured motorist property damage', source: 'fact' },
       // FL: one choice each, kept as GEICO has them (pipKept).
       { q: 'Stacked', ask: 'Is Stacked', control: 'select', name: 'Stacked uninsured motorist', ...pipKept('stacked uninsured motorist') },
-      { q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', name: 'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)', kind: 'choice',
-        source: 'standard', value: () => 'Not Included', onlyIf: (r) => (florida(r) ? null : [{ path: 'geico.qBasicPip', limit: true }, { limit: false }]),
-        onlyNote: 'GEICO offers medical payments limits here and no personal injury protection, so TNI takes medical payments: pick a limit yourself.',
-        unofferedNote: (r) => (florida(r) ? null : 'GEICO lists no medical payments choice here: check it yourself.') },
-      { q: 'BasicPip', ask: 'Basic Personal Injury Protection', control: 'select', name: 'Basic personal injury protection (TNI: $2,500, PIP over medical payments; FL: as GEICO has it)', kind: 'choice',
+      // Medical Payments $5,000, Not Included where GEICO lists no limit; Basic PIP declined beside
+      // medical payments, $2,500 without (TNI, 2026-10-26, W44-26; above). The page kit reads the lists.
+      { q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', name: 'Medical payments (TNI: $5,000; Not Included where GEICO offers no limit)', kind: 'choice',
+        source: 'standard', value: () => MED_PAY, onlyIf: [{ limit: true }, { limit: false, value: 'Not Included' }],
+        unofferedNote: 'GEICO doesn\'t list $5,000 medical payments here: pick it yourself (TNI takes $5,000 medical payments wherever GEICO offers them).' },
+      { q: 'BasicPip', ask: 'Basic Personal Injury Protection', control: 'select', name: 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)', kind: 'choice',
         ignore: florida, source: (r) => (florida(r) ? null : 'standard'), value: (r) => (florida(r) ? null : '$2,500'),
-        onlyIf: (r) => (florida(r) ? null : [{ limit: true }]),
-        onlyNote: 'GEICO lists no basic personal injury protection limit here: check it yourself (TNI takes PIP where GEICO offers a limit).',
-        unofferedNote: 'GEICO doesn\'t offer $2,500 basic personal injury protection here: pick a PIP limit yourself (TNI takes PIP over medical payments).',
+        onlyIf: (r) => (florida(r) ? null : [{ path: MED_PATH, limit: true, value: 'I decline' }, { path: MED_PATH, limit: false }]),
+        unofferedNote: 'GEICO doesn\'t offer the basic personal injury protection answer TNI takes here (I decline beside medical payments, else $2,500): pick it yourself.',
         emptyNote: (r) => (florida(r) ? 'GEICO left basic personal injury protection empty: pick it yourself.' : null) },
       { q: 'PipOptions', ask: 'PIP Options', control: 'select', name: 'PIP options', ...pipKept('the PIP options') },
       { q: 'ExcludedWorkLoss', ask: 'Excluded Work Loss', control: 'select', name: 'Excluded work loss', ...pipKept('excluded work loss') },

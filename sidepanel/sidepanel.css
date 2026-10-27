@@ -78,7 +78,9 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
-html { background: var(--canvas); }
+/* clip on html too: body's own overflow is passed to the viewport, where clip counts as hidden, and
+   a hidden viewport still scrolls for code (scrollIntoView) though not for the mouse wheel (W44-10). */
+html { background: var(--canvas); overflow: clip; }
 body {
   color: var(--ink);
   background: var(--canvas);
@@ -201,8 +203,11 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .step[data-state="bad"] .step-num { color: var(--signal); border-color: var(--signal-line); }
 .step[data-state="bad"] .step-note { color: var(--signal-dark); }
 
-/* The middle: one scrolling area between the header (and client strip) and the dock */
-.view { flex: 1; min-height: 96px; overflow: auto; display: grid; align-content: start; grid-auto-rows: max-content; }
+/* The middle: one scrolling area between the header (and client strip) and the dock. Positioned, so
+   the absolutely placed screen-reader text in its rows (.sr-only) stays inside it: otherwise each
+   sits below the panel, the document grows taller than the window, and a fill's scrollIntoView
+   scrolled the header and client strip out of view (AmWINS' declaration, W44-10). */
+.view { position: relative; flex: 1; min-height: 96px; overflow: auto; display: grid; align-content: start; grid-auto-rows: max-content; }
 .pane { padding: 10px 12px 14px; display: grid; gap: 10px; align-content: start; }
 .pane-head { display: grid; gap: 2px; }
 .pane-head h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); }
