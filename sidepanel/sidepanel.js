@@ -308,6 +308,9 @@ const state = {
   // filled once more for (rememberFill): not again until a fill there finds neither.
   triedAgain: null,
   pagePending: null, // a page the tab moved to while a fill ran: filled when that fill ends (runPendingPage)
+  // A page that arrived with no question drawn yet ({ tabId, page }): its first fill runs when they
+  // show (new_fields), with "Fill each new page as soon as it opens" on (W44-11).
+  drawPending: null,
   // Page layouts: the last one logged per quote and page (or vehicle/driver on its page), the
   // chain that logs them one at a time, the capture waiting for the page to be quiet, failures.
   lastLayouts: new Map(),
@@ -1569,8 +1572,13 @@ function onRecorderMessage(msg, sender) {
     const page = samePage(msg.page);
     const hasButtons = (state.tab.carrier?.actions ?? []).some((a) => [].concat(a.page ?? []).includes(page));
     const wanted = $('auto-pages').checked || ($('auto-followups').checked && (state.autoPages.has(page) || (hasButtons && !msg.fields)));
+    state.drawPending = null;
     if (wanted && (msg.fields > 0 || hasButtons) && onQuotePage()) {
       setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 100);
+    } else if ($('auto-pages').checked && !msg.fields && onQuotePage()) {
+      // Arrived before it drew a question (GEICO's first step: 6 of 8 quotes on 2026-10-26 waited
+      // 3–127 s for the agent's Fill, W44-11): filled as on arriving, once they show (new_fields).
+      state.drawPending = { tabId: sender.tab.id, page };
     }
     return;
   }
@@ -1617,7 +1625,10 @@ function onRecorderMessage(msg, sender) {
     // Start New Quote window, over any gateway page) on a page no fill has answered anything on yet
     // (a gateway control drawn before the window is ignored): its first fill, as on arriving at a page.
     const firstFill = () => !state.autoPages.has(page) || !state.reports.get(currentReportKey())?.filled;
-    if (state.tab.carrier?.fillOnDraw?.test(state.tab.url ?? '') && $('auto-pages').checked && firstFill() && onQuotePage() && !stopNoteFor(state.tab.carrier, page)) {
+    // Or a page that arrived before it drew any (drawPending, W44-11).
+    const drawnLate = state.drawPending?.tabId === sender.tab.id && state.drawPending.page === page;
+    if ((state.tab.carrier?.fillOnDraw?.test(state.tab.url ?? '') || drawnLate) && $('auto-pages').checked && firstFill() && onQuotePage() && !stopNoteFor(state.tab.carrier, page)) {
+      state.drawPending = null;
       setTimeout(() => { if (pageOf(state.tab?.url) === page) fillPage({ auto: 'page' }); }, 100);
     } else scheduleAutoFill(page, undefined, true);
     scheduleLayout(layoutPage, 'appeared');

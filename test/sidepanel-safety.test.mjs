@@ -3009,6 +3009,48 @@ test('a change in a child frame schedules the layout of the quote page around it
   assert.deepEqual(logged.map((e) => [e.type, e.page, e.reason]), [['page_layout', 'Vehicles', 'appeared']]);
 });
 
+// W44-11 (2026-10-26): GEICO's first step arrived before it drew its questions (6 of 8 quotes; the
+// arrival read 0 fields), so "Fill each new page as soon as it opens" filled nothing until the agent
+// clicked Fill (3–127 s). Such an arrival is filled when its questions show (new_fields), once; an
+// arrival with fields is filled at once, as before, and with the setting off nothing is.
+test('an arrival before its questions drew is filled when they show, once, with "Fill each new page" on', () => {
+  const { context } = layoutHarness(() => []);
+  const fills = [];
+  let autoPages = true;
+  Object.assign(context, { samePage: (p) => p, $: (id) => ({ checked: id === 'auto-pages' ? autoPages : false }), redactor: () => (s) => s,
+    scheduleAutoFill: () => {}, fieldChangeEvent: () => ({ type: 'field_change' }), knownStep, stopNoteFor: () => null, scheduleLayout: () => {},
+    fillPage: (o) => fills.push(o), setTimeout: (fn) => fn(), currentReportKey: () => 'k' });
+  context.state.tab = { id: 1, url: '/quote', carrier: { ...geico, layoutUrl: /./ } };
+  Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set(), filled: new Map(), labels: new Map(), reports: new Map(), drawPending: null });
+  vm.runInContext(extractFunction('onRecorderMessage'), context);
+  const sender = { tab: { id: 1 } };
+  const arrive = (page, fields = 0) => context.onRecorderMessage({ ra: 'usage', event: 'page_view', page, from: '/', fields }, sender);
+  const drawn = (page = '/quote') => context.onRecorderMessage({ ra: 'usage', event: 'new_fields', page, keys: ['x'] }, sender);
+  arrive('/quote');
+  assert.equal(fills.length, 0, 'nothing to fill yet');
+  drawn();
+  assert.deepEqual(fills.map((o) => o.auto), ['page'], 'filled as on arriving');
+  drawn();
+  assert.equal(fills.length, 1, 'once: questions drawn later are the follow-ups\'');
+  // Another page in between: that wait is over.
+  arrive('/quote');
+  context.state.tab.url = '/elsewhere';
+  arrive('/elsewhere');
+  context.state.tab.url = '/quote';
+  drawn();
+  assert.equal(fills.length, 1);
+  // An arrival with its questions: filled at once, nothing waits.
+  arrive('/quote', 7);
+  assert.equal(fills.length, 2);
+  drawn();
+  assert.equal(fills.length, 2);
+  // With the setting off: neither.
+  autoPages = false;
+  arrive('/quote');
+  drawn();
+  assert.equal(fills.length, 2);
+});
+
 test('layout errors are logged by kind, never with their message', () => {
   const { context } = layoutHarness(() => []);
   const kinds = ['Frame with ID 0 was removed.', 'No tab with id: 12.', 'Cannot access contents of url "https://example.test/quote?id=55501".',
