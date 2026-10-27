@@ -71,7 +71,8 @@ export const TNI_RULES = `
 - Non-trucking liability (NTL): only when coverage.ntl is Yes (the intake's auto liability Non-Trucking, or the agent's answer); a claims-box mention alone is not a request. The filler opens it with "Add Non-Trucking Liability instead?". Is the customer under permanent lease to a motor carrier: Yes (TNI standard). The Non-Trucking Liability coverage limit: the intake's liability limit. With cargo or general liability too, the rest of Rates is the agent's.
 - Medical payments and personal injury protection (every carrier): medical payments $5,000 wherever offered, and personal injury protection not selected, unless the state requires it; with no medical payments offered, personal injury protection $2,500.
 - Florida: Property Damage Liability Only "Not Selected"; Personal Injury Protection "$10k w/ $0 Deductible" (Florida requires it).
-- Texas: Personal Injury Protection "Not Selected" (medical payments $5,000 is offered). Guest Personal Injury Protection and Optional Personal Injury Protection: Not selected.
+- Texas: Personal Injury Protection "Not Selected" (medical payments $5,000 is offered).
+- Guest Personal Injury Protection and Optional Personal Injury Protection (every state): Not selected.
 - Maryland (no medical payments offered): the personal injury protection list of Not selected, $2,500 Full PIP and $2,500 Guest PIP is "$2,500 Full PIP", not Guest PIP.
 - Kentucky (base Personal Injury Protection is required there) and Utah (required, "$3k Basic" its only option): Personal Injury Protection: keep what the page has.
 - Arkansas: Personal Injury Protection (the "Limit" list of 5k Medical and Hospital, Income Loss and 5k Accidental Death) "5k Medical and Hospital" alone.
