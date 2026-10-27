@@ -44,10 +44,11 @@
 //   show their number fields. How long with the current carrier (only asked with a DOT number)
 //   and claim-free loss runs aren't on the intake: TNI's standards (1 TO 2 YEARS, No).
 // - Personal Injury Protection shows for FL HI KS KY MA MI MN NJ NY ND PA UT AR DE MD OR TX NH SD
-//   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred.
+//   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred (again on
+//   2026-10-26, W44-26: Medical Payments $5,000 wherever offered, PIP not selected).
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
-import { owner, ownerDobNote } from './progressive.js';
+import { owner, ownerDobNote, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 import { driverExcluded, ownerRowExcluded } from '../util.js';
@@ -198,9 +199,10 @@ const licenseNumber = (r, a) => {
 const licenseNumberNote = (r, a) => (excludedDriver(r, a) && !driverOf(r, a)?.licenseNumber
   ? `${ownerRowExcluded(r, driverOf(r, a)) ? 'The intake says the owner doesn\'t drive, so this driver, the owner, is excluded (TNI),' : 'The intake marks this driver as excluded'} and gives no license number: type their license number yourself, then "(Excluded)" after it.` : null);
 // Underwriting questions TNI answers No (both sections), by the field names AmWINS uses.
-// The second section's vehicle, MVR and conviction questions have their own rules below.
+// The second section's vehicle, MVR and conviction questions, and hazard exposure, have their own
+// rules below.
 const UNDERWRITING_NO = [
-  'subsidiary to other', 'subsidiary', 'safety info', 'hazard exposure', 'other insurance', 'coverage denial',
+  'subsidiary to other', 'subsidiary', 'safety info', 'other insurance', 'coverage denial',
   'past criminal activity', 'criminal activity in past ?5 ?years', 'code vo\\w*ation', 'finacial default', 'financial default',
   'finacial judgement', 'financial judgement', 'trust', 'foreign operations', 'other venture', 'own drones',
   'hire other to operate drones', 'use their auto', 'vehicle maintenance program', 'vehicle used by family',
@@ -208,6 +210,30 @@ const UNDERWRITING_NO = [
 ];
 
 const filings = (r) => (r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
+
+// Transporting hazardous material (TNI, 2026-10-26, W44-32), the maintainer: "Hazmat is always no,
+// if its not specifically selected" (GEICO's W43-34 rule): the intake's Yes or No; blank is No (standard),
+// unless the intake points to hazardous freight: its placard answer is Yes, or what they haul or a
+// line of its notes names something that may be hazardous (Progressive's HAZ_HAUL: fuel, propane,
+// chemicals…; "non-hazardous" and "no hazmat" don't count). Then it's the agent's, with the reason.
+const hazNotesLine = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => HAZ_HAUL.test(s))?.slice(0, 80) ?? null;
+const hazmatNote = (r) => {
+  if (typeof r.operations.hazmat === 'boolean') return null;
+  if (r.operations.hazPlacard === true) return 'The intake says a hazardous material placard is required but doesn\'t say whether they haul hazardous material: answer it yourself.';
+  const what = String(r.operations.whatHaul ?? '').trim();
+  if (HAZ_HAUL.test(what)) return `What they haul ("${what.slice(0, 60)}") may be hazardous material, but the intake doesn't answer the hazmat question: answer it yourself.`;
+  const line = hazNotesLine(r);
+  return line ? `The intake doesn't answer the hazmat question, and its notes say "${line}": answer it yourself.` : null;
+};
+const hazmat = (r) => (typeof r.operations.hazmat === 'boolean' ? r.operations.hazmat : hazmatNote(r) ? null : false);
+const hazmatSource = (r) => (typeof r.operations.hazmat === 'boolean' ? 'intake' : hazmatNote(r) ? 'fact' : 'standard');
+// General Information "hazard exposure" (storing, treating, discharging, applying, disposing or
+// transporting hazardous material; TNI, 2026-10-26: answer to PR question, #188): Yes, the intake's
+// answer, when the intake's hazmat answer is Yes. Otherwise TNI's standard No (2026-10-09), also when
+// the box is blank and what they haul, the notes or the placard point to hazardous freight: that
+// hand-off to the agent is the transporting question's alone. "Default all answers to No" answers it
+// No first, so the Yes replaces that No; the standard No replaces nothing, as before.
+const hazardExposure = (r) => r.operations.hazmat === true;
 
 // Radius bands: "< 50 MILES", "51 - 100 MILES", "101- 200 MILES", "201 + MILES". Unlimited / long
 // haul is the top band.
@@ -468,8 +494,10 @@ export const amwins = {
     { name: 'Waiver of collision (standard: No)', label: '^has waiver of collision$', kind: 'bool', source: 'standard', value: () => false },
     { selector: '#towingAndLaborReimbursement', name: 'Towing and labor (standard: $75)', kind: 'choice', source: 'standard', value: () => '$75' },
     // PIP: No whenever Medical Payments is offered, which on AmWINS is always (the Coverages step
-    // has #medicalPayment, $5,000 above). The page pre-selects Yes, so ours replaces it. The limit
-    // box only shows with Yes.
+    // has #medicalPayment, $5,000 above; TNI, 2026-10-26, W44-26). The page pre-selects Yes, so ours
+    // replaces it. The limit box only shows with Yes. The same in every state, no-fault states (FL,
+    // NY, MI) too: AmWINS, as the broker, picks the right coverage on its side when it prepares the
+    // quote (TNI, 2026-10-26: answer to PR question).
     { name: 'Personal Injury Protection (standard: No, Medical Payments is offered)', label: '^personal injury protection$', kind: 'bool', source: 'standard', value: () => false, replace: true },
     { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit (only with PIP Yes)', ignore: true },
     // Liability auto symbol: 6 only.
@@ -480,13 +508,20 @@ export const amwins = {
 
     // --- Underwriting questions --------------------------------------------------------------------
     // TNI answers this section No (2026-10-09), also when the intake reports claims or leased
-    // vehicles; hazardous material is the intake's answer.
+    // vehicles; hazardous material is the intake's answer, and blank is No unless the intake points
+    // to hazardous freight (hazmat above; TNI, 2026-10-26, W44-32); hazard exposure is Yes when the
+    // intake's hazmat is Yes (hazardExposure above; TNI, 2026-10-26: answer to PR question).
     { name: 'Vehicles not owned (standard: No)', label: '^any vehicle not owned$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Vehicles leased to others (standard: No)', label: '^vehicle leased$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'MVR verification (standard: No)', label: '^mvr verification$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Owned unscheduled vehicles (standard: No)', label: '^owned unscheduled vehicle$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Convictions / moving violations (standard: No)', label: '^convictions moving violations$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'Hazardous material', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat' },
+    { name: 'Hazardous material (standard: No unless the intake says otherwise)', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat',
+      source: hazmatSource, value: hazmat, note: hazmatNote },
+    // Hazard exposure: Yes when the intake's hazmat is Yes, otherwise No (hazardExposure above;
+    // TNI, 2026-10-26: answer to PR question).
+    { name: 'Underwriting: hazard exposure (standard: No; Yes when the intake\'s hazmat is Yes)', label: '^hazard exposure$', kind: 'bool',
+      source: (r) => (hazardExposure(r) ? 'intake' : 'standard'), value: hazardExposure, replace: hazardExposure },
     ...UNDERWRITING_NO.map(/** @returns {CarrierRule} */ (q) => ({ name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
     // Yes again after "Default all answers to No".
     { name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', source: 'standard', value: () => true, replace: true },

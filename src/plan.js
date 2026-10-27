@@ -181,7 +181,7 @@ function shownOn(cond, record, active) {
 
 /** @param {ListCondition[] | null | undefined} conditions */
 function onlyIfOf(conditions) {
-  return conditions?.length ? conditions.map((x) => ({ path: x.path ?? null, limit: !!x.limit })) : null;
+  return conditions?.length ? conditions.map((x) => ({ path: x.path ?? null, limit: !!x.limit, value: x.value ?? null })) : null;
 }
 
 /**
@@ -304,8 +304,9 @@ function fieldSteps(rules, record, carrier, active) {
       every: !!rule.every,
       // Checked against the intake, never typed (a VIN decode's year): may depend on the unit.
       verifyOnly: typeof rule.verifyOnly === 'function' ? !!rule.verifyOnly(record, active) : !!rule.verifyOnly,
-      // Our answer replaces what the page put there (e.g. a lookup's body type).
-      replace: !!rule.replace,
+      // Our answer replaces what the page put there (e.g. a lookup's body type); may depend on the
+      // client (AmWINS' hazard exposure: only the intake's Yes replaces Default all answers to No's No).
+      replace: typeof rule.replace === 'function' ? !!rule.replace(record, active) : !!rule.replace,
       // What a lookup put there wins over the intake's wording (no "page differs" flag).
       trustPage: !!rule.trustPage,
       // A differing choice already on the page is kept and flagged, never replaced (`replaceChoices`).
@@ -340,8 +341,8 @@ function fieldSteps(rules, record, carrier, active) {
       labelHas: rule.labelHas ? rule.labelHas(record, active) : null,
       labelNote: rule.labelNote ?? null,
       // Answered only when one of these holds: a list, its own or another question's (`path`),
-      // offers a limit or none (GEICO's Medical Payments reads Basic PIP's); otherwise the agent's,
-      // with the note.
+      // offers a limit or none (GEICO's Basic PIP reads Medical Payments'), with the first one's
+      // `value` if it has one; otherwise the agent's, with the note.
       onlyIf: onlyIfOf(typeof rule.onlyIf === 'function' ? rule.onlyIf(record, active) : rule.onlyIf),
       onlyNote: rule.onlyNote ?? null,
       // A list without the answer, which no helper shows later: the agent's at once, with this note.

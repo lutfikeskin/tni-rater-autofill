@@ -223,7 +223,7 @@ const STANDARDS = [
   'Driver\'s relationship to the business (Owner, else Employee)', 'Number of employees (the drivers besides the owner)',
   'Years with the current auto insurer (1-3 with a current policy)', 'Liability insurance the business has (None unless the notes say)',
   'Named additional insured or waiver of subrogation (TNI: No)', 'Blanket additional insured by contract (TNI: No)', 'Blanket waiver of subrogation by contract (TNI: No)',
-  'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)', 'Basic personal injury protection (TNI: $2,500, PIP over medical payments; FL: as GEICO has it)', 'Comprehensive', 'Collision', 'Refrigeration breakdown (Yes with a reefer)',
+  'Medical payments (TNI: $5,000; Not Included where GEICO offers no limit)', 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)', 'Comprehensive', 'Collision', 'Refrigeration breakdown (Yes with a reefer)',
   'Business description (For Hire Trucking for an expediter or freight hauler)', 'More about the business (Other For-Hire Trucking for an expediter or freight hauler)',
   'Start quote: Commercial Auto/Trucking (TNI: ticked)',
   // FL live run 4, 2026-10-21 (W43-17, W43-18): GEICO in every state.
@@ -1379,32 +1379,39 @@ test('liability coverage and its limit from the intake; an NTL mention not answe
   }
 });
 
-test('Florida: medical payments Not Included, PIP kept as GEICO offers it (TNI)', () => {
+// TNI, 2026-10-26, W44-26 (the maintainer: "Always add medical payments at $5K, there is no medical
+// payments, choose PIP"; GEICO offering both: "MedPay $5K, PIP yok"), replacing that morning's "If
+// there is personal injury protection available, we always prefer PIP" and Florida's Medical
+// Payments Not Included (2026-10-21). What the page kit does with the lists: test/pagekit.test.mjs.
+const MED = 'Medical payments (TNI: $5,000; Not Included where GEICO offers no limit)';
+const BASIC_PIP = 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)';
+test('Medical Payments $5,000 wherever GEICO offers it, PIP declined beside it and $2,500 without it; Florida keeps its PIP (TNI)', () => {
+  // Every state, Florida too: $5,000, and Not Included where GEICO's list offers no limit (TX).
+  for (const r of [intake(), with_({ 'garaging.state': 'TX' }), with_({ 'garaging.state': 'FL' }), with_({ 'garaging.state': ' fl ' }), blank()]) {
+    const med = one(plan(r), MED);
+    assert.deepEqual([med.value, med.source, med.standard, med.kind, med.ignore, med.onlyIf], ['$5,000', 'standard', true, 'choice', false,
+      [{ path: null, limit: true, value: null }, { path: null, limit: false, value: 'Not Included' }]], r.garaging.state ?? 'blank');
+    assert.match(med.unofferedNote, /doesn't list \$5,000 medical payments/, 'a list without $5,000 is the agent\'s at once');
+  }
+  // Basic PIP outside Florida: I decline where Medical Payments lists a limit, else $2,500 (read from
+  // the Medical Payments list, or none off the page). A list without the answer is the agent's at once.
+  for (const r of [intake(), with_({ 'garaging.state': 'TX' })]) {
+    const p = plan(r);
+    const pip = one(p, BASIC_PIP);
+    const med = one(p, MED);
+    assert.deepEqual([pip.value, pip.source, pip.standard, pip.ignore, pip.whenOffered, pip.emptyNote, pip.onlyIf], ['$2,500', 'standard', true, false, false, null,
+      [{ path: med.path, limit: true, value: 'I decline' }, { path: med.path, limit: false, value: null }]], r.garaging.state);
+    assert.match(pip.unofferedNote, /basic personal injury protection/);
+    // The other PIP lists stay the agent's outside Florida.
+    for (const name of ['Excluded work loss', 'PIP options']) agents(one(p, name));
+  }
+  // Florida requires PIP: the PIP lists (one choice each) are kept as GEICO has them.
   const fl = plan(with_({ 'garaging.state': 'FL' }));
-  const med = one(fl, 'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)');
-  assert.deepEqual([med.value, med.source, med.kind, med.onlyIf, med.unofferedNote], ['Not Included', 'standard', 'choice', null, null], 'FL: whatever else GEICO lists');
-  for (const name of ['Basic personal injury protection (TNI: $2,500, PIP over medical payments; FL: as GEICO has it)', 'PIP options', 'Excluded work loss', 'Stacked uninsured motorist']) {
+  for (const name of [BASIC_PIP, 'PIP options', 'Excluded work loss', 'Stacked uninsured motorist']) {
     const s = one(fl, name);
     assert.deepEqual([s.ignore, s.value, s.source, s.note, s.onlyIf], [true, null, null, null, null], name);
     assert.match(s.emptyNote, /left .* empty/);
   }
-  assert.equal(one(plan(with_({ 'garaging.state': ' fl ' })), 'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)').value, 'Not Included');
-  // Elsewhere (the maintainer, 2026-10-26, a TX live run: "If there is personal injury protection
-  // available, we always prefer PIP", ideally $2,500; without it, Medical Payments with a limit):
-  // Basic PIP $2,500 where it offers a limit, and Medical Payments Not Included where Basic PIP offers
-  // a limit or it offers none (the page kit reads the lists, `onlyIf`; test/pagekit.test.mjs). A list
-  // without the answer is the agent's at once (`unofferedNote`), never waited for (`whenOffered`:
-  // Print went out without it).
-  const tx = plan(intake());
-  const txMed = one(tx, 'Medical payments (TNI: Not Included where GEICO offers PIP or no limit; FL: Not Included, PIP instead)');
-  const txPip = one(tx, 'Basic personal injury protection (TNI: $2,500, PIP over medical payments; FL: as GEICO has it)');
-  assert.deepEqual([txMed.value, txMed.source, txMed.onlyIf], ['Not Included', 'standard', [{ path: txPip.path, limit: true }, { path: null, limit: false }]], 'read from the Basic PIP list, then its own');
-  assert.match(txMed.onlyNote, /no personal injury protection, so TNI takes medical payments/);
-  assert.match(txMed.unofferedNote, /no medical payments choice/);
-  assert.deepEqual([txPip.value, txPip.source, txPip.whenOffered, txPip.ignore, txPip.emptyNote, txPip.onlyIf], ['$2,500', 'standard', false, false, null, [{ path: null, limit: true }]]);
-  assert.match(txPip.onlyNote, /no basic personal injury protection limit/);
-  assert.match(txPip.unofferedNote, /doesn't offer \$2,500/);
-  for (const name of ['Excluded work loss', 'PIP options']) agents(one(tx, name));
 });
 
 test('cargo: the intake\'s limit and deductible as one pair; never a default deductible', () => {

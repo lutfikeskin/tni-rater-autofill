@@ -129,9 +129,12 @@ test('Progressive standard answers: USDOT belongs to the business is TNI\'s stan
 
 test('Progressive preserves optional and server-owned controls', () => {
   const plan = buildPlan(baseRecord(), progressive, {});
-  for (const q of ['18F', '194', '1CC', '77', '2DB', '2DD', '2DF', '2B00', '1E7C', '3E96', '3E97', '3EA4', '32CE']) {
+  for (const q of ['18F', '194', '1CC', '77', '2DB', '2DD', '2DF', '2B00', '3E96', '3E97', '3EA4', '32CE']) {
     assert.equal(byQ(plan, q).ignore, true, `q${q} is preserved`);
   }
+  // Maryland's own PIP list is no longer kept as Progressive set it: "$2,500 Full PIP" (TNI,
+  // 2026-10-26: answer to PR question; see the FL run's test).
+  assert.deepEqual([byQ(plan, '1E7C').ignore, byQ(plan, '1E7C').value], [false, '$2,500 Full PIP'], 'MD PIP');
   // Email and Fax are unticked (TNI), so the agent's Print/Send only opens the PDF (Codex on PR #43).
   for (const q of ['32D0', '32DD']) assert.deepEqual([byQ(plan, q).ignore, byQ(plan, q).value], [false, false], q);
   for (const q of ['year', 'make', 'model']) {
@@ -542,11 +545,18 @@ test('AmWINS: current carrier tenure (asked with a DOT only) 1 TO 2 YEARS and cl
   assert.equal(sel('#howLongWithCurrentCarrier').ignore, false);
   assert.deepEqual([named(/^Claim-free loss runs/).value, named(/^Claim-free loss runs/).source], [false, 'standard']);
   assert.deepEqual([named(/^Valued loss runs/).value, named(/^Valued loss runs/).source], [false, 'standard'], 'TNI 2026-10-19 (a later run): always No');
-  const pip = named(/^Personal Injury Protection \(/);
-  assert.equal(pip.ignore, false);
-  assert.equal(pip.value, false, 'No: Medical Payments is offered');
-  assert.equal(pip.replace, true, 'replaces the page pre-selected Yes');
-  assert.equal(sel('#personalInjuryProtectionLimit').ignore, true);
+  // Medical Payments $5,000 and PIP No (TNI, 2026-10-26, W44-26: Medical Payments $5,000 wherever
+  // offered, PIP not selected; AmWINS always offers Medical Payments), in every state AmWINS asks it.
+  // No-fault states too (FL, NY, MI): AmWINS PIP stays as it is in every state, because AmWINS, as
+  // the broker, picks the right coverage on its side when it prepares the quote (TNI, 2026-10-26:
+  // answer to PR question).
+  for (const state of ['TX', 'MD', 'WA', 'FL', 'NY', 'MI']) {
+    const p = buildPlan({ ...record, garaging: { ...record.garaging, state } }, amwins, {});
+    const pip = p.find((x) => /^Personal Injury Protection \(/.test(x.name ?? ''));
+    assert.deepEqual([pip.value, pip.source, pip.ignore, pip.replace], [false, 'standard', false, true], `${state}: PIP No, replacing the page's pre-selected Yes`);
+    assert.deepEqual([p.find((x) => x.selector === '#medicalPayment').value, p.find((x) => x.selector === '#medicalPayment').source], ['$5,000', 'standard'], state);
+    assert.equal(p.find((x) => x.selector === '#personalInjuryProtectionLimit').ignore, true, 'its limit only shows with Yes');
+  }
   const marital = () => sel('#driversPanel [data-id="martialStatus"]');
   assert.equal(marital().value, null, 'no marital status on this record: left to the agent, no Married default (2026-10-09)');
   assert.equal(marital().warn, null);
@@ -582,12 +592,20 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   assert.equal(byQ(plan, '1DB8').value, 'Not Selected');
   assert.equal(byQ(plan, '1E8D').value, '$10k w/ $0 Deductible');
   assert.equal(byQ(plan, '1E8D').ignore, false);
-  // TX 2026-10-07: PIP shares its data-model name across states; TX's list has other amounts and
-  // TNI has no standard there: left as Progressive set it.
-  for (const state of ['TX', 'MD']) {
+  // PIP shares its data-model name across states. TX (TNI, 2026-10-26, W44-26: Medical Payments
+  // $5,000 wherever offered, PIP not selected unless the state requires it): Progressive offers
+  // medical payments there, so PIP is Not Selected (its list: Not Selected, $2,500 to $25,000).
+  const tx = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state: 'TX' } }, progressive, {}), '1E8D');
+  assert.deepEqual([tx.value, tx.source, tx.standard, tx.ignore, tx.emptyNote], ['Not Selected', 'standard', true, false, null], 'TX: not selected');
+  assert.equal(byQ(buildPlan({ ...record, garaging: { ...record.garaging, state: 'TX' } }, progressive, {}), '1FE4').value, '$5,000 per person', 'TX: medical payments instead');
+  // Counterexamples: Maryland (its PIP is its own list, 1E7C, below), Utah (PIP required, "$3k
+  // Basic" its only option, no medical payments: it stays), Kentucky (base PIP required there:
+  // Progressive's stays; TNI, 2026-10-26: answers to PR questions) and a state without PIP keep
+  // Progressive's, as before.
+  for (const state of ['MD', 'KY', 'UT', 'IA']) {
     const other = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {}), '1E8D');
     assert.deepEqual([other.value, other.ignore], [null, true], state);
-    assert.match(other.emptyNote, /Florida and Arkansas only/, `${state}: an empty PIP goes to the agent`);
+    assert.match(other.emptyNote, /Florida, Texas and Arkansas only/, `${state}: an empty PIP goes to the agent`);
   }
   assert.equal(byQ(plan, '1E8D').emptyNote, null);
   // AR 2026-10-19 (live run): PIP is its own control there (PIPInput.Limit, captioned "Limit",
@@ -600,7 +618,26 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   for (const state of ['FL', 'TX']) {
     const other = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {}), '1FB2');
     assert.deepEqual([other.value, other.ignore], [null, true], state);
-    assert.match(other.emptyNote, /Florida and Arkansas only/, state);
+    assert.match(other.emptyNote, /Florida, Texas and Arkansas only/, state);
+  }
+  // Maryland's PIP list (Not selected, $2,500 Full PIP, $2,500 Guest PIP; found by its option, its
+  // box has no question text): Progressive's MD page offers no medical payments, so W44-26 gives PIP
+  // $2,500, and it is "$2,500 Full PIP", not Guest PIP (TNI, 2026-10-26: answer to PR question).
+  const md = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state: 'MD' } }, progressive, {}), '1E7C');
+  assert.deepEqual([md.value, md.source, md.standard, md.ignore, md.withOption], ['$2,500 Full PIP', 'standard', true, false, '$2,500 Full PIP'], 'MD: Full PIP');
+  // Counterexample: another state showing this list (none captured so far) keeps Progressive's choice.
+  for (const state of ['FL', 'TX', 'KY', 'UT']) {
+    const other = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {}), '1E7C');
+    assert.deepEqual([other.value, other.ignore], [null, true], `${state}: 1E7C as Progressive set it`);
+  }
+  // Guest and Optional Personal Injury Protection (KY live run, 2026-10-26: no rule knew them, and
+  // Guest PIP was left required and empty): Not selected (TNI, 2026-10-26, W44-32), in every state.
+  for (const state of ['KY', 'FL', 'TX']) {
+    const p = buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {});
+    for (const [field, ask] of [['LineInput.GuestPIPLimit', 'Guest Personal Injury Protection'], ['LineInput.OptionalPIPLimit', 'Optional Personal Injury Protection']]) {
+      const s = p.find((x) => x.field === field);
+      assert.deepEqual([s?.value, s?.source, s?.standard, s?.ignore, s?.ask], ['Not selected', 'standard', true, false, [ask]], `${state} ${field}`);
+    }
   }
   record.applicant.dot = null;
   assert.equal(byQ(buildPlan(record, progressive, {}), '21E').ignore, true);
