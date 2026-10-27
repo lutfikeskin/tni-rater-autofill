@@ -710,14 +710,25 @@
  * @typedef {object} AiSuggestEvent  sidepanel.js runAssist: one Luna page review (counts only)
  * @property {'ai_suggest'} type
  * @property {string} model
+ * @property {string} carrier
+ * @property {string} [page]
  * @property {number} items  questions sent
+ * @property {number} blocked  questions kept from Luna (never-list, manual-only)
+ * @property {number} [ms]  time the review took
  * @property {number} [suggested]
+ * @property {number} [autoOk]  answers allowed as automatic picks
  * @property {number} [leave]  questions left to the agent; the leave* counts below say why
  * @property {number} [leaveMissing]  Luna said information is missing
  * @property {number} [leaveConflict]  Luna saw conflicting facts
  * @property {number} [leaveChose]  Luna left it without either
  * @property {number} [leaveNoSource]  it answered but cited nothing usable
  * @property {number} [leaveUnverified]  the evidence check refused its answer
+ * @property {number} [tokensIn]
+ * @property {number} [tokensOut]
+ * @property {number} [modelCalls]
+ * @property {number} [reasoningTokens]
+ * @property {number} [cachedTokens]
+ * @property {number} [cacheWriteTokens]
  * @property {string} [error]
  */
 

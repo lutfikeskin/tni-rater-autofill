@@ -102,7 +102,8 @@ test('evaluation inputs retain current choices and use bounded controls', () => 
 test('context cases: the request carries the named row, the blank mapped field and the page answers', () => {
   const request = (id) => {
     const entry = cases.find(x => x.id === id);
-    const items = providerItems(entry).map((x, i) => ({ ...x, id: `f${i + 1}` }));
+    // Through collectItems, as the live run (runProvider) sends them.
+    const items = collectItems([{ unknown: providerItems(entry) }]).items.map((x, i) => ({ ...x, id: `f${i + 1}` }));
     return JSON.parse(buildRequest(items, providerContext(entry)).input[0].content);
   };
   const driver = request('other-driver-row');

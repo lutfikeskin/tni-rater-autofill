@@ -206,7 +206,7 @@
           "controlKind": "radio",
           "options": ["Yes", "No"],
           "current": null,
-          "rulePath": "drivers[1].cdl"
+          "path": "drivers[1].cdl"
         }
       ],
       "expected": [
@@ -272,7 +272,7 @@
           "controlKind": "radio",
           "options": ["Yes", "No"],
           "current": null,
-          "rulePath": "operations.needSr22"
+          "path": "operations.needSr22"
         }
       ],
       "expected": [
