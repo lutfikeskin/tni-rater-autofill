@@ -91,7 +91,8 @@ export function ownerDobNote(r) {
   if (o.dob) return null;
   if (o.dobDriver) return 'The owner\'s driver row has no date of birth: enter it yourself.';
   if (r.applicant.ownerDrives === false) return 'The intake says the owner doesn\'t drive, and no driver row is theirs (TNI: the owner\'s is the first driver; none on the intake, or set as not excluded in client details), so none gives their date of birth: enter it yourself.';
-  return `No driver matches the owner "${r.applicant.owner1 ?? ''}": check the names and enter the owner's date of birth yourself.`;
+  // The owner's row is the first (V4), so only an intake with no driver rows gets here.
+  return 'The intake lists no drivers, so no driver row gives the owner\'s date of birth: enter it yourself.';
 }
 
 // "Is the customer currently insured with Progressive Commercial Auto?" Yes only when the

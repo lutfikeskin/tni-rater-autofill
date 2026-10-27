@@ -599,7 +599,7 @@ test('the owner: names from the owner box (or their row when it carries the name
   assert.equal(value(with_({ 'applicant.owner1': 'Jordan Sample' }), 'Owner date of birth', BOI), '01/02/1980');
   const unmatched = one(plan(with_({ 'applicant.owner1': 'Jordan Sample', drivers: [] })), 'Owner date of birth', BOI);
   agents(unmatched);
-  assert.match(unmatched.note, /No driver matches the owner/);
+  assert.match(unmatched.note, /The intake lists no drivers, so no driver row gives the owner.s date of birth/);
   // A blank owner box: the first row's too (V4); with no driver rows, the note says there is no owner
   // name (never quotes an empty one).
   for (const name of [null, '', '  ']) {

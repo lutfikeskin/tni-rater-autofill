@@ -808,7 +808,7 @@ test('the owner\'s names are never another person\'s; the first driver row is th
   for (const q of ['2BB', '1B8B']) {
     const step = byQ(buildPlan(record, progressive), q);
     assert.deepEqual([step.value, step.manualOnly], [null, true], q);
-    assert.match(step.note, /No driver matches the owner "Alice Sample"/, q);
+    assert.match(step.note, /The intake lists no drivers, so no driver row gives the owner.s date of birth/, q);
   }
   record.drivers = [{ first: 'Alice', middle: null, last: 'Sample', dob: '03/04/1985' }];
   assert.equal(owner(record).named?.dob, '03/04/1985', 'the exact full name gives the name too');
