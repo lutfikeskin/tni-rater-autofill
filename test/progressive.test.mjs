@@ -332,6 +332,52 @@ test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () 
   assert.equal(byQ(buildPlan(record, progressive, {}), '1B84').value, '100 Example Way');
 });
 
+// TNI (2026-10-26, W44-30): "only on NoHit, the first word". Progressive's NoHit page gets the
+// first word of a multi-word owner first name (its own advice there: drop the middle name);
+// Business Owner Info and the driver forms keep the whole first name.
+test('NoHit: the first word of a multi-word owner first name; other pages keep it whole (TNI 2026-10-26, W44-30)', () => {
+  const record = baseRecord();
+  record.applicant.owner1 = 'Amina Sample Kone';
+  record.drivers = [{ first: 'Amina Sample', middle: null, last: 'Kone', dob: '01/02/1980', licenseNumber: 'MD1234567', licenseState: 'MD' }];
+  let plan = buildPlan(record, progressive, {});
+  assert.equal(byQ(plan, '1B7F').value, 'Amina', 'NoHit: the first word');
+  assert.equal(byQ(plan, '1B7F').source, 'derived', 'computed from the intake, not a standard');
+  assert.equal(byQ(plan, '1B7F').standard, false);
+  assert.equal(byQ(plan, '1B80').ignore, true, 'NoHit middle initial: still left as the page has it');
+  assert.equal(byQ(plan, '1B80').value ?? null, null);
+  assert.equal(byQ(plan, '1B81').value, 'Kone');
+  // Counterexamples: Business Owner Info and the driver form keep the whole first name.
+  assert.equal(byQ(plan, '295').value, 'Amina Sample', 'Business Owner Info keeps the whole first name');
+  assert.equal(plan.find((s) => s.path === 'drivers[0].first' && s.q === '2898').value, 'Amina Sample', 'Add Driver keeps the whole first name');
+  // The owner box alone (the owner doesn't drive): its words before the surname, then the first one.
+  record.applicant.ownerDrives = false;
+  plan = buildPlan(record, progressive, {});
+  assert.equal(byQ(plan, '1B7F').value, 'Amina');
+  assert.equal(byQ(plan, '295').value, 'Amina Sample');
+  // A hyphenated first name is one word, also beside a second word.
+  record.applicant.ownerDrives = true;
+  record.applicant.owner1 = 'Mary-Ann Kone';
+  record.drivers[0].first = 'Mary-Ann';
+  assert.equal(byQ(buildPlan(record, progressive, {}), '1B7F').value, 'Mary-Ann');
+  record.applicant.owner1 = 'Mary-Ann Sample Kone';
+  record.drivers[0].first = 'Mary-Ann Sample';
+  plan = buildPlan(record, progressive, {});
+  assert.equal(byQ(plan, '1B7F').value, 'Mary-Ann');
+  assert.equal(byQ(plan, '295').value, 'Mary-Ann Sample');
+  // A two-word first name the reader keeps as written ("A J") is its first word too.
+  record.applicant.owner1 = 'A J Kone';
+  record.drivers[0].first = 'A J';
+  plan = buildPlan(record, progressive, {});
+  assert.deepEqual([byQ(plan, '1B7F').value, byQ(plan, '295').value], ['A', 'A J']);
+  // A one-word first name is unchanged, and none stays none.
+  const one = baseRecord();
+  assert.equal(byQ(buildPlan(one, progressive, {}), '1B7F').value, 'Amina');
+  assert.equal(byQ(buildPlan(one, progressive, {}), '1B7F').value, byQ(buildPlan(one, progressive, {}), '295').value);
+  one.applicant.owner1 = null;
+  one.drivers[0].first = null;
+  assert.equal(byQ(buildPlan(one, progressive, {}), '1B7F').value, null);
+});
+
 test('a vehicle value that is not a dollar amount goes to the agent instead of being typed', () => {
   const record = baseRecord();
   record.vehicles[0].value = 'about 40k';

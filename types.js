@@ -200,6 +200,7 @@
  * @property {boolean} [once]  once a quote
  * @property {boolean} [keepAnswers]  answers checked once its result shows (GEICO's Recalculate)
  * @property {boolean} [kitClick]  clicked by the kit even where the carrier presses its buttons from the page's own world (`pressInPage`): GEICO's Print Quote Proposal
+ * @property {boolean} [onBlankPage]  clicked even while its page shows no field (a page of tiles: Progressive's Most Common Vehicles); any other helper on a page the plan has questions for waits until one shows (W44-03)
  */
 
 /**
@@ -239,6 +240,7 @@
  * @property {string[]} steps
  * @property {string} selector
  * @property {UnitList[]} lists
+ * @property {(record: ClientRecord, list: UnitList, index: number) => string} [missing]  what the panel says of an intake unit the list on screen doesn't have and no helper adds (src/units.js unitMissing, W44-01)
  */
 
 /**
@@ -246,6 +248,13 @@
  * @property {string} page
  * @property {UnitList} list
  * @property {string} text  a pattern whose first group is the name
+ */
+
+/**
+ * @typedef {object} StopButton  a screen without a step of its own, known by a button only it shows (src/carriers.js stopScreen)
+ * @property {string} button  a pattern on the button's words
+ * @property {string | ((record: ClientRecord) => string)} note  what the panel says there
+ * @property {boolean} [stopped]  the carrier's stop, not the agent's step (GEICO's referral, W44-04): the dock and the note above the answers are red, as a stop page's
  */
 
 /**
@@ -286,9 +295,10 @@
  * @property {(record: ClientRecord) => number} [listedDriver]  the intake driver the carrier lists itself, -1 for none
  * @property {(record: ClientRecord) => number} [omittedDriver]  the intake driver the carrier's quote leaves out (GEICO: the owner's row, the first, when the intake says the owner doesn't drive or marks that row Excluded): never added, never an Add Driver form's, not a row of its driver list; -1 for none
  * @property {{ [page: string]: string | null | ((record: ClientRecord) => string | null) }} [agentPages]
+ * @property {{ [page: string]: string }} [warnPages]  agent pages whose note is a yellow warning box with this title, not a line of text (Progressive's NoHit: "Owner not verified", W44-14)
  * @property {{ [page: string]: string }} [stopPages]
  * @property {{ [step: string]: string }} [stopSteps]
- * @property {{ [name: string]: { button: string, note: string | ((record: ClientRecord) => string) } }} [stopButtons]
+ * @property {{ [name: string]: StopButton }} [stopButtons]
  * @property {{ [step: string]: string }} [stepNotes]
  * @property {string} [finishedBy]  the action (its id) whose click ends the quote where TNI stops on this rater (GEICO's Print Quote Proposal, Progressive's Print, Email, Fax): clicked, on its step or page, with nothing left for the agent, the panel says "Quote done" (sidepanel quoteFinished); its click where it wasn't done, or was changed or re-armed since, chimes (noteQuoteDone)
  * @property {{ id: string, steps: string[], left: string[], said: string, sub: string }} [finishedAt]  where the quote ends at a step instead of a button (AmWINS: Underwriting, with only the Declaration left for the agent): a fill there that leaves the agent nothing but the `left` items (by rule name) is the quote done: Review page says "Quote done", the dock says `said` and `sub`, and the chime sounds once a quote (`id` kept with the tab's done actions; sidepanel quoteFinished, rememberFill)
@@ -410,6 +420,7 @@
  * @property {boolean} once
  * @property {boolean} keepAnswers
  * @property {boolean} kitClick
+ * @property {boolean} onBlankPage
  * @property {string | null} unfinished
  * @property {string[]} unlessActions
  * @property {string[]} afterActions

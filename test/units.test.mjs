@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { geico } from '../src/carriers/geico.js';
-import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
+import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
+import { buildPlan } from '../src/plan.js';
 
 const VEH = 'Vehicles';
 const DRV = 'Drivers & Incidents';
@@ -122,4 +123,47 @@ test('a unit list is complete with every unit shown or saved from a form a fill 
   assert.equal(unitToAdd(geico, record, VEH, seen(2, [false, false, false]), saved).complete, false, 'a row short: one saved form was discarded');
   assert.equal(unitToAdd(geico, record, VEH, seen(4, [false, false, false]), saved).complete, false, 'a row the intake does not have');
   assert.equal(unitToAdd(geico, record, VEH, { forms: [], lists: [null, null] }, saved).read, null, 'no list: no read');
+});
+
+// W44-01, GEICO OH (2026-10-26): "owner drives" blank, so the extension adds no driver on GEICO's
+// list (driversKnown: the owner may be one of them under another name), and the quote printed with
+// the owner alone while the panel said nothing. The list on screen without an intake driver that no
+// helper of the plan adds is named, as left for the agent.
+test('a unit the list doesn\'t have and no helper adds is named; one the plan adds, or off the list, isn\'t', () => {
+  const record = { applicant: { ownerDrives: null, owner1: 'Pat Owner' }, garaging: { state: 'OH' }, operations: {}, coverage: {}, claims: {}, priorInsurance: [],
+    vehicles: [], trailers: [], drivers: [{ first: 'Pat', last: 'Owner' }, { first: 'Sam', last: 'Second' }] };
+  const seen = { forms: [], lists: [null, { rows: 1, shown: [true, false] }] };
+  const next = unitToAdd(geico, record, DRV, seen);
+  assert.deepEqual([next.adding, next.onList], [{ list: 'drivers', index: 1 }, true]);
+  const planFor = (r, n) => buildPlan(r, geico, { drivers: n.adding.index, vehicles: 0, trailers: 0, adding: { ...n.adding, click: true } });
+  assert.equal(planFor(record, next).some((s) => s.baseAction === 'addDriver'), false, 'the "+" is the agent\'s here');
+  const missing = unitMissing(next, planFor(record, next));
+  assert.deepEqual(missing, { list: 'drivers', index: 1 });
+  const item = unitMissingItem(geico, record, missing);
+  assert.deepEqual([item.label, item.path, item.key], ['Add Driver', 'drivers[1]', null]);
+  assert.match(item.note, /^Sam Second \(driver 2 of the intake\) isn't on GEICO's driver list/);
+  assert.match(item.note, /doesn't say whether the owner drives/);
+  // The owner drives under a name no driver has: the same, with that reason.
+  const unmatched = { ...record, applicant: { ownerDrives: true, owner1: 'Someone Else' } };
+  assert.match(unitMissingItem(geico, unmatched, missing).note, /no driver on the intake has the owner's name/);
+  // Owner drives and is driver 1 (the plan adds driver 2 itself): nothing named.
+  const known = { ...record, applicant: { ownerDrives: true, owner1: 'Pat Owner' } };
+  const nextKnown = unitToAdd(geico, known, DRV, seen);
+  assert.deepEqual(nextKnown.adding, { list: 'drivers', index: 1 });
+  assert.equal(unitMissing(nextKnown, planFor(known, nextKnown)), null);
+  // A driver's form on screen, not the list: nothing named (the agent may be adding them).
+  const onForm = unitToAdd(geico, record, DRV, { forms: [{ list: 'drivers', id: 'F', blank: true }], lists: [null, null] });
+  assert.equal(onForm.onList, false);
+  assert.equal(unitMissing(onForm, planFor(record, onForm)), null);
+  // GEICO's driver rows known (the owner doesn't drive), but the picker not on driver 2 (no form read
+  // yet, so the list didn't move it): nothing adds them in this fill, and the note doesn't blame the
+  // owner question.
+  const notOwner = { ...record, applicant: { ownerDrives: false, owner1: 'Pat Owner' } };
+  const stayed = unitMissing(nextKnown, buildPlan(notOwner, geico, { drivers: 0, vehicles: 0, trailers: 0, adding: { ...nextKnown.adding, click: true } }));
+  assert.deepEqual(stayed, { list: 'drivers', index: 1 });
+  const stayedNote = unitMissingItem(geico, notOwner, stayed).note;
+  assert.doesNotMatch(stayedNote, /owner/);
+  assert.match(stayedNote, /^Sam Second \(driver 2 of the intake\) isn't on GEICO's driver list: pick them in the panel and Fill again/);
+  // Every driver listed: nothing to add, nothing named.
+  assert.equal(unitMissing(unitToAdd(geico, record, DRV, { forms: [], lists: [null, { rows: 2, shown: [true, true] }] }), []), null);
 });

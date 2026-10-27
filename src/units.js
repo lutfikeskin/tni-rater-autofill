@@ -74,9 +74,30 @@ export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = 
   const entered = (u) => isListed(u) || bound(u.list, u.i) || done.has(mark(u)) || marks.includes(mark(u));
   const complete = !!shown && shown.rows === units.length && units.every((u) => u.shown || isListed(u) || !readable(u.item) || bound(u.list, u.i));
   const read = shown ? { rows: shown.rows, units: units.length, shown: units.filter((u) => u.shown).length, saved: units.filter((u) => bound(u.list, u.i)).length } : null;
-  if (shown && shown.rows >= units.length) return { marks, adding: null, move: false, complete, read };
+  if (shown && shown.rows >= units.length) return { marks, adding: null, move: false, complete, read, onList: true };
   const next = units.find((u) => !entered(u));
-  return { marks, adding: next ? { list: next.list, index: next.i } : null, move: Array.isArray(seen.forms) && !seen.forms.length, complete: false, read };
+  return { marks, adding: next ? { list: next.list, index: next.i } : null, move: Array.isArray(seen.forms) && !seen.forms.length, complete: false, read, onList: !!shown };
+}
+
+// A unit the list on screen doesn't have that no helper of `plan` adds: unitToAdd's `adding` (`next`)
+// when the plan built for it, its clicks allowed, has no action its marker finishes (doneWhen):
+// GEICO's Add Driver while the owner's driver rows are unknown (driversKnown). The panel names it
+// as left for the agent instead of saying nothing (W44-01, OH 2026-10-26: the quote printed with one
+// of the intake's two drivers). Null otherwise, and off the list (a unit's form on screen).
+export function unitMissing(next, plan) {
+  if (!next?.onList || !next.adding) return null;
+  const mark = `${MARKER[next.adding.list]}:${next.adding.index}`;
+  return plan.some((s) => s.kind === 'action' && s.doneWhen?.includes(mark)) ? null : next.adding;
+}
+
+// What the panel lists for it: an item left for the agent, as a helper they must do by hand is
+// (pagekit `missing`), with the note of the carrier's list (`missing`), else a plain one.
+export function unitMissingItem(carrier, record, { list, index }) {
+  const spec = (carrier?.unitLists ?? []).find((s) => s.lists.includes(list));
+  const unit = { vehicles: 'Vehicle', trailers: 'Trailer', drivers: 'Driver' }[list];
+  const note = spec?.missing?.(record, list, index)
+    ?? `${unit} ${index + 1} of the intake isn't on ${carrier?.name ?? 'the carrier'}'s list: add it yourself.`;
+  return { label: `Add ${unit}`, name: `${unit} ${index + 1} of the intake`, path: `${list}[${index}]`, key: null, q: null, controlKind: null, note };
 }
 
 // The carrier's Continue for one fill (fill `advance`), or null without one: its `listed` button

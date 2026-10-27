@@ -571,7 +571,8 @@
   // Buttons and links the agent clicks themselves (Continue, Recalculate, Print, a lookup): the
   // review sees a helper the extension didn't click and a Continue the agent pressed. The
   // extension's own clicks are untrusted and never reported. Only the button's text (60
-  // characters) and the step on screen.
+  // characters), the step on screen and the unit forms on it (element names, no values; the panel
+  // logs neither the forms nor more than the text).
   const BUTTONS = 'a, button, [role=button], input[type=button], input[type=submit], .x-btn';
   // A button's words: its own, else the words slotted into it. GEICO's <gds-button> draws a
   // <button> in its shadow root around a <slot>: "Next" is the host's text, shown through the slot.
@@ -587,7 +588,8 @@
     const el = (e.composedPath?.() ?? []).find((n) => n.matches?.(BUTTONS)) ?? e.target?.closest?.(BUTTONS);
     if (!el) return;
     const text = buttonText(el).slice(0, 60);
-    if (text) send({ event: 'agent_click', page, step: stepKey(), text });
+    // With the unit forms on screen (element names only), so a discarded form lets go of its unit (W44-05).
+    if (text) send({ event: 'agent_click', page, step: stepKey(), text, forms: unitForms() });
   });
 
   const timer = setInterval(tick, TICK_MS);

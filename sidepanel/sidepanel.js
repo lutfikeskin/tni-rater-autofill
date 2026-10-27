@@ -4,7 +4,7 @@ import { sourcePlace } from '../src/intake-source.js';
 import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
-import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
+import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
 import { carrierForUrl, quoteProgress, stopScreen } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, intakeProfile, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
@@ -308,6 +308,9 @@ const state = {
   // filled once more for (rememberFill): not again until a fill there finds neither.
   triedAgain: null,
   pagePending: null, // a page the tab moved to while a fill ran: filled when that fill ends (runPendingPage)
+  // A page that arrived with no question drawn yet ({ tabId, page }): its first fill runs when they
+  // show (new_fields), with "Fill each new page as soon as it opens" on (W44-11).
+  drawPending: null,
   // Page layouts: the last one logged per quote and page (or vehicle/driver on its page), the
   // chain that logs them one at a time, the capture waiting for the page to be quiet, failures.
   lastLayouts: new Map(),
@@ -343,6 +346,10 @@ const state = {
   // per page and set of questions, so a refill doesn't ask again.
   aiRun: 0,
   aiCache: new Map(),
+  // The request whose settings change discarded every earlier request's answer (wireAi), and the
+  // questions being asked now (cache signature -> promise settled when the answer is in).
+  aiSettingsRun: 0,
+  aiAsking: new Map(),
   // Which screen shows: Settings over everything; otherwise the start screen, or the quote with its
   // three steps and the view they picked: step 1's checks ('check') or the page's answers ('page'),
   // all of them or a filter's ('all' | 'needs' | 'done'). The intake PDF opens in a sheet over it.
@@ -1399,6 +1406,22 @@ function renderPickers() {
   if (focused) $(focused)?.focus();
 }
 
+// The unit forms on screen as the agent discarded their changes (GEICO's "Yes, Discard Changes"; the
+// recorder sends the forms with the click): a form's unit was never saved from it, so it no longer
+// holds that unit (unitForms). The next blank form is filled for it, and the list's "+" adds it, unless
+// the list already shows it (W44-05, PA 2026-10-26: the van's discarded form kept the van bound, so the
+// next blank form was filled as the box truck and the van was never added). Its other marks stay: a
+// unit a list showed while bound is still on the quote.
+function releaseDiscardedForms(forms) {
+  let released = false;
+  for (const { list, id } of forms) {
+    if (!id || !Object.hasOwn(state.unitForms?.[list] ?? {}, id)) continue;
+    delete state.unitForms[list][id];
+    released = true;
+  }
+  if (released) persistUnitForms(state.tab?.id, state.unitForms);
+}
+
 // Picking vehicle (driver, trailer) `index` in the panel: the forms bound to it (unitForms) are
 // let go, so the form on the page now can be filled for it (pagekit holds a form while the active
 // unit was filled on another one). Other units' forms stay theirs, the one on the page too: picking
@@ -1565,8 +1588,13 @@ function onRecorderMessage(msg, sender) {
     const page = samePage(msg.page);
     const hasButtons = (state.tab.carrier?.actions ?? []).some((a) => [].concat(a.page ?? []).includes(page));
     const wanted = $('auto-pages').checked || ($('auto-followups').checked && (state.autoPages.has(page) || (hasButtons && !msg.fields)));
+    state.drawPending = null;
     if (wanted && (msg.fields > 0 || hasButtons) && onQuotePage()) {
       setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 100);
+    } else if ($('auto-pages').checked && !msg.fields && onQuotePage()) {
+      // Arrived before it drew a question (GEICO's first step: 6 of 8 quotes on 2026-10-26 waited
+      // 3–127 s for the agent's Fill, W44-11): filled as on arriving, once they show (new_fields).
+      state.drawPending = { tabId: sender.tab.id, page };
     }
     return;
   }
@@ -1613,7 +1641,10 @@ function onRecorderMessage(msg, sender) {
     // Start New Quote window, over any gateway page) on a page no fill has answered anything on yet
     // (a gateway control drawn before the window is ignored): its first fill, as on arriving at a page.
     const firstFill = () => !state.autoPages.has(page) || !state.reports.get(currentReportKey())?.filled;
-    if (state.tab.carrier?.fillOnDraw?.test(state.tab.url ?? '') && $('auto-pages').checked && firstFill() && onQuotePage() && !stopNoteFor(state.tab.carrier, page)) {
+    // Or a page that arrived before it drew any (drawPending, W44-11).
+    const drawnLate = state.drawPending?.tabId === sender.tab.id && state.drawPending.page === page;
+    if ((state.tab.carrier?.fillOnDraw?.test(state.tab.url ?? '') || drawnLate) && $('auto-pages').checked && firstFill() && onQuotePage() && !stopNoteFor(state.tab.carrier, page)) {
+      state.drawPending = null;
       setTimeout(() => { if (pageOf(state.tab?.url) === page) fillPage({ auto: 'page' }); }, 100);
     } else scheduleAutoFill(page, undefined, true);
     scheduleLayout(layoutPage, 'appeared');
@@ -1643,6 +1674,9 @@ function onRecorderMessage(msg, sender) {
     const step = state.tab.carrier?.layoutSteps ? knownStep(state.tab.carrier, msg.step) : undefined;
     log({ type: 'agent_click', carrier, page, view: viewOf(sender.tab.id, page), ...(step ? { step } : {}), text: redactor(redactionTerms(state.intake.record))(String(msg.text ?? '')).slice(0, 60) });
     agentHelperDone(state.tab.carrier, page, step, msg.text);
+    // Only the Yes to GEICO's discard question: "Discard Changes" only asks it, and "No, please don't
+    // discard." keeps the form, which would otherwise be filled as the next unit picked.
+    if (/^\s*yes\b.*\bdiscard\b/i.test(String(msg.text ?? '')) && Array.isArray(msg.forms)) releaseDiscardedForms(msg.forms);
   }
   // An error or validation message appeared (a refused Continue): the layout carries the messages.
   if (msg.event === 'new_messages') scheduleLayout(layoutPage, 'messages');
@@ -2222,6 +2256,7 @@ async function autoFill(page) {
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
+    noteMissingUnit(results, ctx);
     const frames = results.map((r) => r.result).filter(Boolean);
     const retrying = rememberFill(frames, ctx);
     followUp = afterFill(frames, ctx);
@@ -2449,8 +2484,9 @@ async function captureLayout(job, reason) {
 }
 
 // A screen that is the agent's (carrier `stopButtons`: GEICO's "Add USDOT Number / Skip", W43-27),
-// known by a button only it shows, as a layout reads the page: said on a quiet card above the page's answers while the
-// tab shows it (showStopPage), its arrival logged as a fill run that stopped, as a stop step's is,
+// or the carrier's stop (`stopped`: GEICO's referral, W44-04), known by a button only it shows, as a
+// layout reads the page: said above the page's answers while the tab shows it (showStopPage: a quiet
+// card, or red for a `stopped` one), its arrival logged as a fill run that stopped, as a stop step's is,
 // and nothing filled, clicked or asked of the AI there (stopNoteFor). A layout read without it, a
 // move to a step or a new document (noteStep, the page_view arrival) ends it; a question or list
 // GEICO draws while the screen is up doesn't (review of #141).
@@ -3211,10 +3247,11 @@ function dockFor() {
   }
   const page = pageOf(state.tab.url);
   const step = tabStep(carrier);
-  // The carrier stopped the quote here, or the step or screen is the agent's: nothing to press.
+  // The carrier stopped the quote here (a stop page, or a stop screen marked `stopped`: GEICO's
+  // referral, W44-04), or the step or screen is the agent's: nothing to press.
   if (stopNoteFor(carrier, page, step)) {
-    if (carrier.stopPages?.[page]) return { phase: 'stopped', tone: 'bad', eyebrow: `Stopped by ${carrier.name}`, title: 'Nothing to fill on this rater', sub: 'Nothing on this page was filled or clicked.' };
     const screen = step && carrier.stopSteps?.[step] ? null : state.stopScreens?.get(state.tab.id)?.name;
+    if (carrier.stopPages?.[page] || carrier.stopButtons?.[screen]?.stopped) return { phase: 'stopped', tone: 'bad', eyebrow: `Stopped by ${carrier.name}`, title: 'Nothing to fill on this rater', sub: 'Nothing on this page was filled or clicked.' };
     return { phase: 'yours', eyebrow: 'This step is yours', title: `Finish ${screen ?? step ?? 'this step'} yourself`, sub: `Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.` };
   }
   // The tab's quote is for another state than the intake's: no fill until the agent says which.
@@ -3331,7 +3368,9 @@ function issueCard({ tone = '', title, text = null, notes = [], compare = [], ac
 // carrier's reason is said of this client only once the tab is shown to be this intake's quote
 // (stopPageIsOurs). Steps of a one-address application that are the agent's (GEICO's Final Quote
 // Details, MVR & CLUE, Payment Information: `stopSteps`) are kept the same way, in a quiet card:
-// their note is the step's, about no client, so it is said as it is.
+// their note is the step's, about no client, so it is said as it is. So are screens that are the
+// agent's (`stopButtons`: GEICO's Add USDOT Number), and a screen that is the carrier's stop
+// (`stopped`: GEICO's referral, W44-04) is said in red, as a stop page.
 function showStopPage() {
   const carrier = state.tab?.carrier;
   const page = pageOf(state.tab?.url);
@@ -3350,6 +3389,12 @@ function showStopPage() {
   if (!carrier.stopPages?.[page]) {
     // A stop step's, or a stop screen's (`stopButtons`) on a step that is no stop.
     const screen = step && carrier.stopSteps?.[step] ? null : state.stopScreens?.get(state.tab?.id)?.name;
+    // The carrier's own stop on a screen (`stopped`: GEICO's referral, W44-04): in red, as a stop
+    // page's. A screen is noted only from this intake's layouts (noteStopScreen), so it is this client's.
+    if (carrier.stopButtons?.[screen]?.stopped) {
+      box.replaceChildren(issueCard({ role: 'alert', title: `${carrier.name} stopped this quote`, text: note, notes: ['Nothing on this page is filled or clicked.'] }));
+      return;
+    }
     box.replaceChildren(issueCard({ tone: 'quiet', title: `${screen ?? step}: yours`, text: note,
       notes: [`Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.`] }));
     return;
@@ -3584,6 +3629,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
+    noteMissingUnit(results, ctx);
     const frames = results.map((r) => r.result).filter(Boolean);
     const retrying = rememberFill(frames, ctx);
     tabMaps(tabId).autoPages.add(page);
@@ -3704,6 +3750,7 @@ async function pickUnitForm(carrier, ctx) {
 async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   ctx.unitsListed = false;
+  ctx.unitMissing = null;
   if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   const record = ctx.intake.record ?? {};
   const specs = unitListSpecs(carrier, record);
@@ -3737,6 +3784,23 @@ async function pickUnitToAdd(carrier, ctx) {
     await save();
     if (fillCurrent(ctx)) renderPickers();
   }
+  // The list on screen without this unit, and no helper that would add it even with its clicks
+  // allowed (GEICO's Add Driver while the owner's driver rows are unknown): named after the fill,
+  // left for the agent (noteMissingUnit; W44-01, OH 2026-10-26: the quote printed with one of two
+  // drivers, the panel silent).
+  try { ctx.unitMissing = unitMissing(next, buildPlan(record, carrier, { ...state.active, adding: { ...next.adding, click: true } })); } catch { /* no plan, nothing said */ }
+}
+
+// The unit pickUnitToAdd found missing from the list on screen with nothing to add it (ctx.unitMissing),
+// as an item the top frame's report leaves for the agent, which holds its Continue: the list's Looks
+// Good is the agent's (W44-01).
+function noteMissingUnit(results, ctx) {
+  if (!ctx.unitMissing) return;
+  const top = results.find((r) => r.frameId === 0)?.result;
+  if (!top || top.halted) return;
+  const item = unitMissingItem(ctx.carrier, ctx.intake?.record ?? {}, ctx.unitMissing);
+  top.noData = [...(top.noData ?? []), item];
+  top.blockers = [...(top.blockers ?? []), `needs you: ${item.label}`];
 }
 
 // On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each
@@ -4253,7 +4317,10 @@ function renderReport(frames, ctx = {}) {
   const rctx = { tabId, page, carrier };
   const halted = frames.find((f) => f.halted);
   const nodes = [
-    agentPage ? h('p', { class: 'note-line agent-page' }, agentPage) : null,
+    // An agent page's note: a yellow box on a page that needs more attention (`warnPages`:
+    // Progressive's NoHit, W44-14), a line of text on the others.
+    agentPage ? (carrier?.warnPages?.[page] ? issueCard({ tone: 'warn', title: carrier.warnPages[page], text: agentPage })
+      : h('p', { class: 'note-line agent-page' }, agentPage)) : null,
     // An answer picked in place of one the page doesn't offer (pagekit `orMost`: GEICO's pay plan
     // with no 11 Payments, W43-32): named here; nothing is left for the agent by it.
     ...filled.filter((x) => x.said).map((x) => h('p', { class: 'note-line said' }, x.said)),
@@ -5121,10 +5188,16 @@ async function runAssist(frames, ctx) {
   try {
     ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
   } catch { return; }
-  // Why this request (or its answer) no longer fits what the panel shows; null while it does.
-  const staleWhy = () => (run !== state.aiRun ? 'a newer request'
+  // Why this request's answer can't be used at all: its settings, tab, page, intake or
+  // driver/vehicle are no longer the panel's. Null while they are.
+  const discardWhy = () => (run < state.aiSettingsRun ? 'the assistant settings changed'
     : !aiActionCurrent(ctx, []) ? 'the tab or page changed'
-    : ctx.contextKey !== assistContextKey(state.intake?.record, state.active) ? 'the intake or driver/vehicle changed'
+    : ctx.contextKey !== assistContextKey(state.intake?.record, state.active) ? 'the intake or driver/vehicle changed' : null);
+  // Why this request (or its answer) no longer fits what the panel shows; null while it does. A
+  // newer request or a redrawn report alone doesn't make the answer wrong: it is cached, and the
+  // newer request waits for it (2026-10-09 to 10-26: 12 of 58 page reviews were thrown away, most
+  // on GEICO's quote page while a fill of the same page redrew it).
+  const staleWhy = () => discardWhy() ?? (run !== state.aiRun ? 'a newer request'
     : !holder.isConnected ? 'the panel was redrawn' : null);
   const stale = () => !!staleWhy();
   // A dropped answer never leaves "Asking…" on screen (2026-10-05 FL run: Luna answered in 17 s,
@@ -5140,17 +5213,31 @@ async function runAssist(frames, ctx) {
   // checks the page snapshot (applyAi), and approving checks it again.
   const contextHash = aiFingerprint(ctx.contextKey);
   const sigOf = x => aiCacheSignature({ tabId: ctx.tabId, page: ctx.page, model: cfg.model, policy: provider.policy, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl) });
+  const asking = (n) => holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking ${provider.name} about ${n} question${n === 1 ? '' : 's'} left for you…`));
+  // Questions an earlier request is still asking (same signature: this page as it shows them now)
+  // are waited for, not asked again: its answer is cached when it comes.
+  const earlier = [...new Set(items.map((x) => state.aiAsking.get(sigOf(x))).filter(Boolean))];
+  if (earlier.length) {
+    asking(items.filter((x) => !state.aiCache.has(sigOf(x))).length);
+    await Promise.all(earlier);
+    if (stale()) { dropped(`${staleWhy()} while it was answering, so nothing was applied`); return; }
+  }
   const missing = items.filter((x) => !state.aiCache.has(sigOf(x)));
   if (missing.length) {
-    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking ${provider.name} about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
+    asking(missing.length);
     const started = Date.now();
     const context = { record, carrier: ctx.carrier.id, page: ctx.page, active };
     const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
+    let answered = () => {};
+    const sigs = missing.map(sigOf);
+    const pending = new Promise((resolve) => { answered = resolve; });
+    sigs.forEach((sig) => state.aiAsking.set(sig, pending));
     try {
-      const result = await suggest(missing, context, cfg, { isStale: stale });
+      // Stopped between model calls only for an answer that would be discarded.
+      const result = await suggest(missing, context, cfg, { isStale: () => !!discardWhy() });
       const fresh = result.suggestions;
       // An answer that came too late is still logged (its tokens were spent), with the reason.
-      const why = staleWhy();
+      const why = discardWhy();
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length,
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
@@ -5166,6 +5253,9 @@ async function runAssist(frames, ctx) {
       if (!stale()) holder.replaceChildren(h('p', { class: 'card bad small' }, `AI assistant: ${msg}`));
       else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;
+    } finally {
+      sigs.forEach((sig) => { if (state.aiAsking.get(sig) === pending) state.aiAsking.delete(sig); });
+      answered();
     }
   }
   const suggestions = items.map((x) => state.aiCache.get(sigOf(x))).filter(Boolean);
@@ -5594,7 +5684,9 @@ function renderAi(holder, suggestions, ctx) {
 
 function wireAi() {
   const save = async patch => {
-    state.aiRun++;
+    // Answers to requests made before are discarded, never kept for a later one (runAssist).
+    state.aiSettingsRun = ++state.aiRun;
+    state.aiAsking.clear();
     if (Object.hasOwn(patch, 'lunaKey')) {
       for (const [key, value] of state.aiCache) if (!value.done) state.aiCache.delete(key);
     }
