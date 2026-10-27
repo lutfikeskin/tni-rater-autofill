@@ -282,12 +282,19 @@ export function buildContains(build, fix, git) {
 export const buildKey = (e) => `${e.v ?? '?'}|${e.channel ?? '?'}|${e.commit ?? ''}`;
 export const buildName = (e) => `${e.v ?? '?'} ${e.channel ?? '?'}${e.commit ? ` ${String(e.commit).slice(0, 7)}${String(e.commit).endsWith('+dirty') ? '+dirty' : ''}` : ''}`;
 
+// git's per-repository variables. git sets GIT_DIR for the hooks it runs (the pre-push hook runs the
+// tests), and with one set, git acts on that repository whatever its `cwd`.
+const GIT_REPO_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR'];
+
+/** `env` without git's per-repository variables, so a git it runs finds its repository from `cwd`. */
+export const gitEnv = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([k]) => !GIT_REPO_VARS.includes(k.toUpperCase())));
+
 /**
  * git as the ledger needs it, in `cwd` (a clone of this repository), against `main` (a ref).
  * Each answer is cached; a commit the clone doesn't have answers null.
  */
 export function gitReader(cwd, main = 'origin/main') {
-  const run = (...a) => spawnSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = (...a) => spawnSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() });
   const memo = (f) => { const m = new Map(); return (...a) => { const k = a.join(' '); if (!m.has(k)) m.set(k, f(...a)); return m.get(k); }; };
   const resolve = memo((c) => { const r = run('rev-parse', '--verify', '--quiet', `${c}^{commit}`); return r.status === 0 ? r.stdout.trim() : null; });
   const isAncestor = memo((a, b) => {
