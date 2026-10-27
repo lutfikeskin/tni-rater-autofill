@@ -52,6 +52,12 @@ const RECORDS = () => [
   with_({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel', 'trailerInfo.ownership': null, 'drivers.0.maritalStatus': null, 'applicant.yearEstablished': null }),
   // General liability on the intake, no current insurance, no date of birth, a gender set by the agent.
   with_({ 'coverage.gl': true, priorInsurance: [], 'drivers.0.dob': null, 'drivers.0.gender': 'FEMALE' }),
+  // An NTL quote asking for filings, with a USDOT number: TNI's No to both (W44-28).
+  with_({ 'coverage.ntl': true, 'coverage.autoLiability': 'Non-Trucking' }),
+  // NTL with primary auto liability too, and NTL mentioned and not answered: the USDOT and filings
+  // questions are the agent's (TNI, 2026-10-26: answers to PR questions, #192).
+  with_({ 'coverage.ntl': true, 'coverage.autoLiability': 'Yes' }),
+  with_({ 'claims.text': 'No\nAsked about NTL too' }),
 ];
 
 test('every rule that computes an answer declares a valid source', () => {
@@ -129,7 +135,6 @@ const NOT_MAPPED = {
     'trailerInfo.hitch': 'not asked by Progressive',
     'trailerInfo.interchange': 'trailer interchange is not mapped (no live quote has asked it)',
     'trailerInfo.interchangeLimit': 'trailer interchange is not mapped (no live quote has asked it)',
-    'coverage.autoLiability': 'liability is always quoted; only its limit is entered',
   },
   amwins: {
     'applicant.mcDotWithin60Days': 'AmWINS asks for the numbers themselves (has DOT / has MC / no number)',
@@ -141,8 +146,7 @@ const NOT_MAPPED = {
     'operations.vehicleOwnership': 'TNI answers not owned, leased and additional interest No; a lienholder or lessor is added after the quote',
     'operations.usesEld': 'not asked on the Business Auto application',
     'operations.eldBrand': 'not asked on the Business Auto application',
-    'operations.needSr22': 'not asked on the Business Auto application',
-    'operations.hazPlacard': 'AmWINS asks about transporting hazardous material (operations.hazmat)',
+    'operations.needSr22': 'not asked on the Business Auto application; an SR-22 alone is a state filing, so federal filing required stays No (TNI, 2026-10-26)',
     'operations.movingState': 'not asked on the Business Auto application',
     'operations.teamDriving': 'on the intake since 2026-10-02; no AmWINS question for it has been mapped',
     'operations.canadaLoads': 'on the intake since 2026-10; no AmWINS question for it has been mapped',
@@ -154,7 +158,6 @@ const NOT_MAPPED = {
     'trailerInfo.interchange': 'AmWINS has no trailer section',
     'trailerInfo.interchangeLimit': 'AmWINS has no trailer section',
     'trailerInfo.equipTrailer': 'AmWINS has no trailer section',
-    'coverage.autoLiability': 'liability is always quoted; only its CSL limit is entered',
     'coverage.gl': 'AmWINS Business Auto has no general liability section',
     'coverage.glLimit': 'AmWINS Business Auto has no general liability section',
     'coverage.reeferBreakdown': 'no reefer breakdown question on the Business Auto application',
@@ -184,22 +187,27 @@ const NOT_MAPPED = {
 const READ_INDIRECTLY = {
   progressive: {
     'applicant.applicationDate': 'util.priorPolicyExpired (currently insured, insured with Progressive)',
-    'claims.text': 'normalize.intakeNotes (an NTL mention in the claims box holds Rates)',
+    'claims.text': 'normalize.ntlUndecided (an NTL mention not answered yet holds Rates, and the USDOT and filings questions)',
     'claims.notes': 'normalize.otherNotes (the defensive driver course, a claim the notes mention)',
-    'notes.text': 'normalize.intakeNotes and otherNotes (NTL, the defensive driver course, a claim the notes mention)',
+    'notes.text': 'normalize.ntlUndecided and otherNotes (NTL, the defensive driver course, a claim the notes mention)',
+    'coverage.autoLiability': 'normalize.ntlNoDotFilings and ntlDotFilingsHold (an NTL quote: no USDOT number or filings; with auto liability Yes too, they are the agent\'s); otherwise only the liability limit is entered',
+    'drivers[].excluded': 'util.driverExcluded (the exclude question: the intake\'s mark, or the owner\'s row when the owner doesn\'t drive)',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag; how long with the current carrier, round 3, T6)',
     'applicant.ownerDrives': 'owner() in progressive.js (the owner\'s driver row)',
+    'drivers[].excluded': 'util.driverExcluded ("(Excluded)" after the license number)',
     'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
-    'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
-    'claims.text': 'normalize.insurerTenure (a longer time with the insurer than the 1 TO 2 YEARS standard, W44-29)',
+    'claims.text': 'normalize.ntlDotFilingsHold (an NTL mention not answered yet holds Filing required and the DOT boxes) and insurerTenure (a longer time with the insurer than the 1 TO 2 YEARS standard, W44-29)',
+    'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure) and ntlDotFilingsHold (an NTL mention not answered yet)',
+    'coverage.autoLiability': 'normalize.ntlNoDotFilings and ntlDotFilingsHold (an NTL quote: no DOT number or filings; with auto liability Yes too, they are the agent\'s); otherwise only the CSL limit is entered',
   },
   geico: {
     'applicant.applicationDate': 'util.priorPolicyExpired (current GEICO policy, current auto insurance, current GL)',
-    'claims.text': 'normalize.intakeNotes (an NTL mention holds the liability coverage)',
+    'claims.text': 'normalize.ntlUndecided (an NTL mention not answered yet holds the liability coverage, and the USDOT and filings questions)',
     'claims.notes': 'normalize.otherNotes (no physical damage, and a mention that leaves a TNI standard to the agent)',
-    'notes.text': 'normalize.intakeNotes and otherNotes (NTL, no physical damage, a mention that leaves a TNI standard to the agent)',
+    'notes.text': 'normalize.ntlUndecided and otherNotes (NTL, no physical damage, a mention that leaves a TNI standard to the agent)',
+    'drivers[].excluded': 'util.driverExcluded (the excluded-driver warning on Add Driver)',
   },
 };
 
@@ -292,6 +300,94 @@ test('AmWINS prior loss preserves unknown claims and explicit Yes / No', () => {
     assert.equal(loss.note, null);
     assert.equal(loss.manualOnly, false);
     assert.equal(loss.source, 'derived');
+  }
+});
+
+// TNI, 2026-10-26, W44-32 ("Hazmat is always no, if its not specifically selected"; W43-34 extended
+// to AmWINS): the intake's answer; blank is No, unless the intake points to hazardous freight, which
+// stays the agent's with the reason (the maintainer kept that case the agent's).
+test('AmWINS transporting hazardous material: the intake\'s answer; blank is TNI\'s No unless the intake points to hazardous freight', () => {
+  const hazmat = (changes) => named(buildPlan(with_(changes), amwins, {}), /^Hazardous material/);
+  const got = (s) => [s.value, s.source, s.standard, s.manualOnly, s.note ?? null];
+  // An explicit answer stays the intake's, whatever they haul.
+  assert.deepEqual(got(hazmat({})), [false, 'intake', false, false, null], 'explicit No');
+  assert.deepEqual(got(hazmat({ 'operations.hazmat': true })), [true, 'intake', false, false, null], 'explicit Yes');
+  assert.deepEqual(got(hazmat({ 'operations.whatHaul': 'Fuel and propane tanks' })), [false, 'intake', false, false, null], 'explicit No with fuel named');
+  assert.deepEqual(got(hazmat({ 'operations.hazmat': true, 'operations.hazPlacard': false })), [true, 'intake', false, false, null], 'explicit Yes, no placard');
+  // Blank, nothing pointing to hazardous freight: TNI's standard No.
+  for (const whatHaul of ['General freight', 'Non-hazardous general freight', 'Dry goods, no hazmat', 'Furniture', null]) {
+    for (const blank of [null, undefined]) {
+      assert.deepEqual(got(hazmat({ 'operations.hazmat': blank, 'operations.whatHaul': whatHaul })), [false, 'standard', true, false, null], `${blank} / ${whatHaul}`);
+    }
+  }
+  assert.deepEqual(got(hazmat({ 'operations.hazmat': null, 'operations.hazPlacard': null })), [false, 'standard', true, false, null], 'placard blank too');
+  assert.equal(hazmat({ 'operations.hazmat': null }).path, 'operations.hazmat', 'still linked to the intake answer');
+  // Blank, but what they haul names something that may be hazardous (Progressive's HAZ_HAUL): the agent's, with what they haul quoted.
+  for (const whatHaul of ['Fuel and propane tanks', 'Industrial chemicals', 'Diesel fuel', 'Hazmat loads', 'Lithium batteries']) {
+    const step = hazmat({ 'operations.hazmat': null, 'operations.whatHaul': whatHaul });
+    agentsNote(step);
+    assert.deepEqual([step.source, step.standard, step.manualOnly], ['fact', false, true], whatHaul);
+    assert.ok(step.note.includes(`"${whatHaul}"`), step.note);
+  }
+  // Blank, with the intake's placard Yes, or a line of its notes naming hazardous freight: the agent's too.
+  const placard = hazmat({ 'operations.hazmat': null, 'operations.hazPlacard': true });
+  agentsNote(placard);
+  assert.deepEqual([placard.source, placard.manualOnly], ['fact', true]);
+  assert.match(placard.note, /placard/);
+  const notes = hazmat({ 'operations.hazmat': null, 'claims.notes': 'Hauls propane cylinders on some routes' });
+  agentsNote(notes);
+  assert.match(notes.note, /"Hauls propane cylinders on some routes"/);
+  // A standard: a check item in review mode (a class the rules weren't written for); the intake's answer isn't.
+  assert.match(hazmat({ 'operations.hazmat': null, 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' }).warn ?? '', /Review mode/);
+  assert.equal(hazmat({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' }).warn ?? null, null);
+});
+
+// TNI, 2026-10-26: answer to PR question (#188, question 20). AmWINS' General Information "hazard
+// exposure" (storing, treating, disposing or transporting hazardous material) was TNI's No on every
+// intake (2026-10-09); it is now Yes when the intake's hazmat answer is Yes. Otherwise it stays No:
+// freight naming hazardous goods with the box blank hands only the transporting question to the agent.
+test('AmWINS hazard exposure: the intake\'s Yes when its hazmat answer is Yes; otherwise TNI\'s No', () => {
+  const exposure = (changes) => named(buildPlan(with_(changes), amwins, {}), /hazard exposure/);
+  const got = (s) => [s.value, s.source, s.standard, s.manualOnly, s.note ?? null, s.replace];
+  // The intake's Yes: the intake's answer, and it replaces the No that "Default all answers to No" gave.
+  assert.deepEqual(got(exposure({ 'operations.hazmat': true })), [true, 'intake', false, false, null, true], 'the intake\'s Yes');
+  assert.deepEqual(got(exposure({ 'operations.hazmat': true, 'operations.hazPlacard': false, 'operations.whatHaul': 'General freight' })), [true, 'intake', false, false, null, true], 'the intake\'s Yes, no placard');
+  // Everything else: TNI's standard No, as before (no replace: a differing page answer is kept as today).
+  for (const [why, changes] of [
+    ['the intake\'s No', {}],
+    ['the intake\'s No, fuel named', { 'operations.whatHaul': 'Fuel and propane tanks' }],
+    ['blank', { 'operations.hazmat': null }],
+    ['undefined', { 'operations.hazmat': undefined }],
+    ['blank, fuel named', { 'operations.hazmat': null, 'operations.whatHaul': 'Fuel and propane tanks' }],
+    ['blank, chemicals named', { 'operations.hazmat': null, 'operations.whatHaul': 'Industrial chemicals' }],
+    ['blank, propane in the notes', { 'operations.hazmat': null, 'claims.notes': 'Hauls propane cylinders on some routes' }],
+    ['blank, placard Yes', { 'operations.hazmat': null, 'operations.hazPlacard': true }],
+  ]) {
+    assert.deepEqual(got(exposure(changes)), [false, 'standard', true, false, null, false], why);
+  }
+  // The transporting question takes the hand-off to the agent in those blank cases; hazard exposure doesn't.
+  assert.equal(named(buildPlan(with_({ 'operations.hazmat': null, 'operations.whatHaul': 'Fuel and propane tanks' }), amwins, {}), /^Hazardous material/).manualOnly, true);
+  // Review mode: the standard No is a check item; the intake's Yes isn't.
+  const review = { 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' };
+  assert.match(exposure(review).warn ?? '', /Review mode/);
+  assert.equal(exposure({ ...review, 'operations.hazmat': true }).warn ?? null, null);
+});
+
+// The same decision on every carrier's hazmat question: Progressive's and GEICO's placard (2026-10-19,
+// W43-34) and AmWINS' transporting hazardous material (W44-32).
+test('hazmat on every carrier that asks it: the intake\'s answer; blank is No unless the intake points to hazardous freight', () => {
+  const QUESTIONS = [
+    [progressive, (p) => byQ(p, '2F6'), 'operations.hazPlacard'],
+    [geico, (p) => p.find((s) => s.field === 'GiveAnyVehicleNeedHazardousMaterialPlacardYesNo'), 'operations.hazPlacard'],
+    [amwins, (p) => named(p, /^Hazardous material/), 'operations.hazmat'],
+  ];
+  for (const [carrier, find, path] of QUESTIONS) {
+    const step = (changes) => find(buildPlan(with_({ 'operations.hazmat': null, 'operations.hazPlacard': null, ...changes }), carrier, {}));
+    const got = (s) => [s.value, s.source];
+    assert.deepEqual(got(step({})), [false, 'standard'], `${carrier.id}: blank, general freight`);
+    assert.deepEqual(got(step({ [path]: true })), [true, 'intake'], `${carrier.id}: the intake's Yes`);
+    assert.deepEqual(got(step({ [path]: false, 'operations.whatHaul': 'Propane' })), [false, 'intake'], `${carrier.id}: the intake's No`);
+    for (const whatHaul of ['Fuel and propane tanks', 'Industrial chemicals']) agentsNote(step({ 'operations.whatHaul': whatHaul }));
   }
 });
 

@@ -1,7 +1,7 @@
 {
  "test/bakeoff/course-MD-expediter-van.json": {
   "questions": 79,
-  "filled": 59,
+  "filled": 60,
   "failed": 2,
   "unmapped": 2,
   "issues": [],
@@ -69,7 +69,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "cb20028345ad"
+    "outcomes": "e48928e5870c"
    },
    "Filings": {
     "questions": 4,
@@ -85,7 +85,7 @@
    },
    "CoveragesRates": {
     "questions": 9,
-    "filled": 14,
+    "filled": 15,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -93,7 +93,7 @@
     "clicked": [
      "+"
     ],
-    "outcomes": "d27f88cccc90"
+    "outcomes": "3eb6aab45aeb"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -180,7 +180,7 @@
     "unmapped": 0,
     "blockers": 0,
     "clicked": [],
-    "outcomes": "898c9fca005b"
+    "outcomes": "b70507193ec4"
    },
    "MoreAboutBusiness": {
     "questions": 12,
@@ -192,7 +192,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "cb20028345ad"
+    "outcomes": "e48928e5870c"
    },
    "CoveragesRates": {
     "questions": 22,
@@ -220,7 +220,7 @@
  },
  "test/fixtures/progressive/progressive_FL_expediter_van.json": {
   "questions": 110,
-  "filled": 68,
+  "filled": 70,
   "failed": 1,
   "unmapped": 5,
   "issues": [],
@@ -239,23 +239,23 @@
    },
    "MostCommonVehicles": {
     "questions": 9,
-    "filled": 5,
-    "failed": [],
-    "noData": 4,
-    "unmapped": 0,
-    "blockers": 4,
-    "clicked": [],
-    "outcomes": "5343e61f6333"
-   },
-   "AddVehicle": {
-    "questions": 12,
-    "filled": 8,
+    "filled": 6,
     "failed": [],
     "noData": 3,
     "unmapped": 0,
     "blockers": 3,
     "clicked": [],
-    "outcomes": "2b1ac85d4d6b"
+    "outcomes": "7be53987be72"
+   },
+   "AddVehicle": {
+    "questions": 12,
+    "filled": 9,
+    "failed": [],
+    "noData": 2,
+    "unmapped": 0,
+    "blockers": 2,
+    "clicked": [],
+    "outcomes": "75f0a2f15b63"
    },
    "AddDriver": {
     "questions": 9,
@@ -289,7 +289,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "3ebee7b23699"
+    "outcomes": "6b26ac51911c"
    },
    "CoveragesRates": {
     "questions": 22,
@@ -299,7 +299,7 @@
     "unmapped": 5,
     "blockers": 4,
     "clicked": [],
-    "outcomes": "c4b7d5a943c0"
+    "outcomes": "dec4e9c86b9c"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -400,7 +400,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "80a1622f1f88"
+    "outcomes": "fa967b28cb04"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -489,7 +489,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "ae19b72aa667"
+    "outcomes": "c6ab2a919317"
    },
    "CoveragesRates": {
     "questions": 15,
@@ -580,7 +580,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "ace6d9b681a5"
+    "outcomes": "9c67d63996db"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -622,7 +622,7 @@
  },
  "test/fixtures/progressive/progressive_MD_expediter_van.json": {
   "questions": 105,
-  "filled": 68,
+  "filled": 69,
   "failed": 4,
   "unmapped": 3,
   "issues": [],
@@ -676,11 +676,11 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "cb20028345ad"
+    "outcomes": "e48928e5870c"
    },
    "CoveragesRates": {
     "questions": 15,
-    "filled": 14,
+    "filled": 15,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -688,7 +688,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f0b3f4d786f6"
+    "outcomes": "1b1e08e5ae56"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -824,7 +824,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "cb20028345ad"
+    "outcomes": "e48928e5870c"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -933,7 +933,7 @@
     "unmapped": 7,
     "blockers": 14,
     "clicked": [],
-    "outcomes": "7a95287407b4"
+    "outcomes": "bc3a0793c9ba"
    },
    "CoveragesRates": {
     "questions": 25,

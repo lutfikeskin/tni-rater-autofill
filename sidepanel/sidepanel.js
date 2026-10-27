@@ -1,10 +1,10 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../src/intake.js';
 import { sourcePlace } from '../src/intake-source.js';
-import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE, ntlWithPrimary, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
-import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
+import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
 import { carrierForUrl, quoteProgress, stopScreen } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, intakeProfile, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
@@ -15,7 +15,7 @@ import * as usage from './usage-log.js';
 import { canRecord, recordingId, stampEvents, newManifest } from '../src/recording.js';
 import { RecordingStore } from './recording.js';
 import { migrateStorage } from '../src/storage-version.js';
-import { collectItems, AssistError, assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
+import { collectItems, AssistError, assistContextKey, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated, firstNameOf } from '../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../src/ai/providers.js';
 // Not type-checked yet; what it passes the page kit and reads back is typed in types.js, at the repository's root.
@@ -1327,6 +1327,7 @@ async function agentEdit(path, after, kind) {
   const notesEdit = path === 'claims.text' || path === 'notes.text';
   if (notesEdit) claimsTextEdited(state.intake);
   if (['coverage.ntl', 'coverage.autoLiability'].includes(path)) ntlAnswerEdited(state.intake, path);
+  if (['coverage.ntl', 'coverage.autoLiability'].includes(path)) ntlPrimaryEdited(state.intake);
   if (['coverage.ntl', 'coverage.cargo', 'coverage.autoLiability'].includes(path)) { ntlCargoEdited(state.intake); await save(); render(); }
   if (notesEdit || (path.startsWith('coverage.') && !['coverage.ntl', 'coverage.gl', 'coverage.hasGl'].includes(path))) reviewClaimsBox({ retry: true });
   if (/^drivers\[\d+\]\.first$/.test(path)) reviewDriverGender({ retry: true });
@@ -1404,6 +1405,22 @@ function renderPickers() {
       } }, names.map((name, i) => h('option', { value: String(i), selected: state.active[list] === i }, name))));
   }));
   if (focused) $(focused)?.focus();
+}
+
+// The unit forms on screen as the agent discarded their changes (GEICO's "Yes, Discard Changes"; the
+// recorder sends the forms with the click): a form's unit was never saved from it, so it no longer
+// holds that unit (unitForms). The next blank form is filled for it, and the list's "+" adds it, unless
+// the list already shows it (W44-05, PA 2026-10-26: the van's discarded form kept the van bound, so the
+// next blank form was filled as the box truck and the van was never added). Its other marks stay: a
+// unit a list showed while bound is still on the quote.
+function releaseDiscardedForms(forms) {
+  let released = false;
+  for (const { list, id } of forms) {
+    if (!id || !Object.hasOwn(state.unitForms?.[list] ?? {}, id)) continue;
+    delete state.unitForms[list][id];
+    released = true;
+  }
+  if (released) persistUnitForms(state.tab?.id, state.unitForms);
 }
 
 // Picking vehicle (driver, trailer) `index` in the panel: the forms bound to it (unitForms) are
@@ -1658,6 +1675,9 @@ function onRecorderMessage(msg, sender) {
     const step = state.tab.carrier?.layoutSteps ? knownStep(state.tab.carrier, msg.step) : undefined;
     log({ type: 'agent_click', carrier, page, view: viewOf(sender.tab.id, page), ...(step ? { step } : {}), text: redactor(redactionTerms(state.intake.record))(String(msg.text ?? '')).slice(0, 60) });
     agentHelperDone(state.tab.carrier, page, step, msg.text);
+    // Only the Yes to GEICO's discard question: "Discard Changes" only asks it, and "No, please don't
+    // discard." keeps the form, which would otherwise be filled as the next unit picked.
+    if (/^\s*yes\b.*\bdiscard\b/i.test(String(msg.text ?? '')) && Array.isArray(msg.forms)) releaseDiscardedForms(msg.forms);
   }
   // An error or validation message appeared (a refused Continue): the layout carries the messages.
   if (msg.event === 'new_messages') scheduleLayout(layoutPage, 'messages');
@@ -2237,6 +2257,7 @@ async function autoFill(page) {
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
+    noteMissingUnit(results, ctx);
     const frames = results.map((r) => r.result).filter(Boolean);
     const retrying = rememberFill(frames, ctx);
     followUp = afterFill(frames, ctx);
@@ -3609,6 +3630,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
+    noteMissingUnit(results, ctx);
     const frames = results.map((r) => r.result).filter(Boolean);
     const retrying = rememberFill(frames, ctx);
     tabMaps(tabId).autoPages.add(page);
@@ -3681,8 +3703,9 @@ async function pickListItem(carrier, page, ctx = { tabId: state.tab?.id, intake:
 // Driver), a new, blank form while the panel's unit was already filled on another one is the next
 // intake unit no form was filled for (FL live run, 2026-10-21: the second vehicle's and the second
 // driver's forms waited for a pick). The driver the carrier lists itself (`listedDriver`: GEICO's
-// owner who drives) is never the one an Add Driver form is for. A form with answers (a saved unit
-// opened again) or with no unit left keeps the pagekit hold.
+// owner who drives) is never the one an Add Driver form is for, nor the one its quote leaves out
+// (`omittedDriver`: GEICO's owner who doesn't drive, TNI 2026-10-26 and 2026-10-27, T1, V3). A form with answers (a
+// saved unit opened again) or with no unit left keeps the pagekit hold.
 async function pickUnitForm(carrier, ctx) {
   if (!formScoped(carrier) || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   let forms = null;
@@ -3697,8 +3720,9 @@ async function pickUnitForm(carrier, ctx) {
     const bound = state.unitForms?.[list] ?? {};
     if (!blank || Object.hasOwn(bound, id)) continue;
     const listed = list === 'drivers' ? carrier.listedDriver?.(record) ?? -1 : -1;
+    const omitted = list === 'drivers' ? carrier.omittedDriver?.(record) ?? -1 : -1;
     const taken = new Set(Object.values(bound));
-    const free = (i) => !taken.has(i) && i !== listed;
+    const free = (i) => !taken.has(i) && i !== listed && i !== omitted;
     const active = state.active[list] ?? 0;
     if (free(active)) continue;
     const next = (record[list] ?? []).findIndex((_, i) => free(i));
@@ -3727,6 +3751,7 @@ async function pickUnitForm(carrier, ctx) {
 async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   ctx.unitsListed = false;
+  ctx.unitMissing = null;
   if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   const record = ctx.intake.record ?? {};
   const specs = unitListSpecs(carrier, record);
@@ -3760,6 +3785,23 @@ async function pickUnitToAdd(carrier, ctx) {
     await save();
     if (fillCurrent(ctx)) renderPickers();
   }
+  // The list on screen without this unit, and no helper that would add it even with its clicks
+  // allowed (GEICO's Add Driver while the panel's driver is another one): named after the fill,
+  // left for the agent (noteMissingUnit; W44-01, OH 2026-10-26: the quote printed with one of two
+  // drivers, the panel silent).
+  try { ctx.unitMissing = unitMissing(next, buildPlan(record, carrier, { ...state.active, adding: { ...next.adding, click: true } })); } catch { /* no plan, nothing said */ }
+}
+
+// The unit pickUnitToAdd found missing from the list on screen with nothing to add it (ctx.unitMissing),
+// as an item the top frame's report leaves for the agent, which holds its Continue: the list's Looks
+// Good is the agent's (W44-01).
+function noteMissingUnit(results, ctx) {
+  if (!ctx.unitMissing) return;
+  const top = results.find((r) => r.frameId === 0)?.result;
+  if (!top || top.halted) return;
+  const item = unitMissingItem(ctx.carrier, ctx.intake?.record ?? {}, ctx.unitMissing);
+  top.noData = [...(top.noData ?? []), item];
+  top.blockers = [...(top.blockers ?? []), `needs you: ${item.label}`];
 }
 
 // On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each
@@ -4938,6 +4980,24 @@ function ntlCargoEdited(intake) {
   }
 }
 
+// NTL and primary auto liability (auto liability Yes) both asked for after the agent's edit of either
+// (TNI, 2026-10-26: answer to PR question): the intake's check naming the conflict is asked (again,
+// unchecked, when it was retired), or retired to a note when they no longer are. Today's form can't
+// ask for both (Non-Trucking is its auto liability answer), so the agent's NTL Yes with auto
+// liability Yes is where it arises. Kept by position, as the checked marks are.
+function ntlPrimaryEdited(intake) {
+  const both = ntlWithPrimary(intake.record);
+  const i = intake.warnings.findIndex((w) => w.code === 'coverage.ntl-primary');
+  const ask = { code: 'coverage.ntl-primary', path: 'coverage.autoLiability', level: 'check', msg: NTL_PRIMARY_MESSAGE };
+  if (both && i < 0) intake.warnings.push(ask);
+  else if (both && intake.warnings[i].level !== 'check') {
+    intake.warnings[i] = ask;
+    intake.done = intake.done.filter((d) => d !== i);
+  } else if (!both && i >= 0 && intake.warnings[i].level === 'check') {
+    intake.warnings[i] = { code: 'coverage.ntl-primary', path: 'coverage.autoLiability', level: 'info', msg: 'Non-trucking liability and primary auto liability are no longer both asked for.' };
+  }
+}
+
 // The long-claims-box item is the code's own: it stays while the box is still too long to read whole.
 function supersedeClaimsItems(intake) {
   const truncated = claimsTruncated(intakeNotes(intake.record));
@@ -5185,7 +5245,9 @@ async function runAssist(frames, ctx) {
   if (missing.length) {
     asking(missing.length);
     const started = Date.now();
-    const context = { record, carrier: ctx.carrier.id, page: ctx.page, active };
+    // The page's other choice questions and their answers go along as context (redacted, bounded,
+    // never typed values): what the agent sees beside the questions left to them.
+    const context = { record, carrier: ctx.carrier.id, page: ctx.page, active, pageAnswers: pageAnswers(ctx.snapshots, missing, record) };
     const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
     let answered = () => {};
     const sigs = missing.map(sigOf);
@@ -5198,7 +5260,7 @@ async function runAssist(frames, ctx) {
       // An answer that came too late is still logged (its tokens were spent), with the reason.
       const why = discardWhy();
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
-        leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length,
+        leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length, ...leaveCounts(fresh),
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
         reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
         ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
@@ -5229,6 +5291,15 @@ async function runAssist(frames, ctx) {
   else if (applied) dropped(`${staleWhy()} after its selections were put in`, 'Click Fill this page to review them before continuing.');
   else dropped(`${staleWhy()} before its answers were shown, so nothing was applied`);
   syncAiBanner(ctx);
+}
+
+// Why Luna left questions, as counts (luna.js leaveWhy): it said information is missing, saw a
+// conflict, chose to leave, cited nothing usable, or its answer failed the evidence check.
+function leaveCounts(suggestions) {
+  const field = { missing: 'leaveMissing', conflict: 'leaveConflict', chose: 'leaveChose', noSource: 'leaveNoSource', unverified: 'leaveUnverified' };
+  const out = Object.fromEntries(Object.values(field).map((k) => [k, 0]));
+  for (const x of suggestions) if (x.leave && field[x.leaveWhy]) out[field[x.leaveWhy]]++;
+  return out;
 }
 
 // AI selections on this tab's page that the agent hasn't approved or rejected yet. While there
@@ -5581,7 +5652,9 @@ function renderAi(holder, suggestions, ctx) {
     if (x.done) return h('div', { class: 'ai-done' }, h('b', {}, '✓'), h('span', { class: 'grow' }, `Put in ${answer(x)} (purple on the page).`));
     if (x.dismissed) return null;
     if (x.leave || !x.applyable) {
-      return h('div', { class: 'ai-box' }, h('div', { class: 'ai-says' }, x.leave ? 'AI: this one is yours to decide.' : 'AI tip'), x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null);
+      // Its recommendation (luna.js nextStep): what to confirm or check, never an answer.
+      return h('div', { class: 'ai-box' }, h('div', { class: 'ai-says' }, x.leave ? 'AI: this one is yours to decide.' : 'AI tip'), x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null,
+        x.leave && x.nextStep ? h('div', { class: 'ai-tip ai-next' }, h('b', {}, 'Luna recommends: '), x.nextStep) : null);
     }
     return h('div', { class: 'ai-box' },
       h('div', { class: 'ai-says' }, 'AI suggests ', h('b', {}, x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice)),

@@ -5,7 +5,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, noPriorInsurance, priorInsuranceAssumed, priorPolicyExpired, priorPolicyNotAuto, ownerIsDriver, set, companyName } from './util.js';
+import { STATES, noPriorInsurance, ownerRow, ownerRowNameDiffers, set, companyName, priorInsuranceAssumed, priorPolicyExpired, priorPolicyNotAuto } from './util.js';
 
 /** @import { IntakeResult } from '../types.js' */
 
@@ -342,6 +342,12 @@ export const nonTruckingAnswer = (v) => /^\s*non[\s-]*trucking\s*$/i.test(String
 // No driver: nothing.
 export const cdlStandard = (driver) => !!driver && typeof driver.cdl !== 'boolean' && driver.cdlYear == null;
 export const cdlAnswer = (driver) => (cdlStandard(driver) ? false : typeof driver?.cdl === 'boolean' ? driver.cdl : null);
+// What GEICO gets for an excluded driver (the Intake step's checks): GEICO asks nothing about
+// excluding one, so the driver is filled with a warning (TNI, 2026-10-20); the owner's row (the
+// first) when the intake says the owner doesn't drive, or marks that row excluded, isn't added at all
+// (TNI, 2026-10-26 and 2026-10-27: answers to PR questions T1 and V3).
+const GEICO_EXCLUDED = 'GEICO asks nothing about it: the driver\'s answers are filled with a warning, and the exclusion is yours.';
+const GEICO_OWNER_LEFT_OUT = 'GEICO\'s quote leaves the owner out: the fill doesn\'t add this driver (TNI).';
 export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
 // What the filler does on an NTL quote, carrier by carrier (the NTL items below and Luna's).
 export const NTL_FILLS = 'On Progressive the filler adds it on Rates, answers the permanent lease question Yes, puts the limit in the NTL limit and leaves Bodily Injury and Property Damage Liability Not selected, then does the rest of Rates through Print, Email, Fax; with cargo or general liability too, the rest of Rates is yours. On GEICO it picks Non-Trucking Liability, answers "Yes, under permanent lease" and puts the limit in the NTL list. On AmWINS it is written in the disclosure details on Underwriting.';
@@ -352,6 +358,31 @@ export const NTL_FORM_MESSAGE = `Auto liability is Non-Trucking on the intake: N
 // carrier, which covers the cargo, so the agent confirms it with the client. Every carrier.
 export const ntlWithCargo = (record) => record?.coverage?.ntl === true && record?.coverage?.cargo === true;
 export const NTL_CARGO_MESSAGE = 'Non-trucking liability (NTL) and cargo coverage are both asked for. An NTL client is leased on to a motor carrier, which usually covers the cargo: confirm with the client whether they want cargo, and set Cargo coverage to No if not.';
+// NTL mentioned in the claims box or the notes (or flagged by Luna, claims.aiNtl) and not answered
+// yet, Yes or No: a mention is not a request, the agent decides on the Intake step. Every carrier.
+export const ntlUndecided = (record) => record?.coverage?.ntl == null && (!!ntlMention(intakeNotes(record)) || record?.claims?.aiNtl === true);
+// NTL and primary auto liability (auto liability Yes) both asked for.
+export const ntlWithPrimary = (record) => record?.coverage?.ntl === true && /^\s*yes\s*$/i.test(String(record?.coverage?.autoLiability ?? ''));
+// An NTL quote, as TNI's USDOT and filings answers read it (TNI, 2026-10-26, W44-28: "US DOT is not
+// added and filings not added if its NTL, in every case"): NTL asked for, with or without cargo or
+// general liability, and without primary auto liability (below). Every carrier.
+export const ntlNoDotFilings = (record) => record?.coverage?.ntl === true && !ntlWithPrimary(record);
+// (TNI, 2026-10-26: answer to PR question) NTL with primary auto liability too is an intake check
+// naming the conflict (`coverage.ntl-primary`), and on every carrier its USDOT and filings questions
+// are the agent's: no answer, with the note below.
+export const NTL_PRIMARY_MESSAGE = 'Non-trucking liability (NTL) and primary auto liability (auto liability Yes) are both asked for. TNI adds no USDOT number and no filings on an NTL quote alone: confirm with the client which one they want (Non-trucking liability No for primary liability, or auto liability Non-Trucking for NTL alone). Until then the USDOT and filings questions are yours on every carrier.';
+// (TNI, 2026-10-26: answers to PR questions) Why the carriers' USDOT and filings questions are left
+// to the agent, or null: NTL with primary auto liability (the agent's), or NTL mentioned and not
+// answered yet (they wait for the answer; once it is Yes or No, the next fill answers them).
+export const ntlDotFilingsHold = (record) => (ntlWithPrimary(record)
+  ? 'Non-trucking liability (NTL) and primary auto liability are both asked for, and TNI adds no USDOT number and no filings on an NTL quote alone: answer this yourself.'
+  : ntlUndecided(record)
+    ? 'The claims box or notes mention non-trucking liability (NTL), not answered yet: set it to Yes or No on the Intake step first, then fill this page again (TNI adds no USDOT number and no filings on an NTL quote).'
+    : null);
+// The intake's info item when an NTL intake asks for filings or gives a USDOT number (coverage.ntl-filings).
+export const ntlFilingsMessage = (record) => `Non-trucking liability (NTL) quote: TNI adds no USDOT number and no filings on an NTL quote (TNI, 2026-10-26), so ${record?.operations?.filingsRequired === true
+  ? `the carriers' filings questions are answered No although the intake asks for filings${record?.applicant?.dot ? ', and the intake\'s USDOT number isn\'t entered' : ''}.`
+  : 'the intake\'s USDOT number isn\'t entered, and whether the client has one is answered No.'}`;
 
 // Words in the claims notes that answer the ownership question. Only the form's three answers
 // are taken as the answer; the others count as mentions, so "on a lease, truck owned" is not
@@ -665,7 +696,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       // has none, and the license number gets "(Excluded)" after it. GEICO's Add Driver form asks
       // nothing about it (the driver is filled, with a warning).
       const amwins = d.licenseNumber ? 'their license number gets "(Excluded)" after it' : 'type "(Excluded)" after the license number you enter';
-      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}": the driver is to be excluded, and ${d.licenseNumber ? `the license number is ${d.licenseNumber}` : 'it has no license number'}. Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. GEICO asks nothing about it: the driver's answers are filled with a warning, and the exclusion is yours. An exclusion usually needs the insured's signed form.`);
+      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}": the driver is to be excluded, and ${d.licenseNumber ? `the license number is ${d.licenseNumber}` : 'it has no license number'}. Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. ${GEICO_EXCLUDED} An exclusion usually needs the insured's signed form.`);
     }
 
     if (name.suffix) {
@@ -685,10 +716,37 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   });
   if (companyAsWritten && !companyName(companyAsWritten)) info('company.none', 'applicant.name', `Company name "${companyAsWritten}": no company, so a sole proprietor.`);
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
-  if (a.ownerDrives && a.owner1) {
-    if (!record.drivers.some((d) => ownerIsDriver(a.owner1, d))) {
-      check('drivers.owner-not-listed', 'drivers', `Owner drives, but "${a.owner1}" isn't in the driver list.`);
-    }
+  // A blank "owner drives" box is TNI's Yes on the carriers (2026-10-26, W44-25: util.js
+  // ownerDrives; the record keeps it blank): an owner missing from the driver list is then listed as a
+  // driver whose details aren't on the intake, as with the intake's Yes. Since the owner is always the
+  // first driver (TNI, 2026-10-27: answer to PR question V4), only with no driver rows (as before).
+  if (a.ownerDrives !== false && a.owner1 && !record.drivers.length) {
+    check('drivers.owner-not-listed', 'drivers', a.ownerDrives ? `Owner drives, but "${a.owner1}" isn't in the driver list.`
+      : `"Owner drives" is blank, so the carriers answer TNI's standard Yes, but "${a.owner1}" isn't in the driver list: the owner's driver details (date of birth, license) are yours. If the owner doesn't drive, set Owner drives to No.`);
+  }
+  // TNI, 2026-10-27 (answer to PR question V4): "The owner is always the first driver on the intake's
+  // driver list". A first row whose name isn't the owner box's (util.js ownerRowNameDiffers) is still
+  // the owner, and this check says it was taken as the owner (in place of T2's `drivers.owner-unclear`).
+  // It names no one: the row is its path.
+  if (ownerRowNameDiffers(record)) {
+    check('drivers.owner-name-differs', 'drivers[0]', 'The first driver\'s name differs from the owner\'s, and the first driver was taken as the owner (TNI: the owner is always the first driver on the intake). The owner\'s date of birth, marital status, license and CDL, and whether they are excluded, come from that row; the drivers after it are drivers like any other. If the owner is someone else, correct the driver list in client details.');
+  }
+  // TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives;
+  // the intake's No makes the owner's driver row an excluded driver on every carrier, as an "Excluded"
+  // mark does (util.js driverExcluded). The owner's row is the first (TNI, 2026-10-27: answer to PR
+  // question V4; before, T2's row by the owner's exact full name, with `drivers.owner-unclear` when
+  // none was). GEICO's quote leaves the owner's row out (T1), as it does when that row is marked
+  // "Excluded" over a blank box or a Yes (V3). The record keeps the rows as read (`excluded` stays
+  // null), so this item tells the agent; a row marked excluded already has its own (license.excluded),
+  // whose GEICO sentence then says the row is left out.
+  const own = ownerRow(record);
+  if (own?.excluded === true) {
+    const marked = warnings.find((w) => w.code === 'license.excluded' && w.path === 'drivers[0].excluded');
+    if (marked) marked.msg = marked.msg.replace(GEICO_EXCLUDED, GEICO_OWNER_LEFT_OUT);
+  } else if (own && a.ownerDrives === false) {
+    const who = [own.first, own.last].filter(Boolean).join(' ') || `Driver ${rows.drivers[0]}`;
+    const amwins = own.licenseNumber ? 'their license number gets "(Excluded)" after it' : 'type "(Excluded)" after the license number you enter';
+    check('drivers.owner-excluded', 'drivers[0].excluded', `${who}: "Owner drives" is No, and the first driver is the owner (TNI), so the driver is excluded. Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. ${GEICO_OWNER_LEFT_OUT} An exclusion usually needs the insured's signed form. To keep this driver on the quote, set Excluded driver to No.`);
   }
 
   // --- Vehicles and trailers ------------------------------------------------------------------
@@ -741,9 +799,12 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   else if (radius.kind === 'unit') check('radius.unit', 'operations.radiusMiles', `Radius is "${ops.radius}", not in miles. Convert it and enter the miles.`);
   else if (radius.kind === 'text') check('radius.not-miles', 'operations.radius', `Radius is "${ops.radius}", not a number of miles. Raters usually want miles or a band (e.g. 500+).`);
   if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.');
-  if (ops.filingsRequired && !ops.filingsWhich) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.');
+  // (TNI, 2026-10-26: answer to PR question) Neither check on an NTL quote, which gets no filings:
+  // the `coverage.ntl-filings` info item below says why the carriers answer No instead.
+  const ntlQuote = ntlNoDotFilings(record);
+  if (ops.filingsRequired && !ops.filingsWhich && !ntlQuote) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.');
   // Filings are made under a USDOT or MC number (the maintainer, 2026-10-26: a wrong intake).
-  if (ops.filingsRequired === true && !record.applicant.dot && !record.applicant.mc) {
+  if (ops.filingsRequired === true && !record.applicant.dot && !record.applicant.mc && !ntlQuote) {
     check('filings.no-number', 'applicant.dot', `Needs filings but no USDOT or MC number is given${record.applicant.mcDotWithin60Days === true ? ' (the client says they will have one within 60 days)' : ''}. Filings are made under a number: check with the client.`);
   }
   if (ops.hazmat) check('hazmat.yes', 'operations.hazmat', 'Hauls hazmat, tobacco or prescription drugs — confirm which, most raters treat these differently.');
@@ -837,6 +898,14 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (record.coverage.ntl === true) info('coverage.ntl-form', 'coverage.ntl', NTL_FORM_MESSAGE);
   else if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
   if (ntlWithCargo(record)) check('coverage.ntl-cargo', 'coverage.cargo', NTL_CARGO_MESSAGE);
+  // NTL and primary auto liability both asked for (TNI, 2026-10-26: answer to PR question). Today's
+  // form can't ask for both (Non-Trucking is its auto liability answer): the agent's NTL Yes with
+  // auto liability Yes can, and the panel adds the check then (sidepanel ntlPrimaryEdited).
+  if (ntlWithPrimary(record)) check('coverage.ntl-primary', 'coverage.autoLiability', NTL_PRIMARY_MESSAGE);
+  // An NTL quote gets no USDOT number and no filings (W44-28): said where the intake asks otherwise.
+  if (ntlNoDotFilings(record) && (ops.filingsRequired === true || record.applicant.dot)) {
+    info('coverage.ntl-filings', ops.filingsRequired === true ? 'operations.filingsRequired' : 'applicant.dot', ntlFilingsMessage(record));
+  }
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
     check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.');
   }

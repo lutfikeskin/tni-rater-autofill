@@ -33,6 +33,8 @@ let flagIntake = false;
 let agentFactsSent = 0;
 const AGENT_FACT = /how long with current carrier|has additional interest|claim free loss run|valued loss runs|any prior loss|gender|marital|licen[cs]e year/i;
 const unexpectedProviderHosts = new Set();
+// The page's other answers each page review carried (2026-10-27: context, never evidence).
+const pageAnswersSent = [];
 const verify = (name, actual, expected) => {
   checks.push({ name, ok: actual === expected });
   assert.equal(actual, expected, name);
@@ -84,9 +86,10 @@ try {
       assert.equal(body.max_output_tokens, state.proposed ? 2048 : 4096);
       assert.ok(Object.keys(state.proposed ?? state.fields).length <= 12);
       if (!state.proposed) assert.equal(state.intake, undefined);
+      if (!state.proposed && state.pageAnswers) pageAnswersSent.push(state.pageAnswers);
       const decisions = {};
       if (state.proposed) {
-        for (const id of Object.keys(state.proposed)) decisions[id] = { supported: true };
+        for (const id of Object.keys(state.proposed)) decisions[id] = { supported: true, gap: '' };
       } else {
         const source = Object.keys(state.sources).find(id => state.sources[id].path === 'operations.hazPlacard');
         for (const [id, field] of Object.entries(state.fields)) {
@@ -94,7 +97,8 @@ try {
           const matches = field.label.includes('Mock Luna choice') && !!source && !!option;
           decisions[id] = { option: matches ? option : '__leave__', sourceIds: matches ? [source] : [],
             explanation: matches ? 'The supplied intake explicitly says No.' : 'Agent review required.',
-            missingInformation: [], conflicts: matches && mode === 'conflict' ? ['Conflicting intake facts require clarification.'] : [] };
+            missingInformation: [], conflicts: matches && mode === 'conflict' ? ['Conflicting intake facts require clarification.'] : [],
+            nextStep: matches && mode !== 'conflict' ? '' : 'Confirm placard use with the client.' };
         }
       }
       return route.fulfill({ json: { status: 'completed', model: 'gpt-6-luna',
@@ -585,6 +589,14 @@ try {
   await panel.getByText('Conflicting intake facts require clarification.', { exact: false }).waitFor();
   verify('conflicting evidence leaves the field unanswered', await mock.locator('#mockLunaChoice').inputValue(), '');
   verify('conflicting evidence offers no approval button', await approve.isVisible(), false);
+  verify('a field Luna left shows its recommendation', await panel.getByText('Luna recommends: Confirm placard use with the client.', { exact: false }).count() > 0, true);
+  // The page's other answers went along, bounded, without typed values or private questions.
+  const typed = await mock.evaluate(() => [...document.querySelectorAll('input[type=text], input:not([type]), textarea')].map((el) => el.value.trim()).filter(Boolean));
+  const sentAnswers = pageAnswersSent.flat();
+  verify('page reviews carry the page’s other answers', sentAnswers.length > 0, true);
+  verify('page answers stay bounded', pageAnswersSent.every((list) => list.length <= 40 && JSON.stringify(list).length <= 6200), true);
+  verify('page answers hold no typed value', sentAnswers.some((x) => typed.includes(x.answer)), false);
+  verify('page answers hold no name, address or identifier question', sentAnswers.some((x) => /\b(name|address|street|city|zip|phone|e-?mail|vin|licen[cs]e|fein|usdot)\b/i.test(`${x.section ?? ''} ${x.label}`)), false);
 
   mode = 'slow';
   await openMock(); await loadPdf();

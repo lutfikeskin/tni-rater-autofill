@@ -124,11 +124,12 @@ const EXPECT = {
     GiveFarthestOneWayDistance: '101-200', GiveCommercialVehicleForPersonalUse: 'No',
   },
   // No VIN: the agent says so, and make and model are picked from the intake. The year is the agent's
-  // correction (the intake has 2021), the type the agent's pick, and the distance the agent's too,
-  // picked while the form was held.
+  // correction (the intake has 2021); the type the fill's Box/Straight Truck for the intake's Box Truck
+  // (TNI, W44-32: GEICO lists no Box Truck), which the agent corrects; and the distance the agent's
+  // too, picked while the form was held.
   'Vehicles: vehicle 2': {
     YesNoPreQuoteHaveFullVinActivity: 'No', GiveVinPreQuote: '', GiveYear: '2022', GiveMake: 'RAM', GiveModel: '2500',
-    GiveOtherVehicleType: 'Box/Straight Truck', GiveAnyVehicleCustomizationYesNo: 'No', GiveGrossVehicleWeight: '', GiveStreet: '1 Test Way', GiveZip: '68102', GiveCity: 'OMAHA',
+    GiveOtherVehicleType: 'Flatbed Truck', GiveAnyVehicleCustomizationYesNo: 'No', GiveGrossVehicleWeight: '', GiveStreet: '1 Test Way', GiveZip: '68102', GiveCity: 'OMAHA',
     GiveFarthestOneWayDistance: '201-300', GiveCommercialVehicleForPersonalUse: 'No',
   },
   // The trailer's year as the agent picked it before any fill read the form (the intake has 2015),
@@ -163,6 +164,9 @@ const EXPECT = {
     // and the commodities from what they haul (the intake's general freight: other consumer goods).
     'cov:FT#1': 'Not Included', 'cov:FT#2': 'Not Included', 'cov:Rental#1': '$40 Per Day, $1,200 Max', 'cov:Rental#2': '$40 Per Day, $1,200 Max',
     GiveMtcHaulingCommoditiesCollect: ['Consumer Goods - Other Consumer Goods'],
+    // TNI, 2026-10-26, W44-26: Medical Payments $5,000 wherever GEICO offers it (NE: no PIP); until
+    // then the agent's here.
+    'cov:Medical Payments (MED)': '$5,000',
   },
 };
 // Questions the fill must leave to the agent, each with its note (report.noData), by field key:
@@ -174,9 +178,8 @@ const NEEDS_YOU = [
   ['Business & Owner Info', /\S/, ['ref:GiveEffectiveDate']],
   ['Vehicles: owner check', /never filled/, ['ref:GiveSocialSecurityNumber']],
   ['Vehicles: vehicle 1', /\S/, ['ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
-  ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
+  ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: trailer 1', /trailer/, ['ref:GiveOtherVehicleType']],
-  ['Quote & Coverages', /\S/, ['cov:medical payments med']],
 ];
 const STOP_STEPS = Object.keys(geico.stopSteps ?? {});
 
@@ -462,10 +465,10 @@ async function fillAll(form, max = 5) {
 
 // The panel's follow-ups on a step that takes them only for questions it draws (Quote & Coverages:
 // newQuestionsOnlySteps): filled again while the page shows new questions, never for an answer alone.
-async function fillDrawn(form, max = 5) {
+async function fillDrawn(form, max = 5, options = {}) {
   let report;
   for (let i = 0; i < max; i++) {
-    report = await fill(form);
+    report = await fill(form, options);
     await page.waitForTimeout(700);
     const { appeared } = await poll();
     if (!appeared) break;
@@ -757,15 +760,19 @@ async function scenario() {
   await agent.radio('YesNoPreQuoteHaveFullVinActivity', 'No');
   await fillAll('Vehicles: vehicle 2');
   // The agent corrects the year (the intake has 2021): the page empties make and model, which the next
-  // fill gives again. Then they pick its type (the intake's words are quoted in its note). Both are
-  // vehicle 2's (its form's and `|v1`): the trailer form asks both by the same names, and they keep
-  // nothing there from the fill (checked below).
+  // fill gives again. Then they change its type from the fill's Box/Straight Truck (TNI's for the
+  // intake's Box Truck where GEICO lists no Box Truck: W44-32) to their own pick. Both are vehicle 2's
+  // (its form's and `|v1`): the trailer form asks both by the same names, and they keep nothing there
+  // from the fill (checked below).
   await agent.choose(page.locator('#salesForm select[id^="Id_GiveYear_"]').first(), '2022');
   await fillAll('Vehicles: vehicle 2');
   await corrected('Vehicles: vehicle 2', 'ref:GiveYear', 'GiveYear', '2022');
-  await agent.choose(page.locator('#salesForm select[id^="Id_GiveOtherVehicleType_"]').first(), 'Box/Straight Truck');
+  if (!filledOn('Vehicles: vehicle 2', 'ref:GiveOtherVehicleType') || (await values()).GiveOtherVehicleType !== 'Box/Straight Truck') {
+    fail(`Vehicles: vehicle 2: the intake's Box Truck was not filled as GEICO's Box/Straight Truck (W44-32): ${JSON.stringify((await values()).GiveOtherVehicleType)}`);
+  }
+  await agent.choose(page.locator('#salesForm select[id^="Id_GiveOtherVehicleType_"]').first(), 'Flatbed Truck');
   await fillAll('Vehicles: vehicle 2');
-  await corrected('Vehicles: vehicle 2', 'ref:GiveOtherVehicleType', 'GiveOtherVehicleType', 'Box/Straight Truck');
+  await corrected('Vehicles: vehicle 2', 'ref:GiveOtherVehicleType', 'GiveOtherVehicleType', 'Flatbed Truck');
   await leave('Vehicles: vehicle 2');
   await agent.go('Next', 'vehicle-list');
 
@@ -824,42 +831,32 @@ async function scenario() {
   await continued('Additional Business Info', 'Next', 'quote');
 
   // Quote & Coverages: the fill runs when the step opens and again only for questions it draws
-  // (geico.newQuestionsOnlySteps: fillDrawn), never after an answer alone. It opens Motor Truck Cargo
-  // (a collapsed card; the intake asks for cargo: W43-16), and each cargo question that draws the next
-  // gets the panel's follow-up. Collision's deductibles show a moment after comprehensive is chosen
-  // (FL live run 2, 2026-10-21), and the fill waits for them. The fill answers mobile homes No and picks
-  // the commodities (W43-23); the agent changes the liability limit, answers household goods and marks
-  // the rest done; nothing clicked meanwhile
-  // (`whenClear`). Then Fill this page: with nothing left, Recalculate once the page has been quiet for
-  // 2 s (W43-31). GEICO draws its own choices back for UM/UIM (the fill's) and the liability limit (the
-  // agent's), as on FL live run 6: the fill puts UM/UIM back, leaves the agent's limit, marks both red
-  // with one more red item, and clicks nothing more. The agent picks the limit again and clicks
-  // Recalculate, and the follow-up fill picks 11 Payments under View More Payment Plans and clicks
-  // Print Quote Proposal, once each (TNI, FL live run 4, 2026-10-21: W43-18), never Recalculate
-  // again; the agent's limit is kept.
-  const CARGO = 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]';
-  await fillDrawn('Quote & Coverages');
-  if (!doneActions.has('openCargo')) fail('Quote & Coverages: the fill did not open Motor Truck Cargo');
-  await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
-  await agent.open(CARGO, 'Motor Truck Cargo');
-  await agent.radio('GiveMtcRequireCoverageForBusinessDocumentYesNo', 'No');
-  await fillDrawn('Quote & Coverages');
-  const early = fills.filter((x) => x.form === 'Quote & Coverages').flatMap((f) => f.report.actions ?? []).filter((a) => a.id !== 'openCargo');
-  if (early.length) fail(`Quote & Coverages: a fill clicked ${early.map((a) => a.text).join(', ')} with questions left for the agent`);
-  if ((await mock()).recalcs) fail('Quote & Coverages: Recalculate was clicked with questions left for the agent');
-  // What is left and stays as GEICO has it: marked done (sidepanel markDone: the step's agent keys).
-  const leftKeys = [...(needsSeen.get('Quote & Coverages')?.keys() ?? [])];
-  for (const key of leftKeys) keysIn(`${PAGE}|s:Quote & Coverages`).add(key);
-  lines.push(`  (agent marked ${leftKeys.length} item(s) done)`);
+  // (geico.newQuestionsOnlySteps: fillDrawn), never after an answer alone. The agent picks the
+  // liability limit as the step opens (theirs, never the fill's after that). The fill opens Motor
+  // Truck Cargo (a collapsed card; the intake asks for cargo: W43-16), and each cargo question that
+  // draws the next gets the panel's follow-up. Collision's deductibles show a moment after
+  // comprehensive is chosen (FL live run 2, 2026-10-21), and the fill waits for them. The fill answers
+  // mobile homes and household goods No, picks the commodities (W43-23) and Medical Payments $5,000
+  // (W44-26: until then the agent's here, which held Recalculate). With nothing left, it clicks
+  // Recalculate once the page has been quiet for 2 s (W43-31). GEICO draws its own choices back for
+  // UM/UIM (the fill's) and the liability limit (the agent's), as on FL live run 6: the fill puts
+  // UM/UIM back, leaves the agent's limit, marks both red with one more red item, and clicks nothing
+  // more. The agent picks the limit again and clicks Recalculate, and the follow-up fill picks 11
+  // Payments under View More Payment Plans and clicks Print Quote Proposal, once each (TNI, FL live
+  // run 4, 2026-10-21: W43-18), never Recalculate again; the agent's limit is kept.
   const UM = 'cov:Uninsured Motorist Bodily Injury (includes Underinsured)';
   const LIMIT = 'cov:Bodily Injury or Combined Single Limit Liability';
+  await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
   await page.evaluate(([um, limit]) => { window.__geicoMock.recalcResets = { [um]: '$750,000 Combined Single Limit', [limit]: '$1,000,000 Combined Single Limit' }; }, [UM, LIMIT]);
-  const asked = await fill('Quote & Coverages', { asked: true, expectFailed: [/^cov:uninsured motorist bodily injury/, /^cov:bodily injury or combined single limit/, /^null$/] });
+  await fillDrawn('Quote & Coverages', 5, { expectFailed: [/^cov:uninsured motorist bodily injury/, /^cov:bodily injury or combined single limit/, /^null$/] });
   await settled();
   await poll();
-  const askedIds = asked.actions?.map((a) => a.id) ?? [];
-  if (JSON.stringify(askedIds) !== '["recalculate"]') fail(`Quote & Coverages: Fill this page clicked [${askedIds.join(', ')}], expected [recalculate] (GEICO then changed answers)`);
-  if ((await mock()).recalcs !== 1) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s) after Fill this page, expected once`);
+  if (!doneActions.has('openCargo')) fail('Quote & Coverages: the fill did not open Motor Truck Cargo');
+  const opened = fills.filter((x) => x.form === 'Quote & Coverages').map((f) => f.report);
+  const askedIds = opened.flatMap((r) => r.actions ?? []).map((a) => a.id);
+  if (JSON.stringify(askedIds) !== '["openCargo","recalculate"]') fail(`Quote & Coverages: the fills clicked [${askedIds.join(', ')}], expected [openCargo, recalculate] (GEICO then changed answers)`);
+  if ((await mock()).recalcs !== 1) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s) after the step opened, expected once`);
+  const asked = opened.find((r) => (r.actions ?? []).some((a) => a.id === 'recalculate')) ?? { failed: [] };
   // In page order: the agent's limit (left, "your answer"), UM/UIM (put back), then the one without a field.
   const red = (asked.failed ?? []).map((x) => [x.key ?? null, /your answer/.test(x.reason) ? 'agent' : /put it back/.test(x.reason) ? 'back' : 'say']);
   if (JSON.stringify(red) !== JSON.stringify([['cov:bodily injury or combined single limit liability', 'agent'], ['cov:uninsured motorist bodily injury includes underinsured', 'back'], [null, 'say']])) {
