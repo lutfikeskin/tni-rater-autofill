@@ -535,8 +535,10 @@ test('USDOT: the number and whether there is one, from the intake', () => {
   // No number, none coming and no MC: No; the number box is left alone.
   const none = plan(with_({ 'applicant.dot': null, 'applicant.mcDotWithin60Days': false }));
   assert.deepEqual([one(none, 'Has a USDOT number').value, one(none, 'USDOT #').ignore], ['No', true]);
-  // An MC number only, a number coming, or nothing said: the agent's (never "applied for one").
-  for (const changes of [{ 'applicant.mc': 'MC-765432' }, { 'applicant.mcDotWithin60Days': true }, {}]) {
+  // A number coming within 60 days: Not yet (TNI, 2026-10-27; until then the agent's).
+  assert.equal(one(plan(with_({ 'applicant.dot': null, 'applicant.mcDotWithin60Days': true })), 'Has a USDOT number').value, 'Not yet, but the customer has applied for one.');
+  // An MC number only, or nothing said: the agent's.
+  for (const changes of [{ 'applicant.mc': 'MC-765432' }, {}]) {
     const s = one(plan(with_({ 'applicant.dot': null, ...changes })), 'Has a USDOT number');
     agents(s);
     assert.equal(s.manualOnly, true);
