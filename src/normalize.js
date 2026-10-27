@@ -228,19 +228,24 @@ export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.tex
 // "approx." / "approx" / "approximately", "abt", "est." / "estimated", "circa", "Nish" ("5ish"),
 // "N or so" and "give or take" are "about N", so N; ">", "N plus" and "N+" are "over N" (until
 // then "N+" was N or more, and ">5" was read as 5); "<" is "under N" (until then "<5" was read as
-// 5). A word not named stays unread ("some 5 years", "maybe 5 years": the number alone). A range
-// ("3-5 years", "3 to 5 years", "three to five years") runs from its first figure to its last, so
-// a carrier answers it only when both ends give the same answer there (TNI, 2026-10-27: answer to
-// PR question, round 5, V7; until then the last figure alone was read). The carriers place a time
-// on a band edge (tenureBand).
+// 5). "Some" and "ca." are "about N" too, and "maybe N" and "up to N" give any time, so the line is
+// the agent's (the maintainer, 2026-10-27: answer to PR question; until then all four were N). A
+// word not named stays unread (the number alone). A range ("3-5 years", "3 to 5 years", "three to
+// five years"; also "between 3 and 5 years", "3 or 4 years" and "1 year to 2 years", the
+// maintainer, 2026-10-27: answer to PR question, until then each figure alone, the longest kept)
+// runs from its first figure to its last, so a carrier answers it only when both ends give the
+// same answer there (TNI, 2026-10-27: answer to PR question, round 5, V7; until then the last
+// figure alone was read). The carriers place a time on a band edge (tenureBand).
 const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const INSURANCE_WORDS = /\b(?:insur\w*|polic(?:y|ies)|pop|proof of prior)\b/i;
 const OTHER_YEARS = /\b(?:claims?|accidents?|violations?|tickets?|cdl|licen[cs]ed?|driv(?:e|es|ing|er|ers)|experience|business|established|trucks?|vehicles?|vans?|trailers?|record|laps\w*|uninsured|no insurance|not insured|without insurance|ago|expir\w*|renew\w*)\b/i;
 const NUMBER_SAID = String.raw`\d{1,2}(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty`;
-// [1] a symbol before the number (~ > <), [2] a word before it, [3] a range's first figure, [4] the
-// number, [5]-[8] a hedge after it ("+", "plus", "ish", "or so"), [9] a hedge after "years".
-const YEARS_SAID = new RegExp(String.raw`(?:([~><])\s*|\b(over|more than|at least|almost|nearly|close to|under|less than|about|around|approximately|approx\.?|abt\.?|est\.?|estimated|circa|roughly|give or take)\s+)?\b(?:(${NUMBER_SAID})\s*(?:[-–—]|to\b)\s*)?\b(${NUMBER_SAID})(?:\s*(\+)|\s+(plus)\b|-?(ish)\b|\s+(or so)\b)?\s*(?:years?|yrs?)\b(?:,?\s+(or so|give or take)\b)?(?![\s-]*(?:old|in business|of experience|experience|exp\b))`, 'gi');
+// [1] a symbol before the number (~ > <), [2] a word before it, [3] a range's first figure after
+// "between" ("between 3 and 5 years"), [4] a range's first figure ("3-5", "3 to 5", "3 or 4", "1
+// year to 2 years"), [5] the number, [6]-[9] a hedge after it ("+", "plus", "ish", "or so"), [10] a
+// hedge after "years".
+const YEARS_SAID = new RegExp(String.raw`(?:([~><])\s*|\b(over|more than|at least|almost|nearly|close to|under|less than|about|around|approximately|approx\.?|abt\.?|est\.?|estimated|circa|ca\.|some|roughly|give or take|maybe|up to)\s+)?(?:\bbetween\s+(${NUMBER_SAID})(?:\s*(?:years?|yrs?))?\s+and\s+|\b(${NUMBER_SAID})(?:\s*(?:years?|yrs?))?\s*(?:[-–—]|to\b|or\b)\s*)?\b(${NUMBER_SAID})(?:\s*(\+)|\s+(plus)\b|-?(ish)\b|\s+(or so)\b)?\s*(?:years?|yrs?)\b(?:,?\s+(or so|give or take)\b)?(?![\s-]*(?:old|in business|of experience|experience|exp\b))`, 'gi');
 /** @param {string} s */
 const yearsNumber = (s) => NUMBER_WORDS[s.toLowerCase()] ?? Number(s);
 const START_SAID = /\b(?:since|started|began|start(?:ing)?)\s+(?:(?:in|on)\s+)?(?:(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:(\d{1,2})(?:st|nd|rd|th)?,?\s+)?|(\d{1,2})\/(?:(\d{1,2})\/)?)?((?:19|20)\d{2})\b/gi;
@@ -256,22 +261,28 @@ const saidSpan = (n, qualifier) => {
   if (OVER.has(q)) return [n + 0.1, Infinity];
   if (q === 'almost' || q === 'nearly' || q === 'close to') return [n - 1, n - 0.1];
   if (UNDER.has(q)) return [0, n - 0.1];
+  // The maintainer, 2026-10-27 (answer to PR question): "maybe N" and "up to N" make the line the
+  // agent's, whatever N: any time, so no band fits it (until then N).
+  if (q === 'maybe' || q === 'up to') return [0, Infinity];
   // TNI, 2026-10-26 (answer to PR question, round 2, R8): "about 3 years" counts as 3, as do
   // "around" and "approximately". TNI, 2026-10-26 (answer to PR question, round 3, T5): "roughly
   // N" counts as N, like "about N" (until then half a year either side). TNI, 2026-10-27 (answer
   // to PR question, round 5, V6): so do "~", "approx.", "abt", "est.", "estimated", "circa",
-  // "Nish", "N or so" and "give or take".
+  // "Nish", "N or so" and "give or take". The maintainer, 2026-10-27 (answer to PR question): and
+  // "some" and "ca." ("some 5 years", "ca. 5 years": 5, as the number alone gave before).
   return [n, n];
 };
 // A match of YEARS_SAID as [least, most]: its qualifier is the symbol or word before the number,
 // else the hedge after it. A range spans its first figure's least to its last figure's most, so a
 // carrier's band answers it only when both ends fall in it (TNI, 2026-10-27: answer to PR
-// question, round 5, V7).
+// question, round 5, V7), also one said "between 3 and 5 years", "3 or 4 years" or "1 year to 2
+// years" (the maintainer, 2026-10-27: answer to PR question).
 /** @param {RegExpMatchArray} m @returns {number[]} */
 const yearsSpan = (m) => {
-  const qualifier = m[1] ?? m[2] ?? m[5] ?? m[6] ?? m[7] ?? m[8] ?? m[9];
-  const last = saidSpan(yearsNumber(m[4]), qualifier);
-  return m[3] == null ? last : [saidSpan(yearsNumber(m[3]), qualifier)[0], last[1]];
+  const qualifier = m[1] ?? m[2] ?? m[6] ?? m[7] ?? m[8] ?? m[9] ?? m[10];
+  const last = saidSpan(yearsNumber(m[5]), qualifier);
+  const first = m[3] ?? m[4];
+  return first == null ? last : [saidSpan(yearsNumber(first), qualifier)[0], last[1]];
 };
 const tenth = (n) => Math.round(n * 10) / 10;
 /** @param {any} record @returns {{ years: number, least: number, line: string } | null} */

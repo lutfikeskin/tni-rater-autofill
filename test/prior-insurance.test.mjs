@@ -265,9 +265,7 @@ test('the tenure reader reads hedges as their words: about N, over N, under N (r
   const under1 = intake(DATED, { additional_notes: 'Insured <1 year with Synthetic Mutual' });
   assert.deepEqual([geicoStep(under1.record, GEICO.years).value, howLong(under1.record).value], ['1-3 Years', '1 TO 2 YEARS']);
   assert.equal(under1.warnings.find((w) => w.code === 'prior.tenure'), undefined);
-  // Counterexamples: a word V6 doesn't name stays as before (the number alone, or nothing).
-  assert.deepEqual(tenureOf('Insured some 5 years with Synthetic Mutual'), { years: 5, least: 5, line: 'Insured some 5 years with Synthetic Mutual' });
-  assert.deepEqual(tenureOf('Insured maybe 5 years with Synthetic Mutual'), { years: 5, least: 5, line: 'Insured maybe 5 years with Synthetic Mutual' });
+  // "Some", "ca.", "maybe" and "up to": the maintainer's answers of 2026-10-27, the test below.
   // A hedge on a line that doesn't name insurance doesn't count.
   assert.equal(tenureOf('About 5ish years in this line of work'), null);
   assert.equal(tenureOf('~5 years'), null);
@@ -485,4 +483,86 @@ test('a time on a line about something else besides insurance is the agent\'s, n
   // Counterexample: a time with the insurer on its own line keeps its band beside such a line.
   const both = intake(DATED, { additional_notes: 'Insured with Synthetic Mutual for 6 years\nCDL for 12 years' }).record;
   assert.deepEqual([geicoStep(both, GEICO.years).value, howLong(both).value], ['5-10 Years', 'MORE THAN 3 YEARS']);
+});
+
+// The maintainer, 2026-10-27 (answers to the PR's questions): "some N" and "ca. N" years are N, as
+// "about N"; "maybe N" and "up to N" years make the line the agent's, whatever N (no band).
+test('"some" and "ca." N years are N; "maybe" and "up to" N years leave the line to the agent (the maintainer, 2026-10-27)', () => {
+  const tenureOf = (line) => insurerTenure(intake(DATED, { additional_notes: line }).record);
+  for (const line of ['Insured some 5 years with Synthetic Mutual', 'Insured ca. 5 years with Synthetic Mutual']) {
+    assert.deepEqual(tenureOf(line), { years: 5, least: 5, line }, line);
+    const r = intake(DATED, { additional_notes: line }).record;
+    assert.deepEqual([geicoStep(r, GEICO.years).value, geicoStep(r, GEICO.years).source], ['5-10 Years', 'derived'], line);
+    assert.deepEqual([howLong(r).value, howLong(r).source], ['MORE THAN 3 YEARS', 'derived'], line);
+  }
+  // On an edge, as "about 3" (GEICO 1-3, AmWINS 2 TO 3).
+  const some3 = intake(DATED, { additional_notes: 'Insured some 3 years with Synthetic Mutual' }).record;
+  assert.deepEqual([geicoStep(some3, GEICO.years).value, howLong(some3).value], ['1-3 Years', '2 TO 3 YEARS']);
+  // "Maybe" and "up to": the agent's on both carriers, the line quoted, a short time too.
+  for (const line of ['Insured maybe 5 years with Synthetic Mutual', 'Insured up to 5 years with Synthetic Mutual',
+    'Insured maybe 1 year with Synthetic Mutual', 'Insured up to 1 year with Synthetic Mutual', 'Maybe 3-5 years with the same insurer']) {
+    const { record: r, warnings } = intake(DATED, { additional_notes: line });
+    const years = geicoStep(r, GEICO.years);
+    agents(years);
+    assert.equal(years.source, 'fact', line);
+    assert.ok(years.note.includes(line), line);
+    agents(howLong(r));
+    assert.equal(howLong(r).source, 'fact', line);
+    assert.ok(howLong(r).note.includes(line), line);
+    assert.ok(warnings.find((w) => w.code === 'prior.tenure')?.msg.includes(`"${line}"`), line);
+    assert.equal(geicoStep(r, GEICO.auto).value, 'Yes', `${line}: still currently insured`);
+  }
+  // Counterexamples: not on a line about insurance, not read; a plain time keeps its band.
+  assert.equal(tenureOf('Maybe 5 years'), null);
+  assert.equal(tenureOf('Up to 5 years'), null);
+  const plain = intake(DATED, { additional_notes: 'Insured 5 years with Synthetic Mutual' }).record;
+  assert.deepEqual([geicoStep(plain, GEICO.years).value, howLong(plain).value], ['5-10 Years', 'MORE THAN 3 YEARS']);
+});
+
+// The maintainer, 2026-10-27 (answers to the PR's questions): two figures joined by "between …
+// and", "or", or "N years to M years" are a range, as V7's "3-5 years": an answer only when both
+// ends give the same one on that carrier's question, otherwise the agent's, the line quoted. Until
+// then each figure was read alone and the longest kept.
+test('"between 3 and 5 years", "3 or 4 years" and "1 year to 2 years" are ranges, as V7 (the maintainer, 2026-10-27)', () => {
+  const tenureOf = (line) => insurerTenure(intake(DATED, { additional_notes: line }).record);
+  assert.deepEqual(tenureOf('Insured between 3 and 5 years with Synthetic Mutual'), { years: 5, least: 3, line: 'Insured between 3 and 5 years with Synthetic Mutual' });
+  assert.deepEqual(tenureOf('Insured 3 or 4 years with Synthetic Mutual'), { years: 4, least: 3, line: 'Insured 3 or 4 years with Synthetic Mutual' });
+  assert.deepEqual(tenureOf('Insured 1 year to 2 years with Synthetic Mutual'), { years: 2, least: 1, line: 'Insured 1 year to 2 years with Synthetic Mutual' });
+  // [line, GEICO's answer (null: the agent's), AmWINS' answer (null: the agent's)]
+  for (const [line, geicoBand, amwinsBand] of [
+    // Ends in different bands on both carriers' questions or on one.
+    ['Insured between 3 and 5 years with Synthetic Mutual', null, null],
+    ['Insured between three and five years with Synthetic Mutual', null, null],
+    ['Insured 3 or 4 years with Synthetic Mutual', null, null],
+    ['Insured 1 year to 2 years with Synthetic Mutual', '1-3 Years', null],
+    ['Insured 3 years or 4 years with Synthetic Mutual', null, null],
+    ['Insured between 4 years and 6 years with Synthetic Mutual', null, 'MORE THAN 3 YEARS'],
+    // Both ends the same answer: that answer.
+    ['Insured between 6 and 8 years with Synthetic Mutual', '5-10 Years', 'MORE THAN 3 YEARS'],
+    ['Insured 6 or 7 years with Synthetic Mutual', '5-10 Years', 'MORE THAN 3 YEARS'],
+    ['Insured 12 years to 15 years with Synthetic Mutual', '10+ Years', 'MORE THAN 3 YEARS'],
+    ['Insured 2 or 3 years with Synthetic Mutual', '1-3 Years', '2 TO 3 YEARS'],
+  ]) {
+    const r = intake(DATED, { additional_notes: line }).record;
+    const years = geicoStep(r, GEICO.years);
+    if (geicoBand) assert.equal(years.value, geicoBand, line);
+    else {
+      agents(years);
+      assert.equal(years.source, 'fact', line);
+      assert.ok(years.note.includes(line), line);
+    }
+    const step = howLong(r);
+    if (amwinsBand) assert.equal(step.value, amwinsBand, line);
+    else {
+      agents(step);
+      assert.equal(step.source, 'fact', line);
+      assert.ok(step.note.includes(line), line);
+    }
+  }
+  // Counterexamples: "N or so" is a hedge, not a range; "N years or more" and "5 years to date"
+  // are the one figure; "and" without "between" joins no range.
+  assert.deepEqual(tenureOf('Insured 3 or so years with Synthetic Mutual'), { years: 3, least: 3, line: 'Insured 3 or so years with Synthetic Mutual' });
+  assert.deepEqual(tenureOf('Insured 6 years or more with Synthetic Mutual'), { years: 6, least: 6, line: 'Insured 6 years or more with Synthetic Mutual' });
+  assert.deepEqual(tenureOf('Insured 5 years to date with Synthetic Mutual'), { years: 5, least: 5, line: 'Insured 5 years to date with Synthetic Mutual' });
+  assert.deepEqual(tenureOf('Insured 2 and 6 years with Synthetic Mutual'), { years: 6, least: 6, line: 'Insured 2 and 6 years with Synthetic Mutual' });
 });
