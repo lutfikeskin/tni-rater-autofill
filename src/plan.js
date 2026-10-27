@@ -181,7 +181,7 @@ function shownOn(cond, record, active) {
 
 /** @param {ListCondition[] | null | undefined} conditions */
 function onlyIfOf(conditions) {
-  return conditions?.length ? conditions.map((x) => ({ path: x.path ?? null, limit: !!x.limit })) : null;
+  return conditions?.length ? conditions.map((x) => ({ path: x.path ?? null, limit: !!x.limit, value: x.value ?? null })) : null;
 }
 
 /**
@@ -341,8 +341,8 @@ function fieldSteps(rules, record, carrier, active) {
       labelHas: rule.labelHas ? rule.labelHas(record, active) : null,
       labelNote: rule.labelNote ?? null,
       // Answered only when one of these holds: a list, its own or another question's (`path`),
-      // offers a limit or none (GEICO's Medical Payments reads Basic PIP's); otherwise the agent's,
-      // with the note.
+      // offers a limit or none (GEICO's Basic PIP reads Medical Payments'), with the first one's
+      // `value` if it has one; otherwise the agent's, with the note.
       onlyIf: onlyIfOf(typeof rule.onlyIf === 'function' ? rule.onlyIf(record, active) : rule.onlyIf),
       onlyNote: rule.onlyNote ?? null,
       // A list without the answer, which no helper shows later: the agent's at once, with this note.
