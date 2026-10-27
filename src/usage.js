@@ -47,7 +47,8 @@ export async function intakeSummary(pdfBytes, raw, result) {
 
 // What the client's business looks like, without names, numbers or addresses (intake_profile, for
 // TNI's analysis of its quoting): no name, contact, address, identification number, date of birth,
-// VIN or plate. It is pseudonymous, not anonymous: state, fleet and years together can still point
+// VIN or plate, except `contact`, the email, phone, company and owner's name the server turns into
+// match codes for finding the quote's deal in TNI's CRM, and never stores. It is pseudonymous, not anonymous: state, fleet and years together can still point
 // to one carrier. Where an identifier matters, a fact about it instead: whether a USDOT, MC or FEIN
 // number was given (`given`: a valid one; `other`: something else written, such as "Pending"), a
 // driver's age on `today`, the month a policy expires. A yes/no keeps null (unanswered, never No).
@@ -90,6 +91,8 @@ function ageOn(dob, today) {
 const monthOf = (date) => { const m = MDY.exec(toDate(date) ?? ''); return m ? `${m[3]}-${m[1]}` : null; };
 // The intake's own VINs written with spaces or dashes ("1FUJ GLDR 0CLB P8834"), which the redactor,
 // matching them as written, would miss.
+// A contact value as the intake has it, within the server's bound (MATCH_TEXT_MAX); null when blank.
+const contactText = (v) => { const s = typeof v === 'string' || typeof v === 'number' ? String(v).trim() : ''; return s && s.length <= 200 ? s : null; };
 const looseVin = (vin) => new RegExp(String(vin).replace(/[\s-]/g, '').split('').join('[\\s-]*'), 'gi');
 
 /**
@@ -151,6 +154,9 @@ export function intakeProfile(record, { redact = (s) => s, today = new Date() } 
       type: words(p.type, 40), carrier: words(p.carrier, 60), limit: limit(p.limit, 40), expires: noPriorInsurance(p) ? 'none' : monthOf(p.expiration),
     })),
     hasClaims: yesNo(r.claims?.hasClaims),
+    // Who the client is, for the server to turn into match codes (matchCodes in server/index.mjs)
+    // and never store: the only part of the profile that names the client.
+    contact: { email: contactText(a.email), phone: contactText(a.phone), company: contactText(a.name), owner: contactText(a.owner1) },
   };
 }
 

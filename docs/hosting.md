@@ -29,7 +29,7 @@ within hours of approval.
 | Service | `usage-server`, built from `server/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`) |
 | URL | https://usage-server-production.up.railway.app (`/v1/health`) |
 | Storage | volume `usage-data` mounted at `/data` (one JSONL file per day received) |
-| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `OPENAI_API_KEY` (TNI's key for Luna, below; without it `/v1/luna` answers 501), optional `RATER_LUNA_DAILY_LIMIT` (default 5000), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
+| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `OPENAI_API_KEY` (TNI's key for Luna, below; without it `/v1/luna` answers 501), optional `RATER_LUNA_DAILY_LIMIT` (default 5000), `MATCH_KEY` (the key for the profile's match codes, below; without it the contact is dropped), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
 
 The extension sends to this server by default (`sidepanel/usage-log.js`, `DEFAULT_SERVER` /
 `DEFAULT_TOKEN`); an agent's own Server setting (a local test server) overrides it, and a blank
@@ -61,6 +61,22 @@ still ask questions of its own and use up the day's limit for every agent; the c
 memory, so a restart or redeploy starts it again. To stop Luna at once, set the limit to 0 or remove
 `OPENAI_API_KEY` (then `/v1/luna` answers 501 and the panel says Luna isn't set up). Rotating the
 key is a variable change and a redeploy, with no extension release.
+
+`MATCH_KEY` makes the business profile's match codes: the server turns the intake's email, phone,
+company name and first owner's name into keyed codes (HMAC-SHA256) and stores only those
+(`matchCodes` in `server/index.mjs`; [quoting history](quoting-history-database.md#match-codes)).
+Generate it once, at least 32 characters, with
+`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`, and keep it in two
+places only: the Railway variable and the maintainer's computer
+(`~/.config/tni-rater/match-key`), where the CRM side computes the same codes. A shorter key stops
+the server at startup; no key drops each contact (`dropped: ["contact"]`) and stores no codes. Don't
+rotate it: codes made with another key match nothing made before. Losing it means quotes from
+before can't be matched; anyone who has it and the stored codes can test a guessed phone or email.
+
+Release order for the match codes: set `MATCH_KEY` on Railway, deploy the server, check it
+(`node scripts/server-check.mjs` says `same`; the startup log says `match codes on`), then release
+the extension. An extension released first sends contacts a server without the key drops, so
+those quotes never get codes.
 
 Release order for Luna through the server: set `OPENAI_API_KEY` on Railway, deploy the server that
 has `/v1/luna`, check it (`node scripts/server-check.mjs` says `same`), then release the extension.

@@ -373,9 +373,12 @@ test('a Recalculate trace is logged as a page_layout the layouts leave out, with
   assert.ok(!fillEvents([{ filled: [] }], { carrier: 'geico', page: '/quote', overwrite: false, ms: 1, redact }).some((e) => e.type === 'page_layout'));
 });
 
-test('the business profile describes the intake without identifying the client', () => {
+test('the business profile describes the intake without identifying the client, apart from the contact the server codes', () => {
   const p = intakeProfile(record, { redact, today: new Date('2026-09-30') });
-  assertNoClientData(p);
+  const { contact, ...business } = p;
+  assertNoClientData(business);
+  assert.deepEqual(contact, { email: record.applicant.email, phone: record.applicant.phone, company: record.applicant.name, owner: record.applicant.owner1 },
+    'the email, phone and names as written: the server turns them into match codes and never stores them');
   assert.equal(p.type, 'intake_profile');
   assert.deepEqual([p.business.state, p.business.dot, p.business.mc, p.business.fein], ['IL', 'given', 'given', 'blank'], 'whether a number was given, never the number');
   assert.equal(p.vehicles.length, record.vehicles.length);
@@ -414,6 +417,7 @@ test('profile text loses what could identify the client; numbers, yes/no and gen
   assert.deepEqual([p.drivers[0].age, p.drivers[0].gender, p.drivers[1].age, p.drivers[1].gender], [45, 'MALE', null, 'MALE'], 'the birthday not yet reached; gender as typed in the panel (M, Female) read as MALE or FEMALE');
   assert.deepEqual(p.priorInsurance.map((x) => [x.carrier, x.expires]), [['None', 'none'], ['[client] Mutual', '2026-11']]);
   assert.equal(p.hasClaims, null);
+  assert.deepEqual(p.contact, { email: null, phone: null, company: null, owner: null }, 'none on the intake');
   for (const leak of ['Ann', '1FUJ', 'A1234567', '10/01/1980', 'example.com', '12-3456789', '40000']) assert.ok(!JSON.stringify(p).includes(leak), leak);
 });
 

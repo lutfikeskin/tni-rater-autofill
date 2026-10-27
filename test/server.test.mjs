@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, matchCodes, normalizeContact } from '../server/index.mjs';
 import { buildRequest } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
@@ -561,7 +561,53 @@ test('keeps a business profile as sent when every value is in its shape', async 
   const [kept] = stored(dataDir);
   for (const group of EVENT_FIELDS.intake_profile) assert.deepEqual(kept[group], sent[group], group);
   assert.equal(kept.dropped, undefined);
-  assert.deepEqual(EVENT_FIELDS.intake_profile, Object.keys(PROFILE), 'the event keeps the profile\'s groups, no more');
+  assert.deepEqual(EVENT_FIELDS.intake_profile, [...Object.keys(PROFILE), 'contact', 'match'], 'the event keeps the profile\'s groups and the contact\'s codes, no more');
+});
+
+const MATCH_KEY = 'k'.repeat(40);
+const contact = { email: ' Owner@Sample-Trucking.test ', phone: '+1 (555) 010-0199 ext 2', company: 'The Sample Trucking, L.L.C.', owner: 'Sample, Jordan A. Jr.' };
+
+test('a contact becomes match codes the CRM side can compute again; its values are never stored', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir, matchKey: MATCH_KEY }, async ({ post }) => {
+    assert.equal((await (await post({ events: [profileEvent({ contact })] })).json()).accepted, 1);
+  });
+  const [kept] = stored(dataDir);
+  assert.equal(kept.contact, undefined);
+  assert.equal(kept.dropped, undefined);
+  // The CRM's own spelling of the same client gives the same codes.
+  assert.deepEqual(kept.match, matchCodes({ email: 'owner@sample-trucking.test', phone: '555.010.0199', company: 'Sample Trucking LLC', owner: 'Jordan Sample' }, MATCH_KEY));
+  assert.ok(Object.values(kept.match).every((c) => /^[0-9a-f]{64}$/.test(c)));
+  const file = fs.readdirSync(path.join(dataDir, 'events')).map((f) => fs.readFileSync(path.join(dataDir, 'events', f), 'utf8')).join('');
+  for (const leak of ['sample-trucking', '010-0199', '5550100199', 'Jordan', 'jordan']) assert.ok(!file.includes(leak), `stored ${leak}`);
+  // Another key, other codes: a code says nothing without the key.
+  assert.notDeepEqual(matchCodes(contact, 'x'.repeat(40)), kept.match);
+});
+
+test('without MATCH_KEY a contact is dropped and named; stored codes come back only in their shape', async () => {
+  const dataDir = tmp();
+  const codes = matchCodes(contact, MATCH_KEY);
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [profileEvent({ contact }), profileEvent({ match: codes }), profileEvent({ match: { ...codes, email: 'owner@sample-trucking.test' } })] });
+  });
+  const [noKey, again, bad] = stored(dataDir);
+  assert.deepEqual([noKey.contact, noKey.match, noKey.dropped], [undefined, undefined, ['contact']]);
+  assert.deepEqual(again.match, codes, 'a re-upload (npm run push-logs) keeps its codes');
+  assert.deepEqual([bad.match, bad.dropped], [undefined, ['match']]);
+});
+
+test('contact values are compared in one form, and what has none gets no code', () => {
+  assert.equal(normalizeContact('email', 'Mail: JOE@Example.COM; other@x.test'), 'joe@example.com');
+  assert.deepEqual(['(555) 010-0199', '1-555-010-0199', '555 010 0199 x12', '0100199', 'none'].map((v) => normalizeContact('phone', v)),
+    ['5550100199', '5550100199', '5550100199', null, null]);
+  assert.deepEqual(['ABC Trucking, Inc.', 'abc trucking', 'The ABC Trucking Co', 'A & B Freight LLC', 'LLC'].map((v) => normalizeContact('company', v)),
+    ['abc trucking', 'abc trucking', 'abc trucking', 'a and b freight', 'llc']);
+  assert.deepEqual(['John A. Smith', 'Smith, John', 'SMITH JOHN JR', 'J.'].map((v) => normalizeContact('owner', v)), ['john smith', 'john smith', 'john smith', null]);
+  assert.deepEqual(matchCodes({ email: null, phone: 'n/a', company: '', owner: null }, MATCH_KEY), { email: null, phone: null, company: null, owner: null });
+  assert.equal(matchCodes({ ...contact, ssn: '123-45-6789' }, MATCH_KEY), null, 'an unknown field: no codes at all');
+  assert.equal(matchCodes(contact, ''), null);
+  assert.match(startupError({ host: '127.0.0.1', token: '', matchKey: 'short' }), /MATCH_KEY/);
+  assert.equal(startupError({ host: '127.0.0.1', token: '', matchKey: MATCH_KEY }), null);
 });
 
 test('a profile value out of its shape, or one that identifies the client, is left out and its group named', async () => {

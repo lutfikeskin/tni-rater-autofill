@@ -14,7 +14,8 @@ TNI wants to ask its quoting history business questions:
 - which coverages and limits clients ask for, and which are chosen on each carrier;
 - who insured them before, and when those policies expire;
 - how all of that moves over time;
-- later, what the carriers quoted (premiums).
+- later, what the carriers quoted (premiums);
+- which quotes became policies, matched with TNI's CRM by [match codes](#match-codes), so TNI can learn what makes an intake likely to sell.
 
 The usage server already receives part of this, as JSON lines on a Railway volume. `npm run warehouse` turns the pulled copy into tables the maintainer queries in SQL with the DuckDB command line. The rest needs one extension change, the intake profile below.
 
@@ -94,7 +95,19 @@ Gender is not on the intake form (`NOT_ON_INTAKE` in [schema.js](../src/schema.j
 
 ### Left out on purpose
 
-Company and owner names, phone, email, street, city, ZIP, USDOT, MC and FEIN numbers, license numbers, dates of birth, VINs, the license plate, the claims box and Additional Notes text. Adding any of these is a decision for the maintainer, not a default.
+Company and owner names, phone, email, street, city, ZIP, USDOT, MC and FEIN numbers, license numbers, dates of birth, VINs, the license plate, the claims box and Additional Notes text. Adding any of these is a decision for the maintainer, not a default. The email, phone, company name and first owner's name do reach the server, but only to become [match codes](#match-codes): the server stores the codes, never the values.
+
+### Match codes
+
+To learn which quotes became policies, TNI matches each quote with its deal in Bitrix, its CRM. The USDOT number can't be the key: many applications have none. Every application has a contact, so the profile carries the intake's email, phone, company name and first owner's name as written (`contact`). The usage server turns each into a keyed code and stores only the codes (`match`; `matchCodes` in [server/index.mjs](../server/index.mjs)):
+
+- **Normalized first** (`normalizeContact`), so the CRM's spelling of the same client gives the same code: the first email address, lowercased; the first US phone number as its 10 digits (`+1 (555) 010-0199` and `555.010.0199` are one); a company name without punctuation, a leading "The" or a trailing LLC, Inc, Co and the like, `&` read as "and"; an owner's name as its words sorted, without initials, Jr or Sr ("Smith, John A." is "john smith"). Nothing usable is a null code.
+- **Keyed**: HMAC-SHA256 with `MATCH_KEY` of the kind and the normalized value. A plain hash wouldn't do: every US phone number can be hashed in minutes, so anyone with the stored file could reverse it. With the key held only in Railway and on the maintainer's computer, a code alone can't be turned back ([hosting](hosting.md)).
+- **Never stored as written.** The server replaces `contact` with `match` before writing the event; without `MATCH_KEY` it drops the contact and names it in `dropped`.
+
+On the CRM side, the maintainer computes the same codes from each deal's contact with `matchCodes` and the same key, on their own computer, and joins on any of the four: a client who changed their email still matches by phone. The quotes table has them as `match_email`, `match_phone`, `match_company` and `match_owner`. Only quotes from the release that sends the contact have codes; older ones can still be matched through their intake PDF's SHA-256 (`intake_id`) where the PDF in Bitrix is the same file.
+
+The codes are pseudonymous client data, like the profile: whoever has the key can test a guessed email or phone against them. Keep the key out of the repository, logs and chat.
 
 ### When it is sent, and how the server checks it
 
@@ -389,7 +402,7 @@ The whole feature can be removed as one piece: `src/premium.js`, its import and 
 - **No ZIPs, cities, names, VINs or numbers, by design.** State is the finest geography. The profile says whether a USDOT or MC number was given, never which. That is not anonymity: a carrier with an unusual fleet in a small state can still be recognised, so the database is client data.
 - **The intake's word, not the policy's.** The profile is what the client wrote on the intake, as corrected by the agent in the panel. A vehicle type or limit changed later on the carrier's page shows in `answers`, not in the profile.
 - **No profile before its release.** Older quotes have only the summary logged on load, unless the backfill finds their PDFs.
-- **No bind or outcome data.** "Done" means the quote reached the carrier's final page or was printed. Whether the client bought, and from which carrier, is in TNI's agency system, and the log has no identifier that could join to it.
+- **No bind or outcome data in the log.** "Done" means the quote reached the carrier's final page or was printed. Whether the client bought, and from which carrier, is in TNI's CRM; the [match codes](#match-codes) are how a quote joins to it, from the release that sends them.
 - **A quote is a panel session, not a client.** A client quoted twice is two quotes. The same PDF has the same `intake_id`; a re-saved or edited PDF gets a new one.
 - **GEICO is not verified live.** Its step names, coverage keys and the premium wording come from saved pages and the first live runs (2026-10-21). Treat GEICO's numbers as provisional until its coverage map is checked against real quotes.
 - **History is uneven.** Older builds sent fewer fields: no `step`, `run` or `source`, no `view` before 0.9.9. Questions asked of early events get blanks, such as a null `rule_source` on most early answers, and `dropped` on an event names fields an older server threw away.

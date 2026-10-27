@@ -9,7 +9,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { EVENT_FIELDS, COMMON, RUN_FIELDS, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT } from '../server/index.mjs';
+import { EVENT_FIELDS, COMMON, RUN_FIELDS, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT, MATCH_KINDS } from '../server/index.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms } from '../src/plan.js';
@@ -76,12 +76,18 @@ const profileFits = (v, spec, where) => {
   assert.deepEqual(Object.keys(v).sort(), Object.keys(spec).sort(), `${where}: the extension sends every field the server has a shape for, and no other`);
   for (const k of Object.keys(v)) profileFits(v[k], spec[k], `${where}.${k}`);
 };
-const keptWhole = (p, label) => { for (const group of EVENT_FIELDS.intake_profile) profileFits(p[group], PROFILE[group], `${label}: ${group}`); };
+// The contact isn't kept but turned into match codes: every value the server takes is text.
+const keptWhole = (p, label) => {
+  for (const group of Object.keys(PROFILE)) profileFits(p[group], PROFILE[group], `${label}: ${group}`);
+  assert.deepEqual(Object.keys(p.contact), MATCH_KINDS, `${label}: contact`);
+  for (const k of MATCH_KINDS) assert.ok(p.contact[k] === null || (typeof p.contact[k] === 'string' && p.contact[k].length <= 200), `${label}: contact.${k}`);
+};
 
 test('the business profile the extension builds is one the server keeps whole', () => {
   const unit = { type: 'Semi Truck', year: 2019, make: 'Freightliner', model: 'Cascadia', vin: 'x', value: 65000 };
   const record = {
-    applicant: { dot: '1234567', mc: '654321', fein: '12-3456789', mcDotWithin60Days: false, yearsInBusiness: 4, yearsExperience: 6, ownerDrives: true },
+    applicant: { dot: '1234567', mc: '654321', fein: '12-3456789', mcDotWithin60Days: false, yearsInBusiness: 4, yearsExperience: 6, ownerDrives: true,
+      email: 'owner@sample-trucking.test', phone: '(555) 010-0199', name: 'Sample Trucking LLC', owner1: 'Jordan Sample' },
     garaging: { state: 'TX' },
     operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight', radius: '500 miles', radiusMiles: 500, vehicleOwnership: 'Owned', personalUse: false, usesEld: true, eldBrand: 'Motive',
       needSr22: false, filingsRequired: true, filingsWhich: 'MCS-90', hazmat: false, hazPlacard: false, movingState: false, teamDriving: false, canadaLoads: false, equipVehicle: 5000 },
@@ -93,7 +99,7 @@ test('the business profile the extension builds is one the server keeps whole', 
     claims: { hasClaims: false },
   };
   const p = intakeProfile(record, { today: new Date('2026-10-22') });
-  assert.deepEqual(Object.keys(p).filter((k) => k !== 'type'), EVENT_FIELDS.intake_profile);
+  assert.deepEqual(Object.keys(p).filter((k) => k !== 'type'), EVENT_FIELDS.intake_profile.filter((k) => k !== 'match'), 'the server makes the codes');
   assert.equal(EXTENSION_UNITS, PROFILE_UNITS);
   assert.equal(String(EXTENSION_ID_LIKE), String(ID_LIKE), 'the extension and the server refuse the same text');
   assert.equal(String(EXTENSION_LIMIT), String(LIMIT), 'and take the same limits as written');
@@ -121,7 +127,7 @@ test('profiles of real intakes, odd values included, are ones the server keeps w
       const { record } = normalizeIntake({ ...raw, ...over }, { today: new Date('2026-10-22') });
       const p = intakeProfile(record, { redact: redactor(redactionTerms(record)), today: new Date('2026-10-22') });
       keptWhole(p, `${file} #${i}`);
-      for (const leak of ['555-0142', '123-45-6789', '01-05-1980', '01.05.1980', 'S123-4567', 'CA-0193']) assert.ok(!JSON.stringify(p).includes(leak), `${file} #${i} leaks ${leak}`);
+      for (const leak of ['555-0142', '123-45-6789', '01-05-1980', '01.05.1980', 'S123-4567', 'CA-0193']) assert.ok(!JSON.stringify({ ...p, contact: undefined }).includes(leak), `${file} #${i} leaks ${leak}`);
     }
   }
 });
