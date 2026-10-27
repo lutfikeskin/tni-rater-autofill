@@ -1,9 +1,14 @@
-# Lint, type, unit and package checks on Ubuntu, the cheapest runner. Windows and the browser checks run
-# locally (`npm run ci`) or by hand (windows-smoke.yml).
+# Every step of `npm run ci` on Ubuntu, split into parallel jobs: lint, type, unit and package
+# checks, then the browser checks with Playwright Chromium. The repository is public, so these runs
+# cost nothing. The same browser checks on Windows are windows-smoke.yml, run by hand.
+# No secrets: a pull request from a fork runs this code, and nothing here needs a credential.
 name: Checks
 
 on:
   pull_request:
+
+permissions:
+  contents: read
 
 concurrency:
   group: checks-${{ github.event.pull_request.number }}
@@ -11,11 +16,7 @@ concurrency:
 
 jobs:
   checks:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -32,3 +33,68 @@ jobs:
         run: npm test
       - name: Package
         run: npm run package
+
+  # The store ZIP and the packaged extension on the AmWINS mock, served by the replay server on
+  # port 8792 as `npm run replay` does.
+  extension:
+    name: Packaged extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The image's preinstalled Chrome already brings Chromium's system libraries; --with-deps
+      # fetched them again from Ubuntu's mirror, which once took 9 minutes and timed a job out.
+      - run: npx playwright install chromium
+      - run: npm run package
+      - name: Extract the store ZIP
+        run: |
+          version=$(jq -r .version manifest.json)
+          destination="$RUNNER_TEMP/rater-store-package"
+          unzip -q "dist/tni-rater-autofill-$version.zip" -d "$destination"
+          manifest="$destination/manifest.json"
+          if jq -e 'has("key")' "$manifest" > /dev/null; then echo 'The store ZIP must not contain the development key'; exit 1; fi
+          if [ "$(jq -r .version "$manifest")" != "$version" ]; then echo 'Store version does not match source'; exit 1; fi
+          if [ ! -f "$destination/$(jq -r .side_panel.default_path "$manifest")" ]; then echo 'Missing side panel'; exit 1; fi
+      - name: Packaged extension with the Node replay server
+        run: |
+          node scripts/replay.mjs &
+          curl --silent --fail --output /dev/null --retry 30 --retry-delay 1 --retry-connrefused \
+            http://127.0.0.1:8792/test/fixtures/amwins/application.html
+          npm run e2e:extension
+
+  # The mocks and replays, one job each; each starts its own local server where it needs one.
+  browser:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: AmWINS mock
+            run: npm run mock:amwins
+          - name: AmWINS mock, reversed
+            run: npm run mock:amwins -- --reversed
+          - name: GEICO mock
+            run: npm run mock:geico
+          - name: Progressive fixtures
+            run: npm run e2e -- --fixtures
+          - name: Luna mock
+            run: npm run package && npm run mock:luna
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The image's preinstalled Chrome already brings Chromium's system libraries; --with-deps
+      # fetched them again from Ubuntu's mirror, which once took 9 minutes and timed a job out.
+      - run: npx playwright install chromium
+      - name: ${{ matrix.name }}
+        run: ${{ matrix.run }}
