@@ -1,17 +1,19 @@
 #!/bin/sh
-# Before a push, runs this repository's pull-request checks on this computer (`npm run ci`,
-# scripts/ci-local.mjs), so a failure shows before GitHub runs them. `npm ci` / `npm install`
-# installs it: the prepare script points core.hooksPath at .githooks.
+# The pull request's Checks on GitHub (.github/workflows/checks.yml, every step of `npm run ci` on
+# Ubuntu) are the gate, so a push runs nothing here by default: no unit tests, mocks or E2E. Running
+# the tests from a hook once let a test's own `git init` reach this repository through the hook's
+# GIT_DIR (core.bare and core.worktree set in the shared .git/config, 2026-10-27). `npm ci` /
+# `npm install` installs the hook: the prepare script points core.hooksPath at .githooks.
 #
-#   git push                -> npm run ci -- --quick (lint, type check, unit tests, package)
-#   TNI_CI=full git push    -> npm run ci (adds the packaged-extension E2E and the mocks)
-#   git push --no-verify    -> no checks; say so wherever the push is reported
+#   git push                -> no checks; watch the PR's Checks on GitHub
+#   TNI_CI=full git push    -> npm run ci first, on this computer (every step, about 8 minutes)
 #
-# Skipped when `npm run ci` already passed on HEAD with no uncommitted changes to tracked files
-# (a full pass covers a quick push). The checks run on the working tree, so a push of a commit
-# other than HEAD is refused: check that branch out, or push it with --no-verify.
+# With TNI_CI=full, skipped when `npm run ci` already passed on HEAD with no uncommitted changes to
+# tracked files. The checks run on the working tree, so a push of a commit other than HEAD is
+# refused: check that branch out, or push without TNI_CI.
 
-mode=${TNI_CI:-quick}
+[ "${TNI_CI:-}" = full ] || exit 0
+
 head=$(git rev-parse HEAD)
 dirty=$(git status --porcelain --untracked-files=no)
 
@@ -21,19 +23,21 @@ while read -r _ sha _ _; do
     *[!0]*)
       if [ "$sha" != "$head" ]; then
         echo "pre-push: $sha is not HEAD ($head), and the checks run on HEAD's working tree." >&2
-        echo "pre-push: check that commit out and push again, or push with --no-verify and say it is unchecked." >&2
+        echo "pre-push: check that commit out and push again, or push without TNI_CI=full." >&2
         exit 1
       fi ;;
   esac
 done
 
 passed=$(cat "$(git rev-parse --git-path tni-ci-passed)" 2>/dev/null)
-if [ -z "$dirty" ] && { [ "$passed" = "$head full" ] || { [ "$mode" != full ] && [ "$passed" = "$head quick" ]; }; }; then
-  echo "pre-push: npm run ci already passed on $head (${passed#* }); not running it again."
+if [ -z "$dirty" ] && [ "$passed" = "$head full" ]; then
+  echo "pre-push: npm run ci already passed on $head; not running it again."
   exit 0
 fi
 
 if [ -n "$dirty" ]; then
   echo "pre-push: tracked files have uncommitted changes; the checks run on them too, not only on what is pushed."
 fi
-if [ "$mode" = full ]; then npm run ci; else npm run ci -- --quick; fi
+# Git's hook environment points at this repository; the tests' temporary repositories must not see it.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX
+npm run ci
