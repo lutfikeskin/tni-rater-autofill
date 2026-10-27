@@ -50,7 +50,7 @@
 import { owner, ownerDobNote } from './progressive.js';
 import { isLongHaul, otherNotes } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
-import { driverExcluded, ownerRowExcluded } from '../util.js';
+import { driverExcluded, ownerRowExcluded, ownerRowUnclearNote } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -185,13 +185,19 @@ const licenseYearNote = (r, a) => (birthYear(r, a) == null
 // in client details). AmWINS asks nothing about excluding a driver, so TNI (2026-10-20) writes
 // "(Excluded)" after their license number. With no number to write it after, the box is the agent's.
 // The owner's row when the intake says the owner doesn't drive counts too (TNI, 2026-10-26: answer
-// to PR question, R1: util.js driverExcluded).
+// to PR question, R1: util.js driverExcluded): of several rows the owner's name matches (a Sr and a
+// Jr), only the one with exactly the owner's full name; with none, each one's box is the agent's,
+// never the AI's, with the reason (TNI, 2026-10-26: answer to PR question, T2: ownerRowUnclearNote).
 const excludedDriver = (r, a) => driverExcluded(r, driverOf(r, a));
+const licenseUnclearNote = (r, a) => {
+  const why = ownerRowUnclearNote(r, driverOf(r, a));
+  return why ? `${why} Type their license number yourself, with "(Excluded)" after it if they are.` : null;
+};
 const licenseNumber = (r, a) => {
   const number = driverOf(r, a)?.licenseNumber ?? null;
   return number && excludedDriver(r, a) ? `${number} (Excluded)` : number;
 };
-const licenseNumberNote = (r, a) => (excludedDriver(r, a) && !driverOf(r, a)?.licenseNumber
+const licenseNumberNote = (r, a) => licenseUnclearNote(r, a) ?? (excludedDriver(r, a) && !driverOf(r, a)?.licenseNumber
   ? `${ownerRowExcluded(r, driverOf(r, a)) ? 'The intake says the owner doesn\'t drive, so this driver, the owner, is excluded (TNI),' : 'The intake marks this driver as excluded'} and gives no license number: type their license number yourself, then "(Excluded)" after it.` : null);
 // Underwriting questions TNI answers No (both sections), by the field names AmWINS uses.
 // The second section's vehicle, MVR and conviction questions have their own rules below.
@@ -420,7 +426,7 @@ export const amwins = {
     { selector: dataId('dateOfBirth', DRIVER), path: 'drivers[].dob' },
     // An excluded driver's number ends in "(Excluded)" (TNI 2026-10-20, excludedDriver above).
     { selector: dataId('licenseNumber', DRIVER), path: 'drivers[].licenseNumber',
-      source: (r, a) => (excludedDriver(r, a) ? 'derived' : 'intake'), value: licenseNumber, note: licenseNumberNote },
+      source: (r, a) => (licenseUnclearNote(r, a) ? 'fact' : excludedDriver(r, a) ? 'derived' : 'intake'), value: licenseNumber, note: licenseNumberNote },
     { selector: dataId('licenseState', DRIVER), path: 'drivers[].licenseState' },
     // Gender and the year first licensed aren't on the intake: TNI's standards (2026-10-10; the
     // agent's from 2026-10-09): MALE unless the agent set the driver's gender, and birth year + 17

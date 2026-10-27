@@ -30,7 +30,9 @@ const MARKER = { vehicles: 'vehicleEntered', trailers: 'trailerEntered', drivers
 // unit, and `done` the quote's done actions: the unit to add next, `adding` ({ list, index }), by the
 // intake's order (vehicles, then trailers), and the `marks` to add to the done actions
 // (`<unit>Entered:<i>`, as Progressive's are). A unit is on the quote once a fill answered a form for
-// it or the list shows it; the driver GEICO lists itself (listedDriver) is never added. Nothing is
+// it or the list shows it; the driver GEICO lists itself (listedDriver) is never added, and the one
+// its quote leaves out (omittedDriver: the owner's row when the intake says the owner doesn't drive,
+// TNI 2026-10-26, T1) is no unit of the list at all, neither added nor counted. Nothing is
 // added while the list holds as many units as the intake or more. A unit the list can't be read for
 // (no VIN, a name another driver's holds), while the list has a row no intake unit is known to be
 // on, may be that row (added by hand): it is taken as on the quote, left to the agent, never added
@@ -48,11 +50,15 @@ export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = 
   const spec = specs[at];
   const shown = seen.lists?.[at] ?? null;
   const listed = spec.lists.includes('drivers') ? carrier.listedDriver?.(record) ?? -1 : -1;
+  const omitted = spec.lists.includes('drivers') ? carrier.omittedDriver?.(record) ?? -1 : -1;
   const bound = (list, i) => Object.values(unitForms[list] ?? {}).includes(i);
   const units = [];
   let offset = 0;
   for (const list of spec.lists) {
-    (record[list] ?? []).forEach((_, i) => units.push({ list, i, item: spec.items[offset + i], shown: !!shown?.shown?.[offset + i] }));
+    (record[list] ?? []).forEach((_, i) => {
+      if (list === 'drivers' && i === omitted) return;
+      units.push({ list, i, item: spec.items[offset + i], shown: !!shown?.shown?.[offset + i] });
+    });
     offset += record[list]?.length ?? 0;
   }
   const mark = (u) => `${MARKER[u.list]}:${u.i}`;

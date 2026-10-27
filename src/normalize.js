@@ -5,7 +5,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, noPriorInsurance, ownerIsDriver, set, companyName } from './util.js';
+import { STATES, noPriorInsurance, ownerIsDriver, ownerRow, set, companyName } from './util.js';
 
 /** @import { IntakeResult } from '../types.js' */
 
@@ -220,6 +220,11 @@ export const nonTruckingAnswer = (v) => /^\s*non[\s-]*trucking\s*$/i.test(String
 // No driver: nothing.
 export const cdlStandard = (driver) => !!driver && typeof driver.cdl !== 'boolean' && driver.cdlYear == null;
 export const cdlAnswer = (driver) => (cdlStandard(driver) ? false : typeof driver?.cdl === 'boolean' ? driver.cdl : null);
+// What GEICO gets for an excluded driver (the Intake step's checks): GEICO asks nothing about
+// excluding one, so the driver is filled with a warning (TNI, 2026-10-20); the owner's row when the
+// intake says the owner doesn't drive isn't added at all (TNI, 2026-10-26: answer to PR question, T1).
+const GEICO_EXCLUDED = 'GEICO asks nothing about it: the driver\'s answers are filled with a warning, and the exclusion is yours.';
+const GEICO_OWNER_LEFT_OUT = 'GEICO\'s quote leaves the owner out: the fill doesn\'t add this driver (TNI).';
 export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
 // What the filler does on an NTL quote, carrier by carrier (the NTL items below and Luna's).
 export const NTL_FILLS = 'On Progressive the filler adds it on Rates, answers the permanent lease question Yes, puts the limit in the NTL limit and leaves Bodily Injury and Property Damage Liability Not selected, then does the rest of Rates through Print, Email, Fax; with cargo or general liability too, the rest of Rates is yours. On GEICO it picks Non-Trucking Liability, answers "Yes, under permanent lease" and puts the limit in the NTL list. On AmWINS it is written in the disclosure details on Underwriting.';
@@ -543,7 +548,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       // has none, and the license number gets "(Excluded)" after it. GEICO's Add Driver form asks
       // nothing about it (the driver is filled, with a warning).
       const amwins = d.licenseNumber ? 'their license number gets "(Excluded)" after it' : 'type "(Excluded)" after the license number you enter';
-      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}": the driver is to be excluded, and ${d.licenseNumber ? `the license number is ${d.licenseNumber}` : 'it has no license number'}. Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. GEICO asks nothing about it: the driver's answers are filled with a warning, and the exclusion is yours. An exclusion usually needs the insured's signed form.`);
+      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}": the driver is to be excluded, and ${d.licenseNumber ? `the license number is ${d.licenseNumber}` : 'it has no license number'}. Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. ${GEICO_EXCLUDED} An exclusion usually needs the insured's signed form.`);
     }
 
     if (name.suffix) {
@@ -573,17 +578,31 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     }
   }
   // TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives;
-  // the intake's No makes the owner's driver row (every row the owner's name matches, ownerIsDriver)
-  // an excluded driver on every carrier, as an "Excluded" mark does (util.js driverExcluded). The
-  // record keeps the row as read (`excluded` stays null), so this item tells the agent; a row marked
-  // excluded already has its own (license.excluded).
+  // the intake's No makes the owner's driver row an excluded driver on every carrier, as an "Excluded"
+  // mark does (util.js driverExcluded). The owner's row is the one the owner's name matches
+  // (ownerIsDriver), of several (a Sr and a Jr) only the one whose name is exactly the owner's full
+  // name (T2: util.js ownerRow); with none, which is the owner is the agent's (`drivers.owner-unclear`
+  // on each). GEICO's quote leaves the owner's row out (T1). The record keeps the rows as read
+  // (`excluded` stays null), so these items tell the agent; a row marked excluded already has its own
+  // (license.excluded), whose GEICO sentence then says the row is left out.
   if (a.ownerDrives === false && a.owner1) {
     const owners = record.drivers.map((d, i) => ({ d, i })).filter(({ d }) => ownerIsDriver(a.owner1, d));
-    for (const { d, i } of owners.filter(({ d }) => d.excluded !== true)) {
-      const who = [d.first, d.last].filter(Boolean).join(' ') || `Driver ${rows.drivers[i]}`;
+    const own = ownerRow(record);
+    const whoOf = (d, i) => [d.first, d.last].filter(Boolean).join(' ') || `Driver ${rows.drivers[i]}`;
+    for (const { d, i } of owners.filter(({ d }) => d === own)) {
+      if (d.excluded === true) {
+        const marked = warnings.find((w) => w.code === 'license.excluded' && w.path === `drivers[${i}].excluded`);
+        if (marked) marked.msg = marked.msg.replace(GEICO_EXCLUDED, GEICO_OWNER_LEFT_OUT);
+        continue;
+      }
       const amwins = d.licenseNumber ? 'their license number gets "(Excluded)" after it' : 'type "(Excluded)" after the license number you enter';
-      const which = owners.length > 1 ? ` The owner's name matches ${owners.length} drivers, and each is excluded: for one who isn't the owner, set Excluded driver to No.` : ' If this driver isn\'t the owner, set Excluded driver to No.';
-      check('drivers.owner-excluded', `drivers[${i}].excluded`, `${who}: "Owner drives" is No and the name matches the owner "${a.owner1}", so the driver is excluded (TNI). Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. GEICO is told the owner isn't a driver and asks nothing about exclusion: the driver's answers are filled with a warning, and the exclusion is yours. An exclusion usually needs the insured's signed form.${which}`);
+      const which = owners.length > 1 ? ` The owner's name matches ${owners.length} drivers, and only this one has exactly the owner's full name, so only this one is excluded.` : '';
+      check('drivers.owner-excluded', `drivers[${i}].excluded`, `${whoOf(d, i)}: "Owner drives" is No and the name matches the owner "${a.owner1}", so the driver is excluded (TNI). Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. ${GEICO_OWNER_LEFT_OUT} An exclusion usually needs the insured's signed form.${which} If this driver isn't the owner, set Excluded driver to No.`);
+    }
+    if (!own && owners.length > 1) {
+      for (const { d, i } of owners.filter(({ d }) => d.excluded !== true)) {
+        check('drivers.owner-unclear', `drivers[${i}].excluded`, `${whoOf(d, i)}: "Owner drives" is No and the name matches the owner "${a.owner1}", as ${owners.length} drivers' names do, none of them exactly, so whether this driver is the owner, and so excluded, is yours (TNI). Progressive's exclude question and AmWINS' license number are left to you; on GEICO, whose quote leaves out an owner who doesn't drive, adding the drivers is yours. If this driver is the owner, set Excluded driver to Yes; if not, to No.`);
+      }
     }
   }
 

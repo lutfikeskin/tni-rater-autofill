@@ -31,7 +31,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDrivesNote, driverExcluded } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDrivesNote, driverExcluded, nonDrivingOwnerRow, ownerRowUnclearNote } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -46,11 +46,14 @@ const explicitBoolean = (record, path) => {
 };
 
 // The business owner, matched to their driver row (for date of birth and a clean name split).
-// An intake saying the owner doesn't drive links no row, whatever the names: the name parts come
-// from the owner box alone and the date of birth stays the agent's (a driver with the owner's
-// surname is another person). The date of birth (`dob`) is the matched driver's, or the first
-// of several drivers matching the owner's name; with none it is the agent's, with a warning
-// (ownerDobNote; TNI, 2026-10-20: never another driver's).
+// An intake saying the owner doesn't drive links no row (`driver`), whatever the names: the name
+// parts come from the owner box alone (a driver with the owner's surname is another person). Its
+// date of birth then comes from the owner's own row (`dobDriver`: util.js nonDrivingOwnerRow, the
+// one row the owner's name matches, of several only the one with exactly the owner's full name;
+// TNI, 2026-10-26: answer to PR question, T3, asked of GEICO, and the same question here and on
+// AmWINS); with none it is the agent's. Otherwise the date of birth (`dob`) is the matched driver's,
+// or the first of several drivers matching the owner's name; with none it is the agent's, with a
+// warning (ownerDobNote; TNI, 2026-10-20: never another driver's).
 export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
@@ -72,7 +75,7 @@ export function owner(r) {
   const driver = fullMatches.length === 1 ? fullMatches[0] : fullMatches.length ? null : lastMatches.length === 1 ? lastMatches[0]
     : repeatedFirst ? sole : firstOnly.length === 1 ? firstOnly[0] : null;
   const first = driver?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
-  const dobDriver = driver ?? fullMatches[0] ?? lastMatches[0] ?? null;
+  const dobDriver = r.applicant.ownerDrives === false ? nonDrivingOwnerRow(r) : driver ?? fullMatches[0] ?? lastMatches[0] ?? null;
   return { driver, dob: dobDriver?.dob ?? null, dobDriver, first: first || null, middle: driver?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : driver?.last ?? full.split(/\s+/).at(-1) ?? null };
 }
 
@@ -80,8 +83,8 @@ export function owner(r) {
 export function ownerDobNote(r) {
   const o = owner(r);
   if (o.dob) return null;
-  if (r.applicant.ownerDrives === false) return 'The intake says the owner doesn\'t drive, so no driver row gives their date of birth: enter it yourself.';
   if (o.dobDriver) return 'The owner\'s driver row has no date of birth: enter it yourself.';
+  if (r.applicant.ownerDrives === false) return 'The intake says the owner doesn\'t drive, and no one driver row is theirs (by the owner\'s name; of several, the one with exactly the owner\'s full name), so none gives their date of birth: enter it yourself.';
   return `No driver matches the owner "${r.applicant.owner1 ?? ''}": check the names and enter the owner's date of birth yourself.`;
 }
 
@@ -162,8 +165,11 @@ const trailerEquipmentSource = (r) => (r.trailerInfo?.equipTrailer == null ? 'st
 // A driver the intake marks excluded ("Excluded" in their license-number box, normalize.js; or set
 // in client details). TNI (2026-10-20): the exclude question is Yes for them. The owner's row when
 // the intake says the owner doesn't drive counts too (TNI, 2026-10-26: answer to PR question, R1:
-// util.js driverExcluded).
+// util.js driverExcluded): of several rows the owner's name matches (a Sr and a Jr), only the one
+// with exactly the owner's full name, and with none each is the agent's, never the AI's, with the
+// reason (TNI, 2026-10-26: answer to PR question, T2: util.js ownerRowUnclearNote).
 const excludedDriver = (r, a) => driverExcluded(r, r.drivers?.[a.drivers ?? 0]);
+const excludedUnclearNote = (r, a) => ownerRowUnclearNote(r, r.drivers?.[a.drivers ?? 0]);
 
 // TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
 // the driver took a course (or the Additional Notes box does); then it's the agent's.
@@ -850,8 +856,9 @@ export const progressive = {
       // No: the driver is listed on the intake to be covered. Yes for a driver the intake marks
       // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver), and for the
       // owner's row when the intake says the owner doesn't drive (TNI, 2026-10-26: answer to PR
-      // question, R1).
-      { q: '28C1', source: 'derived', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (No unless the intake marks them excluded)', kind: 'bool', value: excludedDriver },
+      // question, R1); of a Sr and a Jr neither exactly the owner's full name, the agent's (T2).
+      { q: '28C1', source: (r, a) => (excludedUnclearNote(r, a) ? 'fact' : 'derived'), field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (No unless the intake marks them excluded)', kind: 'bool',
+        value: excludedDriver, note: excludedUnclearNote },
       // The claims box's Yes or No; neither: TNI's standard No unless the notes mention one (hasClaims, 2026-10-19).
       { q: '28F5', source: hasClaimsSource, field: 'DriverInput.AnyAccidentsViolationsPastExpYears', label: '^has this driver had any accidents claims or violations in the past', path: 'claims.hasClaims', name: 'Accidents / claims / violations (standard: No unless the intake says otherwise)', kind: 'bool', value: hasClaims, note: hasClaimsNote },
     ]),

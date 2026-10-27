@@ -51,7 +51,7 @@
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDrivesNote, driverExcluded, ownerRowExcluded } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDrivesNote, driverExcluded, nonDrivingOwnerRow, ownerRowsUnclear, ownerRowUnclearNote } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -251,10 +251,18 @@ const ownerName = (r) => [ownerFirst(r), ownerLast(r)].filter(Boolean).join(' ')
 // The business name: the company's, else the owner's (a sole proprietor; a company box saying
 // there is none, util.js companyName), as Progressive and AmWINS.
 const businessName = (r) => companyName(r.applicant.name) || ownerName(r);
-// An owner fact from their driver row: none when the intake says the owner doesn't drive or names
-// no driver as the owner (the agent's, never another driver's).
-const ownerRowNote = (what) => (r) => (owner(r).driver ? null
-  : r.applicant.ownerDrives === false ? `The intake says the owner doesn't drive, so their ${what} isn't on it: answer it yourself.`
+// The owner's own driver row, for their details (marital status; license state and CDL on the
+// owner's form): the row matched to the owner (owner()), or, when the intake says the owner doesn't
+// drive, the owner's row (util.js nonDrivingOwnerRow: the one row the owner's name matches, of several
+// only the one whose name is exactly the owner's full name). TNI, 2026-10-26 (answer to PR question,
+// T3): "GEICO's owner details (date of birth, marital status, license state, CDL) come from the
+// matching driver row" (the date of birth through owner().dob). Each keeps the source its rule gives
+// a driving owner's: the row's value, as derived. null: the agent's.
+const ownerDetails = (r) => (r.applicant.ownerDrives === false ? nonDrivingOwnerRow(r) : owner(r).driver);
+// An owner fact from their driver row: none when the intake names no driver as the owner (the
+// agent's, never another driver's).
+const ownerRowNote = (what) => (r) => (ownerDetails(r) ? null
+  : r.applicant.ownerDrives === false ? `The intake says the owner doesn't drive, and no one driver row is theirs (by the owner's name; of several, the one with exactly the owner's full name), so their ${what} isn't known: answer it yourself.`
     : `The owner isn't matched to a driver on the intake, so their ${what} isn't known: answer it yourself.`);
 const DATE = /^\d{2}\/\d{2}\/\d{4}$/;
 // The owner's date of birth (owner().dob: the matched driver's, or the first of several drivers
@@ -500,16 +508,35 @@ const listedDriver = (r) => (r?.applicant && ownerDrives(r) === true && owner(r)
 // a Jr) leaves whether the owner drives to the agent (ownerDrives null), so the owner's rows are
 // unknown and adding the drivers is the agent's too, as for an unmatched owner (TNI, 2026-10-26:
 // answer to PR question). With the intake's No that can't happen: the No decides, and the owner's
-// rows are excluded drivers (util.js driverExcluded; TNI, 2026-10-26: answer to PR question, R1),
-// added with the other drivers and warned on their form (excludedWarn), as for any driver the intake
-// marks excluded.
-const driversKnown = (r) => ownerDrives(r) === false || listedDriver(r) >= 0;
+// row is left off GEICO's quote (omittedDriver, below: TNI, 2026-10-26, answers to PR questions,
+// R1, T1) while the other drivers are added. A Sr and a Jr with the No, neither exactly the owner's
+// full name (util.js ownerRowsUnclear: which is the owner is the agent's, T2): GEICO's drivers are
+// unknown again, and adding them is the agent's, so the owner is never added, nor a driver twice.
+const driversKnown = (r) => (ownerDrives(r) === false && !ownerRowsUnclear(r)) || listedDriver(r) >= 0;
+// The intake driver GEICO's quote leaves out: the owner's row when the intake says the owner doesn't
+// drive (util.js nonDrivingOwnerRow: the one row the owner's name matches, of several only the one
+// whose name is exactly the owner's full name). TNI, 2026-10-26 (answer to PR question, T1): GEICO
+// "does not add the owner's row at all; only the other intake drivers are added". Before, R1 had it
+// added with the other drivers and the excluded-driver warning, but GEICO asks nothing about
+// excluding a driver, so it was on the quote as one. The fill never clicks "+" for it (addUnit), nor
+// fills an Add Driver form for it (ownerOmittedNote); the panel never picks it for a form (sidepanel
+// pickUnitForm) and GEICO's driver list is complete without it (src/units.js unitToAdd). Only the
+// intake's No: an owner whose row the intake marks excluded over a blank box or a Yes is still added,
+// with the warning (the 2026-10-20 rule, excludedWarn). -1 for none.
+/** @param {any} r @returns {number} */
+const omittedDriver = (r) => {
+  const d = nonDrivingOwnerRow(r);
+  return d ? r.drivers.indexOf(d) : -1;
+};
 // An Add Driver form while the panel's driver is the owner, whom GEICO already lists as a driver
 // (Business & Owner Info: the owner drives): filling it would add the owner twice. The panel's
 // picker starts on the first driver, often the owner.
 const ownerListedNote = (r, a) => (ownerDrives(r) && !!owner(r).driver && owner(r).driver === driverOf(r, a)
   ? 'The panel\'s driver is the owner, whom GEICO already lists: pick the driver this form is for in the panel, then Fill again.' : null);
-const driverNote = (more) => (r, a) => ownerListedNote(r, a) ?? (more ? more(r, a) : null);
+// The same while the panel's driver is the owner's row GEICO's quote leaves out (omittedDriver, T1).
+const ownerOmittedNote = (r, a) => (!!driverOf(r, a) && driverOf(r, a) === nonDrivingOwnerRow(r)
+  ? 'The panel\'s driver is the owner, who doesn\'t drive (the intake), and GEICO\'s quote leaves them out (TNI): pick the driver this form is for in the panel, then Fill again.' : null);
+const driverNote = (more) => (r, a) => ownerListedNote(r, a) ?? ownerOmittedNote(r, a) ?? (more ? more(r, a) : null);
 // "What is their relationship to the business?": Owner for a driver who is one of the intake's
 // owners; any other driver is TNI's standard Employee (2026-10-21).
 const isOwner = (r, d) => !!d && (ownerIsDriver(r.applicant.owner1, d) || ownerIsDriver(r.applicant.owner2, d));
@@ -535,11 +562,17 @@ const sr22Note = (value) => (r) => (r.operations.needSr22 == null ? (sr22Mention
       : 'The intake says an SR-22 is needed but not for which of the drivers GEICO lists (the owner and the intake\'s driver): answer it for this driver yourself.');
 // A driver to be excluded (util.js driverExcluded): GEICO asks nothing about it, so the form is
 // filled with a warning (TNI, 2026-10-20). The owner's row when the intake says the owner doesn't
-// drive counts too (TNI, 2026-10-26: answer to PR question, R1); GEICO doesn't list that owner
-// (ownerDrives No, listedDriver), and both owner-driver questions answer No.
-const excludedWarn = (r, a) => (!driverExcluded(r, driverOf(r, a)) ? null
-  : ownerRowExcluded(r, driverOf(r, a)) ? 'The intake says the owner doesn\'t drive, so this driver, the owner, is excluded (TNI), and GEICO asks nothing about it here: handle the exclusion yourself.'
-    : 'The intake marks this driver to be excluded, and GEICO asks nothing about it here: handle the exclusion yourself.');
+// drive isn't added at all (omittedDriver: TNI, 2026-10-26, answer to PR question, T1; before, R1
+// warned it here): its form carries ownerOmittedNote instead. A Sr and a Jr with the intake's No,
+// neither exactly the owner's full name: which is the owner is the agent's (T2), so each one's form
+// says so.
+const excludedWarn = (r, a) => {
+  const d = driverOf(r, a);
+  if (!d || d === nonDrivingOwnerRow(r)) return null;
+  const unclear = ownerRowUnclearNote(r, d, 'if this driver is the owner, leave them off GEICO\'s quote (TNI: an owner who doesn\'t drive isn\'t added); otherwise they are a driver like any other.');
+  if (unclear) return unclear;
+  return driverExcluded(r, d) ? 'The intake marks this driver to be excluded, and GEICO asks nothing about it here: handle the exclusion yourself.' : null;
+};
 const dobNote = (r, a) => (driverOf(r, a)?.dob && !DATE.test(driverOf(r, a).dob) ? 'This driver\'s date of birth on the intake isn\'t a valid date: enter it yourself.' : null);
 
 // --- Additional business info ------------------------------------------------------------------
@@ -749,7 +782,9 @@ const UNIT = { vehicles: ['vehicle', 'Vehicle'], trailers: ['trailer', 'Trailer'
 const addUnit = (list, listSelector, how) => ({
   id: `add${UNIT[list][1]}`, steps: [list === 'drivers' ? DRIVERS : VEHICLES], token: 'addIcon', within: `${listSelector} > li.add-state`,
   loads: true, verify: 'revealed', scope: UNIT[list][0], label: list === 'drivers' ? 'Add Driver' : 'Add Vehicle or Trailer',
-  when: (r, a) => adds(list)(r, a) && (list !== 'drivers' || driversKnown(r)),
+  // A driver only while GEICO's drivers are known, and never the owner's row its quote leaves out
+  // (omittedDriver: TNI, 2026-10-26, answer to PR question, T1), whatever the panel picked.
+  when: (r, a) => adds(list)(r, a) && (list !== 'drivers' || (driversKnown(r) && a.adding.index !== omittedDriver(r))),
   doneWhen: (r, a) => [`${UNIT[list][0]}Entered:${a[list] ?? 0}`],
   unfinished: (r, a) => `The "+" was clicked for ${UNIT[list][0]} ${(a[list] ?? 0) + 1} of the intake, but no form was filled for it and it isn't on the list: add it yourself (${how}), then fill.`,
 });
@@ -810,6 +845,10 @@ export const geico = {
   // Add Driver form is never theirs, nor is Add Driver clicked for them (sidepanel pickUnitForm,
   // pickUnitToAdd). -1 for none.
   listedDriver,
+  // The intake driver GEICO's quote leaves out (the owner's row when the intake says the owner
+  // doesn't drive: TNI, 2026-10-26, answer to PR question, T1): never added, an Add Driver form never
+  // theirs, and not a row of the driver list (sidepanel pickUnitForm, pickUnitToAdd). -1 for none.
+  omittedDriver,
   // The lists of the units on the quote, by step (sidepanel pickUnitToAdd): which intake units each
   // shows (a VIN, a driver's name), how many it lists, and so the next unit to add.
   unitLists: [
@@ -1018,7 +1057,7 @@ export const geico = {
       { field: 'GiveEffectiveDate', name: 'Coverage start date (as GEICO has it)', ignore: true,
         emptyNote: 'GEICO left the coverage start date empty, and it isn\'t on the intake: pick it yourself.' },
       { field: 'GiveMaritalStatus', ask: 'Marital Status', name: 'Owner marital status', kind: 'choice', source: 'derived', clientFact: true,
-        value: (r) => owner(r).driver?.maritalStatus ?? null, note: ownerRowNote('marital status') },
+        value: (r) => ownerDetails(r)?.maritalStatus ?? null, note: ownerRowNote('marital status') },
       { field: 'GivePhoneNumber', ask: 'Please confirm the owner\'s phone number', path: 'applicant.phone', name: 'Owner phone (the intake\'s phone)', note: phoneNote },
       { field: 'GiveBusinessPhoneNumber', ask: 'Please confirm the business phone number', path: 'applicant.phone', name: 'Business phone', note: phoneNote },
       { field: 'GiveEmail', ask: 'What\'s the customer\'s email address?', path: 'applicant.email', name: 'Customer email' },
@@ -1102,12 +1141,12 @@ export const geico = {
     // The driver GEICO adds for an owner who drives (named after the owner): the owner's answers,
     // from their driver row, never the panel's active driver.
     ...on(DRIVERS, { unlessShown: OWNER_DRIVER_FORM }, [
-      { field: 'GiveDriverLicenseState', q: 'GiveDriverLicenseState.owner', name: 'Owner\'s license state', kind: 'state', source: 'derived', value: (r) => owner(r).driver?.licenseState ?? null, note: ownerRowNote('license state') },
+      { field: 'GiveDriverLicenseState', q: 'GiveDriverLicenseState.owner', name: 'Owner\'s license state', kind: 'state', source: 'derived', value: (r) => ownerDetails(r)?.licenseState ?? null, note: ownerRowNote('license state') },
       { field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', ask: 'We just need a little more info about this driver. Do they need a Certificate of Financial Responsibility or SR-22?',
         path: 'operations.needSr22', name: 'SR-22 (the owner; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Owner, note: sr22Note(sr22Owner) },
       // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard; cdlAnswer).
       { field: 'CommercialDriverLicense', q: 'CommercialDriverLicense.owner', ask: 'Does this driver have a CDL?', name: 'Owner has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
-        source: (r) => (cdlStandard(owner(r).driver) ? 'standard' : 'derived'), value: (r) => cdlAnswer(owner(r).driver), note: ownerRowNote('CDL answer') },
+        source: (r) => (cdlStandard(ownerDetails(r)) ? 'standard' : 'derived'), value: (r) => cdlAnswer(ownerDetails(r)), note: ownerRowNote('CDL answer') },
     ]),
     // Add Driver: the panel's active driver.
     ...on(DRIVERS, { whenShown: ADD_DRIVER_FORM }, [

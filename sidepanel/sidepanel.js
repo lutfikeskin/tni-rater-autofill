@@ -3656,8 +3656,9 @@ async function pickListItem(carrier, page, ctx = { tabId: state.tab?.id, intake:
 // Driver), a new, blank form while the panel's unit was already filled on another one is the next
 // intake unit no form was filled for (FL live run, 2026-10-21: the second vehicle's and the second
 // driver's forms waited for a pick). The driver the carrier lists itself (`listedDriver`: GEICO's
-// owner who drives) is never the one an Add Driver form is for. A form with answers (a saved unit
-// opened again) or with no unit left keeps the pagekit hold.
+// owner who drives) is never the one an Add Driver form is for, nor the one its quote leaves out
+// (`omittedDriver`: GEICO's owner who doesn't drive, TNI 2026-10-26, T1). A form with answers (a
+// saved unit opened again) or with no unit left keeps the pagekit hold.
 async function pickUnitForm(carrier, ctx) {
   if (!formScoped(carrier) || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   let forms = null;
@@ -3672,8 +3673,9 @@ async function pickUnitForm(carrier, ctx) {
     const bound = state.unitForms?.[list] ?? {};
     if (!blank || Object.hasOwn(bound, id)) continue;
     const listed = list === 'drivers' ? carrier.listedDriver?.(record) ?? -1 : -1;
+    const omitted = list === 'drivers' ? carrier.omittedDriver?.(record) ?? -1 : -1;
     const taken = new Set(Object.values(bound));
-    const free = (i) => !taken.has(i) && i !== listed;
+    const free = (i) => !taken.has(i) && i !== listed && i !== omitted;
     const active = state.active[list] ?? 0;
     if (free(active)) continue;
     const next = (record[list] ?? []).findIndex((_, i) => free(i));

@@ -64,6 +64,31 @@ test('a unit list is complete only on screen, with as many rows as the intake an
   assert.equal(unitToAdd(geico, drivers, DRV, { forms: [], lists: [null, { rows: 1, shown: [true, false] }] }).complete, false);
 });
 
+// TNI, 2026-10-26 (answer to PR question, T1): with the intake's "owner drives" No, GEICO's quote
+// leaves the owner's row out. It is never the driver added next, and the list is complete without it.
+test('owner drives No: the owner\'s row is never added, and GEICO\'s driver list is complete without it', () => {
+  const record = (ownerDrives, drivers = [{ first: 'Pat', last: 'Owner' }, { first: 'Casey', last: 'Example' }]) =>
+    ({ applicant: { ownerDrives, owner1: 'Pat Owner' }, vehicles: [], trailers: [], drivers });
+  const list = (rows, shown) => ({ forms: [], lists: [null, { rows, shown }] });
+  const no = record(false);
+  // The list empty: Casey is added next, never the owner.
+  assert.deepEqual(unitToAdd(geico, no, DRV, list(0, [false, false])).adding, { list: 'drivers', index: 1 });
+  // Casey on the list: nothing left to add, and the list holds every driver GEICO's quote has.
+  let out = unitToAdd(geico, no, DRV, list(1, [false, true]));
+  assert.deepEqual([out.adding, out.complete, out.read], [null, true, { rows: 1, units: 1, shown: 1, saved: 0 }]);
+  // A row that isn't Casey (the agent added the owner by hand): not complete, and nothing added.
+  out = unitToAdd(geico, no, DRV, list(1, [true, false]));
+  assert.deepEqual([out.adding, out.complete], [null, false]);
+  // The owner listed second: the first driver is added.
+  assert.deepEqual(unitToAdd(geico, record(false, [{ first: 'Casey', last: 'Example' }, { first: 'Pat', last: 'Owner' }]), DRV, list(0, [false, false])).adding, { list: 'drivers', index: 0 });
+  // Counterexamples: a blank box or the intake's Yes, GEICO lists the owner itself, as a row of its own.
+  for (const box of [null, true]) {
+    assert.deepEqual(unitToAdd(geico, record(box), DRV, list(1, [true, false])).adding, { list: 'drivers', index: 1 }, String(box));
+    assert.equal(unitToAdd(geico, record(box), DRV, list(1, [false, true])).complete, false, String(box));
+    assert.equal(unitToAdd(geico, record(box), DRV, list(2, [true, true])).complete, true, String(box));
+  }
+});
+
 test('a carrier\'s Continue for one fill: its list button only once the list is complete', () => {
   assert.equal(advanceFor({ id: 'none' }), null);
   const amwins = { advance: { text: '^save & continue$' } };

@@ -6663,7 +6663,7 @@ test('GEICO Quote & Coverages: once filled, an automatic fill runs there only fo
 // FL live run, 2026-10-21: the second vehicle's and second driver's Add forms waited for a pick, and
 // the panel's driver was the owner GEICO already lists.
 test('a new, blank GEICO unit form is the next intake unit no form was filled for; never the owner GEICO lists', async () => {
-  const run = async ({ forms, active = {}, unitForms = {}, record, listedDriver = () => -1 }) => {
+  const run = async ({ forms, active = {}, unitForms = {}, record, listedDriver = () => -1, omittedDriver = () => -1 }) => {
     const intake = { record };
     const state = { tab: { id: 4 }, intake, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0, ...active }, unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms } };
     const calls = { saved: 0, rendered: 0 };
@@ -6674,7 +6674,7 @@ test('a new, blank GEICO unit form is the next intake unit no form was filled fo
       renderPickers: () => { calls.rendered++; },
     };
     vm.runInNewContext(['formScoped', 'pickUnitForm'].map(extractFunction).join('\n'), context);
-    await context.pickUnitForm({ ...geico, listedDriver }, { tabId: 4, intake, revision: 1 });
+    await context.pickUnitForm({ ...geico, listedDriver, omittedDriver }, { tabId: 4, intake, revision: 1 });
     return { active: { ...state.active }, ...calls };
   };
   const record = { vehicles: [{}, {}, {}], drivers: [{}, {}, {}], trailers: [] };
@@ -6690,6 +6690,13 @@ test('a new, blank GEICO unit form is the next intake unit no form was filled fo
 
   // Owner listed and driver 2 bound: the next form is driver 3.
   out = await run({ forms: [{ list: 'drivers', id: 'E', blank: true }], unitForms: { drivers: { D: 1 } }, active: { drivers: 1 }, record, listedDriver: () => 0 });
+  assert.equal(out.active.drivers, 2);
+
+  // The owner who doesn't drive, whose row GEICO's quote leaves out (TNI, 2026-10-26: answer to PR
+  // question, T1): an Add Driver form is never theirs either.
+  out = await run({ forms: [{ list: 'drivers', id: 'D', blank: true }], record, omittedDriver: () => 0 });
+  assert.equal(out.active.drivers, 1);
+  out = await run({ forms: [{ list: 'drivers', id: 'E', blank: true }], unitForms: { drivers: { D: 0 } }, record, omittedDriver: () => 1 });
   assert.equal(out.active.drivers, 2);
 
   // An answered form (a saved unit opened again), a form already bound, or a free active unit: no change.

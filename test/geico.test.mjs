@@ -571,13 +571,17 @@ test('the owner: from their driver row or the owner box, never the first driver'
   const p = plan(r);
   assert.deepEqual(['Owner first name', 'Owner last name', 'Owner date of birth', 'Owner marital status'].map((n) => one(p, n, BOI).value), ['Amina', 'Kone', '01/02/1980', 'Married']);
   assert.deepEqual(['Owner first name', 'Owner date of birth'].map((n) => one(p, n, VEH).value), ['Amina', '01/02/1980'], 'and again with the SSN');
-  // The owner doesn't drive: the names from the owner box (a lone middle initial left out), the
-  // rest the agent's.
-  const box = plan(with_({ 'applicant.owner1': 'Amina K. Kone', 'applicant.ownerDrives': false }));
+  // The owner doesn't drive: the names from the owner box (a lone middle initial left out); the date
+  // of birth and marital status from the owner's driver row (TNI, 2026-10-26: answer to PR question,
+  // T3), and the agent's when no row is theirs.
+  // (The row as the intake reads it: `excluded` null. This file's intake() has the agent's No.)
+  const box = plan(with_({ 'applicant.owner1': 'Amina K. Kone', 'applicant.ownerDrives': false, 'drivers.0.excluded': null }));
   assert.deepEqual([one(box, 'Owner first name', BOI).value, one(box, 'Owner last name', BOI).value], ['Amina', 'Kone']);
+  assert.deepEqual([one(box, 'Owner date of birth', BOI).value, one(box, 'Owner marital status', BOI).value], ['01/02/1980', 'Married']);
+  const noRow = plan(with_({ 'applicant.owner1': 'Amina K. Kone', 'applicant.ownerDrives': false, drivers: [CASEY] }));
   for (const name of ['Owner date of birth', 'Owner marital status']) {
-    agents(one(box, name, BOI));
-    assert.equal(one(box, name, BOI).manualOnly, true);
+    agents(one(noRow, name, BOI));
+    assert.equal(one(noRow, name, BOI).manualOnly, true);
   }
   assert.equal(value(with_({ 'applicant.owner1': 'Mary Ann Kone', 'applicant.ownerDrives': false }), 'Owner first name', BOI), 'Mary Ann');
   agents(one(plan(with_({ 'applicant.owner1': 'Bartholomew-Alexander Kone', 'applicant.ownerDrives': false })), 'Owner first name', BOI));
@@ -691,18 +695,19 @@ test('owner drives: the owner\'s name on two driver rows, only one excluded, is 
 
 // TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives; if
 // the owner's row is marked Excluded, or the answer is No, the owner is excluded. GEICO asks nothing
-// about exclusion: the owner's row carries the excluded-driver warning on its Add Driver form, as an
-// "Excluded" mark does, and GEICO doesn't list the owner as a driver.
-test('owner drives No: the owner\'s driver row is an excluded driver (warned on Add Driver), never listed by GEICO; other drivers unchanged', () => {
+// about exclusion, and doesn't list the owner as a driver. Since T1 (TNI, 2026-10-26: answer to PR
+// question) the owner's row isn't on GEICO's quote at all: no Add Driver form is filled for it (the
+// test below); before, it carried the excluded-driver warning.
+test('owner drives No: the owner\'s driver row is left off GEICO\'s quote (T1), never listed by GEICO; other drivers unchanged', () => {
   const two = (changes = {}) => with_(changes, with_({ drivers: [{ ...intake().drivers[0], excluded: null }, { ...CASEY, excluded: null }] }));
   const firstName = (r, drivers) => one(plan(r, { drivers }), 'Driver first name', DRV);
   const no = two({ 'applicant.ownerDrives': false });
-  // GEICO isn't told the owner drives, on Business & Owner Info or on the owner's Add Driver form.
-  for (const s of [one(plan(no), OWNER_DRIVES, BOI), one(plan(no, { drivers: 0 }), OWNER_DRIVES_ADD, DRV)]) assert.deepEqual([s.value, s.source, s.note, s.warn], [false, 'intake', null, null]);
+  // GEICO isn't told the owner drives, on Business & Owner Info or on another driver's Add Driver form.
+  for (const s of [one(plan(no), OWNER_DRIVES, BOI), one(plan(no, { drivers: 1 }), OWNER_DRIVES_ADD, DRV)]) assert.deepEqual([s.value, s.source, s.note, s.warn], [false, 'intake', null, null]);
   assert.equal(geico.listedDriver(no), -1);
-  // The owner's Add Driver form: the excluded-driver warning, saying why; the other driver's: none.
-  assert.match(firstName(no, 0).warn, /owner doesn't drive.*excluded.*GEICO asks nothing about it here: handle the exclusion yourself/);
-  assert.equal(firstName(no, 0).note, null, 'not the "GEICO already lists" note: GEICO doesn\'t list the owner');
+  // The owner's row: no Add Driver form is filled for it (T1), so no exclusion warning either.
+  assert.deepEqual([firstName(no, 0).value, firstName(no, 0).warn], [null, null]);
+  assert.match(firstName(no, 0).note, /owner, who doesn't drive/, 'not the "GEICO already lists" note: GEICO doesn\'t list the owner');
   assert.equal(firstName(no, 1).warn, null);
   assert.equal(no.drivers[0].excluded, null, 'the record keeps the row as read');
   // Counterexamples: a blank box or the intake's Yes, the owner's row unmarked: GEICO lists the owner,
@@ -718,16 +723,110 @@ test('owner drives No: the owner\'s driver row is an excluded driver (warned on 
   assert.match(firstName(two({ 'applicant.ownerDrives': false, 'drivers.1.excluded': true }), 1).warn, /^The intake marks this driver to be excluded/);
   // The owner's name on two rows (a Sr and a Jr), one marked excluded: with the intake's No the No
   // decides, so there is no mixed case. Both owner-driver questions are the intake's No without the
-  // mixed-rows note, every row the owner's name matches carries the warning, and the other driver none.
-  for (const marked of [0, 1]) {
+  // mixed-rows note. Since T2 only the row with exactly the owner's full name (here the first) is the
+  // owner's, left off the quote (T1); the Jr is excluded only by their own mark, the other driver never.
+  for (const [marked, warned] of [[0, [false, false, false]], [1, [false, true, false]]]) {
     const senior = { ...intake().drivers[0], excluded: null };
     const family = with_({ 'applicant.ownerDrives': false, drivers: [senior, { ...senior, suffix: 'Jr', dob: '03/04/2004' }, { ...CASEY, excluded: null }] });
     family.drivers[marked].excluded = true;
     for (const s of [one(plan(family), OWNER_DRIVES, BOI), one(plan(family, { drivers: 1 }), OWNER_DRIVES_ADD, DRV)]) {
       assert.deepEqual([s.value, s.source, s.manualOnly, s.note], [false, 'intake', false, null], `row ${marked} marked`);
     }
-    assert.equal(geico.listedDriver(family), -1);
-    assert.deepEqual([0, 1, 2].map((i) => /excluded/.test(firstName(family, i).warn ?? '')), [true, true, false], `row ${marked} marked`);
+    assert.deepEqual([geico.listedDriver(family), geico.omittedDriver(family)], [-1, 0]);
+    assert.deepEqual([0, 1, 2].map((i) => /excluded/.test(firstName(family, i).warn ?? '')), warned, `row ${marked} marked`);
+  }
+});
+
+// TNI, 2026-10-26 (answers to PR questions, T1, T2, T3), the intake's "owner drives" No:
+// - T1: GEICO's quote leaves the owner's row out. The fill doesn't add it, nor fills an Add Driver
+//   form for it; only the other intake drivers are added. (R1 had it added, as an excluded driver
+//   GEICO asks nothing about.)
+// - T2: of several rows the owner's name matches (a Sr and a Jr), only the one whose name is exactly
+//   the owner's full name is the owner's; with none, which one is the owner is the agent's.
+// - T3: the owner's date of birth, marital status, license state and CDL come from that row.
+test('owner drives No (T1-T3): GEICO leaves the owner\'s row out and adds the others; the owner\'s details from that row; a Sr and a Jr by the exact full name', () => {
+  const owner = { ...intake().drivers[0], excluded: null };
+  const casey = { ...CASEY, excluded: null };
+  const no = (drivers, changes = {}) => with_({ 'applicant.ownerDrives': false, drivers, ...changes });
+  const added = (r, index) => buildPlan(r, geico, { vehicles: 0, drivers: index, trailers: 0, adding: { list: 'drivers', index, click: true } })
+    .filter((s) => s.kind === 'action' && !s.steps.includes(QC)).map((s) => s.action);
+  const form = (r, drivers, name = 'Driver first name') => one(plan(r, { drivers }), name, DRV);
+  const ADD_DRIVER = ['Driver first name', 'Driver last name', 'Driver date of birth', 'Driver license state', 'Driver has a CDL (TNI: No when the intake leaves it blank)',
+    'Driver\'s relationship to the business (Owner, else Employee)', OWNER_DRIVES_ADD];
+  const DETAILS = ['Owner date of birth', 'Owner marital status', 'Owner\'s license state', 'Owner has a CDL (TNI: No when the intake leaves it blank)'];
+  const details = (r) => DETAILS.map((name) => one(plan(r), name, name.startsWith('Owner\'s') || name.startsWith('Owner has') ? DRV : BOI));
+
+  // T1: the owner's row is never added, and no Add Driver form is filled for it; the other driver is.
+  const r = no([owner, casey]);
+  assert.deepEqual([geico.omittedDriver(r), geico.listedDriver(r)], [0, -1]);
+  assert.deepEqual(added(r, 1), ['addDriver:1']);
+  assert.deepEqual(added(r, 0), [], 'never the owner\'s "+"');
+  for (const name of ADD_DRIVER) {
+    agents(form(r, 0, name));
+    assert.match(form(r, 0, name).note, /owner, who doesn't drive.*GEICO's quote leaves them out.*pick the driver this form is for/, name);
+  }
+  assert.equal(form(r, 0).warn, null, 'no exclusion warning: the row isn\'t added');
+  assert.deepEqual([form(r, 1).value, form(r, 1).note, form(r, 1).warn], ['Casey', null, null]);
+  // Both owner-driver questions stay the intake's No.
+  assert.deepEqual([one(plan(r), OWNER_DRIVES, BOI).value, form(r, 1, OWNER_DRIVES_ADD).value], [false, false]);
+  // The owner listed second; and the owner's row the intake also marks excluded: left out the same way.
+  assert.deepEqual([geico.omittedDriver(no([casey, owner])), added(no([casey, owner]), 0), added(no([casey, owner]), 1)], [1, ['addDriver:0'], []]);
+  const marked = no([{ ...owner, excluded: true }, casey]);
+  assert.deepEqual([geico.omittedDriver(marked), added(marked, 0), form(marked, 0).warn], [0, [], null]);
+  // Counterexamples. A blank box or the intake's Yes: GEICO lists the owner itself (W44-25), and the
+  // other driver is added.
+  for (const box of [null, true]) {
+    const yes = no([owner, casey], { 'applicant.ownerDrives': box });
+    assert.deepEqual([geico.omittedDriver(yes), geico.listedDriver(yes), added(yes, 1)], [-1, 0, ['addDriver:1']], String(box));
+  }
+  // The owner's row marked excluded with the box blank (an excluded owner, not the intake's No): added
+  // with the other drivers and warned, as the 2026-10-20 rule has it (unchanged).
+  const blankMarked = no([{ ...owner, excluded: true }, casey], { 'applicant.ownerDrives': null });
+  assert.deepEqual([geico.omittedDriver(blankMarked), added(blankMarked, 0)], [-1, ['addDriver:0']]);
+  assert.match(form(blankMarked, 0).warn, /^The intake marks this driver to be excluded/);
+  // The agent's No for the owner's row in client details (this driver isn't the owner): added as any.
+  const corrected = no([{ ...owner, excluded: false }, casey]);
+  assert.deepEqual([geico.omittedDriver(corrected), added(corrected, 0), form(corrected, 0).value], [-1, ['addDriver:0'], 'Amina']);
+  // An owner no driver row matches: every intake driver is added.
+  const unmatched = no([owner, casey], { 'applicant.owner1': 'Jordan Sample' });
+  assert.deepEqual([geico.omittedDriver(unmatched), added(unmatched, 0), added(unmatched, 1)], [-1, ['addDriver:0'], ['addDriver:1']]);
+
+  // T3: the owner's details from their row, with the source the row's value has (not TNI's standard).
+  assert.deepEqual(details(r).map((s) => [s.value, s.source, s.note]), [['01/02/1980', 'derived', null], ['Married', 'derived', null], ['NE', 'derived', null], [true, 'derived', null]]);
+  // The owner's names stay the owner box's.
+  assert.deepEqual([one(plan(no([owner], { 'applicant.owner1': 'Amina K. Kone' })), 'Owner first name', BOI).value, details(no([owner], { 'applicant.owner1': 'Amina K. Kone' }))[0].value], ['Amina', '01/02/1980']);
+  // No row matches the owner: the agent's, with the reason.
+  for (const s of details(unmatched)) {
+    agents(s);
+    assert.match(s.note, /owner doesn't drive/, s.name);
+  }
+  // The agent's No for the owner's row: it isn't the owner's, so their details are the agent's.
+  for (const s of details(corrected)) agents(s);
+
+  // T2: the owner box's name exactly (no suffix) on one row, and a Jr: only the exact one is the owner's.
+  const junior = { ...owner, suffix: 'Jr', dob: '03/04/2004', maritalStatus: 'Single', licenseState: 'IA', cdl: false, cdlYear: null };
+  const family = no([owner, junior, casey]);
+  assert.deepEqual([geico.omittedDriver(family), added(family, 0), added(family, 1), added(family, 2)], [0, [], ['addDriver:1'], ['addDriver:2']]);
+  assert.deepEqual([form(family, 1).value, form(family, 1).note, form(family, 1).warn], ['Amina', null, null], 'the Jr: a driver like any other');
+  assert.deepEqual(details(family).map((s) => s.value), ['01/02/1980', 'Married', 'NE', true]);
+  // The owner box naming the Jr: the Jr is the owner's row (their details), the other added.
+  const ownerJr = no([{ ...owner, suffix: 'Sr' }, junior, casey], { 'applicant.owner1': 'Amina Kone Jr' });
+  assert.deepEqual([geico.omittedDriver(ownerJr), added(ownerJr, 0), added(ownerJr, 1)], [1, ['addDriver:0'], []]);
+  assert.deepEqual(details(ownerJr).map((s) => [s.value, s.source]), [['03/04/2004', 'derived'], ['Single', 'derived'], ['IA', 'derived'], [false, 'derived']]);
+  // A Sr and a Jr, neither exactly the owner's full name: which is the owner is the agent's. GEICO's
+  // drivers are then unknown, so adding them is the agent's (none is added twice, nor the owner), and
+  // each such row's form says why; the owner's details are the agent's.
+  const unclear = no([{ ...owner, suffix: 'Sr' }, junior, casey]);
+  assert.equal(geico.omittedDriver(unclear), -1);
+  for (const i of [0, 1, 2]) assert.deepEqual(added(unclear, i), [], `driver ${i + 1}`);
+  for (const i of [0, 1]) {
+    assert.deepEqual([form(unclear, i).value, form(unclear, i).note], ['Amina', null], `driver ${i + 1}`);
+    assert.match(form(unclear, i).warn, /owner doesn't drive.*owner's name matches 2 of the intake's drivers.*none exactly.*if this driver is the owner/, `driver ${i + 1}`);
+  }
+  assert.equal(form(unclear, 2).warn, null);
+  for (const s of details(unclear)) {
+    agents(s);
+    assert.match(s.note, /owner doesn't drive/, s.name);
   }
 });
 
@@ -922,11 +1021,12 @@ test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel
     agents(one(owner, name));
     assert.match(one(owner, name).note, /already lists/);
   }
-  // Unless the intake says the owner doesn't drive: then an owner's row is the owner, added by Add
-  // Driver. A blank box is TNI's Yes (W44-25): GEICO lists them, as above.
-  const unsaid = plan(with_({ 'applicant.ownerDrives': false }, r), { drivers: 0 });
-  const unsaidRel = one(unsaid, 'Driver\'s relationship to the business (Owner, else Employee)');
-  assert.deepEqual([one(unsaid, 'Driver first name').value, unsaidRel.value, unsaidRel.source], ['Amina', 'Owner', 'derived']);
+  // The intake says the owner doesn't drive: GEICO's quote leaves the owner's row out, so Add Driver
+  // isn't filled for them either (TNI, 2026-10-26: answer to PR question, T1). A blank box is TNI's
+  // Yes (W44-25): GEICO lists them, as above.
+  const unsaid = plan(with_({ 'applicant.ownerDrives': false, 'drivers.0.excluded': null }, r), { drivers: 0 });
+  agents(one(unsaid, 'Driver first name'));
+  assert.match(one(unsaid, 'Driver\'s relationship to the business (Owner, else Employee)').note, /owner, who doesn't drive/);
   assert.match(one(plan(with_({ 'applicant.ownerDrives': null }, r), { drivers: 0 }), 'Driver first name').note, /already lists/);
   const second = plan(with_({ 'applicant.owner2': 'Casey Example' }, r), { drivers: 1 });
   assert.equal(one(second, 'Driver\'s relationship to the business (Owner, else Employee)').value, 'Owner', 'the second owner');

@@ -674,8 +674,9 @@ test('owner drives No: the owner\'s driver row is excluded (28C1 Yes); blank, Ye
   assert.deepEqual([exclude(other, 0).value, exclude(other, 1).value], [false, false]);
   // The owner's name on two rows (a Sr and a Jr), only one marked excluded: with the intake's No the
   // No decides, so there is no mixed case (TNI, 2026-10-26: answer to PR question, R1). 29F is the
-  // intake's No without the mixed-rows note, and every row the owner's name matches is excluded.
-  for (const marked of [0, 1]) {
+  // intake's No without the mixed-rows note. Since T2 the No excludes only the row with exactly the
+  // owner's full name (the first here); the Jr is excluded by their own mark only.
+  for (const [marked, excluded] of [[0, [true, false, false]], [1, [true, true, false]]]) {
     const family = baseRecord();
     family.applicant.ownerDrives = false;
     const senior = family.drivers[0];
@@ -684,8 +685,59 @@ test('owner drives No: the owner\'s driver row is excluded (28C1 Yes); blank, Ye
     family.drivers[marked].excluded = true;
     const s = byQ(buildPlan(family, progressive), '29F');
     assert.deepEqual([s.value, s.source, s.manualOnly, s.note], [false, 'intake', false, null], `row ${marked} marked`);
-    assert.deepEqual([0, 1, 2].map((i) => exclude(family, i).value), [true, true, false], `row ${marked} marked`);
+    assert.deepEqual([0, 1, 2].map((i) => exclude(family, i).value), excluded, `row ${marked} marked`);
   }
+});
+
+// TNI, 2026-10-26 (answers to PR questions, T2, T3), the intake's "owner drives" No: of several rows
+// the owner's name matches (a Sr and a Jr), only the one whose name is exactly the owner's full name
+// is the owner's, excluded (28C1 Yes); with none, whether each is excluded is the agent's. The
+// owner's date of birth comes from that row (T3, asked of GEICO: Progressive asks it too, on Business
+// Owner Info and NoHit).
+test('owner drives No (T2, T3): only the exact full-name row is excluded, none is the agent\'s; the owner\'s date of birth from that row', () => {
+  const casey = { first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'MD1112223', licenseState: 'MD' };
+  const record = (drivers, box = false, owner1 = 'Amina Kone') => {
+    const r = baseRecord();
+    r.applicant.ownerDrives = box;
+    r.applicant.owner1 = owner1;
+    r.drivers = drivers;
+    return r;
+  };
+  const senior = baseRecord().drivers[0];
+  const junior = { ...senior, suffix: 'Jr', dob: '03/04/2004', licenseNumber: 'MD7654321' };
+  const exclude = (r, drivers) => byQ(buildPlan(r, progressive, { drivers }), '28C1');
+  const dob = (r) => ['2BB', '1B8B'].map((q) => byQ(buildPlan(r, progressive), q));
+  // The owner box's name exactly on the first row, and a Jr: only the first is excluded.
+  const family = record([senior, junior, casey]);
+  assert.deepEqual([0, 1, 2].map((i) => [exclude(family, i).value, exclude(family, i).source, exclude(family, i).note]),
+    [[true, 'derived', null], [false, 'derived', null], [false, 'derived', null]]);
+  assert.deepEqual(dob(family).map((s) => [s.value, s.source, s.note]), [['01/02/1980', 'derived', null], ['01/02/1980', 'derived', null]]);
+  // The owner box naming the Jr: the Jr is the owner's row.
+  const ownerJr = record([{ ...senior, suffix: 'Sr' }, junior, casey], false, 'Amina Kone Jr');
+  assert.deepEqual([0, 1, 2].map((i) => exclude(ownerJr, i).value), [false, true, false]);
+  assert.deepEqual(dob(ownerJr).map((s) => s.value), ['03/04/2004', '03/04/2004']);
+  // A Sr and a Jr, neither exactly the owner's full name: the agent's, never the AI's, with the reason.
+  const unclear = record([{ ...senior, suffix: 'Sr' }, junior, casey]);
+  for (const i of [0, 1]) {
+    const s = exclude(unclear, i);
+    assert.deepEqual([s.value, s.source, s.manualOnly], [null, 'fact', true], `driver ${i + 1}`);
+    assert.match(s.note, /owner doesn't drive.*owner's name matches 2 of the intake's drivers.*none exactly.*yours/, `driver ${i + 1}`);
+  }
+  assert.equal(exclude(unclear, 2).value, false);
+  for (const s of dob(unclear)) {
+    assert.deepEqual([s.value, s.manualOnly], [null, true]);
+    assert.match(s.note, /owner doesn't drive/);
+  }
+  // One row: it is the owner's, by the owner's name (ownerIsDriver), its date of birth the owner's.
+  assert.deepEqual(dob(record([casey, senior])).map((s) => s.value), ['01/02/1980', '01/02/1980']);
+  // Counterexamples: a blank box or the intake's Yes leaves the Sr and Jr drivers (28C1 No), and the
+  // owner's date of birth is found as before; the agent's No on the owner's row: not the owner's.
+  for (const box of [null, true]) {
+    const r = record([{ ...senior, suffix: 'Sr' }, junior, casey], box);
+    assert.deepEqual([0, 1, 2].map((i) => exclude(r, i).value), [false, false, false], String(box));
+  }
+  const corrected = record([{ ...senior, excluded: false }, casey]);
+  assert.deepEqual([exclude(corrected, 0).value, dob(corrected)[0].value], [false, null]);
 });
 
 // Audit 2026-10-08: owner "Alice Sample" who doesn't drive took the first name and date of birth
@@ -722,7 +774,9 @@ test('the owner is never another driver: first names must agree, and a non-drivi
   assert.equal(owner(record).driver?.dob, '03/04/1985', 'the exact full name links');
   record.applicant.ownerDrives = false;
   assert.equal(owner(record).driver, null, 'an owner who doesn\'t drive is not a driver row, even by full name');
-  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, null);
+  // ... but their own row (the same full name) gives their date of birth (TNI, 2026-10-26: answer to
+  // PR question, T3), never another person's (Bob Sample's, above).
+  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, '03/04/1985');
   // The owner box holding only the first name still finds the one driver with it, unless the
   // intake says the owner doesn't drive.
   record.applicant.owner1 = 'Alice';

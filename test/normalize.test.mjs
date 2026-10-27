@@ -780,12 +780,34 @@ test('"owner drives" No: the owner\'s driver row is an excluded driver on every 
   // The Intake step says so, on the owner's row only, and what each carrier gets.
   assert.equal(item(no)?.level, 'check');
   assert.match(item(no).msg, /"Owner drives" is No.*matches the owner "Jordan Avery Sample".*excluded.*Progressive's exclude question gets Yes; on AmWINS, which has no such question, their license number gets "\(Excluded\)" after it\..*GEICO/);
+  // GEICO's quote leaves the owner's row out (TNI, 2026-10-26: answer to PR question, T1).
+  assert.match(item(no).msg, /GEICO's quote leaves the owner out: the fill doesn't add this driver/);
+  assert.doesNotMatch(item(no).msg, /filled with a warning/);
   assert.equal(item(no, 1), undefined, 'another driver is never affected');
   assert.match(item(no).msg, /If this driver isn't the owner, set Excluded driver to No\.$/);
-  // The owner's name on two rows (a Sr and a Jr): the No decides, each is excluded, and each item says so.
+  // The owner's name on two rows (a Sr and a Jr): the No decides, and only the row with exactly the
+  // owner's full name is excluded (TNI, 2026-10-26: answer to PR question, T2); its item says so.
   const family = read({ owner_drives: 'No', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Jr' });
-  assert.deepEqual([0, 1].map((i) => /matches 2 drivers, and each is excluded: for one who isn't the owner, set Excluded driver to No\./.test(item(family, i)?.msg ?? '')), [true, true]);
-  assert.deepEqual([exclude(family, 0), exclude(family, 1)], [true, true]);
+  assert.match(item(family, 0)?.msg ?? '', /owner's name matches 2 drivers, and only this one has exactly the owner's full name, so only this one is excluded/);
+  assert.equal(item(family, 1), undefined, 'the Jr isn\'t the owner');
+  assert.deepEqual([exclude(family, 0), exclude(family, 1)], [true, false]);
+  // Neither exactly the owner's full name (a Sr and a Jr): which is the owner is the agent's, each row
+  // named, on every carrier (T2).
+  const unclear = read({ owner_drives: 'No', drv_last_1: 'Sample Sr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Jr' });
+  const unclearItem = (i) => unclear.warnings.find((w) => w.code === 'drivers.owner-unclear' && w.path === `drivers[${i}].excluded`);
+  for (const i of [0, 1]) {
+    assert.equal(unclearItem(i)?.level, 'check', `driver ${i + 1}`);
+    assert.match(unclearItem(i).msg, /"Owner drives" is No.*matches the owner "Jordan Avery Sample", as 2 drivers' names do, none of them exactly.*whether this driver is the owner, and so excluded, is yours/, `driver ${i + 1}`);
+    assert.equal(item(unclear, i), undefined);
+  }
+  assert.deepEqual([exclude(unclear, 0), exclude(unclear, 1)], [null, null]);
+  assert.deepEqual([amwinsLicense(unclear, 0).value, amwinsLicense(unclear, 1).value], [null, null]);
+  assert.match(amwinsLicense(unclear, 0).note, /owner doesn't drive.*matches 2 of the intake's drivers.*none exactly/);
+  // The owner's date of birth on AmWINS: the owner's row's (T3, asked of GEICO; AmWINS asks it too).
+  const ownerDob = (r) => buildPlan(r.record, amwins, {}).find((s) => s.selector === '#ownerDob');
+  assert.equal(ownerDob(no).value, no.record.drivers[0].dob);
+  assert.equal(ownerDob(family).value, family.record.drivers[0].dob);
+  assert.deepEqual([ownerDob(unclear).value, /owner doesn't drive/.test(ownerDob(unclear).note)], [null, true]);
   // Progressive: the exclude question Yes for the owner's row, No for the other driver.
   assert.deepEqual([exclude(no, 0), exclude(no, 1)], [true, false]);
   // AmWINS: "(Excluded)" after the owner's license number, the other driver's as written.
@@ -799,6 +821,12 @@ test('"owner drives" No: the owner\'s driver row is an excluded driver on every 
   // A row the intake marks excluded keeps its own item (license.excluded), not this one.
   const marked = read({ owner_drives: 'No', drv_lic_1: 'IL - S12345678901 EXCLUDED' });
   assert.deepEqual([item(marked), exclude(marked, 0)], [undefined, true]);
+  // ... which says GEICO's quote leaves the owner out (T1); another driver's mark keeps GEICO's warning.
+  const licenseItem = (r, i) => r.warnings.find((w) => w.code === 'license.excluded' && w.path === `drivers[${i}].excluded`).msg;
+  assert.match(licenseItem(marked, 0), /GEICO's quote leaves the owner out: the fill doesn't add this driver/);
+  assert.doesNotMatch(licenseItem(marked, 0), /filled with a warning/);
+  assert.match(licenseItem(read({ owner_drives: 'No', drv_lic_2: 'E98765432101 EXCLUDED' }), 1), /GEICO asks nothing about it: the driver's answers are filled with a warning/);
+  assert.match(licenseItem(read({ owner_drives: '', drv_lic_1: 'IL - S12345678901 EXCLUDED' }), 0), /filled with a warning/, 'a blank box: unchanged');
   // Counterexamples: a blank box or the intake's Yes leaves the owner's unmarked row a listed driver.
   for (const box of ['', 'Yes']) {
     const r = read({ owner_drives: box });
