@@ -47,7 +47,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      # The image's preinstalled Chrome already brings Chromium's system libraries; --with-deps
+      # fetched them again from Ubuntu's mirror, which once took 9 minutes and timed a job out.
+      - run: npx playwright install chromium
       - run: npm run package
       - name: Extract the store ZIP
         run: |
@@ -69,7 +71,6 @@ jobs:
   browser:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
-    # Installing Chromium's system libraries took from 30 s to 3.6 min on the first runs.
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -92,6 +93,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      # The image's preinstalled Chrome already brings Chromium's system libraries; --with-deps
+      # fetched them again from Ubuntu's mirror, which once took 9 minutes and timed a job out.
+      - run: npx playwright install chromium
       - name: ${{ matrix.name }}
         run: ${{ matrix.run }}
