@@ -8,7 +8,8 @@
 // `source: 'standard'` and names in `tni` (or a carrier action does); every rule that can be
 // `standard` names an entry of the general part or its own carrier's part. test/rulebook.test.mjs
 // checks both ways, so a new standard changes the code and this rulebook together. The bake-off task
-// (test/bakeoff/instructions.md) is a separate copy, not checked.
+// (test/bakeoff/instructions.md) is a separate, hand-kept copy for its one practice course, scored
+// against its own answer key; nothing checks its text against this rulebook.
 //
 // The entries are the first sources of every page review, in this order, so each carrier's requests
 // share the same start for the provider's prompt cache: keep ids and wording stable, and bump Luna's

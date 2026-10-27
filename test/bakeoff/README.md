@@ -6,7 +6,7 @@ The same quote, same fake intake and same TNI rules, on practice copies of Progr
 | --- | --- |
 | `course-MD-expediter-van.json` | The practice pages: recorded from two live MD quotes, plus the Filings boxes and the buttons agents described. Progressive's pre-selected answers are set as defaults, and cargo questions appear only after "+". |
 | `intake.md` | The fake client's intake as text, as written (same as `test/fixtures/sample-intake.pdf`) |
-| `instructions.md` | The agent's task and TNI's rules, page by page. The extension follows the same rules (`src/carriers/progressive.js`). |
+| `instructions.md` | The agent's task and TNI's rules, page by page. The extension follows the same rules (`src/carriers/progressive.js`), but this text is kept by hand for this course and nothing checks it against Luna's rulebook (`src/ai/tni-rules.js`): when a Progressive standard this course asks changes, change it here too, without changing what this course's answers are unless the answer key changes with them (last brought in step 2026-10-27). |
 | `answer-key.json` | Expected answers (58) and buttons. **Draft**: generated from the rules; have an agent review it before trusting scores. |
 
 ## Run it

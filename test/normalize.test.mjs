@@ -905,3 +905,15 @@ test('AmWINS writes NTL as the first line of the disclosure details', () => {
   r.coverage.ntl = true;
   assert.match(buildPlan(r, amwins).find((s) => s.re === '^disclosure details$').value, /^Non-Trucking Liability \(NTL\) - \$1M CSL$/m);
 });
+
+// TNI, 2026-10-27: cargo with a limit but no deductible is the agent's on every carrier (until then
+// Progressive and AmWINS took $1,000); the Intake step says what the deductible usually is.
+test('cargo with a limit but no deductible is a check on the Intake step', () => {
+  const today = { today: new Date('2026-10-27') };
+  const check = (ded) => normalizeIntake({ ...raw, cargo_cov: 'Yes', cargo_limit_ded: ded }, today).warnings.find((w) => w.code === 'cargo-deductible.missing');
+  const w = check('$100K');
+  assert.deepEqual([w.level, w.path], ['check', 'coverage.cargoDeductible']);
+  assert.match(w.msg, /usually \$1,000 or \$2,500/);
+  assert.equal(check('$100K/$1K Ded'), undefined);
+  assert.equal(check(''), undefined, 'no limit either: cargo-limit.missing instead');
+});

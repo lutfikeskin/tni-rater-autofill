@@ -50,7 +50,7 @@ export const geico = {
     ] },
     { heading: 'The agent\'s', rules: [
       { id: 'geico.stop-steps', kind: 'agent', text: 'TNI stops a GEICO quote at Quote & Coverages and prints the quote proposal there: Final Quote Details, MVR & CLUE (whose reports cost the agency) and Payment Information are the agent\'s steps. The owner\'s Social Security number is never filled.' },
-      { id: 'geico.not-carried-over', kind: 'agent', text: 'Progressive\'s and AmWINS\' other standards don\'t carry over: on GEICO a blank years in business, cargo deductible or GL limit is the agent\'s, and so are cost new, medical payments outside Florida where GEICO lists limits for it and no PIP, the uninsured motorist deductible, UM/UIM type, property damage liability, uninsured motorist property damage, the hired and non-owned auto questions and the GL follow-ups.' },
+      { id: 'geico.not-carried-over', kind: 'agent', text: 'Progressive\'s and AmWINS\' other standards don\'t carry over: on GEICO a blank years in business or GL limit is the agent\'s, and so are cost new, medical payments outside Florida where GEICO lists limits for it and no PIP, the uninsured motorist deductible, UM/UIM type, property damage liability, uninsured motorist property damage, the hired and non-owned auto questions and the GL follow-ups.' },
     ] },
   ],
 };

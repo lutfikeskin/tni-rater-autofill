@@ -310,8 +310,17 @@ test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () 
   record.coverage.cargoLimit = 100000;
   record.coverage.cargoDeductible = null;
   const plan = buildPlan(record, progressive, {});
-  assert.equal(byQ(plan, '216F').value, '$100000/$1000', 'standard $1,000 cargo deductible');
-  assert.equal(byQ(plan, '216F').note, null);
+  // TNI, 2026-10-27 (until then $1,000): no deductible on the intake is the agent's, told what it
+  // usually is; a client fact, so never Luna's.
+  for (const q of ['216F', '2150']) {
+    const cargo = byQ(plan, q);
+    assert.deepEqual([cargo.value, cargo.source, cargo.manualOnly], [null, 'fact', true], q);
+    assert.match(cargo.note, /no deductible.*usually \$1,000 or \$2,500/, q);
+  }
+  const withDed = buildPlan({ ...record, coverage: { ...record.coverage, cargoDeductible: 2500 } }, progressive, {});
+  assert.deepEqual([byQ(withDed, '216F').value, byQ(withDed, '216F').source, byQ(withDed, '216F').note], ['$100000/$2500', 'derived', null]);
+  const noCargo = buildPlan({ ...record, coverage: { ...record.coverage, cargo: false } }, progressive, {});
+  assert.deepEqual([byQ(noCargo, '216F').value, byQ(noCargo, '216F').note], ['Not selected', null], 'no cargo: no deductible needed');
   for (const q of ['1DCA', '1DDE', '1DD8', '1DBF']) assert.equal(byQ(plan, q).value, '$100k CSL');
   // AR 2026-10-19: underinsured is offered only up to the uninsured limit, so uninsured is
   // answered first (the fill goes in plan order).
@@ -401,6 +410,13 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
   assert.equal(named(/^Year licensed/).source, 'standard');
   assert.equal(named(/^Gender/).value, 'MALE', 'TNI standard, no gender set in client details');
   assert.equal(named(/^Disclosure/).value, 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026');
+  assert.equal(named(/^Disclosure/).warn, null);
+  // No deductible on the intake (TNI, 2026-10-27; until then $1K): the line leaves it out, and the
+  // agent adds it.
+  record.coverage.cargoDeductible = null;
+  const noDed = buildPlan(record, amwins, {}).find((x) => /^Disclosure/.test(x.name ?? ''));
+  assert.match(noDed.value, /^Motor Truck Cargo \$100K - Consumer Goods \/ Other Consumer Goods$/m);
+  assert.match(noDed.warn, /usually \$1,000 or \$2,500.*Motor Truck Cargo line/);
   assert.equal(sel('#autoSymbol6').value, true);
   assert.equal(sel('#autoSymbol1').value, false);
   assert.equal(plan.find((x) => x.action === 'importVins').immediate, true);

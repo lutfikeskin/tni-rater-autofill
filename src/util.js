@@ -52,6 +52,12 @@ export function noPriorInsurance(policy) {
   return !!policy && /^(no|none|n\/?a)\b/i.test(String(policy.carrier ?? '').trim()) && !policy.expiration;
 }
 
+// A cargo limit with no deductible on the intake: the deductible is the client's, so on every
+// carrier the cargo limit and deductible are the agent's, told what it usually is (TNI, 2026-10-27;
+// before, Progressive and AmWINS took $1,000).
+export const noCargoDeductible = (record) => !!record.coverage?.cargoLimit && record.coverage?.cargoDeductible == null;
+export const CARGO_DEDUCTIBLE_NOTE = 'The intake gives a cargo limit but no deductible: choose the cargo limit and deductible yourself (the deductible is usually $1,000 or $2,500).';
+
 // Compare calendar dates using the application date, so an archived intake stays reproducible.
 // An absent/invalid date does not establish that a policy expired.
 export function priorPolicyExpired(record, policy = record.priorInsurance?.[0]) {

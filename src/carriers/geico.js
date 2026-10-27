@@ -50,7 +50,7 @@
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -639,12 +639,14 @@ const reeferSource = (r) => (typeof r.coverage?.reeferBreakdown !== 'boolean' ? 
 const reeferNote = (r) => (reeferSource(r) === 'fact' ? 'The intake says no reefer breakdown but lists a reefer: answer it yourself.' : null);
 
 // Motor truck cargo: the intake's limit and deductible as GEICO's pair ("$100k/$1000 deductible",
-// matched by its amounts). No deductible on the intake is the agent's: Progressive's $1,000 is
-// Progressive's. A pair GEICO doesn't list ($100K/$5K) finds no option and stays the agent's.
+// matched by its amounts). No deductible on the intake is the agent's alone, never Luna's, as on
+// every carrier (noCargoDeductible). A pair GEICO doesn't list ($100K/$5K) finds no option and stays the agent's.
 const cargoChoice = (r) => (r.coverage?.cargo === true && r.coverage.cargoLimit && r.coverage.cargoDeductible
   ? `$${r.coverage.cargoLimit}/$${r.coverage.cargoDeductible}` : null);
+const cargoLimitSource = (r) => (r.coverage?.cargo === true && noCargoDeductible(r) ? 'fact' : 'derived');
 const cargoLimitNote = (r) => (cargoChoice(r) ? null
-  : r.coverage?.cargo === true ? 'Cargo is requested without both a limit and a deductible on the intake: choose them yourself.'
+  : r.coverage?.cargo === true && noCargoDeductible(r) ? CARGO_DEDUCTIBLE_NOTE
+    : r.coverage?.cargo === true ? 'Cargo is requested without both a limit and a deductible on the intake: choose them yourself.'
     : 'The intake doesn\'t ask for cargo coverage: answer it yourself.');
 const cargoNote = (r) => (typeof r.coverage?.cargo !== 'boolean' && r.coverage?.cargoLimit
   ? 'The intake gives a cargo limit but doesn\'t tick cargo coverage: answer it yourself.' : null);
@@ -1231,7 +1233,7 @@ export const geico = {
       { field: 'GiveMtcHaulingCommoditiesCollect', ask: 'Select up to four commodities the customer hauls the most', name: 'Cargo commodities', kind: 'choice',
         source: 'derived', value: commodities,
         note: (r) => (commodities(r) ? null : `Pick up to four commodities yourself${r.operations.whatHaul ? `: the intake says they haul ${quote(r.operations.whatHaul)}` : ''}.`) },
-      { q: 'CargoLimit', ask: 'Motor Truck Cargo', control: 'select', name: 'Motor truck cargo limit and deductible', kind: 'choice', source: 'derived', value: cargoChoice, note: cargoLimitNote },
+      { q: 'CargoLimit', ask: 'Motor Truck Cargo', control: 'select', name: 'Motor truck cargo limit and deductible', kind: 'choice', source: cargoLimitSource, value: cargoChoice, note: cargoLimitNote },
       { field: 'GiveTrailerInterchangeEligibleRequireCoverageYesNo', path: 'trailerInfo.interchange', name: 'Trailer interchange', kind: 'bool' },
       // Hired and non-owned autos: interchange or rented trailers don't make them Yes.
       fact('GiveHiredCoverageRequired', 'Hired auto coverage'),

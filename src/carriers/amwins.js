@@ -49,7 +49,7 @@
 
 import { owner, ownerDobNote } from './progressive.js';
 import { isLongHaul, otherNotes } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -136,7 +136,9 @@ const disclosure = (r) => {
   if (c.ntl === true) lines.push(['Non-Trucking Liability (NTL)', c.autoLiabLimit].filter(Boolean).join(' - '));
   if (c.cargo && c.cargoLimit) {
     const goods = /general\s*freight/i.test(r.operations.whatHaul ?? '') ? 'Consumer Goods / Other Consumer Goods' : r.operations.whatHaul;
-    lines.push(`Motor Truck Cargo ${moneyK(c.cargoLimit)} with ${moneyK(c.cargoDeductible ?? 1000)} Ded${goods ? ` - ${goods}` : ''}`);
+    // No deductible on the intake: left out, for the agent to add (disclosureWarn; TNI, 2026-10-27).
+    const ded = noCargoDeductible(r) ? '' : ` with ${moneyK(c.cargoDeductible)} Ded`;
+    lines.push(`Motor Truck Cargo ${moneyK(c.cargoLimit)}${ded}${goods ? ` - ${goods}` : ''}`);
   }
   const miles = radius(r);
   if (miles) lines.push(miles > 500 ? 'More than 500 miles radius of operation' : `${miles} miles radius of operation`);
@@ -151,6 +153,7 @@ const disclosure = (r) => {
   }
   return lines.join('\n') || null;
 };
+const disclosureWarn = (r) => (r.coverage.cargo && noCargoDeductible(r) ? `${CARGO_DEDUCTIBLE_NOTE} Add the deductible to the Motor Truck Cargo line here.` : null);
 
 // Body type as on the intake: a Van is a Cargo Van.
 const bodyType = (r, a) => {
@@ -483,7 +486,7 @@ export const amwins = {
     ...UNDERWRITING_NO.map(/** @returns {CarrierRule} */ (q) => ({ tni: 'amwins.underwriting-general', name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
     // Yes again after "Default all answers to No".
     { tni: 'amwins.disclose', name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', source: 'standard', value: () => true, replace: true },
-    { name: 'Disclosure details (from the intake)', label: '^disclosure details$', source: 'derived', value: disclosure },
+    { name: 'Disclosure details (from the intake)', label: '^disclosure details$', source: 'derived', value: disclosure, warn: disclosureWarn },
     // The declaration is the agent's to make.
     { selector: '#accept', name: 'Declaration', kind: 'bool', source: 'attestation', note: 'The declaration is yours to confirm; never ticked. Then Submit (yours too).' },
   ]),

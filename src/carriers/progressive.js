@@ -30,7 +30,7 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -220,9 +220,11 @@ const equipmentNote = (r) => (equipmentOver(r) ? `The intake's attached equipmen
 const cargo = (r) => {
   const c = r.coverage;
   if (c.cargo === false) return 'Not selected';
-  // No deductible on the intake: TNI's standard $1,000.
-  return c.cargoLimit ? `$${c.cargoLimit}/$${c.cargoDeductible ?? 1000}` : null;
+  // No deductible on the intake: the agent's (TNI, 2026-10-27; from 2026-10-01 it was $1,000).
+  return c.cargoLimit && !noCargoDeductible(r) ? `$${c.cargoLimit}/$${c.cargoDeductible}` : null;
 };
+// The deductible is a client fact: without it the limit is the agent's alone, never Luna's.
+const cargoSource = (r) => (r.coverage.cargo !== false && noCargoDeductible(r) ? 'fact' : 'derived');
 
 // What the intake calls the freight -> Progressive's commodity category and commodity.
 const COMMODITIES = [
@@ -251,9 +253,9 @@ const filingsAsked = (r) => (filingsBlankNoNumber(r) ? false : filings(r));
 const filingsSource = (r) => (filingsBlankNoNumber(r) ? 'standard' : 'derived');
 const usesEld = (r) => explicitBoolean(r, 'operations.usesEld');
 const eldNote = (r) => (usesEld(r) == null ? 'The intake does not answer the ELD question.' : null);
-const cargoNote = (r) => r.coverage.cargo === true && !r.coverage.cargoLimit
+const cargoNote = (r) => (r.coverage.cargo === true && !r.coverage.cargoLimit
   ? 'Cargo was requested without a limit; an agent must choose it.'
-  : null;
+  : r.coverage.cargo !== false && noCargoDeductible(r) ? CARGO_DEDUCTIBLE_NOTE : null);
 // General liability the intake asks for (Requested coverage). TNI (2026-10-20, after an AR run
 // that recorded the open section): the "+" in the General Liability row adds it (openGl), its
 // questions get TNI's standard answers (glQuestion), the limit is the intake's, else TNI's
@@ -913,8 +915,8 @@ export const progressive = {
       { q: '216B', source: 'derived', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargoListOfCommodities', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
       // The cargo row's limit (its data-model name), then the cargo section's, which reads the same:
       // with the row's taken, "Motor Trucking Cargo" is left with one field, the section's.
-      { q: '2150', source: 'derived', cargo: 'limit', field: 'LineInput.MotorTruckingCargoLimit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo summary', kind: 'choice', value: cargo, note: cargoNote },
-      { q: '216F', source: 'derived', cargo: 'limit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo', kind: 'choice', value: cargo, note: cargoNote },
+      { q: '2150', source: cargoSource, cargo: 'limit', field: 'LineInput.MotorTruckingCargoLimit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo summary', kind: 'choice', value: cargo, note: cargoNote },
+      { q: '216F', source: cargoSource, cargo: 'limit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo', kind: 'choice', value: cargo, note: cargoNote },
       // General liability's section (AR live run, 2026-10-20: each question shows once the one
       // before is answered, the limit last). TNI's standards (2026-10-20), for a for-hire trucker
       // with nothing else on the intake: all income from trucking, no premises customers visit,

@@ -14,6 +14,7 @@ export const general = {
       { id: 'general.standards-first', kind: 'workflow', text: 'Coverage and workflow questions the intake doesn\'t cover use TNI\'s standard answers in these rules. The page\'s own pre-selected answer is not always right: prefer the TNI rule.' },
       { id: 'general.client-facts', kind: 'agent', text: 'A fact about the client that the intake doesn\'t give (a driver\'s marital status, when the business was established, who a vehicle is registered to) is the agent\'s: leave it. There is no standard answer for a client fact, except the TNI standards these rules name.' },
       { id: 'general.agent-decides', kind: 'agent', text: 'The agent decides: MVR and CLUE report orders, anything the client must sign, attest or authorise, payment or bank details, and moving to another page.' },
+      { id: 'general.cargo-deductible', kind: 'agent', text: 'Cargo with a limit but no deductible on the intake: the deductible is the client\'s, so the cargo limit and deductible are the agent\'s (the deductible is usually $1,000 or $2,500). AmWINS\' disclosure leaves the deductible out of its cargo line for the agent to add.' },
       { id: 'general.no-prior', kind: 'intake', text: 'A current-insurance carrier of "No", "None", "N/A" or "no POP" without an expiration date is no prior insurance, whatever type or limit the form shows; nothing about it is disclosed.' },
     ] },
     { heading: 'Drivers', rules: [
