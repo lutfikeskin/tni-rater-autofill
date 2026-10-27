@@ -141,6 +141,9 @@ function actionSteps(carrier, record, active) {
       // Clicked by the kit itself where the carrier's buttons are pressed from the page's own world
       // (`pressInPage`): GEICO's Print Quote Proposal opened nothing pressed from there (2026-10-23).
       kitClick: !!a.kitClick,
+      // Clicked on its page even while the page shows no field (a page of tiles, where the pick is
+      // all there is): any other helper on a page the plan has questions for waits for them (W44-03).
+      onBlankPage: !!a.onBlankPage,
       unfinished: resolve(a.unfinished) ?? null,
       unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (/:driver$/.test(id) || (a.scope === 'driver' && !/:/.test(id))
         ? `${id.replace(/:driver$/, '')}:${active.drivers ?? 0}`
