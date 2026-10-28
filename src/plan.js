@@ -198,17 +198,24 @@ function fieldSteps(rules, record, carrier, active) {
     if (rule.repeat) return (record[rule.repeat] ?? []).map((_, index) => ({ rule, active: { ...active, [rule.repeat]: index } }));
     // A per-vehicle question with several vehicles (or a vehicle and a trailer): a step for each
     // vehicle, which finds its own row. On a page showing one vehicle at a time, only the active
-    // vehicle's step answers. A per-trailer question: a step for each trailer, the same way.
+    // vehicle's step answers. A per-trailer question: a step for each trailer, the same way. A
+    // per-vehicle question asked of trailers too (`trailers`: GEICO's comprehensive, collision and
+    // fire and theft rows list the trailer among the vehicles) has a step for each trailer after
+    // the vehicles', which finds the trailer's row by its year and make, never by a count of rows
+    // the trailer shifts.
     const scope = typeof rule.scope === 'function' ? rule.scope(record, active) : rule.scope;
     if (scope === 'vehicle' && unitRows(record)) {
-      return record.vehicles.map((_, index) => ({ rule, active: { ...active, vehicles: index }, activeVehicle: index === (active.vehicles ?? 0) }));
+      return [
+        ...record.vehicles.map((_, index) => ({ rule, active: { ...active, vehicles: index }, activeVehicle: index === (active.vehicles ?? 0), unit: 'vehicles' })),
+        ...(rule.trailers ? (record.trailers ?? []).map((_, index) => ({ rule, active: { ...active, trailers: index }, activeVehicle: false, unit: 'trailers' })) : []),
+      ];
     }
     if (scope === 'trailer') {
       return (record.trailers ?? []).map((_, index) => ({ rule, active: { ...active, trailers: index }, activeVehicle: index === (active.trailers ?? 0) }));
     }
     return [{ rule, active }];
   });
-  return expanded.map(/** @returns {FieldStep} */ ({ rule, active, activeVehicle = null }, id) => {
+  return expanded.map(/** @returns {FieldStep} */ ({ rule, active, activeVehicle = null, unit = null }, id) => {
     const list = rule.path ? listOf(rule.path) : null;
     const path = rule.path
       ? (list ? rule.path.replace('[]', `[${active[list] ?? 0}]`) : rule.path)
@@ -243,7 +250,7 @@ function fieldSteps(rules, record, carrier, active) {
     const scopeIndex = typeof rule.scopeIndex === 'function' ? rule.scopeIndex(record, active) : rule.scopeIndex;
     // Per-vehicle questions repeat once per vehicle, labelled "2021 MERCEDES-BENZ SPRINTER" (a
     // trailer's "2019 Wilson"): the step's unit's year/make/model picks its row.
-    const v = scope === 'vehicle' && unitRows(record) ? record.vehicles[active.vehicles ?? 0]
+    const v = scope === 'vehicle' && unitRows(record) ? (unit === 'trailers' ? record.trailers?.[active.trailers ?? 0] : record.vehicles[active.vehicles ?? 0])
       : scope === 'trailer' ? record.trailers?.[active.trailers ?? 0] : null;
     const vehicleHint = v ? [v.year, v.make, v.model].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).filter((x) => x.length >= 2) : null;
     return {

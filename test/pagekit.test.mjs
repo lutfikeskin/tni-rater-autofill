@@ -7938,3 +7938,85 @@ test("a fill's first wait is its whole 400 ms from when it begins, whatever the 
   setTimeout(() => { defined = true; }, 100);
   assert.equal(await answeredAfter(parts, { components: 'gds-' }), 400, 'a component undefined as it began');
 });
+
+// GEICO live run, 2026-10-28 (FL, 4 vehicles and a trailer; synthetic units here): Quote &
+// Coverages lists the trailer among the vehicles in its comprehensive, collision and fire and theft
+// rows, and only the motor vehicles in rental and road service. The rows' steps took the rows in
+// page order, so the trailer took a vehicle's place and the last vehicle's rows were left
+// unfamiliar; its rental and road service, whose choices GEICO offers only once that vehicle has
+// comprehensive, failed. Each row now goes to the unit it names.
+const COVERED = [
+  { year: 2018, make: 'Ford', model: 'Transit' },
+  { year: 2024, make: 'Ram', model: '2500' },
+  { year: 2015, make: 'Freightliner', model: 'Cascadia' },
+  { year: 2021, make: 'Ram', model: '3500' },
+];
+const COVERED_TRAILER = { year: 2017, make: 'Great Dane', model: 'Dry Van', type: 'Dry Van' };
+const COVERED_ROWS = ['2018 FORD TRANSIT', '2024 RAM 2500', '2017 Great Dane', '2015 FREIGHTLINER CASCADIA', '2021 RAM 3500'];
+// A list whose choices depend on another answer (GEICO's rental after comprehensive).
+class GatedSelect extends SelectNode {
+  constructor(gate, closed, open, props) { super(open, props); this._gate = gate; this._closed = closed.map((o) => new OptionNode(o.text ?? o, o.value ?? o)); }
+  get options() { return !this._gate || this._gate() ? this._open : this._closed; }
+  set options(v) { this._open = v; }
+}
+function coverageRowsPage(units = COVERED_ROWS) {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  // GEICO's lists show their first choice as a blank placeholder ("Not Included", value "").
+  const choices = (texts) => [{ text: texts[0], value: '' }, ...texts];
+  const DEDUCTIBLES = choices(['Not Included', '$500 deductible', '$1,000 deductible']);
+  let n = 10000;
+  const rows = {};
+  // A row as GEICO draws it, read as one label: the unit's name, then GEICO's words about it.
+  const row = (suffix, unit, make, words) => {
+    const list = make({ id: `Id_${randomUUID()}_${n++}_${suffix}`, ariaLabel: `${unit} ${words}`, value: '' });
+    h.document.body.append(list);
+    (rows[suffix] ??= {})[unit] = list;
+  };
+  for (const suffix of ['COMP', 'COLL', 'FT']) {
+    for (const unit of units) row(suffix, unit, (props) => new SelectNode(DEDUCTIBLES, props), 'Coverage is recommended for this vehicle because it is leased or financed');
+  }
+  const motor = units.filter((u) => !/great dane/i.test(u));
+  const comp = (unit) => () => rows.COMP[unit].value === '$1,000 deductible';
+  for (const unit of motor.filter((u) => !/cascadia/i.test(u))) {
+    row('Rental', unit, (props) => new GatedSelect(comp(unit), choices(['Not Included']), choices(['Not Included', '$40 Per Day, $1,200 Max']), props), 'Comprehensive or fire & theft, and collision coverage are required before adding this coverage.');
+    row('ERS', unit, (props) => new GatedSelect(comp(unit), choices(['I decline']), choices(['I decline', 'I accept this coverage']), props), 'Comprehensive or Fire & Theft Coverage is recommended for this vehicle.');
+  }
+  for (const unit of motor.filter((u) => /cascadia/i.test(u))) row('HVRS', unit, (props) => new SelectNode(choices(['I decline', 'I accept this coverage']), props), '$500 in Labor, $5,000 in Towing');
+  const rules = geico.rules.filter((r) => ['COMP', 'COLL', 'FT', 'Rental', 'ERS', 'HVRS'].includes(r.q));
+  const record = { ...geicoRecord(), vehicles: COVERED.map((v) => ({ ...v })), trailers: [{ ...COVERED_TRAILER }] };
+  const plan = buildPlan(record, { id: 'geico', useGenericRules: false, rules, actions: [] });
+  return { h, rows, plan };
+}
+
+test('GEICO coverage rows: each row goes to the unit it names, a trailer among the vehicles shifting none (2026-10-28)', async () => {
+  const { h, rows, plan } = coverageRowsPage();
+  const report = await h.kit.fill(plan, { maxRounds: 40 });
+  // Every unit's comprehensive and collision, the trailer's too: TNI's $1,000 deductibles.
+  for (const suffix of ['COMP', 'COLL']) {
+    for (const [unit, list] of Object.entries(rows[suffix])) assert.equal(list.value, '$1,000 deductible', `${suffix} for ${unit}`);
+  }
+  // Rental and road service on every motor vehicle, the last one's after its comprehensive.
+  for (const [unit, list] of Object.entries(rows.Rental)) assert.equal(list.value, '$40 Per Day, $1,200 Max', `rental for ${unit}`);
+  for (const [unit, list] of Object.entries(rows.ERS)) assert.equal(list.value, 'I accept this coverage', `road service for ${unit}`);
+  assert.equal(Object.values(rows.HVRS)[0].value, 'I accept this coverage');
+  // Fire and theft Not Included on every row, the trailer's too: TNI's standard (2026-10-28).
+  for (const [unit, list] of Object.entries(rows.FT)) assert.equal(list.value, 'Not Included', `fire and theft for ${unit}`);
+  const trailerFt = report.filled.find((x) => x.label.startsWith('2017 Great Dane') && x.key.startsWith('cov:FT#'));
+  assert.equal(trailerFt?.standard, true, 'the trailer\'s fire and theft is filled as a TNI standard');
+  assert.deepEqual(plain(report.failed), []);
+  assert.deepEqual(plain(report.unknown.map((x) => x.key)), [], 'no coverage row is left unfamiliar');
+  assert.deepEqual(plain(report.checks.map((x) => x.key)), []);
+});
+
+test('GEICO coverage rows: a row naming no intake unit is named for the agent, never unfamiliar nor another unit\'s', async () => {
+  // The quote has a 2012 Kenworth the intake doesn't list, in place of the 2021 Ram 3500.
+  const { h, rows, plan } = coverageRowsPage(COVERED_ROWS.map((u) => (u === '2021 RAM 3500' ? '2012 KENWORTH T680' : u)));
+  const report = await h.kit.fill(plan, { maxRounds: 40 });
+  assert.equal(rows.COMP['2012 KENWORTH T680'].value, '', 'left as it was');
+  assert.equal(rows.COMP['2024 RAM 2500'].value, '$1,000 deductible');
+  assert.deepEqual(plain(report.unknown.map((x) => x.key)), []);
+  const named = plain(report.checks.filter((x) => /2012 KENWORTH/.test(x.label)).map((x) => [x.name, x.note]));
+  assert.equal(named.length, 5, JSON.stringify(named));
+  for (const [, note] of named) assert.match(note, /matches none of the intake's vehicles and trailers/);
+});

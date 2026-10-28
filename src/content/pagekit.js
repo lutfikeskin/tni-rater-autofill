@@ -640,6 +640,10 @@
     // Rows showing a witness (a VIN) no intake unit has: a vehicle on the quote the intake doesn't
     // list. Never answered or changed; each row is a check for the agent (pairs.extraRows).
     const extraRows = new Map();
+    // Rows of a per-unit question found by a selector that name their unit: the rule each is for.
+    // One no step took is a check naming the row for the agent, never an unfamiliar question
+    // (pairs.unmatchedRows).
+    const namedRows = new Map();
     const page = currentPage();
     // The step on screen, read only for a plan kept to steps ('' when no step is named: then no
     // stepped rule is live, and GEICO's fields stay the agent's).
@@ -732,6 +736,14 @@
               const w = rowWitnessOf(x, s.witness);
               if (w?.value && !wanted.has(w.value) && !extraRows.has(w.el)) extraRows.set(w.el, s.witness);
             }
+          } else if (s.activeVehicle != null && all.some((x) => x.vehicle)) {
+            // A per-unit question's rows that name their unit (GEICO's coverage rows, "2020 RAM 3500
+            // …", a trailer among the vehicles): the step's unit's row is the one naming it, never
+            // the row at the unit's position, which a trailer listed among the vehicles shifts
+            // (GEICO live run, 2026-10-28). A row no unit names, or two alike, is the agent's (namedRows).
+            c = s.vehicleHint ? namedRow(all, s, steps) : null;
+            if (c && used.has(c)) c = null;
+            for (const x of all) if (x.vehicle && !namedRows.has(x)) namedRows.set(x, s);
           } else c = matching[0] ?? null;
           // An ignored step for every match (`every`: the gateway's other product boxes, however many).
           if (s.ignore && s.every) for (const x of matching.slice(1)) take(s, x, how);
@@ -776,6 +788,7 @@
     }
     pairs.unwitnessed = unwitnessed;
     pairs.witnessed = witnessed;
+    pairs.unmatchedRows = [...namedRows].filter(([x]) => !used.has(x)).map(([control, step]) => ({ control, step }));
     pairs.held = held;
     pairs.units = units;
     // Numbered by their place among the page's rows (by their witness controls), never by value.
@@ -919,6 +932,20 @@
     const best = Math.max(0, ...rows.map(score));
     const top = rows.filter((x) => score(x) === best);
     return best >= 2 && top.length === 1 ? top[0] : null;
+  }
+
+  const unmatchedRowNote = (step) => `${step.name}: this row's vehicle matches none of the intake's vehicles and trailers (or two of them alike), so it wasn't filled. Answer it yourself.`;
+
+  // The row of a per-unit step among rows naming their unit: the one naming the step's unit best
+  // (vehicleRow), unless another unit asked the same question names it as well or better (two
+  // units alike, or the step's own unit missing from the rows): then no unit's, and the agent's.
+  function namedRow(rows, step, steps) {
+    const row = vehicleRow(rows, step.vehicleHint);
+    if (!row) return null;
+    const score = (hint) => hint.filter((h) => ` ${row.vehicle ?? ''} `.includes(` ${h} `)).length;
+    const mine = score(step.vehicleHint);
+    const rivals = steps.filter((t) => t !== step && t.selector === step.selector && t.activeVehicle != null && t.vehicleHint);
+    return rivals.some((t) => score(t.vehicleHint) >= mine) ? null : row;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -2410,10 +2437,19 @@
       for (const p of allPairs.filter((x) => x.reworded)) flag(report.reworded, { label: p.control.label, key: fieldKey(p.control), name: p.step.name, field: p.step.field });
       const renamed = new Map(allPairs.renamed.map((r) => [r.control, r.step]));
       for (const [c, step] of renamed) flag(report.renamed, { label: c.label, key: fieldKey(c), name: step.name, field: step.field, now: c.ref ?? null });
+      // A per-unit question's row naming a unit no step's unit matched (none of the intake's
+      // vehicles or trailers, or two alike): a known question left to the agent, named by its row.
+      const unmatched = new Map(allPairs.unmatchedRows.map((r) => [r.control, r.step]));
+      for (const [c, step] of unmatched) {
+        if (skippedField(c)) continue;
+        const note = unmatchedRowNote(step);
+        flag(report.checks, { label: c.label, path: null, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, note, ...describe(c) });
+        mark(c, 'needs', note);
+      }
       for (const c of controls) {
         // A row a witness step chooses among is a known question (its unit is named instead), and
-        // so is a held unit form's (the form is named instead).
-        if (mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c) || allPairs.held.has(c)) continue;
+        // so is a held unit form's (the form is named instead), and a unit's row no unit matched.
+        if (mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c) || allPairs.held.has(c) || unmatched.has(c)) continue;
         flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, ref: c.ref ?? null, controlKind: c.kind, required: c.required, ...describe(c) });
         mark(c, 'needs', renamed.has(c) ? `Looks like "${renamed.get(c).name}", but the carrier renamed this field: left for you.` : 'Unfamiliar question — left for you.');
       }
@@ -3441,6 +3477,8 @@
     }
     // A held unit form is marked on its first question, where its check says why.
     for (const u of stillHere ? pairs.units : []) if (u.held && !skippedField(u.marker)) mark(u.marker, 'needs', heldFormNote(u));
+    // So is a unit's row no unit matched (its check names the row).
+    for (const { control, step } of stillHere ? pairs.unmatchedRows : []) if (!skippedField(control)) mark(control, 'needs', unmatchedRowNote(step));
     // An unfamiliar question that went away during the fill (hidden by an answer, such as the
     // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
     if (stillHere) {
