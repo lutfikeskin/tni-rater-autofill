@@ -732,10 +732,18 @@ async function restoreReports(tabId) {
   if (was?.scope !== scope || !Array.isArray(was.entries)) return;
   // A report a fill made since the panel opened is newer: kept. Each keeps its key, which holds
   // its step on a one-address application (GEICO, AmWINS): the tab's step may not be known yet.
+  // Each is made again as the page is now (liveFrames): the page in front's read once for all its
+  // items before it shows (a question gone since never shows again), another page's with nothing
+  // said of its page until it is in front (checkItems).
+  const front = currentReportKey();
   for (const e of was.entries) {
     if (!e?.key || !String(e.key).startsWith(`${tabId}|`) || state.reports.has(e.key) || !Array.isArray(e.frames)) continue;
     const active = { ...firstUnits(), ...(e.active ?? {}) };
-    renderReport(e.frames, { tabId, page: e.page, carrier, active, plan: buildPlan(state.intake.record, carrier, active), stopped: !!e.stopped, keptKey: e.key, restoredAt: e.at ?? Date.now(), filledBefore: e.filledBefore });
+    const plan = buildPlan(state.intake.record, carrier, active);
+    const live = e.key === front ? await liveItems(tabId, carrier, reviewItems(e.frames), plan) : null;
+    // A fill, another tab or another intake since the page was read: not made again here.
+    if (state.reports.has(e.key) || state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) continue;
+    renderReport(liveFrames(e.frames, live), { tabId, page: e.page, carrier, active, plan, stopped: !!e.stopped, keptKey: e.key, restoredAt: e.at ?? Date.now(), filledBefore: e.filledBefore });
   }
   refreshAnswers();
 }
@@ -2970,7 +2978,8 @@ function fillProblem(ctx, text, kind = 'error') {
 function recount() {
   const entry = state.reportFor;
   if (!entry?.fields) return;
-  const items = [...$('report').querySelectorAll('.row.need')];
+  // A question gone from the page since (checkItems) isn't left: it holds nothing.
+  const items = [...$('report').querySelectorAll('.row.need')].filter((n) => !n.classList.contains('gone'));
   const left = items.filter((n) => !n.classList.contains('resolved')).length;
   entry.otherLeft = items.filter((n) => !n.classList.contains('resolved') && n.dataset?.finish !== '1').length;
   if (left === entry.left) return;
@@ -4130,6 +4139,103 @@ async function showOnPage(item, x, tabId, page, carrier) {
   if (found) return;
   announce(where.textContent);
   where.hideTimer = setTimeout(() => { where.hidden = true; where.textContent = ''; }, 6000);
+  // Gone from the page, not in a closed section the fill knew of: it leaves the list (checkItems).
+  checkItems();
+}
+
+// The invariant of the review list (docs/browser-filling.md, "Only what is on the page"): it lists
+// only questions the rater page has, and says what they show from the page itself. The fill's report
+// is made so as the fill ends (pagekit reconcile); the page may change after it (GEICO draws a CSL
+// liability limit's redraw a moment later), and a kept report is of the page as it was.
+
+// The review items of fill reports that are questions with a field (`key`), as the kit's present
+// takes them: [{ key, label }]. A row the intake doesn't have (`extra-row:`) is no field.
+function reviewItems(frames) {
+  return frames.flatMap((f) => [...['unknown', 'failed', 'noData', 'leftRequired', 'checks'].flatMap((k) => f[k] ?? []), ...(f.kept ?? []).filter((x) => x.differs)])
+    .filter((x) => x.key && !String(x.key).startsWith('extra-row:')).map((x) => ({ key: x.key, label: x.label || null }));
+}
+
+// What the page shows now for `items` ([{ key, label }]), from all of the tab's frames in one message
+// (pagekit present: one read of each frame): [{ key, label, controlKind, options, current, shared }]
+// for those it has. Null when the page couldn't be read (navigating, no kit): nothing is judged then.
+async function liveItems(tabId, carrier, items, plan = []) {
+  if (!items.length) return [];
+  // Fields the plan fills while they are hidden (a fill's hiddenOk: AmWINS' earlier steps).
+  const hidden = (plan ?? []).filter((s) => s.hidden && s.selector).map((s) => s.selector);
+  let frames;
+  try {
+    frames = await runKit(tabId, carrier, (asked, hiddenOk) => globalThis.__raterKit?.present?.(asked, hiddenOk) ?? null, [items, hidden]);
+  } catch { return null; /* the page is navigating */ }
+  const read = (frames ?? []).filter((f) => Array.isArray(f.result));
+  return read.length ? read.flatMap((f) => f.result) : null;
+}
+// An item's reading among liveItems', by its key and label as it was asked.
+function liveOf(live, key, label) {
+  return live.find((y) => y.key === key && (y.label || null) === (label || null)) ?? null;
+}
+
+// A kept report's frames as the page is now (restoreReports): an item with a field stays only where
+// the page has it (`live`, liveItems) or the fill knew it off screen (`offPage`), saying what the page
+// shows and offers now. Unread (`live` null: another page is in front, or the page couldn't be read),
+// none is dropped and none says what the page shows: checkItems reads it once its page is in front.
+function liveFrames(frames, live) {
+  const fresh = (x) => {
+    if (!x.key || String(x.key).startsWith('extra-row:')) return x;
+    const now = live ? liveOf(live, x.key, x.label) : null;
+    if (!now) return live && !x.offPage ? null : 'current' in x ? { ...x, current: null } : x;
+    const out = { ...x };
+    if ('current' in x) out.current = now.shared ? null : now.current ?? null;
+    if ('options' in x) out.options = now.options ?? [];
+    return out;
+  };
+  return frames.map((f) => {
+    const out = { ...f };
+    for (const k of ['unknown', 'failed', 'noData', 'leftRequired', 'checks']) if (Array.isArray(f[k])) out[k] = f[k].map(fresh).filter(Boolean);
+    if (Array.isArray(f.kept)) out.kept = f.kept.map((x) => (x.differs ? fresh(x) : x)).filter(Boolean);
+    return out;
+  });
+}
+
+// The report shown, checked against its page as it is now (liveItems, one message for every item):
+// an item whose question has gone from the page (and isn't one the fill knew off screen) leaves the
+// list (`gone`, hidden: back if the page draws it again) and holds nothing, Continue included; the
+// others say what the page shows and offers now. Only on the report's own tab and page, never while a
+// fill runs; an item already settled (answered, picked, marked done) stays as it is.
+async function checkItems() {
+  const entry = state.reportFor;
+  const here = () => !state.filling && state.reportFor === entry && entry.tabId === state.tab?.id && pageOf(state.tab?.url) === entry.page;
+  if (!entry?.fields || !here()) return;
+  const rows = [...$('report').querySelectorAll('.row.need')].filter((row) => row.dataset.key && !row.classList.contains('resolved'));
+  if (!rows.length) return;
+  const live = await liveItems(entry.tabId, entry.carrier ?? state.tab.carrier, rows.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null })), entry.plan);
+  if (!live || !here()) return;
+  let changed = false;
+  for (const row of rows) {
+    if (row.classList.contains('resolved')) continue;
+    const now = liveOf(live, row.dataset.key, row.dataset.field);
+    const gone = !now && row.dataset.offpage !== '1';
+    row.showLive?.(now);
+    if (gone === row.classList.contains('gone')) continue;
+    row.classList.toggle('gone', gone);
+    row.hidden = gone;
+    if (gone && row.classList.contains('open')) toggleRow(row, false);
+    changed = true;
+  }
+  if (changed) recount();
+}
+
+// checkItems once the page has been quiet a moment (the recorder's changes come in bursts).
+function scheduleCheckItems() {
+  clearTimeout(state.itemsTimer);
+  state.itemsTimer = setTimeout(() => { checkItems(); }, 300);
+}
+
+// The page in front changed under the report shown, as the recorder saw it (answers, questions drawn
+// or gone, a step or page shown): its items are checked against it again (checkItems). Registered
+// beside onRecorderMessage; it answers nothing.
+function noteLiveItems(msg, sender) {
+  if (msg?.ra !== 'usage' || sender?.tab?.id !== state.tab?.id || !state.reportFor?.fields) return;
+  if (['field_changes', 'new_fields', 'removed_fields', 'step_shown', 'page_view'].includes(msg.event)) scheduleCheckItems();
 }
 
 // An item left for the agent that is settled now: answered on the page ('answered'), put in from
@@ -4498,7 +4604,16 @@ function needRow(x, { tabId, page, carrier }, open = false) {
   const kind = x.mark === 'failed' ? 'failed' : pickable ? 'need' : 'yours';
   const icon = { failed: '!', need: '?', yours: '•' }[kind];
   const wait = { failed: 'Couldn’t fill', need: 'Needs your answer', yours: 'Left for you' }[kind];
-  const now = x.controlKind !== 'text' && x.current ? x.current : null;
+  // What the page shows: only as the page has it (the fill's report as the fill ended, or the panel's
+  // own reading since: checkItems), never for a question off screen (`offPage`).
+  const now = x.controlKind !== 'text' && x.current && !x.offPage ? x.current : null;
+  const nowSaid = (current) => (current ? ` On the page now: ${choiceSaid(current)}.` : '');
+  const pageNow = h('span', { class: 'page-now' }, nowSaid(now));
+  const onPick = (choice, button) => (item.aiAccept && choice === item.dataset.aiPick
+    ? item.aiAccept(button) : agentAnswer(item, x, choice, { tabId, page, carrier }, button));
+  let shownChoices = options;
+  let choices = pickable ? choiceList(options, { current: now, onPick })
+    : h('p', { class: 'row-say' }, x.key || x.action ? 'Answer it on the rater page, then mark it done here.' : 'Do it on the rater page.');
   // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
   const show = x.key ? h('button', { class: 'link small show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
     'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
@@ -4510,23 +4625,51 @@ function needRow(x, { tabId, page, carrier }, open = false) {
     'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page, x) }, 'Mark done')
     : actionId ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You did it on the page: the panel stops waiting on it for this quote',
       'aria-label': `Mark done: ${label}`, onclick: () => markActionDone(item, actionId, tabId, page, x) }, 'Mark done') : null;
-  const item = h('div', { class: `row need${kind === 'need' ? '' : ` ${kind}`}${open ? ' open' : ''}`, tabindex: '-1', dataset: { need: `${x.key}|${x.label}`, key: x.key ?? '', icon, wait, finish: finishLeftOk(carrier, x) ? '1' : '' } },
+  // A failed choice the panel can't put in: the options the page offers, as for `now`.
+  const optionsSaid = (list) => (list?.length ? `Options: ${list.slice(0, 25).join(' · ')}${list.length > 25 ? ' · …' : ''}` : '');
+  const offered = !pickable && x.mark === 'failed' ? h('div', { class: 'options', hidden: !x.options?.length }, optionsSaid(x.options)) : null;
+  // `field` and `offpage`: the label the kit tells rows of one question apart by, and an item the
+  // fill knew is off screen for now (checkItems keeps it).
+  const item = h('div', { class: `row need${kind === 'need' ? '' : ` ${kind}`}${open ? ' open' : ''}`, tabindex: '-1',
+    dataset: { need: `${x.key}|${x.label}`, key: x.key ?? '', field: x.label ?? '', offpage: x.offPage ? '1' : '', icon, wait, finish: finishLeftOk(carrier, x) ? '1' : '' } },
     h('button', { type: 'button', class: 'row-head', 'aria-expanded': String(open), onclick: () => toggleRow(item) },
       h('span', { class: 'row-icon', 'aria-hidden': 'true' }, icon),
       h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, label), h('span', { class: 'row-value' }, wait))),
     h('div', { class: 'row-body', hidden: !open },
-      h('p', { class: 'why' }, x.why, now ? ` On the page now: ${choiceSaid(now)}.` : ''),
+      h('p', { class: 'why' }, x.why, pageNow),
       h('div', { class: 'ai-slot' }),
-      pickable
-        ? choiceList(options, { current: now, onPick: (choice, button) => (item.aiAccept && choice === item.dataset.aiPick
-          ? item.aiAccept(button) : agentAnswer(item, x, choice, { tabId, page, carrier }, button)) })
-        : h('p', { class: 'row-say' }, x.key || actionId ? 'Answer it on the rater page, then mark it done here.' : 'Do it on the rater page.'),
-      !pickable && x.options?.length && x.mark === 'failed' ? h('div', { class: 'options' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null,
+      choices,
+      offered,
       h('div', { class: 'row-actions' }, show, done),
       show ? h('span', { class: 'need-where', hidden: true }) : null,
       // Empty while the item is open: what settled it, once it is (settleNeed), or why the page
       // didn't take a pick (agentAnswer).
       h('p', { class: 'need-note', hidden: true })));
+  // What the page shows and offers for it now (checkItems: pagekit present), or nothing when its
+  // field isn't on screen (`live` null): what it said before is never left as the page's.
+  item.showLive = (live) => {
+    const current = live && !live.shared && x.controlKind !== 'text' ? live.current ?? null : null;
+    pageNow.textContent = nowSaid(current);
+    if (!live) return;
+    if (offered) {
+      offered.textContent = optionsSaid(live.options);
+      offered.hidden = !live.options?.length;
+    }
+    const next = pickable ? [...new Set(choicesOf(x.controlKind, live.options))] : [];
+    if (!next.length) return;
+    // The same choices: only which one the page shows (an AI pick's mark on them stays).
+    if (next.length === shownChoices.length && next.every((o, i) => o === shownChoices[i])) {
+      for (const b of choices.querySelectorAll('.opt-btn')) b.setAttribute('aria-pressed', String(b.dataset.choice === current));
+      const select = choices.querySelector('select');
+      if (select) select.value = current != null && next.includes(current) ? current : '';
+      return;
+    }
+    x.options = live.options;
+    shownChoices = next;
+    const list = choiceList(next, { current, onPick });
+    choices.replaceWith(list);
+    choices = list;
+  };
   return item;
 }
 
@@ -4583,7 +4726,7 @@ function showNextNeed() {
     showScreen();
     renderSteps();
   }
-  const open = [...$('report').querySelectorAll('.row.need:not(.resolved)')];
+  const open = [...$('report').querySelectorAll('.row.need:not(.resolved):not(.gone)')];
   if (!open.length) return;
   const now = $('report').querySelector('.row.open');
   const next = (now && open.find((n) => n !== now && (now.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING))) || open.find((n) => n !== now) || open[0];
@@ -6498,7 +6641,7 @@ function wire() {
   $('agent-btn').addEventListener('click', async () => { const cfg = await aiSettings(); openSettings(cfg.on && !cfg.ready ? 'ai-openai-key' : 'ai-on'); });
   $('step-check').addEventListener('click', () => setView('check'));
   $('step-fill').addEventListener('click', () => setView('page'));
-  $('step-confirm').addEventListener('click', () => { setView('page'); refreshAnswers(); });
+  $('step-confirm').addEventListener('click', () => { setView('page'); refreshAnswers(); checkItems(); });
   for (const b of $('filters').querySelectorAll('button')) b.addEventListener('click', () => setFilter(b.dataset.filter));
   $('open-pdf').addEventListener('click', () => openPdf());
   $('client-card').addEventListener('click', () => (state.detailsOpen ? closeDetails() : openDetails()));
@@ -6606,6 +6749,7 @@ function wire() {
     // The step first: a field change or new question is scoped by the step it came with.
     chrome.runtime.onMessage.addListener(noteStep);
     chrome.runtime.onMessage.addListener(onRecorderMessage);
+    chrome.runtime.onMessage.addListener(noteLiveItems);
     chrome.runtime.onMessage.addListener(onPanelMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); });

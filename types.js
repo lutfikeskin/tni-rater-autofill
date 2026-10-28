@@ -565,6 +565,8 @@
  * @property {number} [order]  its place on the page
  * @property {string} [unit]
  * @property {object} [timing]
+ * @property {'group' | 'section' | 'answer'} [offPage]  set as the fill ends (reconcile) on an item whose field isn't on screen but which stays: read while another group of units was shown, in a coverage section the page closes, or about the fill's own answer whose field the page took away (`vanished`)
+ * @property {boolean} [vanished]  failed: the page took the field away on the fill's answer (a summary in its place)
  */
 
 /**
@@ -638,6 +640,7 @@
  * @property {boolean} [notDrawn]
  * @property {any} [signatureBefore]
  * @property {RecalcTrace} [recalcTrace]
+ * @property {{ ms: number, reads: number, dropped: number, retried: number }} [reconcile]  the report made to agree with the page as the fill ended (pagekit reconcile), on a fill that ended on its page: its time in ms, the page reads since the rounds ended (1: the end's own read), the items dropped as gone from the page, and the failed choices given again against options the page redrew
  */
 
 // ---------------------------------------------------------------------------------------------

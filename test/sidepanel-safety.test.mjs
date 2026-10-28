@@ -796,9 +796,10 @@ test('Show on page asks every frame of the item\'s own tab to reveal its field, 
   const timers = [];
   const where = { hidden: true, textContent: '' };
   const item = { querySelector: (sel) => (sel === '.need-where' ? where : null) };
+  let checked = 0;
   const context = { state, pageOf: (u) => u, announce: (t) => said.push(t),
     runKit: async (...args) => { runs.push(args); if (frames instanceof Error) throw frames; return frames; },
-    setTimeout: (fn) => timers.push(fn), clearTimeout() {} };
+    setTimeout: (fn) => timers.push(fn), clearTimeout() {}, checkItems: () => { checked++; } };
   vm.runInNewContext(extractFunction('showOnPage'), context);
   const x = { key: '200F', label: 'Vehicle field' };
   // Another tab or page, or an item without a field: nothing is asked of any page.
@@ -823,6 +824,8 @@ test('Show on page asks every frame of the item\'s own tab to reveal its field, 
   await context.showOnPage(item, x, 7, 'Rates', carrier);
   assert.deepEqual([where.hidden, where.textContent], [false, 'Not on the page now (it may be in a closed section).']);
   assert.deepEqual(said, ['Not on the page now (it may be in a closed section).']);
+  // And the list is checked against the page (checkItems): gone, and in no closed section, it leaves.
+  assert.equal(checked, 1, 'found: nothing checked; not found: the list checked once');
   timers.at(-1)();
   assert.deepEqual([where.hidden, where.textContent], [true, '']);
   // The page navigating meanwhile: not found either.
@@ -2054,8 +2057,11 @@ test('done actions are kept per intake and tab, restored once after a reload', a
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
 // Each tab's reports are kept in storage.session (the panel's `store`) as the fill results they were
 // made from, and made again from them on reopen. `memory`: the store's contents.
-function keptReportsHarness(memory, { session = { intakeId: 'intake-a' }, state = {} } = {}) {
+// `front`: the report key of the page in front; `live`: what the page shows (liveItems' answer), each
+// read recorded in `reads`.
+function keptReportsHarness(memory, { session = { intakeId: 'intake-a' }, state = {}, front = null, live = [] } = {}) {
   const rendered = [];
+  const reads = [];
   const context = {
     state: { tab: { id: 7, carrier: { id: 'progressive' } }, intake: { record: {} }, reports: new Map(), ...state },
     usage: { currentSession: () => session },
@@ -2063,10 +2069,12 @@ function keptReportsHarness(memory, { session = { intakeId: 'intake-a' }, state 
     firstUnits: () => ({ vehicles: 0, drivers: 0, trailers: 0 }),
     buildPlan: (record, carrier, active) => [{ drivers: active.drivers }],
     renderReport: (frames, ctx) => rendered.push({ frames, ctx }), refreshAnswers: () => rendered.push('refreshAnswers'),
+    currentReportKey: () => front,
+    liveItems: async (tabId, carrier, items) => { reads.push(items); return live; },
   };
   const block = SIDEPANEL.slice(SIDEPANEL.indexOf("const REPORTS_PREFIX = 'reports:';"), SIDEPANEL.indexOf('let reportsQueue = Promise.resolve();'));
-  vm.runInNewContext(`${block}\nvar reportsQueue = Promise.resolve();\n${['keepReport', 'forgetKeptReports', 'restoreReports'].map(extractFunction).join('\n')}\nglobalThis.kept = () => reportsQueue;`, context);
-  return { context, rendered };
+  vm.runInNewContext(`${block}\nvar reportsQueue = Promise.resolve();\n${['keepReport', 'forgetKeptReports', 'restoreReports', 'reviewItems', 'liveFrames', 'liveOf'].map(extractFunction).join('\n')}\nglobalThis.kept = () => reportsQueue;`, context);
+  return { context, rendered, reads };
 }
 
 test('each quote tab keeps its last reports for the intake, as the fill results they were made from (W43-39)', async () => {
@@ -2145,6 +2153,95 @@ test('the panel opened again makes the tab\'s kept reports again, as of their fi
   assert.equal(later.rendered.length, 4, 'all three reports, then the check against the page');
   // The panel's tab switch makes them again after the tab's other records.
   assert.match(extractFunction('refreshTab'), /await restoreDoneActions\(state\.tab\?\.id\);\n\s+await restoreReports\(state\.tab\?\.id\);/);
+});
+
+// GEICO live run, 2026-10-28: Quote & Coverages' report kept property damage and UMPD, which a CSL
+// limit had taken off the page, as "Needs your answer… On the page now: $25,000", and they held
+// Recalculate until the agent marked them done. A kept report is made again as the page is now: the
+// page in front read once for all its items before it shows; a question gone isn't listed or counted,
+// and what a row says the page shows is the page's now, never what the fill read.
+const plain = (v) => JSON.parse(JSON.stringify(v));
+const GEICO_KEPT = () => [{ fields: 6, filled: [{ label: 'Bodily Injury or Combined Single Limit Liability', key: 'cov:bodily injury or combined single limit liability', shown: '$1,000,000 Combined Single Limit', stepId: 1 }],
+  kept: [], failed: [{ label: 'Uninsured Motorist Bodily Injury (includes Underinsured)', key: 'cov:um', controlKind: 'select', reason: 'no option matches "$100,000/$300,000"', current: '$30,000/$60,000', options: ['$30,000/$60,000'], stepId: 3 }],
+  noData: [
+    { label: 'Property Damage Liability (PD)', key: 'cov:pd', controlKind: 'select', current: '$25,000', options: ['$25,000', '$50,000'], stepId: 2 },
+    { label: 'Uninsured Motorist Property Damage (UMPD)', key: 'cov:umpd', controlKind: 'select', current: '$25,000', options: ['$25,000'], stepId: 4 },
+  ], leftRequired: [], unknown: [], checks: [], actions: [] }];
+const GEICO_LIVE = [{ key: 'cov:um', label: 'Uninsured Motorist Bodily Injury (includes Underinsured)', controlKind: 'select', current: '$300,000 Combined Single Limit', options: ['$100,000 Combined Single Limit', '$300,000 Combined Single Limit'] }];
+
+test('a kept report is made again as the page is now: a question gone is not listed and holds nothing; "On the page now" is the page\'s (GEICO, 2026-10-28)', async () => {
+  const memory = { 'reports:7': { scope: 'intake-a', entries: [
+    { key: '7|/quote|Quote & Coverages', page: '/quote', active: {}, at: 100, frames: GEICO_KEPT() },
+    { key: '7|/quote|Vehicles', page: '/quote', active: {}, at: 50, frames: GEICO_KEPT() },
+  ] } };
+  const { context, rendered, reads } = keptReportsHarness(memory, { front: '7|/quote|Quote & Coverages', live: GEICO_LIVE });
+  await context.restoreReports(7);
+  // One read of the page, for every item of the report in front; none for the other step's.
+  assert.deepEqual(plain(reads), [[{ key: 'cov:um', label: 'Uninsured Motorist Bodily Injury (includes Underinsured)' }, { key: 'cov:pd', label: 'Property Damage Liability (PD)' },
+    { key: 'cov:umpd', label: 'Uninsured Motorist Property Damage (UMPD)' }]]);
+  const [front, other] = rendered;
+  assert.deepEqual(plain(front.frames[0].noData), [], 'property damage and UMPD are gone from the page');
+  assert.deepEqual(plain(front.frames[0].failed.map((x) => [x.key, x.current, x.options])), [['cov:um', '$300,000 Combined Single Limit', ['$100,000 Combined Single Limit', '$300,000 Combined Single Limit']]]);
+  assert.equal(front.frames[0].filled.length, 1, 'answers that went in stay');
+  // Another step's page isn't in front: nothing dropped, and nothing said of what its page shows.
+  assert.deepEqual(plain(other.frames[0].noData.map((x) => [x.key, x.current])), [['cov:pd', null], ['cov:umpd', null]]);
+
+  // As the panel draws it: UM alone is left (Continue and the dock wait on it only), saying what the
+  // page shows now.
+  const { context: panel, box } = reportHarness({ tab: { id: 7, url: '/quote', carrier: { id: 'geico' } } });
+  panel.renderReport(front.frames, { tabId: 7, page: '/quote', restoredAt: 100 });
+  const needs = rowsOf(box).filter((r) => rowSaid(r).need);
+  assert.deepEqual(needs.map((r) => rowSaid(r).label), ['Uninsured Motorist Bodily Injury (includes Underinsured)']);
+  assert.deepEqual([panel.state.reportFor.left, panel.state.reportFor.otherLeft], [1, 1]);
+  const why = nodesIn(needs[0]).find((n) => n.props?.class === 'why');
+  assert.deepEqual(why.children.flat().map((n) => (typeof n === 'string' ? n : n.children.join(''))), ['Couldn\'t fill: no option matches "$100,000/$300,000"', ' On the page now: $300,000 Combined Single Limit.']);
+  // The other step's rows say nothing of their page until it is in front and read.
+  const { context: later, box: laterBox } = reportHarness({ tab: { id: 7, url: '/quote', carrier: { id: 'geico' } } });
+  later.renderReport(other.frames, { tabId: 7, page: '/quote', restoredAt: 50 });
+  const pd = rowsOf(laterBox).find((r) => rowSaid(r).label === 'Property Damage Liability (PD)');
+  assert.deepEqual(nodesIn(pd).find((n) => n.props?.class === 'page-now').children, ['']);
+});
+
+// The report shown, checked against the page (checkItems: one message for all its items): a question
+// gone from the page leaves the list and the count (back if the page draws it again), one the fill
+// knew off screen stays, a settled one is left as it is, and each other one says what the page shows.
+test('the review list follows the page: a gone question leaves it and holds nothing, in one read of the page', async () => {
+  const classes = (...names) => { const set = new Set(names); return { set, contains: (c) => set.has(c), add: (c) => set.add(c), remove: (c) => set.delete(c), toggle: (c, on) => (on ? set.add(c) : set.delete(c)) }; };
+  const shown = [];
+  const row = (key, field, { offpage = '', resolved = false } = {}) => {
+    const r = { dataset: { key, field, offpage, finish: '' }, classList: classes('row', 'need', ...(resolved ? ['resolved'] : [])), hidden: false };
+    r.showLive = (live) => shown.push([key, live?.current ?? null]);
+    return r;
+  };
+  const rows = [row('cov:pd', 'Property Damage Liability (PD)'), row('cov:um', 'UM'), row('cov:gl', 'GL limit', { offpage: '1' }), row('cov:done', 'Marked', { resolved: true })];
+  const entry = { key: '7|/quote', tabId: 7, page: '/quote', fields: 6, left: 3, plan: [] };
+  const state = { tab: { id: 7, url: '/quote', carrier: { id: 'geico' } }, reportFor: entry, filling: false };
+  let live = [{ key: 'cov:um', label: 'UM', current: '$300,000 Combined Single Limit', options: [] }];
+  const asked = [];
+  const said = [];
+  const context = { state, $: () => ({ querySelectorAll: (sel) => (sel === '.row.need' ? rows : []) }), pageOf: (u) => u, renderSteps() {}, announce: (t) => said.push(t), toggleRow() {},
+    liveItems: async (tabId, carrier, items) => { asked.push(items); return live; } };
+  vm.runInNewContext(['checkItems', 'liveOf', 'recount'].map(extractFunction).join('\n'), context);
+  await context.checkItems();
+  assert.equal(asked.length, 1, 'one read for every item');
+  assert.deepEqual(plain(asked[0].map((x) => x.key)), ['cov:pd', 'cov:um', 'cov:gl'], 'a settled item is not asked about');
+  assert.deepEqual(rows.map((r) => [r.dataset.key, r.hidden]), [['cov:pd', true], ['cov:um', false], ['cov:gl', false], ['cov:done', false]]);
+  assert.deepEqual(shown, [['cov:pd', null], ['cov:um', '$300,000 Combined Single Limit'], ['cov:gl', null]]);
+  assert.deepEqual([entry.left, entry.otherLeft, said], [2, 2, ['2 left for you on this page.']], 'the gone question holds nothing');
+  // Drawn again: back in the list.
+  live = [...live, { key: 'cov:pd', label: 'Property Damage Liability (PD)', current: '$50,000', options: [] }];
+  await context.checkItems();
+  assert.deepEqual([rows[0].hidden, rows[0].classList.contains('gone'), entry.left], [false, false, 3]);
+  // A page that couldn't be read, another page in front, or a fill running: nothing is judged.
+  live = null;
+  await context.checkItems();
+  state.tab.url = '/other';
+  live = [];
+  await context.checkItems();
+  state.tab.url = '/quote';
+  state.filling = true;
+  await context.checkItems();
+  assert.deepEqual([rows.map((r) => r.hidden), asked.length], [[false, false, false, false], 3]);
 });
 
 test('kept reports go with the shown ones: a closed tab\'s, a cleared page\'s, all for a new or cleared client (W43-39)', async () => {
