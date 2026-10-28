@@ -2342,6 +2342,9 @@ test('business type list picks General Freight Trucking when offered, else For H
     [['For Hire Trucking Haul goods for others.', 'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).'], /^General Freight Trucking/],
     [['For Hire Trucking Haul goods for others.'], /^For Hire Trucking/],
     [['Auto Haulers Haul autos for a fee (For Hire Trucking).'], null],
+    // Two options beginning with General Freight Trucking: the agent's, never For Hire Trucking in
+    // its place (Claude review of PR #220).
+    [['For Hire Trucking Haul goods for others.', 'General Freight Trucking Haul general goods.', 'General Freight Trucking (Local) Haul general goods nearby.'], null],
   ];
   for (const [offered, want] of lists) {
     const h = harness({ search: '?pageName=BECAPopup' });

@@ -1010,6 +1010,9 @@
         const starts = usable.filter((o) => squash(o.text).startsWith(c));
         if (exact) return exact;
         if (starts.length === 1) return starts[0];
+        // Several begin with it: the answer is listed, but which one is the agent's; never the
+        // next alias in its place (Claude review of PR #220).
+        if (starts.length > 1) return null;
       }
       return null;
     }

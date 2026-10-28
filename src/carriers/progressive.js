@@ -352,7 +352,7 @@ const SEARCH_WORD = 'Trucking';
 const searchBusinessType = (r) => (searchClass(r) ? 'General Freight Trucking' : null);
 const searchBusinessSource = (r) => (searchClass(r) ? 'standard' : 'fact');
 const searchBusinessNote = (r) => (searchClass(r) ? null : `Business type for a ${r.operations.businessClass || 'business of this class'}: pick it yourself (the fill picks it for expediters and general freight haulers only).`);
-const SEARCH_UNOFFERED = 'The business type list shows neither General Freight Trucking nor For Hire Trucking: pick it yourself (TNI takes General Freight Trucking, else For Hire Trucking, for expediters and general freight haulers; never another business).';
+const SEARCH_UNOFFERED = 'The business type list shows neither General Freight Trucking nor For Hire Trucking, or several options for it: pick it yourself (TNI takes General Freight Trucking, else For Hire Trucking, for expediters and general freight haulers; never another business).';
 // The popup's own Business Type box and Search (KY), apart from the page's box and Search behind it.
 const BECA_POPUP = '.becaPopupPage';
 const BECA_POPUP_BOX = `${BECA_POPUP} [fieldref="BECAInput.BusinessTypeTextBox"]`;
