@@ -2073,7 +2073,7 @@ function keptReportsHarness(memory, { session = { intakeId: 'intake-a' }, state 
     liveItems: async (tabId, carrier, items) => { reads.push(items); return live; },
   };
   const block = SIDEPANEL.slice(SIDEPANEL.indexOf("const REPORTS_PREFIX = 'reports:';"), SIDEPANEL.indexOf('let reportsQueue = Promise.resolve();'));
-  vm.runInNewContext(`${block}\nvar reportsQueue = Promise.resolve();\n${['keepReport', 'forgetKeptReports', 'restoreReports', 'reviewItems', 'liveFrames', 'liveOf'].map(extractFunction).join('\n')}\nglobalThis.kept = () => reportsQueue;`, context);
+  vm.runInNewContext(`${block}\nvar reportsQueue = Promise.resolve();\n${['keepReport', 'forgetKeptReports', 'restoreReports', 'reviewItems', 'answerItems', 'liveFrames', 'liveOf', 'looseText'].map(extractFunction).join('\n')}\nglobalThis.kept = () => reportsQueue;`, context);
   return { context, rendered, reads };
 }
 
@@ -2167,7 +2167,7 @@ const GEICO_KEPT = () => [{ fields: 6, filled: [{ label: 'Bodily Injury or Combi
     { label: 'Property Damage Liability (PD)', key: 'cov:pd', controlKind: 'select', current: '$25,000', options: ['$25,000', '$50,000'], stepId: 2 },
     { label: 'Uninsured Motorist Property Damage (UMPD)', key: 'cov:umpd', controlKind: 'select', current: '$25,000', options: ['$25,000'], stepId: 4 },
   ], leftRequired: [], unknown: [], checks: [], actions: [] }];
-const GEICO_LIVE = [{ key: 'cov:um', label: 'Uninsured Motorist Bodily Injury (includes Underinsured)', controlKind: 'select', current: '$300,000 Combined Single Limit', options: ['$100,000 Combined Single Limit', '$300,000 Combined Single Limit'] }];
+const GEICO_LIVE = [{ key: 'cov:bodily injury or combined single limit liability', label: 'Bodily Injury or Combined Single Limit Liability', controlKind: 'select', current: '$1,000,000 Combined Single Limit', shown: '$1,000,000 Combined Single Limit', agrees: true, options: [] }, { key: 'cov:um', label: 'Uninsured Motorist Bodily Injury (includes Underinsured)', controlKind: 'select', current: '$300,000 Combined Single Limit', options: ['$100,000 Combined Single Limit', '$300,000 Combined Single Limit'] }];
 
 test('a kept report is made again as the page is now: a question gone is not listed and holds nothing; "On the page now" is the page\'s (GEICO, 2026-10-28)', async () => {
   const memory = { 'reports:7': { scope: 'intake-a', entries: [
@@ -2178,7 +2178,7 @@ test('a kept report is made again as the page is now: a question gone is not lis
   await context.restoreReports(7);
   // One read of the page, for every item of the report in front; none for the other step's.
   assert.deepEqual(plain(reads), [[{ key: 'cov:um', label: 'Uninsured Motorist Bodily Injury (includes Underinsured)' }, { key: 'cov:pd', label: 'Property Damage Liability (PD)' },
-    { key: 'cov:umpd', label: 'Uninsured Motorist Property Damage (UMPD)' }]]);
+    { key: 'cov:umpd', label: 'Uninsured Motorist Property Damage (UMPD)' }, { key: 'cov:bodily injury or combined single limit liability', label: 'Bodily Injury or Combined Single Limit Liability', stepId: 1 }]]);
   const [front, other] = rendered;
   assert.deepEqual(plain(front.frames[0].noData), [], 'property damage and UMPD are gone from the page');
   assert.deepEqual(plain(front.frames[0].failed.map((x) => [x.key, x.current, x.options])), [['cov:um', '$300,000 Combined Single Limit', ['$100,000 Combined Single Limit', '$300,000 Combined Single Limit']]]);
@@ -2200,6 +2200,36 @@ test('a kept report is made again as the page is now: a question gone is not lis
   later.renderReport(other.frames, { tabId: 7, page: '/quote', restoredAt: 50 });
   const pd = rowsOf(laterBox).find((r) => rowSaid(r).label === 'Property Damage Liability (PD)');
   assert.deepEqual(nodesIn(pd).find((n) => n.props?.class === 'page-now').children, ['']);
+});
+
+// The answers listed hold to it too: one whose question a later answer took off the page has no row
+// (GEICO: property damage filled, then the CSL limit removed it), and each row shows what the page
+// shows; one the page changed since is the page's, not counted as the fill's.
+test('an answer whose question is gone has no row; each answer row shows the page\'s value, a changed one as the page\'s', async () => {
+  const frames = () => [{ fields: 3, kept: [], failed: [], noData: [], leftRequired: [], unknown: [], checks: [], actions: [], filled: [
+    { label: 'Property Damage Liability (PD)', key: 'cov:pd', shown: '$50,000', stepId: 1 },
+    { label: 'Zip Code', key: 'ref:Zip', shown: '21000', stepId: 2 },
+    { label: 'Medical Payments (MED)', key: 'cov:med', shown: '$5,000', stepId: 3, standard: true },
+  ] }];
+  // Read from the page (restore): PD gone, the ZIP in the page's format, MED changed by the page.
+  const live = [{ key: 'ref:Zip', label: 'Zip Code', shown: '21000-1234', agrees: true }, { key: 'cov:med', label: 'Medical Payments (MED)', shown: 'Not Included', agrees: false }];
+  const memory = { 'reports:7': { scope: 'intake-a', entries: [{ key: '7|/quote', page: '/quote', active: {}, at: 100, frames: frames() }] } };
+  const { context, rendered, reads } = keptReportsHarness(memory, { front: '7|/quote', live });
+  await context.restoreReports(7);
+  assert.equal(reads.length, 1, 'one read for every answer');
+  assert.deepEqual(plain(rendered[0].frames[0].filled.map((x) => [x.key, x.gone ?? false, x.now ?? null, x.changed ?? null])),
+    [['cov:pd', true, null, null], ['ref:Zip', false, '21000-1234', null], ['cov:med', false, 'Not Included', 'page']]);
+  // As the panel draws it (the kit's reconciled report reads the same).
+  const { context: panel, box } = reportHarness({ tab: { id: 7, url: '/quote', carrier: { id: 'geico' } } });
+  panel.renderReport(rendered[0].frames, { tabId: 7, page: '/quote', restoredAt: 100 });
+  assert.deepEqual(rowsOf(box).map(rowSaid).map((r) => [r.label, r.value, r.tag]), [
+    ['Zip Code', '21000-1234', null],
+    ['Medical Payments (MED)', 'Not Included', 'Changed on the page'],
+  ], 'no row for property damage; the page\'s values');
+  assert.equal(panel.state.reportFor.filled, 1, 'the page\'s change is not counted as the fill\'s answer');
+  // Kept unread (another page in front): nothing dropped, nothing said of the page.
+  const unread = context.liveFrames(frames(), null)[0].filled;
+  assert.deepEqual(plain(unread.map((x) => [x.gone ?? false, x.now ?? null])), [[false, null], [false, null], [false, null]]);
 });
 
 // The report shown, checked against the page (checkItems: one message for all its items): a question

@@ -740,7 +740,7 @@ async function restoreReports(tabId) {
     if (!e?.key || !String(e.key).startsWith(`${tabId}|`) || state.reports.has(e.key) || !Array.isArray(e.frames)) continue;
     const active = { ...firstUnits(), ...(e.active ?? {}) };
     const plan = buildPlan(state.intake.record, carrier, active);
-    const live = e.key === front ? await liveItems(tabId, carrier, reviewItems(e.frames), plan) : null;
+    const live = e.key === front ? await liveItems(tabId, carrier, [...reviewItems(e.frames), ...answerItems(e.frames)], plan) : null;
     // A fill, another tab or another intake since the page was read: not made again here.
     if (state.reports.has(e.key) || state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) continue;
     renderReport(liveFrames(e.frames, live), { tabId, page: e.page, carrier, active, plan, stopped: !!e.stopped, keptKey: e.key, restoredAt: e.at ?? Date.now(), filledBefore: e.filledBefore });
@@ -4154,17 +4154,31 @@ function reviewItems(frames) {
   return frames.flatMap((f) => [...['unknown', 'failed', 'noData', 'leftRequired', 'checks'].flatMap((k) => f[k] ?? []), ...(f.kept ?? []).filter((x) => x.differs)])
     .filter((x) => x.key && !String(x.key).startsWith('extra-row:')).map((x) => ({ key: x.key, label: x.label || null }));
 }
+// The answers of fill reports the panel lists (filled, and kept as the page had them), as present
+// takes them, with the rule that answered each (`stepId`, for `agrees`).
+function answerItems(frames) {
+  return frames.flatMap((f) => [...(f.filled ?? []), ...(f.kept ?? []).filter((x) => !x.differs)])
+    .filter((x) => x.key && !String(x.key).startsWith('extra-row:')).map((x) => ({ key: x.key, label: x.label || null, stepId: x.stepId ?? null }));
+}
+// Spacing, case and punctuation aside (as checkAnswers compares): a phone number formatted on blur.
+function looseText(s) {
+  return String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
 
-// What the page shows now for `items` ([{ key, label }]), from all of the tab's frames in one message
-// (pagekit present: one read of each frame): [{ key, label, controlKind, options, current, shared }]
-// for those it has. Null when the page couldn't be read (navigating, no kit): nothing is judged then.
+// What the page shows now for `items` ([{ key, label, stepId }]), from all of the tab's frames in one
+// message (pagekit present: one read of each frame): [{ key, label, controlKind, options, current,
+// shown, agrees, shared }] for those it has. Null when the page couldn't be read (navigating, no
+// kit): nothing is judged then.
 async function liveItems(tabId, carrier, items, plan = []) {
   if (!items.length) return [];
-  // Fields the plan fills while they are hidden (a fill's hiddenOk: AmWINS' earlier steps).
+  // Fields the plan fills while they are hidden (a fill's hiddenOk: AmWINS' earlier steps), and the
+  // rules that answered the answers asked about, so the kit judges each as fill does.
   const hidden = (plan ?? []).filter((s) => s.hidden && s.selector).map((s) => s.selector);
+  const ids = new Set(items.map((x) => x.stepId).filter((id) => id != null).map(String));
+  const steps = (plan ?? []).filter((s) => ids.has(String(s.id)));
   let frames;
   try {
-    frames = await runKit(tabId, carrier, (asked, hiddenOk) => globalThis.__raterKit?.present?.(asked, hiddenOk) ?? null, [items, hidden]);
+    frames = await runKit(tabId, carrier, (asked, hiddenOk, rules) => globalThis.__raterKit?.present?.(asked, hiddenOk, rules) ?? null, [items, hidden, steps]);
   } catch { return null; /* the page is navigating */ }
   const read = (frames ?? []).filter((f) => Array.isArray(f.result));
   return read.length ? read.flatMap((f) => f.result) : null;
@@ -4178,11 +4192,30 @@ function liveOf(live, key, label) {
 // the page has it (`live`, liveItems) or the fill knew it off screen (`offPage`), saying what the page
 // shows and offers now. Unread (`live` null: another page is in front, or the page couldn't be read),
 // none is dropped and none says what the page shows: checkItems reads it once its page is in front.
+// An answer (filled, or kept as the page had it) whose field is gone is `gone` (no row); the others
+// show what the page shows (`now`), `changed` where that is no longer the fill's answer.
 function liveFrames(frames, live) {
+  const answer = (x, filled) => {
+    if (!x.key || String(x.key).startsWith('extra-row:')) return x;
+    const now = live ? liveOf(live, x.key, x.label) : null;
+    const out = { ...x };
+    delete out.now;
+    if (!now) {
+      if (live && !x.offPage) out.gone = true;
+      return out;
+    }
+    delete out.gone;
+    if (now.shared || now.shown == null) return out;
+    out.now = now.shown;
+    delete out.changed;
+    if (filled && now.agrees !== true && looseText(now.shown) !== looseText(x.shown)) out.changed = x.changed ?? 'page';
+    return out;
+  };
   const fresh = (x) => {
     if (!x.key || String(x.key).startsWith('extra-row:')) return x;
     const now = live ? liveOf(live, x.key, x.label) : null;
-    if (!now) return live && !x.offPage ? null : 'current' in x ? { ...x, current: null } : x;
+    // In the page but not shown (`hidden`: a collapsed card): kept, saying nothing of the page.
+    if (!now || now.hidden) return live && !now && !x.offPage ? null : 'current' in x ? { ...x, current: null } : x;
     const out = { ...x };
     if ('current' in x) out.current = now.shared ? null : now.current ?? null;
     if ('options' in x) out.options = now.options ?? [];
@@ -4191,7 +4224,8 @@ function liveFrames(frames, live) {
   return frames.map((f) => {
     const out = { ...f };
     for (const k of ['unknown', 'failed', 'noData', 'leftRequired', 'checks']) if (Array.isArray(f[k])) out[k] = f[k].map(fresh).filter(Boolean);
-    if (Array.isArray(f.kept)) out.kept = f.kept.map((x) => (x.differs ? fresh(x) : x)).filter(Boolean);
+    if (Array.isArray(f.kept)) out.kept = f.kept.map((x) => (x.differs ? fresh(x) : answer(x, false))).filter(Boolean);
+    if (Array.isArray(f.filled)) out.filled = f.filled.map((x) => answer(x, true));
     return out;
   });
 }
@@ -4206,15 +4240,40 @@ async function checkItems() {
   const here = () => !state.filling && state.reportFor === entry && entry.tabId === state.tab?.id && pageOf(state.tab?.url) === entry.page;
   if (!entry?.fields || !here()) return;
   const rows = [...$('report').querySelectorAll('.row.need')].filter((row) => row.dataset.key && !row.classList.contains('resolved'));
-  if (!rows.length) return;
-  const live = await liveItems(entry.tabId, entry.carrier ?? state.tab.carrier, rows.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null })), entry.plan);
+  // The answers listed (answerRow), with the rule that answered each.
+  const answers = [...$('report').querySelectorAll('.row:not(.need)[data-key]')].filter((row) => row.dataset.key);
+  if (!rows.length && !answers.length) return;
+  const asked = [...rows.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null })),
+    ...answers.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null, stepId: row.dataset.step || null }))];
+  const live = await liveItems(entry.tabId, entry.carrier ?? state.tab.carrier, asked, entry.plan);
   if (!live || !here()) return;
+  // An answer whose field is gone has no row (back if the page draws it again); one whose field shows
+  // something else now shows that, as the page's (its tag said so where the fill wouldn't call it its
+  // answer any more).
+  for (const row of answers) {
+    const now = liveOf(live, row.dataset.key, row.dataset.field);
+    const gone = !now && row.dataset.offpage !== '1';
+    row.classList.toggle('gone', gone);
+    row.hidden = gone;
+    if (!now || now.shared || now.shown == null || looseText(now.shown) === looseText(row.dataset.value)) continue;
+    row.dataset.value = now.shown;
+    row.classList.remove('changed');
+    const note = row.querySelector('.kv-now');
+    if (note) { note.hidden = true; note.textContent = ''; }
+    if (now.agrees === true) {
+      const value = row.querySelector('.row-head .row-value');
+      if (value) value.textContent = now.shown;
+    } else {
+      setRowHead(row, { icon: '•', value: now.shown, tag: { kind: 'page', text: 'Changed on the page', title: 'Not the fill’s answer: the page shows this now' } });
+    }
+  }
   let changed = false;
   for (const row of rows) {
     if (row.classList.contains('resolved')) continue;
     const now = liveOf(live, row.dataset.key, row.dataset.field);
     const gone = !now && row.dataset.offpage !== '1';
-    row.showLive?.(now);
+    // In the page but not shown (a collapsed card): kept, saying nothing of what it shows.
+    row.showLive?.(now?.hidden ? null : now);
     if (gone === row.classList.contains('gone')) continue;
     row.classList.toggle('gone', gone);
     row.hidden = gone;
@@ -4425,8 +4484,10 @@ function renderReport(frames, ctx = {}) {
   keep();
   // Each answer with its frame's place among the page's frames, as each item (itemsLeft).
   const framed = (k) => frames.flatMap((f, frame) => (f[k] ?? []).map((x) => ({ ...x, frame })));
-  const filled = framed('filled').filter((x) => !x.otherStep);
-  const kept = framed('kept').filter((x) => !x.otherStep);
+  // An answer whose field the page no longer has (`gone`: pagekit reconcile, liveFrames) has no row:
+  // the list shows only what is on the page.
+  const filled = framed('filled').filter((x) => !x.otherStep && !x.gone);
+  const kept = framed('kept').filter((x) => !x.otherStep && !x.gone);
   const items = itemsLeft(frames);
   const onPage = (x) => Number.isInteger(x.order);
   const needs = [...items.filter(onPage).sort((a, b) => a.frame - b.frame || a.order - b.order), ...items.filter((x) => !onPage(x))];
@@ -4446,10 +4507,13 @@ function renderReport(frames, ctx = {}) {
   const doneRows = groupRows([
     // `key`/`field`: the field and its label on the page, for checking the answer is still there
     // (checkAnswers) and changing it (changeAnswer); `kind`: what it is when it's no answer of ours.
-    ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order })),
+    // Its value is what the page shows (`now`), not what the fill put in; one the page or the agent
+    // changed since (`changed`) is theirs, not counted as the fill's ('changed', 'yours').
+    ...filled.map((x) => ({ label: x.label || x.name, value: x.now ?? x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId,
+      answer: !x.changed, ...(x.changed ? { kind: x.changed === 'you' ? 'yours' : 'changed' } : {}), key: x.key, field: x.label ?? null, q: x.q ?? null, offPage: x.offPage ?? null, frame: x.frame, order: x.order })),
     ...earlier.map((x) => {
       const was = before.get(x.key);
-      return { label: x.label || x.name, value: was.shown || 'filled', standard: !!(x.standard || was.standard), path: was.path, from: fromOf.get(x.stepId), edited: editedBy(was.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: was.shown ? x.key : null, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order };
+      return { label: x.label || x.name, value: x.now || was.shown || 'filled', standard: !!(x.standard || was.standard), path: was.path, from: fromOf.get(x.stepId), edited: editedBy(was.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: was.shown ? x.key : null, field: x.label ?? null, q: x.q ?? null, offPage: x.offPage ?? null, frame: x.frame, order: x.order };
     }),
     ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
     ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: !!x.standard, group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page', frame: x.frame, order: x.order })),
@@ -4560,6 +4624,7 @@ function answerRow(row, { tabId, page, carrier }) {
     page: row.standard ? { cls: 'standard', text: 'TNI standard', title: 'The page already had the TNI standard answer' } : { cls: 'page', text: 'On the page', title: 'The page already had it' },
     clicked: { cls: 'clicked', text: 'Clicked', title: 'Clicked for you' },
     yours: { cls: 'you', text: 'You', title: 'Your answer: no fill changes it' },
+    changed: { cls: 'page', text: 'Changed on the page', title: 'Not the fill’s answer: the page shows this now' },
   }[kind];
   const fmt = (v) => (v === true ? 'Yes' : v === false ? 'No' : v == null || v === '' ? 'not on the intake' : String(v));
   const said = (path) => `${fieldInfo(path).label}: ${fmt(get(state.intake?.record ?? {}, path))}`;
@@ -4571,11 +4636,12 @@ function answerRow(row, { tabId, page, carrier }) {
     page: ['Already on the page', 'The fill left it as the page had it.'],
     clicked: ['Clicked for you', `“${row.value}”`],
     yours: ['Your answer', 'You changed it on the page, so no fill puts it back.'],
+    changed: ['Changed on the page', 'The page shows this now, not the answer the fill put in. Check it.'],
   }[kind];
-  const item = h('div', { class: `row${{ page: ' page', clicked: ' clicked', yours: ' yours' }[kind] ?? ''}${row.fresh ? ' fresh' : ''}`,
-    dataset: row.key ? { key: row.key, field: row.field ?? '', value: row.value, step: row.stepId ?? '' } : {} },
+  const item = h('div', { class: `row${{ page: ' page', changed: ' page', clicked: ' clicked', yours: ' yours' }[kind] ?? ''}${row.fresh ? ' fresh' : ''}`,
+    dataset: row.key ? { key: row.key, field: row.field ?? '', value: row.value, step: row.stepId ?? '', offpage: row.offPage ? '1' : '' } : {} },
   h('button', { type: 'button', class: 'row-head', 'aria-expanded': 'false', onclick: () => toggleRow(item) },
-    h('span', { class: 'row-icon', 'aria-hidden': 'true' }, kind === 'page' || kind === 'yours' ? '•' : '✓'),
+    h('span', { class: 'row-icon', 'aria-hidden': 'true' }, kind === 'page' || kind === 'yours' || kind === 'changed' ? '•' : '✓'),
     h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, row.label), h('span', { class: 'row-value' }, row.value),
       row.key ? h('span', { class: 'kv-now', hidden: true }) : null),
     // From the intake is the usual source: no tag to read past (said to screen readers), so the

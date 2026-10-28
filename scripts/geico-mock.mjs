@@ -447,6 +447,9 @@ async function fill(form, { asked = false, expectFailed = [] } = {}) {
   if (report.unitHeld) lines.push(`  held: this ${report.unitHeld.list.slice(0, -1)} form may be another unit's`);
   if (report.advanced) lines.push(`  → ${report.advanced}`);
   if (report.halted) lines.push(`  halted: ${report.reason}`);
+  // Answers whose question the page took away after they went in: no row in the panel (reconcile).
+  const goneAnswers = [...report.filled, ...report.kept].filter((x) => x.gone);
+  if (goneAnswers.length) lines.push(`  gone from the page since: ${named(goneAnswers)}`);
   for (const x of report.unknown ?? []) fail(`${form}: unfamiliar question "${x.label}" (${x.key}): left for the agent and offered to the AI assistant`);
   for (const x of report.failed ?? []) if (!expectFailed.some((re) => re.test(String(x.key)))) fail(`${form}: failed "${x.label}" (${x.key}): ${x.reason}`);
   return report;
@@ -1223,7 +1226,7 @@ lines.push(`Filling time: ${(totalMs / 1000).toFixed(1)} s over ${fills.length} 
 if (reconciled.length) {
   const total = reconciled.reduce((n, r) => n + r.ms, 0);
   lines.push(`Reports made to agree with the page at the end: ${reconciled.length} fills, ${total.toFixed(1)} ms in all (${Math.max(...reconciled.map((r) => r.ms)).toFixed(1)} ms at most), `
-    + `${Math.max(...reconciled.map((r) => r.reads))} page read(s) at most each, ${reconciled.reduce((n, r) => n + r.dropped, 0)} item(s) gone dropped, ${reconciled.reduce((n, r) => n + r.retried, 0)} choice(s) given again`);
+    + `${Math.max(...reconciled.map((r) => r.reads))} page read(s) at most each, ${reconciled.reduce((n, r) => n + r.dropped, 0)} item(s) gone dropped, ${reconciled.reduce((n, r) => n + (r.gone ?? 0), 0)} answer(s) gone, ${reconciled.reduce((n, r) => n + r.retried, 0)} choice(s) given again`);
 }
 lines.push(`Views: ${views.join(' → ')}`);
 lines.push(`Recalculate ×${final.recalcs} (premium ${final.premium ? 'rated' : 'out of date'}) · agent's protected keys: ${[...agentKeys].map(([s, k]) => `${s === PAGE ? 'page' : s.slice(PAGE.length + 1)} ${k.size}`).join(', ')}`);

@@ -436,10 +436,13 @@
     controlReads++;
     const out = [];
     const groups = new Map();
+    // Fields in the page but not shown or not open to an answer (a collapsed card, a closed section):
+    // no question of this read, but not gone from the page either (hiddenKeys).
+    const hidden = [];
     for (const el of deepQueryAll(document, CONTROL_SELECTOR)) {
       const type = el.tagName === 'INPUT' ? (el.type || 'text').toLowerCase() : el.tagName.toLowerCase();
       if (el.tagName === 'INPUT' && SKIP_INPUT_TYPES.has(type) && !(type === 'search' && safeMatches(el, ADDRESS_SEARCH))) continue;
-      if (el.disabled || (!isVisible(el) && !hiddenOk.some((sel) => safeMatches(el, sel)))) continue;
+      if (el.disabled || (!isVisible(el) && !hiddenOk.some((sel) => safeMatches(el, sel)))) { hidden.push(el); continue; }
       const cmp = extCmp(el);
       if (type === 'radio') {
         const extGroup = cmp?.up?.('radiogroup') ?? null;
@@ -497,7 +500,20 @@
       rowVehicle.set(c.row, rowVehicle.has(c.row) && rowVehicle.get(c.row) !== c.text ? null : c.text);
     }
     for (const c of out) c.vehicle = VEHICLE_LABEL.test(c.label ?? '') ? c.text : (c.row && rowVehicle.get(c.row)) || null;
+    hiddenOf.set(out, hidden);
     return out;
+  }
+  // The fields one read found in the page but not shown (collectControls' `hidden`), and their keys,
+  // worked out only when asked (an item not among the read's questions).
+  const hiddenOf = new WeakMap();
+  const hiddenKeySets = new WeakMap();
+  function hiddenKeys(controls) {
+    let keys = hiddenKeySets.get(controls);
+    if (!keys) {
+      keys = new Set((hiddenOf.get(controls) ?? []).map((el) => globalThis.__raterFieldKey(el, { q: dctQuestionId(extCmp(el)?.id ?? el.id) })));
+      hiddenKeySets.set(controls, keys);
+    }
+    return keys;
   }
 
   // One read's questions by field key (each key's controls in page order), worked out once per read.
@@ -3432,8 +3448,11 @@
     // section the page closes ('section': CLOSED_SECTIONS, Progressive's cargo, GL and trailer
     // interchange behind their Done); or an item about the fill's own answer, whose field the page
     // took away on it ('answer': a summary in its place, `vanished`), which the agent still checks.
-    function offPage(x) {
-      return x.vanished ? 'answer' : x.key != null && unitGroups.readElsewhere(x.key) ? 'group' : x.stepId != null && closable.has(x.stepId) ? 'section' : null;
+    // And one whose field is in the page but not shown or open now ('hidden': a collapsed card such as
+    // GEICO's cargo after Recalculate, a section closed), as `controls`, the read, found it.
+    function offPage(x, controls) {
+      return x.vanished ? 'answer' : x.key != null && unitGroups.readElsewhere(x.key) ? 'group' : x.stepId != null && closable.has(x.stepId) ? 'section'
+        : x.key != null && hiddenKeys(controls).has(x.key) ? 'hidden' : null;
     }
     // A row the intake doesn't have (pairs.extraRows): its check's key is the row's own token, no field's.
     function rowCheck(x) { return String(x.key ?? '').startsWith('extra-row:'); }
@@ -3444,7 +3463,7 @@
       const index = keyIndex(controls);
       let steps = null;
       return (x) => {
-        if (x.key == null || rowCheck(x) || index.has(x.key) || offPage(x)) return true;
+        if (x.key == null || rowCheck(x) || index.has(x.key) || offPage(x, controls)) return true;
         if (x.stepId == null) return false;
         steps ??= new Set(assign(controls, plan).map((p) => p.step.id));
         return steps.has(x.stepId);
@@ -3454,14 +3473,41 @@
     // assign's pairs of it): an item whose field is gone (and isn't offPage) is dropped, so it is no
     // blocker and the panel never lists it; each other one takes what its field shows and offers now
     // (describe), never what an earlier round read, and its key and label where its rule now finds
-    // another row. Answers that went in aren't items: they stay. `reads`: the page reads since the
-    // rounds ended, said in `report.reconcile` with its time (`ms`) and the items it dropped.
+    // another row. Answers (filled, and kept as the page had them) stay in the report, for what the
+    // fill did (the usage log, the panel's bookkeeping), each with what its field shows now (`now`,
+    // shownNow: the panel shows that, never what the fill put in), `changed` when that is no longer
+    // the fill's answer ('you': a field the agent took over; 'page': the page's change), and `gone`
+    // when its field isn't on the page (the panel shows no row for it). `reads`: the page reads
+    // since the rounds ended, said in `report.reconcile` with its time (`ms`), the items it dropped
+    // and the answers gone.
     function reconcile(now, pairsNow, reads = null) {
       const t0 = perfNow();
       const index = keyIndex(now);
       const byStep = new Map(pairsNow.map((p) => [p.step.id, p.control]));
       const rows = new Set((pairsNow.extraRows ?? []).map((r) => r.key));
+      const steps = new Map(plan.map((s) => [s.id, s]));
       let dropped = 0;
+      let gone = 0;
+      const answer = (x, filled) => {
+        if (x.key == null || rowCheck(x)) return;
+        const ruled = x.stepId != null ? byStep.get(x.stepId) ?? null : null;
+        const { c, sure } = ruled ? { c: ruled, sure: true } : controlOf(index, x.key, x.label);
+        delete x.now;
+        delete x.changed;
+        if (!c) {
+          const off = offPage(x, now);
+          if (off) { x.offPage = off; delete x.gone; } else { x.gone = true; delete x.offPage; gone++; }
+          return;
+        }
+        delete x.gone;
+        delete x.offPage;
+        if (!sure) return;
+        x.now = shownNow(c);
+        // Not the fill's answer any more: neither what it put in nor the answer as the fill judges it
+        // (a ZIP+4, an address in the page's own format, the plan picked in place of one never offered).
+        const step = steps.get(x.stepId);
+        if (filled && step && loose(x.now) !== loose(x.shown) && !agreesWith(step, c)) x.changed = skippedField(c) ? 'you' : 'page';
+      };
       const live = (x) => {
         if (x.key == null) return true;
         if (rowCheck(x)) {
@@ -3472,7 +3518,7 @@
         const ruled = x.stepId != null ? byStep.get(x.stepId) ?? null : null;
         const { c, sure } = ruled ? { c: ruled, sure: true } : controlOf(index, x.key, x.label);
         if (!c) {
-          const off = offPage(x);
+          const off = offPage(x, now);
           if (!off) { dropped++; return false; }
           // Not on screen now: nothing it shows is the page's now; a field taken away offers nothing.
           x.offPage = off;
@@ -3490,8 +3536,10 @@
       };
       for (const k of REVIEW_LISTS) report[k] = report[k].filter(live);
       report.kept = report.kept.filter((x) => !x.differs || live(x));
+      for (const x of report.filled) answer(x, true);
+      for (const x of report.kept) if (!x.differs) answer(x, false);
       const was = report.reconcile;
-      report.reconcile = { ms: Math.round(((was?.ms ?? 0) + perfNow() - t0) * 100) / 100, reads: reads ?? was?.reads ?? 0, dropped: (was?.dropped ?? 0) + dropped, retried: redrawRetried.size };
+      report.reconcile = { ms: Math.round(((was?.ms ?? 0) + perfNow() - t0) * 100) / 100, reads: reads ?? was?.reads ?? 0, dropped: (was?.dropped ?? 0) + dropped, gone, retried: redrawRetried.size };
     }
     // A choice that failed against options the page has redrawn since (GEICO, 2026-10-28: UM was tried
     // against the split limits shown before the CSL liability limit redrew them as CSL) is given once
@@ -3866,6 +3914,10 @@
       phase(hold && confirmed == null ? 'waiting' : 'continue');
       if (serverBacked) await settle({ quietMs: 500, maxMs: 6000 });
       else if (advance.quietMs && quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000 });
+      // The report as the page is after that wait, from one read (reconcile), halted or not.
+      const now = collectControls();
+      const nowPairs = assign(now, plan);
+      reconcile(now, nowPairs);
       // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
       // the report says why. (Reproduced 2026-10-08: halted, and Continue clicked all the same.)
       if (report.halted) {
@@ -3874,10 +3926,6 @@
         // The carrier may have rewritten an answer during that wait (a late server response). An
         // answer whose field no longer shows it is the agent's to check (no retry here): it moves
         // to `failed`, is marked, and Continue waits.
-        const now = collectControls();
-        const nowPairs = assign(now, plan);
-        // The report as the page is after that wait, from this read (reconcile).
-        reconcile(now, nowPairs);
         const changed = changedSinceFilled(nowPairs);
         for (const { previous, pair } of changed) {
           const item = { ...previous, reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
@@ -4148,17 +4196,24 @@
   // the page"): `items` is [{ key, label }] as the fill reports them; `hidden`, the selectors of rules
   // allowed to fill a field that isn't on screen (a fill's hiddenOk: AmWINS' earlier steps). Returns
   // [{ key, label, controlKind, options, section, current }] for each one this frame has (describe: a
-  // box's typed text never leaves the page), in one read of the page for all of them; `shared` (with
-  // `current` null) where rows of one question share the key and the label doesn't tell which row is
-  // the item's. It reads only.
-  function present(items, hidden = []) {
+  // box's typed text never leaves the page as `current`), in one read of the page for all of them;
+  // `shown`, what the field shows (readBack's `shown`: the text of a box too), for the answers the
+  // panel lists, and `agrees`, as in readBack, for an item with its `stepId` among `steps`; `shared`
+  // (with `current` and `shown` null) where rows of one question share the key and the label doesn't
+  // tell which row is the item's; `{ key, label, hidden: true }` alone for one whose field is in the
+  // page but not shown (a collapsed card, a closed section). It reads only.
+  function present(items, hidden = [], steps = []) {
     const fillHidden = hiddenOk;
     let controls;
     try { if (!running) hiddenOk = [].concat(hidden ?? []); controls = collectControls(); } finally { hiddenOk = fillHidden; }
     const index = keyIndex(controls);
-    return (items ?? []).flatMap(({ key, label = null }) => {
+    return (items ?? []).flatMap(({ key, label = null, stepId = null }) => {
       const { c, sure } = key == null ? { c: null, sure: false } : controlOf(index, key, label);
-      return c ? [{ key, label, controlKind: c.kind, ...describe(c), ...(sure ? {} : { current: null, shared: true }) }] : [];
+      // In the page but not shown (a collapsed card, a closed section): there, with nothing to say.
+      if (!c) return key != null && hiddenKeys(controls).has(key) ? [{ key, label, hidden: true }] : [];
+      const step = stepId == null ? null : (steps ?? []).find((s) => String(s.id) === String(stepId));
+      return [{ key, label, controlKind: c.kind, ...describe(c), shown: shownNow(c), agrees: step ? !!agreesWith(step, c) : null,
+        ...(sure ? {} : { current: null, shown: null, agrees: null, shared: true }) }];
     });
   }
 

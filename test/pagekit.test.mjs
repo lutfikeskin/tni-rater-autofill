@@ -466,7 +466,7 @@ function harness({ ext = false, pathname = '/rater', search = '' } = {}) {
 // a fill that ended on its page (`reconcile`) and clicked no Continue.
 const REVIEW_LISTS = ['unknown', 'failed', 'noData', 'leftRequired', 'checks'];
 // How many fills and items it held over (the last test checks it covered this file's fills).
-const liveChecked = { fills: 0, items: 0 };
+const liveChecked = { fills: 0, items: 0, answers: 0 };
 function assertLive(kit, report, plan = []) {
   if (!report?.reconcile || report.advanced) return;
   const items = [...REVIEW_LISTS.flatMap((k) => report[k] ?? []), ...(report.kept ?? []).filter((x) => x.differs)]
@@ -482,6 +482,17 @@ function assertLive(kit, report, plan = []) {
     // page read alone only that the question is there.
     if ('current' in x && !now.shared) assert.deepEqual(x.current, now.current, `what "${x.label}" shows is the page's now`);
     if ('options' in x) assert.deepEqual([...x.options], [...now.options], `what "${x.label}" offers is the page's now`);
+  }
+  // The answers the panel lists (filled, and kept as the page had them): each not `gone` is on the
+  // page (or known off screen), and what it says the page shows (`now`) is what its field shows.
+  const answers = [...(report.filled ?? []), ...(report.kept ?? []).filter((x) => !x.differs)]
+    .filter((x) => x.key != null && !String(x.key).startsWith('extra-row:') && !x.offPage && !x.gone);
+  liveChecked.answers += answers.length;
+  const shown = kit.present(answers.map((x) => ({ key: x.key, label: x.label ?? null })), hidden);
+  for (const x of answers) {
+    const now = shown.find((y) => y.key === x.key && y.label === (x.label ?? null));
+    assert.ok(now, `the answer "${x.label}" (${x.key}) is on the page as the fill ends, or said gone`);
+    if (!now.shared) assert.equal(x.now, now.shown, `the answer "${x.label}" shows what the page shows now`);
   }
 }
 
@@ -8556,8 +8567,59 @@ test('the review items left on the page say what the page shows now; a gone ques
   assert.equal(report.reconcile.dropped, 1);
 });
 
+// An answer that went in and whose question a later answer then takes off the page (GEICO: property
+// damage answered, then the CSL liability limit removes it) is said `gone`: the panel lists no row for
+// it. The answers left say what the page shows now (`now`), in the page's own format.
+test('an answer the fill gave whose question a later answer takes off the page is gone; the others show the page', async () => {
+  const h = harness({ pathname: '/quote' });
+  const pd = new SelectNode(['', '$25,000', '$50,000'], { id: 'Id_GivePd_1', ariaLabel: 'Property Damage Liability (PD)', value: '$25,000' });
+  const bi = new SelectNode(['', '$30,000/$60,000', '$1,000,000 Combined Single Limit'], { id: 'Id_GiveBi_1', ariaLabel: 'Bodily Injury or Combined Single Limit Liability', value: '$30,000/$60,000' });
+  const zip = makeInput({ id: 'Id_GiveZip_1', ariaLabel: 'Zip Code', value: '' });
+  h.document.body.append(pd, bi, zip);
+  bi.addEventListener('change', () => { if (/Combined/.test(bi.value)) pd.remove(); });
+  // The page writes its own format of the ZIP a moment after it is typed, as GEICO's mask does.
+  zip.addEventListener('change', () => { setTimeout(() => { zip.value = `${zip.value}-1234`; }, 50); });
+  const plan = [
+    { id: 1, field: 'GivePd', path: 'geico.qPd', name: 'Property damage', kind: 'choice', value: '$50,000' },
+    { id: 2, field: 'GiveBi', path: 'coverage.autoLiabLimit', name: 'Liability limit', kind: 'choice', value: '$1,000,000 Combined Single Limit' },
+    { id: 3, field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'zip', value: '21000' },
+  ];
+  const report = await h.kit.fill(plan, { replaceChoices: true, maxRounds: 6 });
+  assert.equal(h.document.getElementById('Id_GivePd_1'), null, 'the liability limit took property damage off the page');
+  assert.deepEqual(plain(report.filled.map((x) => [x.key, x.shown, x.gone ?? false, x.now ?? null, x.changed ?? null])), [
+    ['ref:GivePd', '$50,000', true, null, null],
+    ['ref:GiveBi', '$1,000,000 Combined Single Limit', false, '$1,000,000 Combined Single Limit', null],
+    ['ref:GiveZip', '21000', false, '21000-1234', null],
+  ]);
+  assert.equal(report.reconcile.gone, 1);
+  assert.equal(report.reconcile.reads, 1, 'from the end of the fill\'s own read');
+});
+
+// A card the page collapses after its questions were answered (GEICO's cargo card after Recalculate,
+// in the GEICO mock): its fields are in the page, not shown. Its answers and items stay, off screen
+// ('hidden'), saying nothing of what the page shows; the panel's reading says the same (present).
+test('answers and items in a section the page closes stay, off screen, with nothing said of the page', async () => {
+  const h = harness({ pathname: '/quote' });
+  const cargo = new SelectNode(['', 'Yes', 'No'], { id: 'Id_GiveCargo_1', ariaLabel: 'Cargo', value: '' });
+  const limit = new SelectNode(['', '$50,000', '$100,000'], { id: 'Id_GiveLimit_1', ariaLabel: 'Cargo limit', value: '' });
+  const close = new SelectNode(['', 'Done'], { id: 'Id_GiveClose_1', ariaLabel: 'Close', value: '' });
+  h.document.body.append(cargo, limit, close);
+  close.addEventListener('change', () => { cargo._visible = false; limit._visible = false; });
+  const plan = [
+    { id: 1, field: 'GiveCargo', path: 'coverage.cargo', name: 'Cargo', kind: 'choice', value: 'Yes' },
+    { id: 2, field: 'GiveLimit', path: 'coverage.cargoLimit', name: 'Cargo limit', kind: 'choice', value: null },
+    { id: 3, field: 'GiveClose', path: 'geico.qClose', name: 'Close', kind: 'choice', value: 'Done' },
+  ];
+  const report = await h.kit.fill(plan, { maxRounds: 6 });
+  assert.deepEqual(plain(report.filled.map((x) => [x.key, x.offPage ?? null, x.gone ?? false, x.now ?? null])),
+    [['ref:GiveCargo', 'hidden', false, null], ['ref:GiveClose', null, false, 'Done']]);
+  assert.deepEqual(plain(report.noData.map((x) => [x.key, x.offPage, x.current])), [['ref:GiveLimit', 'hidden', null]]);
+  assert.deepEqual(plain(h.kit.present([{ key: 'ref:GiveLimit', label: 'Cargo limit' }, { key: 'ref:Nothing', label: 'x' }])), [{ key: 'ref:GiveLimit', label: 'Cargo limit', hidden: true }]);
+});
+
 // Last in this file: the invariant (assertLive) held over the fills of every test above, not a few.
 test('every fill in this file ended with only what is on the page in its report', () => {
   assert.ok(liveChecked.fills >= 500, `${liveChecked.fills} fills checked`);
   assert.ok(liveChecked.items >= 300, `${liveChecked.items} items checked`);
+  assert.ok(liveChecked.answers >= 500, `${liveChecked.answers} answers checked`);
 });
