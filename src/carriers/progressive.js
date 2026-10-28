@@ -343,6 +343,21 @@ const isFreightHauler = (r) => FREIGHT_HAULER.test((r.operations.businessClass ?
 const isGeneralFreight = (r) => isFreightHauler(r) && /general\s+freight/i.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
 const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHauler(r) ? 'General Freight Hauler' : (r.operations.businessClass ?? null);
 const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
+// Search-style business type (TNI, 2026-10-28: KY's Business Type Selection popup and LA's New
+// Customer search): for an expediter or a general freight hauler, General Freight Trucking first, For
+// Hire Trucking where the list has no General Freight Trucking; neither listed is the agent's, and
+// so is any other class. Where the list shows no results yet, "Trucking" is searched for first.
+const searchClass = (r) => isExpediter(r) || isFreightHauler(r);
+const SEARCH_WORD = 'Trucking';
+const searchBusinessType = (r) => (searchClass(r) ? 'General Freight Trucking' : null);
+const searchBusinessSource = (r) => (searchClass(r) ? 'standard' : 'fact');
+const searchBusinessNote = (r) => (searchClass(r) ? null : `Business type for a ${r.operations.businessClass || 'business of this class'}: pick it yourself (the fill picks it for expediters and general freight haulers only).`);
+const SEARCH_UNOFFERED = 'The business type list shows neither General Freight Trucking nor For Hire Trucking: pick it yourself (TNI takes General Freight Trucking, else For Hire Trucking, for expediters and general freight haulers; never another business).';
+// The popup's own Business Type box and Search (KY), apart from the page's box and Search behind it.
+const BECA_POPUP = '.becaPopupPage';
+const BECA_POPUP_BOX = `${BECA_POPUP} [fieldref="BECAInput.BusinessTypeTextBox"]`;
+// The popup's result list: shown at once in IN and OH, only after a search in KY.
+const BECA_RESULTS = { field: 'BECAInput.BusinessTypeLabel' };
 // "Is the customer currently insured?" Yes for a policy on the intake with a limit and an
 // expiration not passed (derived), and, TNI's assumption, whenever any box of an auto or untyped
 // policy is filled (TNI, 2026-10-26, W44-29: proof of prior insurance, 1-3 years; the Intake step
@@ -565,6 +580,10 @@ export const progressive = {
     // Some states (IN, OH) show the business type as a box with a Search next to it, which opens
     // the business type list (BECAPopup).
     { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
+    // KY's popup opens with no result list (TNI, 2026-10-28): "Trucking" is typed into its own
+    // Business Type box (q1D), then its own Search pressed, never the page's behind it. Done once the
+    // list shows. IN and OH show the list at once: the box isn't typed, so this waits for the pick.
+    { id: 'businessTypePopupSearch', tni: 'progressive.business-type-search', page: 'BECAPopup', text: '^search$', within: BECA_POPUP, after: ['progressive.q1D'], unless: ['progressive.q36'], immediate: true, verify: 'revealed', label: 'Business type: Search', when: searchClass },
     // Two tiles matching (two reefer tiles) means it's the agent's pick.
     // A page of tiles: picked even where the page shows no field (onBlankPage; the MD layout has none).
     { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, onBlankPage: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
@@ -750,12 +769,22 @@ export const progressive = {
       { q: '27E', source: 'derived', field: 'PrimaryBusinessAddressOutputNonShredded.StreetAddressDup', ask: 'Street Address', name: 'Business address (with suggestion)', kind: 'address-suggest', value: oneLineAddress, fallback: (r) => r.garaging?.street ?? null },
       { q: '284', field: 'PrimaryBusinessAddressInput.ZipCode', ask: 'Zip Code', askAfter: 'Street Address', path: 'garaging.zip', name: 'Business ZIP' },
       { q: '286', field: 'PrimaryBusinessAddressInput.City', ask: 'City', askAfter: 'Street Address', path: 'garaging.city', name: 'Business city' },
-      // Search-style business type (IN, OH): the box itself is left alone (typing filters the list
-      // away); the result list (BECAPopup q36) gets For Hire Trucking, or General Freight Trucking
-      // when the list doesn't have it. Options read "<name> <description>".
+      // Search-style business type (IN, OH, KY; TNI, 2026-10-28): the result list (BECAPopup q36)
+      // gets General Freight Trucking, or For Hire Trucking when the list doesn't have it, for an
+      // expediter or a general freight hauler. Options read "<name> <description>": one only
+      // mentioning the name ("Auto Haulers … for hire trucking …") is never it (`matchStart`).
+      // The popup's own box (q1D, found inside the popup, before the page's box takes the first
+      // "Business Type") is left alone while the list shows (typing filters it away: IN, OH); with
+      // no list yet (KY) it gets "Trucking", and businessTypePopupSearch presses the popup's Search.
+      { q: '1D', tni: 'progressive.business-type-search', source: 'standard', page: 'BECAPopup', selector: BECA_POPUP_BOX, unlessShown: BECA_RESULTS, name: 'Business type search box ("Trucking" until the list shows)', value: () => SEARCH_WORD, ignore: (r) => !searchClass(r) },
+      { q: '1D', page: 'BECAPopup', selector: BECA_POPUP_BOX, whenShown: BECA_RESULTS, name: 'Business type search box (left alone: the list shows)', ignore: true },
       { q: '24D', ask: 'Business Type', control: 'text', each: true, name: 'Business type box (filled by the search)', ignore: true },
       { q: '1D', ask: 'Business Type', control: 'text', each: true, name: 'Business type search box', ignore: true },
-      { q: '36', tni: 'progressive.business-type-search', source: 'standard', ask: 'Business Type Label', name: 'Business type (search list: For Hire Trucking, else General Freight Trucking)', kind: 'choice', value: () => 'For Hire Trucking', choiceAliases: () => ['General Freight Trucking'] },
+      { q: '36', tni: 'progressive.business-type-search', source: searchBusinessSource, ask: 'Business Type Label', name: 'Business type (search list: General Freight Trucking, else For Hire Trucking)', kind: 'choice', value: searchBusinessType, choiceAliases: () => ['For Hire Trucking'], matchStart: true, note: searchBusinessNote, unofferedNote: SEARCH_UNOFFERED },
+      // LA's New Customer business description (q93, a list of 1,200 business names; TNI,
+      // 2026-10-28): "Trucking" is searched for, then the same pick among its results (General
+      // Freight Trucking, else For Hire Trucking; never "Auto Hauler (For Hire Trucking)").
+      { q: '93', tni: 'progressive.business-type-search', source: searchBusinessSource, field: 'AccountInput.BusinessDescriptionSearch', ask: 'Business Description Search', name: 'Business description (search "Trucking": General Freight Trucking, else For Hire Trucking)', kind: 'choice', search: (r) => (searchClass(r) ? SEARCH_WORD : null), value: searchBusinessType, choiceAliases: () => ['For Hire Trucking'], matchStart: true, note: searchBusinessNote, unofferedNote: SEARCH_UNOFFERED },
       { q: '239', source: 'derived', ask: ['Business type list', 'Business Type'], control: 'select', name: 'Business type', kind: 'choice', value: businessType, choiceAliases: businessAliases, summaryAfter: (r) => isExpediter(r) ? 'Type of Trucker' : 'How is the customer\'s business structured?' },
       { q: '22D', source: 'derived', clientFact: true, field: 'AccountInput.BusinessStructure', ask: 'How is the customer\'s business structured?', name: 'Business structure (from the company name)', kind: 'choice', value: businessStructure, note: businessStructureNote, warn: businessStructureWarn },
       { q: '267', source: 'derived', field: 'AccountInput.SpecificTruckHaulContractType', ask: 'Type of Trucker', name: 'Type of trucker', kind: 'choice', value: truckerType, ignore: (r) => !isExpediter(r) },

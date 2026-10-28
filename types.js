@@ -179,8 +179,13 @@
  * @property {string} [group]
  * @property {ClientValue<string | null>} [summaryAfter]
  * @property {ClientValue<string[]>} [choiceAliases]
+ * @property {boolean} [matchStart]  a choice is an option reading as the answer or an alias, or beginning with
+ *   it, never one that only mentions it further on (Progressive's business type lists: "<name> <description>",
+ *   and "Auto Hauler (For Hire Trucking)" is not For Hire Trucking)
  * @property {ClientValue<string | null>} [fallback]
- * @property {ClientValue<string | null>} [search]
+ * @property {ClientValue<string | null>} [search]  what is typed to narrow a type-ahead list before the pick: a
+ *   select2 list (`search-select`), or an ExtJS combo (Progressive's LA business description: "Trucking"), whose
+ *   answer is then picked among the results only
  * @property {ClientValue<string | null>} [withOption]
  */
 
@@ -397,6 +402,7 @@
  * @property {string | null} warn
  * @property {string | null} summaryAfter
  * @property {string[]} choiceAliases
+ * @property {boolean} matchStart
  * @property {string | null} scope
  * @property {number | null | undefined} scopeIndex
  * @property {string[] | null} vehicleHint  the unit's year, make and model, which pick its row

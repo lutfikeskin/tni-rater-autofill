@@ -10,9 +10,13 @@ import { GENERIC_RULES } from '../../src/rules.js';
 // Same normalisation pagekit applies to labels before label rules run.
 const squash = (s) => String(s ?? '').toLowerCase().replace(/['’*]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 
-// A selector part understood without a DOM: "#id", "[data-id=x]" (optionally scoped), "#a, #b".
-// Anything else (nth-of-type paths) can't be checked here and counts as "can't tell".
+// A selector part understood without a DOM: "#id", "[data-id=x]" (optionally scoped), "#a, #b",
+// and a data-model name "[fieldref=x]" (optionally scoped: Progressive's business type popup box,
+// whose scope a layout doesn't record; a field recorded without a name isn't it, its wording's rule
+// judges it). Anything else (nth-of-type paths) can't be checked here and counts as "can't tell".
 function selectorMatch(selector, f) {
+  const fieldref = String(selector).match(/^[^,]*\[fieldref=["']?([^"'\]]+)["']?\]\s*$/);
+  if (fieldref) return f.ref === fieldref[1] ? 'yes' : 'no';
   // Layouts recorded before ids were kept (before 0.8.1) can't be checked against id rules.
   if (f.id == null && f.dataId == null) return 'unknown';
   let unknown = false;
