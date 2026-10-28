@@ -50,7 +50,7 @@
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts } from '../util.js';
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
@@ -808,13 +808,18 @@ const cargoNo = (words, what) => ({
 });
 // The commodities, GEICO's option texts joined by "; " (a list taking several): a reefer (one
 // listed, or the freight refrigerated) hauls pharmaceuticals, food and beverages, dairy and frozen
-// seafood; an auto hauler automobiles; general freight (General Freight Hauler, Consumer Goods,
-// General Freight, Dry Freight, General) other consumer goods, as on Progressive. No match: null.
+// seafood; an auto hauler automobiles; car or auto parts auto accessories (not tires); general
+// freight (General Freight Hauler, Consumer Goods, General Freight, Dry Freight, General) other
+// consumer goods, as on Progressive (cargoCommodity in util.js). The first match only, so freight
+// naming car parts and general freight is auto accessories, as on Progressive. No match: null.
 const COMMODITIES = [
   { test: (r) => hasReefer(r) || /reefer|refrigerat/i.test(freightWords(r)),
     picks: ['Consumer Goods - Pharmaceuticals (Over The Counter)', 'Food & Beverage - Other Food & Beverages', 'Refrigerated Goods - Dairy', 'Refrigerated Goods - Frozen Seafood'] },
-  // Cars themselves, never their parts or accessories ("auto parts" is general freight or the agent's).
-  { test: (r) => /\b(?:auto(?:mobile)?s?|cars?)\b(?!\s*(?:parts?|accessories)\b)|\bcar\s*haul/i.test(freightWords(r)), picks: ['Aircraft/Auto/Boats - Automobiles'] },
+  // Cars themselves, never their parts or accessories ("auto-parts", "auto body parts" neither).
+  { test: (r) => /\b(?:auto(?:mobile)?s?|cars?)\b(?![\s-]*(?:body[\s-]*)?(?:parts?|accessor(?:y|ies))\b)|\bcar\s*haul/i.test(freightWords(r)), picks: ['Aircraft/Auto/Boats - Automobiles'] },
+  // Car or auto parts: TNI's auto accessories (TNI, 2026-10-28, on every carrier; before, general
+  // freight when named with it, else the agent's).
+  { test: haulsCarParts, picks: ['Aircraft/Auto/Boats - Auto Accessories (Not Tires)'] },
   // What they haul wins over the class, as on Progressive and AmWINS (haulsGeneralFreight).
   { test: (r) => haulsGeneralFreight(r) || /freight\s*haul|consumer\s*goods|dry\s*freight|^\s*general\s*$/i.test(hauled(r)),
     picks: ['Consumer Goods - Other Consumer Goods'] },

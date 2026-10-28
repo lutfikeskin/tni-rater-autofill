@@ -30,7 +30,7 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight } from '../util.js';
+import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, nonDrivingOwnerRow } from '../util.js';
 import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 
@@ -264,8 +264,9 @@ const cargo = (r) => {
 // The deductible is a client fact: without it the limit is the agent's alone, never Luna's.
 const cargoSource = (r) => (r.coverage.cargo !== false && noCargoDeductible(r) ? 'fact' : 'derived');
 
-// What the intake calls the freight -> Progressive's commodity category and commodity.
-const commodity = (r) => (haulsGeneralFreight(r) ? { category: 'Consumer Goods', commodity: 'Other Consumer Goods' } : null);
+// What the intake calls the freight -> Progressive's commodity category and commodity: TNI's
+// (cargoCommodity in util.js: car or auto parts, then general freight), else the agent's.
+const commodity = cargoCommodity;
 
 // Filings: Yes when the intake says so. On the Filings page the standard answers are "all
 // vehicles on this quote" = Yes and the Federal filing; ticking Federal makes Progressive tick

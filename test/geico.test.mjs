@@ -1572,9 +1572,12 @@ test('cargo: the intake\'s limit and deductible as one pair; never a default ded
     assert.equal(goodsFor({ 'operations.businessClass': cls, 'operations.whatHaul': haul }).value, 'Consumer Goods - Other Consumer Goods', `${cls} / ${haul}`);
   }
   assert.equal(goodsFor({ 'operations.businessClass': 'Auto Hauler', 'operations.whatHaul': null }).value, 'Aircraft/Auto/Boats - Automobiles');
-  // Auto parts aren't automobiles: with general freight, other consumer goods; alone, the agent's.
-  assert.equal(goodsFor({ 'operations.businessClass': 'Expediter', 'operations.whatHaul': 'General freight, auto parts' }).value, 'Consumer Goods - Other Consumer Goods');
-  agents(goodsFor({ 'operations.businessClass': 'Auto Parts Distributor', 'operations.whatHaul': 'Car parts' }));
+  // Auto parts aren't automobiles: TNI's auto accessories (not tires), also named with general freight
+  // (TNI, 2026-10-28; before, other consumer goods with general freight, alone the agent's).
+  const PARTS = 'Aircraft/Auto/Boats - Auto Accessories (Not Tires)';
+  for (const [cls, haul] of [['Expediter', 'General freight, auto parts'], ['Auto Parts Distributor', 'Car parts'], ['Expediter', 'Auto-parts'], ['Expediter', 'Auto body parts']]) {
+    assert.deepEqual([goodsFor({ 'operations.businessClass': cls, 'operations.whatHaul': haul }).value, goodsFor({ 'operations.businessClass': cls, 'operations.whatHaul': haul }).source], [PARTS, 'derived'], `${cls} / ${haul}`);
+  }
   assert.equal(goodsFor({ trailers: [{ ...TRAILER, type: 'Reefer' }] }).value, REEFER_PICKS, 'a reefer listed: the reefer picks, before general freight');
   assert.equal(goodsFor({ 'operations.businessClass': 'Expediter', 'operations.whatHaul': 'Refrigerated produce' }).value, REEFER_PICKS);
   // No match ("cargo" isn't a car): the agent's, quoted, and open to the AI's suggestion (not manualOnly).

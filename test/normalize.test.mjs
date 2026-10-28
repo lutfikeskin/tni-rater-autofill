@@ -520,10 +520,12 @@ test('progressive: standard answers for follow-up questions', () => {
   assert.equal(byQ('1ED', noDot).value, 'No - and the customer will not have a USDOT number');
   assert.equal(byQ('20F', noDot).ignore, true);
   assert.equal(byQ('20F').value, true, 'TNI\'s standard Yes once the lookup found the number (2026-10-20)');
-  // Other freight descriptions aren't guessed.
+  // Other freight descriptions aren't guessed; auto parts are TNI's (2026-10-28).
   const other = structuredClone(record);
-  other.operations.whatHaul = 'Auto parts';
+  other.operations.whatHaul = 'Furniture';
   assert.equal(byQ('216A', other).value, null);
+  other.operations.whatHaul = 'Auto parts';
+  assert.deepEqual([byQ('216A', other).value, byQ('216B', other).value], ['Aircraft/ Auto/ Boats', 'Auto Accessories (Not Tires)']);
 });
 
 test('progressive: second live quote — business type, standard vehicle answers, buttons', () => {

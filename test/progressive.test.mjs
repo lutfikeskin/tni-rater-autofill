@@ -51,7 +51,8 @@ test('general freight, also misspelled or as the business class, is Consumer Goo
       a.find((x) => /^Disclosure/.test(x.name ?? '')).value.split('\n')[0]];
   };
   const CONSUMER = ['Consumer Goods', 'Other Consumer Goods', 'Consumer Goods - Other Consumer Goods', 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods'];
-  for (const whatHaul of ['General freight', 'General Fright ', 'General Frieght', 'general freigt', 'Gen. Freight', 'Non-hazardous general freight']) {
+  // Plural too (TNI, 2026-10-28: a live intake's "General freights" was left to the agent).
+  for (const whatHaul of ['General freight', 'General Fright ', 'General Frieght', 'general freigt', 'Gen. Freight', 'Non-hazardous general freight', 'General freights', 'General Frieghts']) {
     assert.deepEqual(goods({ whatHaul }), CONSUMER, whatHaul);
   }
   assert.deepEqual(goods({ businessClass: 'General Freight', whatHaul: null }), CONSUMER, 'the class, with what they haul blank');
@@ -65,6 +66,31 @@ test('general freight, also misspelled or as the business class, is Consumer Goo
   }
   assert.equal(goods({ businessClass: 'Expediter', whatHaul: 'Dry freight' })[2], CONSUMER[2], 'GEICO: dry freight hauled');
   assert.equal(goods({ whatHaul: 'General fleet maintenance parts' })[0], null);
+  assert.equal(goods({ whatHaul: 'General fights' })[0], null, 'not every plural-looking word');
+});
+
+// Car or auto parts are Aircraft/ Auto/ Boats, Auto Accessories (Not Tires), on every carrier (TNI,
+// 2026-10-28: a live intake's "Car Parts, Overnight Orders" was left to the agent). Named with
+// general freight, car parts win (one commodity, the more specific). Cars themselves aren't parts.
+test('car or auto parts are Aircraft/ Auto/ Boats / Auto Accessories (Not Tires) on every carrier', () => {
+  const goods = (operations) => {
+    const record = baseRecord();
+    Object.assign(record.operations, operations);
+    const p = buildPlan(record, progressive), g = buildPlan(record, geico), a = buildPlan(record, amwins, {});
+    return [byQ(p, '216A').value, byQ(p, '216B').value, g.find((x) => x.name === 'Cargo commodities').value,
+      a.find((x) => /^Disclosure/.test(x.name ?? '')).value.split('\n')[0]];
+  };
+  const PARTS = ['Aircraft/ Auto/ Boats', 'Auto Accessories (Not Tires)', 'Aircraft/Auto/Boats - Auto Accessories (Not Tires)',
+    'Motor Truck Cargo $100K with $1K Ded - Aircraft/ Auto/ Boats / Auto Accessories (Not Tires)'];
+  for (const whatHaul of ['Car Parts, Overnight Orders', 'Auto parts', 'autoparts', 'Automotive parts', 'Auto body parts', 'car part', 'Auto-parts', 'Car accessories',
+    'General freight, car parts', 'Auto parts and general freights']) {
+    assert.deepEqual(goods({ whatHaul }), PARTS, whatHaul);
+  }
+  assert.deepEqual(goods({ businessClass: 'Auto Parts Delivery', whatHaul: null }), PARTS, 'the class, with what they haul blank');
+  // Not parts: golf carts, a racecar, cargo; cars hauled are (GEICO's automobiles, Progressive's agent's).
+  for (const whatHaul of ['Golf carts', 'Racecar parts', 'Cargo parts']) assert.equal(goods({ whatHaul })[0], null, whatHaul);
+  const cars = goods({ whatHaul: 'Used cars' });
+  assert.deepEqual([cars[0], cars[2]], [null, 'Aircraft/Auto/Boats - Automobiles']);
 });
 
 test('freight intake maps business type and blank business name to sole proprietor', () => {
