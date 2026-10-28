@@ -228,7 +228,15 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const order = glActions.map((s) => s.action);
   assert.ok(order.indexOf('doneCargo') < order.indexOf('openGl') && order.indexOf('openGl') < order.indexOf('doneGl') && order.indexOf('doneGl') < order.indexOf('billPlan'));
   const openGl = glActions.find((s) => s.action === 'openGl');
-  assert.deepEqual([openGl.text, openGl.near, openGl.afterActions, openGl.unless, openGl.label], ['^\+$', 'general liability', ['doneCargo'], ['progressive.q21D1'], 'General liability']);
+  assert.deepEqual([openGl.text, openGl.near, openGl.afterActions, openGl.unless, openGl.label], ['^\\+$', 'general liability', ['doneCargo'], ['progressive.q21D1'], 'General liability']);
+  // FL live run, 2026-10-28: written '^\+$' it was /^+$/, which doesn't compile; the fill stopped there.
+  assert.ok(new RegExp(openGl.text, 'i').test('+') && !new RegExp(openGl.text, 'i').test('x'));
+  // Every helper's words compile, whichever carrier (a throw ends the whole fill on that page).
+  for (const carrier of [progressive, geico, amwins]) {
+    for (const a of carrier.actions ?? []) {
+      for (const key of ['text', 'resolvedBy', 'opener']) if (typeof a[key] === 'string') assert.doesNotThrow(() => new RegExp(a[key], 'i'), `${carrier.id}: ${a.id}.${key}`);
+    }
+  }
   const doneGl = glActions.find((s) => s.action === 'doneGl');
   assert.deepEqual([doneGl.afterActions, doneGl.after, doneGl.verify, doneGl.waitRequired], [['openGl'], ['progressive.q21D1'], 'glClosed', true]);
   assert.ok(new RegExp(doneGl.text, 'i').test('Done with this coverage'));
@@ -332,10 +340,8 @@ test('Type of Trucker is Other For-Hire Trucking for expediters and left alone o
 test('search-style business type (IN), other-coverage checkboxes, vehicle list', () => {
   const plan = buildPlan(baseRecord(), progressive, {});
   const q36 = byQ(plan, '36');
-  assert.equal(q36.value, 'For Hire Trucking');
-  assert.deepEqual(q36.choiceAliases, ['General Freight Trucking']);
-  assert.equal(byQ(plan, '24D').ignore, true, 'the search box itself is not typed into');
-  assert.equal(byQ(plan, '1D').ignore, true);
+  assert.deepEqual([q36.value, q36.choiceAliases, q36.matchStart, q36.source], ['General Freight Trucking', ['For Hire Trucking'], true, 'standard']);
+  assert.equal(byQ(plan, '24D').ignore, true, 'the page box itself is not typed into');
   // TNI 2026-10-10: None of the above unless the notes say the client has general liability
   // (then the agent's). GL asked for on the intake alone keeps None (TNI 2026-10-19, AR run).
   assert.deepEqual(['AA', 'B2', 'A8', 'A2'].map((q) => byQ(plan, q).value), [true, true, false, 'None']);
@@ -354,6 +360,42 @@ test('search-style business type (IN), other-coverage checkboxes, vehicle list',
   assert.equal(search.near, 'business type');
   assert.equal(progressive.vehicleList, 'VehicleSummary');
   assert.ok(new RegExp(plan.find((s) => s.action === 'addVehicle:0').text, 'i').test('Add another'));
+});
+
+// TNI, 2026-10-28 (KY and LA live runs): the search-style business type is General Freight Trucking,
+// else For Hire Trucking, for an expediter or a general freight hauler; where the list shows no
+// results yet (KY's popup, LA's New Customer list) "Trucking" is searched for first. Any other class
+// is the agent's (until then For Hire Trucking was taken for every class).
+test('search-style business type: General Freight Trucking, else For Hire Trucking, after a search for Trucking', () => {
+  for (const businessClass of ['Expediter', 'Freight Hauler', 'General Freight Hauler', 'General Freight Hauling']) {
+    const record = baseRecord();
+    record.operations.businessClass = businessClass;
+    const plan = buildPlan(record, progressive, {});
+    for (const q of ['36', '93']) {
+      const s = byQ(plan, q);
+      assert.deepEqual([s.value, s.choiceAliases, s.matchStart, s.source, s.note], ['General Freight Trucking', ['For Hire Trucking'], true, 'standard', null], `${businessClass} ${q}`);
+      assert.match(s.unofferedNote, /neither General Freight Trucking nor For Hire Trucking/);
+    }
+    assert.equal(byQ(plan, '93').search, 'Trucking');
+    assert.equal(byQ(plan, '93').field, 'AccountInput.BusinessDescriptionSearch');
+    // The popup's box: "Trucking" while no result list shows, left alone once one does.
+    const boxes = plan.filter((s) => s.q === '1D' && s.selector);
+    assert.deepEqual(boxes.map((s) => [s.value, s.ignore, !!s.unlessShown, !!s.whenShown]), [['Trucking', false, true, false], [null, true, false, true]]);
+    assert.ok(plan.indexOf(boxes[1]) < plan.indexOf(byQ(plan, '24D')), 'the popup box is found before the page box takes the first "Business Type"');
+    const search = plan.find((s) => s.action === 'businessTypePopupSearch');
+    assert.deepEqual([search.within, search.after, search.unless, search.verify], ['.becaPopupPage', ['progressive.q1D'], ['progressive.q36'], 'revealed']);
+  }
+  const other = baseRecord();
+  other.operations.businessClass = 'Landscaping';
+  const plan = buildPlan(other, progressive, {});
+  for (const q of ['36', '93']) {
+    const s = byQ(plan, q);
+    assert.deepEqual([s.value, s.source, s.manualOnly], [null, 'fact', true], q);
+    assert.match(s.note, /Business type for a Landscaping: pick it yourself/);
+  }
+  assert.equal(byQ(plan, '93').search, null);
+  assert.equal(plan.find((s) => s.q === '1D' && s.selector).ignore, true, 'never typed for another class');
+  assert.equal(plan.find((s) => s.action === 'businessTypePopupSearch'), undefined, 'never searched for another class');
 });
 
 test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () => {
@@ -1108,7 +1150,7 @@ test('owner drives No: the owner\'s driver row is excluded (28C1 Yes); blank, Ye
 // Info and NoHit; V2, 2026-10-27: confirmed). The owner's row is the first (V4, 2026-10-27, which
 // replaces T2's row by the owner's exact full name, and the agent's with none: the test after this
 // one has the Sr, Jr and other-name cases).
-test('owner drives No (T3, V2): the owner\'s date of birth from the owner\'s row, the first; the agent\'s No on it leaves it the agent\'s', () => {
+test('owner drives No (T3, V2): the owner\'s date of birth from the owner\'s row, the first; the agent\'s not-excluded on it is the owner driving', () => {
   const casey = { first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'MD1112223', licenseState: 'MD' };
   const record = (drivers, box = false) => {
     const r = baseRecord();
@@ -1122,10 +1164,25 @@ test('owner drives No (T3, V2): the owner\'s date of birth from the owner\'s row
   const r = record([senior, casey]);
   assert.deepEqual([0, 1].map((i) => [exclude(r, i).value, exclude(r, i).source, exclude(r, i).note]), [[true, 'derived', null], [false, 'derived', null]]);
   assert.deepEqual(dob(r).map((s) => [s.value, s.source, s.note]), [['01/02/1980', 'derived', null], ['01/02/1980', 'derived', null]]);
-  // The agent's No on the owner's row (client details): not excluded, and the date of birth is theirs.
+  // The agent's Excluded driver No on the owner's row (client details) with the box still No: the
+  // owner drives (the maintainer, 2026-10-28: "Does the owner drive?" Yes is the owner driving and
+  // not excluded, on every carrier; util.js ownerDrivesSaid). Business Owner Info gets the owner's
+  // name and date of birth from that row, and the owner-driver question is Yes. Before, the box's No
+  // dropped the row as the owner's driver row and its Excluded No dropped it as the excluded owner's,
+  // so no row gave the name or date of birth (2026-10-28 runs: a fill error, then the agent set Owner
+  // drives to Yes).
   const corrected = record([{ ...senior, excluded: false }, casey]);
-  assert.deepEqual([exclude(corrected, 0).value, dob(corrected)[0].value, dob(corrected)[0].manualOnly], [false, null, true]);
-  assert.match(dob(corrected)[0].note, /owner doesn't drive/);
+  const plan = buildPlan(corrected, progressive);
+  assert.deepEqual([exclude(corrected, 0).value, exclude(corrected, 1).value], [false, false]);
+  assert.deepEqual(dob(corrected).map((s) => [s.value, s.manualOnly, s.note ?? null]), [['01/02/1980', false, null], ['01/02/1980', false, null]]);
+  assert.deepEqual(['295', '297'].map((q) => byQ(plan, q).value), [senior.first, senior.last]);
+  assert.deepEqual([byQ(plan, '29F').value, byQ(plan, '29F').source, byQ(plan, '2D7').value], [true, 'derived', true]);
+  // ... never silently: the Yes carries a warning the agent confirms (PR #216 review).
+  assert.match(byQ(plan, '29F').warn, /owner doesn't drive, but their driver row is set not excluded, so the owner is quoted as a driver: Yes/);
+  // The box's No with no driver rows: the agent's, with the reason.
+  const none = dob(record([]))[0];
+  assert.deepEqual([none.value, none.manualOnly], [null, true]);
+  assert.match(none.note, /owner doesn't drive and lists no drivers/);
 });
 
 // TNI, 2026-10-27 (answers to PR questions V4, V3, V2): the owner is always the first driver on the

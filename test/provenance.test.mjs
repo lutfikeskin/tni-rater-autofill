@@ -575,6 +575,34 @@ test('AmWINS: an excluded driver\'s license number ends in "(Excluded)"; with no
   assert.ok(plan.find((x) => x.action === 'addDriver1').afterAny.includes(row(0).path));
 });
 
+// The maintainer, 2026-10-28: "Does the owner drive?" Yes is the owner driving and not excluded, No
+// the owner excluded, the same on every carrier. Whatever the Owner drives box and the owner's row's
+// Excluded driver say, the carriers agree with each other, and the owner's name and date of birth
+// always come from the owner's row. The 2026-10-28 runs had the box No and the agent's Excluded
+// driver No on the row: the owner neither excluded nor driving, and Progressive's Business Owner
+// Info with no name or date of birth.
+test('owner drives and the owner\'s exclusion agree on every carrier, whatever the box and the row\'s Excluded driver say', () => {
+  for (const box of [true, false, null]) {
+    for (const excluded of [true, false, null]) {
+      const r = with_({ 'applicant.ownerDrives': box, 'drivers.0.excluded': excluded });
+      const why = `box ${box}, row excluded ${excluded}`;
+      const drives = excluded === true ? false : excluded === false ? true : box !== false;
+      const prog = buildPlan(r, progressive, { drivers: 0 });
+      assert.deepEqual([byQ(prog, '29F').value, byQ(prog, '28C1').value], [drives, !drives], `${why}: Progressive`);
+      // Where the box and the row disagree, the answer carries a warning the agent confirms: the
+      // box's No read as Yes is never silent (PR #216 review), nor the Yes read as No.
+      const overridden = box === false && excluded === false;
+      assert.equal(!!byQ(prog, '29F').warn, overridden || (box === true && excluded === true), `${why}: warned`);
+      if (overridden) assert.match(byQ(prog, '29F').warn, /intake says the owner doesn't drive, but their driver row is set not excluded, so the owner is quoted as a driver/, why);
+      assert.deepEqual(['295', '297', '2BB'].map((q) => byQ(prog, q).value), ['Amina', 'Kone', '01/02/1980'], `${why}: Progressive's Business Owner Info`);
+      const am = buildPlan(r, amwins, {});
+      assert.equal(am.find((s) => s.path === 'drivers[0].licenseNumber').value, drives ? 'NJ1234567' : 'NJ1234567 (Excluded)', `${why}: AmWINS`);
+      assert.equal(bySel(am, '#ownerDob').value, '01/02/1980', `${why}: AmWINS owner date of birth`);
+      assert.deepEqual([geico.listedDriver(r), geico.omittedDriver(r)], drives ? [0, -1] : [-1, 0], `${why}: GEICO`);
+    }
+  }
+});
+
 test('Progressive continuous coverage: Yes when currently insured, otherwise the agent\'s', () => {
   const insured = byQ(buildPlan(expediter(), progressive, {}), '83');
   // TNI's assumption, not an intake fact (audit 2026-10-10): tagged standard, no PDF link.

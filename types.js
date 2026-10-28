@@ -144,6 +144,7 @@
  * @property {'select' | 'radio' | 'checkbox' | 'text'} [control]
  * @property {ClientValue<string | null>} [scope]  vehicle, trailer, driver or policy
  * @property {ClientValue<number | null>} [scopeIndex]
+ * @property {boolean} [trailers]  with scope vehicle: a step for each trailer too, after the vehicles' (src/plan.js)
  * @property {UnitList} [repeat]  one step per unit of this list
  * @property {(record: ClientRecord, active: ActiveUnits) => string} [repeatSelector]
  * @property {{ selector: string, path: string }} [witness]  the unit's row: the one showing its value
@@ -174,14 +175,20 @@
  * @property {ClientValue<ListCondition[] | null>} [onlyIf]  answered only when one of these holds, with the first one's value if it has one (GEICO's Medical Payments: $5,000 where it offers a limit, Not Included where it offers none); otherwise the agent's alone (manual only), with `onlyNote`
  * @property {string} [onlyNote]
  * @property {ClientValue<string | null>} [unofferedNote]  a list without the answer, which no helper shows later (GEICO's Medical Payments without $5,000): the agent's alone at once, with this note, instead of a failure
+ * @property {string[]} [needs]  the rules (their `q`) whose answer on the same unit the page needs before it offers this one (GEICO's collision, rental and road service behind comprehensive): while one of them is being given again this waits, and when one doesn't take, the unit gets one needs-you item naming them all instead of a failure each
  * @property {boolean} [checkNumber]
  * @property {'section' | 'limit' | true} [cargo]
  * @property {'section' | 'limit'} [gl]
  * @property {string} [group]
  * @property {ClientValue<string | null>} [summaryAfter]
  * @property {ClientValue<string[]>} [choiceAliases]
+ * @property {boolean} [matchStart]  a choice is an option reading as the answer or an alias, or beginning with
+ *   it, never one that only mentions it further on (Progressive's business type lists: "<name> <description>",
+ *   and "Auto Hauler (For Hire Trucking)" is not For Hire Trucking)
  * @property {ClientValue<string | null>} [fallback]
- * @property {ClientValue<string | null>} [search]
+ * @property {ClientValue<string | null>} [search]  what is typed to narrow a type-ahead list before the pick: a
+ *   select2 list (`search-select`), or an ExtJS combo (Progressive's LA business description: "Trucking"), whose
+ *   answer is then picked among the results only
  * @property {ClientValue<string | null>} [withOption]
  */
 
@@ -328,6 +335,7 @@
  * @property {string} [driverPage]
  * @property {UnitListSpec[]} [unitLists]
  * @property {UnitNameSpec[]} [unitNames]
+ * @property {UnitPager} [unitPager]  a page that draws the units' rows a few at a time behind group buttons (Progressive's Rates: "1-3", "4-5"); the fill presses each other group, then its own again (pagekit fill `pager`)
  * @property {(record: ClientRecord) => number} [listedDriver]  the intake driver the carrier lists itself, -1 for none
  * @property {(record: ClientRecord) => number} [omittedDriver]  the intake driver the carrier's quote leaves out (GEICO: the owner's row, the first, when the intake says the owner doesn't drive or marks that row Excluded): never added, never an Add Driver form's, not a row of its driver list; -1 for none
  * @property {{ [page: string]: string | null | ((record: ClientRecord) => string | null) }} [agentPages]
@@ -399,16 +407,19 @@
  * @property {string | null} warn
  * @property {string | null} summaryAfter
  * @property {string[]} choiceAliases
+ * @property {boolean} matchStart
  * @property {string | null} scope
  * @property {number | null | undefined} scopeIndex
  * @property {string[] | null} vehicleHint  the unit's year, make and model, which pick its row
  * @property {boolean | null} activeVehicle
+ * @property {{ list: 'vehicles' | 'trailers', index: number, name: string } | null} [unit]  the unit whose row a per-unit step takes (its year, make and model as `name`): a page whose `unitPager` shows a few units at a time pages until each unit's row was read, and names a unit none read as
  * @property {string[] | null} businessNames
  * @property {string[] | null} labelHas
  * @property {string | null} labelNote
  * @property {{ path: string | null, limit: boolean, value: string | null }[] | null} onlyIf
  * @property {string | null} onlyNote
  * @property {string | null} unofferedNote
+ * @property {string[] | null} needs  the rule `q`s whose answer on the same unit the page needs first (CarrierRule `needs`)
  * @property {string | null} fallback
  * @property {boolean} checkNumber
  * @property {string | null} search
@@ -508,6 +519,16 @@
  * @property {{ list: UnitList, text: string, names: string[][], active: number, label: string } | null} [formUnit]
  *   a form that names its unit (carrier `unitNames`): each intake unit's name words, and the plan's unit
  * @property {{ [key: string]: any }} [givenBefore]
+ * @property {UnitPager | null} [pager]  the carrier's `unitPager`
+ */
+
+/**
+ * Group buttons that show a few units' rows at a time (Progressive's Rates, FL live run
+ * 2026-10-28: "1-3" and "4-5" for four vehicles and a trailer, the shown group's button disabled).
+ * @typedef {object} UnitPager
+ * @property {string[]} pages  the pages that page
+ * @property {string} text  a group button's words (a pattern)
+ * @property {string} [current]  a selector around the shown group's button (besides disabled or tabindex -1)
  */
 
 /**
@@ -608,6 +629,7 @@
  * @property {'busy' | 'none'} [advanceDue]
  * @property {'check' | 'changed'} [held]
  * @property {boolean} [agentPressed]
+ * @property {string[]} [paged]  the unit group buttons the fill pressed, in order (`pager`)
  * @property {boolean} [covered]
  * @property {string[]} [coveredHelpers]
  * @property {boolean} [documentPending]

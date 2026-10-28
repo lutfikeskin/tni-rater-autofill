@@ -31,7 +31,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, nonDrivingOwnerRow } from '../util.js';
+import { ownerDrives, ownerDrivesSaid, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, nonDrivingOwnerRow } from '../util.js';
 import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -53,7 +53,8 @@ const explicitBoolean = (record, path) => {
 // no row's name matched got no date of birth: a first row with another name is still the owner's,
 // and the Intake step says so (normalize.js `drivers.owner-name-differs`).
 // - `driver`: the owner's row while the owner drives (as their driver row); none when the intake
-//   says the owner doesn't drive.
+//   says the owner doesn't drive (util.js ownerDrivesSaid: the box's No, unless the agent set the
+//   owner's row not excluded, which is the owner driving: the maintainer, 2026-10-28).
 // - `dob` from `dobDriver`: that row, or with the intake's No the owner's row all the same
 //   (util.js nonDrivingOwnerRow; TNI, 2026-10-26: answer to PR question, T3, asked of GEICO, and V2,
 //   2026-10-27: confirmed here and on AmWINS). None with no driver rows: the agent's (ownerDobNote).
@@ -66,13 +67,13 @@ export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
   const row = ownerRow(r);
-  const driver = r.applicant.ownerDrives === false ? null : row;
+  const driver = ownerDrivesSaid(r) === false ? null : row;
   const fullMatch = !!driver && !!nameKey(full) && nameKey(`${driver.first ?? ''} ${driver.middle ?? ''} ${driver.last ?? ''} ${driver.suffix ?? ''}`) === nameKey(full);
   // Some intakes repeat the first name in the sole driver's last-name box. Only connect
   // that row's name when the intake explicitly says the owner drives and the owner's first name agrees.
   // A blank box, TNI's Yes for the owner-driver question (W44-25), is no evidence of the name.
   const sole = r.drivers.length === 1 ? r.drivers[0] : null;
-  const repeatedFirst = !!driver && driver === sole && r.applicant.ownerDrives === true && !!nameKey(sole.first)
+  const repeatedFirst = !!driver && driver === sole && ownerDrivesSaid(r) === true && !!nameKey(sole.first)
     && nameKey(sole.first) === nameKey(sole.last)
     && nameKey(sole.first) === nameKey(full.split(/\s+/).slice(0, -1).join(' '));
   // The owner box sometimes holds only the first name ("IBRAHIM"): the row whose first name starts
@@ -81,7 +82,7 @@ export function owner(r) {
     && (driver.first ?? '').trim().split(/\s+/)[0].toLowerCase() === full.trim().toLowerCase();
   const named = driver && (fullMatch || ownerIsDriver(full, driver) || repeatedFirst || firstOnly) ? driver : null;
   const first = named?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
-  const dobDriver = r.applicant.ownerDrives === false ? nonDrivingOwnerRow(r) : driver;
+  const dobDriver = ownerDrivesSaid(r) === false ? nonDrivingOwnerRow(r) : driver;
   return { driver, named, dob: dobDriver?.dob ?? null, dobDriver, first: first || null, middle: named?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : named?.last ?? full.split(/\s+/).at(-1) ?? null };
 }
 
@@ -90,8 +91,8 @@ export function ownerDobNote(r) {
   const o = owner(r);
   if (o.dob) return null;
   if (o.dobDriver) return 'The owner\'s driver row has no date of birth: enter it yourself.';
-  if (r.applicant.ownerDrives === false) return 'The intake says the owner doesn\'t drive, and no driver row is theirs (TNI: the owner\'s is the first driver; none on the intake, or set as not excluded in client details), so none gives their date of birth: enter it yourself.';
   // The owner's row is the first (V4), so only an intake with no driver rows gets here.
+  if (ownerDrivesSaid(r) === false) return 'The intake says the owner doesn\'t drive and lists no drivers, so no driver row gives their date of birth: enter it yourself.';
   return 'The intake lists no drivers, so no driver row gives the owner\'s date of birth: enter it yourself.';
 }
 
@@ -343,6 +344,21 @@ const isFreightHauler = (r) => FREIGHT_HAULER.test((r.operations.businessClass ?
 const isGeneralFreight = (r) => isFreightHauler(r) && /general\s+freight/i.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
 const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHauler(r) ? 'General Freight Hauler' : (r.operations.businessClass ?? null);
 const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
+// Search-style business type (TNI, 2026-10-28: KY's Business Type Selection popup and LA's New
+// Customer search): for an expediter or a general freight hauler, General Freight Trucking first, For
+// Hire Trucking where the list has no General Freight Trucking; neither listed is the agent's, and
+// so is any other class. Where the list shows no results yet, "Trucking" is searched for first.
+const searchClass = (r) => isExpediter(r) || isFreightHauler(r);
+const SEARCH_WORD = 'Trucking';
+const searchBusinessType = (r) => (searchClass(r) ? 'General Freight Trucking' : null);
+const searchBusinessSource = (r) => (searchClass(r) ? 'standard' : 'fact');
+const searchBusinessNote = (r) => (searchClass(r) ? null : `Business type for a ${r.operations.businessClass || 'business of this class'}: pick it yourself (the fill picks it for expediters and general freight haulers only).`);
+const SEARCH_UNOFFERED = 'The business type list shows neither General Freight Trucking nor For Hire Trucking, or several options for it: pick it yourself (TNI takes General Freight Trucking, else For Hire Trucking, for expediters and general freight haulers; never another business).';
+// The popup's own Business Type box and Search (KY), apart from the page's box and Search behind it.
+const BECA_POPUP = '.becaPopupPage';
+const BECA_POPUP_BOX = `${BECA_POPUP} [fieldref="BECAInput.BusinessTypeTextBox"]`;
+// The popup's result list: shown at once in IN and OH, only after a search in KY.
+const BECA_RESULTS = { field: 'BECAInput.BusinessTypeLabel' };
 // "Is the customer currently insured?" Yes for a policy on the intake with a limit and an
 // expiration not passed (derived), and, TNI's assumption, whenever any box of an auto or untyped
 // policy is filled (TNI, 2026-10-26, W44-29: proof of prior insurance, 1-3 years; the Intake step
@@ -432,6 +448,11 @@ const ADD_NTL = '^add non-?trucking liability( instead)?\\??$';
 // Later Rates helpers wait while an NTL added on this quote is still there after the agent set it
 // back to No (until the page offers Add NTL again).
 const NTL_HOLD = ['ntlStillAdded'];
+// The open Motor Truck Cargo section, by its fields' data-model names (fieldref): its questions,
+// and a commodity row (its category or commodity list, filled or blank). Neither is on the page
+// while the section is closed (saved Rates pages, 2026-10).
+const CARGO_SECTION = '[fieldref^="MotorTruckingCargoInput."]';
+const COMMODITY_ROW = '[fieldref="MTCargoCommodityCategories.MTCargolistOfCommodityCategories"], [fieldref="MTCargoCommodityCategories.MTCargoListOfCommodities"]';
 
 // A small, reviewed label fallback for practice layouts and carrier redraws that omit a Duck
 // Creek question id. Keep optional contact fields and unvalidated GL out of this list.
@@ -571,6 +592,10 @@ export const progressive = {
     // Some states (IN, OH) show the business type as a box with a Search next to it, which opens
     // the business type list (BECAPopup).
     { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
+    // KY's popup opens with no result list (TNI, 2026-10-28): "Trucking" is typed into its own
+    // Business Type box (q1D), then its own Search pressed, never the page's behind it. Done once the
+    // list shows. IN and OH show the list at once: the box isn't typed, so this waits for the pick.
+    { id: 'businessTypePopupSearch', tni: 'progressive.business-type-search', page: 'BECAPopup', text: '^search$', within: BECA_POPUP, after: ['progressive.q1D'], unless: ['progressive.q36'], immediate: true, verify: 'revealed', label: 'Business type: Search', when: searchClass },
     // Two tiles matching (two reefer tiles) means it's the agent's pick.
     // A page of tiles: picked even where the page shows no field (onBlankPage; the MD layout has none).
     { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, onBlankPage: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
@@ -607,8 +632,16 @@ export const progressive = {
       missing: () => 'NTL was added on this quote, but Non-trucking liability is no longer Yes on the intake: remove it on this page yourself, or set it back to Yes.' },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
     // With NTL the cargo helpers are the agent's too (the rest of Rates is, see agentPages).
-    { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true && notNtl(r) },
-    { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true && notNtl(r) },
+    // Done without a click once the section is open (its questions or a commodity row on the page):
+    // a "+" pressed there again is another one, such as the commodity list's own add.
+    // Add a commodity, only while the open section has no commodity row: the intake needs one
+    // commodity, so a row already there, filled or blank, is never joined by another (FL live run,
+    // 2026-10-28: the fills stopped at general liability's "+", whose pattern didn't compile (PR
+    // #213), so their clicks never reached the panel; the next fill pressed the commodity list's "+"
+    // as cargo's and Add a commodity again, an empty row each time, and the agent removed them with
+    // "x"). The page decides, whatever the panel remembers.
+    { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], unlessSelector: `${CARGO_SECTION}, ${COMMODITY_ROW}`, when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], unlessSelector: COMMODITY_ROW, when: (r) => r.coverage.cargo === true && notNtl(r) },
     // OK (2026-10-07): the commodity was chosen but Done didn't show until the agent chose it again
     // (the category's reload still under way): with no Done, the commodity is chosen again, once.
     { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', nudge: 'progressive.q216B', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', unlessActions: ['openGl'], when: (r) => r.coverage.cargo === true && notNtl(r) },
@@ -617,8 +650,13 @@ export const progressive = {
     // limit fill (glQuestion, glLimit), then its Done closes it. Done waits for the limit and for
     // every required question in the section: one no rule knows stays the agent's. Done only once
     // the section's questions are gone and the row keeps the limit (glClosed). Once GL is open,
-    // cargo's Done (the same text) is never clicked again (doneCargo's unlessActions).
-    { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\+$', near: 'general liability', unless: ['progressive.q21D1'], afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
+    // cargo's Done (the same text) is never clicked again (doneCargo's unlessActions). Cargo closed
+    // on the page, by the agent or an earlier fill, counts as doneCargo (the maintainer, 2026-10-28;
+    // the kit's sectionClosedOn, for `verify: 'cargoClosed'` as for 'glClosed').
+    // Its text is a regular expression in a string: '^\\+$', as cargo's. Written '^\+$' it read
+    // /^+$/, which doesn't compile: every fill on Rates with GL asked for stopped where it looked
+    // for this "+" (FL live run, 2026-10-28: the agent added GL and closed cargo by hand).
+    { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'general liability', unless: ['progressive.q21D1'], afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
     { id: 'doneGl', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openGl'], after: ['progressive.q21D1'], verify: 'glClosed', when: (r) => glRequested(r) && notNtl(r) },
     // Rates, as TNI agents work it (the maintainer, 2026-10-23): once cargo and GL are added,
     // Recalculate and wait for the new premium, open the bill plan options and pick automatic
@@ -657,6 +695,11 @@ export const progressive = {
   finishedSaid: 'Print, Email, Fax was clicked',
   // The pages about one vehicle, repeated for each (their Continue is per vehicle).
   vehiclePages: ['MostCommonVehicles', 'AddVehicle'],
+  // Rates draws three units' coverage columns at a time (FL live run, 2026-10-28: four vehicles and
+  // a trailer, "1-3" and "4-5" with an arrow; the shown group's button is disabled, in a
+  // disabled-action wrapper): the fill presses each other group to answer every vehicle's and
+  // trailer's rows, then its first group again. A unit no row read as is named for the agent.
+  unitPager: { pages: ['CoveragesRates'], text: '^\\d+\\s*[-–]\\s*\\d+$', current: '.disabled-action-1' },
   // Trailers are added from the same list; their pages are per trailer, and Add Trailer marks its
   // trailer entered once filled.
   trailerList: 'VehicleSummary',
@@ -756,12 +799,22 @@ export const progressive = {
       { q: '27E', source: 'derived', field: 'PrimaryBusinessAddressOutputNonShredded.StreetAddressDup', ask: 'Street Address', name: 'Business address (with suggestion)', kind: 'address-suggest', value: oneLineAddress, fallback: (r) => r.garaging?.street ?? null },
       { q: '284', field: 'PrimaryBusinessAddressInput.ZipCode', ask: 'Zip Code', askAfter: 'Street Address', path: 'garaging.zip', name: 'Business ZIP' },
       { q: '286', field: 'PrimaryBusinessAddressInput.City', ask: 'City', askAfter: 'Street Address', path: 'garaging.city', name: 'Business city' },
-      // Search-style business type (IN, OH): the box itself is left alone (typing filters the list
-      // away); the result list (BECAPopup q36) gets For Hire Trucking, or General Freight Trucking
-      // when the list doesn't have it. Options read "<name> <description>".
+      // Search-style business type (IN, OH, KY; TNI, 2026-10-28): the result list (BECAPopup q36)
+      // gets General Freight Trucking, or For Hire Trucking when the list doesn't have it, for an
+      // expediter or a general freight hauler. Options read "<name> <description>": one only
+      // mentioning the name ("Auto Haulers … for hire trucking …") is never it (`matchStart`).
+      // The popup's own box (q1D, found inside the popup, before the page's box takes the first
+      // "Business Type") is left alone while the list shows (typing filters it away: IN, OH); with
+      // no list yet (KY) it gets "Trucking", and businessTypePopupSearch presses the popup's Search.
+      { q: '1D', tni: 'progressive.business-type-search', source: 'standard', page: 'BECAPopup', selector: BECA_POPUP_BOX, unlessShown: BECA_RESULTS, name: 'Business type search box ("Trucking" until the list shows)', value: () => SEARCH_WORD, ignore: (r) => !searchClass(r) },
+      { q: '1D', page: 'BECAPopup', selector: BECA_POPUP_BOX, whenShown: BECA_RESULTS, name: 'Business type search box (left alone: the list shows)', ignore: true },
       { q: '24D', ask: 'Business Type', control: 'text', each: true, name: 'Business type box (filled by the search)', ignore: true },
       { q: '1D', ask: 'Business Type', control: 'text', each: true, name: 'Business type search box', ignore: true },
-      { q: '36', tni: 'progressive.business-type-search', source: 'standard', ask: 'Business Type Label', name: 'Business type (search list: For Hire Trucking, else General Freight Trucking)', kind: 'choice', value: () => 'For Hire Trucking', choiceAliases: () => ['General Freight Trucking'] },
+      { q: '36', tni: 'progressive.business-type-search', source: searchBusinessSource, ask: 'Business Type Label', name: 'Business type (search list: General Freight Trucking, else For Hire Trucking)', kind: 'choice', value: searchBusinessType, choiceAliases: () => ['For Hire Trucking'], matchStart: true, note: searchBusinessNote, unofferedNote: SEARCH_UNOFFERED },
+      // LA's New Customer business description (q93, a list of 1,200 business names; TNI,
+      // 2026-10-28): "Trucking" is searched for, then the same pick among its results (General
+      // Freight Trucking, else For Hire Trucking; never "Auto Hauler (For Hire Trucking)").
+      { q: '93', tni: 'progressive.business-type-search', source: searchBusinessSource, field: 'AccountInput.BusinessDescriptionSearch', ask: 'Business Description Search', name: 'Business description (search "Trucking": General Freight Trucking, else For Hire Trucking)', kind: 'choice', search: (r) => (searchClass(r) ? SEARCH_WORD : null), value: searchBusinessType, choiceAliases: () => ['For Hire Trucking'], matchStart: true, note: searchBusinessNote, unofferedNote: SEARCH_UNOFFERED },
       { q: '239', source: 'derived', ask: ['Business type list', 'Business Type'], control: 'select', name: 'Business type', kind: 'choice', value: businessType, choiceAliases: businessAliases, summaryAfter: (r) => isExpediter(r) ? 'Type of Trucker' : 'How is the customer\'s business structured?' },
       { q: '22D', source: 'derived', clientFact: true, field: 'AccountInput.BusinessStructure', ask: 'How is the customer\'s business structured?', name: 'Business structure (from the company name)', kind: 'choice', value: businessStructure, note: businessStructureNote, warn: businessStructureWarn },
       { q: '267', source: 'derived', field: 'AccountInput.SpecificTruckHaulContractType', ask: 'Type of Trucker', name: 'Type of trucker', kind: 'choice', value: truckerType, ignore: (r) => !isExpediter(r) },
