@@ -2212,6 +2212,13 @@
     const pagedUnits = new Map(pagerOn ? plan.filter((s) => s.activeVehicle != null && s.vehicleHint && s.unit && s.pages?.includes(startPage)).map((s) => [unitId(s), s.unit]) : []);
     const seenUnits = new Set();
     let unitRowsShown = false;
+    // The groups each field key was read in, and the unit rows left for an agent's edit by step id.
+    // A row's key is its place in its group, so the rows of different groups share keys: an edit
+    // on vehicle 1's row also keeps vehicle 4's (PR #215 review). Such a row whose key two groups
+    // showed may be either's edit: it is named for the agent rather than taken for theirs.
+    const keyGroups = new Map();
+    const skippedRows = new Map();
+    const sharedKey = (key) => (keyGroups.get(key)?.size ?? 0) > 1;
     // Keys of questions read while another group was shown: still this page's at the end.
     const pagedKeys = new Set();
     // The group buttons on screen (the innermost match), each with whether it is the group shown:
@@ -2279,12 +2286,26 @@
       report.fields = Math.max(report.fields, controls.length);
       if (report.halted) break;
       const allPairs = assign(controls, plan);
-      if (pagerOn) {
-        for (const p of allPairs) if (pagedUnits.has(unitId(p.step))) { seenUnits.add(unitId(p.step)); unitRowsShown = true; }
-        if (startGroup && shownGroup() !== startGroup) for (const c of controls) pagedKeys.add(fieldKey(c));
-      }
       // The agent's edits made where the kit is now, before anything asks whether a field is theirs.
       if (skipBy) skipWhere(allPairs.units);
+      if (pagerOn) {
+        const group = shownGroup() ?? '';
+        for (const c of controls) {
+          const key = fieldKey(c);
+          if (!keyGroups.has(key)) keyGroups.set(key, new Set());
+          keyGroups.get(key).add(group);
+        }
+        // A unit is read once the fill works one of its rows. A row the agent's edit keeps is set
+        // aside: its key may be another group's row's (below).
+        for (const p of allPairs) {
+          const id = unitId(p.step);
+          if (!pagedUnits.has(id)) continue;
+          unitRowsShown = true;
+          if (skippedField(p.control)) skippedRows.set(p.step.id, { step: p.step, label: p.control.label, key: fieldKey(p.control), unit: id });
+          else seenUnits.add(id);
+        }
+        if (startGroup && group !== startGroup) for (const c of controls) pagedKeys.add(fieldKey(c));
+      }
       // Review items are flagged in yellow and the rest of the page still fills. Only a stuck
       // page or an agent edit stops the fill.
       const mapped = new Set(allPairs.map((p) => p.control));
@@ -3289,9 +3310,20 @@
     // A unit whose row no group of the page showed (`pager`): none of its questions was answered,
     // and it is the agent's, named, never taken for done.
     if (pagerOn && stillHere && unitRowsShown) {
+      const unitLabel = (unit) => `${unit.list === 'trailers' ? 'Trailer' : 'Vehicle'} ${unit.index + 1}`;
+      // A row the agent's edit kept whose key another group's row has: named, by its unit.
+      const named = new Set();
+      for (const row of skippedRows.values()) {
+        if (!sharedKey(row.key)) continue;
+        const unit = pagedUnits.get(row.unit);
+        named.add(row.unit);
+        report.noData.push({ stepId: row.step.id, label: row.label, path: row.step.path, name: `${row.step.name}: ${unitLabel(unit)}`, unit: unitLabel(unit), key: null, q: null, controlKind: null,
+          note: `Not answered for ${unitLabel(unit)}${unit.name ? ` (${unit.name})` : ''}: you changed this coverage on a row of one group of vehicles, and each group's rows share their field names, so the fill can't tell whose row it was and left both. Check it, or answer it yourself.` });
+      }
       for (const [id, unit] of pagedUnits) {
-        if (seenUnits.has(id)) continue;
-        const label = `${unit.list === 'trailers' ? 'Trailer' : 'Vehicle'} ${unit.index + 1}`;
+        // Read: a row the fill worked, or one only the agent's edit on that very row kept.
+        if (seenUnits.has(id) || named.has(id) || [...skippedRows.values()].some((r) => r.unit === id && !sharedKey(r.key))) continue;
+        const label = unitLabel(unit);
         const where = (report.paged ?? []).length || groupButtons().length > 1 ? 'in any group of vehicles on this page' : 'on this page';
         report.noData.push({ label, path: `${unit.list}[${unit.index}]`, name: label, unit: label, key: null, q: null, controlKind: null,
           note: `No row ${where} reads as ${label}${unit.name ? ` (${unit.name})` : ''}: none of its coverages was answered. Check it is on the quote, then answer its coverages yourself.` });

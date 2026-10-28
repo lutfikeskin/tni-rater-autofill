@@ -1343,6 +1343,18 @@ test('Rates with its units in groups: the fill shows each group, answers every u
   assert.deepEqual(Array.from(report.noData, (x) => x.label), ['Vehicle 5']);
   assert.match(report.noData[0].note, /^No row in any group of vehicles on this page reads as Vehicle 5 \(2018 ABSENTCO EPSILON\)/);
   assert.ok(report.blockers.some((b) => /Vehicle 5/.test(b)), 'it holds what waits for the agent');
+  // PR #215 review: each group's first row has the same key, so the agent's edit on vehicle 1's
+  // row (its key in `skip`) also keeps vehicle 4's. Vehicle 4's is named for the agent, never
+  // taken for read; the other units are answered.
+  const edited = vehicleGroupsPage(groups);
+  const kept = await edited.h.kit.fill(plan, { maxRounds: 20, pager: progressive.unitPager, skip: ['ref:ComprehensiveInput.Deductible'] });
+  assert.deepEqual(all.map(edited.value), ['', '$1,000 Deductible', '$1,000 Deductible', '', '$1,000 Deductible']);
+  assert.deepEqual(Array.from(kept.noData, (x) => x.unit).sort(), ['Vehicle 1', 'Vehicle 4']);
+  assert.match(kept.noData.find((x) => x.unit === 'Vehicle 4').note, /^Not answered for Vehicle 4 \(2021 TESTCO DELTA\): you changed this coverage/);
+  // Without other groups, a key is one row's: the edit is that row's own, and nothing is said.
+  const single = vehicleGroupsPage([{ text: '1-3', units: all.slice(0, 3) }]);
+  const own = await single.h.kit.fill(buildPlan({ ...record, vehicles: record.vehicles.slice(0, 3), trailers: [] }, progressive, {}).filter((s) => s.q === '1FCD'), { maxRounds: 20, pager: progressive.unitPager, skip: ['ref:ComprehensiveInput.Deductible'] });
+  assert.deepEqual([single.presses, own.noData.length], [[], 0]);
   // Every unit in the group shown: nothing is pressed.
   const one = vehicleGroupsPage([{ text: '1-3', units: all.slice(0, 3) }, { text: '4-5', units: ['2099 OTHER UNIT'] }]);
   await one.h.kit.fill(buildPlan({ ...record, vehicles: record.vehicles.slice(0, 3), trailers: [] }, progressive, {}).filter((s) => s.q === '1FCD'), { maxRounds: 20, pager: progressive.unitPager });
