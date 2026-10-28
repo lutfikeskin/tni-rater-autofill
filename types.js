@@ -179,6 +179,7 @@
  * @property {boolean} [checkNumber]
  * @property {'section' | 'limit' | true} [cargo]
  * @property {'section' | 'limit'} [gl]
+ * @property {'section' | 'limit'} [interchange]  Progressive's trailer interchange: a question of its open section, or its limit (in the section and in the row once Done); its Done checks them (`interchangeClosed`)
  * @property {string} [group]
  * @property {ClientValue<string | null>} [summaryAfter]
  * @property {ClientValue<string[]>} [choiceAliases]
@@ -249,7 +250,7 @@
 /**
  * How a click is known to have worked (pagekit fill): its result shows the premium, reveals more,
  * starts a download, the button goes, a coverage closes, or `appears` matches more than before.
- * @typedef {'premium' | 'revealed' | 'download' | 'gone' | 'cargoClosed' | 'glClosed' | { appears: string }} ActionVerify
+ * @typedef {'premium' | 'revealed' | 'download' | 'gone' | 'cargoClosed' | 'glClosed' | 'interchangeClosed' | { appears: string }} ActionVerify
  */
 
 /**
@@ -385,6 +386,7 @@
  * @property {boolean} registeredName
  * @property {'section' | 'limit' | true | null} cargo
  * @property {'section' | 'limit' | null} gl
+ * @property {'section' | 'limit' | null} interchange
  * @property {string | null} selector
  * @property {string | null} re  the rule's `label` pattern
  * @property {string | null} ex  the rule's `not` pattern

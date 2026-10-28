@@ -1707,6 +1707,8 @@
   const CLOSED_SECTIONS = {
     cargoClosed: { tag: 'cargo', words: /motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i },
     glClosed: { tag: 'gl', anyLimit: true },
+    // Trailer interchange (2026-10-28): as general liability's.
+    interchangeClosed: { tag: 'interchange', anyLimit: true },
   };
 
   // A button the fill presses (a helper, its menu, Continue). GEICO's submit buttons set their own
@@ -2795,8 +2797,8 @@
         if (result.ok) {
           if (currentPage() === 'CoveragesRates') {
             // The bill plan (payment method) stays chosen; the premium needs recalculating.
-            // A cargo or general liability answer re-arms its Done with this coverage too.
-            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : [])]) {
+            // A cargo, general liability or trailer interchange answer re-arms its Done with this coverage too.
+            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : []), ...(step.interchange === 'section' ? ['doneInterchange'] : [])]) {
               clicked.delete(id);
               report.actions = report.actions.filter((x) => x.id !== id);
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
@@ -3043,7 +3045,7 @@
       // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
       // screen but disabled is not gone.
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
-      // A coverage section's Done (cargo's, general liability's): its questions are gone and the
+      // A coverage section's Done (cargo's, general liability's, trailer interchange's): its questions are gone and the
       // row keeps the limit (sectionClosedOn).
       if (CLOSED_SECTIONS[a.verify]) accepted = sectionClosedOn(collectControls(), CLOSED_SECTIONS[a.verify]);
       // `revealed`: the click showed its result: a question appeared, or an answer changed, since
