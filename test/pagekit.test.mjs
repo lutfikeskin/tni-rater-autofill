@@ -85,19 +85,32 @@ function matchesSimple(node, selector) {
     if (matchesSimple(node, not[1])) return false;
   }
   selector = selector.replace(/:not\([^()]*\)/g, '');
-  const tag = selector.match(/^([a-z][\w-]*)/i)?.[1];
+  // Tag, id and classes outside attribute values ([fieldref="BECAInput.BusinessTypeTextBox"]).
+  const bare = selector.replace(/\[[^\]]*\]/g, '');
+  const tag = bare.match(/^([a-z][\w-]*)/i)?.[1];
   if (tag && node.tagName !== tag.toUpperCase()) return false;
-  const id = selector.match(/#([\w-]+)/)?.[1];
+  const id = bare.match(/#([\w-]+)/)?.[1];
   if (id && node.id !== id) return false;
-  for (const cls of selector.matchAll(/\.([\w-]+)/g)) {
+  for (const cls of bare.matchAll(/\.([\w-]+)/g)) {
     if (!node.className.split(/\s+/).includes(cls[1])) return false;
   }
   return attrSelector(node, selector);
 }
 
 function matchesSelector(node, selector) {
-  // The pagekit selectors used by this test are comma-separated simple selectors.
-  return selector.split(',').some((part) => matchesSimple(node, part));
+  // The pagekit selectors used by this test are comma-separated simple selectors, or simple
+  // selectors joined by a descendant combinator (".becaPopupPage [fieldref=…]").
+  return selector.split(',').some((part) => {
+    const chain = part.trim().split(/\s+(?![^[]*\])/);
+    if (!matchesSimple(node, chain.pop())) return false;
+    let at = node.parentElement;
+    for (const outer of chain.reverse()) {
+      while (at && !matchesSimple(at, outer)) at = at.parentElement;
+      if (!at) return false;
+      at = at.parentElement;
+    }
+    return true;
+  });
 }
 
 class FakeNode {
@@ -2496,21 +2509,107 @@ test('Add Vehicle inside the Add menu: the menu is opened first, then Add Vehicl
   assert.deepEqual(Array.from(report.actions, (x) => x.id), ['addVehicle:0:menu', 'addVehicle:0']);
 });
 
-test('business type list picks For Hire Trucking when offered, else General Freight Trucking', async () => {
+// TNI, 2026-10-28 (until then For Hire Trucking first): General Freight Trucking, else For Hire
+// Trucking; an option only mentioning For Hire Trucking in its description is never picked.
+test('business type list picks General Freight Trucking when offered, else For Hire Trucking, never another business', async () => {
   const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
-  for (const offered of [false, true]) {
+  const lists = [
+    [['For Hire Trucking Haul goods for others.', 'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).'], /^General Freight Trucking/],
+    [['For Hire Trucking Haul goods for others.'], /^For Hire Trucking/],
+    [['Auto Haulers Haul autos for a fee (For Hire Trucking).'], null],
+    // Two options beginning with General Freight Trucking: the agent's, never For Hire Trucking in
+    // its place (Claude review of PR #220).
+    [['For Hire Trucking Haul goods for others.', 'General Freight Trucking Haul general goods.', 'General Freight Trucking (Local) Haul general goods nearby.'], null],
+  ];
+  for (const [offered, want] of lists) {
     const h = harness({ search: '?pageName=BECAPopup' });
-    const names = [
-      'Expediters/Hotshotters Express delivery of packages or time sensitive materials over a 50-mile radius.',
-      ...(offered ? ['For Hire Trucking Haul goods for others.'] : []),
-      'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).',
-    ];
+    const names = ['Expediters/Hotshotters Express delivery of packages or time sensitive materials over a 50-mile radius.', ...offered];
     const radios = names.map((value, i) => makeInput({ id: i ? `bt-${i}` : `f_U${'A'.repeat(32)}36_1_1`, name: 'bt_36', type: 'radio', value }));
     h.document.body.append(radioGroup('Business Type Label', ...radios));
     const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 3 });
-    const picked = radios.find((r) => r.checked)?.value ?? '';
-    assert.match(picked, offered ? /^For Hire Trucking/ : /^General Freight Trucking/);
-    assert.equal(report.failed.length, 0);
+    const picked = radios.find((r) => r.checked)?.value ?? null;
+    assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+    if (want) { assert.match(picked, want); continue; }
+    assert.equal(picked, null, 'never "Auto Haulers" for its description');
+    assert.match(report.noData.find((x) => x.path === 'progressive.q36')?.note ?? '', /neither General Freight Trucking nor For Hire Trucking/);
+  }
+});
+
+// KY live run, 2026-10-28: the popup opened with no result list until a word was typed into its own
+// Business Type box and its Search pressed; the fill typed nothing, and "continue did not take".
+// Now: "Trucking" in the popup's box (never the page's behind it), the popup's Search (never the
+// page's), then the pick from the list it shows. IN and OH show the list at once: nothing typed.
+test('the business type popup with no list: Trucking typed in its own box, its own Search pressed, then the pick', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  for (const listShown of [false, true]) {
+    const h = harness({ search: '?pageName=BECAPopup' });
+    const box = (q) => makeInput({ id: `f_b${'B'.repeat(32)}${q}_1_1`, name: `string_${q}|`, ariaLabel: 'Business Type', attrs: { fieldref: 'BECAInput.BusinessTypeTextBox' } });
+    const pageBox = box('284');
+    const pageSearch = new FakeNode('button', { textContent: 'Search' });
+    pageSearch.onclick = () => { pageSearch._clicked = (pageSearch._clicked ?? 0) + 1; };
+    const pageRow = new FakeNode('div', { textContent: 'Business Type' });
+    pageRow.append(pageBox, pageSearch);
+    const popup = new FakeNode('div', { className: 'x-window becaPopupPage', textContent: 'Business Type Selection' });
+    const popupBox = box('1D');
+    const popupSearch = new FakeNode('button', { textContent: 'Search' });
+    const radios = [];
+    const drawList = () => {
+      for (const value of ['Auto Haulers Haul autos for a fee.', 'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).']) {
+        radios.push(makeInput({ id: radios.length ? `bt-${radios.length}` : `f_U${'A'.repeat(32)}36_1_1`, name: 'string_36', type: 'radio', value, attrs: { fieldref: 'BECAInput.BusinessTypeLabel' } }));
+      }
+      popup.append(radioGroup('Business Type Label', ...radios));
+    };
+    popupSearch.onclick = () => { popupSearch._clicked = (popupSearch._clicked ?? 0) + 1; if (popupBox.value === 'Trucking') drawList(); };
+    popup.append(popupBox, popupSearch);
+    if (listShown) drawList();
+    h.document.body.append(pageRow, popup);
+    const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 6 });
+    assert.equal(pageBox.value, '', 'the page\'s box behind the popup is never typed into');
+    assert.equal(pageSearch._clicked, undefined, 'the page\'s Search is never pressed');
+    assert.equal(popupBox.value, listShown ? '' : 'Trucking');
+    assert.equal(popupSearch._clicked, listShown ? undefined : 1);
+    assert.match(radios.find((r) => r.checked)?.value ?? '', /^General Freight Trucking/);
+    assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+    assert.equal(report.unknown.length, 0, JSON.stringify(report.unknown));
+  }
+  // Another class: nothing typed or searched; the business type is the agent's.
+  const h = harness({ search: '?pageName=BECAPopup' });
+  const popup = new FakeNode('div', { className: 'x-window becaPopupPage' });
+  const popupBox = makeInput({ id: 'popup-box', ariaLabel: 'Business Type', attrs: { fieldref: 'BECAInput.BusinessTypeTextBox' } });
+  const popupSearch = new FakeNode('button', { textContent: 'Search' });
+  popupSearch.onclick = () => { popupSearch._clicked = true; };
+  popup.append(popupBox, popupSearch);
+  h.document.body.append(popup);
+  await h.kit.fill(buildPlan({ ...record, operations: { businessClass: 'Landscaping' } }, progressive), { maxRounds: 3 });
+  assert.equal(popupBox.value, '');
+  assert.equal(popupSearch._clicked, undefined);
+});
+
+// LA live run, 2026-10-28: New Customer's business description (q93) is a list of some 1,200
+// business names; the agent typed a word and picked from the narrowed list. Now the fill searches
+// for "Trucking" and picks General Freight Trucking, else For Hire Trucking, among the results only.
+test('LA business description: Trucking searched for, then General Freight Trucking, else For Hire Trucking, never another business', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const cases = [
+    [['Accountant', 'Auto Hauler (For Hire Trucking)', 'For Hire Trucking', 'General Freight Hauler', 'Long Haul Trucking', 'Livery (For Hire)'], 'For Hire Trucking'],
+    [['Accountant', 'Auto Hauler (For Hire Trucking)', 'For Hire Trucking', 'General Freight Trucking', 'Long Haul Trucking'], 'General Freight Trucking'],
+    [['Accountant', 'Auto Hauler (For Hire Trucking)', 'Less Than Truckload Carrier (For Hire)', 'Long Haul Trucking'], null],
+  ];
+  for (const [all, want] of cases) {
+    const h = harness({ ext: true, search: '?pageName=NewCustomer' });
+    const field = addExtText(h, 'a', '93', { required: true });
+    let records = all.map((label) => ({ get: () => label }));
+    const searches = [];
+    Object.assign(field.cmp, {
+      displayField: 'label', valueField: 'label', store: { getRange: () => records, isLoading: () => false },
+      doQuery: (query) => { searches.push(query); records = all.filter((x) => x.toLowerCase().includes(query.toLowerCase())).map((label) => ({ get: () => label })); },
+    });
+    const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 3 });
+    assert.equal(searches[0], 'Trucking', 'the agent\'s word, before any pick');
+    assert.equal(field.cmp.getValue(), want ?? '');
+    assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+    if (want) assert.ok(report.filled.some((x) => x.path === 'progressive.q93'));
+    else assert.match(report.noData.find((x) => x.path === 'progressive.q93')?.note ?? '', /neither General Freight Trucking nor For Hire Trucking/);
   }
 });
 

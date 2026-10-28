@@ -334,6 +334,9 @@ function fieldSteps(rules, record, carrier, active) {
       warn: standard && reviewNote ? [reviewNote, ruleWarn].filter(Boolean).join(' ') : ruleWarn,
       summaryAfter: typeof rule.summaryAfter === 'function' ? rule.summaryAfter(record, active) : rule.summaryAfter ?? null,
       choiceAliases: typeof rule.choiceAliases === 'function' ? rule.choiceAliases(record, active) : rule.choiceAliases ?? [],
+      // The option must read as the answer (or an alias) or begin with it; one only mentioning it
+      // further on is never picked (Progressive's business type lists: "Auto Hauler (For Hire Trucking)").
+      matchStart: !!rule.matchStart,
       scope,
       scopeIndex,
       vehicleHint: vehicleHint?.length ? vehicleHint : null,

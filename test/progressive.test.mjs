@@ -337,10 +337,8 @@ test('Type of Trucker is Other For-Hire Trucking for expediters and left alone o
 test('search-style business type (IN), other-coverage checkboxes, vehicle list', () => {
   const plan = buildPlan(baseRecord(), progressive, {});
   const q36 = byQ(plan, '36');
-  assert.equal(q36.value, 'For Hire Trucking');
-  assert.deepEqual(q36.choiceAliases, ['General Freight Trucking']);
-  assert.equal(byQ(plan, '24D').ignore, true, 'the search box itself is not typed into');
-  assert.equal(byQ(plan, '1D').ignore, true);
+  assert.deepEqual([q36.value, q36.choiceAliases, q36.matchStart, q36.source], ['General Freight Trucking', ['For Hire Trucking'], true, 'standard']);
+  assert.equal(byQ(plan, '24D').ignore, true, 'the page box itself is not typed into');
   // TNI 2026-10-10: None of the above unless the notes say the client has general liability
   // (then the agent's). GL asked for on the intake alone keeps None (TNI 2026-10-19, AR run).
   assert.deepEqual(['AA', 'B2', 'A8', 'A2'].map((q) => byQ(plan, q).value), [true, true, false, 'None']);
@@ -359,6 +357,42 @@ test('search-style business type (IN), other-coverage checkboxes, vehicle list',
   assert.equal(search.near, 'business type');
   assert.equal(progressive.vehicleList, 'VehicleSummary');
   assert.ok(new RegExp(plan.find((s) => s.action === 'addVehicle:0').text, 'i').test('Add another'));
+});
+
+// TNI, 2026-10-28 (KY and LA live runs): the search-style business type is General Freight Trucking,
+// else For Hire Trucking, for an expediter or a general freight hauler; where the list shows no
+// results yet (KY's popup, LA's New Customer list) "Trucking" is searched for first. Any other class
+// is the agent's (until then For Hire Trucking was taken for every class).
+test('search-style business type: General Freight Trucking, else For Hire Trucking, after a search for Trucking', () => {
+  for (const businessClass of ['Expediter', 'Freight Hauler', 'General Freight Hauler', 'General Freight Hauling']) {
+    const record = baseRecord();
+    record.operations.businessClass = businessClass;
+    const plan = buildPlan(record, progressive, {});
+    for (const q of ['36', '93']) {
+      const s = byQ(plan, q);
+      assert.deepEqual([s.value, s.choiceAliases, s.matchStart, s.source, s.note], ['General Freight Trucking', ['For Hire Trucking'], true, 'standard', null], `${businessClass} ${q}`);
+      assert.match(s.unofferedNote, /neither General Freight Trucking nor For Hire Trucking/);
+    }
+    assert.equal(byQ(plan, '93').search, 'Trucking');
+    assert.equal(byQ(plan, '93').field, 'AccountInput.BusinessDescriptionSearch');
+    // The popup's box: "Trucking" while no result list shows, left alone once one does.
+    const boxes = plan.filter((s) => s.q === '1D' && s.selector);
+    assert.deepEqual(boxes.map((s) => [s.value, s.ignore, !!s.unlessShown, !!s.whenShown]), [['Trucking', false, true, false], [null, true, false, true]]);
+    assert.ok(plan.indexOf(boxes[1]) < plan.indexOf(byQ(plan, '24D')), 'the popup box is found before the page box takes the first "Business Type"');
+    const search = plan.find((s) => s.action === 'businessTypePopupSearch');
+    assert.deepEqual([search.within, search.after, search.unless, search.verify], ['.becaPopupPage', ['progressive.q1D'], ['progressive.q36'], 'revealed']);
+  }
+  const other = baseRecord();
+  other.operations.businessClass = 'Landscaping';
+  const plan = buildPlan(other, progressive, {});
+  for (const q of ['36', '93']) {
+    const s = byQ(plan, q);
+    assert.deepEqual([s.value, s.source, s.manualOnly], [null, 'fact', true], q);
+    assert.match(s.note, /Business type for a Landscaping: pick it yourself/);
+  }
+  assert.equal(byQ(plan, '93').search, null);
+  assert.equal(plan.find((s) => s.q === '1D' && s.selector).ignore, true, 'never typed for another class');
+  assert.equal(plan.find((s) => s.action === 'businessTypePopupSearch'), undefined, 'never searched for another class');
 });
 
 test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () => {

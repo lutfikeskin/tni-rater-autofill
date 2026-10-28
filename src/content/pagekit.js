@@ -1001,6 +1001,21 @@
     // Always the page's first choice (e.g. the first offered home address).
     if (step.kind === 'first-option') return usable[0] ?? null;
     const cands = candidates(step);
+    // `matchStart`: the answer, else each alias in turn, as an option reading so or beginning so
+    // (Progressive's business type lists: "General Freight Trucking Haul general goods…"); never one
+    // only mentioning it further on ("Auto Hauler (For Hire Trucking)" is not For Hire Trucking).
+    if (step.matchStart) {
+      for (const c of cands.filter(Boolean)) {
+        const exact = usable.find((o) => squash(o.text) === c || squash(o.value) === c);
+        const starts = usable.filter((o) => squash(o.text).startsWith(c));
+        if (exact) return exact;
+        if (starts.length === 1) return starts[0];
+        // Several begin with it: the answer is listed, but which one is the agent's; never the
+        // next alias in its place (Claude review of PR #220).
+        if (starts.length > 1) return null;
+      }
+      return null;
+    }
     for (const c of cands) {
       const hit = usable.find((o) => squash(o.text) === c || squash(o.value) === c);
       if (hit) return hit;
@@ -1452,6 +1467,18 @@
     }
     if (cmp?.readOnly) return { ok: false, reason: 'the field is read-only — set it by hand' };
     if (c.kind === 'select') {
+      // `search`: the word an agent types to narrow the list (Progressive's LA business description,
+      // "Trucking"); the answer is picked among its results only, none of them is a miss.
+      const searched = step.search ? await queryCombo(cmp, step.search) : null;
+      if (searched) {
+        const hit = matchOption(searched, step);
+        if (!hit) return noMatch(step, searched);
+        extFocusAndBlur(cmp, el, () => {
+          cmp.setValue(hit.value);
+          cmp.fireEvent('select', cmp, hit.rec);
+        });
+        return { ok: true, shown: cmp.getRawValue?.() || hit.text };
+      }
       let opt = matchOption(c.options, step);
       if (!opt && step.kind !== 'bool') {
         for (const q of [String(step.value), String(step.value).split(/\s+/).slice(0, 2).join(' ')]) {
