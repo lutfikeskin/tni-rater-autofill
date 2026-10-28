@@ -2,7 +2,8 @@
 // Builds the committed GEICO fixture, test/fixtures/geico/quote.html, from the ignored raw evidence:
 // the NE quote pages saved with Chrome's "Save page as" on 2026-10-20 (layouts/geico/NE-no-dot/) and,
 // for what was never saved as HTML (Business & Owner Info, the owner/SSN sub-form, the USDOT number box,
-// the filing boxes, the vehicle type list), the FL Alt+Shift+C captures (layouts/geico/json_layouts_FL_DOT/).
+// the filing boxes, the vehicle type list), the FL Alt+Shift+C captures (layouts/geico/json_layouts_FL_DOT/),
+// and for the Trailer Interchange card the FL Quote & Coverages saved on 2026-10-28 (INTERCHANGE_SAVE).
 // test/fixtures/geico/mock.js plays GEICO's page script on it; scripts/geico-mock.mjs drives the fill.
 //
 // It only runs on a machine that holds those ignored captures. It writes nothing when a privacy check
@@ -90,6 +91,14 @@ const VARIANTS = {
   quoteGl: 'GEICO Quote & CoverageswithGL.html', // Motor Truck General Liability Yes and its limit
 };
 const ALSO_HARVEST = ['GEICO Quote & CoveragesCargo.html', 'GEICO Quote & CoveragesFilled.html', 'GEICO Quote & CoveragesAfterRunAgain.html', 'GEICO Gateway.html'];
+// The FL Quote & Coverages saved on 2026-10-28 (layouts/geico/, beside NE-no-dot/) with Trailer
+// Interchange and Motor Truck General Liability opened and answered by the agent: read for the
+// Trailer Interchange card alone, which the NE quote doesn't offer. Its answers are put back to GEICO's
+// first state (need it No, the rest unanswered and hidden, the limit list not drawn: frag-ti-limit),
+// and it goes after Non-Owned Trailer Physical Damage's card, whose id stem it shares, as on the FL page.
+const INTERCHANGE_SAVE = 'GEICO Quote & CoveragesTrailerandGL.html';
+const INTERCHANGE_STEMS = ['GiveTrailerInterchangeEligibleRequireCoverageYesNo', 'GiveTrailerInterchangeAgreementYesNo', 'GiveTrailerInterchangeAgreementProvideOnRequestYesNo',
+  'GiveTrailerInterchangeNumberOfTrailers', 'GiveTrailerInterchangeCommonTrailerType'];
 
 // ---------------------------------------------------------------------------------------------------
 // A small HTML tree for Chrome's own serializer output (explicit end tags, declarative shadow DOM as
@@ -587,6 +596,44 @@ export function build(rawDir) {
   frags['mtc-limit'] = inner(kids(panel('quoteCargo', /^Id_MtcCoverageQuestionsComboActivityData_/))[2]);
   frags['gl-limit'] = inner(kids(panel('quoteGl', /^Id_MotorTruckGeneralLiabilityEligibilityComboActivityData_/))[2]);
   for (const k of ['insurer-years', 'insurer-limits', 'stale-card', 'mtc-limit', 'gl-limit', 'options-COLL', 'options-Rental', 'options-ERS']) if (!frags[k].trim()) throw new Error(`fragment ${k} is empty in its save`);
+  // The Trailer Interchange card (INTERCHANGE_SAVE): learned and scrubbed on its own (the NE pages'
+  // fakes and premiums stay as they were), its values joining the refusal list.
+  const tiFile = path.join(rawDir, INTERCHANGE_SAVE);
+  if (!fs.existsSync(tiFile)) throw new Error(`missing raw page: ${INTERCHANGE_SAVE}`);
+  const tiTree = parse(fs.readFileSync(tiFile, 'utf8'));
+  const tiState = learn([tiTree]);
+  for (const [v, cat] of tiState.secrets) if (!state.secrets.has(v)) state.secrets.set(v, `${cat} (${INTERCHANGE_SAVE})`);
+  reports.quoteInterchange = scrubPage(tiTree, tiState, { answers: 'keep' });
+  const tiCard = find(formOf(tiTree), (n) => n.name === 'li' && /^Id_TrailerInterchangeQuestionsComboActivityData_/.test(attr(n, 'id') ?? '')
+    && !!find(n, (x) => stemOf(attr(x, 'id')) === INTERCHANGE_STEMS[0]));
+  if (!tiCard) throw new Error(`${INTERCHANGE_SAVE}: no Trailer Interchange card`);
+  for (const n of els(tiCard)) {
+    const stem = stemOf(attr(n, 'id'));
+    if (n.name === 'gds-radio-button-group' && INTERCHANGE_STEMS.includes(stem)) {
+      const opts = kids(n).filter((c) => c.name === 'gds-radio-button');
+      const first = stem === INTERCHANGE_STEMS[0];
+      for (const o of opts) {
+        const on = first && attr(o, 'value') === 'No';
+        if (on) setAttr(o, 'checked', null); else delAttr(o, 'checked');
+        for (const x of els(o)) if (x.name === 'input') { if (on) setAttr(x, 'checked', null); else delAttr(x, 'checked'); }
+      }
+      setAttr(n, 'active-index', first ? String(opts.findIndex((o) => attr(o, 'value') === 'No')) : '-1');
+      if (!first) setAttr(n.parent, 'class', ' hide');
+    }
+    if (n.name === 'select' && INTERCHANGE_STEMS.includes(stem)) {
+      for (const o of kids(n)) delAttr(o, 'selected');
+      const field = n.parent?.parent;
+      if (field) setAttr(field, 'class', [...classes(field).filter((c) => c !== 'hide'), 'hide'].join(' '));
+    }
+  }
+  const tiLimit = kids(tiCard).find((c) => classes(c).includes('coverage-form-field-wrapper'));
+  if (!tiLimit || !find(tiLimit, (n) => n.name === 'select')) throw new Error(`${INTERCHANGE_SAVE}: no Trailer Interchange limit list`);
+  frags['ti-limit'] = inner(tiLimit);
+  tiLimit.children = [];
+  slot(tiLimit, 'ti-limit');
+  const nonOwned = panel('quote', /^Id_TrailerInterchangeQuestionsComboActivityData_/);
+  nonOwned.parent.children.splice(nonOwned.parent.children.indexOf(nonOwned) + 1, 0, tiCard);
+  tiCard.parent = nonOwned.parent;
   // FL 001: the USDOT number box, a light-DOM tel input labelled by its aria-label.
   const dot = fl('001').controls.find((c) => stemOf(c.name || c.id) === 'GiveDepartmentOfTransportationNumber');
   const dotId = `Id_GiveDepartmentOfTransportationNumber_${freshNumber()}`;
@@ -670,8 +717,10 @@ export function privacyFindings(html, secrets = new Map()) {
 async function check(rawDir) {
   const { chromium } = await import('playwright');
   const browser = await chromium.launch({ headless: true });
-  const probe = () => {
-    const deep = (r, sel, acc = []) => { acc.push(...r.querySelectorAll(sel)); for (const el of r.querySelectorAll('*')) if (el.shadowRoot) deep(el.shadowRoot, sel, acc); return acc; };
+  // `without`: a part the raw page doesn't have (the quote's Trailer Interchange card, from another save).
+  const probe = (without) => {
+    const outside = (el) => { for (let n = el; n; n = n.parentElement ?? n.getRootNode?.()?.host ?? null) if (without && n.matches?.(without)) return false; return true; };
+    const deep = (r, sel, acc = []) => { acc.push(...[...r.querySelectorAll(sel)].filter(outside)); for (const el of r.querySelectorAll('*')) if (el.shadowRoot) deep(el.shadowRoot, sel, acc); return acc; };
     const form = document.getElementById('salesForm');
     const visible = (el) => !!((el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden') || [...(el.labels ?? [])].some((l) => l.getClientRects().length));
     const stem = (el) => String(el.name || el.id || '').replace(/^Id_([A-Za-z][A-Za-z0-9]*)_\d+.*$/, '$1').replace(/^Id_[0-9a-f-]{36}_\d+(_[A-Za-z]+)?$/, 'coverage$1');
@@ -700,7 +749,7 @@ async function check(rawDir) {
     await a.page.close();
     const b = await open(`${fixture}?view=${id}&delay=0`, (u) => u.startsWith(fixture) || u === mockJs);
     await b.page.waitForFunction(() => window.__geicoMock?.renders >= 1);
-    const B = await b.page.evaluate(probe);
+    const B = await b.page.evaluate(probe, id === 'quote' ? `li:has([id^="Id_${INTERCHANGE_STEMS[0]}_"])` : null);
     await b.page.close();
     const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
     const ok = same(A.shown, B.shown) && same(A.hidden, B.hidden) && A.hosts === B.hosts && !B.unattached && !b.seen.aborted && !b.seen.errors.length && B.title === `GEICO ${step}`;

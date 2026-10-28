@@ -30,7 +30,9 @@
 //   the three filing boxes (FL 038), Federal Liability hides MCS-90 (FL 043); VIN handy shows or hides the
 //   VIN box; Motor Truck Cargo Yes -> mobile homes -> No -> business documents -> No -> commodities and
 //   the cargo limit (…Cargo, …CargoFull); Motor Truck General Liability Yes -> its four questions and its
-//   limit (…withGL). Assumed, not seen: customizations Yes (vehicle) or comp/collision Yes (trailer) shows
+//   limit (…withGL); Trailer Interchange Yes -> its four questions and its limit list (FL save of
+//   2026-10-28, its card after Non-Owned Trailer Physical Damage's; whether GEICO draws them one at a
+//   time was not seen: all at once here). Each add-on card opens and closes by its chevron. Assumed, not seen: customizations Yes (vehicle) or comp/collision Yes (trailer) shows
 //   the customization value, the cost without equipment and the stated amount (FL 027 shows it for a
 //   tractor's comp/collision). Anything else keeps the visibility it was saved with;
 // - select2 boxes: the rendered text (a list taking several: its chips) follows the hidden select; the
@@ -461,6 +463,7 @@
   const CUSTOMIZATION = ['GiveTotalCustomizationValue', 'GiveCostExcludingPermanentlyAttachedEquipment', 'GiveStatedAmount'];
   const MTC = ['GiveMtcRequireCoverageForMobileHomesYesNo', 'GiveMtcRequireCoverageForBusinessDocumentYesNo', 'GiveMtcHaulingCommoditiesCollect'];
   const GL = ['GiveIncomeOnlyFromTruckingOperation', 'GiveOperateFromWarehouseOrOtherAccessiblePremises', 'GiveInvolvedInAnySetupOrInstallation', 'GiveOperateOrInvolvedInAnyWayForOilGasProduction'];
+  const TI = ['GiveTrailerInterchangeAgreementYesNo', 'GiveTrailerInterchangeAgreementProvideOnRequestYesNo', 'GiveTrailerInterchangeNumberOfTrailers', 'GiveTrailerInterchangeCommonTrailerType'];
   // Drawn a moment after "more about the business" is answered (FL live run, 2026-10-23: after the
   // fill's wait for that answer, during its wait before Next).
   const OPERATIONS = ['TeamDrivingOrSlipSeatingYesNo', 'GiveAnyVehicleNeedHazardousMaterialPlacardYesNo'];
@@ -478,6 +481,7 @@
     if (stem === MTC[0]) { setShown(MTC[1], value === 'No'); if (value !== 'No') { setShown(MTC[2], false); empty('mtc-limit'); } }
     if (stem === MTC[1]) { setShown(MTC[2], value === 'No'); if (value === 'No') fill('mtc-limit'); else empty('mtc-limit'); }
     if (stem === 'GiveMotorTruckGeneralLiabilityCoverageRequired') { for (const s of GL) setShown(s, value === 'Yes'); if (value === 'Yes') fill('gl-limit'); else empty('gl-limit'); }
+    if (stem === 'GiveTrailerInterchangeEligibleRequireCoverageYesNo') { for (const s of TI) setShown(s, value === 'Yes'); if (value === 'Yes') fill('ti-limit'); else empty('ti-limit'); }
     if (state.view === 'quote' && stem !== 'GivePayPlanV2' && !sync) makeStale();
   }
   // Text boxes, selects and boxes (their change reaches the document; a radio's does not).
