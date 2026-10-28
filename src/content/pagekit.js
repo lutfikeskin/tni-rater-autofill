@@ -1891,6 +1891,114 @@
     return results;
   }
 
+  // A page that draws its units' rows a few at a time behind group buttons (fill `pager`, the
+  // carrier's `unitPager`: Progressive's Rates, "1-3" and "4-5" for four vehicles and a trailer, FL
+  // live run 2026-10-28): the units outside the group shown aren't in the page at all. The fill
+  // notes each round's rows (`noteRound`) and, once nothing is left to answer in the group shown,
+  // asks `next()` for a group to press, before any helper: while a unit's row hasn't been read, the
+  // next group it hasn't shown (never one it showed); once every unit was read or every group
+  // shown, the group it began on again. `missing()`: the items left for the agent at the end, a
+  // unit no group showed a row for, never taken for done. Off on other pages (`on`).
+  function makePager(plan, pager, startPage) {
+    const on = !!pager?.text && (pager.pages ?? []).includes(startPage);
+    const re = on ? new RegExp(pager.text, 'i') : null;
+    const unitId = (s) => (s.unit ? `${s.unit.list}:${s.unit.index}` : null);
+    const units = new Map(on ? plan.filter((s) => s.activeVehicle != null && s.vehicleHint && s.unit && s.pages?.includes(startPage)).map((s) => [unitId(s), s.unit]) : []);
+    const seen = new Set();
+    let rowsShown = false;
+    // The groups each field key was read in, and the unit rows left for an agent's edit by step id.
+    // A row's key is its place in its group, so the rows of different groups share keys: an edit
+    // on vehicle 1's row also keeps vehicle 4's (PR #215 review). Such a row whose key two groups
+    // showed may be either's edit: it is named for the agent rather than taken for theirs.
+    const keyGroups = new Map();
+    const skippedRows = new Map();
+    const sharedKey = (key) => (keyGroups.get(key)?.size ?? 0) > 1;
+    // Keys of questions read while another group was shown: still this page's at the end.
+    const elsewhere = new Set();
+    // The group buttons on screen (the innermost match), each with whether it is the group shown:
+    // disabled, out of the keyboard's reach (tabindex -1) or inside the carrier's `current`.
+    const buttons = () => {
+      if (!on) return [];
+      const hits = deepQueryAll(document, 'a, button, [role=button], .x-btn').filter((el) => el.getClientRects().length && re.test(buttonText(el)));
+      return hits.filter((el) => !hits.some((x) => x !== el && el.contains(x))).map((el) => ({
+        el, text: oneLine(buttonText(el)),
+        current: !!el.disabled || el.getAttribute('aria-disabled') === 'true' || el.getAttribute('tabindex') === '-1' || (!!pager.current && !!el.closest(pager.current)),
+      }));
+    };
+    const shownGroup = () => buttons().find((b) => b.current)?.text ?? null;
+    const startGroup = shownGroup();
+    const shown = new Set(startGroup ? [startGroup] : []);
+    // The group buttons pressed, in order (the report's `paged`).
+    const paged = [];
+    let cameBack = false;
+    const unitLabel = (unit) => `${unit.list === 'trailers' ? 'Trailer' : 'Vehicle'} ${unit.index + 1}`;
+    return {
+      on,
+      paged,
+      // A round's questions and the pairs `assign` made of them; `skipped`: whether the agent's
+      // edit keeps a field. A unit is read once the fill works one of its rows. A row the agent's
+      // edit keeps is set aside: its key may be another group's row's (missing).
+      noteRound(controls, pairs, skipped) {
+        if (!on) return;
+        const group = shownGroup() ?? '';
+        for (const c of controls) {
+          const key = fieldKey(c);
+          if (!keyGroups.has(key)) keyGroups.set(key, new Set());
+          keyGroups.get(key).add(group);
+        }
+        for (const p of pairs) {
+          const id = unitId(p.step);
+          if (!units.has(id)) continue;
+          rowsShown = true;
+          if (skipped(p.control)) skippedRows.set(p.step.id, { step: p.step, label: p.control.label, key: fieldKey(p.control), unit: id });
+          else seen.add(id);
+        }
+        if (startGroup && group !== startGroup) for (const c of controls) elsewhere.add(fieldKey(c));
+      },
+      // The group button to press now ({ el, text }), counted as pressed, or null.
+      next() {
+        if (!on || !rowsShown) return null;
+        const all = buttons();
+        if (all.length < 2) return null;
+        let turn = null;
+        if ([...units.keys()].some((u) => !seen.has(u))) turn = all.find((b) => !b.current && !shown.has(b.text)) ?? null;
+        if (!turn && !cameBack && startGroup && paged.length) {
+          cameBack = true;
+          const back = all.find((b) => b.text === startGroup);
+          turn = back && !back.current ? back : null;
+        }
+        if (turn) { shown.add(turn.text); paged.push(turn.text); }
+        return turn;
+      },
+      // The pressed group is the one shown (always, where the page doesn't say which is).
+      shows: (text) => !startGroup || shownGroup() === text,
+      // A question read while another group was shown.
+      readElsewhere: (key) => elsewhere.has(key),
+      // For the agent: each row an edit kept whose key two groups showed, by its unit, and each
+      // unit not read (a row the fill worked, or one only the agent's edit on that very row kept).
+      missing() {
+        if (!on || !rowsShown) return [];
+        const out = [];
+        const named = new Set();
+        for (const row of skippedRows.values()) {
+          if (!sharedKey(row.key)) continue;
+          const unit = units.get(row.unit);
+          named.add(row.unit);
+          out.push({ stepId: row.step.id, label: row.label, path: row.step.path, name: `${row.step.name}: ${unitLabel(unit)}`, unit: unitLabel(unit), key: null, q: null, controlKind: null,
+            note: `Not answered for ${unitLabel(unit)}${unit.name ? ` (${unit.name})` : ''}: you changed this coverage on a row of one group of vehicles, and each group's rows share their field names, so the fill can't tell whose row it was and left both. Check it, or answer it yourself.` });
+        }
+        for (const [id, unit] of units) {
+          if (seen.has(id) || named.has(id) || [...skippedRows.values()].some((r) => r.unit === id && !sharedKey(r.key))) continue;
+          const label = unitLabel(unit);
+          const where = paged.length || buttons().length > 1 ? 'in any group of vehicles on this page' : 'on this page';
+          out.push({ label, path: `${unit.list}[${unit.index}]`, name: label, unit: label, key: null, q: null, controlKind: null,
+            note: `No row ${where} reads as ${label}${unit.name ? ` (${unit.name})` : ''}: none of its coverages was answered. Check it is on the quote, then answer its coverages yourself.` });
+        }
+        return out;
+      },
+    };
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Public API
 
@@ -2199,55 +2307,8 @@
     // GEICO's Add Driver while the panel's driver is the owner (whom GEICO already lists) is all
     // notes: bound to the owner, it would be held as the owner's once the agent picks its driver.
     const answeredLists = new Set(plan.filter((s) => s.whenShown?.unit && s.value != null && s.value !== '').map((s) => s.whenShown.unit));
-    // A page that draws its units' rows a few at a time behind group buttons (`pager`: Progressive's
-    // Rates, "1-3" and "4-5" for four vehicles and a trailer, FL live run 2026-10-28): the units
-    // outside the group shown aren't in the page at all. Once nothing is left to answer in the group
-    // shown, while a unit's row hasn't been read this fill, the fill presses the next group it
-    // hasn't shown (never one it showed), and once every unit was read or every group shown, the
-    // group it began on again, before any helper. A unit no group showed a row for is named for the
-    // agent (below), never taken for done.
-    const pagerOn = !!pager?.text && (pager.pages ?? []).includes(startPage);
-    const pagerRe = pagerOn ? new RegExp(pager.text, 'i') : null;
-    const unitId = (s) => (s.unit ? `${s.unit.list}:${s.unit.index}` : null);
-    const pagedUnits = new Map(pagerOn ? plan.filter((s) => s.activeVehicle != null && s.vehicleHint && s.unit && s.pages?.includes(startPage)).map((s) => [unitId(s), s.unit]) : []);
-    const seenUnits = new Set();
-    let unitRowsShown = false;
-    // The groups each field key was read in, and the unit rows left for an agent's edit by step id.
-    // A row's key is its place in its group, so the rows of different groups share keys: an edit
-    // on vehicle 1's row also keeps vehicle 4's (PR #215 review). Such a row whose key two groups
-    // showed may be either's edit: it is named for the agent rather than taken for theirs.
-    const keyGroups = new Map();
-    const skippedRows = new Map();
-    const sharedKey = (key) => (keyGroups.get(key)?.size ?? 0) > 1;
-    // Keys of questions read while another group was shown: still this page's at the end.
-    const pagedKeys = new Set();
-    // The group buttons on screen (the innermost match), each with whether it is the group shown:
-    // disabled, out of the keyboard's reach (tabindex -1) or inside the carrier's `current`.
-    const groupButtons = () => {
-      if (!pagerOn) return [];
-      const hits = deepQueryAll(document, 'a, button, [role=button], .x-btn').filter((el) => el.getClientRects().length && pagerRe.test(buttonText(el)));
-      return hits.filter((el) => !hits.some((x) => x !== el && el.contains(x))).map((el) => ({
-        el, text: oneLine(buttonText(el)),
-        current: !!el.disabled || el.getAttribute('aria-disabled') === 'true' || el.getAttribute('tabindex') === '-1' || (!!pager.current && !!el.closest(pager.current)),
-      }));
-    };
-    const shownGroup = () => groupButtons().find((b) => b.current)?.text ?? null;
-    const startGroup = shownGroup();
-    const pagedGroups = new Set(startGroup ? [startGroup] : []);
-    let cameBack = false;
-    const pagerTurn = () => {
-      if (!unitRowsShown) return null;
-      const buttons = groupButtons();
-      if (buttons.length < 2) return null;
-      if ([...pagedUnits.keys()].some((u) => !seenUnits.has(u))) {
-        const next = buttons.find((b) => !b.current && !pagedGroups.has(b.text));
-        if (next) return next;
-      }
-      if (cameBack || !startGroup || (report.paged ?? []).length === 0) return null;
-      cameBack = true;
-      const back = buttons.find((b) => b.text === startGroup);
-      return back && !back.current ? back : null;
-    };
+    // A page that draws its units' rows a few at a time behind group buttons (`pager`, makePager).
+    const unitGroups = makePager(plan, pager, startPage);
 
     for (let round = 0; round < maxRounds; round++) {
       report.rounds = round + 1;
@@ -2288,24 +2349,7 @@
       const allPairs = assign(controls, plan);
       // The agent's edits made where the kit is now, before anything asks whether a field is theirs.
       if (skipBy) skipWhere(allPairs.units);
-      if (pagerOn) {
-        const group = shownGroup() ?? '';
-        for (const c of controls) {
-          const key = fieldKey(c);
-          if (!keyGroups.has(key)) keyGroups.set(key, new Set());
-          keyGroups.get(key).add(group);
-        }
-        // A unit is read once the fill works one of its rows. A row the agent's edit keeps is set
-        // aside: its key may be another group's row's (below).
-        for (const p of allPairs) {
-          const id = unitId(p.step);
-          if (!pagedUnits.has(id)) continue;
-          unitRowsShown = true;
-          if (skippedField(p.control)) skippedRows.set(p.step.id, { step: p.step, label: p.control.label, key: fieldKey(p.control), unit: id });
-          else seenUnits.add(id);
-        }
-        if (startGroup && group !== startGroup) for (const c of controls) pagedKeys.add(fieldKey(c));
-      }
+      unitGroups.noteRound(controls, allPairs, skippedField);
       // Review items are flagged in yellow and the rest of the page still fills. Only a stuck
       // page or an agent edit stops the fill.
       const mapped = new Set(allPairs.map((p) => p.control));
@@ -2680,16 +2724,15 @@
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
       // Another group of units (`pager`), before any helper: Recalculate or the bill plan must not
       // go before every unit's rows were answered.
-      const turn = !changed && !retry && !waited && pagerOn && window === window.top && !agentPressed ? pagerTurn() : null;
+      const turn = !changed && !retry && !waited && unitGroups.on && window === window.top && !agentPressed ? unitGroups.next() : null;
       if (turn) {
-        pagedGroups.add(turn.text);
-        (report.paged ??= []).push(turn.text);
+        report.paged = unitGroups.paged;
         phase('helper', turn.text);
         pressButton(turn.el);
         progressed = true;
         if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
         // Its rows drawn: the pressed group shown (where the page says which is), 10 s at most.
-        for (const until = Date.now() + 10000; startGroup && shownGroup() !== turn.text && Date.now() < until && !report.halted;) await sleep(200);
+        for (const until = Date.now() + 10000; !unitGroups.shows(turn.text) && Date.now() < until && !report.halted;) await sleep(200);
         if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
         if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
         continue;
@@ -3309,26 +3352,7 @@
     }
     // A unit whose row no group of the page showed (`pager`): none of its questions was answered,
     // and it is the agent's, named, never taken for done.
-    if (pagerOn && stillHere && unitRowsShown) {
-      const unitLabel = (unit) => `${unit.list === 'trailers' ? 'Trailer' : 'Vehicle'} ${unit.index + 1}`;
-      // A row the agent's edit kept whose key another group's row has: named, by its unit.
-      const named = new Set();
-      for (const row of skippedRows.values()) {
-        if (!sharedKey(row.key)) continue;
-        const unit = pagedUnits.get(row.unit);
-        named.add(row.unit);
-        report.noData.push({ stepId: row.step.id, label: row.label, path: row.step.path, name: `${row.step.name}: ${unitLabel(unit)}`, unit: unitLabel(unit), key: null, q: null, controlKind: null,
-          note: `Not answered for ${unitLabel(unit)}${unit.name ? ` (${unit.name})` : ''}: you changed this coverage on a row of one group of vehicles, and each group's rows share their field names, so the fill can't tell whose row it was and left both. Check it, or answer it yourself.` });
-      }
-      for (const [id, unit] of pagedUnits) {
-        // Read: a row the fill worked, or one only the agent's edit on that very row kept.
-        if (seenUnits.has(id) || named.has(id) || [...skippedRows.values()].some((r) => r.unit === id && !sharedKey(r.key))) continue;
-        const label = unitLabel(unit);
-        const where = (report.paged ?? []).length || groupButtons().length > 1 ? 'in any group of vehicles on this page' : 'on this page';
-        report.noData.push({ label, path: `${unit.list}[${unit.index}]`, name: label, unit: label, key: null, q: null, controlKind: null,
-          note: `No row ${where} reads as ${label}${unit.name ? ` (${unit.name})` : ''}: none of its coverages was answered. Check it is on the quote, then answer its coverages yourself.` });
-      }
-    }
+    if (stillHere) report.noData.push(...unitGroups.missing());
     // A row showing a VIN no intake vehicle has: an unintended vehicle may be on the quote. Left
     // as it is (never removed or answered); Continue waits for the agent. Named by its place only.
     for (const { witness, position, key } of finalPairs.extraRows ?? []) {
@@ -3366,7 +3390,7 @@
     // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
     if (stillHere) {
       const onPageNow = new Set(controls.map((c) => fieldKey(c)));
-      report.unknown = report.unknown.filter((x) => onPageNow.has(x.key) || pagedKeys.has(x.key));
+      report.unknown = report.unknown.filter((x) => onPageNow.has(x.key) || unitGroups.readElsewhere(x.key));
       // Likewise a field that looked renamed (Codex on PR #43): it no longer holds Continue.
       report.renamed = report.renamed.filter((x) => onPageNow.has(x.key));
     }
