@@ -198,17 +198,24 @@ function fieldSteps(rules, record, carrier, active) {
     if (rule.repeat) return (record[rule.repeat] ?? []).map((_, index) => ({ rule, active: { ...active, [rule.repeat]: index } }));
     // A per-vehicle question with several vehicles (or a vehicle and a trailer): a step for each
     // vehicle, which finds its own row. On a page showing one vehicle at a time, only the active
-    // vehicle's step answers. A per-trailer question: a step for each trailer, the same way.
+    // vehicle's step answers. A per-trailer question: a step for each trailer, the same way. A
+    // per-vehicle question asked of trailers too (`trailers`: GEICO's comprehensive, collision and
+    // fire and theft rows list the trailer among the vehicles) has a step for each trailer after
+    // the vehicles', which finds the trailer's row by its year and make, never by a count of rows
+    // the trailer shifts.
     const scope = typeof rule.scope === 'function' ? rule.scope(record, active) : rule.scope;
     if (scope === 'vehicle' && unitRows(record)) {
-      return record.vehicles.map((_, index) => ({ rule, active: { ...active, vehicles: index }, activeVehicle: index === (active.vehicles ?? 0) }));
+      return [
+        ...record.vehicles.map((_, index) => ({ rule, active: { ...active, vehicles: index }, activeVehicle: index === (active.vehicles ?? 0), unit: 'vehicles' })),
+        ...(rule.trailers ? (record.trailers ?? []).map((_, index) => ({ rule, active: { ...active, trailers: index }, activeVehicle: false, unit: 'trailers' })) : []),
+      ];
     }
     if (scope === 'trailer') {
       return (record.trailers ?? []).map((_, index) => ({ rule, active: { ...active, trailers: index }, activeVehicle: index === (active.trailers ?? 0) }));
     }
     return [{ rule, active }];
   });
-  return expanded.map(/** @returns {FieldStep} */ ({ rule, active, activeVehicle = null }, id) => {
+  return expanded.map(/** @returns {FieldStep} */ ({ rule, active, activeVehicle = null, unit = null }, id) => {
     const list = rule.path ? listOf(rule.path) : null;
     const path = rule.path
       ? (list ? rule.path.replace('[]', `[${active[list] ?? 0}]`) : rule.path)
@@ -243,7 +250,7 @@ function fieldSteps(rules, record, carrier, active) {
     const scopeIndex = typeof rule.scopeIndex === 'function' ? rule.scopeIndex(record, active) : rule.scopeIndex;
     // Per-vehicle questions repeat once per vehicle, labelled "2021 MERCEDES-BENZ SPRINTER" (a
     // trailer's "2019 Wilson"): the step's unit's year/make/model picks its row.
-    const v = scope === 'vehicle' && unitRows(record) ? record.vehicles[active.vehicles ?? 0]
+    const v = scope === 'vehicle' && unitRows(record) ? (unit === 'trailers' ? record.trailers?.[active.trailers ?? 0] : record.vehicles[active.vehicles ?? 0])
       : scope === 'trailer' ? record.trailers?.[active.trailers ?? 0] : null;
     const vehicleHint = v ? [v.year, v.make, v.model].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).filter((x) => x.length >= 2) : null;
     return {
@@ -336,10 +343,16 @@ function fieldSteps(rules, record, carrier, active) {
       warn: standard && reviewNote ? [reviewNote, ruleWarn].filter(Boolean).join(' ') : ruleWarn,
       summaryAfter: typeof rule.summaryAfter === 'function' ? rule.summaryAfter(record, active) : rule.summaryAfter ?? null,
       choiceAliases: typeof rule.choiceAliases === 'function' ? rule.choiceAliases(record, active) : rule.choiceAliases ?? [],
+      // The option must read as the answer (or an alias) or begin with it; one only mentioning it
+      // further on is never picked (Progressive's business type lists: "Auto Hauler (For Hire Trucking)").
+      matchStart: !!rule.matchStart,
       scope,
       scopeIndex,
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
       activeVehicle,
+      // The unit whose row the step takes, for a page that shows a few units' rows at a time
+      // (carrier `unitPager`): each unit no row read as is named for the agent.
+      unit: v ? { list: scope === 'trailer' ? 'trailers' : 'vehicles', index: (scope === 'trailer' ? active.trailers : active.vehicles) ?? 0, name: [v.year, v.make, v.model].filter(Boolean).join(' ') } : null,
       businessNames: rule.businessNames ? rule.businessNames(record, active) : null,
       // Words the question's own text must show for the answer to be given (GEICO's USDOT record:
       // the intake's house number, street and ZIP, W43-24), and the note when it doesn't.
@@ -352,6 +365,9 @@ function fieldSteps(rules, record, carrier, active) {
       onlyNote: rule.onlyNote ?? null,
       // A list without the answer, which no helper shows later: the agent's at once, with this note.
       unofferedNote: typeof rule.unofferedNote === 'function' ? rule.unofferedNote(record, active) : rule.unofferedNote ?? null,
+      // The rules (`q`) whose answer on the same unit the page needs before it offers this one
+      // (GEICO's collision, rental and road service behind comprehensive): pagekit holds it meanwhile.
+      needs: rule.needs?.length ? [...rule.needs] : null,
       // What an address box gets when the page offers no suggestion (e.g. just the street).
       fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,
       // An address the page already shows agrees only with the intake's house number (GEICO fills
