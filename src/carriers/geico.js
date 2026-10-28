@@ -51,7 +51,7 @@
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
+import { ownerDrives, ownerDrivesSaid, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -295,11 +295,13 @@ const businessName = (r) => companyName(r.applicant.name) || ownerName(r);
 // license state, CDL) come from the matching driver row" (the date of birth through owner().dob).
 // Each keeps the source its rule gives a driving owner's: the row's value, as derived; a blank CDL
 // box is TNI's CDL standard No, as every driver's (V5, 2026-10-27: confirmed). null: the agent's.
-const ownerDetails = (r) => (r.applicant.ownerDrives === false ? nonDrivingOwnerRow(r) : owner(r).driver);
-// An owner fact from their driver row: none with no driver rows, or with the intake's No and the
-// agent's Excluded driver No on the first row (the agent's, never another driver's).
+// The owner doesn't drive by util.js ownerDrivesSaid: the box's No, unless the agent set the owner's
+// row not excluded, which is the owner driving (the maintainer, 2026-10-28).
+const ownerDetails = (r) => (ownerDrivesSaid(r) === false ? nonDrivingOwnerRow(r) : owner(r).driver);
+// An owner fact from their driver row: none with no driver rows (the agent's, never another
+// driver's).
 const ownerRowNote = (what) => (r) => (ownerDetails(r) ? null
-  : r.applicant.ownerDrives === false ? `The intake says the owner doesn't drive, and no driver row is theirs (TNI: the owner's is the first driver; none on the intake, or set as not excluded in client details), so their ${what} isn't known: answer it yourself.`
+  : ownerDrivesSaid(r) === false ? `The intake says the owner doesn't drive and lists no drivers, so their ${what} isn't known: answer it yourself.`
     : `The intake lists no drivers, so the owner's ${what} isn't known: answer it yourself.`);
 const DATE = /^\d{2}\/\d{2}\/\d{4}$/;
 // The owner's date of birth (owner().dob: the first driver row's, whatever its name: TNI,
@@ -307,7 +309,7 @@ const DATE = /^\d{2}\/\d{2}\/\d{4}$/;
 // driver's: TNI, 2026-10-20), as on Progressive and AmWINS, with their note when there is none. With
 // no driver rows and a blank owner box, their note would quote the name as "".
 const noOwnerName = (r) => !String(r.applicant.owner1 ?? '').trim();
-const ownerDobNote = (r) => (!owner(r).dob && !owner(r).dobDriver && r.applicant.ownerDrives !== false && noOwnerName(r)
+const ownerDobNote = (r) => (!owner(r).dob && !owner(r).dobDriver && ownerDrivesSaid(r) !== false && noOwnerName(r)
   ? 'The intake has no owner name, so no driver row gives their date of birth: enter it yourself.' : noOwnerDob(r))
   ?? (!DATE.test(owner(r).dob) ? 'The owner\'s date of birth on the intake isn\'t a valid date: enter it yourself.' : null);
 
@@ -555,9 +557,9 @@ const driversKnown = (r) => ownerDrives(r) === false || listedDriver(r) >= 0;
 // PR question V4) when the owner doesn't drive and the row is excluded (util.js ownerExcluded):
 // - the intake's No (TNI, 2026-10-26: answer to PR question, T1: GEICO "does not add the owner's row
 //   at all; only the other intake drivers are added"), unless the agent set the row's Excluded driver
-//   to No (util.js nonDrivingOwnerRow). Before, R1 had it added with the other drivers and the
-//   excluded-driver warning, but GEICO asks nothing about excluding a driver, so it was on the quote as
-//   one;
+//   to No, which makes the owner a driver GEICO lists (util.js ownerDrivesSaid). Before, R1 had it
+//   added with the other drivers and the excluded-driver warning, but GEICO asks nothing about
+//   excluding a driver, so it was on the quote as one;
 // - the row marked "Excluded" with the box blank or Yes (TNI, 2026-10-27: answer to PR question V3:
 //   "GEICO leaves that row out too, as T1", since an excluded owner doesn't drive, R1). Before, it was
 //   added with the warning (the 2026-10-20 rule, which still holds for any other excluded driver:
