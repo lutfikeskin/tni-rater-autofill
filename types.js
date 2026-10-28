@@ -164,6 +164,7 @@
  * @property {boolean} [keepChoice]
  * @property {boolean} [keepPreset]  a choice the carrier already made (a pre-selection, such as Progressive's anti-theft device from its VIN lookup) is kept as it is, without a check, also with Replace existing answers: only an empty one is answered
  * @property {boolean} [keepUnlisted]
+ * @property {string} [firstNot]  with `kind: 'first-option'`: a first option matching this pattern is not picked; the question is the agent's, with `unofferedNote` (Progressive's Primary Business Address listing "Enter a different address" first)
  * @property {boolean} [whenOffered]
  * @property {{ count: string, one?: string, after: string, name: string }} [orMost]
  * @property {ClientValue<string | null>} [waitFor]
@@ -399,6 +400,7 @@
  * @property {boolean} keepChoice
  * @property {boolean} keepPreset
  * @property {boolean} keepUnlisted
+ * @property {string | null} firstNot
  * @property {boolean} whenOffered
  * @property {{ count: string, one: string | null, after: string, name: string } | null} orMost
  * @property {boolean} hidden

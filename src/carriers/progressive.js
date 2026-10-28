@@ -605,6 +605,12 @@ export const progressive = {
     // USDOT number is the agent's: NTL with primary auto liability, or NTL not answered yet (TNI,
     // 2026-10-26: answers to PR questions).
     { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] }, when: (r) => !ntlNoDotFilings(r) && !ntlDotFilingsHold(r) },
+    // More about the business: Verify Address once Primary Business Address (q58) has Progressive's
+    // offered address (TNI, 2026-10-28; the agent clicked it in both live runs). Never with "Enter a
+    // different address" chosen (its boxes may be empty), and done once the page says the address
+    // was verified (pressed at most once; a page verified before Fill isn't pressed).
+    { id: 'verifyAddress', tni: 'progressive.home-address', page: 'MoreAboutBusiness', text: '^verify address$', after: ['progressive.q58'], afterValue: ['progressive.q58', '^(?!enter a different)'], immediate: true, label: 'Verify Address',
+      unlessSelector: '[fieldref="PrimaryBusinessAddressOutputNonShredded.VerifyAddressSuccessMessage"]' },
     // Vehicle summary: "Add a Vehicle" for a vehicle not entered yet (its VIN lookup not done).
     // The vehicles found by the USDOT lookup are listed there too; ours is added with Add Vehicle,
     // which sits in the "Add" menu.
@@ -903,6 +909,13 @@ export const progressive = {
 
     // --- More about the business (MoreAboutBusiness) -------------------------------------------
     ...onPage('MoreAboutBusiness', [
+      // TNI's home-address standard (q2A5) here too (2026-10-28, after a KY live run): Primary
+      // Business Address is always the first option Progressive offers (its own spelling of the
+      // address, so never compared with the intake's street). The field claims the radio, which
+      // keeps the generic street label rule off it. A first option of "Enter a different address"
+      // isn't picked (no rule here fills its boxes): the agent's, with a note (TNI, 2026-10-28).
+      { q: '58', tni: 'progressive.home-address', source: 'standard', field: 'PrimaryBusinessAddressInputNonShredded.AddressOptions', ask: 'Primary Business Address', name: 'Primary business address (first option)', kind: 'first-option', value: () => 'first option',
+        firstNot: '^enter a different', unofferedNote: 'Progressive offers no business address to pick here: choose the Primary Business Address and enter it yourself, then click Verify Address.' },
       { q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
       { tni: 'progressive.currently-insured', q: '81', source: insuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
       // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer

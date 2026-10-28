@@ -1026,7 +1026,8 @@
     }
     if (step.kind === 'selected-option') return usable.find((o) => /^selected\b/i.test(o.text)) ?? null;
     // Always the page's first choice (e.g. the first offered home address).
-    if (step.kind === 'first-option') return usable[0] ?? null;
+    // Unless that first choice is no answer (`firstNot`): then none, and the question is the agent's.
+    if (step.kind === 'first-option') return step.firstNot && usable[0] && new RegExp(step.firstNot, 'i').test(usable[0].text) ? null : usable[0] ?? null;
     const cands = candidates(step);
     // `matchStart`: the answer, else each alias in turn, as an option reading so or beginning so
     // (Progressive's business type lists: "General Freight Trucking Haul general goods…"); never one
