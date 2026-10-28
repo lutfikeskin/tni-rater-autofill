@@ -85,21 +85,32 @@ function matchesSimple(node, selector) {
     if (matchesSimple(node, not[1])) return false;
   }
   selector = selector.replace(/:not\([^()]*\)/g, '');
-  const tag = selector.match(/^([a-z][\w-]*)/i)?.[1];
+  // Tag, id and classes outside attribute values ([fieldref="BECAInput.BusinessTypeTextBox"]).
+  const bare = selector.replace(/\[[^\]]*\]/g, '');
+  const tag = bare.match(/^([a-z][\w-]*)/i)?.[1];
   if (tag && node.tagName !== tag.toUpperCase()) return false;
-  // Ids and classes outside the attribute tests ([fieldref="A.B"] holds a dot, not a class).
-  const outside = selector.replace(/\[[^\]]*\]/g, '');
-  const id = outside.match(/#([\w-]+)/)?.[1];
+  const id = bare.match(/#([\w-]+)/)?.[1];
   if (id && node.id !== id) return false;
-  for (const cls of outside.matchAll(/\.([\w-]+)/g)) {
+  for (const cls of bare.matchAll(/\.([\w-]+)/g)) {
     if (!node.className.split(/\s+/).includes(cls[1])) return false;
   }
   return attrSelector(node, selector);
 }
 
 function matchesSelector(node, selector) {
-  // The pagekit selectors used by this test are comma-separated simple selectors.
-  return selector.split(',').some((part) => matchesSimple(node, part));
+  // The pagekit selectors used by this test are comma-separated simple selectors, or simple
+  // selectors joined by a descendant combinator (".becaPopupPage [fieldref=…]").
+  return selector.split(',').some((part) => {
+    const chain = part.trim().split(/\s+(?![^[]*\])/);
+    if (!matchesSimple(node, chain.pop())) return false;
+    let at = node.parentElement;
+    for (const outer of chain.reverse()) {
+      while (at && !matchesSimple(at, outer)) at = at.parentElement;
+      if (!at) return false;
+      at = at.parentElement;
+    }
+    return true;
+  });
 }
 
 class FakeNode {
@@ -1279,6 +1290,90 @@ test('Rates rows of a vehicle and a trailer each get their own answer', async ()
   assert.equal(report.unknown.length, 0);
 });
 
+// FL live run, 2026-10-28 (four vehicles and a trailer): Rates draws three units' columns at a time,
+// with "1-3" and "4-5" buttons (the shown group's disabled, in a disabled-action wrapper), and the
+// other group's rows aren't in the page at all (the saved page of the 4-5 view has only vehicle 4's
+// and the trailer's). The fill answered the group shown and said nothing of the rest; the agent
+// pressed the arrow. Scrubbed: made-up units, only the structure.
+function vehicleGroupsPage(groups, { start = 0 } = {}) {
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const options = ['Not selected', '$500 Deductible', '$1,000 Deductible'].map((label) => ({ get: () => label }));
+  const values = new Map();
+  let rows = [];
+  const buttons = groups.map((g) => {
+    const wrap = new FakeNode('div', { className: 'g-action standard-2' });
+    const a = new FakeNode('a', { role: 'button', attrs: { tabindex: '0' } });
+    a.append(new FakeNode('span', { className: 'g-btn-text', textContent: g.text }));
+    wrap.append(a);
+    h.document.body.append(wrap);
+    return { wrap, a };
+  });
+  const show = (i) => {
+    // The page posts the shown group's answers, then draws the pressed group's rows in their place.
+    for (const r of rows) { values.set(r.caption, r.cmp.getValue()); r.input.remove(); h.context.Ext._components.delete(r.id); }
+    rows = groups[i].units.map((caption, n) => {
+      const row = addExtText(h, 'c', '1FCD', { caption, ref: 'ComprehensiveInput.Deductible', row: `8_${n + 1}`, value: values.get(caption) ?? '' });
+      Object.assign(row.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => options } });
+      return { ...row, caption };
+    });
+    buttons.forEach((b, j) => {
+      b.wrap.className = j === i ? 'g-action disabled-action-1' : 'g-action standard-2';
+      b.a.setAttribute('tabindex', j === i ? '-1' : '0');
+    });
+    out.shown = groups[i].text;
+  };
+  const out = { h, values, shown: null, presses: [], value: (caption) => rows.find((r) => r.caption === caption)?.cmp.getValue() ?? values.get(caption) };
+  buttons.forEach((b, i) => { b.a.onclick = () => { out.presses.push(groups[i].text); show(i); }; });
+  show(start);
+  return out;
+}
+
+test('Rates with its units in groups: the fill shows each group, answers every unit, and comes back', async () => {
+  const unit = (year, make, model) => ({ type: 'Box Truck', year, make, model, value: 30000 });
+  const record = {
+    applicant: {}, garaging: { state: 'FL' }, operations: {}, drivers: [], priorInsurance: [], coverage: {}, claims: {},
+    vehicles: [unit(2020, 'TESTCO', 'ALPHA'), unit(2019, 'SAMPLEMAKE', 'BETA'), unit(2016, 'DEMOWORKS', 'GAMMA'), unit(2021, 'TESTCO', 'DELTA')],
+    trailers: [{ type: 'Dry Van', year: 2016, make: 'MOCKTRAIL', value: 20000 }], trailerInfo: {},
+  };
+  const groups = [{ text: '1-3', units: ['2020 TESTCO ALPHA', '2019 SAMPLEMAKE BETA', '2016 DEMOWORKS GAMMA'] }, { text: '4-5', units: ['2021 TESTCO DELTA', '2016 MOCKTRAIL'] }];
+  const all = groups.flatMap((g) => g.units);
+  const plan = buildPlan(record, progressive, {}).filter((s) => /^(TR)?1FCD$/.test(s.q ?? ''));
+  for (const start of [0, 1]) {
+    const page = vehicleGroupsPage(groups, { start });
+    const report = await page.h.kit.fill(plan, { maxRounds: 20, pager: progressive.unitPager });
+    assert.deepEqual(all.map(page.value), all.map(() => '$1,000 Deductible'), `every unit answered, starting on ${groups[start].text}`);
+    assert.deepEqual(page.presses, [groups[1 - start].text, groups[start].text], 'the other group, then back');
+    assert.equal(page.shown, groups[start].text, 'the page ends on the group it began on');
+    assert.equal(report.filled.length, 5);
+    assert.equal(report.noData.length, 0);
+  }
+  // A unit no group shows (not on the quote): named for the agent, never taken for done; each group
+  // is shown once.
+  const more = { ...record, vehicles: [...record.vehicles, unit(2018, 'ABSENTCO', 'EPSILON')] };
+  const page = vehicleGroupsPage(groups);
+  const report = await page.h.kit.fill(buildPlan(more, progressive, {}).filter((s) => /^(TR)?1FCD$/.test(s.q ?? '')), { maxRounds: 20, pager: progressive.unitPager });
+  assert.deepEqual(page.presses, ['4-5', '1-3']);
+  assert.deepEqual(Array.from(report.noData, (x) => x.label), ['Vehicle 5']);
+  assert.match(report.noData[0].note, /^No row in any group of vehicles on this page reads as Vehicle 5 \(2018 ABSENTCO EPSILON\)/);
+  assert.ok(report.blockers.some((b) => /Vehicle 5/.test(b)), 'it holds what waits for the agent');
+  // PR #215 review: each group's first row has the same key, so the agent's edit on vehicle 1's
+  // row (its key in `skip`) also keeps vehicle 4's. Vehicle 4's is named for the agent, never
+  // taken for read; the other units are answered.
+  const edited = vehicleGroupsPage(groups);
+  const kept = await edited.h.kit.fill(plan, { maxRounds: 20, pager: progressive.unitPager, skip: ['ref:ComprehensiveInput.Deductible'] });
+  assert.deepEqual(all.map(edited.value), ['', '$1,000 Deductible', '$1,000 Deductible', '', '$1,000 Deductible']);
+  assert.deepEqual(Array.from(kept.noData, (x) => x.unit).sort(), ['Vehicle 1', 'Vehicle 4']);
+  assert.match(kept.noData.find((x) => x.unit === 'Vehicle 4').note, /^Not answered for Vehicle 4 \(2021 TESTCO DELTA\): you changed this coverage/);
+  // Without other groups, a key is one row's: the edit is that row's own, and nothing is said.
+  const single = vehicleGroupsPage([{ text: '1-3', units: all.slice(0, 3) }]);
+  const own = await single.h.kit.fill(buildPlan({ ...record, vehicles: record.vehicles.slice(0, 3), trailers: [] }, progressive, {}).filter((s) => s.q === '1FCD'), { maxRounds: 20, pager: progressive.unitPager, skip: ['ref:ComprehensiveInput.Deductible'] });
+  assert.deepEqual([single.presses, own.noData.length], [[], 0]);
+  // Every unit in the group shown: nothing is pressed.
+  const one = vehicleGroupsPage([{ text: '1-3', units: all.slice(0, 3) }, { text: '4-5', units: ['2099 OTHER UNIT'] }]);
+  await one.h.kit.fill(buildPlan({ ...record, vehicles: record.vehicles.slice(0, 3), trailers: [] }, progressive, {}).filter((s) => s.q === '1FCD'), { maxRounds: 20, pager: progressive.unitPager });
+  assert.deepEqual(one.presses, []);
+});
+
 // Add Trailer sits in a menu, so it's not on the page once the trailer is in: its "add it yourself"
 // note is only for a trailer not entered yet.
 test('a helper\'s "do it yourself" note is not shown once what it adds is already in', async () => {
@@ -1797,6 +1892,97 @@ test('general liability Done verifies a closed section that keeps the limit', as
   const emptyReport = await empty.kit.fill(emptyPlan, { maxRounds: 5 });
   assert.equal(emptyButton._clicked, undefined, 'Done waits for a limit');
   assert.ok(emptyReport.blocked.some((b) => b.id === 'doneGl'));
+});
+
+// FL live run, 2026-10-28: with general liability asked for, the fill never clicked the "+" in its
+// row (the agent did), and every fill on Rates ended where it looked for that "+": its words were
+// /^+$/, which doesn't compile. Each coverage row has a "+" (an <a role=button>); GL's is clicked.
+test('general liability on the intake: the fill clicks the "+" in its row, not cargo\'s', async () => {
+  const record = { applicant: { name: 'Sample Test LLC' }, garaging: {}, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: {},
+    coverage: { gl: true, glLimit: '$1M/$2M', cargo: false } };
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const clicks = [];
+  for (const coverage of ['Motor Truck Cargo', 'General Liability']) {
+    const row = new FakeNode('div');
+    const plus = new FakeNode('a', { attrs: { role: 'button' } });
+    plus.append(new FakeNode('span', { textContent: '+' }));
+    plus.onclick = () => clicks.push(coverage);
+    row.append(new FakeNode('div', { textContent: coverage }), plus);
+    h.document.body.append(row);
+  }
+  const steps = buildPlan(record, progressive).filter((s) => s.kind === 'action' && s.action === 'openGl');
+  assert.equal(steps.length, 1);
+  const report = await h.kit.fill(steps, { maxRounds: 3 });
+  assert.deepEqual(clicks, ['General Liability']);
+  assert.deepEqual(Array.from(report.actions, (x) => x.id), ['openGl']);
+});
+
+// The maintainer, 2026-10-28 (same FL run): the agent closed Motor Truck Cargo by hand, so the
+// fill had no doneCargo of its own, and GL's "+" waited for it. Cargo closed on the page (its row
+// keeps the limit, its section's questions gone, no Done showing) is cargo done: GL's "+" is pressed.
+test('cargo closed by the agent: cargo counts as done and the fill clicks general liability\'s "+"', async () => {
+  const record = { applicant: { name: 'Sample Test LLC' }, garaging: {}, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: {},
+    coverage: { cargo: true, cargoLimit: '100000', cargoDeductible: '1000', gl: true, glLimit: '$1M/$2M' } };
+  const plan = buildPlan(record, progressive);
+  const run = async ({ open = false, value = '$100000/$1000' } = {}) => {
+    const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+    const clicks = [];
+    const limit = addExtText(h, 'U', '2150', { caption: 'Motor Trucking Cargo', ref: 'LineInput.MotorTruckingCargoLimit', value });
+    const options = ['Not selected', '$100000/$1000'].map((label) => ({ get: () => label }));
+    Object.assign(limit.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => options } });
+    if (open) {
+      const category = addExtText(h, 'P', '216A', { caption: 'Commodity Type:', ref: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', value: 'Consumer Goods' });
+      Object.assign(category.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => [{ get: () => 'Consumer Goods' }] } });
+    }
+    const row = new FakeNode('div');
+    const plus = new FakeNode('a', { attrs: { role: 'button' } });
+    plus.append(new FakeNode('span', { textContent: '+' }));
+    plus.onclick = () => clicks.push('General Liability');
+    row.append(new FakeNode('div', { textContent: 'General Liability' }), plus);
+    h.document.body.append(row);
+    const report = await h.kit.fill(plan, { maxRounds: 3, doneActions: [] });
+    return { clicks, report };
+  };
+  let { clicks, report } = await run();
+  assert.deepEqual(clicks, ['General Liability'], JSON.stringify(report.blocked));
+  assert.ok(report.actions.some((x) => x.id === 'doneCargo' && x.alreadyShown));
+  assert.ok(report.actions.some((x) => x.id === 'openGl' && !x.alreadyShown));
+  // Cargo's section still open: GL's "+" still waits.
+  ({ clicks } = await run({ open: true }));
+  assert.deepEqual(clicks, []);
+  // Cargo not added: the limit this fill puts in the row adds it, and its section is yet to come.
+  ({ clicks, report } = await run({ value: '' }));
+  assert.ok(report.filled.some((x) => x.q === '2150'), JSON.stringify(report.filled));
+  assert.deepEqual(clicks, []);
+});
+
+// One check for every coverage section (sectionClosedOn): general liability closed on the page, by
+// the agent, is GL's Done done too; open, or a limit this fill put in, is not.
+test('general liability closed by the agent: its Done counts as done, by the same section check', async () => {
+  const record = { applicant: { name: 'Sample Test LLC' }, garaging: {}, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: {},
+    coverage: { cargo: false, gl: true, glLimit: '$1M/$2M' } };
+  const plan = buildPlan(record, progressive);
+  const intakeLimit = plan.find((s) => s.field === 'LineInput.GeneralLiabilityLimit').value;
+  const run = async ({ open = false, value = intakeLimit } = {}) => {
+    const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+    const limit = addExtText(h, 'U', '225C', { caption: 'General Liability', ref: 'LineInput.GeneralLiabilityLimit', value });
+    const options = ['Not selected', intakeLimit].map((label) => ({ get: () => label }));
+    Object.assign(limit.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => options } });
+    if (open) {
+      const question = 'Does the customer operate businesses other than the for hire trucking operations?';
+      h.document.body.append(radioGroup(question, ...['Yes', 'No'].map((answer) => makeInput({ id: `f_P${'A'.repeat(32)}2233_1_1_${answer}`, name: 'string_2233', type: 'radio', value: answer,
+        attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckOtherBusiness' } }))));
+    }
+    const report = await h.kit.fill(plan, { maxRounds: 3, doneActions: [] });
+    if (open) assert.ok(report.filled.some((x) => x.path === 'progressive.q21F3'), 'the open section\'s question is found');
+    return report;
+  };
+  const doneHere = (report) => report.actions.some((x) => x.id === 'doneGl' && x.alreadyShown);
+  assert.ok(doneHere(await run()));
+  assert.ok(!doneHere(await run({ open: true })));
+  const filled = await run({ value: '' });
+  assert.ok(filled.filled.some((x) => x.path === 'progressive.q21D1'), JSON.stringify(filled.filled));
+  assert.ok(!doneHere(filled));
 });
 
 test('trusted agent gesture plus input protects the edit and reports no filled answer', async () => {
@@ -2323,21 +2509,107 @@ test('Add Vehicle inside the Add menu: the menu is opened first, then Add Vehicl
   assert.deepEqual(Array.from(report.actions, (x) => x.id), ['addVehicle:0:menu', 'addVehicle:0']);
 });
 
-test('business type list picks For Hire Trucking when offered, else General Freight Trucking', async () => {
+// TNI, 2026-10-28 (until then For Hire Trucking first): General Freight Trucking, else For Hire
+// Trucking; an option only mentioning For Hire Trucking in its description is never picked.
+test('business type list picks General Freight Trucking when offered, else For Hire Trucking, never another business', async () => {
   const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
-  for (const offered of [false, true]) {
+  const lists = [
+    [['For Hire Trucking Haul goods for others.', 'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).'], /^General Freight Trucking/],
+    [['For Hire Trucking Haul goods for others.'], /^For Hire Trucking/],
+    [['Auto Haulers Haul autos for a fee (For Hire Trucking).'], null],
+    // Two options beginning with General Freight Trucking: the agent's, never For Hire Trucking in
+    // its place (Claude review of PR #220).
+    [['For Hire Trucking Haul goods for others.', 'General Freight Trucking Haul general goods.', 'General Freight Trucking (Local) Haul general goods nearby.'], null],
+  ];
+  for (const [offered, want] of lists) {
     const h = harness({ search: '?pageName=BECAPopup' });
-    const names = [
-      'Expediters/Hotshotters Express delivery of packages or time sensitive materials over a 50-mile radius.',
-      ...(offered ? ['For Hire Trucking Haul goods for others.'] : []),
-      'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).',
-    ];
+    const names = ['Expediters/Hotshotters Express delivery of packages or time sensitive materials over a 50-mile radius.', ...offered];
     const radios = names.map((value, i) => makeInput({ id: i ? `bt-${i}` : `f_U${'A'.repeat(32)}36_1_1`, name: 'bt_36', type: 'radio', value }));
     h.document.body.append(radioGroup('Business Type Label', ...radios));
     const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 3 });
-    const picked = radios.find((r) => r.checked)?.value ?? '';
-    assert.match(picked, offered ? /^For Hire Trucking/ : /^General Freight Trucking/);
-    assert.equal(report.failed.length, 0);
+    const picked = radios.find((r) => r.checked)?.value ?? null;
+    assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+    if (want) { assert.match(picked, want); continue; }
+    assert.equal(picked, null, 'never "Auto Haulers" for its description');
+    assert.match(report.noData.find((x) => x.path === 'progressive.q36')?.note ?? '', /neither General Freight Trucking nor For Hire Trucking/);
+  }
+});
+
+// KY live run, 2026-10-28: the popup opened with no result list until a word was typed into its own
+// Business Type box and its Search pressed; the fill typed nothing, and "continue did not take".
+// Now: "Trucking" in the popup's box (never the page's behind it), the popup's Search (never the
+// page's), then the pick from the list it shows. IN and OH show the list at once: nothing typed.
+test('the business type popup with no list: Trucking typed in its own box, its own Search pressed, then the pick', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  for (const listShown of [false, true]) {
+    const h = harness({ search: '?pageName=BECAPopup' });
+    const box = (q) => makeInput({ id: `f_b${'B'.repeat(32)}${q}_1_1`, name: `string_${q}|`, ariaLabel: 'Business Type', attrs: { fieldref: 'BECAInput.BusinessTypeTextBox' } });
+    const pageBox = box('284');
+    const pageSearch = new FakeNode('button', { textContent: 'Search' });
+    pageSearch.onclick = () => { pageSearch._clicked = (pageSearch._clicked ?? 0) + 1; };
+    const pageRow = new FakeNode('div', { textContent: 'Business Type' });
+    pageRow.append(pageBox, pageSearch);
+    const popup = new FakeNode('div', { className: 'x-window becaPopupPage', textContent: 'Business Type Selection' });
+    const popupBox = box('1D');
+    const popupSearch = new FakeNode('button', { textContent: 'Search' });
+    const radios = [];
+    const drawList = () => {
+      for (const value of ['Auto Haulers Haul autos for a fee.', 'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).']) {
+        radios.push(makeInput({ id: radios.length ? `bt-${radios.length}` : `f_U${'A'.repeat(32)}36_1_1`, name: 'string_36', type: 'radio', value, attrs: { fieldref: 'BECAInput.BusinessTypeLabel' } }));
+      }
+      popup.append(radioGroup('Business Type Label', ...radios));
+    };
+    popupSearch.onclick = () => { popupSearch._clicked = (popupSearch._clicked ?? 0) + 1; if (popupBox.value === 'Trucking') drawList(); };
+    popup.append(popupBox, popupSearch);
+    if (listShown) drawList();
+    h.document.body.append(pageRow, popup);
+    const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 6 });
+    assert.equal(pageBox.value, '', 'the page\'s box behind the popup is never typed into');
+    assert.equal(pageSearch._clicked, undefined, 'the page\'s Search is never pressed');
+    assert.equal(popupBox.value, listShown ? '' : 'Trucking');
+    assert.equal(popupSearch._clicked, listShown ? undefined : 1);
+    assert.match(radios.find((r) => r.checked)?.value ?? '', /^General Freight Trucking/);
+    assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+    assert.equal(report.unknown.length, 0, JSON.stringify(report.unknown));
+  }
+  // Another class: nothing typed or searched; the business type is the agent's.
+  const h = harness({ search: '?pageName=BECAPopup' });
+  const popup = new FakeNode('div', { className: 'x-window becaPopupPage' });
+  const popupBox = makeInput({ id: 'popup-box', ariaLabel: 'Business Type', attrs: { fieldref: 'BECAInput.BusinessTypeTextBox' } });
+  const popupSearch = new FakeNode('button', { textContent: 'Search' });
+  popupSearch.onclick = () => { popupSearch._clicked = true; };
+  popup.append(popupBox, popupSearch);
+  h.document.body.append(popup);
+  await h.kit.fill(buildPlan({ ...record, operations: { businessClass: 'Landscaping' } }, progressive), { maxRounds: 3 });
+  assert.equal(popupBox.value, '');
+  assert.equal(popupSearch._clicked, undefined);
+});
+
+// LA live run, 2026-10-28: New Customer's business description (q93) is a list of some 1,200
+// business names; the agent typed a word and picked from the narrowed list. Now the fill searches
+// for "Trucking" and picks General Freight Trucking, else For Hire Trucking, among the results only.
+test('LA business description: Trucking searched for, then General Freight Trucking, else For Hire Trucking, never another business', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const cases = [
+    [['Accountant', 'Auto Hauler (For Hire Trucking)', 'For Hire Trucking', 'General Freight Hauler', 'Long Haul Trucking', 'Livery (For Hire)'], 'For Hire Trucking'],
+    [['Accountant', 'Auto Hauler (For Hire Trucking)', 'For Hire Trucking', 'General Freight Trucking', 'Long Haul Trucking'], 'General Freight Trucking'],
+    [['Accountant', 'Auto Hauler (For Hire Trucking)', 'Less Than Truckload Carrier (For Hire)', 'Long Haul Trucking'], null],
+  ];
+  for (const [all, want] of cases) {
+    const h = harness({ ext: true, search: '?pageName=NewCustomer' });
+    const field = addExtText(h, 'a', '93', { required: true });
+    let records = all.map((label) => ({ get: () => label }));
+    const searches = [];
+    Object.assign(field.cmp, {
+      displayField: 'label', valueField: 'label', store: { getRange: () => records, isLoading: () => false },
+      doQuery: (query) => { searches.push(query); records = all.filter((x) => x.toLowerCase().includes(query.toLowerCase())).map((label) => ({ get: () => label })); },
+    });
+    const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 3 });
+    assert.equal(searches[0], 'Trucking', 'the agent\'s word, before any pick');
+    assert.equal(field.cmp.getValue(), want ?? '');
+    assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+    if (want) assert.ok(report.filled.some((x) => x.path === 'progressive.q93'));
+    else assert.match(report.noData.find((x) => x.path === 'progressive.q93')?.note ?? '', /neither General Freight Trucking nor For Hire Trucking/);
   }
 });
 
@@ -5187,6 +5459,92 @@ test('GEICO\'s Recalculate waits until the page\'s own requests stop finishing, 
   assert.ok(stopped.ended < 6000, `ended ${stopped.ended} ms in`);
 });
 
+// GEICO live run, 2026-10-28 (3 vehicles, session 6231): on a slow page the Sprinter's comprehensive
+// was reset while GEICO still worked on the collision answered before it, and the tries given at once
+// were reset too. GEICO offers collision, rental and road service only once comprehensive is set, so
+// each of them failed as well, the agent dismissed them, and the next fill recalculated and printed
+// without the Sprinter's physical damage. An answer the page didn't keep is given again once the page
+// and its own requests are quiet; one that never takes is one item for its vehicle, and what needs it
+// waits behind it, Recalculate held.
+function dependentCoverages({ busyUntil = 3000, never = false } = {}) {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const t0 = clock.Date.now();
+  let observer = null;
+  h.context.performance = { now: () => clock.Date.now() - t0 };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+  const finished = () => observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/coverage', responseEnd: clock.Date.now() - t0 }] });
+  // GEICO's server still saving the answers before (one request finishing every 500 ms).
+  const tick = () => { if (clock.Date.now() - t0 < busyUntil) { finished(); setTimeout(tick, 500); } };
+  setTimeout(tick, 100);
+  const row = (suffix, options, value) => new SelectNode(options, { id: `Id_${randomUUID()}_2${suffix.length}${suffix.charCodeAt(0)}_${suffix}`, value });
+  const offer = (sel, options) => { sel.options = options.map((o) => new OptionNode(o, o)); };
+  const comp = row('COMP', ['Not Included', '$500 deductible', '$1,000 deductible'], 'Not Included');
+  const coll = row('COLL', ['Not Included', 'Not Included'], 'Not Included');
+  const rental = row('Rental', ['Not Included', 'Not Included'], 'Not Included');
+  const ers = row('ERS', ['I decline this coverage'], 'I decline this coverage');
+  const page = { h, comp, coll, rental, ers, picks: 0, recalcs: 0 };
+  // GEICO offers collision once comprehensive is set, and rental and road service once collision is.
+  const draw = () => {
+    offer(coll, comp.value === 'Not Included' ? ['Not Included', 'Not Included'] : ['Not Included', '$500 deductible', '$1,000 deductible']);
+    const both = comp.value !== 'Not Included' && coll.value !== 'Not Included';
+    offer(rental, both ? ['Not Included', '$40 Per Day, $1,200 Max'] : ['Not Included', 'Not Included']);
+    offer(ers, both ? ['I decline this coverage', 'I accept this coverage'] : ['I decline this coverage']);
+  };
+  // A comprehensive picked while the page is still busy (or always, `never`) is reset 100 ms later.
+  comp.addEventListener('change', () => {
+    page.picks++;
+    if (never || clock.Date.now() - t0 < busyUntil) setTimeout(() => { comp.value = 'Not Included'; draw(); }, 100);
+    else draw();
+  });
+  coll.addEventListener('change', draw);
+  h.document.body.append(comp, coll, rental, ers);
+  h.document.body.innerText = STALE;
+  const recalc = addButton(h, 'Recalculate');
+  recalc.onclick = () => { page.recalcs++; rate(h); };
+  const rules = [
+    { q: 'COMP', selector: '[id$="_COMP"]', name: 'Comprehensive', value: '$1,000 deductible' },
+    { q: 'COLL', selector: '[id$="_COLL"]', name: 'Collision', value: '$1,000 deductible', needs: ['COMP'] },
+    { q: 'Rental', selector: '[id$="_Rental"]', name: 'Rental reimbursement (TNI: $40 Per Day, $1,200 Max)', value: '$40 Per Day, $1,200 Max', needs: ['COMP', 'COLL'] },
+    { q: 'ERS', selector: '[id$="_ERS"]', name: 'Emergency road service (TNI: accepted)', value: 'I accept this coverage', needs: ['COMP', 'COLL'] },
+  ].map(({ value, ...r }) => ({ ...r, steps: ['Quote & Coverages'], kind: 'choice', source: 'standard', value: () => value }));
+  page.plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules, actions: geico.actions.filter((a) => a.id === 'recalculate') });
+  return page;
+}
+
+test('a coverage the page reset while busy is given again once the page and its requests are quiet, and what needs it follows (GEICO, 2026-10-28)', async () => {
+  const p = dependentCoverages();
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 30, replaceChoices: true });
+  assert.deepEqual([p.comp.value, p.coll.value, p.rental.value, p.ers.value], ['$1,000 deductible', '$1,000 deductible', '$40 Per Day, $1,200 Max', 'I accept this coverage']);
+  assert.deepEqual(plain(report.failed), []);
+  assert.deepEqual(plain(report.noData), []);
+  assert.deepEqual(plain(report.filled.map((x) => x.key)), ['cov:COMP#1', 'cov:COLL#1', 'cov:Rental#1', 'cov:ERS#1']);
+  // Picked once while GEICO was busy, then once it was quiet.
+  assert.equal(p.picks, 2);
+  assert.equal(p.recalcs, 1);
+});
+
+test('a coverage that never sticks is one needs-you item for its vehicle; what needs it isn\'t failed, and Recalculate waits (GEICO, 2026-10-28)', async () => {
+  const p = dependentCoverages({ never: true });
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 30, replaceChoices: true });
+  // Three tries, each once the page was quiet.
+  assert.equal(p.picks, 3);
+  assert.deepEqual(plain(report.failed), []);
+  assert.deepEqual(plain(report.noData.map((x) => x.key)), ['cov:COMP#1']);
+  assert.equal(report.noData[0].note, 'Comprehensive didn\'t stick on the page (tried 3 times, each once the page was quiet). This vehicle\'s collision, rental reimbursement and emergency road service depend on it, so the fill left them too. Set its comprehensive yourself, then fill again.');
+  assert.deepEqual(plain(report.filled), []);
+  assert.deepEqual([p.coll.value, p.rental.value, p.ers.value], ['Not Included', 'Not Included', 'I decline this coverage']);
+  assert.equal(p.recalcs, 0);
+  assert.ok(report.blocked.some((x) => x.id === 'recalculate' && /nothing left for you/.test(x.why)));
+  // The agent marks it done (its field theirs): nothing behind it is failed or listed, and the page
+  // goes on as before a dismissal.
+  const next = await p.h.kit.fill(p.plan, { maxRounds: 30, replaceChoices: true, skip: ['cov:COMP#1'] });
+  assert.deepEqual(plain(next.failed), []);
+  assert.deepEqual(plain(next.noData), []);
+  assert.equal(p.picks, 3);
+  assert.equal(p.recalcs, 1);
+});
+
 // 2026-10-23 (every Recalculate trace, and the live recording): GEICO asks its server every 2.0 s,
 // about 0.3 s each, the whole time a quote is open. Recalculate's 2 s without a request finishing
 // came only when a beat ran a few ms late: clicked 18.3 s after the last answer. A request on that
@@ -7709,4 +8067,86 @@ test("a fill's first wait is its whole 400 ms from when it begins, whatever the 
   parts.document.body.append(notDefinedYet(new FakeNode('gds-address-check'), () => defined));
   setTimeout(() => { defined = true; }, 100);
   assert.equal(await answeredAfter(parts, { components: 'gds-' }), 400, 'a component undefined as it began');
+});
+
+// GEICO live run, 2026-10-28 (FL, 4 vehicles and a trailer; synthetic units here): Quote &
+// Coverages lists the trailer among the vehicles in its comprehensive, collision and fire and theft
+// rows, and only the motor vehicles in rental and road service. The rows' steps took the rows in
+// page order, so the trailer took a vehicle's place and the last vehicle's rows were left
+// unfamiliar; its rental and road service, whose choices GEICO offers only once that vehicle has
+// comprehensive, failed. Each row now goes to the unit it names.
+const COVERED = [
+  { year: 2018, make: 'Ford', model: 'Transit' },
+  { year: 2024, make: 'Ram', model: '2500' },
+  { year: 2015, make: 'Freightliner', model: 'Cascadia' },
+  { year: 2021, make: 'Ram', model: '3500' },
+];
+const COVERED_TRAILER = { year: 2017, make: 'Great Dane', model: 'Dry Van', type: 'Dry Van' };
+const COVERED_ROWS = ['2018 FORD TRANSIT', '2024 RAM 2500', '2017 Great Dane', '2015 FREIGHTLINER CASCADIA', '2021 RAM 3500'];
+// A list whose choices depend on another answer (GEICO's rental after comprehensive).
+class GatedSelect extends SelectNode {
+  constructor(gate, closed, open, props) { super(open, props); this._gate = gate; this._closed = closed.map((o) => new OptionNode(o.text ?? o, o.value ?? o)); }
+  get options() { return !this._gate || this._gate() ? this._open : this._closed; }
+  set options(v) { this._open = v; }
+}
+function coverageRowsPage(units = COVERED_ROWS) {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  // GEICO's lists show their first choice as a blank placeholder ("Not Included", value "").
+  const choices = (texts) => [{ text: texts[0], value: '' }, ...texts];
+  const DEDUCTIBLES = choices(['Not Included', '$500 deductible', '$1,000 deductible']);
+  let n = 10000;
+  const rows = {};
+  // A row as GEICO draws it, read as one label: the unit's name, then GEICO's words about it.
+  const row = (suffix, unit, make, words) => {
+    const list = make({ id: `Id_${randomUUID()}_${n++}_${suffix}`, ariaLabel: `${unit} ${words}`, value: '' });
+    h.document.body.append(list);
+    (rows[suffix] ??= {})[unit] = list;
+  };
+  for (const suffix of ['COMP', 'COLL', 'FT']) {
+    for (const unit of units) row(suffix, unit, (props) => new SelectNode(DEDUCTIBLES, props), 'Coverage is recommended for this vehicle because it is leased or financed');
+  }
+  const motor = units.filter((u) => !/great dane/i.test(u));
+  const comp = (unit) => () => rows.COMP[unit].value === '$1,000 deductible';
+  for (const unit of motor.filter((u) => !/cascadia/i.test(u))) {
+    row('Rental', unit, (props) => new GatedSelect(comp(unit), choices(['Not Included']), choices(['Not Included', '$40 Per Day, $1,200 Max']), props), 'Comprehensive or fire & theft, and collision coverage are required before adding this coverage.');
+    row('ERS', unit, (props) => new GatedSelect(comp(unit), choices(['I decline']), choices(['I decline', 'I accept this coverage']), props), 'Comprehensive or Fire & Theft Coverage is recommended for this vehicle.');
+  }
+  for (const unit of motor.filter((u) => /cascadia/i.test(u))) row('HVRS', unit, (props) => new SelectNode(choices(['I decline', 'I accept this coverage']), props), '$500 in Labor, $5,000 in Towing');
+  const rules = geico.rules.filter((r) => ['COMP', 'COLL', 'FT', 'Rental', 'ERS', 'HVRS'].includes(r.q));
+  const record = { ...geicoRecord(), vehicles: COVERED.map((v) => ({ ...v })), trailers: [{ ...COVERED_TRAILER }] };
+  const plan = buildPlan(record, { id: 'geico', useGenericRules: false, rules, actions: [] });
+  return { h, rows, plan };
+}
+
+test('GEICO coverage rows: each row goes to the unit it names, a trailer among the vehicles shifting none (2026-10-28)', async () => {
+  const { h, rows, plan } = coverageRowsPage();
+  const report = await h.kit.fill(plan, { maxRounds: 40 });
+  // Every unit's comprehensive and collision, the trailer's too: TNI's $1,000 deductibles.
+  for (const suffix of ['COMP', 'COLL']) {
+    for (const [unit, list] of Object.entries(rows[suffix])) assert.equal(list.value, '$1,000 deductible', `${suffix} for ${unit}`);
+  }
+  // Rental and road service on every motor vehicle, the last one's after its comprehensive.
+  for (const [unit, list] of Object.entries(rows.Rental)) assert.equal(list.value, '$40 Per Day, $1,200 Max', `rental for ${unit}`);
+  for (const [unit, list] of Object.entries(rows.ERS)) assert.equal(list.value, 'I accept this coverage', `road service for ${unit}`);
+  assert.equal(Object.values(rows.HVRS)[0].value, 'I accept this coverage');
+  // Fire and theft Not Included on every row, the trailer's too: TNI's standard (2026-10-28).
+  for (const [unit, list] of Object.entries(rows.FT)) assert.equal(list.value, 'Not Included', `fire and theft for ${unit}`);
+  const trailerFt = report.filled.find((x) => x.label.startsWith('2017 Great Dane') && x.key.startsWith('cov:FT#'));
+  assert.equal(trailerFt?.standard, true, 'the trailer\'s fire and theft is filled as a TNI standard');
+  assert.deepEqual(plain(report.failed), []);
+  assert.deepEqual(plain(report.unknown.map((x) => x.key)), [], 'no coverage row is left unfamiliar');
+  assert.deepEqual(plain(report.checks.map((x) => x.key)), []);
+});
+
+test('GEICO coverage rows: a row naming no intake unit is named for the agent, never unfamiliar nor another unit\'s', async () => {
+  // The quote has a 2012 Kenworth the intake doesn't list, in place of the 2021 Ram 3500.
+  const { h, rows, plan } = coverageRowsPage(COVERED_ROWS.map((u) => (u === '2021 RAM 3500' ? '2012 KENWORTH T680' : u)));
+  const report = await h.kit.fill(plan, { maxRounds: 40 });
+  assert.equal(rows.COMP['2012 KENWORTH T680'].value, '', 'left as it was');
+  assert.equal(rows.COMP['2024 RAM 2500'].value, '$1,000 deductible');
+  assert.deepEqual(plain(report.unknown.map((x) => x.key)), []);
+  const named = plain(report.checks.filter((x) => /2012 KENWORTH/.test(x.label)).map((x) => [x.name, x.note]));
+  assert.equal(named.length, 5, JSON.stringify(named));
+  for (const [, note] of named) assert.match(note, /matches none of the intake's vehicles and trailers/);
 });
