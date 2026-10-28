@@ -108,9 +108,10 @@ export function interchangeLimitPick(record, listed) {
 }
 // Why the limit is the agent's (null when the fill picks it). `carrier`: its name.
 export const interchangeLimitNote = (record, listed, carrier) => interchangeUnrequested(record) ?? (interchangeLimitPick(record, listed) ? null
-  : record.trailerInfo?.interchangeLimit
-    ? `The intake asks for a ${String(record.trailerInfo.interchangeLimit).slice(0, 20)} trailer interchange limit, above the highest ${carrier} lists (${thousands(Math.max(...listed))}): choose it yourself.`
-    : 'The intake asks for trailer interchange without a limit: choose it yourself.');
+  : !record.trailerInfo?.interchangeLimit ? 'The intake asks for trailer interchange without a limit: choose it yourself.'
+    : toMoney(record.trailerInfo.interchangeLimit) == null
+      ? `The intake's trailer interchange limit (${String(record.trailerInfo.interchangeLimit).slice(0, 20)}) isn't an amount: choose it yourself.`
+      : `The intake asks for a ${String(record.trailerInfo.interchangeLimit).slice(0, 20)} trailer interchange limit, above the highest ${carrier} lists (${thousands(Math.max(...listed))}): choose it yourself.`);
 // The next limit up, said to confirm with the client.
 export const interchangeLimitRaised = (record, listed, carrier) => {
   const pick = interchangeLimitPick(record, listed);

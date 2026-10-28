@@ -1683,7 +1683,7 @@ test('trailer interchange: TNI\'s answers when the intake asks for it, the numbe
   // A limit GEICO lists: the intake's, no warning; above $80k, or none: the agent's.
   const listed = one(plan(interchangeIntake({ 'trailerInfo.interchangeLimit': '$40,000' })), limit.name);
   assert.deepEqual([listed.value, listed.source, listed.warn], ['$40k/$1000 deductible', 'derived', null]);
-  for (const [said, note] of [['$100,000', /above the highest GEICO lists \(\$80,000\)/], [null, /without a limit/]]) {
+  for (const [said, note] of [['$100,000', /above the highest GEICO lists \(\$80,000\)/], [null, /without a limit/], ['Fifty thousand', /\(Fifty thousand\) isn't an amount/]]) {
     const over = one(plan(interchangeIntake({ 'trailerInfo.interchangeLimit': said })), limit.name);
     agents(over);
     assert.match(over.note, note);
