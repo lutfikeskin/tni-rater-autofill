@@ -1797,6 +1797,97 @@ test('general liability Done verifies a closed section that keeps the limit', as
   assert.ok(emptyReport.blocked.some((b) => b.id === 'doneGl'));
 });
 
+// FL live run, 2026-10-28: with general liability asked for, the fill never clicked the "+" in its
+// row (the agent did), and every fill on Rates ended where it looked for that "+": its words were
+// /^+$/, which doesn't compile. Each coverage row has a "+" (an <a role=button>); GL's is clicked.
+test('general liability on the intake: the fill clicks the "+" in its row, not cargo\'s', async () => {
+  const record = { applicant: { name: 'Sample Test LLC' }, garaging: {}, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: {},
+    coverage: { gl: true, glLimit: '$1M/$2M', cargo: false } };
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const clicks = [];
+  for (const coverage of ['Motor Truck Cargo', 'General Liability']) {
+    const row = new FakeNode('div');
+    const plus = new FakeNode('a', { attrs: { role: 'button' } });
+    plus.append(new FakeNode('span', { textContent: '+' }));
+    plus.onclick = () => clicks.push(coverage);
+    row.append(new FakeNode('div', { textContent: coverage }), plus);
+    h.document.body.append(row);
+  }
+  const steps = buildPlan(record, progressive).filter((s) => s.kind === 'action' && s.action === 'openGl');
+  assert.equal(steps.length, 1);
+  const report = await h.kit.fill(steps, { maxRounds: 3 });
+  assert.deepEqual(clicks, ['General Liability']);
+  assert.deepEqual(Array.from(report.actions, (x) => x.id), ['openGl']);
+});
+
+// The maintainer, 2026-10-28 (same FL run): the agent closed Motor Truck Cargo by hand, so the
+// fill had no doneCargo of its own, and GL's "+" waited for it. Cargo closed on the page (its row
+// keeps the limit, its section's questions gone, no Done showing) is cargo done: GL's "+" is pressed.
+test('cargo closed by the agent: cargo counts as done and the fill clicks general liability\'s "+"', async () => {
+  const record = { applicant: { name: 'Sample Test LLC' }, garaging: {}, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: {},
+    coverage: { cargo: true, cargoLimit: '100000', cargoDeductible: '1000', gl: true, glLimit: '$1M/$2M' } };
+  const plan = buildPlan(record, progressive);
+  const run = async ({ open = false, value = '$100000/$1000' } = {}) => {
+    const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+    const clicks = [];
+    const limit = addExtText(h, 'U', '2150', { caption: 'Motor Trucking Cargo', ref: 'LineInput.MotorTruckingCargoLimit', value });
+    const options = ['Not selected', '$100000/$1000'].map((label) => ({ get: () => label }));
+    Object.assign(limit.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => options } });
+    if (open) {
+      const category = addExtText(h, 'P', '216A', { caption: 'Commodity Type:', ref: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', value: 'Consumer Goods' });
+      Object.assign(category.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => [{ get: () => 'Consumer Goods' }] } });
+    }
+    const row = new FakeNode('div');
+    const plus = new FakeNode('a', { attrs: { role: 'button' } });
+    plus.append(new FakeNode('span', { textContent: '+' }));
+    plus.onclick = () => clicks.push('General Liability');
+    row.append(new FakeNode('div', { textContent: 'General Liability' }), plus);
+    h.document.body.append(row);
+    const report = await h.kit.fill(plan, { maxRounds: 3, doneActions: [] });
+    return { clicks, report };
+  };
+  let { clicks, report } = await run();
+  assert.deepEqual(clicks, ['General Liability'], JSON.stringify(report.blocked));
+  assert.ok(report.actions.some((x) => x.id === 'doneCargo' && x.alreadyShown));
+  assert.ok(report.actions.some((x) => x.id === 'openGl' && !x.alreadyShown));
+  // Cargo's section still open: GL's "+" still waits.
+  ({ clicks } = await run({ open: true }));
+  assert.deepEqual(clicks, []);
+  // Cargo not added: the limit this fill puts in the row adds it, and its section is yet to come.
+  ({ clicks, report } = await run({ value: '' }));
+  assert.ok(report.filled.some((x) => x.q === '2150'), JSON.stringify(report.filled));
+  assert.deepEqual(clicks, []);
+});
+
+// One check for every coverage section (sectionClosedOn): general liability closed on the page, by
+// the agent, is GL's Done done too; open, or a limit this fill put in, is not.
+test('general liability closed by the agent: its Done counts as done, by the same section check', async () => {
+  const record = { applicant: { name: 'Sample Test LLC' }, garaging: {}, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: {},
+    coverage: { cargo: false, gl: true, glLimit: '$1M/$2M' } };
+  const plan = buildPlan(record, progressive);
+  const intakeLimit = plan.find((s) => s.field === 'LineInput.GeneralLiabilityLimit').value;
+  const run = async ({ open = false, value = intakeLimit } = {}) => {
+    const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+    const limit = addExtText(h, 'U', '225C', { caption: 'General Liability', ref: 'LineInput.GeneralLiabilityLimit', value });
+    const options = ['Not selected', intakeLimit].map((label) => ({ get: () => label }));
+    Object.assign(limit.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => options } });
+    if (open) {
+      const question = 'Does the customer operate businesses other than the for hire trucking operations?';
+      h.document.body.append(radioGroup(question, ...['Yes', 'No'].map((answer) => makeInput({ id: `f_P${'A'.repeat(32)}2233_1_1_${answer}`, name: 'string_2233', type: 'radio', value: answer,
+        attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckOtherBusiness' } }))));
+    }
+    const report = await h.kit.fill(plan, { maxRounds: 3, doneActions: [] });
+    if (open) assert.ok(report.filled.some((x) => x.path === 'progressive.q21F3'), 'the open section\'s question is found');
+    return report;
+  };
+  const doneHere = (report) => report.actions.some((x) => x.id === 'doneGl' && x.alreadyShown);
+  assert.ok(doneHere(await run()));
+  assert.ok(!doneHere(await run({ open: true })));
+  const filled = await run({ value: '' });
+  assert.ok(filled.filled.some((x) => x.path === 'progressive.q21D1'), JSON.stringify(filled.filled));
+  assert.ok(!doneHere(filled));
+});
+
 test('trusted agent gesture plus input protects the edit and reports no filled answer', async () => {
   const h = harness();
   const edit = makeInput({ id: 'agent-edit', ariaLabel: 'Agent corrected value' });
