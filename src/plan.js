@@ -363,6 +363,9 @@ function fieldSteps(rules, record, carrier, active) {
       onlyNote: rule.onlyNote ?? null,
       // A list without the answer, which no helper shows later: the agent's at once, with this note.
       unofferedNote: typeof rule.unofferedNote === 'function' ? rule.unofferedNote(record, active) : rule.unofferedNote ?? null,
+      // The rules (`q`) whose answer on the same unit the page needs before it offers this one
+      // (GEICO's collision, rental and road service behind comprehensive): pagekit holds it meanwhile.
+      needs: rule.needs?.length ? [...rule.needs] : null,
       // What an address box gets when the page offers no suggestion (e.g. just the street).
       fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,
       // An address the page already shows agrees only with the intake's house number (GEICO fills

@@ -851,6 +851,15 @@ const downtimeMention = notesLine(/\bdown[\s-]*time\b|\brental\b/i);
 const downtimeNote = (r) => (downtimeMention(r) ? `The intake's notes say ${quote(downtimeMention(r), 80)}: answer rental reimbursement with downtime yourself.` : null);
 const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 'Fire and theft'], ['Rental', 'Rental reimbursement'],
   ['RRWDT', 'Rental reimbursement with downtime'], ['ERS', 'Emergency road service'], ['HVRS', 'Heavy vehicle road service']];
+// What a vehicle's row needs on that vehicle before GEICO offers its answers (`needs`): collision
+// lists only Not Included until comprehensive (or fire and theft) is chosen, and rental and road
+// service say "Comprehensive or fire & theft, and collision coverage are required before adding this
+// coverage". TNI's fire and theft is Not Included, so comprehensive is the one the fill gives. A
+// comprehensive the page didn't keep (GEICO live run, 2026-10-28: the Sprinter's, on a slow page) is
+// then one needs-you item for the vehicle, not a failure for each row behind it.
+const ROW_NEEDS = { COLL: ['COMP'], Rental: ['COMP', 'COLL'], RRWDT: ['COMP', 'COLL'], ERS: ['COMP', 'COLL'], HVRS: ['COMP', 'COLL'] };
+/** @param {CarrierRule} rule @returns {CarrierRule} */
+const withNeeds = (rule) => (ROW_NEEDS[rule.q] ? { ...rule, needs: ROW_NEEDS[rule.q] } : rule);
 
 // --- Adding units --------------------------------------------------------------------------------
 
@@ -1403,7 +1412,7 @@ export const geico = {
               : suffix === 'RRWDT'
                 ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.rental-downtime', name: `${name} (TNI: ${DOWNTIME})`, kind: 'choice',
                   source: (r) => (downtimeMention(r) ? 'fact' : 'standard'), value: (r) => (downtimeMention(r) ? null : DOWNTIME), note: downtimeNote }
-                : { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })),
+                : { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })).map(withNeeds),
       // The same customization questions as on the vehicle form, per vehicle. Found by their text:
       // their rows don't name the vehicle, so with several vehicles they are the agent's.
       { q: 'CustomizationValue', ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', scope: 'vehicle', tni: 'geico.customizations', name: 'Customization value (the attached equipment value, else TNI: 0)',

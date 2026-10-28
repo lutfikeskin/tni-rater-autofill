@@ -1665,6 +1665,10 @@ test('a vehicle\'s coverage rows: by the coverage their id ends in, one step per
   // Rental needs comprehensive and collision: with the notes declining them, the agent's.
   agents(one(plan(with_({ 'notes.text': 'liability only' })), 'Rental reimbursement (TNI: $40 Per Day, $1,200 Max)'));
   assert.equal(one(plan(with_({ 'notes.text': 'liability only' })), 'Fire and theft (TNI: Not Included)').value, 'Not Included');
+  // GEICO offers collision only once comprehensive is set, and rental and road service once both are
+  // (`needs`, per vehicle: GEICO live run, 2026-10-28); comprehensive and fire and theft need nothing.
+  assert.deepEqual(Object.fromEntries(p.filter((s) => s.activeVehicle && s.selector?.startsWith('[id$="_')).map((s) => [s.q, s.needs])),
+    { COMP: null, COLL: ['COMP'], FT: null, Rental: ['COMP', 'COLL'], RRWDT: ['COMP', 'COLL'], ERS: ['COMP', 'COLL'], HVRS: ['COMP', 'COLL'] });
   // The customization boxes there name no vehicle: the value only with one vehicle.
   const values = p.filter((s) => s.name === 'Vehicle value without customizations' && s.steps.includes(QC));
   assert.deepEqual(values.map((s) => [s.path, s.value]), [['vehicles[0].value', 45000], ['vehicles[1].value', 30000]]);

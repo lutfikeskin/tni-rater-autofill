@@ -174,6 +174,7 @@
  * @property {ClientValue<ListCondition[] | null>} [onlyIf]  answered only when one of these holds, with the first one's value if it has one (GEICO's Medical Payments: $5,000 where it offers a limit, Not Included where it offers none); otherwise the agent's alone (manual only), with `onlyNote`
  * @property {string} [onlyNote]
  * @property {ClientValue<string | null>} [unofferedNote]  a list without the answer, which no helper shows later (GEICO's Medical Payments without $5,000): the agent's alone at once, with this note, instead of a failure
+ * @property {string[]} [needs]  the rules (their `q`) whose answer on the same unit the page needs before it offers this one (GEICO's collision, rental and road service behind comprehensive): while one of them is being given again this waits, and when one doesn't take, the unit gets one needs-you item naming them all instead of a failure each
  * @property {boolean} [checkNumber]
  * @property {'section' | 'limit' | true} [cargo]
  * @property {'section' | 'limit'} [gl]
@@ -416,6 +417,7 @@
  * @property {{ path: string | null, limit: boolean, value: string | null }[] | null} onlyIf
  * @property {string | null} onlyNote
  * @property {string | null} unofferedNote
+ * @property {string[] | null} needs  the rule `q`s whose answer on the same unit the page needs first (CarrierRule `needs`)
  * @property {string | null} fallback
  * @property {boolean} checkNumber
  * @property {string | null} search
