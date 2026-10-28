@@ -1806,15 +1806,15 @@ function interchangePlan(info = {}) {
     trailers: [{ type: 'Dry Van' }], trailerInfo: { interchange: true, interchangeLimit: '$50,000', ...info }, priorInsurance: [], coverage: { cargo: false, gl: false }, claims: {},
   };
   return buildPlan(record, progressive, {})
-    .filter((s) => s.interchange || s.field === 'NonOwnedTrailerPhysicalDamageInput.Limit' || ['interchangeTile', 'doneInterchange'].includes(s.action))
+    .filter((s) => s.interchange || s.field?.startsWith('NonOwnedTrailerPhysicalDamageInput.') || ['interchangeTile', 'doneInterchange'].includes(s.action))
     .map((s) => (s.kind === 'action' ? { ...s, afterActions: [] } : s));
 }
 const INTERCHANGE_LIMIT_SAID = '$50k with a $1,000 Deductible';
 // The section's lists as the live page drew them (test/fixtures/progressive/interchange: shapes only).
 const INTERCHANGE_LAYOUT = JSON.parse(fs.readFileSync(new URL('./fixtures/progressive/interchange/coverages-rates.json', import.meta.url), 'utf8'));
-function addInterchangeList(h, q, value = '', { as = q } = {}) {
-  const shape = [...INTERCHANGE_LAYOUT.open.fields, ...INTERCHANGE_LAYOUT.closed.fields].find((f) => f.q === q);
-  const field = addExtText(h, 'c', as, { caption: shape.caption, ref: shape.ref, value, required: shape.req });
+function addInterchangeList(h, q, value = '', { from = ['open', 'closed'] } = {}) {
+  const shape = from.flatMap((part) => INTERCHANGE_LAYOUT[part].fields).find((f) => f.q === q);
+  const field = addExtText(h, 'c', q, { caption: shape.caption, ref: shape.ref, value, required: shape.req });
   const records = shape.opts.map((label) => ({ get: () => label }));
   Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records, isLoading: () => false } });
   return field;
@@ -1869,6 +1869,24 @@ test('trailer interchange: the tile once the number is in, and Done verified as 
   assert.equal(emptyButton._clicked, undefined, 'Done waits for a limit');
   assert.ok(emptyReport.blocked.some((b) => b.id === 'doneInterchange'));
   assert.ok(emptyReport.noData.some((x) => /without a limit: choose it yourself/.test(x.note)));
+});
+
+// A second FL run (2026-10-28): Non-Owned Trailer Physical Damage added by its own "+", under other
+// question ids (21EB, 2207): its own number of non-owned trailers, the intake's trailer tile, and a
+// limit list in full dollars with no "Matching Trailer Interchange Limits": the interchange limit
+// with the $1,000 deductible, in that wording.
+test('non-owned trailer physical damage under other ids: the number, the tile, and the matching full-dollar limit', async () => {
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const count = addInterchangeList(h, '21EB', '', { from: ['nonOwnedAlone'] });
+  // The limit shows once a tile is picked, as live.
+  let limit = null;
+  const tile = addButton(h, 'Dry Freight Trailer');
+  tile.onclick = () => { tile._clicked = true; tile.remove?.(); limit = addInterchangeList(h, '2207', 'Not selected', { from: ['nonOwnedAlone'] }); };
+  const report = await h.kit.fill(interchangePlan(), { maxRounds: 5, overwrite: true });
+  assert.equal(count.cmp.getValue(), '1');
+  assert.equal(limit?.cmp.getValue(), '$50,000 with a $1,000 Deductible');
+  assert.equal(tile._clicked, true);
+  assert.ok(report.checks.some((x) => /TNI's default of 1 non-owned trailer/.test(x.note)), 'the number and tile to confirm');
 });
 
 test('trusted agent gesture plus input protects the edit and reports no filled answer', async () => {
