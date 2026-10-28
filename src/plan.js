@@ -338,6 +338,9 @@ function fieldSteps(rules, record, carrier, active) {
       scopeIndex,
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
       activeVehicle,
+      // The unit whose row the step takes, for a page that shows a few units' rows at a time
+      // (carrier `unitPager`): each unit no row read as is named for the agent.
+      unit: v ? { list: scope === 'trailer' ? 'trailers' : 'vehicles', index: (scope === 'trailer' ? active.trailers : active.vehicles) ?? 0, name: [v.year, v.make, v.model].filter(Boolean).join(' ') } : null,
       businessNames: rule.businessNames ? rule.businessNames(record, active) : null,
       // Words the question's own text must show for the answer to be given (GEICO's USDOT record:
       // the intake's house number, street and ZIP, W43-24), and the note when it doesn't.

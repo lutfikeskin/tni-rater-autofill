@@ -1277,6 +1277,90 @@ test('Rates rows of a vehicle and a trailer each get their own answer', async ()
   assert.equal(report.unknown.length, 0);
 });
 
+// FL live run, 2026-10-28 (four vehicles and a trailer): Rates draws three units' columns at a time,
+// with "1-3" and "4-5" buttons (the shown group's disabled, in a disabled-action wrapper), and the
+// other group's rows aren't in the page at all (the saved page of the 4-5 view has only vehicle 4's
+// and the trailer's). The fill answered the group shown and said nothing of the rest; the agent
+// pressed the arrow. Scrubbed: made-up units, only the structure.
+function vehicleGroupsPage(groups, { start = 0 } = {}) {
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const options = ['Not selected', '$500 Deductible', '$1,000 Deductible'].map((label) => ({ get: () => label }));
+  const values = new Map();
+  let rows = [];
+  const buttons = groups.map((g) => {
+    const wrap = new FakeNode('div', { className: 'g-action standard-2' });
+    const a = new FakeNode('a', { role: 'button', attrs: { tabindex: '0' } });
+    a.append(new FakeNode('span', { className: 'g-btn-text', textContent: g.text }));
+    wrap.append(a);
+    h.document.body.append(wrap);
+    return { wrap, a };
+  });
+  const show = (i) => {
+    // The page posts the shown group's answers, then draws the pressed group's rows in their place.
+    for (const r of rows) { values.set(r.caption, r.cmp.getValue()); r.input.remove(); h.context.Ext._components.delete(r.id); }
+    rows = groups[i].units.map((caption, n) => {
+      const row = addExtText(h, 'c', '1FCD', { caption, ref: 'ComprehensiveInput.Deductible', row: `8_${n + 1}`, value: values.get(caption) ?? '' });
+      Object.assign(row.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => options } });
+      return { ...row, caption };
+    });
+    buttons.forEach((b, j) => {
+      b.wrap.className = j === i ? 'g-action disabled-action-1' : 'g-action standard-2';
+      b.a.setAttribute('tabindex', j === i ? '-1' : '0');
+    });
+    out.shown = groups[i].text;
+  };
+  const out = { h, values, shown: null, presses: [], value: (caption) => rows.find((r) => r.caption === caption)?.cmp.getValue() ?? values.get(caption) };
+  buttons.forEach((b, i) => { b.a.onclick = () => { out.presses.push(groups[i].text); show(i); }; });
+  show(start);
+  return out;
+}
+
+test('Rates with its units in groups: the fill shows each group, answers every unit, and comes back', async () => {
+  const unit = (year, make, model) => ({ type: 'Box Truck', year, make, model, value: 30000 });
+  const record = {
+    applicant: {}, garaging: { state: 'FL' }, operations: {}, drivers: [], priorInsurance: [], coverage: {}, claims: {},
+    vehicles: [unit(2020, 'TESTCO', 'ALPHA'), unit(2019, 'SAMPLEMAKE', 'BETA'), unit(2016, 'DEMOWORKS', 'GAMMA'), unit(2021, 'TESTCO', 'DELTA')],
+    trailers: [{ type: 'Dry Van', year: 2016, make: 'MOCKTRAIL', value: 20000 }], trailerInfo: {},
+  };
+  const groups = [{ text: '1-3', units: ['2020 TESTCO ALPHA', '2019 SAMPLEMAKE BETA', '2016 DEMOWORKS GAMMA'] }, { text: '4-5', units: ['2021 TESTCO DELTA', '2016 MOCKTRAIL'] }];
+  const all = groups.flatMap((g) => g.units);
+  const plan = buildPlan(record, progressive, {}).filter((s) => /^(TR)?1FCD$/.test(s.q ?? ''));
+  for (const start of [0, 1]) {
+    const page = vehicleGroupsPage(groups, { start });
+    const report = await page.h.kit.fill(plan, { maxRounds: 20, pager: progressive.unitPager });
+    assert.deepEqual(all.map(page.value), all.map(() => '$1,000 Deductible'), `every unit answered, starting on ${groups[start].text}`);
+    assert.deepEqual(page.presses, [groups[1 - start].text, groups[start].text], 'the other group, then back');
+    assert.equal(page.shown, groups[start].text, 'the page ends on the group it began on');
+    assert.equal(report.filled.length, 5);
+    assert.equal(report.noData.length, 0);
+  }
+  // A unit no group shows (not on the quote): named for the agent, never taken for done; each group
+  // is shown once.
+  const more = { ...record, vehicles: [...record.vehicles, unit(2018, 'ABSENTCO', 'EPSILON')] };
+  const page = vehicleGroupsPage(groups);
+  const report = await page.h.kit.fill(buildPlan(more, progressive, {}).filter((s) => /^(TR)?1FCD$/.test(s.q ?? '')), { maxRounds: 20, pager: progressive.unitPager });
+  assert.deepEqual(page.presses, ['4-5', '1-3']);
+  assert.deepEqual(Array.from(report.noData, (x) => x.label), ['Vehicle 5']);
+  assert.match(report.noData[0].note, /^No row in any group of vehicles on this page reads as Vehicle 5 \(2018 ABSENTCO EPSILON\)/);
+  assert.ok(report.blockers.some((b) => /Vehicle 5/.test(b)), 'it holds what waits for the agent');
+  // PR #215 review: each group's first row has the same key, so the agent's edit on vehicle 1's
+  // row (its key in `skip`) also keeps vehicle 4's. Vehicle 4's is named for the agent, never
+  // taken for read; the other units are answered.
+  const edited = vehicleGroupsPage(groups);
+  const kept = await edited.h.kit.fill(plan, { maxRounds: 20, pager: progressive.unitPager, skip: ['ref:ComprehensiveInput.Deductible'] });
+  assert.deepEqual(all.map(edited.value), ['', '$1,000 Deductible', '$1,000 Deductible', '', '$1,000 Deductible']);
+  assert.deepEqual(Array.from(kept.noData, (x) => x.unit).sort(), ['Vehicle 1', 'Vehicle 4']);
+  assert.match(kept.noData.find((x) => x.unit === 'Vehicle 4').note, /^Not answered for Vehicle 4 \(2021 TESTCO DELTA\): you changed this coverage/);
+  // Without other groups, a key is one row's: the edit is that row's own, and nothing is said.
+  const single = vehicleGroupsPage([{ text: '1-3', units: all.slice(0, 3) }]);
+  const own = await single.h.kit.fill(buildPlan({ ...record, vehicles: record.vehicles.slice(0, 3), trailers: [] }, progressive, {}).filter((s) => s.q === '1FCD'), { maxRounds: 20, pager: progressive.unitPager, skip: ['ref:ComprehensiveInput.Deductible'] });
+  assert.deepEqual([single.presses, own.noData.length], [[], 0]);
+  // Every unit in the group shown: nothing is pressed.
+  const one = vehicleGroupsPage([{ text: '1-3', units: all.slice(0, 3) }, { text: '4-5', units: ['2099 OTHER UNIT'] }]);
+  await one.h.kit.fill(buildPlan({ ...record, vehicles: record.vehicles.slice(0, 3), trailers: [] }, progressive, {}).filter((s) => s.q === '1FCD'), { maxRounds: 20, pager: progressive.unitPager });
+  assert.deepEqual(one.presses, []);
+});
+
 // Add Trailer sits in a menu, so it's not on the page once the trailer is in: its "add it yourself"
 // note is only for a trailer not entered yet.
 test('a helper\'s "do it yourself" note is not shown once what it adds is already in', async () => {
