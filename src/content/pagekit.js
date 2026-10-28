@@ -1644,6 +1644,15 @@
   }
   const COVERED = 'something on the page is open over Continue: close it, then fill again';
   const COVERED_HELPER = 'something on the page is open over it';
+  // Coverage sections a helper's Done closes (Progressive's Rates), by its `verify`: `tag`, the
+  // rule key marking the section's questions ('section') and the row's limit ('limit'); `anyLimit`,
+  // a row with any limit is kept when the intake gives none; `words`, the row's text that may show
+  // the intake's amounts instead of its field. A coverage is added here and in its rules' tag
+  // (sectionClosedOn).
+  const CLOSED_SECTIONS = {
+    cargoClosed: { tag: 'cargo', words: /motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i },
+    glClosed: { tag: 'gl', anyLimit: true },
+  };
 
   // A button the fill presses (a helper, its menu, Continue). GEICO's submit buttons set their own
   // part of the request after an await, which its React applies in time only while an event is
@@ -2759,13 +2768,9 @@
       // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
       // screen but disabled is not gone.
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
-      if (a.verify === 'cargoClosed') accepted = cargoClosedOn(collectControls(), { summary: true });
-      // General liability's Done: its section's questions are gone and the row keeps the limit.
-      if (a.verify === 'glClosed') {
-        const pairs = assign(collectControls(), plan);
-        accepted = !pairs.some(({ step }) => step.gl === 'section')
-          && pairs.some(({ step, control }) => step.gl === 'limit' && hasValue(control) && (step.value == null || agreesWith(step, control)));
-      }
+      // A coverage section's Done (cargo's, general liability's): its questions are gone and the
+      // row keeps the limit (sectionClosedOn).
+      if (CLOSED_SECTIONS[a.verify]) accepted = sectionClosedOn(collectControls(), CLOSED_SECTIONS[a.verify]);
       // `revealed`: the click showed its result: a question appeared, or an answer changed, since
       // the snapshot taken as the button was clicked (a lookup's decoded values, the rows an
       // import redraws, the registered names a USDOT check offers). A redraw of the same
@@ -3048,20 +3053,26 @@
         && actionHere(a) && !settledItem(a);
     }
 
-    // Motor Truck Cargo added and closed (Progressive's Rates): none of its section's questions on
-    // screen (found by the rules for them), and its row keeps the intake's limit, or one the agent
-    // set themselves. `summary`: the row's words may stand for its field (checking the fill's own
-    // Done); a section the agent closed counts by its field alone, as the fill found it (`found`: a
-    // limit this fill put in the row adds cargo, whose section Progressive hasn't drawn yet).
-    function cargoClosedOn(controls, { summary = false, found = false } = {}) {
-      if (assign(controls, plan).some(({ step }) => step.cargo === 'section')) return false;
-      const cargoSteps = plan.filter((s) => s.cargo === 'limit' && s.value != null);
-      if (assign(controls, cargoSteps).some(({ step, control }) => (!found || !report.filled.some((x) => x.key === fieldKey(control)))
-        && (agreesWith(step, control) || (skippedField(control) && hasValue(control))))) return true;
-      if (!summary) return false;
-      const words = (document.body.innerText ?? '').match(/motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i)?.[0] ?? '';
-      const amounts = moneyTokens(words);
-      return cargoSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
+    // A coverage section added and closed (CLOSED_SECTIONS): none of its questions on screen (found
+    // by the rules tagged for it), and its row keeps the limit.
+    // Checking the fill's own Done: the intake's limit (with `anyLimit`, any limit when the intake
+    // has none), or the row's `words` showing the intake's amounts.
+    // `found` (a section the fill finds closed, by the agent or an earlier fill): the intake's limit
+    // or one the agent set themselves, not one this fill put in (a limit chosen in the row adds the
+    // coverage, whose section Progressive hasn't drawn yet), and never by the row's words.
+    function sectionClosedOn(controls, section, { found = false } = {}) {
+      const { tag } = section;
+      if (assign(controls, plan).some(({ step }) => step[tag] === 'section')) return false;
+      // The row's limit steps, assigned among themselves (cargo's row and section read the same).
+      const limitSteps = plan.filter((s) => s[tag] === 'limit' && (s.value != null || (section.anyLimit && !found)));
+      const kept = ({ step, control }) => (found
+        ? !report.filled.some((x) => x.key === fieldKey(control))
+          && (agreesWith(step, control) || (skippedField(control) && hasValue(control)))
+        : (!section.anyLimit || hasValue(control)) && (step.value == null || agreesWith(step, control)));
+      if (assign(controls, limitSteps).some(kept)) return true;
+      if (found || !section.words) return false;
+      const amounts = moneyTokens((document.body.innerText ?? '').match(section.words)?.[0] ?? '');
+      return limitSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
     }
 
     // Its button back on the page (`resolvedBy`: the Add NTL link, NTL removed), or a page the agent
@@ -3118,12 +3129,13 @@
           continue;
         }
         if (a.unless.some(has) || (a.unlessActions ?? []).some((id) => clicked.has(id))) { clicked.add(a.action); continue; }
-        // Cargo already added and closed on the page, by the agent or an earlier fill: its Done is
-        // done, unclicked, so what follows it (general liability's "+") runs (the maintainer,
-        // 2026-10-28, after an FL run where the agent closed cargo and GL was never added). Only as
-        // this fill found the page (after a click of its own, cargo's "+", a section still being
-        // drawn isn't closed), and with no Done with this coverage showing (a section is open).
-        if (a.verify === 'cargoClosed' && !report.actions.some((x) => !x.alreadyShown) && !findButton(a) && cargoClosedOn(controls, { found: true })) {
+        // A coverage section already added and closed on the page, by the agent or an earlier fill:
+        // its Done is done, unclicked, so what follows it runs (general liability's "+" after cargo:
+        // the maintainer, 2026-10-28, after an FL run where the agent closed cargo and GL was never
+        // added). Only as this fill found the page (after a click of its own, a "+", a section still
+        // being drawn isn't closed), and with no Done with this coverage showing (a section is open).
+        if (CLOSED_SECTIONS[a.verify] && !report.actions.some((x) => !x.alreadyShown) && !findButton(a)
+          && sectionClosedOn(controls, CLOSED_SECTIONS[a.verify], { found: true })) {
           clicked.add(a.action);
           report.actions.push({ id: a.action, text: 'closed on the page', alreadyShown: true });
           continue;

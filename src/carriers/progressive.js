@@ -613,7 +613,7 @@ export const progressive = {
     // the section's questions are gone and the row keeps the limit (glClosed). Once GL is open,
     // cargo's Done (the same text) is never clicked again (doneCargo's unlessActions). Cargo closed
     // on the page, by the agent or an earlier fill, counts as doneCargo (the maintainer, 2026-10-28;
-    // the kit's check for `verify: 'cargoClosed'`).
+    // the kit's sectionClosedOn, for `verify: 'cargoClosed'` as for 'glClosed').
     // Its text is a regular expression in a string: '^\\+$', as cargo's. Written '^\+$' it read
     // /^+$/, which doesn't compile: every fill on Rates with GL asked for stopped where it looked
     // for this "+" (FL live run, 2026-10-28: the agent added GL and closed cargo by hand).

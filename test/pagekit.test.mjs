@@ -1859,6 +1859,35 @@ test('cargo closed by the agent: cargo counts as done and the fill clicks genera
   assert.deepEqual(clicks, []);
 });
 
+// One check for every coverage section (sectionClosedOn): general liability closed on the page, by
+// the agent, is GL's Done done too; open, or a limit this fill put in, is not.
+test('general liability closed by the agent: its Done counts as done, by the same section check', async () => {
+  const record = { applicant: { name: 'Sample Test LLC' }, garaging: {}, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: {},
+    coverage: { cargo: false, gl: true, glLimit: '$1M/$2M' } };
+  const plan = buildPlan(record, progressive);
+  const intakeLimit = plan.find((s) => s.field === 'LineInput.GeneralLiabilityLimit').value;
+  const run = async ({ open = false, value = intakeLimit } = {}) => {
+    const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+    const limit = addExtText(h, 'U', '225C', { caption: 'General Liability', ref: 'LineInput.GeneralLiabilityLimit', value });
+    const options = ['Not selected', intakeLimit].map((label) => ({ get: () => label }));
+    Object.assign(limit.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => options } });
+    if (open) {
+      const question = 'Does the customer operate businesses other than the for hire trucking operations?';
+      h.document.body.append(radioGroup(question, ...['Yes', 'No'].map((answer) => makeInput({ id: `f_P${'A'.repeat(32)}2233_1_1_${answer}`, name: 'string_2233', type: 'radio', value: answer,
+        attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckOtherBusiness' } }))));
+    }
+    const report = await h.kit.fill(plan, { maxRounds: 3, doneActions: [] });
+    if (open) assert.ok(report.filled.some((x) => x.path === 'progressive.q21F3'), 'the open section\'s question is found');
+    return report;
+  };
+  const doneHere = (report) => report.actions.some((x) => x.id === 'doneGl' && x.alreadyShown);
+  assert.ok(doneHere(await run()));
+  assert.ok(!doneHere(await run({ open: true })));
+  const filled = await run({ value: '' });
+  assert.ok(filled.filled.some((x) => x.path === 'progressive.q21D1'), JSON.stringify(filled.filled));
+  assert.ok(!doneHere(filled));
+});
+
 test('trusted agent gesture plus input protects the edit and reports no filled answer', async () => {
   const h = harness();
   const edit = makeInput({ id: 'agent-edit', ariaLabel: 'Agent corrected value' });
