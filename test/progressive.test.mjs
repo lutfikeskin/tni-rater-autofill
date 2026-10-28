@@ -2126,7 +2126,7 @@ test('trailer interchange: the intake\'s request is added and answered, the numb
   assert.deepEqual(buildPlan(gl, progressive, {}).find((s) => s.action === 'openInterchange').afterActions, ['doneCargo', 'doneGl']);
 });
 
-test('trailer interchange: a tile only for one matched trailer type, a limit only one Progressive lists', () => {
+test('trailer interchange: a tile only for one matched trailer type; the intake\'s limit, else the next one up Progressive lists', () => {
   const flat = interchangeRecord();
   flat.trailers[0].type = 'Flatbed';
   assert.equal(buildPlan(flat, progressive, {}).find((s) => s.action === 'interchangeTile').text, '^Flatbed Trailer$');
@@ -2139,13 +2139,25 @@ test('trailer interchange: a tile only for one matched trailer type, a limit onl
     assert.ok(!p.some((s) => s.action === 'interchangeTile'), JSON.stringify(trailers));
     assert.match(p.find((s) => s.field === 'TrailerInterchangeInput.NoOfNonOwnedTrailers').warn, said);
   }
-  // The limit as the intake writes it; none, or one Progressive doesn't list, is the agent's.
+  // The limit as the intake writes it.
   for (const said of ['50K', '50000', '$50,000.00']) {
     const r = interchangeRecord();
     r.trailerInfo.interchangeLimit = said;
-    assert.equal(buildPlan(r, progressive, {}).find((s) => s.field === 'TrailerInterchangeInput.Limit').value, '$50k with a $1,000 Deductible', said);
+    const step = buildPlan(r, progressive, {}).find((s) => s.field === 'TrailerInterchangeInput.Limit');
+    assert.deepEqual([step.value, step.source], ['$50k with a $1,000 Deductible', 'derived'], said);
+    assert.doesNotMatch(step.warn, /next one up/);
   }
-  for (const [said, note] of [[null, /without a limit: choose it yourself/], ['$25,000', /\$25,000 trailer interchange limit, which Progressive doesn't list/], ['$1,000,000', /doesn't list/]]) {
+  // One Progressive doesn't list (TNI, 2026-10-28, every carrier): the next one up with a $1,000
+  // deductible, TNI's rule, marked to confirm; Non-Owned Trailer Physical Damage matches it.
+  const between = interchangeRecord();
+  between.trailerInfo.interchangeLimit = '$25,000';
+  const raised = buildPlan(between, progressive, {});
+  const up = raised.find((s) => s.field === 'TrailerInterchangeInput.Limit');
+  assert.deepEqual([up.value, up.source, up.manualOnly, up.note], ['$30k with a $1,000 Deductible', 'standard', false, null]);
+  assert.match(up.warn, /^Progressive doesn't list the intake's \$25,000 trailer interchange limit: the next one up, \$30,000 with a \$1,000 deductible, is picked\. Confirm it with the client\. Trailer interchange: TNI's default of 1/);
+  assert.deepEqual(raised.find((s) => s.field === 'NonOwnedTrailerPhysicalDamageInput.Limit').choiceAliases, ['$30,000 with a $1,000 Deductible']);
+  // None, or one above the highest Progressive lists ($250k), is the agent's.
+  for (const [said, note] of [[null, /without a limit: choose it yourself/], ['$1,000,000', /\$1,000,000 trailer interchange limit, above the highest Progressive lists \(\$250,000\)/]]) {
     const r = interchangeRecord();
     r.trailerInfo.interchangeLimit = said;
     const step = buildPlan(r, progressive, {}).find((s) => s.field === 'TrailerInterchangeInput.Limit');

@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPlan, AGENT_SOURCES, SOURCES } from '../src/plan.js';
 import { geico } from '../src/carriers/geico.js';
+import { progressive } from '../src/carriers/progressive.js';
 import { CARRIERS, carrierForUrl, quoteProgress } from '../src/carriers.js';
 import { knownStep } from '../src/usage.js';
 import { advanceFor } from '../src/units.js';
@@ -152,14 +153,14 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   const cargo = geico.actions.find((a) => a.id === 'openCargo');
   assert.deepEqual([cargo.token, cargo.within, cargo.unlessSelector], ['editIcon', 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]', 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"].expanded']);
   // Print once a pay plan is picked: 11 Payments, or the plan the fill picked in its place.
-  assert.deepEqual(geico.actions.find((a) => a.id === 'printProposal').after, ['geico.qGivePayPlanV2']);
+  assert.deepEqual(buildPlan(intake(), geico, {}).find((s) => s.action === 'printProposal').after, ['geico.qGivePayPlanV2']);
   // 11 Payments not offered once View More Payment Plans was clicked: the plan with the most
   // payments offered, Pay In Full counting one (W43-32; the page kit picks it).
   const ORMOST = { count: '^(\\d+)\\s+payments?\\b', one: '^pay\\s+in\\s+full\\b', after: 'morePayPlans', name: 'the plan with the most payments GEICO offers' };
   assert.deepEqual(buildPlan(intake(), geico, {}).filter((s) => s.field === 'GivePayPlanV2').map((s) => [s.value, s.whenOffered, s.orMost]), [['11 Payments', true, ORMOST], ['11 Payments', true, ORMOST]]);
   const most = (texts) => texts.map((t) => (new RegExp(ORMOST.one, 'i').test(t) ? 1 : Number(new RegExp(ORMOST.count, 'i').exec(t)?.[1] ?? NaN)));
   assert.deepEqual(most(['Pay In Full', '4 Payments Bi-Monthly Plan', '9 Payments', '11 Payments', 'Paperless discount']), [1, 4, 9, 11, NaN]);
-  assert.ok(geico.actions.filter((a) => a.steps.includes(QC) && !['openCargo', 'recalculate', 'ntlLease'].includes(a.id)).every((a) => a.needsPremium), 'each waits for a current premium');
+  assert.ok(geico.actions.filter((a) => a.steps.includes(QC) && !['openCargo', 'openInterchange', 'openGl', 'recalculate', 'ntlLease'].includes(a.id)).every((a) => a.needsPremium), 'each waits for a current premium');
   for (const a of geico.actions) assert.ok(a.steps.every((s) => [VEH, DRV, QC].includes(s)), a.id);
   assert.deepEqual([geico.newQuestionsOnlySteps, geico.keepTakenBack], [[QC], [QC]]);
   assert.ok(!('noFollowUpSteps' in geico));
@@ -243,6 +244,11 @@ const STANDARDS = [
   'Hazardous material placard (TNI: No unless the intake says otherwise)', 'Team driving or slip seating (TNI: No unless the intake says otherwise)',
   'Filings required (TNI: No unless the intake says otherwise)', 'Driver has a CDL (TNI: No when the intake leaves it blank)',
   'Owner has a CDL (TNI: No when the intake leaves it blank)',
+  // TNI, 2026-10-28 (FL run, general liability and trailer interchange): every carrier's answers.
+  'GL: all income from for-hire trucking (TNI: Yes)', 'GL: premises customers visit (TNI: No)', 'GL: setup or installation (TNI: No)',
+  'GL: oil and gas production (TNI: No unless the intake mentions oil or gas work)',
+  'Trailer interchange agreement provided on request (TNI: Yes)', 'Non-owned trailers hauled (TNI\'s default 1, to confirm)',
+  'Trailer interchange limit (the intake\'s, or the next one up, with a $1,000 deductible)',
 ];
 // TNI, 2026-10-26 (W44-25): "Owner Drivers if not excluded, in every case".
 const OWNER_DRIVES = 'Owner is a driver (TNI: Yes when the intake leaves it blank, unless excluded)';
@@ -254,7 +260,8 @@ STANDARDS.push(OWNER_DRIVES, OWNER_DRIVES_ADD, OWNER_DAILY);
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
   const seen = new Set();
   const records = [...RECORDS(), with_({ 'garaging.state': 'FL', 'coverage.reeferBreakdown': null, 'operations.equipVehicle': null, 'vehicles.0.type': 'Van' }),
-    with_({ drivers: [{ ...intake().drivers[0], cdl: null, cdlYear: null }, { ...CASEY, cdl: null }] })];
+    with_({ drivers: [{ ...intake().drivers[0], cdl: null, cdlYear: null }, { ...CASEY, cdl: null }] }),
+    with_({ trailers: [TRAILER], 'trailerInfo.interchange': true, 'trailerInfo.interchangeLimit': '$50,000' })];
   for (const rule of geico.rules) {
     const sources = typeof rule.source === 'function' ? records.flatMap((r) => ACTIVES.map((a) => rule.source(r, a))) : [rule.source];
     if (sources.includes('standard')) seen.add(rule.name);
@@ -1641,7 +1648,126 @@ test('general liability: the intake\'s request and a limit GEICO lists, no TNI d
   for (const changes of [{ 'coverage.gl': true }, { 'coverage.gl': true, 'coverage.glLimit': '$2M/$4M' }, {}]) agents(gl(changes)[1]);
   // GL the client already has isn't a request.
   assert.equal(gl({ 'coverage.hasGl': true })[0].value, false);
-  for (const name of ['GL: all income from for-hire trucking', 'GL: premises customers visit', 'GL: setup or installation', 'GL: oil and gas production']) agents(one(plan(intake()), name));
+});
+
+// FL live run, 2026-10-28 (freight hauler, GL $1M/$2M on the intake): GEICO's four GL questions were
+// facts and the agent answered Yes / No / No / No. TNI: the same answers as Progressive's, one
+// concept for every carrier (general.gl).
+const GL_QUESTIONS = [['GiveIncomeOnlyFromTruckingOperation', 'GL: all income from for-hire trucking (TNI: Yes)', true],
+  ['GiveOperateFromWarehouseOrOtherAccessiblePremises', 'GL: premises customers visit (TNI: No)', false],
+  ['GiveInvolvedInAnySetupOrInstallation', 'GL: setup or installation (TNI: No)', false],
+  ['GiveOperateOrInvolvedInAnyWayForOilGasProduction', 'GL: oil and gas production (TNI: No unless the intake mentions oil or gas work)', false]];
+test('general liability\'s questions: TNI\'s answers when the intake asks for GL, as on Progressive; oil and gas the agent\'s when mentioned', () => {
+  const p = plan(with_({ 'coverage.gl': true, 'coverage.glLimit': '$1M/$2M' }));
+  for (const [field, name, answer] of GL_QUESTIONS) {
+    const s = one(p, name, QC);
+    assert.deepEqual([s.field, s.value, s.source, s.standard, s.note], [field, answer, 'standard', true, null], name);
+  }
+  // The same rules as Progressive's (one concept): their answers agree question by question.
+  const pr = buildPlan(with_({ 'coverage.gl': true, 'coverage.glLimit': '$1M/$2M' }), progressive, {});
+  assert.deepEqual(['GeneralLiabilityTruckIncome', 'GeneralLiabilityTruckOtherPremises', 'GeneralLiabilityTruckSetup', 'GeneralLiabilityTruckOilAndGas']
+    .map((ref) => pr.find((s) => s.field === `GeneralLiabilityInput.${ref}`).value), GL_QUESTIONS.map(([, , a]) => a));
+  // Oil or gas work in what they haul or the notes: that one is the agent's, quoted; the rest stay.
+  for (const changes of [{ 'operations.whatHaul': 'Frac sand' }, { 'notes.text': 'Hauls pipe to oil field sites' }]) {
+    const oil = plan(with_({ 'coverage.gl': true, ...changes }));
+    const s = one(oil, GL_QUESTIONS[3][1]);
+    agents(s);
+    assert.match(s.note, /mentions oil or gas work/);
+    assert.equal(one(oil, GL_QUESTIONS[0][1]).value, true);
+  }
+  // No GL request (none, No, or GL the client already has): every one is the agent's.
+  for (const changes of [{}, { 'coverage.gl': null }, { 'coverage.hasGl': true }]) {
+    for (const [, name] of GL_QUESTIONS) {
+      const s = one(plan(with_(changes)), name);
+      agents(s);
+      assert.deepEqual([s.source, s.manualOnly], ['fact', true], name);
+    }
+  }
+});
+
+// FL live run, 2026-10-28 (4 vehicles and a Dry Van trailer with a gooseneck hitch; interchange Yes,
+// $50,000): GEICO's Trailer Interchange card was never opened; once the agent opened it, four of
+// its questions were unfamiliar and its list had no $50k. TNI: the same concept as Progressive's.
+const interchangeIntake = (changes = {}) => with_({ trailers: [TRAILER], 'trailerInfo.interchange': true, 'trailerInfo.interchangeLimit': '50000', 'trailerInfo.hitch': 'Gooseneck', ...changes });
+test('trailer interchange: TNI\'s answers when the intake asks for it, the number and type to confirm, the next limit up', () => {
+  const p = plan(interchangeIntake());
+  const s = (name) => one(p, name, QC);
+  assert.deepEqual([s('Trailer interchange').field, s('Trailer interchange').value], ['GiveTrailerInterchangeEligibleRequireCoverageYesNo', true]);
+  const agreement = s('Trailer interchange agreement (the intake\'s Yes)');
+  assert.deepEqual([agreement.field, agreement.value, agreement.source, agreement.note], ['GiveTrailerInterchangeAgreementYesNo', true, 'derived', null]);
+  const copy = s('Trailer interchange agreement provided on request (TNI: Yes)');
+  assert.deepEqual([copy.field, copy.value, copy.source, copy.standard], ['GiveTrailerInterchangeAgreementProvideOnRequestYesNo', true, 'standard', true]);
+  const count = s('Non-owned trailers hauled (TNI\'s default 1, to confirm)');
+  assert.deepEqual([count.field, count.value, count.source], ['GiveTrailerInterchangeNumberOfTrailers', '1', 'standard']);
+  assert.match(count.warn, /TNI's default of 1 non-owned trailer\. Confirm it with the client/);
+  // The trailer type from the intake's trailer type (Dry Van), never the Gooseneck hitch.
+  const type = s('Most common trailer type (the intake\'s trailer type, to confirm)');
+  assert.deepEqual([type.field, type.value, type.source], ['GiveTrailerInterchangeCommonTrailerType', 'Dry Freight Trailer', 'derived']);
+  assert.match(type.warn, /the Dry Freight Trailer option for the intake's Dry Van trailer\. Confirm it with the client/);
+  // GEICO lists no $50k: the next one up with a $1,000 deductible, TNI's rule, to confirm.
+  const limit = s('Trailer interchange limit (the intake\'s, or the next one up, with a $1,000 deductible)');
+  assert.deepEqual([limit.ask, limit.control, limit.value, limit.source, limit.note], [['Trailer Interchange'], 'select', '$60k/$1000 deductible', 'standard', null]);
+  assert.match(limit.warn, /GEICO doesn't list the intake's \$50,000 trailer interchange limit: the next one up, \$60,000 with a \$1,000 deductible, is picked\. Confirm it with the client/);
+  // A limit GEICO lists: the intake's, no warning; above $80k, or none: the agent's.
+  const listed = one(plan(interchangeIntake({ 'trailerInfo.interchangeLimit': '$40,000' })), limit.name);
+  assert.deepEqual([listed.value, listed.source, listed.warn], ['$40k/$1000 deductible', 'derived', null]);
+  for (const [said, note] of [['$100,000', /above the highest GEICO lists \(\$80,000\)/], [null, /without a limit/], ['Fifty thousand', /\(Fifty thousand\) isn't an amount/]]) {
+    const over = one(plan(interchangeIntake({ 'trailerInfo.interchangeLimit': said })), limit.name);
+    agents(over);
+    assert.match(over.note, note);
+  }
+  // Other trailer types by GEICO's list; two types, none, or one GEICO has no name for: the agent's pick.
+  for (const [kind, option] of [['Flatbed', 'Flatbed Trailer'], ['Reefer', 'Refrigerated Dry Freight Trailer'], ['Lowboy', 'Lowboy Trailer'], ['Tanker', 'Tank Trailer']]) {
+    assert.equal(one(plan(interchangeIntake({ trailers: [{ ...TRAILER, type: kind }] })), type.name).value, option, kind);
+  }
+  for (const [trailers, said] of [[[{ ...TRAILER, type: 'Step Deck' }], /Step Deck isn't matched to a GEICO trailer option/], [[], /the intake has no trailer type/],
+    [[TRAILER, { ...TRAILER, type: 'Flatbed' }], /the intake has Dry Van, Flatbed trailers/]]) {
+    const t = one(plan(interchangeIntake({ trailers })), type.name);
+    agents(t);
+    assert.equal(t.warn, null);
+    assert.match(t.note, said);
+  }
+  // Not asked for: the card isn't opened and every answer but the request is the agent's.
+  for (const interchange of [false, null]) {
+    const off = plan(interchangeIntake({ 'trailerInfo.interchange': interchange }));
+    for (const name of [agreement.name, copy.name, count.name, type.name, limit.name]) {
+      const x = one(off, name);
+      agents(x);
+      assert.match(x.note, /doesn't ask for trailer interchange/, name);
+    }
+  }
+});
+
+test('Quote & Coverages: Trailer Interchange and General Liability opened when asked for, and Recalculate, pay plans and Print wait for them', () => {
+  const both = interchangeIntake({ 'coverage.gl': true, 'coverage.glLimit': '$1M/$2M' });
+  const steps = buildPlan(both, geico, {}).filter((s) => s.kind === 'action' && s.steps?.includes(QC));
+  const act = (id) => steps.find((s) => s.action === id);
+  // Opened before Recalculate, by their chevrons (the card's edit icon), once (a second click closes it).
+  assert.deepEqual(steps.map((s) => s.action), ['openCargo', 'openInterchange', 'openGl', 'recalculate', 'morePayPlans', 'printProposal']);
+  const ti = act('openInterchange');
+  const gl = act('openGl');
+  assert.deepEqual([ti.token, gl.token], ['editIcon', 'editIcon']);
+  // Non-Owned Trailer Physical Damage's card has the same id stem: interchange's own question picks it.
+  assert.equal(ti.within, 'li[id^="Id_TrailerInterchangeQuestionsComboActivityData_"]:has([id^="Id_GiveTrailerInterchangeEligibleRequireCoverageYesNo_"])');
+  assert.equal(ti.unlessSelector, 'li.expanded[id^="Id_TrailerInterchangeQuestionsComboActivityData_"]:has([id^="Id_GiveTrailerInterchangeEligibleRequireCoverageYesNo_"])');
+  assert.deepEqual([gl.within, gl.unlessSelector], ['li[id^="Id_MotorTruckGeneralLiabilityEligibilityComboActivityData_"]', 'li[id^="Id_MotorTruckGeneralLiabilityEligibilityComboActivityData_"].expanded']);
+  assert.match(ti.missing, /no Trailer Interchange card/);
+  assert.match(gl.missing, /no Motor Truck General Liability card/);
+  // Recalculate and what follows it: each card opened and its limit answered.
+  for (const id of ['recalculate', 'morePayPlans', 'printProposal']) assert.deepEqual(act(id).afterActions, ['openInterchange', 'openGl'], id);
+  for (const id of ['recalculate', 'morePayPlans']) assert.deepEqual(act(id).after, ['geico.qTrailerInterchangeLimit', 'geico.qGeneralLiabilityLimit'], id);
+  assert.deepEqual(act('printProposal').after, ['geico.qGivePayPlanV2', 'geico.qTrailerInterchangeLimit', 'geico.qGeneralLiabilityLimit']);
+  // Each alone; neither asked for: nothing opened and nothing waited for.
+  const only = (r) => buildPlan(r, geico, {}).filter((s) => s.kind === 'action' && s.steps?.includes(QC));
+  assert.deepEqual(only(with_({ 'coverage.gl': true })).find((s) => s.action === 'recalculate').afterActions, ['openGl']);
+  assert.deepEqual(only(interchangeIntake()).find((s) => s.action === 'recalculate').after, ['geico.qTrailerInterchangeLimit']);
+  const none = only(intake());
+  assert.ok(!none.some((s) => /^open(Interchange|Gl)$/.test(s.action)));
+  for (const s of none.filter((x) => x.action !== 'openCargo')) assert.deepEqual(s.afterActions, [], s.action);
+  // The plan's paths are the limits' rules.
+  const p = plan(both);
+  assert.deepEqual(['Trailer interchange limit (the intake\'s, or the next one up, with a $1,000 deductible)', 'Motor truck general liability limit'].map((n) => one(p, n).path),
+    ['geico.qTrailerInterchangeLimit', 'geico.qGeneralLiabilityLimit']);
 });
 
 test('a vehicle\'s coverage rows: by the coverage their id ends in, one step per vehicle', () => {

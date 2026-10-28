@@ -1,3 +1,6 @@
+// normalize.js imports this module too: both only call each other's functions, never at load.
+import { toMoney, otherNotes } from './normalize.js';
+
 export const STATES = {
   AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado',
   CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia',
@@ -93,6 +96,76 @@ export const cargoCommodity = (record) => (carPartsMixed(record) ? null
   : haulsCarParts(record) ? { category: 'Aircraft/ Auto/ Boats', commodity: 'Auto Accessories (Not Tires)' }
     : haulsGeneralFreight(record) ? { category: 'Consumer Goods', commodity: 'Other Consumer Goods' } : null);
 export const CARGO_DEDUCTIBLE_NOTE = 'The intake gives a cargo limit but no deductible: choose the cargo limit and deductible yourself (the deductible is usually $1,000 or $2,500).';
+
+// General liability the intake asks for (Requested coverage: coverage.gl, never coverage.hasGl, GL
+// the client already has), on every carrier. GL added on a quote whose intake doesn't ask for it:
+// its questions are the agent's.
+export const glRequested = (record) => record?.coverage?.gl === true;
+export const glUnrequested = (record) => (glRequested(record) ? null : 'The intake doesn\'t ask for general liability: answer its questions yourself.');
+// GL's trucking questions (TNI, general.gl: set on Progressive 2026-10-20, for GEICO too 2026-10-28,
+// after an FL run where the agent answered GEICO's by hand), for a for-hire trucker with nothing else
+// on the intake: all income from for-hire trucking Yes; a warehouse or premises customers visit,
+// set-up or installation, and other businesses No; oil and gas No unless what they haul or the notes
+// mention oil or gas fields, fracking or the like, then the agent's. Without the request each is the
+// agent's (a fact, never Luna's). Carriers spread one into a rule: `glAnswer(true)`, `GL_OIL_GAS`.
+export const glAnswer = (answer) => ({ tni: 'general.gl', source: (record) => (glRequested(record) ? 'standard' : 'fact'), value: () => answer, note: glUnrequested });
+const OIL_GAS = /\b(?:oil ?field|oil and gas|oil & gas|oil\/gas|frac(?:k|king)?|fracing|crude|drilling|(?:oil|drilling) rig|pipe ?line|well ?site)s?\b/i;
+const oilGasMention = (record) => [record?.operations?.whatHaul, otherNotes(record)].map((x) => String(x ?? ''))
+  .flatMap((x) => x.split(/[\n.;]+/)).map((s) => s.trim()).find((s) => OIL_GAS.test(s))?.slice(0, 80) ?? null;
+export const oilGasNote = (record) => glUnrequested(record) ?? (oilGasMention(record) ? `The intake mentions oil or gas work ("${oilGasMention(record)}"): answer it yourself.` : null);
+export const GL_OIL_GAS = { tni: 'general.gl', source: (record) => (oilGasNote(record) ? 'fact' : 'standard'), value: () => false, note: oilGasNote };
+
+// Trailer interchange the intake asks for (trailerInfo.interchange Yes), on every carrier (TNI, the
+// maintainer, 2026-10-28, general.trailer-interchange: Progressive, then GEICO): the interchange
+// agreement Yes (the intake's), giving a copy of it on request Yes; the number of non-owned
+// trailers TNI's default 1 and the trailer type from the intake's trailer type (never its hitch),
+// both filled and marked to confirm with the client; the limit the intake's with a $1,000
+// deductible, or, where the carrier doesn't list it, the next limit up it lists (marked to
+// confirm); no limit, or one above the highest listed, is the agent's. Without the request nothing
+// is answered.
+export const interchangeRequested = (record) => record?.trailerInfo?.interchange === true;
+export const interchangeUnrequested = (record) => (interchangeRequested(record) ? null : 'The intake doesn\'t ask for trailer interchange: answer it yourself.');
+export const INTERCHANGE_TRAILERS = '1';
+const thousands = (n) => `$${n.toLocaleString('en-US')}`;
+// The limit picked among the carrier's (`listed`, in dollars, each offered with a $1,000
+// deductible): the intake's, else the next one up; `raised` when it isn't the intake's. Null
+// without a request or a limit, or with one above the highest listed.
+export function interchangeLimitPick(record, listed) {
+  const asked = toMoney(record?.trailerInfo?.interchangeLimit);
+  if (!interchangeRequested(record) || asked == null) return null;
+  const amount = [...listed].sort((a, b) => a - b).find((x) => x >= asked);
+  return amount == null ? null : { amount, asked, raised: amount !== asked };
+}
+// Why the limit is the agent's (null when the fill picks it). `carrier`: its name.
+export const interchangeLimitNote = (record, listed, carrier) => interchangeUnrequested(record) ?? (interchangeLimitPick(record, listed) ? null
+  : !record.trailerInfo?.interchangeLimit ? 'The intake asks for trailer interchange without a limit: choose it yourself.'
+    : toMoney(record.trailerInfo.interchangeLimit) == null
+      ? `The intake's trailer interchange limit (${String(record.trailerInfo.interchangeLimit).slice(0, 20)}) isn't an amount: choose it yourself.`
+      : `The intake asks for a ${String(record.trailerInfo.interchangeLimit).slice(0, 20)} trailer interchange limit, above the highest ${carrier} lists (${thousands(Math.max(...listed))}): choose it yourself.`);
+// The next limit up, said to confirm with the client.
+export const interchangeLimitRaised = (record, listed, carrier) => {
+  const pick = interchangeLimitPick(record, listed);
+  return pick?.raised ? `${carrier} doesn't list the intake's ${thousands(pick.asked)} trailer interchange limit: the next one up, ${thousands(pick.amount)} with a $1,000 deductible, is picked. Confirm it with the client.` : null;
+};
+// Left to the agent: a fact, never Luna's; the intake's: derived; the next one up: TNI's rule.
+export const interchangeLimitSource = (record, listed) => {
+  const pick = interchangeLimitPick(record, listed);
+  return !pick ? 'fact' : pick.raised ? 'standard' : 'derived';
+};
+// The intake's trailer types, each once. The carrier's trailer type for them (`types`: the intake's
+// type to the carrier's): one type the map has; none, two, or one it doesn't have is the agent's.
+export const interchangeTrailerTypes = (record) => [...new Set((record?.trailers ?? []).map((t) => t?.type).filter(Boolean))];
+export const interchangeTrailerType = (record, types) => {
+  const listed = interchangeTrailerTypes(record);
+  return listed.length === 1 ? types[listed[0]] ?? null : null;
+};
+// What was picked for the trailer type, or why nothing was (`what`: "the Dry Freight Trailer tile").
+export const interchangeTypeSaid = (record, types, { carrier, what, shown = (x) => x }) => {
+  const listed = interchangeTrailerTypes(record);
+  const pick = interchangeTrailerType(record, types);
+  if (pick) return `the ${shown(pick)} ${what} for the intake's ${listed[0]} trailer`;
+  return `no trailer type ${what} picked (${!listed.length ? 'the intake has no trailer type' : listed.length > 1 ? `the intake has ${listed.join(', ')} trailers` : `${listed[0]} isn't matched to a ${carrier} trailer ${what}`}): pick it yourself`;
+};
 
 // The names a carrier being quoted goes by as an intake's current carrier (sameCarrier): one word
 // matched with spelling slips, or words all present. AmWINS, a wholesaler, has none: the client's

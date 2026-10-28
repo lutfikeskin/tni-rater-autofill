@@ -52,6 +52,8 @@ import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { ownerDrives, ownerDrivesSaid, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
+import { glRequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitNote, interchangeLimitRaised,
+  interchangeLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -833,15 +835,48 @@ const COMMODITIES = [
 const hauled = (r) => String(r.operations.whatHaul ?? '').trim() || String(r.operations.businessClass ?? '');
 const commodities = (r) => COMMODITIES.find((c) => c.test(r))?.picks.join('; ') || null;
 
-// Motor truck general liability: the intake's GL request (coverage.gl, never coverage.hasGl, GL the
-// client already has), and its limit when GEICO lists it. TNI's $1M/$2M default for a request
-// without a limit is recorded for Progressive only.
+// Motor truck general liability: the intake's GL request (util.js glRequested: coverage.gl, never
+// coverage.hasGl, GL the client already has), and its limit when GEICO lists it. TNI's $1M/$2M
+// default for a request without a limit is recorded for Progressive only. Its four trucking
+// questions are TNI's for every carrier (util.js glAnswer, GL_OIL_GAS: TNI, 2026-10-28).
 const GL_LIMITS = { '$1M/$2M': '$1,000,000/$2,000,000 aggregate' };
-const glLimit = (r) => (r.coverage?.gl === true ? GL_LIMITS[String(r.coverage.glLimit ?? '').trim()] ?? null : null);
+const glLimit = (r) => (glRequested(r) ? GL_LIMITS[String(r.coverage.glLimit ?? '').trim()] ?? null : null);
 const glLimitNote = (r) => (glLimit(r) ? null
-  : r.coverage?.gl !== true ? 'The intake doesn\'t ask for general liability: answer it yourself.'
+  : !glRequested(r) ? 'The intake doesn\'t ask for general liability: answer it yourself.'
     : r.coverage.glLimit ? `The intake asks for a ${quote(r.coverage.glLimit, 20)} general liability limit, which GEICO doesn't list: choose it yourself.`
       : 'General liability is requested without a limit on the intake: choose it yourself.');
+
+// Trailer interchange the intake asks for: TNI's answers on every carrier (util.js
+// interchangeRequested; the maintainer, 2026-10-28, after an FL run where the agent opened and
+// answered it by hand). The limits GEICO lists (FL, 2026-10-28: $15k, $20k, $30k, $40k, $60k, $70k,
+// $80k, each with a $1,000 or a $2,000 deductible, as "$60k/$1000 deductible"; no $50k): the
+// intake's, else the next one up, to confirm.
+const INTERCHANGE_LIMITS = [15, 20, 30, 40, 60, 70, 80].map((k) => k * 1000);
+const interchangePick = (r) => interchangeLimitPick(r, INTERCHANGE_LIMITS);
+const interchangeLimit = (r) => (interchangePick(r) ? `$${interchangePick(r).amount / 1000}k/$1000 deductible` : null);
+// GEICO's most common trailer type for the intake's trailer type (its list, FL 2026-10-28; Dry Van
+// and Flatbed the maintainer's, the others by GEICO's name for the same trailer). Enclosed, Step
+// Deck and Other are the agent's pick.
+const INTERCHANGE_TYPES = { 'Dry Van': 'Dry Freight Trailer', Flatbed: 'Flatbed Trailer', Reefer: 'Refrigerated Dry Freight Trailer', Lowboy: 'Lowboy Trailer', Tanker: 'Tank Trailer' };
+const interchangeType = (r) => (interchangeRequested(r) ? interchangeTrailerType(r, INTERCHANGE_TYPES) : null);
+const interchangeTypeNote = (r) => interchangeUnrequested(r) ?? (interchangeType(r) ? null
+  : `Trailer interchange: ${interchangeTypeSaid(r, INTERCHANGE_TYPES, { carrier: 'GEICO', what: 'option' })}.`);
+// Marked to confirm with the client (TNI, 2026-10-28), each on its own question: the number, the
+// type, and a limit that isn't the intake's.
+const interchangeCountWarn = (r) => (interchangeRequested(r) ? 'Trailer interchange: TNI\'s default of 1 non-owned trailer. Confirm it with the client.' : null);
+const interchangeTypeWarn = (r) => (interchangeType(r)
+  ? `Trailer interchange: ${interchangeTypeSaid(r, INTERCHANGE_TYPES, { carrier: 'GEICO', what: 'option' })}. Confirm it with the client.` : null);
+// The two cards on Quote & Coverages (2026-10-28): each opens only by its chevron, as cargo's. GEICO
+// names Non-Owned Trailer Physical Damage's card as trailer interchange's: its own question tells
+// them apart (Chrome's :has).
+const INTERCHANGE_CARD = 'li[id^="Id_TrailerInterchangeQuestionsComboActivityData_"]:has([id^="Id_GiveTrailerInterchangeEligibleRequireCoverageYesNo_"])';
+const GL_CARD = 'li[id^="Id_MotorTruckGeneralLiabilityEligibilityComboActivityData_"]';
+const INTERCHANGE_LIMIT = 'geico.qTrailerInterchangeLimit';
+const GL_LIMIT = 'geico.qGeneralLiabilityLimit';
+// What Recalculate, View More Payment Plans and Print Quote Proposal wait for (TNI, 2026-10-28): each
+// card the intake asks for opened, and its limit answered (the fill's, or the agent's).
+const sectionsOpened = (r) => [...(interchangeRequested(r) ? ['openInterchange'] : []), ...(glRequested(r) ? ['openGl'] : [])];
+const sectionLimits = (r) => [...(interchangeRequested(r) ? [INTERCHANGE_LIMIT] : []), ...(glRequested(r) ? [GL_LIMIT] : [])];
 
 // A vehicle's rows on Quote & Coverages, one per vehicle, by the coverage their list's id ends in:
 // comprehensive and collision are TNI's $1,000 deductibles, road service accepted on every vehicle
@@ -992,6 +1027,18 @@ export const geico = {
     // clicked once: its chevron toggles, so a second click (a retry of a slow card) would close it.
     { id: 'openCargo', steps: [COVERAGES], token: 'editIcon', within: CARGO_CARD, label: 'Motor Truck Cargo',
       when: (r) => r.coverage?.cargo === true, unlessSelector: `${CARGO_CARD}.expanded` },
+    // Trailer Interchange and Motor Truck General Liability, the same way, when the intake asks for
+    // them (TNI, 2026-10-28: on an FL run the fill set the coverages, clicked Recalculate, View More
+    // Payment Plans and Print Quote Proposal, and never opened either; the agent opened both by their
+    // chevrons and answered them). Their questions are answered as they show, and Recalculate and
+    // what follows it wait for them (sectionsOpened, sectionLimits). A card the page doesn't show
+    // (GEICO not offering it) is said, and Recalculate is the agent's.
+    { id: 'openInterchange', steps: [COVERAGES], token: 'editIcon', within: INTERCHANGE_CARD, label: 'Trailer Interchange',
+      when: interchangeRequested, unlessSelector: INTERCHANGE_CARD.replace(/^li/, 'li.expanded'),
+      missing: 'The intake asks for trailer interchange, and this page shows no Trailer Interchange card to open: add it or leave it yourself; Recalculate is yours.' },
+    { id: 'openGl', steps: [COVERAGES], token: 'editIcon', within: GL_CARD, label: 'Motor Truck General Liability',
+      when: glRequested, unlessSelector: `${GL_CARD}.expanded`,
+      missing: 'The intake asks for general liability, and this page shows no Motor Truck General Liability card to open: add it or leave it yourself; Recalculate is yours.' },
     // Then, once nothing on the step is left for the agent (`whenClear`): Recalculate while the rates
     // are out of date, once a quote (TNI, 2026-10-21, W43-31). After each Recalculate the fill clicked
     // at once, GEICO drew the coverages again with its own choices wherever one wasn't saved yet
@@ -1022,9 +1069,10 @@ export const geico = {
     // Recalculate left a total on the page with no coverage premiums and no pay plans, until the
     // agent's own Recalculate; the fill took it as rated and stopped without a word.
     { id: 'recalculate', steps: [COVERAGES], text: '^recalculate$', waitRequired: true, needsRecalculation: true, verify: 'premium', whenClear: true,
-      quietMs: 2000, once: true, keepAnswers: true, ratedBy: '[id^="Id_GivePayPlanV2_"]' },
-    { id: 'morePayPlans', steps: [COVERAGES], text: '^view more payment plans$', needsPremium: true, whenClear: true },
-    { id: 'printProposal', steps: [COVERAGES], text: '^print quote proposal$', needsPremium: true, whenClear: true, after: ['geico.qGivePayPlanV2'], kitClick: true },
+      quietMs: 2000, once: true, keepAnswers: true, ratedBy: '[id^="Id_GivePayPlanV2_"]', afterActions: sectionsOpened, after: sectionLimits },
+    { id: 'morePayPlans', steps: [COVERAGES], text: '^view more payment plans$', needsPremium: true, whenClear: true, afterActions: sectionsOpened, after: sectionLimits },
+    { id: 'printProposal', steps: [COVERAGES], text: '^print quote proposal$', needsPremium: true, whenClear: true, afterActions: sectionsOpened,
+      after: (r) => ['geico.qGivePayPlanV2', ...sectionLimits(r)], kitClick: true },
   ],
   // Continue, with "Click Continue when the page is done" on, once nothing is left for the agent
   // (TNI, FL live run 3, 2026-10-21: "with Click Continue when its done on, GEICO's should click
@@ -1089,7 +1137,7 @@ export const geico = {
   finishedBy: 'printProposal',
   // What the panel says on a step the fill still answers.
   stepNotes: {
-    [COVERAGES]: 'Answer what is left for you here (or mark it done) and click Fill this page, which also puts back any of its answers GEICO changed back. With nothing left, the fill clicks Recalculate once and checks every answer afterwards; if GEICO changed one, it is marked red and Recalculate is yours from then on. With the premium current, the fill picks 11 Payments (or the plan with the most payments GEICO offers) under View More Payment Plans and clicks Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',
+    [COVERAGES]: 'The fill opens Motor Truck Cargo, Trailer Interchange and Motor Truck General Liability when the intake asks for them, and answers them. Answer what is left for you here (or mark it done) and click Fill this page, which also puts back any of its answers GEICO changed back. With nothing left, the fill clicks Recalculate once and checks every answer afterwards; if GEICO changed one, it is marked red and Recalculate is yours from then on. With the premium current, the fill picks 11 Payments (or the plan with the most payments GEICO offers) under View More Payment Plans and clicks Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',
   },
   // GEICO requotes when a coverage changes, and puts back its own choices when the agent backs out
   // (FL live run, 2026-10-21: every follow-up fill set the liability limit again, and GEICO redrew the
@@ -1446,7 +1494,23 @@ export const geico = {
         source: 'derived', value: commodities,
         note: (r) => (commodities(r) ? null : carPartsMixedNote(r) ?? `Pick up to four commodities yourself${r.operations.whatHaul ? `: the intake says they haul ${quote(r.operations.whatHaul)}` : ''}.`) },
       { q: 'CargoLimit', ask: 'Motor Truck Cargo', control: 'select', name: 'Motor truck cargo limit and deductible', kind: 'choice', source: cargoLimitSource, value: cargoChoice, note: cargoLimitNote },
-      { field: 'GiveTrailerInterchangeEligibleRequireCoverageYesNo', path: 'trailerInfo.interchange', name: 'Trailer interchange', kind: 'bool' },
+      // Trailer interchange's card (FL live run, 2026-10-28), opened when the intake asks for it
+      // (openInterchange): TNI's answers (util.js, general.trailer-interchange). Without the request
+      // every one but the first is the agent's (a fact, never Luna's).
+      { field: 'GiveTrailerInterchangeEligibleRequireCoverageYesNo', ask: 'Does the customer need Trailer Interchange Coverage?', path: 'trailerInfo.interchange', name: 'Trailer interchange', kind: 'bool' },
+      { field: 'GiveTrailerInterchangeAgreementYesNo', ask: 'Does the customer have a trailer interchange agreement?', name: 'Trailer interchange agreement (the intake\'s Yes)', kind: 'bool',
+        source: (r) => (interchangeRequested(r) ? 'derived' : 'fact'), value: () => true, note: interchangeUnrequested },
+      { field: 'GiveTrailerInterchangeAgreementProvideOnRequestYesNo', ask: 'Does the customer agree to provide the trailer interchange agreement upon request?', tni: 'general.trailer-interchange', name: 'Trailer interchange agreement provided on request (TNI: Yes)', kind: 'bool',
+        source: (r) => (interchangeRequested(r) ? 'standard' : 'fact'), value: () => true, note: interchangeUnrequested },
+      { field: 'GiveTrailerInterchangeNumberOfTrailers', ask: 'How many non-owned trailers will the customer haul?', tni: 'general.trailer-interchange', name: 'Non-owned trailers hauled (TNI\'s default 1, to confirm)', kind: 'choice',
+        source: (r) => (interchangeRequested(r) ? 'standard' : 'fact'), value: () => INTERCHANGE_TRAILERS, note: interchangeUnrequested, warn: interchangeCountWarn },
+      // From the intake's trailer type, never its hitch (TNI, 2026-10-28: the run's Gooseneck hitch
+      // isn't the trailer).
+      { field: 'GiveTrailerInterchangeCommonTrailerType', ask: 'Select most common trailer type', name: 'Most common trailer type (the intake\'s trailer type, to confirm)', kind: 'choice',
+        source: (r) => (interchangeType(r) ? 'derived' : 'fact'), value: interchangeType, note: interchangeTypeNote, warn: interchangeTypeWarn },
+      { q: 'TrailerInterchangeLimit', ask: 'Trailer Interchange', control: 'select', tni: 'general.trailer-interchange', name: 'Trailer interchange limit (the intake\'s, or the next one up, with a $1,000 deductible)', kind: 'choice',
+        source: (r) => interchangeLimitSource(r, INTERCHANGE_LIMITS), value: interchangeLimit, note: (r) => interchangeLimitNote(r, INTERCHANGE_LIMITS, 'GEICO'),
+        warn: (r) => interchangeLimitRaised(r, INTERCHANGE_LIMITS, 'GEICO') },
       // Hired and non-owned autos: interchange or rented trailers don't make them Yes.
       fact('GiveHiredCoverageRequired', 'Hired auto coverage'),
       fact('GiveHiredAutoCostGreaterThanThreshold', 'Hired auto cost over GEICO\'s threshold'),
@@ -1458,11 +1522,12 @@ export const geico = {
       fact('GiveNonOwnedVehicleUsedInBusiness', 'Non-owned vehicles used in the business'),
       fact('GiveNonOwnedTrailerPdEligibleRequireCoverageYesNo', 'Non-owned trailer physical damage'),
       { field: 'GiveMotorTruckGeneralLiabilityCoverageRequired', ask: 'Does the customer need Motor Truck General Liability?', path: 'coverage.gl', name: 'Motor truck general liability wanted', kind: 'bool' },
-      // Its follow-ups: Progressive's standard answers are Progressive's.
-      fact('GiveIncomeOnlyFromTruckingOperation', 'GL: all income from for-hire trucking', { ask: 'Does all of the customer\'s income come from their for-hire trucking operations?' }),
-      fact('GiveOperateFromWarehouseOrOtherAccessiblePremises', 'GL: premises customers visit', { ask: 'Does the customer operate a warehouse, facility, or other premises that their customers have access to?' }),
-      fact('GiveInvolvedInAnySetupOrInstallation', 'GL: setup or installation', { ask: 'Does the customer\'s business do any setup or installation?' }),
-      fact('GiveOperateOrInvolvedInAnyWayForOilGasProduction', 'GL: oil and gas production'),
+      // Its follow-ups: TNI's answers on every carrier (TNI, 2026-10-28; util.js glAnswer, general.gl),
+      // opened when the intake asks for GL (openGl).
+      { field: 'GiveIncomeOnlyFromTruckingOperation', ask: 'Does all of the customer\'s income come from their for-hire trucking operations?', name: 'GL: all income from for-hire trucking (TNI: Yes)', kind: 'bool', ...glAnswer(true) },
+      { field: 'GiveOperateFromWarehouseOrOtherAccessiblePremises', ask: 'Does the customer operate a warehouse, facility, or other premises that their customers have access to?', name: 'GL: premises customers visit (TNI: No)', kind: 'bool', ...glAnswer(false) },
+      { field: 'GiveInvolvedInAnySetupOrInstallation', ask: 'Does the customer\'s business do any setup or installation?', name: 'GL: setup or installation (TNI: No)', kind: 'bool', ...glAnswer(false) },
+      { field: 'GiveOperateOrInvolvedInAnyWayForOilGasProduction', name: 'GL: oil and gas production (TNI: No unless the intake mentions oil or gas work)', kind: 'bool', ...GL_OIL_GAS },
       { q: 'GeneralLiabilityLimit', ask: 'Motor Truck General Liability', control: 'select', name: 'Motor truck general liability limit', kind: 'choice', source: 'derived', value: glLimit, note: glLimitNote },
     ]),
   ]),
