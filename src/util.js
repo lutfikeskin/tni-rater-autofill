@@ -298,16 +298,28 @@ export function ownerRowNameDiffers(r) {
   return !(owner.length === 1 && nameWords(d.first)[0] === owner[0]);
 }
 
-// The owner's row while the intake says the owner doesn't drive (`applicant.ownerDrives` No): the
-// first row (ownerRow; TNI, 2026-10-27: answer to PR question V4), unless the agent set its Excluded
-// driver to No in client details (the agent's correction stands). It is excluded (driverExcluded:
-// R1), and the owner's details come from it (progressive.js owner, geico.js ownerDetails: T3, and V2
-// on Progressive and AmWINS). null for none.
+// The "owner drives" box as the quote reads it: true, false, or null for a blank box. The
+// maintainer, 2026-10-28: "Does the owner drive?" decides it the same way on every carrier: Yes, the
+// owner drives and isn't excluded; No, the owner is an excluded driver. So an agent's Excluded driver
+// No on the owner's row (the first: ownerRow) while the box says No is that Yes: the owner is on the
+// quote as a driver. Before, the box stayed No while the row wasn't excluded, and no row gave the
+// owner's name or date of birth (Progressive's Business Owner Info, 2026-10-28 runs). The record
+// keeps both as set (the agent's correction stands); the Intake step asks the question on the box
+// itself (normalize.js `drivers.owner-excluded`, on `applicant.ownerDrives`).
+/** @param {any} r @returns {boolean | null} */
+export function ownerDrivesSaid(r) {
+  const said = r?.applicant?.ownerDrives;
+  if (said === false && ownerRow(r)?.excluded === false) return true;
+  return typeof said === 'boolean' ? said : null;
+}
+
+// The owner's row while the owner doesn't drive (ownerDrivesSaid No): the first row (ownerRow; TNI,
+// 2026-10-27: answer to PR question V4). It is excluded (driverExcluded: R1), and the owner's details
+// come from it (progressive.js owner, geico.js ownerDetails: T3, and V2 on Progressive and AmWINS).
+// null for none.
 /** @returns {any} */
 export function nonDrivingOwnerRow(r) {
-  if (r?.applicant?.ownerDrives !== false) return null;
-  const d = ownerRow(r);
-  return d && d.excluded !== false ? d : null;
+  return ownerDrivesSaid(r) === false ? ownerRow(r) : null;
 }
 
 // A driver row the quote treats as excluded, on every carrier (Progressive's exclude question Yes,
@@ -325,8 +337,9 @@ export function nonDrivingOwnerRow(r) {
 // Derived here rather than marked on the record at reading, so the record keeps the intake as read
 // (the panel, the usage log and the warehouse show what the intake says) and an edit of either box
 // in client details applies at quote time. A row's own No (`excluded` false, which only the agent
-// sets: the intake leaves it null) is the agent's correction and stands. Other drivers are never
-// affected.
+// sets: the intake leaves it null) is the agent's correction and stands; on the owner's row it also
+// makes the owner a driver (ownerDrivesSaid), so the quote never has the owner neither excluded nor
+// driving. Other drivers are never affected.
 /** @param {any} r @param {any} d @returns {boolean} */
 export function driverExcluded(r, d) {
   if (!d) return false;
@@ -358,26 +371,32 @@ export function ownerExcluded(r) {
 // driver, No, also over the intake's Yes, with a warning the agent confirms (ownerDrivesWarn; TNI,
 // 2026-10-26: answer to PR question); otherwise Yes: the intake's, or TNI's standard for a blank box.
 // The record keeps the box as read (null when blank), so the answer's source stays right
-// (ownerDrivesSource).
+// (ownerDrivesSource). The box's No with the agent's Excluded driver No on the owner's row is Yes
+// (ownerDrivesSaid).
 /** @returns {boolean} */
 export function ownerDrives(r) {
-  if (r?.applicant?.ownerDrives === false) return false;
+  if (ownerDrivesSaid(r) === false) return false;
   return !ownerExcluded(r);
 }
 
 // Where ownerDrives' answer comes from (plan.js `source`): the intake's box when it answers and the
-// answer stands; the exclusion when it makes the owner not a driver over a blank box or a Yes
-// (`derived`); TNI's standard for a blank box.
+// answer stands; the exclusion when it makes the owner not a driver over a blank box or a Yes, or
+// the agent's not-excluded owner's row over the box's No (`derived`); TNI's standard for a blank box.
 export function ownerDrivesSource(r) {
   const said = r?.applicant?.ownerDrives;
-  if (said === false) return 'intake';
+  if (said === false) return ownerDrivesSaid(r) === false ? 'intake' : 'derived';
   if (ownerExcluded(r)) return 'derived';
   return said === true ? 'intake' : 'standard';
 }
 
 // The intake says the owner drives but marks their driver row excluded: ownerDrives is No, and the
-// agent confirms it.
+// agent confirms it. The other way round, the box's No read as Yes because the owner's row is set
+// not excluded (ownerDrivesSaid), is never silent either: the agent confirms that Yes (PR #216
+// review, 2026-10-28).
 export function ownerDrivesWarn(r) {
+  if (r?.applicant?.ownerDrives === false && ownerDrivesSaid(r) === true) {
+    return 'The intake says the owner doesn\'t drive, but their driver row is set not excluded, so the owner is quoted as a driver: Yes. Confirm it with the client.';
+  }
   return r?.applicant?.ownerDrives === true && ownerExcluded(r)
     ? 'The intake says the owner drives, but marks their driver row excluded: answered No (TNI: an excluded owner isn\'t a driver). Confirm it with the client.' : null;
 }
