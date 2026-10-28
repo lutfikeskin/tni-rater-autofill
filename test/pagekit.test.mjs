@@ -1797,6 +1797,29 @@ test('general liability Done verifies a closed section that keeps the limit', as
   assert.ok(emptyReport.blocked.some((b) => b.id === 'doneGl'));
 });
 
+// FL live run, 2026-10-28: with general liability asked for, the fill never clicked the "+" in its
+// row (the agent did), and every fill on Rates ended where it looked for that "+": its words were
+// /^+$/, which doesn't compile. Each coverage row has a "+" (an <a role=button>); GL's is clicked.
+test('general liability on the intake: the fill clicks the "+" in its row, not cargo\'s', async () => {
+  const record = { applicant: { name: 'Sample Test LLC' }, garaging: {}, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: {},
+    coverage: { gl: true, glLimit: '$1M/$2M', cargo: false } };
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const clicks = [];
+  for (const coverage of ['Motor Truck Cargo', 'General Liability']) {
+    const row = new FakeNode('div');
+    const plus = new FakeNode('a', { attrs: { role: 'button' } });
+    plus.append(new FakeNode('span', { textContent: '+' }));
+    plus.onclick = () => clicks.push(coverage);
+    row.append(new FakeNode('div', { textContent: coverage }), plus);
+    h.document.body.append(row);
+  }
+  const steps = buildPlan(record, progressive).filter((s) => s.kind === 'action' && s.action === 'openGl');
+  assert.equal(steps.length, 1);
+  const report = await h.kit.fill(steps, { maxRounds: 3 });
+  assert.deepEqual(clicks, ['General Liability']);
+  assert.deepEqual(Array.from(report.actions, (x) => x.id), ['openGl']);
+});
+
 test('trusted agent gesture plus input protects the edit and reports no filled answer', async () => {
   const h = harness();
   const edit = makeInput({ id: 'agent-edit', ariaLabel: 'Agent corrected value' });

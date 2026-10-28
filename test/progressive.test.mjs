@@ -225,7 +225,15 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const order = glActions.map((s) => s.action);
   assert.ok(order.indexOf('doneCargo') < order.indexOf('openGl') && order.indexOf('openGl') < order.indexOf('doneGl') && order.indexOf('doneGl') < order.indexOf('billPlan'));
   const openGl = glActions.find((s) => s.action === 'openGl');
-  assert.deepEqual([openGl.text, openGl.near, openGl.afterActions, openGl.unless, openGl.label], ['^\+$', 'general liability', ['doneCargo'], ['progressive.q21D1'], 'General liability']);
+  assert.deepEqual([openGl.text, openGl.near, openGl.afterActions, openGl.unless, openGl.label], ['^\\+$', 'general liability', ['doneCargo'], ['progressive.q21D1'], 'General liability']);
+  // FL live run, 2026-10-28: written '^\+$' it was /^+$/, which doesn't compile; the fill stopped there.
+  assert.ok(new RegExp(openGl.text, 'i').test('+') && !new RegExp(openGl.text, 'i').test('x'));
+  // Every helper's words compile, whichever carrier (a throw ends the whole fill on that page).
+  for (const carrier of [progressive, geico, amwins]) {
+    for (const a of carrier.actions ?? []) {
+      for (const key of ['text', 'resolvedBy', 'opener']) if (typeof a[key] === 'string') assert.doesNotThrow(() => new RegExp(a[key], 'i'), `${carrier.id}: ${a.id}.${key}`);
+    }
+  }
   const doneGl = glActions.find((s) => s.action === 'doneGl');
   assert.deepEqual([doneGl.afterActions, doneGl.after, doneGl.verify, doneGl.waitRequired], [['openGl'], ['progressive.q21D1'], 'glClosed', true]);
   assert.ok(new RegExp(doneGl.text, 'i').test('Done with this coverage'));
