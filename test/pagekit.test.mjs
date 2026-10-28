@@ -2100,6 +2100,29 @@ test('home address uses offered USDOT address when Primary Business Address is a
   assert.equal(manual.checked, false);
 });
 
+// KY live run, 2026-10-28: the generic street label rule caught this radio, found no option equal
+// to the intake's street (Progressive abbreviates "Circle" to "Cir") and left it to the agent. TNI's
+// home-address standard: the first option offered.
+test('More about the business: Primary Business Address takes the first offered option, not the intake street', async () => {
+  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const record = {
+    applicant: { name: 'Example LLC', dot: null, owner1: 'Test Owner' },
+    garaging: { street: '1234 Example Circle', city: 'Example City', zip: '40000', state: 'KY', unit: null },
+    operations: { businessClass: 'Expediter' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [],
+    coverage: { cargo: false, gl: false }, claims: {},
+  };
+  const attrs = { fieldref: 'PrimaryBusinessAddressInputNonShredded.AddressOptions' };
+  const offered = makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_0`, name: 'string_58', type: 'radio', value: '1234 Example Cir Example City KY 40000', attrs });
+  const manual = makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_1`, name: 'string_58', type: 'radio', value: 'Enter a different address', attrs });
+  h.document.body.append(radioGroup('Primary Business Address', offered, manual));
+  const report = await h.kit.fill(buildPlan(record, progressive));
+  assert.equal(report.halted, false);
+  assert.equal(offered.checked, true);
+  assert.equal(manual.checked, false);
+  assert.equal(report.failed.length, 0, 'the street rule no longer tries to match the intake street');
+});
+
 test('unfamiliar questions carry their options for the AI, and answer() puts in a choice and marks it purple', async () => {
   const h = harness();
   const commodity = new SelectNode([

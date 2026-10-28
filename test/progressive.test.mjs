@@ -140,6 +140,9 @@ test('Progressive standard answers: USDOT belongs to the business is TNI\'s stan
   assert.equal(byQ(plan, '2C1A').value, true, 'for-hire: an expediter hauls for hire');
   assert.equal(byQ(plan, '29F').value, true, 'owner-as-driver follows the intake (W44-25: blank is TNI\'s Yes)');
   assert.equal(byQ(plan, '2A5').kind, 'first-option', 'home address: always the first choice');
+  // TNI 2026-10-28: the same standard for More about the business' Primary Business Address.
+  assert.equal(byQ(plan, '58').kind, 'first-option', 'primary business address: always the first choice');
+  assert.equal(byQ(plan, '58').standard, true);
   assert.equal(byQ(plan, '2CE3').value, true, 'no equipment (Add Vehicle and Rates: one field)');
   assert.equal(byQ(plan, '1FDD').value, 'Not selected', 'UMPD');
   // TNI 2026-10-20: Yes, a standard (the agent's from 2026-10-09); the lookup's registered names are
