@@ -567,7 +567,7 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.equal(byQ('3E98').value, 'Automatic payments from checking account');
   assert.equal(byQ('32CC').value, true);
   const actions = plan.filter((s) => s.kind === 'action');
-  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'addVehicle:0', 'addDriver:0', 'businessTypeSearch', 'vehicleTile:0', 'lookupVin:0', 'ntlStillAdded', 'openCargo', 'addCargoCommodity', 'doneCargo', 'recalculate', 'billPlan', 'recalculateAgain', 'print']);
+  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'verifyAddress', 'addVehicle:0', 'addDriver:0', 'businessTypeSearch', 'businessTypePopupSearch', 'vehicleTile:0', 'lookupVin:0', 'ntlStillAdded', 'openCargo', 'addCargoCommodity', 'doneCargo', 'recalculate', 'billPlan', 'recalculateAgain', 'print']);
   assert.deepEqual(actions.find((a) => a.action === 'addVehicle:0').unlessActions, ['lookupVin:0']);
   assert.equal(actions.find((a) => a.action === 'addVehicle:0').opener, '^add$');
   assert.ok(actions.find((a) => a.action === 'lookupVin:0').immediate);
@@ -815,10 +815,12 @@ test('"Excluded" in a license-number box marks the driver excluded and is left o
   assert.equal(amwinsLicense('12345678 EXCLUDED').value, '12345678 (Excluded)');
   assert.deepEqual([amwinsLicense('Excluded').value, !!amwinsLicense('Excluded').note], [null, true]);
   assert.equal(amwinsLicense('12345678').value, '12345678');
-  // The check item says what each carrier gets.
+  // The check item is short: what the box says, no carrier-by-carrier walkthrough (the maintainer,
+  // 2026-10-28; the carriers' answers above stay in their plans), but never that the quote handles an
+  // exclusion GEICO can't (PR #216 review): the owner's row, here, GEICO leaves out; the signed form.
   const said = (box) => one(box).warnings.find((w) => w.code === 'license.excluded').msg;
-  assert.match(said('12345678 EXCLUDED'), /Progressive's exclude question gets Yes; on AmWINS, which has no such question, their license number gets "\(Excluded\)" after it\./);
-  assert.match(said('Excluded'), /on AmWINS, which has no such question, type "\(Excluded\)" after the license number you enter\./);
+  assert.equal(said('12345678 EXCLUDED'), 'Jordan Avery Sample: license-number box "12345678 EXCLUDED" marks this driver excluded. GEICO\'s quote leaves them out, as the owner. An exclusion usually needs the insured\'s signed form.');
+  for (const box of ['12345678 EXCLUDED', 'Excluded']) assert.doesNotMatch(said(box), /Progressive|AmWINS|lists them as an excluded/, box);
 });
 
 // TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives;
@@ -830,20 +832,26 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
   const today = { today: new Date('2026-09-30') };
   // The sample intake's owner is its driver 1 (the same name), driver 2 someone else.
   const read = (extra) => normalizeIntake({ ...raw, ...extra }, today);
-  const item = (r, i = 0) => r.warnings.find((w) => w.code === 'drivers.owner-excluded' && w.path === `drivers[${i}].excluded`);
+  const items = (r) => r.warnings.filter((w) => w.code === 'drivers.owner-excluded');
+  const item = (r) => items(r)[0];
   const exclude = (r, drivers) => buildPlan(r.record, progressive, { drivers }).find((s) => s.q === '28C1').value;
   const amwinsLicense = (r, drivers) => buildPlan(r.record, amwins, { drivers }).find((s) => s.path === `drivers[${drivers}].licenseNumber`);
   const no = read({ owner_drives: 'No' });
   // The record keeps the intake as read: the row isn't marked, the box stays No.
   assert.deepEqual([no.record.applicant.ownerDrives, no.record.drivers[0].excluded, no.record.drivers[1].excluded], [false, null, null]);
-  // The Intake step says so, on the owner's row only, and what each carrier gets.
-  assert.equal(item(no)?.level, 'check');
-  assert.match(item(no).msg, /"Owner drives" is No, and the first driver is the owner.*excluded.*Progressive's exclude question gets Yes; on AmWINS, which has no such question, their license number gets "\(Excluded\)" after it\..*GEICO/);
-  // GEICO's quote leaves the owner's row out (TNI, 2026-10-26: answer to PR question, T1).
-  assert.match(item(no).msg, /GEICO's quote leaves the owner out: the fill doesn't add this driver/);
-  assert.doesNotMatch(item(no).msg, /filled with a warning/);
-  assert.equal(item(no, 1), undefined, 'another driver is never affected');
-  assert.match(item(no).msg, /To keep this driver on the quote, set Excluded driver to No\.$/);
+  // The Intake step asks "Does the owner drive?" on the Owner drives box itself, so the agent's
+  // answer sets that box (the maintainer, 2026-10-28): one item, two plain sentences, no carrier
+  // walkthrough. Before, it was on the owner's row's Excluded driver (`drivers[0].excluded`), where
+  // the agent's No meant "not excluded" while the box stayed No (2026-10-28 runs).
+  assert.deepEqual(items(no).map((w) => [w.level, w.path]), [['check', 'applicant.ownerDrives']]);
+  assert.equal(item(no).msg, 'Does the owner drive? The intake says No: No quotes the owner (Jordan Avery Sample, the first driver) as an excluded driver, Yes as a driver.');
+  assert.ok(!no.warnings.some((w) => w.path === 'drivers[0].excluded' || w.path === 'drivers[1].excluded'), 'nothing on a row\'s Excluded driver');
+  // The agent's answer on that box: Yes, the owner drives and isn't excluded on every carrier; the
+  // No stands as excluded.
+  const answered = structuredClone(no);
+  answered.record.applicant.ownerDrives = true;
+  assert.deepEqual([exclude(answered, 0), exclude(answered, 1), amwinsLicense(answered, 0).value], [false, false, 'ILS12345678901']);
+  assert.equal(buildPlan(answered.record, progressive, {}).find((s) => s.q === '29F').value, true);
   // The owner's name on two rows (a Sr and a Jr), in either order: the No decides, and only the first
   // row is excluded (V4; before, T2's row with exactly the owner's full name, and the agent's for a Sr
   // and a Jr neither exactly it).
@@ -851,8 +859,7 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
     { drv_last_1: 'Sample Jr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Sr' }]) {
     const family = read({ owner_drives: 'No', ...extra });
     const why = JSON.stringify(extra);
-    assert.ok(item(family, 0), why);
-    assert.equal(item(family, 1), undefined, `${why}: the second row isn't the owner`);
+    assert.equal(items(family).length, 1, why);
     assert.ok(!family.warnings.some((w) => w.code === 'drivers.owner-unclear'), `${why}: no unclear rows any more`);
     assert.deepEqual([exclude(family, 0), exclude(family, 1)], [true, false], why);
     assert.deepEqual([amwinsLicense(family, 0).value, amwinsLicense(family, 1).value], ['ILS12345678901 (Excluded)', 'E98765432101'], why);
@@ -871,21 +878,19 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
   const noNumber = read({ owner_drives: 'No', drv_lic_1: '' });
   assert.equal(amwinsLicense(noNumber, 0).value, null);
   assert.match(amwinsLicense(noNumber, 0).note, /owner doesn't drive.*type their license number yourself, then "\(Excluded\)" after it/);
-  assert.match(item(noNumber).msg, /type "\(Excluded\)" after the license number you enter/);
-  // A row the intake marks excluded keeps its own item (license.excluded), not this one.
+  assert.equal(item(noNumber).msg, 'Does the owner drive? The intake says No: No quotes the owner (Jordan Avery Sample, the first driver) as an excluded driver, Yes as a driver.');
+  // A row the intake marks excluded keeps its own item (license.excluded), not this one, with the
+  // same plain sentence whatever the box says (before, its GEICO sentence changed for the owner's row).
   const marked = read({ owner_drives: 'No', drv_lic_1: 'IL - S12345678901 EXCLUDED' });
   assert.deepEqual([item(marked), exclude(marked, 0)], [undefined, true]);
-  // ... which says GEICO's quote leaves the owner out (T1), also over a blank box or a Yes (TNI,
-  // 2026-10-27: answer to PR question V3; before, "filled with a warning"); another driver's mark
-  // keeps GEICO's warning.
   const licenseItem = (r, i) => r.warnings.find((w) => w.code === 'license.excluded' && w.path === `drivers[${i}].excluded`).msg;
   for (const box of ['No', '', 'Yes']) {
     const r = read({ owner_drives: box, drv_lic_1: 'IL - S12345678901 EXCLUDED' });
-    assert.match(licenseItem(r, 0), /GEICO's quote leaves the owner out: the fill doesn't add this driver/, box);
-    assert.doesNotMatch(licenseItem(r, 0), /filled with a warning/, box);
+    assert.equal(licenseItem(r, 0), `Jordan Avery Sample: license-number box "IL - S12345678901 EXCLUDED" marks this driver excluded. GEICO's quote leaves them out, as the owner. An exclusion usually needs the insured's signed form.`, box);
   }
-  assert.match(licenseItem(read({ owner_drives: 'No', drv_lic_2: 'E98765432101 EXCLUDED' }), 1), /GEICO asks nothing about it: the driver's answers are filled with a warning/);
-  assert.match(licenseItem(read({ owner_drives: '', drv_lic_2: 'E98765432101 EXCLUDED' }), 1), /filled with a warning/);
+  // Another driver: GEICO has no exclusion question, so the item never says the quote handles it.
+  const otherDriver = licenseItem(read({ owner_drives: 'No', drv_lic_2: 'E98765432101 EXCLUDED' }), 1);
+  assert.match(otherDriver, /: license-number box "E98765432101 EXCLUDED" marks this driver excluded\. GEICO has no exclusion question, so exclude them there yourself\. An exclusion usually needs the insured's signed form\.$/);
   // Counterexamples: a blank box or the intake's Yes leaves the owner's unmarked row a listed driver.
   for (const box of ['', 'Yes']) {
     const r = read({ owner_drives: box });
@@ -894,7 +899,7 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
   // No with an owner no driver row's name matches: the first row is the owner's all the same (V4;
   // before, nobody was excluded), with the name check (the V4 test below).
   const other = read({ owner_drives: 'No', owner_name_1: 'Someone Else' });
-  assert.deepEqual([!!item(other), item(other, 1), exclude(other, 0), exclude(other, 1)], [true, undefined, true, false]);
+  assert.deepEqual([items(other).length, exclude(other, 0), exclude(other, 1)], [1, true, false]);
 });
 
 // TNI, 2026-10-27 (answer to PR question V4): the owner is always the first driver on the intake's
@@ -905,7 +910,7 @@ test('the owner is the first driver (V4): a first row with another name is taken
   const today = { today: new Date('2026-09-30') };
   const read = (extra) => normalizeIntake({ ...raw, ...extra }, today);
   const item = (r) => r.warnings.find((w) => w.code === 'drivers.owner-name-differs');
-  const excludedItem = (r, i) => r.warnings.find((w) => w.code === 'drivers.owner-excluded' && w.path === `drivers[${i}].excluded`);
+  const excludedItem = (r) => r.warnings.find((w) => w.code === 'drivers.owner-excluded' && w.path === 'applicant.ownerDrives');
   const exclude = (r, drivers) => buildPlan(r.record, progressive, { drivers }).find((s) => s.q === '28C1').value;
   // The sample intake: the owner box's name is driver 1's.
   assert.equal(item(read({})), undefined);
@@ -918,7 +923,9 @@ test('the owner is the first driver (V4): a first row with another name is taken
   // The owner's name on row 2 only: row 1 is still the owner (the check), row 2 an ordinary driver.
   const second = read({ owner_drives: 'No', drv_first_1: 'Riley', drv_last_1: 'Example', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample' });
   assert.ok(item(second));
-  assert.deepEqual([!!excludedItem(second, 0), !!excludedItem(second, 1), exclude(second, 0), exclude(second, 1)], [true, false, true, false]);
+  // The owner-drives item names the first row as the owner.
+  assert.match(excludedItem(second).msg, /the owner \(Riley Example, the first driver\)/);
+  assert.deepEqual([exclude(second, 0), exclude(second, 1)], [true, false]);
   // A Sr and a Jr in either order, two rows with the exact name, a one-word owner box: no check.
   for (const extra of [{ drv_last_1: 'Sample Sr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Jr' },
     { drv_last_1: 'Sample Jr', drv_first_2: 'Jordan Avery', drv_last_2: 'Sample Sr' },

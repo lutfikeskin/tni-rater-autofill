@@ -640,6 +640,10 @@
     // Rows showing a witness (a VIN) no intake unit has: a vehicle on the quote the intake doesn't
     // list. Never answered or changed; each row is a check for the agent (pairs.extraRows).
     const extraRows = new Map();
+    // Rows of a per-unit question found by a selector that name their unit: the rule each is for.
+    // One no step took is a check naming the row for the agent, never an unfamiliar question
+    // (pairs.unmatchedRows).
+    const namedRows = new Map();
     const page = currentPage();
     // The step on screen, read only for a plan kept to steps ('' when no step is named: then no
     // stepped rule is live, and GEICO's fields stay the agent's).
@@ -732,6 +736,14 @@
               const w = rowWitnessOf(x, s.witness);
               if (w?.value && !wanted.has(w.value) && !extraRows.has(w.el)) extraRows.set(w.el, s.witness);
             }
+          } else if (s.activeVehicle != null && all.some((x) => x.vehicle)) {
+            // A per-unit question's rows that name their unit (GEICO's coverage rows, "2020 RAM 3500
+            // …", a trailer among the vehicles): the step's unit's row is the one naming it, never
+            // the row at the unit's position, which a trailer listed among the vehicles shifts
+            // (GEICO live run, 2026-10-28). A row no unit names, or two alike, is the agent's (namedRows).
+            c = s.vehicleHint ? namedRow(all, s, steps) : null;
+            if (c && used.has(c)) c = null;
+            for (const x of all) if (x.vehicle && !namedRows.has(x)) namedRows.set(x, s);
           } else c = matching[0] ?? null;
           // An ignored step for every match (`every`: the gateway's other product boxes, however many).
           if (s.ignore && s.every) for (const x of matching.slice(1)) take(s, x, how);
@@ -776,6 +788,7 @@
     }
     pairs.unwitnessed = unwitnessed;
     pairs.witnessed = witnessed;
+    pairs.unmatchedRows = [...namedRows].filter(([x]) => !used.has(x)).map(([control, step]) => ({ control, step }));
     pairs.held = held;
     pairs.units = units;
     // Numbered by their place among the page's rows (by their witness controls), never by value.
@@ -921,6 +934,20 @@
     return best >= 2 && top.length === 1 ? top[0] : null;
   }
 
+  const unmatchedRowNote = (step) => `${step.name}: this row's vehicle matches none of the intake's vehicles and trailers (or two of them alike), so it wasn't filled. Answer it yourself.`;
+
+  // The row of a per-unit step among rows naming their unit: the one naming the step's unit best
+  // (vehicleRow), unless another unit asked the same question names it as well or better (two
+  // units alike, or the step's own unit missing from the rows): then no unit's, and the agent's.
+  function namedRow(rows, step, steps) {
+    const row = vehicleRow(rows, step.vehicleHint);
+    if (!row) return null;
+    const score = (hint) => hint.filter((h) => ` ${row.vehicle ?? ''} `.includes(` ${h} `)).length;
+    const mine = score(step.vehicleHint);
+    const rivals = steps.filter((t) => t !== step && t.selector === step.selector && t.activeVehicle != null && t.vehicleHint);
+    return rivals.some((t) => score(t.vehicleHint) >= mine) ? null : row;
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Choosing dropdown / radio options
 
@@ -999,8 +1026,24 @@
     }
     if (step.kind === 'selected-option') return usable.find((o) => /^selected\b/i.test(o.text)) ?? null;
     // Always the page's first choice (e.g. the first offered home address).
-    if (step.kind === 'first-option') return usable[0] ?? null;
+    // Unless that first choice is no answer (`firstNot`): then none, and the question is the agent's.
+    if (step.kind === 'first-option') return step.firstNot && usable[0] && new RegExp(step.firstNot, 'i').test(usable[0].text) ? null : usable[0] ?? null;
     const cands = candidates(step);
+    // `matchStart`: the answer, else each alias in turn, as an option reading so or beginning so
+    // (Progressive's business type lists: "General Freight Trucking Haul general goods…"); never one
+    // only mentioning it further on ("Auto Hauler (For Hire Trucking)" is not For Hire Trucking).
+    if (step.matchStart) {
+      for (const c of cands.filter(Boolean)) {
+        const exact = usable.find((o) => squash(o.text) === c || squash(o.value) === c);
+        const starts = usable.filter((o) => squash(o.text).startsWith(c));
+        if (exact) return exact;
+        if (starts.length === 1) return starts[0];
+        // Several begin with it: the answer is listed, but which one is the agent's; never the
+        // next alias in its place (Claude review of PR #220).
+        if (starts.length > 1) return null;
+      }
+      return null;
+    }
     for (const c of cands) {
       const hit = usable.find((o) => squash(o.text) === c || squash(o.value) === c);
       if (hit) return hit;
@@ -1452,6 +1495,18 @@
     }
     if (cmp?.readOnly) return { ok: false, reason: 'the field is read-only — set it by hand' };
     if (c.kind === 'select') {
+      // `search`: the word an agent types to narrow the list (Progressive's LA business description,
+      // "Trucking"); the answer is picked among its results only, none of them is a miss.
+      const searched = step.search ? await queryCombo(cmp, step.search) : null;
+      if (searched) {
+        const hit = matchOption(searched, step);
+        if (!hit) return noMatch(step, searched);
+        extFocusAndBlur(cmp, el, () => {
+          cmp.setValue(hit.value);
+          cmp.fireEvent('select', cmp, hit.rec);
+        });
+        return { ok: true, shown: cmp.getRawValue?.() || hit.text };
+      }
       let opt = matchOption(c.options, step);
       if (!opt && step.kind !== 'bool') {
         for (const q of [String(step.value), String(step.value).split(/\s+/).slice(0, 2).join(' ')]) {
@@ -1644,6 +1699,17 @@
   }
   const COVERED = 'something on the page is open over Continue: close it, then fill again';
   const COVERED_HELPER = 'something on the page is open over it';
+  // Coverage sections a helper's Done closes (Progressive's Rates), by its `verify`: `tag`, the
+  // rule key marking the section's questions ('section') and the row's limit ('limit'); `anyLimit`,
+  // a row with any limit is kept when the intake gives none; `words`, the row's text that may show
+  // the intake's amounts instead of its field. A coverage is added here and in its rules' tag
+  // (sectionClosedOn).
+  const CLOSED_SECTIONS = {
+    cargoClosed: { tag: 'cargo', words: /motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i },
+    glClosed: { tag: 'gl', anyLimit: true },
+    // Trailer interchange (2026-10-28): as general liability's.
+    interchangeClosed: { tag: 'interchange', anyLimit: true },
+  };
 
   // A button the fill presses (a helper, its menu, Continue). GEICO's submit buttons set their own
   // part of the request after an await, which its React applies in time only while an event is
@@ -1891,6 +1957,114 @@
     return results;
   }
 
+  // A page that draws its units' rows a few at a time behind group buttons (fill `pager`, the
+  // carrier's `unitPager`: Progressive's Rates, "1-3" and "4-5" for four vehicles and a trailer, FL
+  // live run 2026-10-28): the units outside the group shown aren't in the page at all. The fill
+  // notes each round's rows (`noteRound`) and, once nothing is left to answer in the group shown,
+  // asks `next()` for a group to press, before any helper: while a unit's row hasn't been read, the
+  // next group it hasn't shown (never one it showed); once every unit was read or every group
+  // shown, the group it began on again. `missing()`: the items left for the agent at the end, a
+  // unit no group showed a row for, never taken for done. Off on other pages (`on`).
+  function makePager(plan, pager, startPage) {
+    const on = !!pager?.text && (pager.pages ?? []).includes(startPage);
+    const re = on ? new RegExp(pager.text, 'i') : null;
+    const unitId = (s) => (s.unit ? `${s.unit.list}:${s.unit.index}` : null);
+    const units = new Map(on ? plan.filter((s) => s.activeVehicle != null && s.vehicleHint && s.unit && s.pages?.includes(startPage)).map((s) => [unitId(s), s.unit]) : []);
+    const seen = new Set();
+    let rowsShown = false;
+    // The groups each field key was read in, and the unit rows left for an agent's edit by step id.
+    // A row's key is its place in its group, so the rows of different groups share keys: an edit
+    // on vehicle 1's row also keeps vehicle 4's (PR #215 review). Such a row whose key two groups
+    // showed may be either's edit: it is named for the agent rather than taken for theirs.
+    const keyGroups = new Map();
+    const skippedRows = new Map();
+    const sharedKey = (key) => (keyGroups.get(key)?.size ?? 0) > 1;
+    // Keys of questions read while another group was shown: still this page's at the end.
+    const elsewhere = new Set();
+    // The group buttons on screen (the innermost match), each with whether it is the group shown:
+    // disabled, out of the keyboard's reach (tabindex -1) or inside the carrier's `current`.
+    const buttons = () => {
+      if (!on) return [];
+      const hits = deepQueryAll(document, 'a, button, [role=button], .x-btn').filter((el) => el.getClientRects().length && re.test(buttonText(el)));
+      return hits.filter((el) => !hits.some((x) => x !== el && el.contains(x))).map((el) => ({
+        el, text: oneLine(buttonText(el)),
+        current: !!el.disabled || el.getAttribute('aria-disabled') === 'true' || el.getAttribute('tabindex') === '-1' || (!!pager.current && !!el.closest(pager.current)),
+      }));
+    };
+    const shownGroup = () => buttons().find((b) => b.current)?.text ?? null;
+    const startGroup = shownGroup();
+    const shown = new Set(startGroup ? [startGroup] : []);
+    // The group buttons pressed, in order (the report's `paged`).
+    const paged = [];
+    let cameBack = false;
+    const unitLabel = (unit) => `${unit.list === 'trailers' ? 'Trailer' : 'Vehicle'} ${unit.index + 1}`;
+    return {
+      on,
+      paged,
+      // A round's questions and the pairs `assign` made of them; `skipped`: whether the agent's
+      // edit keeps a field. A unit is read once the fill works one of its rows. A row the agent's
+      // edit keeps is set aside: its key may be another group's row's (missing).
+      noteRound(controls, pairs, skipped) {
+        if (!on) return;
+        const group = shownGroup() ?? '';
+        for (const c of controls) {
+          const key = fieldKey(c);
+          if (!keyGroups.has(key)) keyGroups.set(key, new Set());
+          keyGroups.get(key).add(group);
+        }
+        for (const p of pairs) {
+          const id = unitId(p.step);
+          if (!units.has(id)) continue;
+          rowsShown = true;
+          if (skipped(p.control)) skippedRows.set(p.step.id, { step: p.step, label: p.control.label, key: fieldKey(p.control), unit: id });
+          else seen.add(id);
+        }
+        if (startGroup && group !== startGroup) for (const c of controls) elsewhere.add(fieldKey(c));
+      },
+      // The group button to press now ({ el, text }), counted as pressed, or null.
+      next() {
+        if (!on || !rowsShown) return null;
+        const all = buttons();
+        if (all.length < 2) return null;
+        let turn = null;
+        if ([...units.keys()].some((u) => !seen.has(u))) turn = all.find((b) => !b.current && !shown.has(b.text)) ?? null;
+        if (!turn && !cameBack && startGroup && paged.length) {
+          cameBack = true;
+          const back = all.find((b) => b.text === startGroup);
+          turn = back && !back.current ? back : null;
+        }
+        if (turn) { shown.add(turn.text); paged.push(turn.text); }
+        return turn;
+      },
+      // The pressed group is the one shown (always, where the page doesn't say which is).
+      shows: (text) => !startGroup || shownGroup() === text,
+      // A question read while another group was shown.
+      readElsewhere: (key) => elsewhere.has(key),
+      // For the agent: each row an edit kept whose key two groups showed, by its unit, and each
+      // unit not read (a row the fill worked, or one only the agent's edit on that very row kept).
+      missing() {
+        if (!on || !rowsShown) return [];
+        const out = [];
+        const named = new Set();
+        for (const row of skippedRows.values()) {
+          if (!sharedKey(row.key)) continue;
+          const unit = units.get(row.unit);
+          named.add(row.unit);
+          out.push({ stepId: row.step.id, label: row.label, path: row.step.path, name: `${row.step.name}: ${unitLabel(unit)}`, unit: unitLabel(unit), key: null, q: null, controlKind: null,
+            note: `Not answered for ${unitLabel(unit)}${unit.name ? ` (${unit.name})` : ''}: you changed this coverage on a row of one group of vehicles, and each group's rows share their field names, so the fill can't tell whose row it was and left both. Check it, or answer it yourself.` });
+        }
+        for (const [id, unit] of units) {
+          if (seen.has(id) || named.has(id) || [...skippedRows.values()].some((r) => r.unit === id && !sharedKey(r.key))) continue;
+          const label = unitLabel(unit);
+          const where = paged.length || buttons().length > 1 ? 'in any group of vehicles on this page' : 'on this page';
+          out.push({ label, path: `${unit.list}[${unit.index}]`, name: label, unit: label, key: null, q: null, controlKind: null,
+            note: `No row ${where} reads as ${label}${unit.name ? ` (${unit.name})` : ''}: none of its coverages was answered. Check it is on the quote, then answer its coverages yourself.` });
+        }
+        return out;
+      },
+    };
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Public API
 
@@ -1956,7 +2130,7 @@
    * @param {FillOptions} [options]
    * @returns {Promise<FillReport>}
    */
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, components = null, formUnit = null, givenBefore = {} } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, components = null, formUnit = null, givenBefore = {}, pager = null } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -2022,6 +2196,18 @@
     // Options picked in place of one never offered (`orMost`), by step id: what the report says.
     const substituted = new Map();
     const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
+    // Answers the page didn't keep: each is given again only once the page, and its own requests,
+    // have been quiet for RESET_QUIET_MS (GEICO live run, 2026-10-28: on a slow page the Sprinter's
+    // comprehensive was reset while GEICO still answered the collision before it, and the tries at
+    // once were reset too), by step id until given or left; `keepSettled`, those waited for since.
+    // One still to give holds `whenClear` helpers (leftForAgent).
+    const keepWait = new Set();
+    const keepSettled = new Set();
+    // `needs` (a choice the page offers only once another on its unit holds: GEICO's collision,
+    // rental and road service behind comprehensive): a prerequisite the page didn't keep, by step id,
+    // with its unit's one item (`unitHeld`), and the steps held behind one (`heldFor`, by step id).
+    const unitHeld = new Map();
+    const heldFor = new Map();
     // Steps waiting for the page (`waitFor`): since when, by step id.
     const waitingSince = new Map();
     const mayWait = (id) => {
@@ -2113,6 +2299,45 @@
         return !pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path) ? [] : [{ previous, pair }];
       });
     };
+    // `needs`: one unit's steps are those naming the same unit (a per-vehicle row's year, make and
+    // model; a page with one vehicle has no hint, and every step there is its).
+    const sameUnit = (a, b) => (a.scope ?? null) === (b.scope ?? null) && (a.vehicleHint ?? []).join(' ') === (b.vehicleHint ?? []).join(' ');
+    const needsOf = (step) => (step.needs?.length ? plan.filter((s) => s.id !== step.id && s.q != null && step.needs.includes(s.q) && sameUnit(s, step)) : []);
+    // The answers on a step's unit still to give that need it: on the page, not the agent's, not
+    // given or left yet, and not already showing their answer.
+    const dependentsOf = (step, pairsNow) => (step.q == null ? [] : pairsNow.filter(({ step: s, control }) => s.id !== step.id && s.needs?.includes(step.q) && sameUnit(s, step)
+      && s.value != null && !s.note && !s.ignore && !handled.has(s.id) && !skippedField(control) && !agreesWith(s, control)));
+    // A coverage's name without the rule's own words in brackets ("Rental reimbursement (TNI: …)").
+    const coverageName = (s) => { const n = String(s.name ?? '').replace(/\s*\(.*\)\s*$/, '').trim(); return n.charAt(0).toLowerCase() + n.slice(1); };
+    const wordList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+    const unitHeldNote = ({ step, deps, tries, reason }) => {
+      const pre = coverageName(step);
+      const why = /did not keep/.test(reason ?? '') ? `didn't stick on the page (tried ${tries} time${tries === 1 ? '' : 's'}, each once the page was quiet)` : `couldn't be set (${reason})`;
+      return `${pre.charAt(0).toUpperCase()}${pre.slice(1)} ${why}. This vehicle's ${wordList([...new Set(deps.map(coverageName))])} depend${deps.length === 1 ? 's' : ''} on it, so the fill left ${deps.length === 1 ? 'it' : 'them'} too. Set its ${pre} yourself, then fill again.`;
+    };
+    const holdDependent = (s, root) => {
+      heldFor.set(s.id, root.step.id);
+      if (!root.deps.some((d) => d.id === s.id)) {
+        root.deps.push(s);
+        root.item.note = unitHeldNote(root);
+        handled.set(root.step.id, { status: 'needs', note: root.item.note });
+      }
+      handled.set(s.id, { status: 'needs', note: `Waits for ${coverageName(root.step)} on this vehicle, which the page didn't keep: see that item.` });
+    };
+    // A prerequisite that didn't take, with answers on its unit that need it still to give: one
+    // needs-you item for the unit (which holds `whenClear` helpers: Recalculate and after), and its
+    // dependents held behind it, none a failure of its own. False when nothing waits on it.
+    const holdUnit = (step, c, item, reason, pairsNow) => {
+      const deps = dependentsOf(step, pairsNow).map((p) => p.step);
+      if (!deps.length) return false;
+      const root = { item: { ...item, ...describe(c) }, step, deps: [], tries: (retries.get(step.id) ?? 0) + 1, reason };
+      unitHeld.set(step.id, root);
+      for (const d of deps) holdDependent(d, root);
+      root.item.note = unitHeldNote(root);
+      report.noData.push(root.item);
+      handled.set(step.id, { status: 'needs', note: root.item.note });
+      return true;
+    };
     // `phase`: what the fill is doing between answers, for the panel's live list and dock (progress):
     // null while it answers, else { name, what }: 'reading' the page as it begins, 'waiting' for the
     // page after an answer, a 'helper' it clicked (`what`: the button), the 'premium' it rates, or
@@ -2199,6 +2424,8 @@
     // GEICO's Add Driver while the panel's driver is the owner (whom GEICO already lists) is all
     // notes: bound to the owner, it would be held as the owner's once the agent picks its driver.
     const answeredLists = new Set(plan.filter((s) => s.whenShown?.unit && s.value != null && s.value !== '').map((s) => s.whenShown.unit));
+    // A page that draws its units' rows a few at a time behind group buttons (`pager`, makePager).
+    const unitGroups = makePager(plan, pager, startPage);
 
     for (let round = 0; round < maxRounds; round++) {
       report.rounds = round + 1;
@@ -2239,6 +2466,7 @@
       const allPairs = assign(controls, plan);
       // The agent's edits made where the kit is now, before anything asks whether a field is theirs.
       if (skipBy) skipWhere(allPairs.units);
+      unitGroups.noteRound(controls, allPairs, skippedField);
       // Review items are flagged in yellow and the rest of the page still fills. Only a stuck
       // page or an agent edit stops the fill.
       const mapped = new Set(allPairs.map((p) => p.control));
@@ -2263,10 +2491,19 @@
       for (const p of allPairs.filter((x) => x.reworded)) flag(report.reworded, { label: p.control.label, key: fieldKey(p.control), name: p.step.name, field: p.step.field });
       const renamed = new Map(allPairs.renamed.map((r) => [r.control, r.step]));
       for (const [c, step] of renamed) flag(report.renamed, { label: c.label, key: fieldKey(c), name: step.name, field: step.field, now: c.ref ?? null });
+      // A per-unit question's row naming a unit no step's unit matched (none of the intake's
+      // vehicles or trailers, or two alike): a known question left to the agent, named by its row.
+      const unmatched = new Map(allPairs.unmatchedRows.map((r) => [r.control, r.step]));
+      for (const [c, step] of unmatched) {
+        if (skippedField(c)) continue;
+        const note = unmatchedRowNote(step);
+        flag(report.checks, { label: c.label, path: null, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, note, ...describe(c) });
+        mark(c, 'needs', note);
+      }
       for (const c of controls) {
         // A row a witness step chooses among is a known question (its unit is named instead), and
-        // so is a held unit form's (the form is named instead).
-        if (mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c) || allPairs.held.has(c)) continue;
+        // so is a held unit form's (the form is named instead), and a unit's row no unit matched.
+        if (mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c) || allPairs.held.has(c) || unmatched.has(c)) continue;
         flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, ref: c.ref ?? null, controlKind: c.kind, required: c.required, ...describe(c) });
         mark(c, 'needs', renamed.has(c) ? `Looks like "${renamed.get(c).name}", but the carrier renamed this field: left for you.` : 'Unfamiliar question — left for you.');
       }
@@ -2490,7 +2727,32 @@
         // question asked once a quote: a vehicle's, driver's or trailer's form reuses its keys for the
         // next unit, where the answer is a first one. A page that doesn't go quiet gets it anyway, as
         // before.
-        if (isChoice && !resetWaited && !agreesWith(step, c) && (refill.has(step.id) || (!step.scope && filledKeys.has(fieldKey(c))))) {
+        // `needs`: an answer the page offers only once another on its unit holds. While that one is
+        // still to be given again (the page didn't keep it), this waits for it; once it didn't take,
+        // this is held behind its unit's one item. A prerequisite that is the agent's (edited, or its
+        // item marked done) without its answer leaves this as the page has it when the list doesn't
+        // offer the answer: their call, with no item of its own.
+        const prereqs = needsOf(step);
+        if (prereqs.length && !agreesWith(step, c)) {
+          const root = prereqs.map((p) => unitHeld.get(p.id) ?? unitHeld.get(heldFor.get(p.id))).find(Boolean);
+          if (root) { holdDependent(step, root); continue; }
+          if (prereqs.some((p) => !handled.has(p.id) && refill.has(p.id) && allPairs.some((x) => x.step.id === p.id && !skippedField(x.control)))) { retry = true; continue; }
+          const theirs = prereqs.find((p) => allPairs.some((x) => x.step.id === p.id && skippedField(x.control) && !agreesWith(x.step, x.control)));
+          if (theirs && isChoice && !matchOption(optionsOf(c), step)) {
+            handled.set(step.id, { status: 'needs', note: `Left as it is: it needs ${coverageName(theirs)} on this vehicle, which you have taken over.` });
+            continue;
+          }
+        }
+        // An answer the page didn't keep is given again once the page and its own requests have been
+        // quiet (`keepWait`), each time, and read again first.
+        if (keepWait.has(step.id) && !keepSettled.has(step.id) && !agreesWith(step, c)) {
+          keepSettled.add(step.id);
+          phase('waiting');
+          await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000, requests: () => !report.halted });
+          retry = true;
+          break;
+        }
+        if (isChoice && !resetWaited && !keepWait.has(step.id) && !agreesWith(step, c) && (refill.has(step.id) || (!step.scope && filledKeys.has(fieldKey(c))))) {
           resetWaited = true;
           phase('waiting');
           await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000 });
@@ -2535,8 +2797,8 @@
         if (result.ok) {
           if (currentPage() === 'CoveragesRates') {
             // The bill plan (payment method) stays chosen; the premium needs recalculating.
-            // A cargo or general liability answer re-arms its Done with this coverage too.
-            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : [])]) {
+            // A cargo, general liability or trailer interchange answer re-arms its Done with this coverage too.
+            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : []), ...(step.interchange === 'section' ? ['doneInterchange'] : [])]) {
               clicked.delete(id);
               report.actions = report.actions.filter((x) => x.id !== id);
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
@@ -2556,6 +2818,7 @@
           report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}) });
           quietDue = true;
           unoffered.delete(step.id);
+          keepWait.delete(step.id);
           // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
           handled.set(step.id, step.standard
             ? { status: 'standard', note: instead ?? `TNI standard answer, not from the intake: ${step.name}` }
@@ -2578,8 +2841,16 @@
           // Plans). Tried again each round; never offered by the fill's end, it is the agent's.
           unoffered.set(step.id, { item: { ...item, ...describe(c) }, control: c, step, options: result.options ?? [] });
         } else if (/did not keep/.test(result.reason ?? '') && !report.halted && retryOnce(step.id)) {
-          // Often a later redraw resets it (a coverage list reloading): try again next round.
+          // Often a later redraw resets it (a coverage list reloading): a choice is tried again once
+          // the page has settled (`keepWait`), a typed answer next round.
           refill.add(step.id);
+          if (isChoice) keepWait.add(step.id);
+          keepSettled.delete(step.id);
+          retry = true;
+          if (serverBacked) break;
+        } else if (holdUnit(step, c, item, result.reason, assign(collectControls(), plan))) {
+          // A prerequisite that didn't take, with answers on its unit waiting on it (`needs`): one
+          // item for the unit, not a failure for each.
           retry = true;
           if (serverBacked) break;
         } else if (step.keepUnlisted && /^no option matches/.test(result.reason ?? '') && hasValue(c) && !/^other\b/i.test(oneLine(selectedText(c) ?? ''))) {
@@ -2611,6 +2882,21 @@
       // Nothing left to type or pick: click the next button whose turn it is. Not on a page the agent
       // moved to while this round answered (its answer's field gone with the old page).
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+      // Another group of units (`pager`), before any helper: Recalculate or the bill plan must not
+      // go before every unit's rows were answered.
+      const turn = !changed && !retry && !waited && unitGroups.on && window === window.top && !agentPressed ? unitGroups.next() : null;
+      if (turn) {
+        report.paged = unitGroups.paged;
+        phase('helper', turn.text);
+        pressButton(turn.el);
+        progressed = true;
+        if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
+        // Its rows drawn: the pressed group shown (where the page says which is), 10 s at most.
+        for (const until = Date.now() + 10000; !unitGroups.shows(turn.text) && Date.now() < until && !report.halted;) await sleep(200);
+        if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
+        if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+        continue;
+      }
       let helperClicked = false;
       if (!changed && window === window.top && !agentPressed) {
         loadDue = null;
@@ -2759,23 +3045,9 @@
       // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
       // screen but disabled is not gone.
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
-      if (a.verify === 'cargoClosed') {
-        const controls = collectControls();
-        // The cargo section's questions still on screen (found by the rules for them).
-        const expanded = assign(controls, plan).some(({ step }) => step.cargo === 'section');
-        const cargoSteps = plan.filter((s) => s.cargo === 'limit' && s.value != null);
-        const retained = assign(controls, cargoSteps).some(({ step, control }) => agreesWith(step, control));
-        const summary = (document.body.innerText ?? '').match(/motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i)?.[0] ?? '';
-        const amounts = moneyTokens(summary);
-        const summaryAgrees = cargoSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
-        accepted = !expanded && (retained || summaryAgrees);
-      }
-      // General liability's Done: its section's questions are gone and the row keeps the limit.
-      if (a.verify === 'glClosed') {
-        const pairs = assign(collectControls(), plan);
-        accepted = !pairs.some(({ step }) => step.gl === 'section')
-          && pairs.some(({ step, control }) => step.gl === 'limit' && hasValue(control) && (step.value == null || agreesWith(step, control)));
-      }
+      // A coverage section's Done (cargo's, general liability's, trailer interchange's): its questions are gone and the
+      // row keeps the limit (sectionClosedOn).
+      if (CLOSED_SECTIONS[a.verify]) accepted = sectionClosedOn(collectControls(), CLOSED_SECTIONS[a.verify]);
       // `revealed`: the click showed its result: a question appeared, or an answer changed, since
       // the snapshot taken as the button was clicked (a lookup's decoded values, the rows an
       // import redraws, the registered names a USDOT check offers). A redraw of the same
@@ -3058,6 +3330,28 @@
         && actionHere(a) && !settledItem(a);
     }
 
+    // A coverage section added and closed (CLOSED_SECTIONS): none of its questions on screen (found
+    // by the rules tagged for it), and its row keeps the limit.
+    // Checking the fill's own Done: the intake's limit (with `anyLimit`, any limit when the intake
+    // has none), or the row's `words` showing the intake's amounts.
+    // `found` (a section the fill finds closed, by the agent or an earlier fill): the intake's limit
+    // or one the agent set themselves, not one this fill put in (a limit chosen in the row adds the
+    // coverage, whose section Progressive hasn't drawn yet), and never by the row's words.
+    function sectionClosedOn(controls, section, { found = false } = {}) {
+      const { tag } = section;
+      if (assign(controls, plan).some(({ step }) => step[tag] === 'section')) return false;
+      // The row's limit steps, assigned among themselves (cargo's row and section read the same).
+      const limitSteps = plan.filter((s) => s[tag] === 'limit' && (s.value != null || (section.anyLimit && !found)));
+      const kept = ({ step, control }) => (found
+        ? !report.filled.some((x) => x.key === fieldKey(control))
+          && (agreesWith(step, control) || (skippedField(control) && hasValue(control)))
+        : (!section.anyLimit || hasValue(control)) && (step.value == null || agreesWith(step, control)));
+      if (assign(controls, limitSteps).some(kept)) return true;
+      if (found || !section.words) return false;
+      const amounts = moneyTokens((document.body.innerText ?? '').match(section.words)?.[0] ?? '');
+      return limitSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
+    }
+
     // Its button back on the page (`resolvedBy`: the Add NTL link, NTL removed), or a page the agent
     // has been to since (`settledByPages`).
     function settledItem(a) {
@@ -3076,6 +3370,8 @@
     // unfamiliar (only those the panel lists, so the agent can answer or mark each one done).
     function leftForAgent(controls) {
       return report.noData.length + report.failed.length + report.checks.length + report.leftRequired.length
+        // An answer the page didn't keep, still to give again (`keepWait`): not done yet.
+        + [...keepWait].filter((id) => !handled.has(id)).length
         + report.kept.filter((x) => x.differs).length
         + controls.filter((c) => !hasValue(c) && !skippedField(c) && report.unknown.some((x) => x.key === fieldKey(c))).length;
     }
@@ -3112,6 +3408,17 @@
           continue;
         }
         if (a.unless.some(has) || (a.unlessActions ?? []).some((id) => clicked.has(id))) { clicked.add(a.action); continue; }
+        // A coverage section already added and closed on the page, by the agent or an earlier fill:
+        // its Done is done, unclicked, so what follows it runs (general liability's "+" after cargo:
+        // the maintainer, 2026-10-28, after an FL run where the agent closed cargo and GL was never
+        // added). Only as this fill found the page (after a click of its own, a "+", a section still
+        // being drawn isn't closed), and with no Done with this coverage showing (a section is open).
+        if (CLOSED_SECTIONS[a.verify] && !report.actions.some((x) => !x.alreadyShown) && !findButton(a)
+          && sectionClosedOn(controls, CLOSED_SECTIONS[a.verify], { found: true })) {
+          clicked.add(a.action);
+          report.actions.push({ id: a.action, text: 'closed on the page', alreadyShown: true });
+          continue;
+        }
         // Recalculate only when the rates are out of date; otherwise it isn't waited for.
         if (a.needsRecalculation && !ratesStale()) continue;
         const button = findButton(a);
@@ -3224,6 +3531,9 @@
       const why = step.witness.value == null ? `the intake has no ${witnessName(step.witness)} for ${unit}` : `the row for ${unit} (its ${witnessName(step.witness)}) wasn't found`;
       report.noData.push({ label: unit.replace(/^\w/, (ch) => ch.toUpperCase()), path: step.witness.path, name: unit, unit, key: null, q: null, controlKind: null, note: `${why}; check the rows and answer its questions yourself.` });
     }
+    // A unit whose row no group of the page showed (`pager`): none of its questions was answered,
+    // and it is the agent's, named, never taken for done.
+    if (stillHere) report.noData.push(...unitGroups.missing());
     // A row showing a VIN no intake vehicle has: an unintended vehicle may be on the quote. Left
     // as it is (never removed or answered); Continue waits for the agent. Named by its place only.
     for (const { witness, position, key } of finalPairs.extraRows ?? []) {
@@ -3243,7 +3553,10 @@
       if ((!refill.has(step.id) && !waitingSince.has(step.id)) || handled.has(step.id) || skippedField(control) || agreesWith(step, control)) continue;
       // One that waited for the page to the end (the fill stopped first) is as unanswered as one the page reset.
       const reason = refill.has(step.id) ? 'the page did not keep the answer; check it' : 'the page was still working on this question; check it';
-      report.failed.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, reason, ...describe(control) });
+      const base = { stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind };
+      // With answers on its unit waiting on it (`needs`): one item for the unit, as in a round.
+      if (refill.has(step.id) && holdUnit(step, control, base, reason, finalPairs)) continue;
+      report.failed.push({ ...base, reason, ...describe(control) });
       handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason.replace(/; check it$/, '')}` });
     }
     if (progressed && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
@@ -3257,11 +3570,13 @@
     }
     // A held unit form is marked on its first question, where its check says why.
     for (const u of stillHere ? pairs.units : []) if (u.held && !skippedField(u.marker)) mark(u.marker, 'needs', heldFormNote(u));
+    // So is a unit's row no unit matched (its check names the row).
+    for (const { control, step } of stillHere ? pairs.unmatchedRows : []) if (!skippedField(control)) mark(control, 'needs', unmatchedRowNote(step));
     // An unfamiliar question that went away during the fill (hidden by an answer, such as the
     // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
     if (stillHere) {
       const onPageNow = new Set(controls.map((c) => fieldKey(c)));
-      report.unknown = report.unknown.filter((x) => onPageNow.has(x.key));
+      report.unknown = report.unknown.filter((x) => onPageNow.has(x.key) || unitGroups.readElsewhere(x.key));
       // Likewise a field that looked renamed (Codex on PR #43): it no longer holds Continue.
       report.renamed = report.renamed.filter((x) => onPageNow.has(x.key));
     }

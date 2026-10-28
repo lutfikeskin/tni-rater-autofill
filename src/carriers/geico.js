@@ -51,7 +51,7 @@
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
+import { ownerDrives, ownerDrivesSaid, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -295,11 +295,13 @@ const businessName = (r) => companyName(r.applicant.name) || ownerName(r);
 // license state, CDL) come from the matching driver row" (the date of birth through owner().dob).
 // Each keeps the source its rule gives a driving owner's: the row's value, as derived; a blank CDL
 // box is TNI's CDL standard No, as every driver's (V5, 2026-10-27: confirmed). null: the agent's.
-const ownerDetails = (r) => (r.applicant.ownerDrives === false ? nonDrivingOwnerRow(r) : owner(r).driver);
-// An owner fact from their driver row: none with no driver rows, or with the intake's No and the
-// agent's Excluded driver No on the first row (the agent's, never another driver's).
+// The owner doesn't drive by util.js ownerDrivesSaid: the box's No, unless the agent set the owner's
+// row not excluded, which is the owner driving (the maintainer, 2026-10-28).
+const ownerDetails = (r) => (ownerDrivesSaid(r) === false ? nonDrivingOwnerRow(r) : owner(r).driver);
+// An owner fact from their driver row: none with no driver rows (the agent's, never another
+// driver's).
 const ownerRowNote = (what) => (r) => (ownerDetails(r) ? null
-  : r.applicant.ownerDrives === false ? `The intake says the owner doesn't drive, and no driver row is theirs (TNI: the owner's is the first driver; none on the intake, or set as not excluded in client details), so their ${what} isn't known: answer it yourself.`
+  : ownerDrivesSaid(r) === false ? `The intake says the owner doesn't drive and lists no drivers, so their ${what} isn't known: answer it yourself.`
     : `The intake lists no drivers, so the owner's ${what} isn't known: answer it yourself.`);
 const DATE = /^\d{2}\/\d{2}\/\d{4}$/;
 // The owner's date of birth (owner().dob: the first driver row's, whatever its name: TNI,
@@ -307,7 +309,7 @@ const DATE = /^\d{2}\/\d{2}\/\d{4}$/;
 // driver's: TNI, 2026-10-20), as on Progressive and AmWINS, with their note when there is none. With
 // no driver rows and a blank owner box, their note would quote the name as "".
 const noOwnerName = (r) => !String(r.applicant.owner1 ?? '').trim();
-const ownerDobNote = (r) => (!owner(r).dob && !owner(r).dobDriver && r.applicant.ownerDrives !== false && noOwnerName(r)
+const ownerDobNote = (r) => (!owner(r).dob && !owner(r).dobDriver && ownerDrivesSaid(r) !== false && noOwnerName(r)
   ? 'The intake has no owner name, so no driver row gives their date of birth: enter it yourself.' : noOwnerDob(r))
   ?? (!DATE.test(owner(r).dob) ? 'The owner\'s date of birth on the intake isn\'t a valid date: enter it yourself.' : null);
 
@@ -555,9 +557,9 @@ const driversKnown = (r) => ownerDrives(r) === false || listedDriver(r) >= 0;
 // PR question V4) when the owner doesn't drive and the row is excluded (util.js ownerExcluded):
 // - the intake's No (TNI, 2026-10-26: answer to PR question, T1: GEICO "does not add the owner's row
 //   at all; only the other intake drivers are added"), unless the agent set the row's Excluded driver
-//   to No (util.js nonDrivingOwnerRow). Before, R1 had it added with the other drivers and the
-//   excluded-driver warning, but GEICO asks nothing about excluding a driver, so it was on the quote as
-//   one;
+//   to No, which makes the owner a driver GEICO lists (util.js ownerDrivesSaid). Before, R1 had it
+//   added with the other drivers and the excluded-driver warning, but GEICO asks nothing about
+//   excluding a driver, so it was on the quote as one;
 // - the row marked "Excluded" with the box blank or Yes (TNI, 2026-10-27: answer to PR question V3:
 //   "GEICO leaves that row out too, as T1", since an excluded owner doesn't drive, R1). Before, it was
 //   added with the warning (the 2026-10-20 rule, which still holds for any other excluded driver:
@@ -857,6 +859,15 @@ const downtimeMention = notesLine(/\bdown[\s-]*time\b|\brental\b/i);
 const downtimeNote = (r) => (downtimeMention(r) ? `The intake's notes say ${quote(downtimeMention(r), 80)}: answer rental reimbursement with downtime yourself.` : null);
 const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 'Fire and theft'], ['Rental', 'Rental reimbursement'],
   ['RRWDT', 'Rental reimbursement with downtime'], ['ERS', 'Emergency road service'], ['HVRS', 'Heavy vehicle road service']];
+// What a vehicle's row needs on that vehicle before GEICO offers its answers (`needs`): collision
+// lists only Not Included until comprehensive (or fire and theft) is chosen, and rental and road
+// service say "Comprehensive or fire & theft, and collision coverage are required before adding this
+// coverage". TNI's fire and theft is Not Included, so comprehensive is the one the fill gives. A
+// comprehensive the page didn't keep (GEICO live run, 2026-10-28: the Sprinter's, on a slow page) is
+// then one needs-you item for the vehicle, not a failure for each row behind it.
+const ROW_NEEDS = { COLL: ['COMP'], Rental: ['COMP', 'COLL'], RRWDT: ['COMP', 'COLL'], ERS: ['COMP', 'COLL'], HVRS: ['COMP', 'COLL'] };
+/** @param {CarrierRule} rule @returns {CarrierRule} */
+const withNeeds = (rule) => (ROW_NEEDS[rule.q] ? { ...rule, needs: ROW_NEEDS[rule.q] } : rule);
 
 // --- Adding units --------------------------------------------------------------------------------
 
@@ -1392,20 +1403,24 @@ export const geico = {
         emptyNote: (r) => (florida(r) ? 'GEICO left basic personal injury protection empty: pick it yourself.' : null) },
       { q: 'PipOptions', ask: 'PIP Options', control: 'select', name: 'PIP options', ...pipKept('the PIP options') },
       { q: 'ExcludedWorkLoss', ask: 'Excluded Work Loss', control: 'select', name: 'Excluded work loss', ...pipKept('excluded work loss') },
-      // A vehicle's coverage rows: its year, make and model name them (scope 'vehicle'). TNI's
-      // comprehensive and collision are $1,000 deductibles (physicalDamageSource); the rest are the agent's.
+      // A vehicle's coverage rows: its year, make and model name them (scope 'vehicle'), and each
+      // step takes the row naming its unit, never the row at its position. Comprehensive, collision
+      // and fire and theft list the trailers among the vehicles (`trailers`: a 4-vehicle FL quote
+      // with a 2016 Great Dane, 2026-10-28, shifted the fifth row out of reach); rental and road
+      // service only the motor vehicles. TNI's comprehensive and collision are $1,000 deductibles
+      // (physicalDamageSource); the rest are the agent's.
       ...ROW_COVERAGES.map(/** @returns {CarrierRule} */ ([suffix, name]) => (['COMP', 'COLL'].includes(suffix)
-        ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.comp-coll', name, kind: 'choice', source: physicalDamageSource, value: () => DEDUCTIBLE, note: physicalDamageNote(name.toLowerCase()) }
+        ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', trailers: true, tni: 'geico.comp-coll', name, kind: 'choice', source: physicalDamageSource, value: () => DEDUCTIBLE, note: physicalDamageNote(name.toLowerCase()) }
         : ['ERS', 'HVRS'].includes(suffix)
           ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.road-service', name: `${name} (TNI: accepted)`, kind: 'choice', source: 'standard', value: () => ROAD_SERVICE }
           : suffix === 'FT'
-            ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.fire-theft', name: `${name} (TNI: ${FIRE_THEFT})`, kind: 'choice', source: 'standard', value: () => FIRE_THEFT }
+            ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', trailers: true, tni: 'geico.fire-theft', name: `${name} (TNI: ${FIRE_THEFT})`, kind: 'choice', source: 'standard', value: () => FIRE_THEFT }
             : suffix === 'Rental'
               ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.rental', name: `${name} (TNI: ${RENTAL})`, kind: 'choice', source: physicalDamageSource, value: () => RENTAL, note: physicalDamageNote(name.toLowerCase()) }
               : suffix === 'RRWDT'
                 ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.rental-downtime', name: `${name} (TNI: ${DOWNTIME})`, kind: 'choice',
                   source: (r) => (downtimeMention(r) ? 'fact' : 'standard'), value: (r) => (downtimeMention(r) ? null : DOWNTIME), note: downtimeNote }
-                : { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })),
+                : { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })).map(withNeeds),
       // The same customization questions as on the vehicle form, per vehicle. Found by their text:
       // their rows don't name the vehicle, so with several vehicles they are the agent's.
       { q: 'CustomizationValue', ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', scope: 'vehicle', tni: 'geico.customizations', name: 'Customization value (the attached equipment value, else TNI: 0)',
