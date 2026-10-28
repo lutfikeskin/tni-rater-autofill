@@ -893,6 +893,7 @@ test('owner drives No (T1, T3): GEICO leaves the owner\'s row, the first, out an
   const corrected = no([{ ...owner, excluded: false }, casey]);
   assert.deepEqual([geico.omittedDriver(corrected), geico.listedDriver(corrected), added(corrected, 1)], [-1, 0, ['addDriver:1']]);
   assert.deepEqual([one(plan(corrected), OWNER_DRIVES, BOI).value, one(plan(corrected), OWNER_DRIVES, BOI).source, form(corrected, 1, OWNER_DRIVES_ADD).value], [true, 'derived', true]);
+  assert.match(one(plan(corrected), OWNER_DRIVES, BOI).warn, /owner doesn't drive, but their driver row is set not excluded, so the owner is quoted as a driver: Yes/, 'never silent (PR #216 review)');
   // An owner no driver row's name matches: the first row is still the owner's (V4; before, every
   // intake driver was added).
   const unmatched = no([owner, casey], { 'applicant.owner1': 'Jordan Sample' });

@@ -1132,6 +1132,8 @@ test('owner drives No (T3, V2): the owner\'s date of birth from the owner\'s row
   assert.deepEqual(dob(corrected).map((s) => [s.value, s.manualOnly, s.note ?? null]), [['01/02/1980', false, null], ['01/02/1980', false, null]]);
   assert.deepEqual(['295', '297'].map((q) => byQ(plan, q).value), [senior.first, senior.last]);
   assert.deepEqual([byQ(plan, '29F').value, byQ(plan, '29F').source, byQ(plan, '2D7').value], [true, 'derived', true]);
+  // ... never silently: the Yes carries a warning the agent confirms (PR #216 review).
+  assert.match(byQ(plan, '29F').warn, /owner doesn't drive, but their driver row is set not excluded, so the owner is quoted as a driver: Yes/);
   // The box's No with no driver rows: the agent's, with the reason.
   const none = dob(record([]))[0];
   assert.deepEqual([none.value, none.manualOnly], [null, true]);

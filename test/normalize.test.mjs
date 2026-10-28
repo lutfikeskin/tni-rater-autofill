@@ -813,11 +813,12 @@ test('"Excluded" in a license-number box marks the driver excluded and is left o
   assert.equal(amwinsLicense('12345678 EXCLUDED').value, '12345678 (Excluded)');
   assert.deepEqual([amwinsLicense('Excluded').value, !!amwinsLicense('Excluded').note], [null, true]);
   assert.equal(amwinsLicense('12345678').value, '12345678');
-  // The check item is one plain sentence: what the box says, no carrier-by-carrier walkthrough (the
-  // maintainer, 2026-10-28; the carriers' answers above stay in their plans).
+  // The check item is short: what the box says, no carrier-by-carrier walkthrough (the maintainer,
+  // 2026-10-28; the carriers' answers above stay in their plans), but never that the quote handles an
+  // exclusion GEICO can't (PR #216 review): the owner's row, here, GEICO leaves out; the signed form.
   const said = (box) => one(box).warnings.find((w) => w.code === 'license.excluded').msg;
-  assert.equal(said('12345678 EXCLUDED'), 'Jordan Avery Sample: license-number box "12345678 EXCLUDED" marks this driver excluded, so the quote lists them as an excluded driver.');
-  for (const box of ['12345678 EXCLUDED', 'Excluded']) assert.doesNotMatch(said(box), /Progressive|AmWINS|GEICO/, box);
+  assert.equal(said('12345678 EXCLUDED'), 'Jordan Avery Sample: license-number box "12345678 EXCLUDED" marks this driver excluded. GEICO\'s quote leaves them out, as the owner. An exclusion usually needs the insured\'s signed form.');
+  for (const box of ['12345678 EXCLUDED', 'Excluded']) assert.doesNotMatch(said(box), /Progressive|AmWINS|lists them as an excluded/, box);
 });
 
 // TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives;
@@ -841,7 +842,7 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
   // walkthrough. Before, it was on the owner's row's Excluded driver (`drivers[0].excluded`), where
   // the agent's No meant "not excluded" while the box stayed No (2026-10-28 runs).
   assert.deepEqual(items(no).map((w) => [w.level, w.path]), [['check', 'applicant.ownerDrives']]);
-  assert.equal(item(no).msg, 'Does the owner drive? The intake says No, so the owner (Jordan Avery Sample, the first driver) is quoted as an excluded driver.');
+  assert.equal(item(no).msg, 'Does the owner drive? The intake says No: No quotes the owner (Jordan Avery Sample, the first driver) as an excluded driver, Yes as a driver.');
   assert.ok(!no.warnings.some((w) => w.path === 'drivers[0].excluded' || w.path === 'drivers[1].excluded'), 'nothing on a row\'s Excluded driver');
   // The agent's answer on that box: Yes, the owner drives and isn't excluded on every carrier; the
   // No stands as excluded.
@@ -875,7 +876,7 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
   const noNumber = read({ owner_drives: 'No', drv_lic_1: '' });
   assert.equal(amwinsLicense(noNumber, 0).value, null);
   assert.match(amwinsLicense(noNumber, 0).note, /owner doesn't drive.*type their license number yourself, then "\(Excluded\)" after it/);
-  assert.equal(item(noNumber).msg, 'Does the owner drive? The intake says No, so the owner (Jordan Avery Sample, the first driver) is quoted as an excluded driver.');
+  assert.equal(item(noNumber).msg, 'Does the owner drive? The intake says No: No quotes the owner (Jordan Avery Sample, the first driver) as an excluded driver, Yes as a driver.');
   // A row the intake marks excluded keeps its own item (license.excluded), not this one, with the
   // same plain sentence whatever the box says (before, its GEICO sentence changed for the owner's row).
   const marked = read({ owner_drives: 'No', drv_lic_1: 'IL - S12345678901 EXCLUDED' });
@@ -883,9 +884,11 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
   const licenseItem = (r, i) => r.warnings.find((w) => w.code === 'license.excluded' && w.path === `drivers[${i}].excluded`).msg;
   for (const box of ['No', '', 'Yes']) {
     const r = read({ owner_drives: box, drv_lic_1: 'IL - S12345678901 EXCLUDED' });
-    assert.equal(licenseItem(r, 0), 'Jordan Avery Sample: license-number box "IL - S12345678901 EXCLUDED" marks this driver excluded, so the quote lists them as an excluded driver.', box);
+    assert.equal(licenseItem(r, 0), `Jordan Avery Sample: license-number box "IL - S12345678901 EXCLUDED" marks this driver excluded. GEICO's quote leaves them out, as the owner. An exclusion usually needs the insured's signed form.`, box);
   }
-  assert.doesNotMatch(licenseItem(read({ owner_drives: 'No', drv_lic_2: 'E98765432101 EXCLUDED' }), 1), /GEICO|Progressive|AmWINS/);
+  // Another driver: GEICO has no exclusion question, so the item never says the quote handles it.
+  const otherDriver = licenseItem(read({ owner_drives: 'No', drv_lic_2: 'E98765432101 EXCLUDED' }), 1);
+  assert.match(otherDriver, /: license-number box "E98765432101 EXCLUDED" marks this driver excluded\. GEICO has no exclusion question, so exclude them there yourself\. An exclusion usually needs the insured's signed form\.$/);
   // Counterexamples: a blank box or the intake's Yes leaves the owner's unmarked row a listed driver.
   for (const box of ['', 'Yes']) {
     const r = read({ owner_drives: box });

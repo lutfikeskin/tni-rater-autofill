@@ -317,8 +317,13 @@ export function ownerDrivesSource(r) {
 }
 
 // The intake says the owner drives but marks their driver row excluded: ownerDrives is No, and the
-// agent confirms it.
+// agent confirms it. The other way round, the box's No read as Yes because the owner's row is set
+// not excluded (ownerDrivesSaid), is never silent either: the agent confirms that Yes (PR #216
+// review, 2026-10-28).
 export function ownerDrivesWarn(r) {
+  if (r?.applicant?.ownerDrives === false && ownerDrivesSaid(r) === true) {
+    return 'The intake says the owner doesn\'t drive, but their driver row is set not excluded, so the owner is quoted as a driver: Yes. Confirm it with the client.';
+  }
   return r?.applicant?.ownerDrives === true && ownerExcluded(r)
     ? 'The intake says the owner drives, but marks their driver row excluded: answered No (TNI: an excluded owner isn\'t a driver). Confirm it with the client.' : null;
 }

@@ -1010,9 +1010,12 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       // What the carriers do with it stays in their plans (TNI 2026-10-20): Progressive's exclude
       // question is Yes; AmWINS has none, and the license number gets "(Excluded)" after it; GEICO
       // asks nothing about it (the driver is filled, with a warning), and leaves the owner's row out
-      // (T1, V3). The item says only what the box says (the maintainer, 2026-10-28: one or two plain
-      // sentences, no carrier-by-carrier walkthrough).
-      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}" marks this driver excluded, so the quote lists them as an excluded driver.`);
+      // (T1, V3). The item stays short (the maintainer, 2026-10-28: no carrier-by-carrier
+      // walkthrough), but says the one thing the fill can't do: GEICO has no exclusion question, so
+      // another driver is the agent's to exclude there (the owner's row GEICO leaves out). And the
+      // signed-form reminder (PR #216 review).
+      const geico = record.drivers.length ? 'GEICO has no exclusion question, so exclude them there yourself.' : 'GEICO\'s quote leaves them out, as the owner.';
+      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}" marks this driver excluded. ${geico} An exclusion usually needs the insured's signed form.`);
     }
 
     if (name.suffix) {
@@ -1063,7 +1066,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const own = ownerRow(record);
   if (own && own.excluded !== true && a.ownerDrives === false) {
     const who = [own.first, own.last].filter(Boolean).join(' ') || `Driver ${rows.drivers[0]}`;
-    check('drivers.owner-excluded', 'applicant.ownerDrives', `Does the owner drive? The intake says No, so the owner (${who}, the first driver) is quoted as an excluded driver.`);
+    check('drivers.owner-excluded', 'applicant.ownerDrives', `Does the owner drive? The intake says No: No quotes the owner (${who}, the first driver) as an excluded driver, Yes as a driver.`);
   }
 
   // --- Vehicles and trailers ------------------------------------------------------------------

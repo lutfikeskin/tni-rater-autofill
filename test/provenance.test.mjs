@@ -589,6 +589,11 @@ test('owner drives and the owner\'s exclusion agree on every carrier, whatever t
       const drives = excluded === true ? false : excluded === false ? true : box !== false;
       const prog = buildPlan(r, progressive, { drivers: 0 });
       assert.deepEqual([byQ(prog, '29F').value, byQ(prog, '28C1').value], [drives, !drives], `${why}: Progressive`);
+      // Where the box and the row disagree, the answer carries a warning the agent confirms: the
+      // box's No read as Yes is never silent (PR #216 review), nor the Yes read as No.
+      const overridden = box === false && excluded === false;
+      assert.equal(!!byQ(prog, '29F').warn, overridden || (box === true && excluded === true), `${why}: warned`);
+      if (overridden) assert.match(byQ(prog, '29F').warn, /intake says the owner doesn't drive, but their driver row is set not excluded, so the owner is quoted as a driver/, why);
       assert.deepEqual(['295', '297', '2BB'].map((q) => byQ(prog, q).value), ['Amina', 'Kone', '01/02/1980'], `${why}: Progressive's Business Owner Info`);
       const am = buildPlan(r, amwins, {});
       assert.equal(am.find((s) => s.path === 'drivers[0].licenseNumber').value, drives ? 'NJ1234567' : 'NJ1234567 (Excluded)', `${why}: AmWINS`);
