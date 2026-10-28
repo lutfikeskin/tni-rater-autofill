@@ -1956,7 +1956,7 @@
    * @param {FillOptions} [options]
    * @returns {Promise<FillReport>}
    */
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, components = null, formUnit = null, givenBefore = {} } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, components = null, formUnit = null, givenBefore = {}, pager = null } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -2199,6 +2199,48 @@
     // GEICO's Add Driver while the panel's driver is the owner (whom GEICO already lists) is all
     // notes: bound to the owner, it would be held as the owner's once the agent picks its driver.
     const answeredLists = new Set(plan.filter((s) => s.whenShown?.unit && s.value != null && s.value !== '').map((s) => s.whenShown.unit));
+    // A page that draws its units' rows a few at a time behind group buttons (`pager`: Progressive's
+    // Rates, "1-3" and "4-5" for four vehicles and a trailer, FL live run 2026-10-28): the units
+    // outside the group shown aren't in the page at all. Once nothing is left to answer in the group
+    // shown, while a unit's row hasn't been read this fill, the fill presses the next group it
+    // hasn't shown (never one it showed), and once every unit was read or every group shown, the
+    // group it began on again, before any helper. A unit no group showed a row for is named for the
+    // agent (below), never taken for done.
+    const pagerOn = !!pager?.text && (pager.pages ?? []).includes(startPage);
+    const pagerRe = pagerOn ? new RegExp(pager.text, 'i') : null;
+    const unitId = (s) => (s.unit ? `${s.unit.list}:${s.unit.index}` : null);
+    const pagedUnits = new Map(pagerOn ? plan.filter((s) => s.activeVehicle != null && s.vehicleHint && s.unit && s.pages?.includes(startPage)).map((s) => [unitId(s), s.unit]) : []);
+    const seenUnits = new Set();
+    let unitRowsShown = false;
+    // Keys of questions read while another group was shown: still this page's at the end.
+    const pagedKeys = new Set();
+    // The group buttons on screen (the innermost match), each with whether it is the group shown:
+    // disabled, out of the keyboard's reach (tabindex -1) or inside the carrier's `current`.
+    const groupButtons = () => {
+      if (!pagerOn) return [];
+      const hits = deepQueryAll(document, 'a, button, [role=button], .x-btn').filter((el) => el.getClientRects().length && pagerRe.test(buttonText(el)));
+      return hits.filter((el) => !hits.some((x) => x !== el && el.contains(x))).map((el) => ({
+        el, text: oneLine(buttonText(el)),
+        current: !!el.disabled || el.getAttribute('aria-disabled') === 'true' || el.getAttribute('tabindex') === '-1' || (!!pager.current && !!el.closest(pager.current)),
+      }));
+    };
+    const shownGroup = () => groupButtons().find((b) => b.current)?.text ?? null;
+    const startGroup = shownGroup();
+    const pagedGroups = new Set(startGroup ? [startGroup] : []);
+    let cameBack = false;
+    const pagerTurn = () => {
+      if (!unitRowsShown) return null;
+      const buttons = groupButtons();
+      if (buttons.length < 2) return null;
+      if ([...pagedUnits.keys()].some((u) => !seenUnits.has(u))) {
+        const next = buttons.find((b) => !b.current && !pagedGroups.has(b.text));
+        if (next) return next;
+      }
+      if (cameBack || !startGroup || (report.paged ?? []).length === 0) return null;
+      cameBack = true;
+      const back = buttons.find((b) => b.text === startGroup);
+      return back && !back.current ? back : null;
+    };
 
     for (let round = 0; round < maxRounds; round++) {
       report.rounds = round + 1;
@@ -2237,6 +2279,10 @@
       report.fields = Math.max(report.fields, controls.length);
       if (report.halted) break;
       const allPairs = assign(controls, plan);
+      if (pagerOn) {
+        for (const p of allPairs) if (pagedUnits.has(unitId(p.step))) { seenUnits.add(unitId(p.step)); unitRowsShown = true; }
+        if (startGroup && shownGroup() !== startGroup) for (const c of controls) pagedKeys.add(fieldKey(c));
+      }
       // The agent's edits made where the kit is now, before anything asks whether a field is theirs.
       if (skipBy) skipWhere(allPairs.units);
       // Review items are flagged in yellow and the rest of the page still fills. Only a stuck
@@ -2611,6 +2657,22 @@
       // Nothing left to type or pick: click the next button whose turn it is. Not on a page the agent
       // moved to while this round answered (its answer's field gone with the old page).
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+      // Another group of units (`pager`), before any helper: Recalculate or the bill plan must not
+      // go before every unit's rows were answered.
+      const turn = !changed && !retry && !waited && pagerOn && window === window.top && !agentPressed ? pagerTurn() : null;
+      if (turn) {
+        pagedGroups.add(turn.text);
+        (report.paged ??= []).push(turn.text);
+        phase('helper', turn.text);
+        pressButton(turn.el);
+        progressed = true;
+        if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
+        // Its rows drawn: the pressed group shown (where the page says which is), 10 s at most.
+        for (const until = Date.now() + 10000; startGroup && shownGroup() !== turn.text && Date.now() < until && !report.halted;) await sleep(200);
+        if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
+        if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+        continue;
+      }
       let helperClicked = false;
       if (!changed && window === window.top && !agentPressed) {
         loadDue = null;
@@ -3224,6 +3286,17 @@
       const why = step.witness.value == null ? `the intake has no ${witnessName(step.witness)} for ${unit}` : `the row for ${unit} (its ${witnessName(step.witness)}) wasn't found`;
       report.noData.push({ label: unit.replace(/^\w/, (ch) => ch.toUpperCase()), path: step.witness.path, name: unit, unit, key: null, q: null, controlKind: null, note: `${why}; check the rows and answer its questions yourself.` });
     }
+    // A unit whose row no group of the page showed (`pager`): none of its questions was answered,
+    // and it is the agent's, named, never taken for done.
+    if (pagerOn && stillHere && unitRowsShown) {
+      for (const [id, unit] of pagedUnits) {
+        if (seenUnits.has(id)) continue;
+        const label = `${unit.list === 'trailers' ? 'Trailer' : 'Vehicle'} ${unit.index + 1}`;
+        const where = (report.paged ?? []).length || groupButtons().length > 1 ? 'in any group of vehicles on this page' : 'on this page';
+        report.noData.push({ label, path: `${unit.list}[${unit.index}]`, name: label, unit: label, key: null, q: null, controlKind: null,
+          note: `No row ${where} reads as ${label}${unit.name ? ` (${unit.name})` : ''}: none of its coverages was answered. Check it is on the quote, then answer its coverages yourself.` });
+      }
+    }
     // A row showing a VIN no intake vehicle has: an unintended vehicle may be on the quote. Left
     // as it is (never removed or answered); Continue waits for the agent. Named by its place only.
     for (const { witness, position, key } of finalPairs.extraRows ?? []) {
@@ -3261,7 +3334,7 @@
     // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
     if (stillHere) {
       const onPageNow = new Set(controls.map((c) => fieldKey(c)));
-      report.unknown = report.unknown.filter((x) => onPageNow.has(x.key));
+      report.unknown = report.unknown.filter((x) => onPageNow.has(x.key) || pagedKeys.has(x.key));
       // Likewise a field that looked renamed (Codex on PR #43): it no longer holds Continue.
       report.renamed = report.renamed.filter((x) => onPageNow.has(x.key));
     }

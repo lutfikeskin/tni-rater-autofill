@@ -327,6 +327,7 @@
  * @property {string} [driverPage]
  * @property {UnitListSpec[]} [unitLists]
  * @property {UnitNameSpec[]} [unitNames]
+ * @property {UnitPager} [unitPager]  a page that draws the units' rows a few at a time behind group buttons (Progressive's Rates: "1-3", "4-5"); the fill presses each other group, then its own again (pagekit fill `pager`)
  * @property {(record: ClientRecord) => number} [listedDriver]  the intake driver the carrier lists itself, -1 for none
  * @property {(record: ClientRecord) => number} [omittedDriver]  the intake driver the carrier's quote leaves out (GEICO: the owner's row, the first, when the intake says the owner doesn't drive or marks that row Excluded): never added, never an Add Driver form's, not a row of its driver list; -1 for none
  * @property {{ [page: string]: string | null | ((record: ClientRecord) => string | null) }} [agentPages]
@@ -401,6 +402,7 @@
  * @property {number | null | undefined} scopeIndex
  * @property {string[] | null} vehicleHint  the unit's year, make and model, which pick its row
  * @property {boolean | null} activeVehicle
+ * @property {{ list: 'vehicles' | 'trailers', index: number, name: string } | null} [unit]  the unit whose row a per-unit step takes (its year, make and model as `name`): a page whose `unitPager` shows a few units at a time pages until each unit's row was read, and names a unit none read as
  * @property {string[] | null} businessNames
  * @property {string[] | null} labelHas
  * @property {string | null} labelNote
@@ -506,6 +508,16 @@
  * @property {{ list: UnitList, text: string, names: string[][], active: number, label: string } | null} [formUnit]
  *   a form that names its unit (carrier `unitNames`): each intake unit's name words, and the plan's unit
  * @property {{ [key: string]: any }} [givenBefore]
+ * @property {UnitPager | null} [pager]  the carrier's `unitPager`
+ */
+
+/**
+ * Group buttons that show a few units' rows at a time (Progressive's Rates, FL live run
+ * 2026-10-28: "1-3" and "4-5" for four vehicles and a trailer, the shown group's button disabled).
+ * @typedef {object} UnitPager
+ * @property {string[]} pages  the pages that page
+ * @property {string} text  a group button's words (a pattern)
+ * @property {string} [current]  a selector around the shown group's button (besides disabled or tabindex -1)
  */
 
 /**
@@ -606,6 +618,7 @@
  * @property {'busy' | 'none'} [advanceDue]
  * @property {'check' | 'changed'} [held]
  * @property {boolean} [agentPressed]
+ * @property {string[]} [paged]  the unit group buttons the fill pressed, in order (`pager`)
  * @property {boolean} [covered]
  * @property {string[]} [coveredHelpers]
  * @property {boolean} [documentPending]

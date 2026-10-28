@@ -1947,6 +1947,8 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
   // What this tab's fills gave, by field key, with the unit each was for: a field still showing
   // another unit's answer gets this unit's (W43-38).
   givenBefore: Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])),
+  // A page that shows a few units' rows at a time (Progressive's Rates): the kit pages through them.
+  pager: carrier.unitPager ?? null,
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
   skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
   ...extra,

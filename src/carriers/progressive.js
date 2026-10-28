@@ -651,6 +651,11 @@ export const progressive = {
   finishedSaid: 'Print, Email, Fax was clicked',
   // The pages about one vehicle, repeated for each (their Continue is per vehicle).
   vehiclePages: ['MostCommonVehicles', 'AddVehicle'],
+  // Rates draws three units' coverage columns at a time (FL live run, 2026-10-28: four vehicles and
+  // a trailer, "1-3" and "4-5" with an arrow; the shown group's button is disabled, in a
+  // disabled-action wrapper): the fill presses each other group to answer every vehicle's and
+  // trailer's rows, then its first group again. A unit no row read as is named for the agent.
+  unitPager: { pages: ['CoveragesRates'], text: '^\\d+\\s*[-–]\\s*\\d+$', current: '.disabled-action-1' },
   // Trailers are added from the same list; their pages are per trailer, and Add Trailer marks its
   // trailer entered once filled.
   trailerList: 'VehicleSummary',
