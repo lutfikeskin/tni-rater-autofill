@@ -85,11 +85,13 @@ function matchesSimple(node, selector) {
     if (matchesSimple(node, not[1])) return false;
   }
   selector = selector.replace(/:not\([^()]*\)/g, '');
-  const tag = selector.match(/^([a-z][\w-]*)/i)?.[1];
+  // Ids and classes outside the attribute brackets ([fieldref="A.B"] names no class B).
+  const plain = selector.replace(/\[[^\]]*\]/g, '');
+  const tag = plain.match(/^([a-z][\w-]*)/i)?.[1];
   if (tag && node.tagName !== tag.toUpperCase()) return false;
-  const id = selector.match(/#([\w-]+)/)?.[1];
+  const id = plain.match(/#([\w-]+)/)?.[1];
   if (id && node.id !== id) return false;
-  for (const cls of selector.matchAll(/\.([\w-]+)/g)) {
+  for (const cls of plain.matchAll(/\.([\w-]+)/g)) {
     if (!node.className.split(/\s+/).includes(cls[1])) return false;
   }
   return attrSelector(node, selector);
@@ -2121,6 +2123,52 @@ test('More about the business: Primary Business Address takes the first offered 
   assert.equal(offered.checked, true);
   assert.equal(manual.checked, false);
   assert.equal(report.failed.length, 0, 'the street rule no longer tries to match the intake street');
+});
+
+// TNI, 2026-10-28: Verify Address after the Primary Business Address pick, once; never with "Enter a
+// different address", and not on a page that already says the address was verified.
+const VERIFIED = 'PrimaryBusinessAddressOutputNonShredded.VerifyAddressSuccessMessage';
+function primaryAddressPage({ offered = true, verified = false } = {}) {
+  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const attrs = { fieldref: 'PrimaryBusinessAddressInputNonShredded.AddressOptions' };
+  const radios = [
+    ...(offered ? [makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_0`, name: 'string_58', type: 'radio', value: '1234 Example Cir Example City KY 40000', checked: verified, attrs })] : []),
+    makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_1`, name: 'string_58', type: 'radio', value: 'Enter a different address', checked: !offered, attrs }),
+  ];
+  h.document.body.append(radioGroup('Primary Business Address', ...radios));
+  const message = () => new FakeNode('div', { attrs: { fieldref: VERIFIED } });
+  if (verified) h.document.body.append(message());
+  const button = addButton(h, 'Verify Address');
+  button.clicks = 0;
+  button.onclick = () => {
+    button.clicks++;
+    h.document.body.append(message());
+  };
+  const record = { applicant: {}, garaging: { street: '1234 Example Circle' }, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => s.q === '58' || s.action === 'verifyAddress');
+  return { h, radios, button, plan };
+}
+
+test('More about the business: Verify Address is pressed once after the first address is picked', async () => {
+  const { h, radios, button, plan } = primaryAddressPage();
+  assert.equal(plan.length, 2, 'the real plan has the address choice and its Verify Address');
+  let report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(radios[0].checked, true);
+  assert.equal(button.clicks, 1);
+  assert.deepEqual(Array.from(report.actions, (a) => a.id), ['verifyAddress']);
+  report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(button.clicks, 1, 'the page says verified: not pressed again');
+});
+
+test('More about the business: Verify Address is not pressed on a verified page or with "Enter a different address"', async () => {
+  const verified = primaryAddressPage({ verified: true });
+  await verified.h.kit.fill(verified.plan, { maxRounds: 8 });
+  assert.equal(verified.radios[0].checked, true, 'the verified address stays');
+  assert.equal(verified.button.clicks, 0, 'verified before Fill');
+  const manual = primaryAddressPage({ offered: false });
+  await manual.h.kit.fill(manual.plan, { maxRounds: 8 });
+  assert.equal(manual.radios[0].checked, true);
+  assert.equal(manual.button.clicks, 0, 'the address boxes are the agent\'s');
 });
 
 test('unfamiliar questions carry their options for the AI, and answer() puts in a choice and marks it purple', async () => {

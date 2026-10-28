@@ -551,6 +551,12 @@ export const progressive = {
     // USDOT number is the agent's: NTL with primary auto liability, or NTL not answered yet (TNI,
     // 2026-10-26: answers to PR questions).
     { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] }, when: (r) => !ntlNoDotFilings(r) && !ntlDotFilingsHold(r) },
+    // More about the business: Verify Address once Primary Business Address (q58) has Progressive's
+    // offered address (TNI, 2026-10-28; the agent clicked it in both live runs). Never with "Enter a
+    // different address" chosen (its boxes may be empty), and done once the page says the address
+    // was verified (pressed at most once; a page verified before Fill isn't pressed).
+    { id: 'verifyAddress', tni: 'progressive.home-address', page: 'MoreAboutBusiness', text: '^verify address$', after: ['progressive.q58'], afterValue: ['progressive.q58', '^(?!enter a different)'], immediate: true, label: 'Verify Address',
+      unlessSelector: '[fieldref="PrimaryBusinessAddressOutputNonShredded.VerifyAddressSuccessMessage"]' },
     // Vehicle summary: "Add a Vehicle" for a vehicle not entered yet (its VIN lookup not done).
     // The vehicles found by the USDOT lookup are listed there too; ours is added with Add Vehicle,
     // which sits in the "Add" menu.
