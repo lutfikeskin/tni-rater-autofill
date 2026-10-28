@@ -1,0 +1,220 @@
+{
+ "source": "Progressive Coverages & Rates, FL, 2026-10-28 (page_layout events of a maintainer test run; field shapes only, no client values)",
+ "open": {
+  "fields": [
+   {
+    "q": "21BE",
+    "ref": "TrailerInterchangeInput.InterchangeAgreement",
+    "kind": "radio",
+    "caption": "Does the customer have an interchange agreement requiring trailer interchange coverage?",
+    "req": true,
+    "opts": [
+     "Yes",
+     "No"
+    ]
+   },
+   {
+    "q": "21BF",
+    "ref": "TrailerInterchangeInput.FurnishAgreement",
+    "kind": "radio",
+    "caption": "Does the customer agree to furnish a copy of the interchange agreement upon request, including in the event of a claim?",
+    "req": true,
+    "opts": [
+     "Yes",
+     "No"
+    ]
+   },
+   {
+    "q": "21C0",
+    "ref": "TrailerInterchangeInput.NoOfNonOwnedTrailers",
+    "kind": "select",
+    "caption": "Number of Non-Owned Trailers",
+    "req": true,
+    "opts": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "5",
+     "6",
+     "7",
+     "8",
+     "9",
+     "10",
+     "11",
+     "12",
+     "13",
+     "14",
+     "15",
+     "16",
+     "17",
+     "18",
+     "19",
+     "20",
+     "More than 20"
+    ]
+   },
+   {
+    "q": "21DD",
+    "ref": "TrailerInterchangeInput.Limit",
+    "kind": "select",
+    "caption": "Trailer Interchange coverage limit",
+    "req": true,
+    "opts": [
+     "Not selected",
+     "$15k with a $1,000 Deductible",
+     "$15k with a $2,000 Deductible",
+     "$20k with a $1,000 Deductible",
+     "$20k with a $2,000 Deductible",
+     "$30k with a $1,000 Deductible",
+     "$30k with a $2,000 Deductible",
+     "$40k with a $1,000 Deductible",
+     "$40k with a $2,000 Deductible",
+     "$50k with a $1,000 Deductible",
+     "$50k with a $2,000 Deductible",
+     "$60k with a $1,000 Deductible",
+     "$60k with a $2,000 Deductible",
+     "$70k with a $1,000 Deductible",
+     "$70k with a $2,000 Deductible",
+     "$80k with a $1,000 Deductible",
+     "$80k with a $2,000 Deductible",
+     "$90k with a $1,000 Deductible",
+     "$90k with a $2,000 Deductible",
+     "$100k with a $1,000 Deductible",
+     "$100k with a $2,000 Deductible",
+     "$110k with a $1,000 Deductible",
+     "$110k with a $2,000 Deductible",
+     "$120k with a $1,000 Deductible",
+     "$120k with a $2,000 Deductible",
+     "$130k with a $1,000 Deductible",
+     "$130k with a $2,000 Deductible",
+     "$140k with a $1,000 Deductible",
+     "$140k with a $2,000 Deductible",
+     "$150k with a $1,000 Deductible",
+     "$150k with a $2,000 Deductible",
+     "$160k with a $1,000 Deductible",
+     "$160k with a $2,000 Deductible",
+     "$170k with a $1,000 Deductible",
+     "$170k with a $2,000 Deductible",
+     "$180k with a $1,000 Deductible",
+     "$180k with a $2,000 Deductible",
+     "$190k with a $1,000 Deductible",
+     "$190k with a $2,000 Deductible",
+     "$200k with a $1,000 Deductible",
+     "$200k with a $2,000 Deductible",
+     "$210k with a $1,000 Deductible",
+     "$210k with a $2,000 Deductible",
+     "$220k with a $1,000 Deductible",
+     "$220k with a $2,000 Deductible",
+     "$230k with a $1,000 Deductible",
+     "$230k with a $2,000 Deductible",
+     "$240k with a $1,000 Deductible",
+     "$240k with a $2,000 Deductible",
+     "$250k with a $1,000 Deductible",
+     "$250k with a $2,000 Deductible"
+    ]
+   },
+   {
+    "q": "21E5",
+    "ref": "NonOwnedTrailerPhysicalDamageInput.Limit",
+    "kind": "select",
+    "caption": "Non-Owned Trailer Physical Damage coverage limit",
+    "req": true,
+    "section": "Non-Owned Trailer Physical Damage",
+    "opts": [
+     "Not selected",
+     "Matching Trailer Interchange Limits"
+    ]
+   }
+  ],
+  "buttons": [
+   "+",
+   "Edit coverage questions",
+   "Done with this coverage"
+  ],
+  "tiles": [
+   "Dry Freight Trailer"
+  ]
+ },
+ "closed": {
+  "fields": [
+   {
+    "q": "21B8",
+    "ref": "TrailerInterchangeInput.Limit",
+    "kind": "select",
+    "caption": "Trailer Interchange coverage limit",
+    "req": true,
+    "section": "Trailer Interchange",
+    "opts": [
+     "Not selected",
+     "$15k with a $1,000 Deductible",
+     "$15k with a $2,000 Deductible",
+     "$20k with a $1,000 Deductible",
+     "$20k with a $2,000 Deductible",
+     "$30k with a $1,000 Deductible",
+     "$30k with a $2,000 Deductible",
+     "$40k with a $1,000 Deductible",
+     "$40k with a $2,000 Deductible",
+     "$50k with a $1,000 Deductible",
+     "$50k with a $2,000 Deductible",
+     "$60k with a $1,000 Deductible",
+     "$60k with a $2,000 Deductible",
+     "$70k with a $1,000 Deductible",
+     "$70k with a $2,000 Deductible",
+     "$80k with a $1,000 Deductible",
+     "$80k with a $2,000 Deductible",
+     "$90k with a $1,000 Deductible",
+     "$90k with a $2,000 Deductible",
+     "$100k with a $1,000 Deductible",
+     "$100k with a $2,000 Deductible",
+     "$110k with a $1,000 Deductible",
+     "$110k with a $2,000 Deductible",
+     "$120k with a $1,000 Deductible",
+     "$120k with a $2,000 Deductible",
+     "$130k with a $1,000 Deductible",
+     "$130k with a $2,000 Deductible",
+     "$140k with a $1,000 Deductible",
+     "$140k with a $2,000 Deductible",
+     "$150k with a $1,000 Deductible",
+     "$150k with a $2,000 Deductible",
+     "$160k with a $1,000 Deductible",
+     "$160k with a $2,000 Deductible",
+     "$170k with a $1,000 Deductible",
+     "$170k with a $2,000 Deductible",
+     "$180k with a $1,000 Deductible",
+     "$180k with a $2,000 Deductible",
+     "$190k with a $1,000 Deductible",
+     "$190k with a $2,000 Deductible",
+     "$200k with a $1,000 Deductible",
+     "$200k with a $2,000 Deductible",
+     "$210k with a $1,000 Deductible",
+     "$210k with a $2,000 Deductible",
+     "$220k with a $1,000 Deductible",
+     "$220k with a $2,000 Deductible",
+     "$230k with a $1,000 Deductible",
+     "$230k with a $2,000 Deductible",
+     "$240k with a $1,000 Deductible",
+     "$240k with a $2,000 Deductible",
+     "$250k with a $1,000 Deductible",
+     "$250k with a $2,000 Deductible"
+    ]
+   },
+   {
+    "q": "21E5",
+    "ref": "NonOwnedTrailerPhysicalDamageInput.Limit",
+    "kind": "select",
+    "caption": "Non-Owned Trailer Physical Damage coverage limit",
+    "req": true,
+    "section": "Non-Owned Trailer Physical Damage",
+    "opts": [
+     "Not selected",
+     "Matching Trailer Interchange Limits"
+    ]
+   }
+  ],
+  "buttons": [
+   "+",
+   "Edit coverage questions"
+  ]
+ }
+}

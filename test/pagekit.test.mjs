@@ -1797,6 +1797,80 @@ test('general liability Done verifies a closed section that keeps the limit', as
   assert.ok(emptyReport.blocked.some((b) => b.id === 'doneGl'));
 });
 
+// Trailer interchange (TNI 2026-10-28): the steps Progressive's plan gives an intake asking for it
+// ($50,000, one Dry Van trailer), as the helpers after "+" see them (openInterchange done). Its Done
+// is verified as general liability's: the section's questions gone and the row keeping the limit.
+function interchangePlan(info = {}) {
+  const record = {
+    applicant: { name: 'Synthetic Expediter LLC' }, garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [],
+    trailers: [{ type: 'Dry Van' }], trailerInfo: { interchange: true, interchangeLimit: '$50,000', ...info }, priorInsurance: [], coverage: { cargo: false, gl: false }, claims: {},
+  };
+  return buildPlan(record, progressive, {})
+    .filter((s) => s.interchange || s.field === 'NonOwnedTrailerPhysicalDamageInput.Limit' || ['interchangeTile', 'doneInterchange'].includes(s.action))
+    .map((s) => (s.kind === 'action' ? { ...s, afterActions: [] } : s));
+}
+const INTERCHANGE_LIMIT_SAID = '$50k with a $1,000 Deductible';
+// The section's lists as the live page drew them (test/fixtures/progressive/interchange: shapes only).
+const INTERCHANGE_LAYOUT = JSON.parse(fs.readFileSync(new URL('./fixtures/progressive/interchange/coverages-rates.json', import.meta.url), 'utf8'));
+function addInterchangeList(h, q, value = '', { as = q } = {}) {
+  const shape = [...INTERCHANGE_LAYOUT.open.fields, ...INTERCHANGE_LAYOUT.closed.fields].find((f) => f.q === q);
+  const field = addExtText(h, 'c', as, { caption: shape.caption, ref: shape.ref, value, required: shape.req });
+  const records = shape.opts.map((label) => ({ get: () => label }));
+  Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records, isLoading: () => false } });
+  return field;
+}
+
+test('trailer interchange: the tile once the number is in, and Done verified as a closed section that keeps the limit', async () => {
+  // The number in, no limit yet: the intake's trailer tile is clicked, marked to confirm.
+  const tiles = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  addInterchangeList(tiles, '21C0', '1');
+  const tile = addButton(tiles, 'Dry Freight Trailer');
+  tile.onclick = () => { tile._clicked = true; };
+  const other = addButton(tiles, 'Flatbed Trailer');
+  other.onclick = () => { other._clicked = true; };
+  const tilesReport = await tiles.kit.fill(interchangePlan(), { maxRounds: 3 });
+  assert.equal(tile._clicked, true);
+  assert.equal(other._clicked, undefined);
+  assert.ok(Array.from(tilesReport.actions, (x) => x.id).includes('interchangeTile'));
+  assert.ok(tilesReport.checks.some((x) => /TNI's default of 1 non-owned trailer, and the Dry Freight Trailer tile/.test(x.note)), 'the number and tile to confirm');
+
+  // Closed: the row's limit (another question id, one data-model name) and Non-Owned Trailer
+  // Physical Damage, no section questions: Done verified, and the confirm item stays with the limit.
+  const closed = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  addInterchangeList(closed, '21B8', INTERCHANGE_LIMIT_SAID);
+  addInterchangeList(closed, '21E5', 'Matching Trailer Interchange Limits');
+  const closedButton = addButton(closed, 'Done with this coverage');
+  closedButton.onclick = () => { closedButton._clicked = true; };
+  const closedReport = await closed.kit.fill(interchangePlan(), { maxRounds: 5 });
+  assert.equal(closedButton._clicked, true);
+  assert.ok(Array.from(closedReport.actions, (x) => x.id).includes('doneInterchange'));
+  assert.ok(!Array.from(closedReport.invalidatedActions).includes('doneInterchange'));
+  assert.ok(closedReport.checks.some((x) => /Confirm them with the client/.test(x.note)), 'the confirm item stays with the limit in the row');
+
+  // Still open (the number still showing): clicked, but not done.
+  const open = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  addInterchangeList(open, '21C0', '1');
+  addInterchangeList(open, '21DD', INTERCHANGE_LIMIT_SAID);
+  addInterchangeList(open, '21E5', 'Matching Trailer Interchange Limits');
+  const openButton = addButton(open, 'Done with this coverage');
+  openButton.onclick = () => { openButton._clicked = true; };
+  const openReport = await open.kit.fill(interchangePlan(), { maxRounds: 5 });
+  assert.equal(openButton._clicked, true);
+  assert.ok(Array.from(openReport.invalidatedActions).includes('doneInterchange'), 'its questions still showing: not done');
+  assert.ok(!Array.from(openReport.actions, (x) => x.id).includes('doneInterchange'));
+
+  // No limit the fill can give (none on the intake) and none picked: Done waits for the agent's.
+  const empty = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  addInterchangeList(empty, '21DD', '');
+  addInterchangeList(empty, '21E5', 'Matching Trailer Interchange Limits');
+  const emptyButton = addButton(empty, 'Done with this coverage');
+  emptyButton.onclick = () => { emptyButton._clicked = true; };
+  const emptyReport = await empty.kit.fill(interchangePlan({ interchangeLimit: null }), { maxRounds: 5 });
+  assert.equal(emptyButton._clicked, undefined, 'Done waits for a limit');
+  assert.ok(emptyReport.blocked.some((b) => b.id === 'doneInterchange'));
+  assert.ok(emptyReport.noData.some((x) => /without a limit: choose it yourself/.test(x.note)));
+});
+
 test('trusted agent gesture plus input protects the edit and reports no filled answer', async () => {
   const h = harness();
   const edit = makeInput({ id: 'agent-edit', ariaLabel: 'Agent corrected value' });

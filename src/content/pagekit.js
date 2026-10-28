@@ -2535,8 +2535,8 @@
         if (result.ok) {
           if (currentPage() === 'CoveragesRates') {
             // The bill plan (payment method) stays chosen; the premium needs recalculating.
-            // A cargo or general liability answer re-arms its Done with this coverage too.
-            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : [])]) {
+            // A cargo, general liability or trailer interchange answer re-arms its Done with this coverage too.
+            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : []), ...(step.interchange === 'section' ? ['doneInterchange'] : [])]) {
               clicked.delete(id);
               report.actions = report.actions.filter((x) => x.id !== id);
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
@@ -2775,6 +2775,13 @@
         const pairs = assign(collectControls(), plan);
         accepted = !pairs.some(({ step }) => step.gl === 'section')
           && pairs.some(({ step, control }) => step.gl === 'limit' && hasValue(control) && (step.value == null || agreesWith(step, control)));
+      }
+      // Trailer interchange's Done the same way (Progressive, 2026-10-28): its section's questions
+      // gone and the row keeping the limit.
+      if (a.verify === 'interchangeClosed') {
+        const pairs = assign(collectControls(), plan);
+        accepted = !pairs.some(({ step }) => step.interchange === 'section')
+          && pairs.some(({ step, control }) => step.interchange === 'limit' && hasValue(control) && (step.value == null || agreesWith(step, control)));
       }
       // `revealed`: the click showed its result: a question appeared, or an answer changed, since
       // the snapshot taken as the button was clicked (a lookup's decoded values, the rows an
