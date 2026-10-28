@@ -30,7 +30,7 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight } from '../util.js';
+import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity, carPartsMixedNote } from '../util.js';
 import { ownerDrives, ownerDrivesSaid, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, nonDrivingOwnerRow } from '../util.js';
 import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitRaised,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
@@ -267,8 +267,9 @@ const cargo = (r) => {
 // The deductible is a client fact: without it the limit is the agent's alone, never Luna's.
 const cargoSource = (r) => (r.coverage.cargo !== false && noCargoDeductible(r) ? 'fact' : 'derived');
 
-// What the intake calls the freight -> Progressive's commodity category and commodity.
-const commodity = (r) => (haulsGeneralFreight(r) ? { category: 'Consumer Goods', commodity: 'Other Consumer Goods' } : null);
+// What the intake calls the freight -> Progressive's commodity category and commodity: TNI's
+// (cargoCommodity in util.js: car or auto parts, then general freight), else the agent's.
+const commodity = cargoCommodity;
 
 // Filings: Yes when the intake says so. On the Filings page the standard answers are "all
 // vehicles on this quote" = Yes and the Federal filing; ticking Federal makes Progressive tick
@@ -1145,7 +1146,7 @@ export const progressive = {
       { q: '215A', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },
       // TNI: an unselected Reefer option on the intake means this coverage is not requested.
       { q: '215C', source: 'derived', cargo: true, ask: 'Does the customer require Refrigeration Breakdown coverage?', path: 'coverage.reeferBreakdown', kind: 'bool', value: (r) => r.coverage.reeferBreakdown === true },
-      { q: '216A', source: 'derived', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null },
+      { q: '216A', source: 'derived', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null, note: carPartsMixedNote },
       { q: '216B', source: 'derived', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargoListOfCommodities', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
       // The cargo row's limit (its data-model name), then the cargo section's, which reads the same:
       // with the row's taken, "Motor Trucking Cargo" is left with one field, the section's.

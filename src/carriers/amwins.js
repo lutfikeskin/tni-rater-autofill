@@ -51,7 +51,7 @@
 
 import { owner, ownerDobNote, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
 import { driverExcluded, ownerRowExcluded } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -150,7 +150,9 @@ const disclosure = (r) => {
   // first, with the intake's liability limit (the maintainer, 2026-10-26).
   if (c.ntl === true) lines.push(['Non-Trucking Liability (NTL)', c.autoLiabLimit].filter(Boolean).join(' - '));
   if (c.cargo && c.cargoLimit) {
-    const goods = haulsGeneralFreight(r) ? 'Consumer Goods / Other Consumer Goods' : r.operations.whatHaul;
+    // TNI's commodity, in Progressive's wording (car or auto parts, general freight), else what they haul.
+    const fixed = cargoCommodity(r);
+    const goods = fixed ? `${fixed.category} / ${fixed.commodity}` : r.operations.whatHaul;
     // No deductible on the intake: left out, for the agent to add (disclosureWarn; TNI, 2026-10-27).
     const ded = noCargoDeductible(r) ? '' : ` with ${moneyK(c.cargoDeductible)} Ded`;
     lines.push(`Motor Truck Cargo ${moneyK(c.cargoLimit)}${ded}${goods ? ` - ${goods}` : ''}`);
