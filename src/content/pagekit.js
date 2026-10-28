@@ -2759,17 +2759,7 @@
       // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
       // screen but disabled is not gone.
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
-      if (a.verify === 'cargoClosed') {
-        const controls = collectControls();
-        // The cargo section's questions still on screen (found by the rules for them).
-        const expanded = assign(controls, plan).some(({ step }) => step.cargo === 'section');
-        const cargoSteps = plan.filter((s) => s.cargo === 'limit' && s.value != null);
-        const retained = assign(controls, cargoSteps).some(({ step, control }) => agreesWith(step, control));
-        const summary = (document.body.innerText ?? '').match(/motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i)?.[0] ?? '';
-        const amounts = moneyTokens(summary);
-        const summaryAgrees = cargoSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
-        accepted = !expanded && (retained || summaryAgrees);
-      }
+      if (a.verify === 'cargoClosed') accepted = cargoClosedOn(collectControls(), { summary: true });
       // General liability's Done: its section's questions are gone and the row keeps the limit.
       if (a.verify === 'glClosed') {
         const pairs = assign(collectControls(), plan);
@@ -3058,6 +3048,22 @@
         && actionHere(a) && !settledItem(a);
     }
 
+    // Motor Truck Cargo added and closed (Progressive's Rates): none of its section's questions on
+    // screen (found by the rules for them), and its row keeps the intake's limit, or one the agent
+    // set themselves. `summary`: the row's words may stand for its field (checking the fill's own
+    // Done); a section the agent closed counts by its field alone, as the fill found it (`found`: a
+    // limit this fill put in the row adds cargo, whose section Progressive hasn't drawn yet).
+    function cargoClosedOn(controls, { summary = false, found = false } = {}) {
+      if (assign(controls, plan).some(({ step }) => step.cargo === 'section')) return false;
+      const cargoSteps = plan.filter((s) => s.cargo === 'limit' && s.value != null);
+      if (assign(controls, cargoSteps).some(({ step, control }) => (!found || !report.filled.some((x) => x.key === fieldKey(control)))
+        && (agreesWith(step, control) || (skippedField(control) && hasValue(control))))) return true;
+      if (!summary) return false;
+      const words = (document.body.innerText ?? '').match(/motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i)?.[0] ?? '';
+      const amounts = moneyTokens(words);
+      return cargoSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
+    }
+
     // Its button back on the page (`resolvedBy`: the Add NTL link, NTL removed), or a page the agent
     // has been to since (`settledByPages`).
     function settledItem(a) {
@@ -3112,6 +3118,16 @@
           continue;
         }
         if (a.unless.some(has) || (a.unlessActions ?? []).some((id) => clicked.has(id))) { clicked.add(a.action); continue; }
+        // Cargo already added and closed on the page, by the agent or an earlier fill: its Done is
+        // done, unclicked, so what follows it (general liability's "+") runs (the maintainer,
+        // 2026-10-28, after an FL run where the agent closed cargo and GL was never added). Only as
+        // this fill found the page (after a click of its own, cargo's "+", a section still being
+        // drawn isn't closed), and with no Done with this coverage showing (a section is open).
+        if (a.verify === 'cargoClosed' && !report.actions.some((x) => !x.alreadyShown) && !findButton(a) && cargoClosedOn(controls, { found: true })) {
+          clicked.add(a.action);
+          report.actions.push({ id: a.action, text: 'closed on the page', alreadyShown: true });
+          continue;
+        }
         // Recalculate only when the rates are out of date; otherwise it isn't waited for.
         if (a.needsRecalculation && !ratesStale()) continue;
         const button = findButton(a);

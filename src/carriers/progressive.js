@@ -611,7 +611,9 @@ export const progressive = {
     // limit fill (glQuestion, glLimit), then its Done closes it. Done waits for the limit and for
     // every required question in the section: one no rule knows stays the agent's. Done only once
     // the section's questions are gone and the row keeps the limit (glClosed). Once GL is open,
-    // cargo's Done (the same text) is never clicked again (doneCargo's unlessActions).
+    // cargo's Done (the same text) is never clicked again (doneCargo's unlessActions). Cargo closed
+    // on the page, by the agent or an earlier fill, counts as doneCargo (the maintainer, 2026-10-28;
+    // the kit's check for `verify: 'cargoClosed'`).
     // Its text is a regular expression in a string: '^\\+$', as cargo's. Written '^\+$' it read
     // /^+$/, which doesn't compile: every fill on Rates with GL asked for stopped where it looked
     // for this "+" (FL live run, 2026-10-28: the agent added GL and closed cargo by hand).
