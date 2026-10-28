@@ -432,6 +432,11 @@ const ADD_NTL = '^add non-?trucking liability( instead)?\\??$';
 // Later Rates helpers wait while an NTL added on this quote is still there after the agent set it
 // back to No (until the page offers Add NTL again).
 const NTL_HOLD = ['ntlStillAdded'];
+// The open Motor Truck Cargo section, by its fields' data-model names (fieldref): its questions,
+// and a commodity row (its category or commodity list, filled or blank). Neither is on the page
+// while the section is closed (saved Rates pages, 2026-10).
+const CARGO_SECTION = '[fieldref^="MotorTruckingCargoInput."]';
+const COMMODITY_ROW = '[fieldref="MTCargoCommodityCategories.MTCargolistOfCommodityCategories"], [fieldref="MTCargoCommodityCategories.MTCargoListOfCommodities"]';
 
 // A small, reviewed label fallback for practice layouts and carrier redraws that omit a Duck
 // Creek question id. Keep optional contact fields and unvalidated GL out of this list.
@@ -601,8 +606,16 @@ export const progressive = {
       missing: () => 'NTL was added on this quote, but Non-trucking liability is no longer Yes on the intake: remove it on this page yourself, or set it back to Yes.' },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
     // With NTL the cargo helpers are the agent's too (the rest of Rates is, see agentPages).
-    { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true && notNtl(r) },
-    { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true && notNtl(r) },
+    // Done without a click once the section is open (its questions or a commodity row on the page):
+    // a "+" pressed there again is another one, such as the commodity list's own add.
+    // Add a commodity, only while the open section has no commodity row: the intake needs one
+    // commodity, so a row already there, filled or blank, is never joined by another (FL live run,
+    // 2026-10-28: the fills stopped at general liability's "+", whose pattern didn't compile (PR
+    // #213), so their clicks never reached the panel; the next fill pressed the commodity list's "+"
+    // as cargo's and Add a commodity again, an empty row each time, and the agent removed them with
+    // "x"). The page decides, whatever the panel remembers.
+    { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], unlessSelector: `${CARGO_SECTION}, ${COMMODITY_ROW}`, when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], unlessSelector: COMMODITY_ROW, when: (r) => r.coverage.cargo === true && notNtl(r) },
     // OK (2026-10-07): the commodity was chosen but Done didn't show until the agent chose it again
     // (the category's reload still under way): with no Done, the commodity is chosen again, once.
     { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', nudge: 'progressive.q216B', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', unlessActions: ['openGl'], when: (r) => r.coverage.cargo === true && notNtl(r) },

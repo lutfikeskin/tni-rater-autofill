@@ -87,9 +87,11 @@ function matchesSimple(node, selector) {
   selector = selector.replace(/:not\([^()]*\)/g, '');
   const tag = selector.match(/^([a-z][\w-]*)/i)?.[1];
   if (tag && node.tagName !== tag.toUpperCase()) return false;
-  const id = selector.match(/#([\w-]+)/)?.[1];
+  // Ids and classes outside the attribute tests ([fieldref="A.B"] holds a dot, not a class).
+  const outside = selector.replace(/\[[^\]]*\]/g, '');
+  const id = outside.match(/#([\w-]+)/)?.[1];
   if (id && node.id !== id) return false;
-  for (const cls of selector.matchAll(/\.([\w-]+)/g)) {
+  for (const cls of outside.matchAll(/\.([\w-]+)/g)) {
     if (!node.className.split(/\s+/).includes(cls[1])) return false;
   }
   return attrSelector(node, selector);
@@ -3286,6 +3288,50 @@ test('a button that shows only once the page took an answer: the answer is picke
   assert.equal(got.length, 1);
   assert.equal(got[0], records[1], 'the record, not its value');
   assert.equal(x.done?._clicked, true);
+});
+
+// FL live run, 2026-10-28 (cargo $100k/$1k, general freight): Rates fills whose reports never
+// reached the panel left openCargo and addCargoCommodity out of its done helpers, so the next fill
+// pressed "+" again (inside the open section, the commodity list's own add) and Add a commodity
+// again: one empty commodity row per fill, which the agent removed with "x". The page decides now:
+// an open cargo section is not opened again, and a commodity row there is never joined by another.
+test('Progressive cargo: Add a commodity adds the one row the intake needs, never a second', async () => {
+  const record = { applicant: {}, garaging: { state: 'FL' }, operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight' }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: { cargo: true, ntl: false }, claims: { hasClaims: false } };
+  const plan = buildPlan(record, progressive).filter((s) => ['openCargo', 'addCargoCommodity'].includes(s.action));
+  assert.equal(plan.length, 2);
+  // Rates with the cargo section open: its question, a commodity row (or none), the "-" that closes
+  // the row, the commodity list's "+" and its Add a commodity.
+  const page = ({ row }) => {
+    const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+    const cargo = new FakeNode('div', { textContent: 'Motor Truck Cargo' });
+    cargo.append(new FakeNode('button', { textContent: '-' }),
+      makeInput({ name: 'mobileHomes', type: 'radio', value: 'No', attrs: { fieldref: 'MotorTruckingCargoInput.MTCargoMobileHomesQuestion' } }));
+    if (row) {
+      for (const [ref, text] of [['MTCargoCommodityCategories.MTCargolistOfCommodityCategories', 'Consumer Goods'], ['MTCargoCommodityCategories.MTCargoListOfCommodities', 'Other Consumer Goods']]) {
+        const list = new SelectNode([{ text: '', value: '' }, { text, value: 'x' }], { attrs: { fieldref: ref } });
+        if (row === 'filled') list.value = 'x';
+        cargo.append(list);
+      }
+    }
+    const plus = cargo.append(new FakeNode('button', { textContent: '+' }));
+    const add = cargo.append(new FakeNode('button', { textContent: 'Add a commodity' }));
+    h.document.body.append(cargo);
+    const presses = [];
+    plus.addEventListener('click', () => presses.push('+'));
+    add.addEventListener('click', () => presses.push('Add a commodity'));
+    return { h, presses };
+  };
+  // The fill after one whose report was lost (no done helpers), with the row filled or blank.
+  for (const row of ['filled', 'blank']) {
+    const { h, presses } = page({ row });
+    const report = await h.kit.fill(plan, { maxRounds: 4 });
+    assert.deepEqual(presses, [], `a ${row} row: nothing pressed`);
+    assert.equal(report.actions.length, 0, `a ${row} row: nothing clicked`);
+  }
+  // The section open with no commodity row yet: Add a commodity, once, as before.
+  const { h, presses } = page({ row: null });
+  await h.kit.fill(plan, { maxRounds: 4, doneActions: ['openCargo'] });
+  assert.deepEqual(presses, ['Add a commodity']);
 });
 
 test('a question whose wording carries a date is not flagged as reworded when the date moves', async () => {
