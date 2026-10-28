@@ -91,6 +91,20 @@ test('car or auto parts are Aircraft/ Auto/ Boats / Auto Accessories (Not Tires)
   for (const whatHaul of ['Golf carts', 'Racecar parts', 'Cargo parts']) assert.equal(goods({ whatHaul })[0], null, whatHaul);
   const cars = goods({ whatHaul: 'Used cars' });
   assert.deepEqual([cars[0], cars[2]], [null, 'Aircraft/Auto/Boats - Automobiles']);
+  // Car parts with tires or cars themselves: Auto Accessories (Not Tires) covers neither, so the
+  // commodity is the agent's, with a note (TNI, 2026-10-28: PR #219's review); AmWINS writes what they haul.
+  for (const [operations, says] of [[{ whatHaul: 'Auto parts and tires' }, /tires/], [{ whatHaul: 'car parts, tyres, general freight' }, /tires/],
+    [{ whatHaul: 'Cars and auto parts' }, /cars themselves/], [{ businessClass: 'Auto Hauler', whatHaul: 'Car parts' }, /cars themselves/]]) {
+    const record = baseRecord();
+    Object.assign(record.operations, operations);
+    const p = byQ(buildPlan(record, progressive), '216A'), g = buildPlan(record, geico).find((x) => x.name === 'Cargo commodities');
+    const what = JSON.stringify(operations);
+    assert.deepEqual([p.value, byQ(buildPlan(record, progressive), '216B').value, g.value], [null, null, null], what);
+    assert.match(p.note, says, what);
+    assert.match(g.note, says, what);
+    assert.equal(goods(operations)[3], `Motor Truck Cargo $100K with $1K Ded - ${operations.whatHaul}`, what);
+  }
+  assert.equal(byQ(buildPlan(baseRecord(), progressive), '216A').note, null, 'no note otherwise');
 });
 
 test('freight intake maps business type and blank business name to sole proprietor', () => {

@@ -72,11 +72,26 @@ export const haulsGeneralFreight = (record) => GENERAL_FREIGHT.test(hauled(recor
 export const CAR_PARTS = /\b(?:auto(?:mobile|motive)?|cars?)[\s-]*(?:body[\s-]*)?(?:parts?|accessor(?:y|ies))\b/i;
 // What they haul names car or auto parts, or, left blank, the business class does.
 export const haulsCarParts = (record) => CAR_PARTS.test(hauled(record));
+// Cars themselves (autos, automobiles, cars, car hauling), never their parts or accessories
+// ("auto-parts", "auto body parts" neither): GEICO's Automobiles.
+export const CARS = /\b(?:auto(?:mobile)?s?|cars?)\b(?![\s-]*(?:body[\s-]*)?(?:parts?|accessor(?:y|ies))\b)|\bcar\s*haul/i;
+const TIRES = /\b(?:tires?|tyres?)\b/i;
+// The business class and what they haul, together.
+const freightWords = (record) => [record.operations?.businessClass, record.operations?.whatHaul].filter(Boolean).join(' / ');
+// Car parts named with tires or with cars themselves (in the business class or what they haul): Auto
+// Accessories (Not Tires) covers neither, so the commodity is the agent's on every carrier, general
+// freight named too or not (TNI, 2026-10-28: answer to PR #219's review).
+export const carPartsMixed = (record) => haulsCarParts(record) && (TIRES.test(freightWords(record)) || CARS.test(freightWords(record)));
+export const carPartsMixedNote = (record) => (carPartsMixed(record)
+  ? `The intake's freight ("${freightWords(record).slice(0, 80)}") names car or auto parts with ${TIRES.test(freightWords(record)) ? 'tires' : 'cars themselves'}, which Auto Accessories (Not Tires) doesn't cover: choose the commodity yourself.`
+  : null);
 // TNI's cargo commodity for what they haul, in Progressive's wording (GEICO words its own): car or
 // auto parts, then general freight; neither, null (the agent's). One commodity: freight naming both
 // takes the more specific, car parts, as GEICO's list puts a named commodity before general freight.
-export const cargoCommodity = (record) => (haulsCarParts(record) ? { category: 'Aircraft/ Auto/ Boats', commodity: 'Auto Accessories (Not Tires)' }
-  : haulsGeneralFreight(record) ? { category: 'Consumer Goods', commodity: 'Other Consumer Goods' } : null);
+// Car parts with tires or cars: null (carPartsMixed).
+export const cargoCommodity = (record) => (carPartsMixed(record) ? null
+  : haulsCarParts(record) ? { category: 'Aircraft/ Auto/ Boats', commodity: 'Auto Accessories (Not Tires)' }
+    : haulsGeneralFreight(record) ? { category: 'Consumer Goods', commodity: 'Other Consumer Goods' } : null);
 export const CARGO_DEDUCTIBLE_NOTE = 'The intake gives a cargo limit but no deductible: choose the cargo limit and deductible yourself (the deductible is usually $1,000 or $2,500).';
 
 // The names a carrier being quoted goes by as an intake's current carrier (sameCarrier): one word

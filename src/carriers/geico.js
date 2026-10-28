@@ -50,7 +50,7 @@
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
@@ -811,12 +811,15 @@ const cargoNo = (words, what) => ({
 // seafood; an auto hauler automobiles; car or auto parts auto accessories (not tires); general
 // freight (General Freight Hauler, Consumer Goods, General Freight, Dry Freight, General) other
 // consumer goods, as on Progressive (cargoCommodity in util.js). The first match only, so freight
-// naming car parts and general freight is auto accessories, as on Progressive. No match: null.
+// naming car parts and general freight is auto accessories, as on Progressive; car parts named with
+// tires or cars themselves are the agent's (carPartsMixed). No match: null.
 const COMMODITIES = [
   { test: (r) => hasReefer(r) || /reefer|refrigerat/i.test(freightWords(r)),
     picks: ['Consumer Goods - Pharmaceuticals (Over The Counter)', 'Food & Beverage - Other Food & Beverages', 'Refrigerated Goods - Dairy', 'Refrigerated Goods - Frozen Seafood'] },
-  // Cars themselves, never their parts or accessories ("auto-parts", "auto body parts" neither).
-  { test: (r) => /\b(?:auto(?:mobile)?s?|cars?)\b(?![\s-]*(?:body[\s-]*)?(?:parts?|accessor(?:y|ies))\b)|\bcar\s*haul/i.test(freightWords(r)), picks: ['Aircraft/Auto/Boats - Automobiles'] },
+  // Car parts with tires or cars themselves: the agent's, on every carrier (TNI, 2026-10-28).
+  { test: carPartsMixed, picks: [] },
+  // Cars themselves, never their parts or accessories (CARS in util.js).
+  { test: (r) => CARS.test(freightWords(r)), picks: ['Aircraft/Auto/Boats - Automobiles'] },
   // Car or auto parts: TNI's auto accessories (TNI, 2026-10-28, on every carrier; before, general
   // freight when named with it, else the agent's).
   { test: haulsCarParts, picks: ['Aircraft/Auto/Boats - Auto Accessories (Not Tires)'] },
@@ -826,7 +829,7 @@ const COMMODITIES = [
 ];
 // What they haul, or, left blank, the business class.
 const hauled = (r) => String(r.operations.whatHaul ?? '').trim() || String(r.operations.businessClass ?? '');
-const commodities = (r) => COMMODITIES.find((c) => c.test(r))?.picks.join('; ') ?? null;
+const commodities = (r) => COMMODITIES.find((c) => c.test(r))?.picks.join('; ') || null;
 
 // Motor truck general liability: the intake's GL request (coverage.gl, never coverage.hasGl, GL the
 // client already has), and its limit when GEICO lists it. TNI's $1M/$2M default for a request
@@ -1426,7 +1429,7 @@ export const geico = {
       // suggest one for the agent's approval (not a client fact: no manualOnly).
       { field: 'GiveMtcHaulingCommoditiesCollect', ask: 'Select up to four commodities the customer hauls the most', name: 'Cargo commodities', kind: 'choice',
         source: 'derived', value: commodities,
-        note: (r) => (commodities(r) ? null : `Pick up to four commodities yourself${r.operations.whatHaul ? `: the intake says they haul ${quote(r.operations.whatHaul)}` : ''}.`) },
+        note: (r) => (commodities(r) ? null : carPartsMixedNote(r) ?? `Pick up to four commodities yourself${r.operations.whatHaul ? `: the intake says they haul ${quote(r.operations.whatHaul)}` : ''}.`) },
       { q: 'CargoLimit', ask: 'Motor Truck Cargo', control: 'select', name: 'Motor truck cargo limit and deductible', kind: 'choice', source: cargoLimitSource, value: cargoChoice, note: cargoLimitNote },
       { field: 'GiveTrailerInterchangeEligibleRequireCoverageYesNo', path: 'trailerInfo.interchange', name: 'Trailer interchange', kind: 'bool' },
       // Hired and non-owned autos: interchange or rented trailers don't make them Yes.
