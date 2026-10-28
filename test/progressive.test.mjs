@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { buildPlan } from '../src/plan.js';
 import { progressive, owner } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
@@ -2028,4 +2029,160 @@ test('the NTL questions\' patterns match their captions as the page kit reads th
   const rule = (q) => progressive.rules.find((r) => r.q === q);
   assert.match(squash('Non-Trucking Liability coverage limit'), new RegExp(rule('1DF2').label, 'i'));
   assert.match(squash('Is the customer under permanent lease to a motor carrier that provides primary liability coverage when the customer is under dispatch?'), new RegExp(rule('1DF0').label, 'i'));
+});
+
+// Trailer interchange (TNI, 2026-10-28, after an FL run where the agent added it by hand): only
+// when the intake asks for it, its section's answers matched by the data-model names a live page
+// drew (test/fixtures/progressive/interchange, field shapes only).
+const interchangeLayout = () => JSON.parse(fs.readFileSync(new URL('./fixtures/progressive/interchange/coverages-rates.json', import.meta.url), 'utf8'));
+const interchangeRecord = () => {
+  const record = baseRecord();
+  record.garaging.state = 'FL';
+  record.trailers = [{ type: 'Dry Van', year: 2019, make: 'WABASH', model: 'Van', vin: '1JJV532D0KL000001', value: 20000 }];
+  record.trailerInfo = { interchange: true, interchangeLimit: '$50,000' };
+  return record;
+};
+const INTERCHANGE_ANSWERS = [['TrailerInterchangeInput.InterchangeAgreement', true, 'derived'], ['TrailerInterchangeInput.FurnishAgreement', true, 'standard'],
+  ['TrailerInterchangeInput.NoOfNonOwnedTrailers', '1', 'standard'], ['TrailerInterchangeInput.Limit', '$50k with a $1,000 Deductible', 'derived'],
+  ['NonOwnedTrailerPhysicalDamageInput.Limit', 'Matching Trailer Interchange Limits', 'standard']];
+
+test('trailer interchange: the intake\'s request is added and answered, the number and tile marked to confirm', () => {
+  const layout = interchangeLayout();
+  const shape = (ref) => layout.open.fields.find((f) => f.ref === ref);
+  const plan = buildPlan(interchangeRecord(), progressive, {});
+  const field = (ref) => plan.find((s) => s.field === ref);
+  const act = (id) => plan.find((s) => s.kind === 'action' && s.action === id);
+  // Every question of the section has a rule, and each answer is one of the page's options.
+  for (const f of layout.open.fields) assert.ok(field(f.ref), f.ref);
+  for (const [ref, value, source] of INTERCHANGE_ANSWERS) {
+    const step = field(ref);
+    assert.deepEqual([step.value, step.source, step.manualOnly, step.note], [value, source, false, null], ref);
+    assert.ok(shape(ref).opts.includes(value === true ? 'Yes' : value), `${ref}: the page offers ${value}`);
+  }
+  assert.deepEqual(['21BE', '21BF', '21C0'].map((q) => byQ(plan, q).interchange), ['section', 'section', 'section']);
+  assert.equal(field('TrailerInterchangeInput.Limit').interchange, 'limit');
+  // The number and the tile are marked to confirm, on the number and on the limit (it stays in the row).
+  for (const ref of ['TrailerInterchangeInput.NoOfNonOwnedTrailers', 'TrailerInterchangeInput.Limit']) {
+    assert.match(field(ref).warn, /TNI's default of 1 non-owned trailer, and the Dry Freight Trailer tile for the intake's Dry Van trailer\. Confirm them with the client/, ref);
+  }
+  // "+" in its row once cargo is done, the tile (Add Trailer's) once the number is in, then Done.
+  const order = plan.filter((s) => s.kind === 'action').map((s) => s.action);
+  assert.ok(order.indexOf('doneCargo') < order.indexOf('openInterchange') && order.indexOf('openInterchange') < order.indexOf('interchangeTile')
+    && order.indexOf('interchangeTile') < order.indexOf('doneInterchange') && order.indexOf('doneInterchange') < order.indexOf('recalculate'));
+  const open = act('openInterchange');
+  assert.deepEqual([open.text, open.near, open.afterActions, open.unless], ['^\\+$', 'trailer interchange', ['doneCargo'], ['progressive.q21DD', 'progressive.q21BE']]);
+  const tile = act('interchangeTile');
+  assert.deepEqual([tile.afterActions, tile.afterAny, tile.unless, tile.unique], [['openInterchange'], ['progressive.q21C0', 'progressive.qNP21EB'], ['progressive.q21DD', 'progressive.q21E5'], true]);
+  assert.ok(layout.open.tiles.every((t) => new RegExp(tile.text, 'i').test(t)));
+  const done = act('doneInterchange');
+  assert.deepEqual([done.afterActions, done.after, done.verify, done.waitRequired], [['openInterchange'], ['progressive.q21DD', 'progressive.q21E5'], 'interchangeClosed', true]);
+  for (const id of ['recalculate', 'billPlan']) assert.deepEqual(act(id).afterActions, ['doneCargo', 'doneInterchange'], id);
+  // With GL too: after GL's Done.
+  const gl = interchangeRecord();
+  gl.coverage.gl = true;
+  assert.deepEqual(buildPlan(gl, progressive, {}).find((s) => s.action === 'openInterchange').afterActions, ['doneCargo', 'doneGl']);
+});
+
+test('trailer interchange: a tile only for one matched trailer type, a limit only one Progressive lists', () => {
+  const flat = interchangeRecord();
+  flat.trailers[0].type = 'Flatbed';
+  assert.equal(buildPlan(flat, progressive, {}).find((s) => s.action === 'interchangeTile').text, '^Flatbed Trailer$');
+  // Trailers of two types, none, or a type with no tile: no tile clicked, the agent's pick, said on the number.
+  for (const [trailers, said] of [[[{ type: 'Dry Van' }, { type: 'Flatbed' }], /the intake has Dry Van, Flatbed trailers\): pick it yourself/],
+    [[], /the intake has no trailer type\): pick it yourself/], [[{ type: 'Tanker' }], /Tanker isn't matched to a Progressive trailer tile\): pick it yourself/]]) {
+    const r = interchangeRecord();
+    r.trailers = trailers;
+    const p = buildPlan(r, progressive, {});
+    assert.ok(!p.some((s) => s.action === 'interchangeTile'), JSON.stringify(trailers));
+    assert.match(p.find((s) => s.field === 'TrailerInterchangeInput.NoOfNonOwnedTrailers').warn, said);
+  }
+  // The limit as the intake writes it; none, or one Progressive doesn't list, is the agent's.
+  for (const said of ['50K', '50000', '$50,000.00']) {
+    const r = interchangeRecord();
+    r.trailerInfo.interchangeLimit = said;
+    assert.equal(buildPlan(r, progressive, {}).find((s) => s.field === 'TrailerInterchangeInput.Limit').value, '$50k with a $1,000 Deductible', said);
+  }
+  for (const [said, note] of [[null, /without a limit: choose it yourself/], ['$25,000', /\$25,000 trailer interchange limit, which Progressive doesn't list/], ['$1,000,000', /doesn't list/]]) {
+    const r = interchangeRecord();
+    r.trailerInfo.interchangeLimit = said;
+    const step = buildPlan(r, progressive, {}).find((s) => s.field === 'TrailerInterchangeInput.Limit');
+    assert.deepEqual([step.value, step.source, step.manualOnly], [null, 'fact', true], String(said));
+    assert.match(step.note, note);
+  }
+});
+
+test('trailer interchange not asked for: left alone, and a section the agent opened is theirs', () => {
+  for (const interchange of [false, null, undefined]) {
+    const r = interchangeRecord();
+    r.trailerInfo.interchange = interchange;
+    const p = buildPlan(r, progressive, {});
+    assert.ok(!p.some((s) => s.kind === 'action' && /nterchange/.test(s.action)), String(interchange));
+    assert.deepEqual(p.find((s) => s.action === 'recalculate').afterActions, ['doneCargo']);
+    for (const [ref] of INTERCHANGE_ANSWERS) {
+      const step = p.find((s) => s.field === ref);
+      assert.deepEqual([step.value, step.source, step.manualOnly, step.warn], [null, 'fact', true, null], ref);
+      assert.match(step.note, /doesn't ask for trailer interchange/);
+    }
+  }
+});
+
+// TNI, 2026-10-28: a customer can add trailer interchange to a non-trucking liability quote.
+test('trailer interchange on an NTL quote: after NTL\'s Done on NTL alone; with cargo or GL too, the agent\'s with the rest of Rates', () => {
+  const alone = interchangeRecord();
+  Object.assign(alone.coverage, { ntl: true, cargo: false });
+  const plan = buildPlan(alone, progressive, {});
+  const act = (id) => plan.find((s) => s.kind === 'action' && s.action === id);
+  const order = plan.filter((s) => s.kind === 'action').map((s) => s.action);
+  for (const id of ['openInterchange', 'interchangeTile', 'doneInterchange']) assert.ok(act(id), id);
+  assert.deepEqual(act('openInterchange').afterActions, ['doneNtl']);
+  assert.ok(order.indexOf('doneNtl') < order.indexOf('openInterchange') && order.indexOf('doneInterchange') < order.indexOf('recalculate'));
+  for (const id of ['recalculate', 'billPlan']) assert.deepEqual(act(id).afterActions, ['doneNtl', 'doneInterchange'], id);
+  assert.ok(!act('ntlRates'), 'NTL alone with interchange: still Rates as on any quote');
+  assert.equal(progressive.agentPages.CoveragesRates(alone), null);
+  assert.equal(plan.find((s) => s.field === 'TrailerInterchangeInput.Limit').value, '$50k with a $1,000 Deductible');
+  // Without interchange the NTL-alone flow is unchanged.
+  const plain = structuredClone(alone);
+  plain.trailerInfo.interchange = false;
+  assert.deepEqual(buildPlan(plain, progressive, {}).find((s) => s.action === 'recalculate').afterActions, ['doneNtl']);
+  // NTL with cargo: Rates is the agent's, interchange too (no helpers); its answers still fill
+  // once they add it, and the reminders say so.
+  const cargo = interchangeRecord();
+  cargo.coverage.ntl = true;
+  const cargoPlan = buildPlan(cargo, progressive, {});
+  assert.ok(!cargoPlan.some((s) => s.kind === 'action' && /nterchange/.test(s.action)));
+  assert.equal(cargoPlan.find((s) => s.field === 'TrailerInterchangeInput.FurnishAgreement').value, true);
+  assert.match(cargoPlan.find((s) => s.action === 'ntlRates').missing, /Cargo, general liability, trailer interchange, the bill plan/);
+  assert.match(progressive.agentPages.CoveragesRates(cargo), /The rest of this page is yours: cargo, general liability, the bill plan, Recalculate and Print\. The intake asks for trailer interchange too/);
+  const noInterchange = structuredClone(cargo);
+  noInterchange.trailerInfo.interchange = false;
+  assert.match(buildPlan(noInterchange, progressive, {}).find((s) => s.action === 'ntlRates').missing, /Cargo, general liability, the bill plan/);
+  assert.doesNotMatch(progressive.agentPages.CoveragesRates(noInterchange), /trailer interchange/);
+});
+
+// A second FL run (2026-10-28): Non-Owned Trailer Physical Damage added by its own "+" asks its own
+// number of non-owned trailers and lists its limits in full dollars, without "Matching Trailer
+// Interchange Limits"; the same fields came under other question ids (21EB, 2207, 21B8).
+test('non-owned trailer physical damage: matching the interchange limit in full dollars where "Matching" isn\'t offered', () => {
+  const layout = interchangeLayout();
+  const plan = buildPlan(interchangeRecord(), progressive, {});
+  const field = (ref) => plan.find((s) => s.field === ref);
+  const pd = field('NonOwnedTrailerPhysicalDamageInput.Limit');
+  assert.deepEqual([pd.value, pd.choiceAliases], ['Matching Trailer Interchange Limits', ['$50,000 with a $1,000 Deductible']]);
+  const fullDollars = layout.nonOwnedAlone.fields.find((f) => f.ref === 'NonOwnedTrailerPhysicalDamageInput.Limit').opts;
+  assert.ok(fullDollars.includes(pd.choiceAliases[0]) && !fullDollars.includes(pd.value));
+  for (const f of layout.nonOwnedAlone.fields) assert.ok(field(f.ref), `${f.q} ${f.ref}`);
+  const count = field('NonOwnedTrailerPhysicalDamageInput.NumberOfNonOwnedTrailers');
+  assert.deepEqual([count.value, count.source, count.manualOnly], ['1', 'standard', false]);
+  assert.match(count.warn, /TNI's default of 1 non-owned trailer/);
+  assert.ok(layout.nonOwnedAlone.tiles.some((t) => new RegExp(plan.find((s) => s.action === 'interchangeTile').text, 'i').test(t)));
+  assert.deepEqual(plan.find((s) => s.action === 'interchangeTile').afterAny, ['progressive.q21C0', 'progressive.qNP21EB']);
+  // No limit the fill can give: nothing to match.
+  const none = interchangeRecord();
+  none.trailerInfo.interchangeLimit = null;
+  assert.deepEqual(buildPlan(none, progressive, {}).find((s) => s.field === 'NonOwnedTrailerPhysicalDamageInput.Limit').choiceAliases, []);
+  // Not asked for: the count is the agent's.
+  const off = interchangeRecord();
+  off.trailerInfo.interchange = false;
+  const offCount = buildPlan(off, progressive, {}).find((s) => s.field === 'NonOwnedTrailerPhysicalDamageInput.NumberOfNonOwnedTrailers');
+  assert.deepEqual([offCount.value, offCount.manualOnly], [null, true]);
 });

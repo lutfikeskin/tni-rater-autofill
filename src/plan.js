@@ -300,6 +300,8 @@ function fieldSteps(rules, record, carrier, active) {
       cargo: rule.cargo ?? null,
       // Its general liability questions the same way: 'section' or 'limit'.
       gl: rule.gl ?? null,
+      // And its trailer interchange questions (Progressive, 2026-10-28): 'section' or 'limit'.
+      interchange: rule.interchange ?? null,
       selector: rule.repeatSelector ? rule.repeatSelector(record, active) : rule.selector ?? null,
       re: rule.label ?? null,
       ex: rule.not ?? null,

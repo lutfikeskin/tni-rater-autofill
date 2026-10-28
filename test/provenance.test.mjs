@@ -133,8 +133,6 @@ const NOT_MAPPED = {
     'drivers[].maritalStatus': 'Progressive\'s commercial driver page does not ask it',
     'drivers[].gender': 'Progressive\'s commercial driver page does not ask it',
     'trailerInfo.hitch': 'not asked by Progressive',
-    'trailerInfo.interchange': 'trailer interchange is not mapped (no live quote has asked it)',
-    'trailerInfo.interchangeLimit': 'trailer interchange is not mapped (no live quote has asked it)',
   },
   amwins: {
     'applicant.mcDotWithin60Days': 'AmWINS asks for the numbers themselves (has DOT / has MC / no number)',
