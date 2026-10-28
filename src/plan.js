@@ -325,6 +325,8 @@ function fieldSteps(rules, record, carrier, active) {
       keepPreset: !!rule.keepPreset,
       // A list without the answer keeps the page's own choice, with a check (GEICO's cities for the ZIP).
       keepUnlisted: !!rule.keepUnlisted,
+      // A first option that is no answer (`firstNot`: "Enter a different address") isn't picked.
+      firstNot: rule.firstNot ?? null,
       // A choice whose option a helper shows (GEICO's 11 Payments, behind View More Payment Plans):
       // not offered yet, it waits instead of failing; never offered, it is the agent's.
       whenOffered: !!rule.whenOffered,

@@ -2396,6 +2396,97 @@ test('home address uses offered USDOT address when Primary Business Address is a
   assert.equal(manual.checked, false);
 });
 
+// KY live run, 2026-10-28: the generic street label rule caught this radio, found no option equal
+// to the intake's street (Progressive abbreviates "Circle" to "Cir") and left it to the agent. TNI's
+// home-address standard: the first option offered.
+test('More about the business: Primary Business Address takes the first offered option, not the intake street', async () => {
+  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const record = {
+    applicant: { name: 'Example LLC', dot: null, owner1: 'Test Owner' },
+    garaging: { street: '1234 Example Circle', city: 'Example City', zip: '40000', state: 'KY', unit: null },
+    operations: { businessClass: 'Expediter' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [],
+    coverage: { cargo: false, gl: false }, claims: {},
+  };
+  const attrs = { fieldref: 'PrimaryBusinessAddressInputNonShredded.AddressOptions' };
+  const offered = makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_0`, name: 'string_58', type: 'radio', value: '1234 Example Cir Example City KY 40000', attrs });
+  const manual = makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_1`, name: 'string_58', type: 'radio', value: 'Enter a different address', attrs });
+  h.document.body.append(radioGroup('Primary Business Address', offered, manual));
+  const report = await h.kit.fill(buildPlan(record, progressive));
+  assert.equal(report.halted, false);
+  assert.equal(offered.checked, true);
+  assert.equal(manual.checked, false);
+  assert.equal(report.failed.length, 0, 'the street rule no longer tries to match the intake street');
+});
+
+// TNI, 2026-10-28: Verify Address after the Primary Business Address pick, once; never with "Enter a
+// different address", and not on a page that already says the address was verified.
+const VERIFIED = 'PrimaryBusinessAddressOutputNonShredded.VerifyAddressSuccessMessage';
+function primaryAddressPage({ offered = true, verified = false } = {}) {
+  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const attrs = { fieldref: 'PrimaryBusinessAddressInputNonShredded.AddressOptions' };
+  const radios = [
+    ...(offered ? [makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_0`, name: 'string_58', type: 'radio', value: '1234 Example Cir Example City KY 40000', checked: verified, attrs })] : []),
+    makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_1`, name: 'string_58', type: 'radio', value: 'Enter a different address', checked: !offered, attrs }),
+  ];
+  h.document.body.append(radioGroup('Primary Business Address', ...radios));
+  const message = () => new FakeNode('div', { attrs: { fieldref: VERIFIED } });
+  if (verified) h.document.body.append(message());
+  const button = addButton(h, 'Verify Address');
+  button.clicks = 0;
+  button.onclick = () => {
+    button.clicks++;
+    h.document.body.append(message());
+  };
+  const record = { applicant: {}, garaging: { street: '1234 Example Circle' }, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => s.q === '58' || s.action === 'verifyAddress');
+  return { h, radios, button, plan };
+}
+
+test('More about the business: Verify Address is pressed once after the first address is picked', async () => {
+  const { h, radios, button, plan } = primaryAddressPage();
+  assert.equal(plan.length, 2, 'the real plan has the address choice and its Verify Address');
+  let report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(radios[0].checked, true);
+  assert.equal(button.clicks, 1);
+  assert.deepEqual(Array.from(report.actions, (a) => a.id), ['verifyAddress']);
+  report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(button.clicks, 1, 'the page says verified: not pressed again');
+});
+
+test('More about the business: Verify Address is not pressed on a verified page or with "Enter a different address"', async () => {
+  const verified = primaryAddressPage({ verified: true });
+  await verified.h.kit.fill(verified.plan, { maxRounds: 8 });
+  assert.equal(verified.radios[0].checked, true, 'the verified address stays');
+  assert.equal(verified.button.clicks, 0, 'verified before Fill');
+  const manual = primaryAddressPage({ offered: false });
+  await manual.h.kit.fill(manual.plan, { maxRounds: 8 });
+  assert.equal(manual.radios[0].checked, true);
+  assert.equal(manual.button.clicks, 0, 'the address boxes are the agent\'s');
+});
+
+// Review of #218: "Enter a different address" listed first is no address to pick (nothing fills its
+// boxes): left to the agent with a note, and Verify Address waits for them.
+test('More about the business: a first option of "Enter a different address" is the agent\'s, with a note', async () => {
+  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const attrs = { fieldref: 'PrimaryBusinessAddressInputNonShredded.AddressOptions' };
+  const manual = makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_0`, name: 'string_58', type: 'radio', value: 'Enter a different address', attrs });
+  const offered = makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_1`, name: 'string_58', type: 'radio', value: '1234 Example Cir Example City KY 40000', attrs });
+  h.document.body.append(radioGroup('Primary Business Address', manual, offered));
+  const button = addButton(h, 'Verify Address');
+  let clicks = 0;
+  button.onclick = () => clicks++;
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => s.q === '58' || s.action === 'verifyAddress');
+  const report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(manual.checked, false);
+  assert.equal(offered.checked, false, 'not the second option either: the first is the standard');
+  assert.equal(report.filled.length, 0);
+  assert.equal(report.failed.length, 0);
+  assert.match(report.noData.map((x) => x.note).join(' '), /enter it yourself/);
+  assert.equal(clicks, 0);
+});
+
 test('unfamiliar questions carry their options for the AI, and answer() puts in a choice and marks it purple', async () => {
   const h = harness();
   const commodity = new SelectNode([
