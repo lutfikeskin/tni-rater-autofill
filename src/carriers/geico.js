@@ -1384,14 +1384,18 @@ export const geico = {
         emptyNote: (r) => (florida(r) ? 'GEICO left basic personal injury protection empty: pick it yourself.' : null) },
       { q: 'PipOptions', ask: 'PIP Options', control: 'select', name: 'PIP options', ...pipKept('the PIP options') },
       { q: 'ExcludedWorkLoss', ask: 'Excluded Work Loss', control: 'select', name: 'Excluded work loss', ...pipKept('excluded work loss') },
-      // A vehicle's coverage rows: its year, make and model name them (scope 'vehicle'). TNI's
-      // comprehensive and collision are $1,000 deductibles (physicalDamageSource); the rest are the agent's.
+      // A vehicle's coverage rows: its year, make and model name them (scope 'vehicle'), and each
+      // step takes the row naming its unit, never the row at its position. Comprehensive, collision
+      // and fire and theft list the trailers among the vehicles (`trailers`: a 4-vehicle FL quote
+      // with a 2016 Great Dane, 2026-10-28, shifted the fifth row out of reach); rental and road
+      // service only the motor vehicles. TNI's comprehensive and collision are $1,000 deductibles
+      // (physicalDamageSource); the rest are the agent's.
       ...ROW_COVERAGES.map(/** @returns {CarrierRule} */ ([suffix, name]) => (['COMP', 'COLL'].includes(suffix)
-        ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.comp-coll', name, kind: 'choice', source: physicalDamageSource, value: () => DEDUCTIBLE, note: physicalDamageNote(name.toLowerCase()) }
+        ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', trailers: true, tni: 'geico.comp-coll', name, kind: 'choice', source: physicalDamageSource, value: () => DEDUCTIBLE, note: physicalDamageNote(name.toLowerCase()) }
         : ['ERS', 'HVRS'].includes(suffix)
           ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.road-service', name: `${name} (TNI: accepted)`, kind: 'choice', source: 'standard', value: () => ROAD_SERVICE }
           : suffix === 'FT'
-            ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.fire-theft', name: `${name} (TNI: ${FIRE_THEFT})`, kind: 'choice', source: 'standard', value: () => FIRE_THEFT }
+            ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', trailers: true, tni: 'geico.fire-theft', name: `${name} (TNI: ${FIRE_THEFT})`, kind: 'choice', source: 'standard', value: () => FIRE_THEFT }
             : suffix === 'Rental'
               ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.rental', name: `${name} (TNI: ${RENTAL})`, kind: 'choice', source: physicalDamageSource, value: () => RENTAL, note: physicalDamageNote(name.toLowerCase()) }
               : suffix === 'RRWDT'

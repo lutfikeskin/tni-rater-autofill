@@ -505,13 +505,21 @@ test('comprehensive and collision: TNI adds them with $1,000 deductibles, unless
   for (const name of ['Comprehensive or collision wanted (TNI: Yes)', 'Trailer comprehensive or collision wanted (TNI: Yes)']) {
     assert.deepEqual([one(p, name).value, one(p, name).source], [true, 'standard'], name);
   }
-  for (const name of ['Comprehensive', 'Collision']) assert.deepEqual([one(p, name).value, one(p, name).source, one(p, name).kind], ['$1,000 deductible', 'standard', 'choice'], name);
+  // Quote & Coverages: a row for the vehicle and one for the trailer.
+  const rows = (q, name) => { const s = q.filter((x) => x.name === name); assert.equal(s.length, 2, `${name}: the vehicle's and the trailer's rows`); return s; };
+  for (const name of ['Comprehensive', 'Collision']) for (const s of rows(p, name)) assert.deepEqual([s.value, s.source, s.kind], ['$1,000 deductible', 'standard', 'choice'], name);
   // The notes say otherwise: each is the agent's, the line quoted.
   for (const line of ['NO COMP/COLL', 'No physical damage please', 'liability only', 'Client doesn\'t want collision', 'without comprehensive']) {
     const q = plan(with_({ trailers: [TRAILER], 'notes.text': `Financed\n${line}` }));
-    for (const name of ['Comprehensive or collision wanted (TNI: Yes)', 'Trailer comprehensive or collision wanted (TNI: Yes)', 'Comprehensive', 'Collision']) {
+    for (const name of ['Comprehensive or collision wanted (TNI: Yes)', 'Trailer comprehensive or collision wanted (TNI: Yes)']) {
       agents(one(q, name));
       assert.ok(one(q, name).note.includes(line), `${line}: ${name}`);
+    }
+    for (const name of ['Comprehensive', 'Collision']) {
+      for (const s of rows(q, name)) {
+        agents(s);
+        assert.ok(s.note.includes(line), `${line}: ${name}`);
+      }
     }
   }
   // The claims box's notes count too; its Yes / No line doesn't.
@@ -1645,6 +1653,20 @@ test('a vehicle\'s coverage rows: by the coverage their id ends in, one step per
   assert.deepEqual(values.map((s) => [s.path, s.value]), [['vehicles[0].value', 45000], ['vehicles[1].value', 30000]]);
   const single = plan(intake()).filter((s) => s.steps?.includes(QC) && s.scope === 'vehicle');
   assert.ok(single.every((s) => s.activeVehicle === null && s.vehicleHint === null), 'one vehicle: no rows to tell apart');
+});
+
+// GEICO live run, 2026-10-28: comprehensive, collision and fire and theft list the trailer among the
+// vehicles, so a trailer has its own step for each, named by its year and make; rental and road
+// service list only the motor vehicles.
+test('a trailer\'s coverage rows: comprehensive, collision and fire and theft, after the vehicles\'', () => {
+  const p = plan(with_({ vehicles: [intake().vehicles[0], SECOND_VEHICLE], trailers: [TRAILER] }));
+  const hints = (name) => p.filter((s) => s.name === name && s.steps?.includes(QC)).map((s) => s.vehicleHint);
+  for (const name of ['Comprehensive', 'Collision', 'Fire and theft (TNI: Not Included)']) {
+    assert.deepEqual(hints(name), [['2021', 'ford', 'f 650'], ['2019', 'ram', 'promaster'], ['2015', 'wabash']], name);
+  }
+  for (const name of ['Rental reimbursement (TNI: $40 Per Day, $1,200 Max)', 'Emergency road service (TNI: accepted)']) assert.equal(hints(name).length, 2, name);
+  const trailerComp = p.filter((s) => s.name === 'Comprehensive').at(-1);
+  assert.deepEqual([trailerComp.value, trailerComp.source, trailerComp.activeVehicle], ['$1,000 deductible', 'standard', false]);
 });
 
 test('notes are short and plain', () => {

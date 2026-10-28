@@ -144,6 +144,7 @@
  * @property {'select' | 'radio' | 'checkbox' | 'text'} [control]
  * @property {ClientValue<string | null>} [scope]  vehicle, trailer, driver or policy
  * @property {ClientValue<number | null>} [scopeIndex]
+ * @property {boolean} [trailers]  with scope vehicle: a step for each trailer too, after the vehicles' (src/plan.js)
  * @property {UnitList} [repeat]  one step per unit of this list
  * @property {(record: ClientRecord, active: ActiveUnits) => string} [repeatSelector]
  * @property {{ selector: string, path: string }} [witness]  the unit's row: the one showing its value
