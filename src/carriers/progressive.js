@@ -817,8 +817,10 @@ export const progressive = {
       // TNI's home-address standard (q2A5) here too (2026-10-28, after a KY live run): Primary
       // Business Address is always the first option Progressive offers (its own spelling of the
       // address, so never compared with the intake's street). The field claims the radio, which
-      // keeps the generic street label rule off it.
-      { q: '58', tni: 'progressive.home-address', source: 'standard', field: 'PrimaryBusinessAddressInputNonShredded.AddressOptions', ask: 'Primary Business Address', name: 'Primary business address (first option)', kind: 'first-option', value: () => 'first option' },
+      // keeps the generic street label rule off it. A first option of "Enter a different address"
+      // isn't picked (no rule here fills its boxes): the agent's, with a note (TNI, 2026-10-28).
+      { q: '58', tni: 'progressive.home-address', source: 'standard', field: 'PrimaryBusinessAddressInputNonShredded.AddressOptions', ask: 'Primary Business Address', name: 'Primary business address (first option)', kind: 'first-option', value: () => 'first option',
+        firstNot: '^enter a different', unofferedNote: 'Progressive offers no business address to pick here: choose the Primary Business Address and enter it yourself, then click Verify Address.' },
       { q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
       { tni: 'progressive.currently-insured', q: '81', source: insuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
       // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer

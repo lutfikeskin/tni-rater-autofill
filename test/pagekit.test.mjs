@@ -2171,6 +2171,28 @@ test('More about the business: Verify Address is not pressed on a verified page 
   assert.equal(manual.button.clicks, 0, 'the address boxes are the agent\'s');
 });
 
+// Review of #218: "Enter a different address" listed first is no address to pick (nothing fills its
+// boxes): left to the agent with a note, and Verify Address waits for them.
+test('More about the business: a first option of "Enter a different address" is the agent\'s, with a note', async () => {
+  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const attrs = { fieldref: 'PrimaryBusinessAddressInputNonShredded.AddressOptions' };
+  const manual = makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_0`, name: 'string_58', type: 'radio', value: 'Enter a different address', attrs });
+  const offered = makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_1`, name: 'string_58', type: 'radio', value: '1234 Example Cir Example City KY 40000', attrs });
+  h.document.body.append(radioGroup('Primary Business Address', manual, offered));
+  const button = addButton(h, 'Verify Address');
+  let clicks = 0;
+  button.onclick = () => clicks++;
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => s.q === '58' || s.action === 'verifyAddress');
+  const report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(manual.checked, false);
+  assert.equal(offered.checked, false, 'not the second option either: the first is the standard');
+  assert.equal(report.filled.length, 0);
+  assert.equal(report.failed.length, 0);
+  assert.match(report.noData.map((x) => x.note).join(' '), /enter it yourself/);
+  assert.equal(clicks, 0);
+});
+
 test('unfamiliar questions carry their options for the AI, and answer() puts in a choice and marks it purple', async () => {
   const h = harness();
   const commodity = new SelectNode([
