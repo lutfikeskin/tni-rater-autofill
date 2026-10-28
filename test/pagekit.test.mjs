@@ -7664,3 +7664,89 @@ test("a fill's first wait is its whole 400 ms from when it begins, whatever the 
   setTimeout(() => { defined = true; }, 100);
   assert.equal(await answeredAfter(parts, { components: 'gds-' }), 400, 'a component undefined as it began');
 });
+
+// GEICO live run, 2026-10-28 (3 vehicles, session 6231): on a slow page the Sprinter's comprehensive
+// was reset while GEICO still worked on the collision answered before it, and the tries given at once
+// were reset too. GEICO offers collision, rental and road service only once comprehensive is set, so
+// each of them failed as well, the agent dismissed them, and the next fill recalculated and printed
+// without the Sprinter's physical damage. An answer the page didn't keep is given again once the page
+// and its own requests are quiet; one that never takes is one item for its vehicle, and what needs it
+// waits behind it, Recalculate held.
+function dependentCoverages({ busyUntil = 3000, never = false } = {}) {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const t0 = clock.Date.now();
+  let observer = null;
+  h.context.performance = { now: () => clock.Date.now() - t0 };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+  const finished = () => observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/coverage', responseEnd: clock.Date.now() - t0 }] });
+  // GEICO's server still saving the answers before (one request finishing every 500 ms).
+  const tick = () => { if (clock.Date.now() - t0 < busyUntil) { finished(); setTimeout(tick, 500); } };
+  setTimeout(tick, 100);
+  const row = (suffix, options, value) => new SelectNode(options, { id: `Id_${randomUUID()}_2${suffix.length}${suffix.charCodeAt(0)}_${suffix}`, value });
+  const offer = (sel, options) => { sel.options = options.map((o) => new OptionNode(o, o)); };
+  const comp = row('COMP', ['Not Included', '$500 deductible', '$1,000 deductible'], 'Not Included');
+  const coll = row('COLL', ['Not Included', 'Not Included'], 'Not Included');
+  const rental = row('Rental', ['Not Included', 'Not Included'], 'Not Included');
+  const ers = row('ERS', ['I decline this coverage'], 'I decline this coverage');
+  const page = { h, comp, coll, rental, ers, picks: 0, recalcs: 0 };
+  // GEICO offers collision once comprehensive is set, and rental and road service once collision is.
+  const draw = () => {
+    offer(coll, comp.value === 'Not Included' ? ['Not Included', 'Not Included'] : ['Not Included', '$500 deductible', '$1,000 deductible']);
+    const both = comp.value !== 'Not Included' && coll.value !== 'Not Included';
+    offer(rental, both ? ['Not Included', '$40 Per Day, $1,200 Max'] : ['Not Included', 'Not Included']);
+    offer(ers, both ? ['I decline this coverage', 'I accept this coverage'] : ['I decline this coverage']);
+  };
+  // A comprehensive picked while the page is still busy (or always, `never`) is reset 100 ms later.
+  comp.addEventListener('change', () => {
+    page.picks++;
+    if (never || clock.Date.now() - t0 < busyUntil) setTimeout(() => { comp.value = 'Not Included'; draw(); }, 100);
+    else draw();
+  });
+  coll.addEventListener('change', draw);
+  h.document.body.append(comp, coll, rental, ers);
+  h.document.body.innerText = STALE;
+  const recalc = addButton(h, 'Recalculate');
+  recalc.onclick = () => { page.recalcs++; rate(h); };
+  const rules = [
+    { q: 'COMP', selector: '[id$="_COMP"]', name: 'Comprehensive', value: '$1,000 deductible' },
+    { q: 'COLL', selector: '[id$="_COLL"]', name: 'Collision', value: '$1,000 deductible', needs: ['COMP'] },
+    { q: 'Rental', selector: '[id$="_Rental"]', name: 'Rental reimbursement (TNI: $40 Per Day, $1,200 Max)', value: '$40 Per Day, $1,200 Max', needs: ['COMP', 'COLL'] },
+    { q: 'ERS', selector: '[id$="_ERS"]', name: 'Emergency road service (TNI: accepted)', value: 'I accept this coverage', needs: ['COMP', 'COLL'] },
+  ].map(({ value, ...r }) => ({ ...r, steps: ['Quote & Coverages'], kind: 'choice', source: 'standard', value: () => value }));
+  page.plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules, actions: geico.actions.filter((a) => a.id === 'recalculate') });
+  return page;
+}
+
+test('a coverage the page reset while busy is given again once the page and its requests are quiet, and what needs it follows (GEICO, 2026-10-28)', async () => {
+  const p = dependentCoverages();
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 30, replaceChoices: true });
+  assert.deepEqual([p.comp.value, p.coll.value, p.rental.value, p.ers.value], ['$1,000 deductible', '$1,000 deductible', '$40 Per Day, $1,200 Max', 'I accept this coverage']);
+  assert.deepEqual(plain(report.failed), []);
+  assert.deepEqual(plain(report.noData), []);
+  assert.deepEqual(plain(report.filled.map((x) => x.key)), ['cov:COMP#1', 'cov:COLL#1', 'cov:Rental#1', 'cov:ERS#1']);
+  // Picked once while GEICO was busy, then once it was quiet.
+  assert.equal(p.picks, 2);
+  assert.equal(p.recalcs, 1);
+});
+
+test('a coverage that never sticks is one needs-you item for its vehicle; what needs it isn\'t failed, and Recalculate waits (GEICO, 2026-10-28)', async () => {
+  const p = dependentCoverages({ never: true });
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 30, replaceChoices: true });
+  // Three tries, each once the page was quiet.
+  assert.equal(p.picks, 3);
+  assert.deepEqual(plain(report.failed), []);
+  assert.deepEqual(plain(report.noData.map((x) => x.key)), ['cov:COMP#1']);
+  assert.equal(report.noData[0].note, 'Comprehensive didn\'t stick on the page (tried 3 times, each once the page was quiet). This vehicle\'s collision, rental reimbursement and emergency road service depend on it, so the fill left them too. Set its comprehensive yourself, then fill again.');
+  assert.deepEqual(plain(report.filled), []);
+  assert.deepEqual([p.coll.value, p.rental.value, p.ers.value], ['Not Included', 'Not Included', 'I decline this coverage']);
+  assert.equal(p.recalcs, 0);
+  assert.ok(report.blocked.some((x) => x.id === 'recalculate' && /nothing left for you/.test(x.why)));
+  // The agent marks it done (its field theirs): nothing behind it is failed or listed, and the page
+  // goes on as before a dismissal.
+  const next = await p.h.kit.fill(p.plan, { maxRounds: 30, replaceChoices: true, skip: ['cov:COMP#1'] });
+  assert.deepEqual(plain(next.failed), []);
+  assert.deepEqual(plain(next.noData), []);
+  assert.equal(p.picks, 3);
+  assert.equal(p.recalcs, 1);
+});

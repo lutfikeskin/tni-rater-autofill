@@ -2022,6 +2022,18 @@
     // Options picked in place of one never offered (`orMost`), by step id: what the report says.
     const substituted = new Map();
     const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
+    // Answers the page didn't keep: each is given again only once the page, and its own requests,
+    // have been quiet for RESET_QUIET_MS (GEICO live run, 2026-10-28: on a slow page the Sprinter's
+    // comprehensive was reset while GEICO still answered the collision before it, and the tries at
+    // once were reset too), by step id until given or left; `keepSettled`, those waited for since.
+    // One still to give holds `whenClear` helpers (leftForAgent).
+    const keepWait = new Set();
+    const keepSettled = new Set();
+    // `needs` (a choice the page offers only once another on its unit holds: GEICO's collision,
+    // rental and road service behind comprehensive): a prerequisite the page didn't keep, by step id,
+    // with its unit's one item (`unitHeld`), and the steps held behind one (`heldFor`, by step id).
+    const unitHeld = new Map();
+    const heldFor = new Map();
     // Steps waiting for the page (`waitFor`): since when, by step id.
     const waitingSince = new Map();
     const mayWait = (id) => {
@@ -2112,6 +2124,45 @@
         const pair = pairs.find(({ step }) => step.id === previous.stepId);
         return !pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path) ? [] : [{ previous, pair }];
       });
+    };
+    // `needs`: one unit's steps are those naming the same unit (a per-vehicle row's year, make and
+    // model; a page with one vehicle has no hint, and every step there is its).
+    const sameUnit = (a, b) => (a.scope ?? null) === (b.scope ?? null) && (a.vehicleHint ?? []).join(' ') === (b.vehicleHint ?? []).join(' ');
+    const needsOf = (step) => (step.needs?.length ? plan.filter((s) => s.id !== step.id && s.q != null && step.needs.includes(s.q) && sameUnit(s, step)) : []);
+    // The answers on a step's unit still to give that need it: on the page, not the agent's, not
+    // given or left yet, and not already showing their answer.
+    const dependentsOf = (step, pairsNow) => (step.q == null ? [] : pairsNow.filter(({ step: s, control }) => s.id !== step.id && s.needs?.includes(step.q) && sameUnit(s, step)
+      && s.value != null && !s.note && !s.ignore && !handled.has(s.id) && !skippedField(control) && !agreesWith(s, control)));
+    // A coverage's name without the rule's own words in brackets ("Rental reimbursement (TNI: …)").
+    const coverageName = (s) => { const n = String(s.name ?? '').replace(/\s*\(.*\)\s*$/, '').trim(); return n.charAt(0).toLowerCase() + n.slice(1); };
+    const wordList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+    const unitHeldNote = ({ step, deps, tries, reason }) => {
+      const pre = coverageName(step);
+      const why = /did not keep/.test(reason ?? '') ? `didn't stick on the page (tried ${tries} time${tries === 1 ? '' : 's'}, each once the page was quiet)` : `couldn't be set (${reason})`;
+      return `${pre.charAt(0).toUpperCase()}${pre.slice(1)} ${why}. This vehicle's ${wordList([...new Set(deps.map(coverageName))])} depend${deps.length === 1 ? 's' : ''} on it, so the fill left ${deps.length === 1 ? 'it' : 'them'} too. Set its ${pre} yourself, then fill again.`;
+    };
+    const holdDependent = (s, root) => {
+      heldFor.set(s.id, root.step.id);
+      if (!root.deps.some((d) => d.id === s.id)) {
+        root.deps.push(s);
+        root.item.note = unitHeldNote(root);
+        handled.set(root.step.id, { status: 'needs', note: root.item.note });
+      }
+      handled.set(s.id, { status: 'needs', note: `Waits for ${coverageName(root.step)} on this vehicle, which the page didn't keep: see that item.` });
+    };
+    // A prerequisite that didn't take, with answers on its unit that need it still to give: one
+    // needs-you item for the unit (which holds `whenClear` helpers: Recalculate and after), and its
+    // dependents held behind it, none a failure of its own. False when nothing waits on it.
+    const holdUnit = (step, c, item, reason, pairsNow) => {
+      const deps = dependentsOf(step, pairsNow).map((p) => p.step);
+      if (!deps.length) return false;
+      const root = { item: { ...item, ...describe(c) }, step, deps: [], tries: (retries.get(step.id) ?? 0) + 1, reason };
+      unitHeld.set(step.id, root);
+      for (const d of deps) holdDependent(d, root);
+      root.item.note = unitHeldNote(root);
+      report.noData.push(root.item);
+      handled.set(step.id, { status: 'needs', note: root.item.note });
+      return true;
     };
     // `phase`: what the fill is doing between answers, for the panel's live list and dock (progress):
     // null while it answers, else { name, what }: 'reading' the page as it begins, 'waiting' for the
@@ -2490,7 +2541,32 @@
         // question asked once a quote: a vehicle's, driver's or trailer's form reuses its keys for the
         // next unit, where the answer is a first one. A page that doesn't go quiet gets it anyway, as
         // before.
-        if (isChoice && !resetWaited && !agreesWith(step, c) && (refill.has(step.id) || (!step.scope && filledKeys.has(fieldKey(c))))) {
+        // `needs`: an answer the page offers only once another on its unit holds. While that one is
+        // still to be given again (the page didn't keep it), this waits for it; once it didn't take,
+        // this is held behind its unit's one item. A prerequisite that is the agent's (edited, or its
+        // item marked done) without its answer leaves this as the page has it when the list doesn't
+        // offer the answer: their call, with no item of its own.
+        const prereqs = needsOf(step);
+        if (prereqs.length && !agreesWith(step, c)) {
+          const root = prereqs.map((p) => unitHeld.get(p.id) ?? unitHeld.get(heldFor.get(p.id))).find(Boolean);
+          if (root) { holdDependent(step, root); continue; }
+          if (prereqs.some((p) => !handled.has(p.id) && refill.has(p.id) && allPairs.some((x) => x.step.id === p.id && !skippedField(x.control)))) { retry = true; continue; }
+          const theirs = prereqs.find((p) => allPairs.some((x) => x.step.id === p.id && skippedField(x.control) && !agreesWith(x.step, x.control)));
+          if (theirs && isChoice && !matchOption(optionsOf(c), step)) {
+            handled.set(step.id, { status: 'needs', note: `Left as it is: it needs ${coverageName(theirs)} on this vehicle, which you have taken over.` });
+            continue;
+          }
+        }
+        // An answer the page didn't keep is given again once the page and its own requests have been
+        // quiet (`keepWait`), each time, and read again first.
+        if (keepWait.has(step.id) && !keepSettled.has(step.id) && !agreesWith(step, c)) {
+          keepSettled.add(step.id);
+          phase('waiting');
+          await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000, requests: () => !report.halted });
+          retry = true;
+          break;
+        }
+        if (isChoice && !resetWaited && !keepWait.has(step.id) && !agreesWith(step, c) && (refill.has(step.id) || (!step.scope && filledKeys.has(fieldKey(c))))) {
           resetWaited = true;
           phase('waiting');
           await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000 });
@@ -2556,6 +2632,7 @@
           report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}) });
           quietDue = true;
           unoffered.delete(step.id);
+          keepWait.delete(step.id);
           // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
           handled.set(step.id, step.standard
             ? { status: 'standard', note: instead ?? `TNI standard answer, not from the intake: ${step.name}` }
@@ -2578,8 +2655,16 @@
           // Plans). Tried again each round; never offered by the fill's end, it is the agent's.
           unoffered.set(step.id, { item: { ...item, ...describe(c) }, control: c, step, options: result.options ?? [] });
         } else if (/did not keep/.test(result.reason ?? '') && !report.halted && retryOnce(step.id)) {
-          // Often a later redraw resets it (a coverage list reloading): try again next round.
+          // Often a later redraw resets it (a coverage list reloading): a choice is tried again once
+          // the page has settled (`keepWait`), a typed answer next round.
           refill.add(step.id);
+          if (isChoice) keepWait.add(step.id);
+          keepSettled.delete(step.id);
+          retry = true;
+          if (serverBacked) break;
+        } else if (holdUnit(step, c, item, result.reason, assign(collectControls(), plan))) {
+          // A prerequisite that didn't take, with answers on its unit waiting on it (`needs`): one
+          // item for the unit, not a failure for each.
           retry = true;
           if (serverBacked) break;
         } else if (step.keepUnlisted && /^no option matches/.test(result.reason ?? '') && hasValue(c) && !/^other\b/i.test(oneLine(selectedText(c) ?? ''))) {
@@ -3076,6 +3161,8 @@
     // unfamiliar (only those the panel lists, so the agent can answer or mark each one done).
     function leftForAgent(controls) {
       return report.noData.length + report.failed.length + report.checks.length + report.leftRequired.length
+        // An answer the page didn't keep, still to give again (`keepWait`): not done yet.
+        + [...keepWait].filter((id) => !handled.has(id)).length
         + report.kept.filter((x) => x.differs).length
         + controls.filter((c) => !hasValue(c) && !skippedField(c) && report.unknown.some((x) => x.key === fieldKey(c))).length;
     }
@@ -3243,7 +3330,10 @@
       if ((!refill.has(step.id) && !waitingSince.has(step.id)) || handled.has(step.id) || skippedField(control) || agreesWith(step, control)) continue;
       // One that waited for the page to the end (the fill stopped first) is as unanswered as one the page reset.
       const reason = refill.has(step.id) ? 'the page did not keep the answer; check it' : 'the page was still working on this question; check it';
-      report.failed.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, reason, ...describe(control) });
+      const base = { stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind };
+      // With answers on its unit waiting on it (`needs`): one item for the unit, as in a round.
+      if (refill.has(step.id) && holdUnit(step, control, base, reason, finalPairs)) continue;
+      report.failed.push({ ...base, reason, ...describe(control) });
       handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason.replace(/; check it$/, '')}` });
     }
     if (progressed && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
