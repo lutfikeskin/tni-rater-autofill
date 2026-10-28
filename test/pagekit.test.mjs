@@ -5247,6 +5247,79 @@ test('GEICO\'s Recalculate: a redraw seconds later is caught before View More; o
   assert.deepEqual(plain(shared.failed.map((x) => [x.key, x.name])), [['ref:GiveFoo', 'second'], [null, 'recalculate']]);
 });
 
+// FL live run, 2026-10-28 (TNI): the fill set GEICO's coverages and clicked Recalculate, View More
+// Payment Plans and Print Quote Proposal without opening Motor Truck General Liability, a card that
+// opens only by its chevron; the agent opened it and answered its questions. With GL on the intake,
+// the card is opened first, its questions get TNI's answers and the intake's limit, and Recalculate
+// waits for them; a card the agent opened already isn't clicked (its chevron would close it).
+function glCardPage({ expanded = false } = {}) {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const card = new FakeNode('li', { id: 'Id_MotorTruckGeneralLiabilityEligibilityComboActivityData_33590', className: `expandable-form${expanded ? ' expanded' : ''}` });
+  const icon = new FakeNode('span', { className: 'expandable-form-control', attrs: { 'data-testid': 'editIcon', tabindex: '0' } });
+  card.append(new FakeNode('p', { className: 'h4', textContent: 'Motor Truck General Liability' }), icon);
+  h.document.body.append(card);
+  h.document.body.innerText = STALE;
+  const recalc = addButton(h, 'Recalculate');
+  const page = { h, card, icon, order: [], radios: {}, limit: null };
+  const QUESTIONS = [['GiveMotorTruckGeneralLiabilityCoverageRequired', 'Does the customer need Motor Truck General Liability?'],
+    ['GiveIncomeOnlyFromTruckingOperation', 'Does all of the customer\'s income come from their for-hire trucking operations?'],
+    ['GiveOperateFromWarehouseOrOtherAccessiblePremises', 'Does the customer operate a warehouse, facility, or other premises that their customers have access to?'],
+    ['GiveInvolvedInAnySetupOrInstallation', 'Does the customer\'s business do any setup or installation?'],
+    ['GiveOperateOrInvolvedInAnyWayForOilGasProduction', 'Is the customer involved in any operations related to oil and gas production or fracking processes, including transportation of materials to and from production locations?']];
+  const open = () => {
+    // GEICO's own No on "need it" (its pre-selection), the four follow-ups unanswered, and the limit.
+    QUESTIONS.forEach(([stem, question], i) => {
+      const r = gdsRadios(stem, 57395 + i, question, [['Yes', 'Yes'], ['No', 'No']], { checked: i === 0 ? 1 : null });
+      page.radios[stem] = r;
+      card.append(r.group);
+    });
+    const id = `Id_${randomUUID()}_56864`;
+    // Its words beside it (GEICO's label is in gds-label-legend's shadow root; here an aria-label).
+    const field = new FakeNode('div', { className: 'form-field' });
+    const legend = new FakeNode('gds-label-legend', { attrs: { element: 'label', for: id } });
+    legend.append(new FakeNode('span', { textContent: 'Motor Truck General Liability' }));
+    page.limit = new SelectNode([{ text: 'Please Select', value: '' }, '$1,000,000/$1,000,000 aggregate', '$1,000,000/$2,000,000 aggregate'], { id, ariaLabel: 'Motor Truck General Liability' });
+    field.append(legend, page.limit);
+    card.append(field);
+  };
+  if (expanded) open();
+  icon.onclick = () => { page.order.push('chevron'); card.className = 'expandable-form expanded'; open(); };
+  recalc.onclick = () => { page.order.push('recalculate'); rate(h); };
+  const record = { ...geicoRecord(), operations: { businessClass: 'Freight Hauler' }, coverage: { gl: true, glLimit: '$1M/$2M' } };
+  page.plan = buildPlan(record, geico, {}).filter((s) => (s.kind === 'action' ? ['openGl', 'recalculate'].includes(s.action)
+    : s.steps?.includes('Quote & Coverages') && /^(GL: |Motor truck general liability)/.test(s.name)));
+  return page;
+}
+
+test('GEICO Quote & Coverages: Motor Truck General Liability opened and answered before Recalculate (FL, 2026-10-28)', async () => {
+  const p = glCardPage();
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 20, replaceChoices: true });
+  assert.deepEqual(p.order, ['chevron', 'recalculate'], 'the card first, once; Recalculate after its answers');
+  assert.deepEqual(plain(report.actions.map((x) => x.id)), ['openGl', 'recalculate']);
+  const answer = (stem) => p.radios[stem].hosts.find((x) => x.hasAttribute('checked'))?.getAttribute('value') ?? null;
+  assert.deepEqual(['GiveMotorTruckGeneralLiabilityCoverageRequired', 'GiveIncomeOnlyFromTruckingOperation', 'GiveOperateFromWarehouseOrOtherAccessiblePremises',
+    'GiveInvolvedInAnySetupOrInstallation', 'GiveOperateOrInvolvedInAnyWayForOilGasProduction'].map(answer), ['Yes', 'Yes', 'No', 'No', 'No']);
+  assert.equal(p.limit.value, '$1,000,000/$2,000,000 aggregate');
+  assert.deepEqual(plain(report.noData), []);
+  // Opened by the agent already: not clicked again (it would close), and Recalculate still follows.
+  const open = glCardPage({ expanded: true });
+  const again = await open.h.kit.fill(open.plan, { maxRounds: 20, replaceChoices: true });
+  assert.deepEqual(open.order, ['recalculate']);
+  assert.equal(open.limit.value, '$1,000,000/$2,000,000 aggregate');
+  assert.ok(!again.actions.some((x) => x.id === 'openGl' && !x.alreadyShown));
+});
+
+test('GEICO Quote & Coverages: Recalculate waits for the GL limit the agent must choose, and says so', async () => {
+  const p = glCardPage();
+  p.plan = buildPlan({ ...geicoRecord(), operations: { businessClass: 'Freight Hauler' }, coverage: { gl: true, glLimit: '$2M/$4M' } }, geico, {}).filter((s) => (s.kind === 'action' ? ['openGl', 'recalculate'].includes(s.action)
+    : s.steps?.includes('Quote & Coverages') && /^(GL: |Motor truck general liability)/.test(s.name)));
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 20, replaceChoices: true });
+  assert.deepEqual(p.order, ['chevron']);
+  assert.ok(report.noData.some((x) => /\$2M\/\$4M"? general liability limit, which GEICO doesn't list/.test(x.note)), JSON.stringify(plain(report.noData)));
+  assert.ok(report.blocked.some((b) => b.id === 'recalculate' && /geico\.qGeneralLiabilityLimit/.test(b.why)), JSON.stringify(plain(report.blocked)));
+});
+
 // 2026-10-22, 5 automatic fills of 5: GEICO rated the fill's Recalculate 13 to 19 s after the click,
 // its loader up only 3 s in, and drew its own liability, UM, road service and cargo. The fill had
 // already failed the click as unrated, so nothing was put back. Its premium is waited for, and the

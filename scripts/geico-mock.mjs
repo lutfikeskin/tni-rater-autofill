@@ -1124,10 +1124,84 @@ async function steadyBeat() {
   if (!beats) fail('Quote & Coverages with a beat: no request in the Recalculate trace was taken for the beat');
   await bp.close();
 }
+// TNI, 2026-10-28 (FL live run): with trailer interchange and general liability on the intake, the
+// fill set the coverages and clicked Recalculate, View More Payment Plans and Print Quote Proposal
+// without opening either card. Now each card the intake asks for is opened by its chevron (never
+// Non-Owned Trailer Physical Damage's, which shares the interchange card's id stem), answered with
+// TNI's answers (the intake's $50,000 interchange limit isn't listed: $60k/$1000, to confirm), and
+// Recalculate waits until the agent has confirmed what is marked; then it is clicked once. A fresh
+// quote view, filled with those cards' rules, the pay plan's and the Quote & Coverages helpers.
+async function interchangeAndGl() {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+  page.on('pageerror', (e) => errors.push(String(e.message)));
+  await page.addInitScript({ content: PRESS });
+  await page.route(/^(https?|wss?):/i, (r) => { refused.push(r.request().url()); return r.abort(); });
+  await page.goto(`${pathToFileURL(path.join(root, 'test/fixtures/geico/quote.html')).href}?view=quote`);
+  await page.waitForFunction(() => window.__geicoMock?.view === 'quote');
+  const cdp = await page.context().newCDPSession(page);
+  const { frameTree } = await cdp.send('Page.getFrameTree');
+  const { executionContextId } = await cdp.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'TNI Rater Autofill (mock, interchange and GL)' });
+  const run = async (expression) => {
+    const r = await cdp.send('Runtime.evaluate', { expression, contextId: executionContextId, awaitPromise: true, returnByValue: true });
+    if (r.exceptionDetails) throw new Error(`in the extension's world: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+    return r.result.value;
+  };
+  await run(`globalThis.chrome = { runtime: { id: 'geico-mock', sendMessage() { return Promise.resolve(); }, onMessage: { addListener() {}, removeListener() {} } } }; true`);
+  await run(KIT);
+  const client = structuredClone(record);
+  Object.assign(client.trailerInfo, { interchange: true, interchangeLimit: '$50,000', hitch: 'Gooseneck' });
+  Object.assign(client.coverage, { cargo: false, gl: true, glLimit: '$1M/$2M' });
+  const CARDS = /TrailerInterchange|GeneralLiability|IncomeOnlyFromTrucking|WarehouseOrOtherAccessiblePremises|SetupOrInstallation|OilGasProduction|GivePayPlanV2/;
+  const carrier = { ...geico, rules: geico.rules.filter((r) => CARDS.test(`${r.field ?? ''} ${r.q ?? ''}`)),
+    actions: geico.actions.filter((a) => ['openInterchange', 'openGl', 'recalculate', 'morePayPlans', 'printProposal'].includes(a.id)) };
+  const plan = buildPlan(client, carrier, {});
+  const options = { replaceChoices: !!geico.replaceChoices, stopSteps: STOP_STEPS, maxRounds: 30 };
+  const first = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify(options)})`);
+  const values = () => page.evaluate(() => window.__geicoMock.values());
+  const opened = await page.evaluate(() => [...document.querySelectorAll('ul.expandable-form > li.expanded')].map((li) => li.querySelector('p.h4')?.textContent.trim()));
+  const firstIds = (first.actions ?? []).map((a) => a.id);
+  lines.push(`## Quote & Coverages with trailer interchange and GL · ${first.rounds} rounds · opened ${opened.join(', ') || 'nothing'} · clicked ${firstIds.join(', ') || 'nothing'} · to confirm ${first.checks.map((x) => x.label).join('; ') || 'nothing'}`);
+  if (JSON.stringify(opened) !== '["Trailer Interchange","Motor Truck General Liability"]') fail(`Quote & Coverages with interchange and GL: the cards opened were [${opened.join(', ')}], expected Trailer Interchange and Motor Truck General Liability`);
+  if (JSON.stringify(firstIds) !== '["openInterchange","openGl"]') fail(`Quote & Coverages with interchange and GL: the first fill clicked [${firstIds.join(', ')}], expected the two cards and no Recalculate while answers wait for the agent`);
+  const want = {
+    GiveTrailerInterchangeEligibleRequireCoverageYesNo: 'Yes', GiveTrailerInterchangeAgreementYesNo: 'Yes', GiveTrailerInterchangeAgreementProvideOnRequestYesNo: 'Yes',
+    GiveTrailerInterchangeNumberOfTrailers: '1', GiveTrailerInterchangeCommonTrailerType: 'Dry Freight Trailer', 'cov:Trailer Interchange': '$60k/$1000 deductible',
+    GiveNonOwnedTrailerPdEligibleRequireCoverageYesNo: 'No',
+    GiveMotorTruckGeneralLiabilityCoverageRequired: 'Yes', GiveIncomeOnlyFromTruckingOperation: 'Yes', GiveOperateFromWarehouseOrOtherAccessiblePremises: 'No',
+    GiveInvolvedInAnySetupOrInstallation: 'No', GiveOperateOrInvolvedInAnyWayForOilGasProduction: 'No', 'cov:Motor Truck General Liability': '$1,000,000/$2,000,000 aggregate',
+  };
+  const got = await values();
+  for (const [k, v] of Object.entries(want)) if (got[k] !== v) fail(`Quote & Coverages with interchange and GL: ${k} is ${JSON.stringify(got[k])}, expected ${JSON.stringify(v)}`);
+  // Marked to confirm: the number of trailers, the trailer type and the next limit up.
+  const confirm = first.checks.map((x) => x.key).sort();
+  const wantConfirm = ['cov:trailer interchange', 'ref:GiveTrailerInterchangeCommonTrailerType', 'ref:GiveTrailerInterchangeNumberOfTrailers'];
+  if (JSON.stringify(confirm) !== JSON.stringify(wantConfirm)) fail(`Quote & Coverages with interchange and GL: marked to confirm [${confirm.join(', ')}], expected [${wantConfirm.join(', ')}]`);
+  if (!first.blocked.some((b) => b.id === 'recalculate')) fail('Quote & Coverages with interchange and GL: Recalculate isn\'t said to wait for the agent');
+  // The agent confirms them (and marks the step's questions without a rule here done): Recalculate, once.
+  const skip = [...(first.unknown ?? []).map((x) => x.key), ...first.checks.map((x) => x.key)];
+  const doneActions = [...new Set(firstIds)];
+  const second = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify({ ...options, skip, doneActions })})`);
+  const m = await page.evaluate(() => ({ recalcs: window.__geicoMock.recalcs, log: window.__geicoMock.log }));
+  const secondIds = (second.actions ?? []).map((a) => a.id);
+  lines.push(`## Quote & Coverages with trailer interchange and GL, confirmed · ${second.rounds} rounds · clicked ${secondIds.join(', ') || 'nothing'} · Recalculate ×${m.recalcs}`);
+  if (secondIds[0] !== 'recalculate' || m.recalcs !== 1) fail(`Quote & Coverages with interchange and GL, confirmed: the fill clicked [${secondIds.join(', ')}] and Recalculate ran ${m.recalcs} time(s), expected Recalculate once first`);
+  const at = (test) => m.log.findIndex(test);
+  const recalcAt = at((e) => e.type === 'click' && e.target === 'button' && /^recalculate$/i.test(e.text ?? ''));
+  const lastAnswer = Math.max(...Object.keys(want).filter((k) => !k.startsWith('cov:') && want[k] === 'Yes').map((k) => m.log.findLastIndex((e) => e.type === 'change' && e.target === k)));
+  if (recalcAt < 0 || recalcAt < lastAnswer) fail('Quote & Coverages with interchange and GL: Recalculate was clicked before the cards were answered');
+  const kept = await values();
+  for (const [k, v] of Object.entries(want)) if (kept[k] !== v) fail(`Quote & Coverages with interchange and GL, after Recalculate: ${k} is ${JSON.stringify(kept[k])}, expected ${JSON.stringify(v)}`);
+  await page.close();
+}
 try {
   await noElevenPayments();
 } catch (e) {
   fail(`the no-11-Payments run stopped: ${String(e.message).split('\n')[0]}`);
+}
+try {
+  await interchangeAndGl();
+} catch (e) {
+  fail(`the interchange and GL run stopped: ${String(e.message).split('\n')[0]}`);
 }
 try {
   await steadyBeat();

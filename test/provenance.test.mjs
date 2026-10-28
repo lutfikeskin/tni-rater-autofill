@@ -176,7 +176,6 @@ const NOT_MAPPED = {
     'drivers[].gender': 'not asked on the captured driver forms',
     'trailerInfo.ownership': 'not asked on the captured trailer form',
     'trailerInfo.hitch': 'not asked on the captured trailer form (a gooseneck hitch isn\'t a Gooseneck Trailer)',
-    'trailerInfo.interchangeLimit': 'only whether trailer interchange is wanted is mapped',
     'claims.hasClaims': 'incidents on Drivers & Incidents are added by the agent (not mapped)',
     'claims.notes': 'nothing GEICO asks on the mapped steps reads the claims box\'s other answers',
   },
@@ -190,6 +189,8 @@ const READ_INDIRECTLY = {
     'notes.text': 'normalize.ntlUndecided and otherNotes (NTL, the defensive driver course, a claim the notes mention)',
     'coverage.autoLiability': 'normalize.ntlNoDotFilings and ntlDotFilingsHold (an NTL quote: no USDOT number or filings; with auto liability Yes too, they are the agent\'s); otherwise only the liability limit is entered',
     'drivers[].excluded': 'util.driverExcluded (the exclude question: the intake\'s mark, or the owner\'s row when the owner doesn\'t drive)',
+    'trailerInfo.interchange': 'util.interchangeRequested (trailer interchange added and answered: TNI\'s answers on every carrier)',
+    'trailerInfo.interchangeLimit': 'util.interchangeLimitPick (the intake\'s trailer interchange limit, or the next one up)',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag; how long with the current carrier, round 3, T6)',
@@ -206,6 +207,7 @@ const READ_INDIRECTLY = {
     'claims.notes': 'normalize.otherNotes (no physical damage, and a mention that leaves a TNI standard to the agent)',
     'notes.text': 'normalize.ntlUndecided and otherNotes (NTL, no physical damage, a mention that leaves a TNI standard to the agent)',
     'drivers[].excluded': 'util.driverExcluded (the excluded-driver warning on Add Driver)',
+    'trailerInfo.interchangeLimit': 'util.interchangeLimitPick (the intake\'s trailer interchange limit, or the next one up)',
   },
 };
 
