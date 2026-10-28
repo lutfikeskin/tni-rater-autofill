@@ -7726,6 +7726,10 @@ test('GEICO coverage rows: each row goes to the unit it names, a trailer among t
   for (const [unit, list] of Object.entries(rows.Rental)) assert.equal(list.value, '$40 Per Day, $1,200 Max', `rental for ${unit}`);
   for (const [unit, list] of Object.entries(rows.ERS)) assert.equal(list.value, 'I accept this coverage', `road service for ${unit}`);
   assert.equal(Object.values(rows.HVRS)[0].value, 'I accept this coverage');
+  // Fire and theft Not Included on every row, the trailer's too: TNI's standard (2026-10-28).
+  for (const [unit, list] of Object.entries(rows.FT)) assert.equal(list.value, 'Not Included', `fire and theft for ${unit}`);
+  const trailerFt = report.filled.find((x) => x.label.startsWith('2017 Great Dane') && x.key.startsWith('cov:FT#'));
+  assert.equal(trailerFt?.standard, true, 'the trailer\'s fire and theft is filled as a TNI standard');
   assert.deepEqual(plain(report.failed), []);
   assert.deepEqual(plain(report.unknown.map((x) => x.key)), [], 'no coverage row is left unfamiliar');
   assert.deepEqual(plain(report.checks.map((x) => x.key)), []);

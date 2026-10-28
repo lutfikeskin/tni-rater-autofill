@@ -1667,6 +1667,12 @@ test('a trailer\'s coverage rows: comprehensive, collision and fire and theft, a
   for (const name of ['Rental reimbursement (TNI: $40 Per Day, $1,200 Max)', 'Emergency road service (TNI: accepted)']) assert.equal(hints(name).length, 2, name);
   const trailerComp = p.filter((s) => s.name === 'Comprehensive').at(-1);
   assert.deepEqual([trailerComp.value, trailerComp.source, trailerComp.activeVehicle], ['$1,000 deductible', 'standard', false]);
+  // The trailer's fire and theft: TNI's Not Included, as Progressive's trailer row (TNI, 2026-10-28).
+  const trailerFt = p.filter((s) => s.name === 'Fire and theft (TNI: Not Included)').at(-1);
+  assert.deepEqual([trailerFt.vehicleHint, trailerFt.value, trailerFt.source, trailerFt.standard, trailerFt.manualOnly], [['2015', 'wabash'], 'Not Included', 'standard', true, false]);
+  // Even with the notes declining physical damage (fire and theft isn't comprehensive or collision).
+  const declined = plan(with_({ vehicles: [intake().vehicles[0]], trailers: [TRAILER], 'notes.text': 'liability only' })).filter((s) => s.name === 'Fire and theft (TNI: Not Included)').at(-1);
+  assert.deepEqual([declined.vehicleHint, declined.value, declined.source], [['2015', 'wabash'], 'Not Included', 'standard']);
 });
 
 test('notes are short and plain', () => {
