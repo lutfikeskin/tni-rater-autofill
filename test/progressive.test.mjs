@@ -1105,7 +1105,7 @@ test('owner drives No: the owner\'s driver row is excluded (28C1 Yes); blank, Ye
 // Info and NoHit; V2, 2026-10-27: confirmed). The owner's row is the first (V4, 2026-10-27, which
 // replaces T2's row by the owner's exact full name, and the agent's with none: the test after this
 // one has the Sr, Jr and other-name cases).
-test('owner drives No (T3, V2): the owner\'s date of birth from the owner\'s row, the first; the agent\'s No on it leaves it the agent\'s', () => {
+test('owner drives No (T3, V2): the owner\'s date of birth from the owner\'s row, the first; the agent\'s not-excluded on it is the owner driving', () => {
   const casey = { first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'MD1112223', licenseState: 'MD' };
   const record = (drivers, box = false) => {
     const r = baseRecord();
@@ -1119,10 +1119,23 @@ test('owner drives No (T3, V2): the owner\'s date of birth from the owner\'s row
   const r = record([senior, casey]);
   assert.deepEqual([0, 1].map((i) => [exclude(r, i).value, exclude(r, i).source, exclude(r, i).note]), [[true, 'derived', null], [false, 'derived', null]]);
   assert.deepEqual(dob(r).map((s) => [s.value, s.source, s.note]), [['01/02/1980', 'derived', null], ['01/02/1980', 'derived', null]]);
-  // The agent's No on the owner's row (client details): not excluded, and the date of birth is theirs.
+  // The agent's Excluded driver No on the owner's row (client details) with the box still No: the
+  // owner drives (the maintainer, 2026-10-28: "Does the owner drive?" Yes is the owner driving and
+  // not excluded, on every carrier; util.js ownerDrivesSaid). Business Owner Info gets the owner's
+  // name and date of birth from that row, and the owner-driver question is Yes. Before, the box's No
+  // dropped the row as the owner's driver row and its Excluded No dropped it as the excluded owner's,
+  // so no row gave the name or date of birth (2026-10-28 runs: a fill error, then the agent set Owner
+  // drives to Yes).
   const corrected = record([{ ...senior, excluded: false }, casey]);
-  assert.deepEqual([exclude(corrected, 0).value, dob(corrected)[0].value, dob(corrected)[0].manualOnly], [false, null, true]);
-  assert.match(dob(corrected)[0].note, /owner doesn't drive/);
+  const plan = buildPlan(corrected, progressive);
+  assert.deepEqual([exclude(corrected, 0).value, exclude(corrected, 1).value], [false, false]);
+  assert.deepEqual(dob(corrected).map((s) => [s.value, s.manualOnly, s.note ?? null]), [['01/02/1980', false, null], ['01/02/1980', false, null]]);
+  assert.deepEqual(['295', '297'].map((q) => byQ(plan, q).value), [senior.first, senior.last]);
+  assert.deepEqual([byQ(plan, '29F').value, byQ(plan, '29F').source, byQ(plan, '2D7').value], [true, 'derived', true]);
+  // The box's No with no driver rows: the agent's, with the reason.
+  const none = dob(record([]))[0];
+  assert.deepEqual([none.value, none.manualOnly], [null, true]);
+  assert.match(none.note, /owner doesn't drive and lists no drivers/);
 });
 
 // TNI, 2026-10-27 (answers to PR questions V4, V3, V2): the owner is always the first driver on the
