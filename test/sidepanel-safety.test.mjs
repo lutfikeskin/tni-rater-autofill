@@ -3230,7 +3230,7 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   // Fills ready their tab once they went through (tested with autoFill below; fillPage the same).
   // (After the stale check: a fill whose intake changed meanwhile proves nothing for the new one;
   // nor does one whose page had moved on, which filled nothing.)
-  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
+  assert.equal((extractFunction('fillPage').match(/__raterKit\?\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
 });
 
 test('a queued capture is dropped for a later change on its page, which gets its reasons', async () => {
@@ -8690,6 +8690,20 @@ test('the next-step watch reads a frame without the kit as nothing, without thro
   await context.watchNextStep({ id: 'amwins' }, 'Step', 'same', 'Step||Vehicles');
   assert.deepEqual(thrown, []);
   assert.equal(fills, 1, 'the next step is filled');
+});
+
+// The other kit calls had the same gap: the AI banner's call threw "Cannot read properties of
+// undefined (reading 'aiBanner')" on the mock's page when the tab moved to a new document between
+// the kit's injection and the call (Luna mock, 2026-10-28: PR 216, the 0.9.27 release PR, 1 run in
+// 61 on PR 225). Chrome gives a throwing frame no result, as `?.` does, so callers see the same.
+test('no kit call throws in a frame without the kit', () => {
+  // A line calling the kit with `.` checks first that it is there (the snapshot reads, the watch).
+  const unguarded = SIDEPANEL.split('\n').filter((line) => /globalThis\.__raterKit\.\w+\(/.test(line)
+    && !/globalThis\.__raterKit \? |!globalThis\.__raterKit \|\| /.test(line));
+  assert.deepEqual(unguarded, []);
+  const calls = SIDEPANEL.match(/globalThis\.__raterKit\?\.\w+\(/g) ?? [];
+  assert.ok(calls.length >= 16, `optional kit calls found: ${calls.length}`);
+  assert.equal(vm.runInNewContext('((l) => globalThis.__raterKit?.aiBanner(l))([])', {}), undefined);
 });
 
 // W44-05, GEICO PA (2026-10-26): the agent left Vehicles during the van's form and confirmed "Yes,

@@ -2276,7 +2276,7 @@ async function autoFill(page) {
     // automatic fill showed nothing until it ended).
     state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false, auto: true };
     unwatch = watchFill(ctx);
-    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
@@ -2432,7 +2432,7 @@ async function captureLayout(job, reason) {
   if (fillStarted()) return waitForFill(job);
   const { tabId, carrier, page } = job;
   try {
-    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
+    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit?.capture(p, r),
       [buildPlan(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
     if (!jobCurrent(job) || superseded(job)) return;
     if (fillStarted()) return waitForFill(job);
@@ -2608,7 +2608,7 @@ async function layoutWhenQuiet(job, tries = 0) {
   if (state.filling) return afterFill();
   let busy;
   try {
-    busy = (await runKit(job.tabId, job.carrier, () => globalThis.__raterKit.busy())).some((r) => r.result);
+    busy = (await runKit(job.tabId, job.carrier, () => globalThis.__raterKit?.busy())).some((r) => r.result);
   } catch (e) {
     // Couldn't ask the page: the same as a layout that couldn't be read, unless it moved on.
     if (live()) layoutFailed(job, reason(), layoutErrorKind(e));
@@ -3680,7 +3680,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // own coverage choice put back over the fill's, on a question the agent didn't answer
     // themselves (their answers are in `skip`). An automatic fill keeps and flags it.
     const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), ...(ctx.asked ? { takenBack: null } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
-    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
@@ -4644,7 +4644,7 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
   await tellRecorder('pause', tabId);
   try {
     guarding = true;
-    await runKit(tabId, carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [token]);
+    await runKit(tabId, carrier, (t) => globalThis.__raterKit?.answerEdits('begin', t), [token]);
     if (!current()) return;
     const frames = await runKit(tabId, carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
     if (!current()) return;
@@ -4657,7 +4657,7 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
       say('The page doesn’t offer that answer now: answer it on the page.');
       return;
     }
-    const answered = await runKit(tabId, carrier, (a, t, o) => globalThis.__raterKit.answer(a, null, t, o),
+    const answered = await runKit(tabId, carrier, (a, t, o) => globalThis.__raterKit?.answer(a, null, t, o),
       [[{ key: field.key, label: field.label, value: choice, expected: { kind: field.kind, section: field.section, options, current: field.current } }],
         token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent' }], [frame.frameId]);
     result = answered.flatMap((f) => f.result ?? []).find((r) => r?.key === field.key) ?? null;
@@ -4666,7 +4666,7 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
   } finally {
     if (guarding) {
       try {
-        const frames = await runKit(tabId, carrier, (t) => globalThis.__raterKit.answerEdits('end', t), [token]);
+        const frames = await runKit(tabId, carrier, (t) => globalThis.__raterKit?.answerEdits('end', t), [token]);
         // The agent's own edits while the answer went in stay theirs, as after a fill.
         edited = frames.flatMap((f) => f.result ?? []).filter((r) => r?.protected).map((r) => r.key);
       } catch { /* a removed or navigating frame no longer has live listeners */ }
@@ -4735,7 +4735,7 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
 
 async function clearMarks() {
   if (!state.tab?.carrier) return;
-  await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit.clear());
+  await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit?.clear());
   const key = currentReportKey();
   dropReports((entry) => entry.key === key);
   renderSite();
@@ -4807,7 +4807,7 @@ async function capturePage() {
   // What the capture is of; checked again once the page has been read (as layout jobs are).
   const asked = JSON.stringify([tabId, page, state.active, state.intakeRevision, usage.currentSession()?.id ?? null]);
   try {
-    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
+    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit?.capture(p, r),
       [record ? buildPlan(record, carrier, state.active) : null, record ? redactionTerms(record) : []]);
     // Frames with questions, the top one, and any with messages or an open list (evidence only).
     const frames = results.map((r) => r.result).filter((f) => f && (f.controls.length || f.isTopFrame || f.messages?.length || f.openLists?.length));
@@ -5383,7 +5383,7 @@ async function remarkAi(ctx) {
   }
   if (!answered.length) return;
   try {
-    await runKit(ctx.tabId, ctx.carrier, (list) => list.forEach(([k, l, n]) => globalThis.__raterKit.markKey(k, l, 'ai', n)),
+    await runKit(ctx.tabId, ctx.carrier, (list) => list.forEach(([k, l, n]) => globalThis.__raterKit?.markKey(k, l, 'ai', n)),
       [answered.map((x) => [x.key, x.label, x.done === 'auto' && !x.approved ? 'selected by the AI: approve it in the side panel' : 'AI answer'])]);
   } catch { /* page navigating */ }
   await syncAiBanner(ctx);
@@ -5393,7 +5393,7 @@ async function remarkAi(ctx) {
 async function syncAiBanner(ctx) {
   if (state.tab?.id !== ctx.tabId) return;
   const lines = pendingAi(ctx.tabId, ctx.page).map((x) => `${x.label}: ${x.choice}`);
-  try { await runKit(ctx.tabId, ctx.carrier, (l) => globalThis.__raterKit.aiBanner(l), [lines]); } catch { /* page navigating */ }
+  try { await runKit(ctx.tabId, ctx.carrier, (l) => globalThis.__raterKit?.aiBanner(l), [lines]); } catch { /* page navigating */ }
 }
 
 // Puts AI answers into the page through the fill engine, which checks the page kept each one.
@@ -5420,7 +5420,7 @@ async function applyAi(list, ctx, decision) {
     // Watch every frame before the snapshot and pending-hold writes. An idle frame stays
     // guarded while another waits on its server, until the full apply finishes.
     guarding = true;
-    await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [guardToken]);
+    await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit?.answerEdits('begin', t), [guardToken]);
     if (!isCurrent()) return false;
     const current = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
     if (!isCurrent()) return false;
@@ -5461,7 +5461,7 @@ async function applyAi(list, ctx, decision) {
     // including later answers in the active frame.
     const results = [];
     const readEdits = async (command = 'read') => {
-      const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit.answerEdits(c, t), [command, guardToken]);
+      const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit?.answerEdits(c, t), [command, guardToken]);
       for (const frame of frames) for (const item of frame.result ?? []) {
         if (item?.protected) results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
       }
@@ -5486,7 +5486,7 @@ async function applyAi(list, ctx, decision) {
       startedFrames.add(frameId);
       dispatched = true;
       // The carrier's stop steps go along: after a reload no fill has told this document about them.
-      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit.answer(a, snapshots, t, o),
+      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit?.answer(a, snapshots, t, o),
         [[a], expected, guardToken, { stopSteps: Object.keys(ctx.carrier.stopSteps ?? {}) }], [frameId]);
       for (const frame of answerFrames) for (const item of frame.result ?? []) {
         if (item && typeof item === 'object') results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
@@ -5543,7 +5543,7 @@ async function applyAi(list, ctx, decision) {
   } finally {
     if (guarding) {
       try {
-        const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('end', t), [guardToken]);
+        const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit?.answerEdits('end', t), [guardToken]);
         // Even a failed answer transport must preserve edits the still-live guards caught.
         const edited = frames.flatMap(frame => frame.result ?? []).filter(item => item?.protected);
         await persistGuardedEdits(editOrigin, edited.map(item => item.key));
@@ -5643,7 +5643,7 @@ function renderAi(holder, suggestions, ctx) {
     }
     if (decision === 'rejected') {
       for (const x of list) {
-        try { await runKit(ctx.tabId, ctx.carrier, (k, l, n) => globalThis.__raterKit.markKey(k, l, 'needs', n), [x.key, x.label, 'AI choice rejected: set this answer yourself']); } catch { /* page navigating */ }
+        try { await runKit(ctx.tabId, ctx.carrier, (k, l, n) => globalThis.__raterKit?.markKey(k, l, 'needs', n), [x.key, x.label, 'AI choice rejected: set this answer yourself']); } catch { /* page navigating */ }
       }
     }
     await persistAiPending();
