@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { MIGRATIONS, STORAGE_VERSION, STORAGE_VERSION_KEY, migrateStorage } from '../src/storage-version.js';
+import { PANEL_SOURCE } from './panel-source.mjs';
 
 // chrome.storage.local as the migrations use it: get (a key, a list of keys, or null for all), set
 // (a patch) and remove (a key or a list), each value copied in and out as Chrome does.
@@ -103,7 +104,7 @@ test('data from a newer build, or with a version that isn\'t one, is left as it 
 });
 
 test('the panel migrates the stored data first, one copy at a time, and logs a failure without its message', () => {
-  const panel = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
+  const panel = PANEL_SOURCE;
   assert.match(panel, /async function init\(\) \{\s+\/\/[^\n]*\n\s+await migrateStoredData\(\);\s+wire\(\);/);
   assert.match(panel, /navigator\.locks\.request\('rater-storage-version', run\)/);
   const logged = panel.match(/if \(result\.error\) logCrash\(new Error\((.*)\)\);/)?.[1] ?? '';

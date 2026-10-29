@@ -30,6 +30,6 @@ If a supposed general fix depends on an unknown insurance answer, complete indep
 ## Related code and documentation
 
 - [review.mjs](../scripts/review.mjs), [events.mjs](../scripts/lib/events.mjs): investigation.
-- [normalize.js](../src/normalize.js), [carrier modules](../src/carriers/), [pagekit.js](../src/content/pagekit.js), [sidepanel.js](../sidepanel/sidepanel.js): likely correction sites.
+- [normalize.js](../src/normalize.js), [carrier modules](../src/carriers/), [pagekit.js](../src/content/pagekit.js), [the side panel](../sidepanel/panel/): likely correction sites.
 - Use [intake and rules](intake-and-rules.md) for answer semantics, [browser filling](browser-filling.md) for execution, or [AI assistance](ai-assistant.md) for AI behavior, according to the cause.
 - Use [learning](learning.md) only when changing how corrections become future candidates or how their evidence is recorded.

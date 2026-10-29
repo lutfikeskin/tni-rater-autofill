@@ -17,9 +17,11 @@ import { progressive } from '../src/carriers/progressive.js';
 import { quoteProgress, stopScreen } from '../src/carriers.js';
 import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
+import { PANEL_SOURCE } from './panel-source.mjs';
 
 
-const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
+// The panel's parts and its wiring as one text (test/panel-source.mjs): functions are found by name.
+const SIDEPANEL = PANEL_SOURCE;
 // Layout scheduling has its own tests (layoutHarness); others only need it to exist.
 const LAYOUT_STUB = '\nfunction scheduleLayout() {}';
 
