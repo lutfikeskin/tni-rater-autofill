@@ -313,6 +313,7 @@
  * @property {CarrierAdvance} [advance]
  * @property {'MAIN'} [world]  the page script in the page's own JavaScript world (ExtJS)
  * @property {boolean} [pressInPage]  buttons pressed from the page's own world (src/content/page-press.js)
+ * @property {string} [pageAdapter]  the carrier's page adapter (src/content/carriers/<carrier>.js: how its own widgets hold values, name questions and show the page busy), injected before the fill engine; none for plain HTML forms
  * @property {RegExp | null} [autoFillUrl]  null on a practice page
  * @property {RegExp | null} [layoutUrl]
  * @property {RegExp} [fillOnDraw]
@@ -879,4 +880,55 @@
  * @property {boolean} test  marked as a test run, not a client
  * @property {number} events  how many events were kept
  * @property {number} dropped  how many the trace couldn't keep
+ */
+
+// ---------------------------------------------------------------------------------------------
+// A carrier's page adapter (src/content/carriers/<carrier>.js), injected before the fill engine
+
+/**
+ * What the fill engine (pagekit.js) hands an adapter's `create`: its own helpers, so the adapter
+ * matches options, words its misses and waits the way the engine does.
+ * @typedef {object} PageAdapterKit
+ * @property {(s: any) => string} oneLine  one line of text, spaces squashed
+ * @property {(ms: number) => Promise<void>} sleep
+ * @property {(options: any[], step: FieldStep) => any} matchOption  the option a step's answer picks, or null
+ * @property {(step: FieldStep, options: any[]) => { ok: false, reason: string, options?: string[] }} noMatch  the result for an answer none of the options takes
+ * @property {(step: FieldStep, control: any) => string} textFor  the text a step types into a field
+ * @property {(options: any[]) => boolean} hasOptions  a list offers a real choice, not only its placeholder
+ * @property {(el: Element) => string | null} labelFor  a field's label as the page shows it
+ */
+
+/**
+ * One carrier's page code: how its own widgets hold values, name their questions and show the page
+ * busy. A widget is whatever `widget(el)` returns for a field (Progressive's ExtJS component); the
+ * engine only hands it back. Every hook is optional: the engine's default is a plain HTML form's
+ * (pagekit.js NO_ADAPTER).
+ * @typedef {object} PageAdapter
+ * @property {(el: Element) => any} widget  the field's widget, or null
+ * @property {(widget: any) => any} radioGroup  a radio's group widget, or null
+ * @property {(group: any) => string} groupKey  one key per radio group widget
+ * @property {(widget: any) => { text: string, value: any }[] | null} choices  a widget that holds a list of choices: its options (it is then a select)
+ * @property {(widget: any, kind: string) => string | null} label  the question's words, from the widget
+ * @property {(widget: any) => string} optionText  a radio option's words, from its widget
+ * @property {(widget: any, el: Element) => string | null} question  the page's own question id (logged; never how a rule finds a field)
+ * @property {(widget: any, el: Element) => string | null} row  the row of a repeating question (one per vehicle on Progressive's Rates)
+ * @property {(el: Element) => string | null} ref  the field's name in the carrier's data model (Progressive's fieldref)
+ * @property {(widget: any) => boolean} required
+ * @property {(widget: any, el: Element) => any} value  the widget's value
+ * @property {(widget: any) => string | null} shown  the text a list widget shows
+ * @property {(widget: any, el: Element, isPlaceholder: (text: string) => boolean) => boolean} holds  a list widget holds an answer
+ * @property {(widget: any) => boolean} invalid  the widget says its answer is wrong
+ * @property {(option: any) => any} groupOf  a radio option's group widget, for its validity
+ * @property {(widget: any, text: string) => void} setText  an address typed into a widget's box
+ * @property {(widget: any, text: string) => void} changed  after the typing events: the widget's own change
+ * @property {(step: FieldStep, control: any) => Promise<{ ok: boolean, shown?: string, reason?: string }>} apply  puts an answer into a widget's field
+ * @property {(widget: any, el: Element) => void} reselect  picks a widget's answer again (a nudge that makes the page show what follows it)
+ * @property {(widget: any) => Element | null} highlight  the element to mark for a widget's field
+ * @property {(widget: any) => string | null} typeName  the widget's type, for captures
+ * @property {() => boolean} busy  the page is waiting on its server
+ * @property {string[]} busySelectors  the carrier's own spinners and masks
+ * @property {() => boolean} serverBacked  the page sends its server each answer: a fill waits between answers
+ * @property {(fn: () => void) => void} onRequest  count the page's requests (per-answer timing)
+ * @property {(fn: () => void) => void} offRequest
+ * @property {(list: Element) => { label: string, fixed: boolean } | null} listOwner  the question an open list belongs to
  */

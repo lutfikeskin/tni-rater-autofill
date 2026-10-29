@@ -580,6 +580,8 @@ export const progressive = {
   hosts: [/(^|\.)foragentsonly\.com$/, /(^|\.)progressive\.com$/],
   // ExtJS components are only reachable from the page's own JavaScript world.
   world: 'MAIN',
+  // How its Duck Creek pages draw questions (ExtJS components), injected before the fill engine.
+  pageAdapter: 'src/content/carriers/progressive.js',
   // Only the quote flow is filled automatically (not the home or quote-search pages).
   autoFillUrl: /\/Express\/Default\.aspx/i,
   // The quote's state is picked on the home page (never filled there): the panel warns when it

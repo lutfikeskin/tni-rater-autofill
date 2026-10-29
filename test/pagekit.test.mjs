@@ -16,6 +16,8 @@ import { assistContextKey } from '../src/ai/common.js';
 // script itself, without a browser session, real quote data, or customer identifiers.
 const PAGEKIT = fs.readFileSync(new URL('../src/content/pagekit.js', import.meta.url), 'utf8');
 const FIELD_KEY = fs.readFileSync(new URL('../src/content/field-key.js', import.meta.url), 'utf8');
+// Progressive's page adapter: loaded before the kit in a harness with ExtJS (`ext`), as the panel does.
+const PROGRESSIVE = fs.readFileSync(new URL('../src/content/carriers/progressive.js', import.meta.url), 'utf8');
 const RECORDER = fs.readFileSync(new URL('../src/content/recorder.js', import.meta.url), 'utf8');
 
 // A virtual clock for the fill engine's waits (sleep, settle, the retry loops that read Date.now()).
@@ -421,7 +423,8 @@ function extCmp(id, input, { caption = 'Synthetic question', required = false, v
   return cmp;
 }
 
-function harness({ ext = false, pathname = '/rater', search = '' } = {}) {
+// `progressive`: Progressive's page adapter is loaded (always with `ext`), as on its tabs.
+function harness({ ext = false, progressive = ext, pathname = '/rater', search = '' } = {}) {
   const document = new FakeDocument();
   const location = { origin: 'https://synthetic.example', pathname, search };
   const context = {
@@ -456,6 +459,7 @@ function harness({ ext = false, pathname = '/rater', search = '' } = {}) {
     };
   }
   vm.runInNewContext(FIELD_KEY, context, { filename: 'src/content/field-key.js' });
+  if (progressive) vm.runInNewContext(PROGRESSIVE, context, { filename: 'src/content/carriers/progressive.js' });
   vm.runInNewContext(PAGEKIT, context, { filename: 'src/content/pagekit.js' });
   // Every fill in this file is held to the review invariant as it returns (assertLive).
   const kit = context.__raterKit;
@@ -2330,7 +2334,7 @@ test('business ZIP/City found by name need no Street Address anchor', async () =
 
 test('blank optional address detail and blank DOT do not stop standard business-page filling', async () => {
   for (const unit of [null, 'Suite 4']) {
-    const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+    const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
     const detail = makeInput({ id: 'address-detail', ariaLabel: 'Apt, Building, Floor, Suite, etc.' });
     const street = makeInput({ id: `f_U${'A'.repeat(32)}27E_1_1`, ariaLabel: 'Street address', attrs: { fieldref: 'PrimaryBusinessAddressOutputNonShredded.StreetAddressDup' } });
     const name = makeInput({ id: `f_U${'A'.repeat(32)}230_1_1`, ariaLabel: 'Business name', attrs: { fieldref: 'AccountInput.BusinessName' } });
@@ -2398,7 +2402,7 @@ test('For Hire Trucking collapses to a verified summary and the revealed trucker
 
 test('home address takes the first offered option with or without DOT and collapses manual boxes', async () => {
   for (const hasDot of [false, true]) {
-    const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+    const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
     const record = {
       applicant: { name: 'Example LLC', dot: hasDot ? '1234567' : null, owner1: 'Test Owner' },
       garaging: { street: '10 Test Road', city: 'Example City', zip: '21000', unit: null },
@@ -2439,7 +2443,7 @@ test('home address retains manual entry when no address suggestion is offered', 
 });
 
 test('home address uses offered USDOT address when Primary Business Address is absent', async () => {
-  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
   const offered = makeInput({ id: `f_U${'A'.repeat(32)}2A5_1_1`, name: 'home_2A5', type: 'radio', value: '10 Test Road Example City MD 21000 (USDOT address)', attrs: { fieldref: 'BusinessOwnerHomeAddressInputNonShredded.AddressOptionsForPrimaryBsnsAdrs' } });
   const manual = makeInput({ id: 'manual-home', name: 'home_2A5', type: 'radio', value: 'Enter a different address', checked: true });
   h.document.body.append(radioGroup('Home Address', offered, manual));
@@ -2454,7 +2458,7 @@ test('home address uses offered USDOT address when Primary Business Address is a
 // to the intake's street (Progressive abbreviates "Circle" to "Cir") and left it to the agent. TNI's
 // home-address standard: the first option offered.
 test('More about the business: Primary Business Address takes the first offered option, not the intake street', async () => {
-  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const h = harness({ progressive: true, search: '?pageName=MoreAboutBusiness' });
   const record = {
     applicant: { name: 'Example LLC', dot: null, owner1: 'Test Owner' },
     garaging: { street: '1234 Example Circle', city: 'Example City', zip: '40000', state: 'KY', unit: null },
@@ -2477,7 +2481,7 @@ test('More about the business: Primary Business Address takes the first offered 
 // different address", and not on a page that already says the address was verified.
 const VERIFIED = 'PrimaryBusinessAddressOutputNonShredded.VerifyAddressSuccessMessage';
 function primaryAddressPage({ offered = true, verified = false } = {}) {
-  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const h = harness({ progressive: true, search: '?pageName=MoreAboutBusiness' });
   const attrs = { fieldref: 'PrimaryBusinessAddressInputNonShredded.AddressOptions' };
   const radios = [
     ...(offered ? [makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_0`, name: 'string_58', type: 'radio', value: '1234 Example Cir Example City KY 40000', checked: verified, attrs })] : []),
@@ -2522,7 +2526,7 @@ test('More about the business: Verify Address is not pressed on a verified page 
 // Review of #218: "Enter a different address" listed first is no address to pick (nothing fills its
 // boxes): left to the agent with a note, and Verify Address waits for them.
 test('More about the business: a first option of "Enter a different address" is the agent\'s, with a note', async () => {
-  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const h = harness({ progressive: true, search: '?pageName=MoreAboutBusiness' });
   const attrs = { fieldref: 'PrimaryBusinessAddressInputNonShredded.AddressOptions' };
   const manual = makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_0`, name: 'string_58', type: 'radio', value: 'Enter a different address', attrs });
   const offered = makeInput({ id: `f_P${'A'.repeat(32)}58_8_1_1`, name: 'string_58', type: 'radio', value: '1234 Example Cir Example City KY 40000', attrs });
@@ -2795,7 +2799,7 @@ test('business type list picks General Freight Trucking when offered, else For H
 test('the business type popup with no list: Trucking typed in its own box, its own Search pressed, then the pick', async () => {
   const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
   for (const listShown of [false, true]) {
-    const h = harness({ search: '?pageName=BECAPopup' });
+    const h = harness({ progressive: true, search: '?pageName=BECAPopup' });
     const box = (q) => makeInput({ id: `f_b${'B'.repeat(32)}${q}_1_1`, name: `string_${q}|`, ariaLabel: 'Business Type', attrs: { fieldref: 'BECAInput.BusinessTypeTextBox' } });
     const pageBox = box('284');
     const pageSearch = new FakeNode('button', { textContent: 'Search' });
@@ -2826,7 +2830,7 @@ test('the business type popup with no list: Trucking typed in its own box, its o
     assert.equal(report.unknown.length, 0, JSON.stringify(report.unknown));
   }
   // Another class: nothing typed or searched; the business type is the agent's.
-  const h = harness({ search: '?pageName=BECAPopup' });
+  const h = harness({ progressive: true, search: '?pageName=BECAPopup' });
   const popup = new FakeNode('div', { className: 'x-window becaPopupPage' });
   const popupBox = makeInput({ id: 'popup-box', ariaLabel: 'Business Type', attrs: { fieldref: 'BECAInput.BusinessTypeTextBox' } });
   const popupSearch = new FakeNode('button', { textContent: 'Search' });
@@ -3863,7 +3867,7 @@ test('a question whose wording carries a date is not flagged as reworded when th
   // An expediter: outside the supported classes the standard No would be a check item (review mode).
   const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
   const plan = buildPlan(record, progressive).filter((s) => ['28F5', '299D'].includes(s.q));
-  const h = harness({ search: '?pageName=AddDriver' });
+  const h = harness({ progressive: true, search: '?pageName=AddDriver' });
   const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
   const accidents = yesNo('DriverInput.AnyAccidentsViolationsPastExpYears', 'Has this driver had any accidents, claims or violations in the past 3 years? (since 11/2023)');
   const defensive = yesNo('DriverInput.DefensiveDriverDiscount', 'Defensive Driver Discount');
@@ -3883,7 +3887,7 @@ test('the defensive driver discount asked about an Armed Forces course is TNI\'s
   const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
   const plan = buildPlan(record, progressive).filter((s) => s.q === '299D');
   for (const preset of [null, 'No']) {
-    const h = harness({ search: '?pageName=AddDriver' });
+    const h = harness({ progressive: true, search: '?pageName=AddDriver' });
     const radios = ['Yes', 'No'].map((value) => makeInput({ name: 'r_defensive', type: 'radio', value, checked: value === preset, attrs: { fieldref: 'DriverInput.DefensiveDriverDiscount' } }));
     h.document.body.append(radioGroup('Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?', ...radios));
     const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
@@ -3899,7 +3903,7 @@ test('a civilian defensive driving course in the notes: the Armed Forces wording
   const ARMED = 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?';
   const fillWith = async (question, notes) => {
     const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false }, notes: { text: notes } };
-    const h = harness({ search: '?pageName=AddDriver' });
+    const h = harness({ progressive: true, search: '?pageName=AddDriver' });
     const radios = ['Yes', 'No'].map((value) => makeInput({ name: 'r_defensive', type: 'radio', value, attrs: { fieldref: 'DriverInput.DefensiveDriverDiscount' } }));
     h.document.body.append(radioGroup(question, ...radios));
     const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => s.q === '299D'), { maxRounds: 4, replaceChoices: true });
@@ -4357,7 +4361,7 @@ test('verify { appears }: more matching elements than before the click, or any w
 
 
 test('the real USDOT plan recognizes an already shown no-record result', async () => {
-  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
   h.document.body.append(makeInput({ id: 'dot', ariaLabel: "USDOT Number associated with the customer's business:", value: '1234567', attrs: { fieldref: 'USDOTInput.NumberCollection' } }));
   const question = 'Did the customer obtain their USDOT Number within the last 60 days?';
   const yes = makeInput({ name: 'sixtyDay', type: 'radio', value: 'Yes', checked: true, attrs: { fieldref: 'USDOTInput.SixtyDayQuestion' } });
@@ -4430,7 +4434,7 @@ test('one intake vehicle value targets its VIN behind an extra quote row with th
 // Continue, and an intake answer is neither.
 test('the fill report says which answers are TNI standards; review mode makes them check items', async () => {
   const fillBoth = async (businessClass) => {
-    const h = harness({ search: '?pageName=AddDriver' });
+    const h = harness({ progressive: true, search: '?pageName=AddDriver' });
     const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
     h.document.body.append(yesNo('DriverInput.AnyAccidentsViolationsPastExpYears', 'Has this driver had any accidents, claims or violations in the past 3 years?'), yesNo('DriverInput.DefensiveDriverDiscount', 'Defensive Driver Discount'));
     const record = { applicant: {}, garaging: {}, operations: { businessClass }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
@@ -4457,7 +4461,7 @@ test('the fill report says which answers are TNI standards; review mode makes th
 // agent; notes that mention a ticket still leave it to the agent.
 test('a blank claims answer is TNI\'s standard No: the page\'s No is kept, not a needs-you item', async () => {
   const fillClaims = async (claims) => {
-    const h = harness({ search: '?pageName=AddDriver' });
+    const h = harness({ progressive: true, search: '?pageName=AddDriver' });
     const no = makeInput({ name: 'r_claims', type: 'radio', value: 'No', attrs: { fieldref: 'DriverInput.AnyAccidentsViolationsPastExpYears' } });
     no.checked = true;
     h.document.body.append(radioGroup('Has this driver had any accidents, claims or violations in the past 5 years? (since 11/2021)',
@@ -4518,7 +4522,7 @@ test('AmWINS review mode confirms differing retained standard choices before Con
 });
 
 test('a fact step is reported manualOnly and kept from the AI', async () => {
-  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const h = harness({ progressive: true, search: '?pageName=MoreAboutBusiness' });
   const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
   h.document.body.append(yesNo('MoreBusinessInput.HasContinuousCoverage', 'Has the customer had continuous coverage?'));
   const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
@@ -4534,7 +4538,7 @@ test('a fact step is reported manualOnly and kept from the AI', async () => {
 });
 
 test('an invalid retained client fact stays manual-only across duplicate report rows', async () => {
-  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const h = harness({ progressive: true, search: '?pageName=MoreAboutBusiness' });
   const question = 'Has the customer had continuous coverage?';
   const yes = makeInput({ name: 'continuous', type: 'radio', value: 'Yes', checked: true,
     attrs: { fieldref: 'MoreBusinessInput.HasContinuousCoverage', 'aria-invalid': 'true' } });

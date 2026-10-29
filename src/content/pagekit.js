@@ -4,11 +4,9 @@
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
 // page already filled alone.
 //
-// Two kinds of pages are handled:
-//  - plain HTML / React / Angular forms: values are set on the DOM elements;
-//  - ExtJS pages (Progressive's Duck Creek "DCT" app): values are set through the ExtJS
-//    components, and the page talks to its server after each answer, so filling goes one field
-//    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
+// It handles plain HTML / React / Angular forms itself: values are set on the DOM elements. What a
+// carrier's own widgets need (Progressive's ExtJS components) is that carrier's page adapter,
+// src/content/carriers/<carrier>.js, injected before this file (see "The carrier's page adapter").
 //
 // Not type-checked yet; the plan it takes, the fill's options and the report it returns are typed
 // in types.js, at the repository's root.
@@ -252,53 +250,70 @@
   }
 
   // ---------------------------------------------------------------------------------------------
-  // ExtJS / Duck Creek helpers (only work in the page's own JS world)
+  // The carrier's page adapter
 
-  const ext = () => (typeof globalThis.Ext?.getCmp === 'function' ? globalThis.Ext : null);
-  const extCmp = (el) => (el?.id && ext() ? ext().getCmp(el.id.replace(/-inputEl$/, '')) ?? null : null);
-
-  function dctCaption(cmp) {
-    for (let c = cmp, i = 0; c && i < 6; c = c.ownerCt, i++) {
-      if (c.dctCaption) return oneLine(String(c.dctCaption).replace(/<[^>]+>/g, ' '));
+  // What one carrier's page code knows (src/content/carriers/<carrier>.js, injected before this file
+  // on that carrier's tabs when its config names a `pageAdapter`): how its own widgets hold values,
+  // name their questions and show the page busy. A widget is whatever the adapter's widget(el)
+  // returns for a field (Progressive's: the field's ExtJS component); the kit only hands it back.
+  // A page without an adapter is plain HTML: every hook has its default here.
+  const NO_ADAPTER = {
+    widget: () => null,
+    radioGroup: () => null,
+    groupKey: () => null,
+    choices: () => null,
+    label: () => null,
+    optionText: () => '',
+    question: () => null,
+    row: () => null,
+    ref: () => null,
+    required: () => false,
+    value: (widget, el) => el?.value ?? null,
+    shown: () => null,
+    holds: () => false,
+    invalid: () => false,
+    groupOf: () => null,
+    setText: () => {},
+    changed: () => {},
+    apply: async () => ({ ok: false, reason: 'no page adapter for this widget' }),
+    reselect: () => {},
+    highlight: () => null,
+    typeName: () => null,
+    busy: () => false,
+    busySelectors: [],
+    serverBacked: () => false,
+    onRequest: () => {},
+    offRequest: () => {},
+    listOwner: () => null,
+  };
+  // The adapter is read when it's needed: one injected again (an extension update) replaces it.
+  let adapterSource;
+  let adapterNow = NO_ADAPTER;
+  function adapter() {
+    const source = globalThis.__raterAdapter ?? null;
+    if (source !== adapterSource) {
+      adapterSource = source;
+      adapterNow = { ...NO_ADAPTER, ...(source?.create?.({ oneLine, sleep, matchOption, noMatch, textFor, hasOptions, labelFor }) ?? {}) };
     }
-    return null;
+    return adapterNow;
   }
 
-  // Only the field itself (or its radio group) says whether it's required; outer containers
-  // carrying dctRequired made optional fields like Suffix and DBA look required.
-  function dctRequired(cmp) {
-    return !!cmp?.dctRequired;
-  }
+  // The field's name in the carrier's data model: the adapter's (Progressive's fieldref) or, for
+  // GEICO, the one in its element names (dataName: Id_GiveYear_81515 is GiveYear).
+  const fieldRef = (el) => adapter().ref(el) || dataName(el) || null;
 
-  // The field's name in the carrier's data model: Duck Creek puts it on every input
-  // (fieldref="RiskInput.VIN", "ComprehensiveInput.Deductible"). It names what the field holds,
-  // where the question id below is only a number, which Progressive renumbers (2026-10-07). GEICO
-  // has it in its names instead (dataName: Id_GiveYear_81515 is GiveYear).
-  const fieldRef = (el) => el?.getAttribute?.('fieldref') || dataName(el) || null;
-
-  // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>. The
-  // question id is a number Progressive reassigns: it keeps a page's rows of one question
-  // together, and is logged, but never says which question a field is (see assign).
-  function dctQuestionId(id) {
-    return String(id ?? '').match(/^f_[a-z]([0-9a-f]{32})([0-9a-f]+)_\d+_\d+/i)?.[2]?.toUpperCase() ?? null;
-  }
-
-  // Its <page>_<row>: on Progressive's Rates every question of one vehicle shares the row, and
-  // one of them is labelled with the vehicle ("2025 RAM PROMASTER 2500").
+  // A question labelled with a vehicle ("2025 RAM PROMASTER 2500") names its row (collectControls).
   const VEHICLE_LABEL = /^(?:19|20)\d{2}\s+\S/;
-  function dctRow(id) {
-    return String(id ?? '').match(/^f_[a-z][0-9a-f]{32}[0-9a-f]+_(\d+_\d+)/i)?.[1] ?? null;
-  }
 
   // The page is waiting on its server or re-drawing after an answer.
   function pageBusy() {
-    const X = ext();
-    if (X?.Ajax?.isLoading?.()) return true;
+    const a = adapter();
+    if (a.busy()) return true;
     // #loadingDefault: AmWINS' overlay while it saves or reloads the application (it redraws every
     // step when the reload lands, so nothing may be filled before that).
     // #page-load / #extendedWaiting: GEICO's spinners while a step loads and while Recalculate rates
     // (both stay in the page, display:none, when idle).
-    return [...document.querySelectorAll('.x-mask-msg, .x-mask-loading, [class*="loading-mask"], [class*="LoadingMessage"], #loadingDefault, #page-load.loader-container, #extendedWaiting.loader-container')]
+    return [...document.querySelectorAll(['[class*="loading-mask"]', '[class*="LoadingMessage"]', '#loadingDefault', '#page-load.loader-container', '#extendedWaiting.loader-container', ...a.busySelectors].join(', '))]
       .some((m) => m.getClientRects().length && getComputedStyle(m).visibility !== 'hidden');
   }
 
@@ -434,6 +449,7 @@
   let controlReads = 0;
   function collectControls() {
     controlReads++;
+    const a = adapter();
     const out = [];
     const groups = new Map();
     // Fields in the page but not shown or not open to an answer (a collapsed card, a closed section):
@@ -443,59 +459,59 @@
       const type = el.tagName === 'INPUT' ? (el.type || 'text').toLowerCase() : el.tagName.toLowerCase();
       if (el.tagName === 'INPUT' && SKIP_INPUT_TYPES.has(type) && !(type === 'search' && safeMatches(el, ADDRESS_SEARCH))) continue;
       if (el.disabled || (!isVisible(el) && !hiddenOk.some((sel) => safeMatches(el, sel)))) { hidden.push(el); continue; }
-      const cmp = extCmp(el);
+      const widget = a.widget(el);
       if (type === 'radio') {
-        const extGroup = cmp?.up?.('radiogroup') ?? null;
+        const widgetGroup = a.radioGroup(widget);
         // By its name too: two groups with one data-model name (GEICO's two pay-plan lists, both
         // ref:GivePayPlanV2) are two questions. Nameless radios group as before.
-        const key = extGroup ? `x:${extGroup.id}` : `${el.form ? 'f' : ''}:${globalThis.__raterFieldKey(el)}|${el.name ?? ''}`;
+        const key = widgetGroup ? a.groupKey(widgetGroup) : `${el.form ? 'f' : ''}:${globalThis.__raterFieldKey(el)}|${el.name ?? ''}`;
         let g = groups.get(key);
         if (!g) {
-          g = { kind: 'radio', el, type, radios: [], cmp: extGroup };
+          g = { kind: 'radio', el, type, radios: [], widget: widgetGroup };
           groups.set(key, g);
           out.push(g);
         }
         g.radios.push(el);
         continue;
       }
-      const c = { kind: el.tagName === 'SELECT' ? 'select' : type === 'checkbox' ? 'checkbox' : 'text', el, type, cmp };
-      if (cmp?.store && cmp.displayField) {
-        // ExtJS combo box: a text input backed by a list of records.
+      const c = { kind: el.tagName === 'SELECT' ? 'select' : type === 'checkbox' ? 'checkbox' : 'text', el, type, widget };
+      // A widget backed by a list of choices (an ExtJS combo box) is a list, whatever its input.
+      const choices = a.choices(widget);
+      if (choices) {
         c.kind = 'select';
-        c.options = cmp.store.getRange().map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
+        c.options = choices;
       }
-      // A checkbox in a group ("Filings: [ ] Federal [ ] MCS-90") is named by its own box label.
-      c.label = (c.kind === 'checkbox' && cmp?.boxLabel ? oneLine(String(cmp.boxLabel).replace(/<[^>]+>/g, ' ')) : null) ?? dctCaption(cmp) ?? labelFor(el);
+      c.label = a.label(widget, c.kind) ?? labelFor(el);
       // No caption or label of its own: its "label" is its name, which says nothing of its wording
       // (assign's `reworded`). Progressive draws TX's PIP limit so (live recording, 2026-10-23).
       c.nameOnly = !!c.label && (c.label === oneLine(humanize(el.name || el.id)) || (!!dataName(el) && c.label === oneLine(humanize(dataName(el)))));
-      c.q = dctQuestionId(cmp?.id ?? el.id);
+      c.q = a.question(widget, el);
       c.ref = fieldRef(el);
       out.push(c);
     }
     for (const g of groups.values()) {
       g.options = g.radios.map((r) => {
-        const item = extCmp(r);
+        const item = a.widget(r);
         // A design-system option's words are its host's [slot=label] part (GEICO: "Vehicle" for
         // the value Yes, "Pay In Full" for GEICO_PP_1Pay); its shadow <label> holds only a <slot>.
         const host = radioHost(r);
-        return { el: r, cmp: item, host, text: oneLine(String(item?.boxLabel ?? '').replace(/<[^>]+>/g, ' ')) || oneLine([...(r.labels ?? [])].map(textOutsideControls).join(' ')) || slotText(host, 'label') || r.value, value: r.value };
+        return { el: r, widget: item, host, text: a.optionText(item) || oneLine([...(r.labels ?? [])].map(textOutsideControls).join(' ')) || slotText(host, 'label') || r.value, value: r.value };
       });
-      g.label = dctCaption(g.cmp) ?? radioGroupLabel(g.radios, g.options.map((o) => o.text));
-      g.q = dctQuestionId(g.cmp?.id ?? g.el.id) ?? (String(g.el.name).match(/^[a-z]+_([0-9A-F]+)/)?.[1] ?? null);
+      g.label = a.label(g.widget, 'radio') ?? radioGroupLabel(g.radios, g.options.map((o) => o.text));
+      g.q = a.question(g.widget, g.el) ?? (String(g.el.name).match(/^[a-z]+_([0-9A-F]+)/)?.[1] ?? null);
       g.ref = g.radios.map(fieldRef).find(Boolean) ?? null;
     }
     for (const c of out) {
       c.text = squash(c.label);
       c.hint = humanize(dataName(c.el) || c.el.name || c.el.id || '');
-      c.required = dctRequired(c.cmp) || isRequired(c.el, c.label);
+      c.required = a.required(c.widget) || isRequired(c.el, c.label);
     }
     // The vehicle a per-vehicle row belongs to: a question labelled with it ("2025 RAM PROMASTER
     // 2500") names its row, and the row's unlabelled questions (vehicle value, equipment) are its
     // too. A row naming two vehicles names none.
     const rowVehicle = new Map();
     for (const c of out) {
-      c.row = dctRow(c.cmp?.id ?? c.el.id);
+      c.row = a.row(c.widget, c.el);
       if (!c.row || !VEHICLE_LABEL.test(c.label ?? '')) continue;
       rowVehicle.set(c.row, rowVehicle.has(c.row) && rowVehicle.get(c.row) !== c.text ? null : c.text);
     }
@@ -510,7 +526,8 @@
   function hiddenKeys(controls) {
     let keys = hiddenKeySets.get(controls);
     if (!keys) {
-      keys = new Set((hiddenOf.get(controls) ?? []).map((el) => globalThis.__raterFieldKey(el, { q: dctQuestionId(extCmp(el)?.id ?? el.id) })));
+      const a = adapter();
+      keys = new Set((hiddenOf.get(controls) ?? []).map((el) => globalThis.__raterFieldKey(el, { q: a.question(a.widget(el), el) })));
       hiddenKeySets.set(controls, keys);
     }
     return keys;
@@ -573,15 +590,10 @@
     return { options, section: sectionOf(c.el), current: c.kind === 'text' ? (textValue(c.el) ? 'has a value' : null) : selectedText(c) };
   }
 
-  // An ExtJS field's value. A combo whose list was never loaded (or was torn down by a redraw)
-  // throws from getValue(); its box text is then the best answer there is.
-  function cmpValue(cmp, el) {
-    try { return cmp.getValue(); } catch { return el?.value || null; }
-  }
-
-  // Whether a radio option is the pick: its ExtJS component's value; a design-system option's host
-  // `checked` (radioHost: its own input may still be checked from an earlier pick); else the input.
-  const optionOn = (o) => (o.cmp ? !!cmpValue(o.cmp, o.el) : o.host ? o.host.hasAttribute('checked') : o.el.checked);
+  // Whether a radio option is the pick: its widget's value (the page adapter's); a design-system
+  // option's host `checked` (radioHost: its own input may still be checked from an earlier pick);
+  // else the input.
+  const optionOn = (o) => (o.widget ? !!adapter().value(o.widget, o.el) : o.host ? o.host.hasAttribute('checked') : o.el.checked);
 
   // A masked box that shows only its mask ("__/__/____", "MM/DD/YYYY", a VIN's seventeen "_") holds
   // no answer yet: GEICO's owner date of birth and VIN were kept as page values that differ from
@@ -591,10 +603,7 @@
 
   function hasValue(c) {
     if (c.kind === 'radio') return c.options.some(optionOn);
-    if (c.cmp && c.kind === 'select') {
-      const v = cmpValue(c.cmp, c.el);
-      return v != null && v !== '' && !isPlaceholderOption(c.cmp.getRawValue?.() ?? '');
-    }
+    if (c.widget && c.kind === 'select') return adapter().holds(c.widget, c.el, isPlaceholderOption);
     if (c.kind === 'text') return textValue(c.el).trim() !== '';
     if (c.kind === 'checkbox') return c.el.checked;
     const o = c.el.selectedOptions?.[0];
@@ -604,20 +613,19 @@
   function selectedText(c) {
     if (c.kind === 'checkbox') return c.el.checked ? 'checked' : 'unchecked';
     if (c.kind === 'radio') return c.options.find(optionOn)?.text ?? null;
-    if (c.cmp) return oneLine(c.cmp.getRawValue?.() ?? '') || null;
+    if (c.widget) return adapter().shown(c.widget);
     // A list taking several choices (GEICO's commodities): all of them.
     if (c.kind === 'select' && c.el.multiple) return [...(c.el.selectedOptions ?? [])].map((x) => oneLine(x.text)).filter((t) => t && !isPlaceholderOption(t)).join('; ') || null;
     const o = c.el.selectedOptions?.[0];
     return o && !isPlaceholderOption(o.text) ? oneLine(o.text) : null;
   }
 
-  // ExtJS keeps a stale "you must select one item" error on a group until it re-validates, so
-  // ask the component to validate now rather than reading the old message.
+  // The page says the answer is wrong: the field's own validity, or its widget's (a radio group's
+  // through its first option), as the page adapter reads it.
   function invalidControl(c) {
     if (c.el.getAttribute('aria-invalid') === 'true' || c.el.validity?.valid === false) return true;
-    const cmp = c.cmp ?? c.options?.[0]?.cmp?.up?.('radiogroup');
-    if (typeof cmp?.isValid === 'function') { try { return !cmp.isValid(); } catch { return false; } }
-    return typeof cmp?.getActiveError === 'function' && !!cmp.getActiveError();
+    const widget = c.widget ?? adapter().groupOf(c.options?.[0]);
+    return !!widget && adapter().invalid(widget);
   }
 
   // Same answer, different formatting: 45000 / "45,000" / "$45,000", 02/03/1988 / 1988-02-03.
@@ -1229,7 +1237,7 @@
   const shownSuggestions = () => deepQueryAll(document, SUGGESTION_SELECTOR).filter((el) => el.getClientRects().length && oneLine(el.textContent));
   async function applyAddress(step, c) {
     const text = String(step.value);
-    const { el, cmp } = c;
+    const { el, widget } = c;
     const before = new Set(shownSuggestions());
     // Google's address autocomplete (Progressive uses it): its list (.pac-item) is only shown
     // while the box has focus, which it doesn't while the agent works in the side panel. The
@@ -1239,11 +1247,11 @@
     const freshPac = () => deepQueryAll(document, '.pac-item').find((x) => pacBefore.get(x) !== x.textContent && oneLine(x.textContent) && (!houseNumber || x.textContent.includes(houseNumber))) ?? null;
     el.focus?.({ preventScroll: true });
     el.dispatchEvent(new Event('focus'));
-    if (cmp) cmp.setValue(text);
+    if (widget) adapter().setText(widget, text);
     else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, text);
     // Suggestion lists listen for typing: send the events typing would.
     for (const type of ['input', 'keydown', 'keyup']) el.dispatchEvent(new Event(type, { bubbles: true }));
-    try { cmp?.fireEvent?.('change', cmp, text); } catch { /* page handler expected a real event */ }
+    if (widget) adapter().changed(widget, text);
     // What the page adds while it thinks: when no known list shows up, the reason names the new
     // elements (tag.class), so the carrier's suggestion list can be recognised next time.
     const added = [];
@@ -1273,7 +1281,7 @@
     if (!first) {
       // A box with its own city/ZIP boxes gets back just the street.
       if (step.fallback) {
-        if (cmp) cmp.setValue(step.fallback);
+        if (widget) adapter().setText(widget, step.fallback);
         else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, step.fallback);
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1313,7 +1321,7 @@
   const select2Box = (select) => [select.nextElementSibling, ...(select.parentElement?.children ?? [])]
     .find((n) => n && n !== select && /\bselect2\b/.test(String(n.className))) ?? null;
   // A list select2 draws (its own <select> hidden by select2), not one it only searches for.
-  const isSelect2 = (c) => c.kind === 'select' && !c.cmp && !!c.el.classList?.contains('select2-hidden-accessible') && !!select2Box(c.el);
+  const isSelect2 = (c) => c.kind === 'select' && !c.widget && !!c.el.classList?.contains('select2-hidden-accessible') && !!select2Box(c.el);
 
   // Opens a select2 list and types `text` in its search box: { box, results } as the list then
   // shows them, or { reason } when it can't. A list taking several choices types in its own box,
@@ -1445,7 +1453,7 @@
   async function apply(step, c) {
     if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
     if (step.kind === 'search-select') return applySearchSelect(step, c);
-    if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
+    if (c.widget || c.options?.some((o) => o.widget)) return adapter().apply(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
     if (isSelect2(c)) return applySelect2(step, c);
     // A list taking several choices (GEICO's commodities: W43-23): exactly the answer's options,
@@ -1497,96 +1505,8 @@
     return { ok: true, shown: opt.text };
   }
 
-  // Runs ExtJS's own "field lost focus" handling, which is when Duck Creek sends an answer to
-  // its server. A real focus/blur doesn't fire while the agent is clicking in the side panel
-  // (the page window isn't focused), so fall back to calling Ext's handler directly.
-  function extFocusAndBlur(cmp, el, set) {
-    let blurred = false;
-    cmp.on('blur', () => { blurred = true; }, null, { single: true });
-    el.focus();
-    set();
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.blur();
-    if (!blurred && typeof cmp.onFocusLeave === 'function') {
-      cmp.onFocusLeave({ type: 'focusleave', event: new FocusEvent('blur'), target: el, relatedTarget: document.body, fromComponent: cmp, toComponent: null });
-    }
-    if (!blurred) cmp.fireEvent('blur', cmp, new FocusEvent('blur'));
-  }
-
-  // ExtJS pages: go through the components so the page's own change/blur handlers run (Duck
-  // Creek sends each answer to the server when the field loses focus).
-  // Type-ahead lists (e.g. Progressive's business type list) only hold what matches the typed
-  // text: type the value, wait for the list to load, then pick.
-  async function queryCombo(cmp, text) {
-    if (typeof cmp.doQuery !== 'function') return null;
-    cmp.doQuery(text, false, true);
-    const start = Date.now();
-    await sleep(200);
-    if (!cmp.store) return null;
-    while (cmp.store?.isLoading?.() && Date.now() - start < 6000) await sleep(100);
-    return storeOptions(cmp);
-  }
-
-  // A list redrawn while it's answered may have lost its store (TX 2026-10-07): no options.
-  const storeOptions = (cmp) => (cmp.store?.getRange?.() ?? []).map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
+  // Whether a list offers any real choice (not only its placeholder).
   const hasOptions = (options) => options.some((o) => !isPlaceholderOption(o.text));
-
-  async function applyExt(step, c) {
-    const { cmp, el } = c;
-    if (c.kind === 'radio') {
-      const opt = matchOption(c.options, step);
-      if (!opt) return noMatch(step, c.options);
-      const isOn = () => (opt.cmp ? !!opt.cmp.getValue() : opt.el.checked);
-      if (!isOn()) opt.el.click();
-      if (!isOn() && opt.cmp) opt.cmp.setValue(true);
-      return isOn() ? { ok: true, shown: opt.text } : { ok: false, reason: "the page didn't accept the choice" };
-    }
-    if (cmp?.readOnly) return { ok: false, reason: 'the field is read-only — set it by hand' };
-    if (c.kind === 'select') {
-      // `search`: the word an agent types to narrow the list (Progressive's LA business description,
-      // "Trucking"); the answer is picked among its results only, none of them is a miss.
-      const searched = step.search ? await queryCombo(cmp, step.search) : null;
-      if (searched) {
-        const hit = matchOption(searched, step);
-        if (!hit) return noMatch(step, searched);
-        extFocusAndBlur(cmp, el, () => {
-          cmp.setValue(hit.value);
-          cmp.fireEvent('select', cmp, hit.rec);
-        });
-        return { ok: true, shown: cmp.getRawValue?.() || hit.text };
-      }
-      let opt = matchOption(c.options, step);
-      if (!opt && step.kind !== 'bool') {
-        for (const q of [String(step.value), String(step.value).split(/\s+/).slice(0, 2).join(' ')]) {
-          const loaded = await queryCombo(cmp, q);
-          opt = loaded && matchOption(loaded, step);
-          if (opt) break;
-        }
-      }
-      // A list that fills in only after another answer (Progressive's cargo commodities, once
-      // their category is picked) may still be empty: give it a few seconds to load.
-      for (const start = Date.now(); !opt && !hasOptions(storeOptions(cmp)) && Date.now() - start < 6000;) {
-        await sleep(250);
-        opt = matchOption(storeOptions(cmp), step);
-      }
-      if (!opt) return noMatch(step, hasOptions(c.options) ? c.options : storeOptions(cmp));
-      extFocusAndBlur(cmp, el, () => {
-        cmp.setValue(opt.value);
-        cmp.fireEvent('select', cmp, opt.rec);
-      });
-      return { ok: true, shown: cmp.getRawValue?.() || opt.text };
-    }
-    if (c.kind === 'checkbox') {
-      if (typeof step.value !== 'boolean') return { ok: false, reason: 'checkbox needs a yes/no answer' };
-      if (!!cmp.getValue() !== step.value) cmp.setValue(step.value);
-      return { ok: true, shown: step.value ? 'checked' : 'unchecked' };
-    }
-    const text = textFor(step, c);
-    if (c.el.maxLength > 0 && text.length > c.el.maxLength) return { ok: false, reason: `value is longer than the field allows (${c.el.maxLength})` };
-    extFocusAndBlur(cmp, el, () => cmp.setValue(text));
-    if (!el.value && !cmp.getValue()) return { ok: false, reason: 'the page cleared the value (it may need a different format)' };
-    return { ok: true, shown: el.value || String(cmp.getValue()) };
-  }
 
   // ---------------------------------------------------------------------------------------------
   // Highlighting
@@ -1595,7 +1515,7 @@
     if (c.kind !== 'radio') {
       // A select2 list's own <select> is a 1-px box: the box drawn after it is what the agent sees.
       const drawn = c.el.classList?.contains('select2-hidden-accessible') ? c.el.nextElementSibling?.querySelector?.('.select2-selection') ?? null : null;
-      return drawn ? [drawn, c.el] : [c.cmp?.el?.dom?.querySelector?.('.x-form-trigger-wrap') ?? c.el];
+      return drawn ? [drawn, c.el] : [adapter().highlight(c.widget) ?? c.el];
     }
     // A design-system option is drawn by its host (its own input may be drawn invisibly).
     return c.radios.map((r) => {
@@ -1640,7 +1560,7 @@
     // intake's house number.
     if (step.kind === 'address-suggest') return c.kind === 'text' && hasValue(c) && (!step.checkNumber || houseNumberOf(c.el.value) === houseNumberOf(step.value));
     if (step.kind === 'search-select') return squash(selectedText(c) ?? '').includes(squash(step.value));
-    if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) === step.value;
+    if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.widget ? !!adapter().value(c.widget, c.el) : c.el.checked) === step.value;
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
       if (loose(c.el.value) === loose(textFor(step, c))) return true;
@@ -2281,10 +2201,10 @@
     // was quiet then.
     let quietDue = false;
     let quietSig = null;
-    // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
+    // Server requests the page sends (as its adapter sees them), counted for the per-answer timing.
     let ajaxCount = 0;
     const countAjax = () => { ajaxCount++; };
-    try { ext()?.Ajax?.on?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
+    adapter().onRequest(countAjax);
     const visited = new Set(visitedPages);
     const startPage = currentPage();
     // The plan has questions for this page (a field rule for it, not only helpers): while it shows no
@@ -2302,7 +2222,7 @@
     let topPage = null;
     try { topPage = window === window.top ? startPage : pageAt(window.top.location); } catch { /* another origin */ }
     if (expectPage != null && topPage != null && topPage !== expectPage) {
-      try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
+      adapter().offRequest(countAjax);
       report.pageMoved = topPage;
       return report;
     }
@@ -2329,7 +2249,7 @@
       report.stepKey = stepKey();
       return report;
     }
-    const serverBacked = !!ext();
+    const serverBacked = adapter().serverBacked();
     let pendingAction = null;
     // A helper that loads a view, due but not clicked until the page has been quiet (`loadDue`), and
     // the page it was quiet on (`quiet`: its action and signature).
@@ -3807,14 +3727,10 @@
           const pair = pairs.find(({ step }) => step.path === a.nudge && step.value != null);
           if (pair && agreesWith(pair.step, pair.control)) {
             nudged.add(a.action);
-            // ExtJS's select hands its listeners the picked record, as a real pick does (Codex on PR #43).
-            const { cmp } = pair.control;
-            if (cmp) {
-              const value = cmpValue(cmp, pair.control.el);
-              const rec = storeOptions(cmp).find((o) => o.value === value || o.text === oneLine(value))?.rec ?? null;
-              cmp.fireEvent?.('select', cmp, rec ?? value);
-            }
-            if (!cmp) setNativeValue(pair.control.el, pair.control.el.value);
+            // A widget is picked again its own way (the page adapter's reselect), a field set again.
+            const { widget } = pair.control;
+            if (widget) adapter().reselect(widget, pair.control.el);
+            else setNativeValue(pair.control.el, pair.control.el.value);
             return true;
           }
         }
@@ -3966,9 +3882,9 @@
     }
     // Question text for every field on the page, keyed like the usage recorder's changes.
     report.labels = controls.map((c) => [fieldKey(c), c.label]);
-    // Each ExtJS combo's loaded choices (never agency staff lists), so the usage log can tell a
-    // pick from text typed into the box.
-    report.choices = controls.filter((c) => c.cmp && c.kind === 'select' && c.options && !/agent|producer/i.test(c.label ?? ''))
+    // Each widget list's loaded choices (an ExtJS combo's; never agency staff lists), so the usage
+    // log can tell a pick from text typed into the box.
+    report.choices = controls.filter((c) => c.widget && c.kind === 'select' && c.options && !/agent|producer/i.test(c.label ?? ''))
       .map((c) => [fieldKey(c), [...new Set(c.options.map((o) => o.text).filter(Boolean))]]);
     report.skipped = controls.filter((c) => skippedField(c)).map((c) => ({ label: c.label, key: fieldKey(c) }));
     const matched = new Set(pairs.map((p) => p.control));
@@ -4180,7 +4096,7 @@
     } finally {
       hiddenOk = [];
       fillUnits = null;
-      try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
+      adapter().offRequest(countAjax);
       releaseEditGuard();
       document.removeEventListener('click', notePress, true);
       if (running === thisFill) running = null;
@@ -4210,7 +4126,7 @@
     if (expectedSnapshots && !expectedSnapshots.includes(decisionSnapshot())) {
       return answers.map(a => ({ key: a.key, label: a.label, ok: false, reason: 'the page changed since the assistant evaluated it; request fresh suggestions' }));
     }
-    const serverBacked = !!ext();
+    const serverBacked = adapter().serverBacked();
     const find = (key, label) => {
       const same = collectControls().filter((c) => fieldKey(c) === key);
       return same.length > 1 ? same.find((c) => c.label === label) ?? null : same[0] ?? null;
@@ -4435,8 +4351,8 @@
   }
 
   function shownNow(c) {
-    if (c.kind === 'checkbox') return (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) ? 'checked' : 'unchecked';
-    if (c.kind === 'text') return textValue(c.el) || (c.cmp ? String(cmpValue(c.cmp, c.el) ?? '') : '');
+    if (c.kind === 'checkbox') return (c.widget ? !!adapter().value(c.widget, c.el) : c.el.checked) ? 'checked' : 'unchecked';
+    if (c.kind === 'text') return textValue(c.el) || (c.widget ? String(adapter().value(c.widget, c.el) ?? '') : '');
     return selectedText(c) ?? '';
   }
 
@@ -4500,7 +4416,7 @@
         // Its row (Duck Creek "<page>_<row>": one per vehicle or trailer on Rates), numbers only.
         row: c.row ?? undefined,
         kind: c.kind,
-        type: c.cmp?.xtype ?? c.type,
+        type: adapter().typeName(c.widget) ?? c.type,
         label: r(c.label),
         name: c.el.name || null,
         id: c.el.id || null,
@@ -4569,10 +4485,8 @@
       const owner = deepQueryAll(document, 'input, [role=combobox]').find((el) =>
         `${el.getAttribute('aria-owns') ?? ''} ${el.getAttribute('aria-controls') ?? ''}`.split(/\s+/).includes(list.id));
       if (owner) return { label: labelFor(owner), fixed: fixedBox(owner) && owner.getAttribute('aria-autocomplete') !== 'list' };
-      const cmp = ext()?.getCmp(list.id);
-      const field = cmp?.pickerField ?? cmp?.ownerCmp;
-      const label = field?.dctCaption ?? field?.fieldLabel ?? (field?.inputEl?.dom ? labelFor(field.inputEl.dom) : null);
-      if (label) return { label, fixed: field.queryMode === 'local' && !field.remoteFilter };
+      const owned = adapter().listOwner(list);
+      if (owned) return owned;
     }
     const focused = document.activeElement;
     return focused && focused !== document.body && /^(INPUT|SELECT)$/.test(focused.tagName ?? '')
