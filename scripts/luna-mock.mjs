@@ -243,9 +243,9 @@ try {
     // them for Playwright's native select actions while keeping the real page structure intact.
     await mock.evaluate(() => document.querySelectorAll('#priorCarrierPanel > .app-rp-section .card-body').forEach((body) => { body.style.display = ''; }));
   };
-  // The brain button opens Settings at the assistant; Done closes it.
+  // Settings holds the assistant; Done closes it. The gear toggles Settings: clicked only when it is shut.
   const openAgent = async () => {
-    await panel.locator('#agent-btn').click();
+    if (await panel.locator('#settings').isHidden()) await panel.locator('#settings-btn').click();
     await panel.locator('#settings').waitFor({ state: 'visible' });
   };
   const closeAgent = () => panel.locator('#settings-done').click();
@@ -560,10 +560,10 @@ try {
     && Object.values(namesSent.at(-1)).every((n) => loaded.record.drivers.some((d) => String(d.first ?? '').startsWith(n))), true);
   verify('the fixture has no GL ticked', loaded.record.coverage.gl === true, false);
   if (await panel.locator('#check-view').isHidden()) await panel.locator('#step-check').click();
-  const glCard = panel.locator('#warnings .check', { hasText: 'mention general liability' });
+  const glCard = panel.locator('#warnings .check', { hasText: 'mention GL' });
   const genderCard = panel.locator('#warnings .check', { hasText: 'is more often a woman\'s name' });
   await glCard.waitFor({ timeout: 15000 });
-  const quoted = (await glCard.innerText()).match(/general liability: "(.+?)"\./)?.[1] ?? '';
+  const quoted = (await glCard.innerText()).match(/mention GL: "(.+?)"\./)?.[1] ?? '';
   verify('the GL item quotes a line of the claims box', quoted.length > 0 && loaded.record.claims.text.replace(/\s+/g, ' ').includes(quoted.replace(/…$/, '')), true);
   const claimsBeforeChoice = claimsRequests;
   verify('the gender item says it is a guess from the name', /guess from the first name only/.test(await genderCard.innerText()), true);
@@ -578,7 +578,7 @@ try {
   const edited = await savedIntake();
   verify('the buttons are the agent\'s edits', ['coverage.hasGl', 'drivers[0].gender'].every((p) => edited.agentEdited.includes(p)), true);
   verify('Client has GL asks for no GL quote', edited.record.coverage.gl === true, false);
-  verify('both items are checked', await panel.locator('#warnings .check', { hasText: /general liability|woman's name/ }).count(), 0);
+  verify('both items are checked', await panel.locator('#warnings .check', { hasText: /mention GL|woman's name/ }).count(), 0);
   await panel.waitForTimeout(500);
   verify('confirming GL does not read the claims box again', claimsRequests, claimsBeforeChoice);
 
@@ -620,7 +620,7 @@ try {
   flagIntake = false;
   const offIntake = await savedIntake();
   verify('assistance off: no claims or name check is sent', claimsRequests + namesRequests, offBefore);
-  verify('assistance off: no GL or gender item', await panel.locator('#warnings .check', { hasText: /general liability|woman's name/ }).count(), 0);
+  verify('assistance off: no GL or gender item', await panel.locator('#warnings .check', { hasText: /mention GL|woman's name/ }).count(), 0);
   verify('assistance off: GL and gender stay as the intake has them', offIntake.record.coverage.gl !== true && offIntake.record.coverage.hasGl !== true && offIntake.record.drivers.every((d) => d.gender == null), true);
   verify('no unrecognized provider host was contacted', unexpectedProviderHosts.size, 0);
   verify('nothing was submitted', await mock.evaluate(() => window.__amwinsMock.submitted), false);

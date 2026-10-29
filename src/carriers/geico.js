@@ -71,7 +71,7 @@ const GATEWAY = /^https:\/\/gateway2\.geico\.com(?:[?#/]|$)/i;
 const GATEWAY_OFF = ['/quote'];
 // The Search Products window's product boxes (Auto, Commercial Auto/Trucking, Motorcycle, Umbrella).
 const PRODUCT = 'input[name="lob-selection"]';
-const STOP_AT_QUOTE = 'TNI stops GEICO quotes at Quote & Coverages: go back there and print the quote proposal.';
+const STOP_AT_QUOTE = 'TNI stops at Quote & Coverages: go back and print the proposal.';
 
 // The forms of one step, by a question only that form asks.
 // - The vehicle form's first question, on all four FL vehicle forms and the NE one (absent on the
@@ -1120,7 +1120,7 @@ export const geico = {
     'GEICO referral': {
       button: '^return to geico gateway$',
       stopped: true,
-      note: 'GEICO won\'t quote this business online: its page asks you to call GEICO at the number it shows. The quote is yours from here.',
+      note: 'GEICO won\'t quote this online: call the number on the page. The quote is yours.',
     },
   },
   // Steps that are the agent's: nothing is filled or clicked there (not even on Fill this page), and
@@ -1128,16 +1128,16 @@ export const geico = {
   // The quote stops at Quote & Coverages (TNI, 2026-10-21): going on leads to MVR & CLUE, whose
   // reports cost the agency and are run only once the client shows interest in the offer.
   stopSteps: {
-    'Final Quote Details': `Final Quote Details is yours: nothing is filled or clicked on this step. ${STOP_AT_QUOTE}`,
-    'MVR & CLUE': `MVR & CLUE orders driving and claims reports, which cost the agency: that is yours. Nothing is filled or clicked on this step. ${STOP_AT_QUOTE}`,
-    'Payment Information': 'Payment Information is yours: nothing is filled or clicked on this step.',
+    'Final Quote Details': `This step is yours: nothing is filled or clicked. ${STOP_AT_QUOTE}`,
+    'MVR & CLUE': `This step orders driving and claims reports, which cost the agency: yours. Nothing is filled or clicked. ${STOP_AT_QUOTE}`,
+    'Payment Information': 'This step is yours: nothing is filled or clicked.',
   },
   // The quote ends at Quote & Coverages with the proposal printed (TNI, 2026-10-21): the panel says
   // "Quote done" once Print Quote Proposal was clicked there and nothing is left for the agent.
   finishedBy: 'printProposal',
   // What the panel says on a step the fill still answers.
   stepNotes: {
-    [COVERAGES]: 'The fill opens Motor Truck Cargo, Trailer Interchange and Motor Truck General Liability when the intake asks for them, and answers them. Answer what is left for you here (or mark it done) and click Fill this page, which also puts back any of its answers GEICO changed back. With nothing left, the fill clicks Recalculate once and checks every answer afterwards; if GEICO changed one, it is marked red and Recalculate is yours from then on. With the premium current, the fill picks 11 Payments (or the plan with the most payments GEICO offers) under View More Payment Plans and clicks Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',
+    [COVERAGES]: 'Answer what is left, then Fill this page. With nothing left, the fill clicks Recalculate once; an answer GEICO changes is marked red, and Recalculate is yours from then on. Then it picks the most payments and clicks Print Quote Proposal. Stop here: MVR & CLUE reports cost the agency, so run them only once the client is interested.',
   },
   // GEICO requotes when a coverage changes, and puts back its own choices when the agent backs out
   // (FL live run, 2026-10-21: every follow-up fill set the liability limit again, and GEICO redrew the

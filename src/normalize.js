@@ -351,15 +351,14 @@ export const nonTruckingAnswer = (v) => /^\s*non[\s-]*trucking\s*$/i.test(String
 export const cdlStandard = (driver) => !!driver && typeof driver.cdl !== 'boolean' && driver.cdlYear == null;
 export const cdlAnswer = (driver) => (cdlStandard(driver) ? false : typeof driver?.cdl === 'boolean' ? driver.cdl : null);
 export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
-// What the filler does on an NTL quote, carrier by carrier (the NTL items below and Luna's).
-export const NTL_FILLS = 'On Progressive the filler adds it on Rates, answers the permanent lease question Yes, puts the limit in the NTL limit and leaves Bodily Injury and Property Damage Liability Not selected, then does the rest of Rates through Print, Email, Fax; with cargo or general liability too, the rest of Rates is yours. On GEICO it picks Non-Trucking Liability, answers "Yes, under permanent lease" and puts the limit in the NTL list. On AmWINS it is written in the disclosure details on Underwriting.';
-export const ntlCheckMessage = (line) => `The claims box or Additional Notes mention non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes. ${NTL_FILLS}`;
+export const NTL_RATES = 'On Progressive, with cargo or general liability too, the rest of Rates is yours.';
+export const ntlCheckMessage = (line) => `Notes mention non-trucking liability (NTL): "${line}". If the client wants it, set it to Yes. ${NTL_RATES}`;
 // The intake's info item when the form's auto liability is Non-Trucking (coverage.ntl-form).
-export const NTL_FORM_MESSAGE = `Auto liability is Non-Trucking on the intake: Non-trucking liability is set to Yes. ${NTL_FILLS}`;
+export const NTL_FORM_MESSAGE = `Auto liability is Non-Trucking, so Non-trucking liability is set to Yes. ${NTL_RATES}`;
 // NTL and cargo both asked for (the maintainer, 2026-10-26): an NTL client is leased on to a motor
 // carrier, which covers the cargo, so the agent confirms it with the client. Every carrier.
 export const ntlWithCargo = (record) => record?.coverage?.ntl === true && record?.coverage?.cargo === true;
-export const NTL_CARGO_MESSAGE = 'Non-trucking liability (NTL) and cargo coverage are both asked for. An NTL client is leased on to a motor carrier, which usually covers the cargo: confirm with the client whether they want cargo, and set Cargo coverage to No if not.';
+export const NTL_CARGO_MESSAGE = 'NTL and cargo both asked for. The motor carrier usually covers cargo: confirm with the client, or set Cargo to No.';
 // NTL mentioned in the claims box or the notes (or flagged by Luna, claims.aiNtl) and not answered
 // yet, Yes or No: a mention is not a request, the agent decides on the Intake step. Every carrier.
 export const ntlUndecided = (record) => record?.coverage?.ntl == null && (!!ntlMention(intakeNotes(record)) || record?.claims?.aiNtl === true);
@@ -372,7 +371,7 @@ export const ntlNoDotFilings = (record) => record?.coverage?.ntl === true && !nt
 // (TNI, 2026-10-26: answer to PR question) NTL with primary auto liability too is an intake check
 // naming the conflict (`coverage.ntl-primary`), and on every carrier its USDOT and filings questions
 // are the agent's: no answer, with the note below.
-export const NTL_PRIMARY_MESSAGE = 'Non-trucking liability (NTL) and primary auto liability (auto liability Yes) are both asked for. TNI adds no USDOT number and no filings on an NTL quote alone: confirm with the client which one they want (Non-trucking liability No for primary liability, or auto liability Non-Trucking for NTL alone). Until then the USDOT and filings questions are yours on every carrier.';
+export const NTL_PRIMARY_MESSAGE = 'Both non-trucking liability (NTL) and primary auto liability asked for. Confirm which one; until then USDOT and filings questions are yours.';
 // (TNI, 2026-10-26: answers to PR questions) Why the carriers' USDOT and filings questions are left
 // to the agent, or null: NTL with primary auto liability (the agent's), or NTL mentioned and not
 // answered yet (they wait for the answer; once it is Yes or No, the next fill answers them).
@@ -382,9 +381,9 @@ export const ntlDotFilingsHold = (record) => (ntlWithPrimary(record)
     ? 'The claims box or notes mention non-trucking liability (NTL), not answered yet: set it to Yes or No on the Intake step first, then fill this page again (TNI adds no USDOT number and no filings on an NTL quote).'
     : null);
 // The intake's info item when an NTL intake asks for filings or gives a USDOT number (coverage.ntl-filings).
-export const ntlFilingsMessage = (record) => `Non-trucking liability (NTL) quote: TNI adds no USDOT number and no filings on an NTL quote (TNI, 2026-10-26), so ${record?.operations?.filingsRequired === true
-  ? `the carriers' filings questions are answered No although the intake asks for filings${record?.applicant?.dot ? ', and the intake\'s USDOT number isn\'t entered' : ''}.`
-  : 'the intake\'s USDOT number isn\'t entered, and whether the client has one is answered No.'}`;
+export const ntlFilingsMessage = (record) => `NTL quote: TNI adds no USDOT and no filings. ${record?.operations?.filingsRequired === true
+  ? `Filings are answered No${record?.applicant?.dot ? ' and the USDOT number is left out' : ''}.`
+  : 'The USDOT number is left out, and "has a USDOT number" is answered No.'}`;
 
 // Words in the claims notes that answer the ownership question. Only the form's three answers
 // are taken as the answer; the others count as mentions, so "on a lease, truck owned" is not
@@ -785,7 +784,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     const s = txt(k);
     if (s == null || saysNoNumber(k)) return null;
     const digits = s.replace(/^(us\s*dot|dot|mc|mx)\b/i, '').replace(/\D/g, '');
-    if (!pattern.test(digits)) { check('id.invalid', path, `${label} "${s}" doesn't look like a valid number.`); return s; }
+    if (!pattern.test(digits)) { check('id.invalid', path, `"${s}" isn't a valid number.`); return s; }
     return digits;
   };
 
@@ -886,25 +885,25 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   else if (txt('fein')) {
     const d = txt('fein').replace(/\D/g, '');
     if (d.length === 9) a.fein = `${d.slice(0, 2)}-${d.slice(2)}`;
-    else { a.fein = txt('fein'); check('fein.invalid', 'applicant.fein', `FEIN "${a.fein}" should be 9 digits.`); }
+    else { a.fein = txt('fein'); check('fein.invalid', 'applicant.fein', `"${a.fein}" should be 9 digits.`); }
   }
   const est = toInt(raw.year_established);
   if (est != null) {
     if (est >= 1900 && est <= year) { a.yearEstablished = est; a.yearsInBusiness = year - est; }
-    else check('year-established.invalid', 'applicant.yearEstablished', `Year established "${txt('year_established')}" isn't a valid year.`);
+    else check('year-established.invalid', 'applicant.yearEstablished', `"${txt('year_established')}" isn't a valid year.`);
   }
   if (txt('phone_number')) {
     a.phone = toPhone(raw.phone_number);
-    if (!a.phone) { a.phone = txt('phone_number'); check('phone.invalid', 'applicant.phone', `Phone "${a.phone}" isn't a 10-digit US number.`); }
+    if (!a.phone) { a.phone = txt('phone_number'); check('phone.invalid', 'applicant.phone', `"${a.phone}" isn't a 10-digit US number.`); }
   }
-  if (a.email && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(a.email)) check('email.invalid', 'applicant.email', `Email "${a.email}" looks malformed.`);
+  if (a.email && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(a.email)) check('email.invalid', 'applicant.email', `"${a.email}" looks malformed.`);
   if (!a.dot && !a.mc && a.mcDotWithin60Days === true) {
     info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
   }
   if (a.noDot) info('dot.none', 'applicant.dot', `USDOT # "${asWritten('dot_number')}": the client has no USDOT number.`);
   if (a.noMc) info('mc.none', 'applicant.mc', `MC # "${asWritten('mc_number')}": the client has no MC number.`);
   if (NEW_AUTHORITY.test(txt('years_experience') ?? '')) info('years-experience.new', 'applicant.yearsExperience', `Years under own authority "${txt('years_experience')}": 0 years, a new authority.`);
-  else if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
+  else if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `"${txt('years_experience')}" isn't a number.`);
   // No year established on the form: the years in business the claims box or Additional Notes state,
   // with a check quoting them (TNI, 2026-10-26, W44-09). They win over years under own authority
   // for years in business (TNI, 2026-10-26: answer to PR question); the authority years are another
@@ -917,13 +916,12 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     const box = boxName(stated.fields[0]);
     const short = (q) => (q.length > 80 ? `${q.slice(0, 79).trimEnd()}…` : q);
     const quote = short(stated.quote);
-    const form = a.yearsExperience == null ? 'The form gives no years in business'
-      : `The form gives no year established, only years under own authority (${a.yearsExperience}), which stay for the authority questions`;
-    if (stated.range) {
+    const authority = a.yearsExperience == null ? '' : ` The years under own authority (${a.yearsExperience}) stay apart.`;
+        if (stated.range) {
       // A range whose ends differ (TNI, 2026-10-27: answer to PR question V7): the agent's on every
       // carrier, neither the blank standard nor the authority years; the check names the line.
       a.yearsInBusinessRange = true;
-      check('years-in-business.notes', 'applicant.yearsInBusiness', `${form}, and the ${box} says "${quote}": a range ("${stated.reading}"), so years in business is left to you. Enter Years in business or Year established here.`);
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${box} says "${quote}", a range ("${stated.reading}"), so years in business is left to you.${authority}`);
     } else if (stated.unread) {
       // A statement it doesn't read, or figures that disagree (TNI, 2026-10-27: round-6 answer 4):
       // the agent's like a range, neither the blank standard nor the authority years.
@@ -931,13 +929,13 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       const boxes = stated.fields.map(boxName).join(' and the ');
       const said = (stated.quotes ?? [stated.quote]).map((q) => `"${short(q)}"`).join(' and ');
       const why = { disagree: 'figures that disagree', mixed: 'not all read as a number of years' }[stated.kind ?? ''] ?? 'not read as a number of years';
-      check('years-in-business.notes', 'applicant.yearsInBusiness', `${form}, and the ${boxes} ${stated.fields.length > 1 ? 'say' : 'says'} ${said}: ${why}, so years in business is left to you. Enter Years in business or Year established here.`);
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${boxes} ${stated.fields.length > 1 ? 'say' : 'says'} ${said}: ${why}, so years in business is left to you.${authority}`);
     } else {
       a.yearsInBusiness = stated.years;
       if (stated.established != null) { a.yearEstablished = stated.established; readFrom['applicant.yearEstablished'] = stated.fields; }
       // How a figure that isn't plain years was read: "over 3 years" as 3, "18 months" as 1 (R11).
       const reading = stated.reading ? ` ("${stated.reading}" read as ${stated.years})` : '';
-      check('years-in-business.notes', 'applicant.yearsInBusiness', `${form}, and the ${box} says "${quote}": years in business is ${stated.years}${reading}${stated.established != null ? `, established ${stated.established}` : ''}. Check it (a plus counts as at least that many); a corrected answer here replaces it.`);
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${box} says "${quote}": years in business is ${stated.years}${reading}${stated.established != null ? `, established ${stated.established}` : ''}. Confirm.${authority}`);
     }
   }
   // TNI's standard for a blank (2026-10-09): 0 years, established this year (AmWINS' rules fill
@@ -945,7 +943,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // Not for a range in the notes (V7) or a statement of years in business they don't settle
   // (round-6 answer 4), which are the agent's: only for notes that say nothing of the business's time.
   if (a.yearsInBusiness == null && a.yearsExperience == null && !a.yearsInBusinessRange && !a.yearsInBusinessUnread) {
-    check('years-in-business.default', 'applicant.yearsInBusiness', `Years in business and year established are blank: the AmWINS quote gets 0 years (New Venture), established ${year}; GEICO's question about it is left to you. If the client has been in business longer, enter Years in business or Year established.`);
+    check('years-in-business.default', 'applicant.yearsInBusiness', `Blank. AmWINS gets 0 years (New Venture), established ${year}; GEICO's question is yours.`);
   }
 
   // --- Garaging address -----------------------------------------------------------------------
@@ -953,9 +951,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (addr) {
     const { confident, ...parts } = addr;
     record.garaging = parts;
-    if (!addr.state || !addr.zip) check('address.unparsed', 'garaging.street', `Couldn't split the garaging address "${txt('garaging_address')}" into street / city / state / ZIP — fill those in.`);
-    else if (!addr.city) check('address.no-city', 'garaging.city', `Couldn't tell where the street ends and the city starts in "${txt('garaging_address')}".`);
-    else if (!confident) check('address.no-commas', 'garaging.city', `Address had no commas; split it as street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}". Confirm.`);
+    if (!addr.state || !addr.zip) check('address.unparsed', 'garaging.street', `Couldn't split "${txt('garaging_address')}". Fill in street, city, state and ZIP.`);
+    else if (!addr.city) check('address.no-city', 'garaging.city', `Couldn't find the city in "${txt('garaging_address')}".`);
+    else if (!confident) check('address.no-commas', 'garaging.city', `Split an address with no commas: street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}". Confirm.`);
   } else {
     record.garaging = { street: null, unit: null, city: null, state: null, zip: null };
     check('address.missing', 'garaging.street', 'No garaging address on the form.');
@@ -987,10 +985,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
 
     if (rawDob) {
       d.dob = toDate(rawDob);
-      if (!d.dob) { d.dob = rawDob; check('dob.invalid', p('dob'), `${who}: date of birth "${rawDob}" isn't a valid MM/DD/YYYY date.`); }
+      if (!d.dob) { d.dob = rawDob; check('dob.invalid', p('dob'), `${who}: "${rawDob}" isn't a valid date.`); }
       else {
         const age = year - Number(d.dob.slice(6));
-        if (age < 18 || age > 90) check('dob.unusual-age', p('dob'), `${who}: date of birth ${d.dob} gives age ~${age}. Typo?`);
+        if (age < 18 || age > 90) check('dob.unusual-age', p('dob'), `${who}: age ~${age}. Typo?`);
       }
     } else check('dob.missing', p('dob'), `${who}: no date of birth.`);
 
@@ -999,7 +997,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       d.licenseNumber = lic.number;
       if (lic.state && !d.licenseState) d.licenseState = lic.state;
       if (lic.state && d.licenseState && lic.state !== d.licenseState) {
-        check('license.state-mismatch', p('licenseState'), `${who}: license box says ${lic.state} but DL state dropdown says ${d.licenseState}.`);
+        check('license.state-mismatch', p('licenseState'), `${who}: license says ${lic.state}, state box says ${d.licenseState}.`);
       }
     } else check('license.missing', p('licenseNumber'), `${who}: no driver's license number.`);
     if (!d.licenseState) check('license-state.missing', p('licenseState'), `${who}: no license state.`);
@@ -1014,26 +1012,26 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       // walkthrough), but says the one thing the fill can't do: GEICO has no exclusion question, so
       // another driver is the agent's to exclude there (the owner's row GEICO leaves out). And the
       // signed-form reminder (PR #216 review).
-      const geico = record.drivers.length ? 'GEICO has no exclusion question, so exclude them there yourself.' : 'GEICO\'s quote leaves them out, as the owner.';
-      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}" marks this driver excluded. ${geico} An exclusion usually needs the insured's signed form.`);
+      const geico = record.drivers.length ? 'On GEICO, exclude them yourself.' : 'GEICO leaves them out, as the owner.';
+      check('license.excluded', p('excluded'), `${who}: marked excluded ("${licBox}"). ${geico} Needs the insured's signed form.`);
     }
 
     if (name.suffix) {
       const box = name.suffixIn === 'first' ? 'first-name' : 'last-name';
-      info('name.suffix', p('suffix'), `${who}: ${box} box "${boxes[name.suffixIn]}" read as ${name.suffixIn === 'first' ? 'first' : 'last'} name ${d[name.suffixIn]} and suffix ${d.suffix}. Progressive's and AmWINS' driver pages have no suffix box, so it is left out there; GEICO's Add Driver form gets it.`);
+      info('name.suffix', p('suffix'), `${who}: ${box} box "${boxes[name.suffixIn]}" read as ${name.suffixIn === 'first' ? 'first' : 'last'} name ${d[name.suffixIn]}, suffix ${d.suffix}. Only GEICO takes the suffix.`);
     }
-    if (name.middle) info('name.middle-initial', p('middle'), `${who}: first-name box "${boxes.first}" read as first name ${d.first} and middle initial ${d.middle}.`);
+    if (name.middle) info('name.middle-initial', p('middle'), `${who}: "${boxes.first}" read as ${d.first}, middle initial ${d.middle}.`);
     if (d.first && /\s/.test(d.first)) {
-      check('name.multi-word-first', p('first'), `${who}: first-name box has more than one word ("${d.first}"). Check the license for which part is the middle name.`);
+      check('name.multi-word-first', p('first'), `${who}: "${d.first}" has two words. Check the license for the middle name.`);
     }
     if (!d.first || !d.last) check('name.missing-part', p(d.first ? 'last' : 'first'), `${who}: missing ${d.first ? 'last' : 'first'} name.`);
     if (d.cdl && !d.cdlYear) check('cdl-year.missing', p('cdlYear'), `${who}: has a CDL but no year it was issued.`);
-    if (d.cdl === false && d.cdlYear) check('cdl-year.without-cdl', p('cdlYear'), `${who}: marked no CDL but a CDL year is filled in.`);
-    if (d.cdl == null && d.cdlYear) check('cdl.blank-with-year', p('cdl'), `${who}: the CDL box is blank but a CDL year is filled in: answer whether they have a CDL (a blank box alone is No).`);
+    if (d.cdl === false && d.cdlYear) check('cdl-year.without-cdl', p('cdlYear'), `${who}: no CDL, but a CDL year is given.`);
+    if (d.cdl == null && d.cdlYear) check('cdl.blank-with-year', p('cdl'), `${who}: CDL blank, but a CDL year is given. Answer it.`);
     record.drivers.push(d);
     rows.drivers.push(n);
   });
-  if (companyAsWritten && !companyName(companyAsWritten)) info('company.none', 'applicant.name', `Company name "${companyAsWritten}": no company, so a sole proprietor.`);
+  if (companyAsWritten && !companyName(companyAsWritten)) info('company.none', 'applicant.name', `Company name "${companyAsWritten}": sole proprietor.`);
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
   // A blank "owner drives" box is TNI's Yes on the carriers (2026-10-26, W44-25: util.js
   // ownerDrives; the record keeps it blank): an owner missing from the driver list is then listed as a
@@ -1041,14 +1039,14 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // first driver (TNI, 2026-10-27: answer to PR question V4), only with no driver rows (as before).
   if (a.ownerDrives !== false && a.owner1 && !record.drivers.length) {
     check('drivers.owner-not-listed', 'drivers', a.ownerDrives ? `Owner drives, but "${a.owner1}" isn't in the driver list.`
-      : `"Owner drives" is blank, so the carriers answer TNI's standard Yes, but "${a.owner1}" isn't in the driver list: the owner's driver details (date of birth, license) are yours. If the owner doesn't drive, set Owner drives to No.`);
+      : `Owner drives is blank (TNI standard Yes), but "${a.owner1}" isn't a driver. Add their details, or set Owner drives to No.`);
   }
   // TNI, 2026-10-27 (answer to PR question V4): "The owner is always the first driver on the intake's
   // driver list". A first row whose name isn't the owner box's (util.js ownerRowNameDiffers) is still
   // the owner, and this check says it was taken as the owner (in place of T2's `drivers.owner-unclear`).
   // It names no one: the row is its path.
   if (ownerRowNameDiffers(record)) {
-    check('drivers.owner-name-differs', 'drivers[0]', 'The first driver\'s name differs from the owner\'s, and the first driver was taken as the owner (TNI: the owner is always the first driver on the intake). The owner\'s date of birth, marital status, license and CDL, and whether they are excluded, come from that row; the drivers after it are drivers like any other. If the owner is someone else, correct the driver list in client details.');
+    check('drivers.owner-name-differs', 'drivers[0]', 'The first driver is taken as the owner, though the names differ (TNI). If not, fix the driver list.');
   }
   // TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives;
   // the intake's No makes the owner's driver row an excluded driver on every carrier, as an "Excluded"
@@ -1066,7 +1064,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const own = ownerRow(record);
   if (own && own.excluded !== true && a.ownerDrives === false) {
     const who = [own.first, own.last].filter(Boolean).join(' ') || `Driver ${rows.drivers[0]}`;
-    check('drivers.owner-excluded', 'applicant.ownerDrives', `Does the owner drive? The intake says No: No quotes the owner (${who}, the first driver) as an excluded driver, Yes as a driver.`);
+    check('drivers.owner-excluded', 'applicant.ownerDrives', `Does the owner drive? The intake says No, so the owner (${who}, the first driver) is quoted as excluded.`);
   }
 
   // --- Vehicles and trailers ------------------------------------------------------------------
@@ -1106,18 +1104,18 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // An intake listing one with only vans or box trucks has likely mistyped a vehicle (TN 2026-10-08).
   const semiTrailer = record.trailers.find((t) => /^(dry van|reefer|flatbed|tanker|lowboy|step deck)$/i.test(t.type ?? ''));
   if (semiTrailer && record.vehicles.length && !record.vehicles.some((v) => /^(semi truck|pickup truck)$/i.test(v.type ?? ''))) {
-    check('vehicle-type.no-tractor', 'vehicles[0].type', `The intake lists a ${semiTrailer.type} trailer, but no vehicle is a Semi Truck (or Pickup Truck) to pull it (vehicle types: ${record.vehicles.map((v) => v.type ?? 'none').join(', ')}). Check the vehicle types.`);
+    check('vehicle-type.no-tractor', 'vehicles[0].type', `A ${semiTrailer.type} trailer, but no Semi or Pickup Truck to pull it (${record.vehicles.map((v) => v.type ?? 'none').join(', ')}).`);
   }
-  if (record.vehicles.length > 1 && ops.licensePlate) info('plate.ambiguous', 'operations.licensePlate', 'The form has one license-plate box but lists several vehicles; the plate may belong to only one of them.');
+  if (record.vehicles.length > 1 && ops.licensePlate) info('plate.ambiguous', 'operations.licensePlate', 'One plate for several vehicles: it may belong to one.');
 
   // --- Operations -----------------------------------------------------------------------------
   // "Unlimited", long haul, OTR, 48 states: no mileage; the carrier rules pick their widest band.
   const radius = parseRadius(ops.radius);
   ops.radiusMiles = radius.miles;
   if (radius.kind === 'missing') check('radius.missing', 'operations.radius', 'No radius of operations.');
-  else if (radius.kind === 'range') check('radius.range', 'operations.radiusMiles', `Radius is "${ops.radius}", a range. Raters ask for the farthest one-way distance: enter it in miles.`);
-  else if (radius.kind === 'unit') check('radius.unit', 'operations.radiusMiles', `Radius is "${ops.radius}", not in miles. Convert it and enter the miles.`);
-  else if (radius.kind === 'text') check('radius.not-miles', 'operations.radius', `Radius is "${ops.radius}", not a number of miles. Raters usually want miles or a band (e.g. 500+).`);
+  else if (radius.kind === 'range') check('radius.range', 'operations.radiusMiles', `"${ops.radius}" is a range. Enter the farthest one-way miles.`);
+  else if (radius.kind === 'unit') check('radius.unit', 'operations.radiusMiles', `"${ops.radius}" isn't in miles. Enter the miles.`);
+  else if (radius.kind === 'text') check('radius.not-miles', 'operations.radius', `"${ops.radius}" isn't miles. Enter miles or a band (e.g. 500+).`);
   if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.');
   // (TNI, 2026-10-26: answer to PR question) Neither check on an NTL quote, which gets no filings:
   // the `coverage.ntl-filings` info item below says why the carriers answer No instead.
@@ -1125,9 +1123,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (ops.filingsRequired && !ops.filingsWhich && !ntlQuote) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.');
   // Filings are made under a USDOT or MC number (the maintainer, 2026-10-26: a wrong intake).
   if (ops.filingsRequired === true && !record.applicant.dot && !record.applicant.mc && !ntlQuote) {
-    check('filings.no-number', 'applicant.dot', `Needs filings but no USDOT or MC number is given${record.applicant.mcDotWithin60Days === true ? ' (the client says they will have one within 60 days)' : ''}. Filings are made under a number: check with the client.`);
+    check('filings.no-number', 'applicant.dot', `Needs filings but has no USDOT or MC${record.applicant.mcDotWithin60Days === true ? ' (one due within 60 days)' : ''}. Check with the client.`);
   }
-  if (ops.hazmat) check('hazmat.yes', 'operations.hazmat', 'Hauls hazmat, tobacco or prescription drugs — confirm which, most raters treat these differently.');
+  if (ops.hazmat) check('hazmat.yes', 'operations.hazmat', 'Hazmat, tobacco or prescription drugs: confirm which.');
 
   // --- Current insurance ----------------------------------------------------------------------
   const prior = {
@@ -1155,7 +1153,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     const quoted = quotedCarriersOf(prior);
     if (quoted.length) {
       warnings.push({ code: 'prior.carrier-is-quoted', path: 'priorInsurance[0].carrier', level: 'check', alert: true,
-        msg: `Current insurance is with ${quoted.join(' and ')}: a ${quoted.join(' or ')} quote may be declined or routed. Check with the client before filling ${quoted.join(' or ')}'s pages; filling goes on as usual.` });
+        msg: `Current insurance is with ${quoted.join(' and ')}: a ${quoted.join(' or ')} quote may be declined or routed. Check with the client first.` });
     }
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
     // TNI (2026-10-26, W44-29): any box filled is proof of prior insurance, 1-3 years (util.js
@@ -1164,13 +1162,13 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       ['policy type', prior.type], ['carrier', prior.carrier], ['limit', prior.limit], ['expiration date', prior.expiration],
     ].filter(([, value]) => !value).map(([name]) => name);
     const named = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
-    if (missing.length && priorInsuranceAssumed(record, prior)) check('prior.incomplete', 'priorInsurance[0]', `Current insurance is missing the ${named}. Proof of prior insurance (1-3 years) is assumed from the boxes filled (TNI): get the missing details from the client.`);
-    else if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance is missing the ${named}; confirm the policy details before quoting.`);
+    if (missing.length && priorInsuranceAssumed(record, prior)) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Proof of prior insurance (1-3 years) is assumed (TNI); get the rest from the client.`);
+    else if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Confirm before quoting.`);
     if (prior.expiration && /^\d{2}\/\d{2}\/\d{4}$/.test(prior.expiration)) {
       const [mm, dd, yyyy] = prior.expiration.split('/').map(Number);
       const expiry = Date.UTC(yyyy, mm - 1, dd);
       const current = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-      if (expiry < current) check('prior-expiration.expired', 'priorInsurance[0].expiration', `Current policy expiration ${prior.expiration} is before today; use the intake date and have an agent review it.`);
+      if (expiry < current) check('prior-expiration.expired', 'priorInsurance[0].expiration', `Expired ${prior.expiration}. Uses the intake date; review it.`);
     }
   }
 
@@ -1180,10 +1178,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   record.coverage.cargoDeductible = cargo.deductible;
   if (record.coverage.cargo && !cargo.limit) check('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.');
   // No deductible: the carriers leave the cargo limit to the agent (TNI, 2026-10-27).
-  else if (record.coverage.cargo && cargo.deductible == null) check('cargo-deductible.missing', 'coverage.cargoDeductible', 'Wants cargo coverage with a limit but no deductible: the deductible is usually $1,000 or $2,500. Enter it here, or choose it on the carrier page.');
+  else if (record.coverage.cargo && cargo.deductible == null) check('cargo-deductible.missing', 'coverage.cargoDeductible', 'No cargo deductible: usually $1,000 or $2,500.');
   // Non-Trucking asks for a limit too: the carrier's NTL limit (the review of PR #176).
   if ((record.coverage.autoLiability === 'Yes' || nonTruckingAnswer(record.coverage.autoLiability)) && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
-  if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'Wants general liability but no limit chosen: TNI\'s default is $1M/$2M ($1M per occurrence, $2M aggregate). Confirm it with the client.');
+  if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'No GL limit. TNI default is $1M/$2M: confirm with the client.');
 
   // --- Claims box -----------------------------------------------------------------------------
   // Clients use this box for answers to other questions too. A leading yes/no answers the claims
@@ -1205,7 +1203,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     // itself always wins over the notes.
     const own = ops.vehicleOwnership ? null : ownershipFromNotes(notes);
     if (own?.value) ops.vehicleOwnership = own.value;
-    else if (own) check('ownership.notes', 'operations.vehicleOwnership', `The claims box or Additional Notes mention ownership ("${own.lines}") but don't settle it for the vehicles. Set Vehicle ownership (owned / leased / financed) yourself.`);
+    else if (own) check('ownership.notes', 'operations.vehicleOwnership', `Notes mention ownership ("${own.lines}"). Set it yourself.`);
   }
   // A time with the current insurer beyond the 1-3 years standard (AmWINS' 1 TO 2 YEARS): the
   // carriers' how-long questions take its band, the line shown here, where it was read (TNI,
@@ -1218,11 +1216,11 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (tenure && tenure.years >= 2) {
     const inNotes = String(record.notes?.text ?? '').split('\n').map((s) => s.trim()).includes(tenure.line);
     const then = priorPolicyExpired(record)
-      ? 'The current policy has expired, so the carriers\' questions on how long with the current insurer are left to you (TNI).'
+      ? 'The policy has expired, so time with the insurer is yours (TNI).'
       : priorPolicyNotAuto(record.priorInsurance?.[0])
-        ? 'The current policy isn\'t auto insurance (not proof of prior insurance), so the carriers\' questions on how long with the current insurer are left to you (TNI).'
-        : 'The carriers\' questions on how long with the current insurer take the band for it, never under 1-3 years (TNI); a time two bands could fit is left to you.';
-    check('prior.tenure', inNotes ? 'notes.text' : 'claims.text', `The claims box or Additional Notes give the time with the current insurer: "${tenure.line.slice(0, 160)}". ${then}`);
+        ? 'The policy isn\'t auto, so time with the insurer is yours (TNI).'
+        : 'Its band is filled, at least 1-3 years (TNI); between two bands, yours.';
+    check('prior.tenure', inNotes ? 'notes.text' : 'claims.text', `Time with insurer: "${tenure.line.slice(0, 160)}". ${then}`);
   }
   // Non-trucking liability (NTL) is named only in the notes: "NTL", "non-trucking" (also written
   // "non tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the
@@ -1241,11 +1239,11 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     info('coverage.ntl-filings', ops.filingsRequired === true ? 'operations.filingsRequired' : 'applicant.dot', ntlFilingsMessage(record));
   }
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
-    check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.');
+    check('ownership.missing', 'operations.vehicleOwnership', 'Not selected.');
   }
 
   const unknown = Object.keys(raw).filter((k) => !KNOWN_FIELDS.has(k) && clean(raw[k]) != null && raw[k] !== false);
-  if (unknown.length) info('form.unknown-fields', '', `The PDF has filled fields this tool doesn't read yet: ${unknown.join(', ')}.`);
+  if (unknown.length) info('form.unknown-fields', '', `Fields not read yet: ${unknown.join(', ')}.`);
 
   const filled = Object.values(raw).filter((v) => v === true || (typeof v === 'string' && clean(v) != null)).length;
   return { record, warnings, stats: { fields: Object.keys(raw).length, filled }, rows, readFrom };
