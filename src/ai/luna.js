@@ -512,7 +512,7 @@ export function nameWarnings(results, { names }, record) {
   return results.filter(x => x.guess === 'likely_female' && !record?.drivers?.[x.index]?.gender
     && firstNameOf(record?.drivers?.[x.index]?.first) === names[x.id]).map(x => ({
     code: 'ai.driver-gender', path: `drivers[${x.index}].gender`, level: 'check', choices: genderChoices(x.index),
-    msg: `Luna: driver ${x.index + 1} is filled Male (TNI standard), but "${names[x.id]}" is more often a woman's name. Check.`,
+    msg: `Luna: driver ${x.index + 1} is filled Male (TNI standard), but "${names[x.id]}" is more often a woman's name: a guess from the first name only. Check.`,
   }));
 }
 
