@@ -897,8 +897,42 @@
  */
 
 /**
- * One carrier's page code: how its own widgets hold values, name their questions and show the page
- * busy. A widget is whatever `widget(el)` returns for a field (Progressive's ExtJS component); the
+ * The registered adapter (globalThis.__raterAdapter): its `shared` part, which field-key.js, the usage
+ * recorder and the kit read in whichever world each runs, and `create`, the kit's own hooks.
+ * @typedef {object} PageAdapterSource
+ * @property {string} carrier
+ * @property {PageAdapterShared} [shared]
+ * @property {(kit: PageAdapterKit) => Partial<PageAdapter>} [create]
+ */
+
+/**
+ * What field-key.js, the recorder and the kit all read: plain DOM, no page script (the recorder runs
+ * in the extension's world, which can't reach a page's ExtJS).
+ * @typedef {object} PageAdapterShared
+ * @property {PageAdapterSelectors} [selectors]
+ * @property {(loc: Location) => string | null} [page]  the page's name, where the carrier names its pages itself (Progressive's ?pageName=)
+ * @property {string[]} [changeAttributes]
+ * @property {string | null} [components]
+ * @property {PageAdapterKeys} [keys]  how its fields are named and keyed (field-key.js)
+ * @property {(el: Element) => string} [caption]  a question's caption as the page draws it (Progressive's c_<id> label), for the recorder
+ * @property {(el: Element) => boolean} [combo]  a dropdown drawn as a text box (an ExtJS combo), for the recorder
+ */
+
+/**
+ * How a carrier names its fields, for field-key.js. Keys are saved with the agent's corrections: a
+ * change here must keep every key a field had.
+ * @typedef {object} PageAdapterKeys
+ * @property {(el: Element) => string | null} [ref]  the field's data-model name (Progressive's fieldref, GEICO's Id_<Name>_<n> name)
+ * @property {(el: Element) => string | null} [row]  a repeated question's row on its page (Progressive's Rates)
+ * @property {(el: Element) => string | null} [question]  the page's own question id (Duck Creek's), for the recorder
+ * @property {(el: Element) => string | null} [special]  a key of its own for a field with no name (GEICO's coverage lists)
+ * @property {(el: Element) => string | null} [rowName]  a row's key for a box repeated per row under one name (AmWINS)
+ * @property {(el: Element) => string | null} [dataName]  the name its element names carry, for labels (GEICO)
+ */
+
+/**
+ * One carrier's page code as the kit uses it: its `shared` part and the hooks `create` returns. A
+ * widget is whatever `widget(el)` returns for a field (Progressive's ExtJS component); the
  * engine only hands it back. Every hook is optional: the engine's default is a plain HTML form's
  * (pagekit.js NO_ADAPTER).
  * @typedef {object} PageAdapter
@@ -910,7 +944,6 @@
  * @property {(widget: any) => string} optionText  a radio option's words, from its widget
  * @property {(widget: any, el: Element) => string | null} question  the page's own question id (logged; never how a rule finds a field)
  * @property {(widget: any, el: Element) => string | null} row  the row of a repeating question (one per vehicle on Progressive's Rates)
- * @property {(el: Element) => string | null} ref  the field's name in the carrier's data model (Progressive's fieldref)
  * @property {(widget: any) => boolean} required
  * @property {(widget: any, el: Element) => any} value  the widget's value
  * @property {(widget: any) => string | null} shown  the text a list widget shows

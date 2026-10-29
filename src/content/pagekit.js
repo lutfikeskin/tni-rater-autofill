@@ -269,7 +269,6 @@
     optionText: () => '',
     question: () => null,
     row: () => null,
-    ref: () => null,
     required: () => false,
     value: (widget, el) => el?.value ?? null,
     shown: () => null,
@@ -300,7 +299,9 @@
     const source = globalThis.__raterAdapter ?? null;
     if (source !== adapterSource) {
       adapterSource = source;
-      adapterNow = { ...NO_ADAPTER, ...(source?.create?.({ oneLine, sleep, matchOption, noMatch, textFor, hasOptions, labelFor }) ?? {}) };
+      // Its `shared` part (selectors, page names, field naming: also read by field-key.js and the
+      // recorder), then the kit's own hooks from `create`.
+      adapterNow = { ...NO_ADAPTER, ...(source?.shared ?? {}), ...(source?.create?.({ oneLine, sleep, matchOption, noMatch, textFor, hasOptions, labelFor }) ?? {}) };
     }
     return adapterNow;
   }
@@ -313,9 +314,9 @@
     return own.length ? el?.closest?.(own.join(', ')) ?? null : null;
   };
 
-  // The field's name in the carrier's data model: the adapter's (Progressive's fieldref) or, for
-  // GEICO, the one in its element names (dataName: Id_GiveYear_81515 is GiveYear).
-  const fieldRef = (el) => adapter().ref(el) || dataName(el) || null;
+  // The field's name in the carrier's data model, as its adapter names it (field-key.js `ref`:
+  // Progressive's fieldref, GEICO's Id_GiveYear_81515 as GiveYear).
+  const fieldRef = (el) => globalThis.__raterFieldKey.ref?.(el) ?? null;
 
   // A question labelled with a vehicle ("2025 RAM PROMASTER 2500") names its row (collectControls).
   const VEHICLE_LABEL = /^(?:19|20)\d{2}\s+\S/;

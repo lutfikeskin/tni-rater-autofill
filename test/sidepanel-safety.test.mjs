@@ -7767,22 +7767,25 @@ test('a profile still waiting when another intake is loaded goes to its own quot
 // the recorder whose readers it uses, and not once the recording is stopping.
 test('the developer recording\'s trace is injected with the recorder, into the recorded tab only', async () => {
   const injected = [];
-  const state = { intake: {}, tab: { id: 4, carrier: { id: 'geico' } }, filling: false, recording: null };
+  // The carrier's page adapter goes in first.
+  const geico = { id: 'geico', pageAdapter: 'src/content/carriers/geico.js' };
+  const state = { intake: {}, tab: { id: 4, carrier: geico }, filling: false, recording: null };
   const context = { state, inExtension: true, tellRecorder: async () => {},
     chrome: { scripting: { executeScript: async ({ target, files }) => { injected.push([target.tabId, files.map((f) => f.split('/').pop())]); } } } };
   vm.runInNewContext(extractFunction('ensureRecorder'), context);
   await context.ensureRecorder();
   state.recording = { tabId: 4, stopping: false };
   await context.ensureRecorder();
-  state.tab = { id: 5, carrier: { id: 'geico' } };
+  state.tab = { id: 5, carrier: geico };
   await context.ensureRecorder();
-  state.tab = { id: 4, carrier: { id: 'geico' } };
+  state.tab = { id: 4, carrier: { id: 'plain' } };
   state.recording.stopping = true;
   await context.ensureRecorder();
   assert.deepEqual(JSON.parse(JSON.stringify(injected)), [
-    [4, ['field-key.js', 'recorder.js']],
-    [4, ['field-key.js', 'recorder.js', 'trace.js']],
-    [5, ['field-key.js', 'recorder.js']],
+    [4, ['geico.js', 'field-key.js', 'recorder.js']],
+    [4, ['geico.js', 'field-key.js', 'recorder.js', 'trace.js']],
+    [5, ['geico.js', 'field-key.js', 'recorder.js']],
+    // A carrier without an adapter: none.
     [4, ['field-key.js', 'recorder.js']],
   ]);
 });

@@ -205,7 +205,10 @@ test('a coverage group where the question stays while its trigger changes rules 
 // FL captures of 2026-10-20 were recorded before the kit sent `ref` for them: each layout named a
 // question by another number, so no condition could ever be seen across two layouts.
 const FIELD_KEY = fs.readFileSync(new URL('../src/content/field-key.js', import.meta.url), 'utf8');
+// GEICO's naming is its page adapter's, read through field-key.js as on its tabs.
+const GEICO = fs.readFileSync(new URL('../src/content/carriers/geico.js', import.meta.url), 'utf8');
 const kitContext = {};
+vm.runInNewContext(GEICO, kitContext, { filename: 'src/content/carriers/geico.js' });
 vm.runInNewContext(FIELD_KEY, kitContext, { filename: 'src/content/field-key.js' });
 const { dataName } = kitContext.__raterFieldKey;
 

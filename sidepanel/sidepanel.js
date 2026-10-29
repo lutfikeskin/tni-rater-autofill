@@ -1561,8 +1561,12 @@ async function ensureRecorder() {
   // The developer recording's trace goes in with the recorder, whose readers it uses, into the tab
   // being recorded only (again after each page load).
   const trace = state.recording?.tabId === tabId && !state.recording.stopping ? ['src/content/trace.js'] : [];
+  // The carrier's page adapter goes into the recorder's world too, first: how its fields are keyed
+  // (field-key.js) and its pages drawn (the recorder) are its own. The kit's world gets its own copy
+  // (injectKit): on Progressive that is the page's world, which this one can't see.
+  const adapter = state.tab.carrier.pageAdapter ? [state.tab.carrier.pageAdapter] : [];
   try {
-    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['src/content/field-key.js', 'src/content/recorder.js', ...trace] });
+    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: [...adapter, 'src/content/field-key.js', 'src/content/recorder.js', ...trace] });
   } catch { return; /* page not ready or not allowed; tried again on the next tab update */ }
   if (!state.filling) await tellRecorder('resume', tabId);
 }
