@@ -52,7 +52,7 @@ Each layer knows only the one below it, and a carrier's knowledge lives in that 
 | Carrier page adapter | How only this carrier's pages work: its widgets, spinners, page names, step bar, and how its fields are named and keyed (for the fill engine, field-key.js and the usage recorder) | `src/content/carriers/<carrier>.js` ([browser filling](browser-filling.md#execution)) |
 | Panel | Intake, review, agent decisions, AI suggestions; it never touches the carrier's page itself | [sidepanel.js](../sidepanel/sidepanel.js) |
 
-A carrier's files import only the shared layers, never another carrier's. Still to separate, in this order, each a change of its own with no change in behavior: the rulebook still states each shared standard in every carrier's part, and its ids are per carrier (`geico.um`, `progressive.um`); the panel is one file. Then the plan step's source becomes one resolution (answer, method, explanation, status) the report, the panel and the AI share, and the client record keeps where each value came from.
+A carrier's files import only the shared layers, never another carrier's. Still to separate, each a change of its own with no change in behavior: the panel is one file. Then the plan step's source becomes one resolution (answer, method, explanation, status) the report, the panel and the AI share, and the client record keeps where each value came from.
 
 ## Design direction, not implemented guarantees
 

@@ -2,6 +2,8 @@
 // AmWINS' part of TNI's rulebook (src/carriers/amwins.js): its pages, options and AmWINS-only
 // standards. TNI's rules for every carrier are in general.js.
 
+import { STANDARDS, usd, usdK } from '../../standards.js';
+
 /** @import { RulebookPart } from '../../../types.js' */
 
 /** @type {RulebookPart} */
@@ -40,12 +42,12 @@ export const amwins = {
     { heading: 'Coverages', rules: [
       { id: 'amwins.csl', kind: 'intake', text: 'CSL limit from the intake.' },
       { id: 'amwins.auto-symbol', kind: 'standard', text: 'Liability auto symbol 6 only.' },
-      { id: 'amwins.medpay-pip', kind: 'standard', text: 'Medical payments $5,000. Personal Injury Protection (some states): No, because Medical Payments ($5,000) is offered and preferred; in every state, no-fault states too, since AmWINS, as the broker, picks the right coverage when it prepares the quote.' },
-      { id: 'amwins.um', kind: 'standard', text: 'Uninsured motorists Yes with $100K.' },
-      { id: 'amwins.comp-coll', kind: 'standard', text: 'Comprehensive and collision $1,000.' },
+      { id: 'amwins.medpay-pip', kind: 'standard', text: `Medical payments ${usd(STANDARDS.medPay)}. Personal Injury Protection (some states): No, because Medical Payments (${usd(STANDARDS.medPay)}) is offered and preferred; in every state, no-fault states too, since AmWINS, as the broker, picks the right coverage when it prepares the quote.` },
+      { id: 'amwins.um', kind: 'standard', text: `Uninsured motorists Yes with ${usdK(STANDARDS.umCsl, 'K')}.` },
+      { id: 'amwins.comp-coll', kind: 'standard', text: `Comprehensive and collision ${usd(STANDARDS.deductible)}.` },
       { id: 'amwins.waiver-collision', kind: 'standard', text: 'Waiver of collision No.' },
       { id: 'amwins.towing', kind: 'standard', text: 'Towing and labor $75.' },
-      { id: 'amwins.rental', kind: 'standard', text: 'Rental $40 day / $1,200 total.' },
+      { id: 'amwins.rental', kind: 'standard', text: `Rental ${usd(STANDARDS.rental.perDay)} day / ${usd(STANDARDS.rental.max)} total.` },
       { id: 'amwins.no-exclusions', kind: 'standard', text: 'Nothing excluded (every "Exclude …" box unticked).' },
     ] },
     { heading: 'Underwriting', rules: [

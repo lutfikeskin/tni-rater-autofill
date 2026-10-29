@@ -69,3 +69,17 @@ test('the amounts are written as the carriers\' options write them', () => {
   assert.equal(usdK(STANDARDS.umCsl, 'K'), '$100K');
   assert.equal(usd(STANDARDS.rental.max), '$1,200');
 });
+
+// Luna reads the same amounts: each carrier's rulebook entry for a shared standard states them
+// (src/ai/rulebook/<carrier>.js writes them from src/standards.js too).
+test('each carrier\'s rulebook states the shared standards\' amounts', async () => {
+  const { rulebookFor } = await import('../src/ai/tni-rules.js');
+  for (const carrier of CARRIERS) {
+    const entries = new Map(rulebookFor(carrier.id).map((e) => [e.id, e.text]));
+    for (const standard of SHARED) {
+      const texts = standard.ids.filter((id) => entries.has(id)).map((id) => entries.get(id));
+      assert.ok(texts.length, `${carrier.name}'s rulebook has ${standard.what}`);
+      for (const amount of standard.amounts) assert.ok(texts.some((t) => shows(t, amount)), `${carrier.name}'s rulebook says ${usd(amount)} for ${standard.what}`);
+    }
+  }
+});
