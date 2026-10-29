@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildPlan } from '../src/plan.js';
-import { progressive, owner } from '../src/carriers/progressive.js';
+import { progressive } from '../src/carriers/progressive.js';
+import { owner } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 

@@ -392,7 +392,7 @@ const stepOf = (step, redact) => (step ? { step: redact(String(step)).slice(0, S
 // several copies (audit 2026-10-08, finding 7). The panel fetches them from its own package. Every
 // module the plan, the record's normalization and the carriers import is here (test/usage.test.mjs
 // checks the import graph), since each one changes the answers a fill puts on the page.
-export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js'];
+export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js'];
 export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }

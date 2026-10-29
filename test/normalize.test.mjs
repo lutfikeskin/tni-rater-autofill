@@ -7,7 +7,8 @@ import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProble
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance } from '../src/util.js';
-import { progressive, owner } from '../src/carriers/progressive.js';
+import { progressive } from '../src/carriers/progressive.js';
+import { owner } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 

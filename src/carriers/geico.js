@@ -48,7 +48,8 @@
 // Driver) on each step up to Additional Business Info, and Looks Good on a unit list once every
 // intake unit is on it (`advance`, TNI, FL live run 3, 2026-10-21); off, the agent clicks them.
 
-import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
+import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from '../util.js';
+import { STANDARDS, usd } from '../standards.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { ownerDrives, ownerDrivesSaid, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
@@ -491,13 +492,14 @@ const NO_PHYSICAL_DAMAGE = /\bno\s+(?:comp(?:rehensive)?|coll(?:ision)?|phys(?:i
 const noPhysicalDamage = notesLine(NO_PHYSICAL_DAMAGE);
 const physicalDamageNote = (what) => (r) => (noPhysicalDamage(r) ? `The intake's notes say ${quote(noPhysicalDamage(r), 80)}: answer ${what} yourself.` : null);
 const physicalDamageSource = (r) => (noPhysicalDamage(r) ? 'fact' : 'standard');
-const DEDUCTIBLE = '$1,000 deductible';
+// TNI's standard coverages (src/standards.js), as GEICO's options write them.
+const DEDUCTIBLE = `${usd(STANDARDS.deductible)} deductible`;
 // TNI's uninsured motorist limit and pay plan on GEICO (FL live run 4, 2026-10-21: W43-17, W43-18).
 // Texas lists only split limits for uninsured motorist bodily injury: there TNI's is $100,000/$300,000
 // (W43-33, TNI, 2026-10-21).
 const UM_SPLIT = '$100,000/$300,000';
 const texas = (r) => String(r.garaging?.state ?? '').trim().toUpperCase() === 'TX';
-const UM_LIMIT = '$100,000 Combined Single Limit';
+const UM_LIMIT = `${usd(STANDARDS.umCsl)} Combined Single Limit`;
 const PAY_PLAN = '11 Payments';
 
 // Farthest one-way distance: the intake's radius in miles, as GEICO's band; long haul ("Unlimited",
@@ -758,7 +760,7 @@ const liabilityNote = (r) => ntlNote(r) ?? (liabilityType(r) ? null
 // agent's at once (one without "I decline" beside medical payments: PIP may be required there).
 // Florida requires PIP: its PIP lists (one choice each) are kept as GEICO has them. The other PIP
 // lists are the agent's elsewhere.
-const MED_PAY = '$5,000';
+const MED_PAY = usd(STANDARDS.medPay);
 const MED_PATH = 'geico.qMedicalPayments';
 const florida = (r) => String(r.garaging?.state ?? '').trim().toUpperCase() === 'FL';
 const pipKept = (name) => ({ ignore: florida, source: (r) => (florida(r) ? null : 'fact'),
@@ -886,7 +888,7 @@ const ROAD_SERVICE = 'I accept this coverage';
 // Fire and theft and rental reimbursement on every vehicle (TNI, FL live run 5, 2026-10-21, W43-22):
 // rental needs comprehensive and collision, so it follows them (physicalDamageSource).
 const FIRE_THEFT = 'Not Included';
-const RENTAL = '$40 Per Day, $1,200 Max';
+const RENTAL = `${usd(STANDARDS.rental.perDay)} Per Day, ${usd(STANDARDS.rental.max)} Max`;
 // Rental reimbursement with downtime: TNI's Not Included on every vehicle (W43-30, 2026-10-21: "always
 // No"), unless a line of the intake's notes mentions downtime or rental: then the agent's, quoted.
 const DOWNTIME = 'Not Included';
@@ -1425,11 +1427,11 @@ export const geico = {
       // $100,000 CSL then. A state without either option leaves it to the agent. After NTL is
       // accepted GEICO resets it; GEICO fills one answer a round in page order, so UM comes after. GA and SC caption it "(UMBI)", SC asks underinsured
       // separately: the same limit (W43-33, TNI, 2026-10-21).
-      { q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', tni: 'geico.um', name: 'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)',
+      { q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury (TNI: ${usd(STANDARDS.umCsl)} CSL; TX ${UM_SPLIT})`,
         kind: 'choice', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT), choiceAliases: (r) => (texas(r) ? [UM_LIMIT] : []) },
-      { q: 'UninsuredMotoristUmbi', ask: 'Uninsured Motorist Bodily Injury (UMBI)', control: 'select', tni: 'geico.um', name: 'Uninsured motorist bodily injury, UMBI (TNI: $100,000 CSL)',
+      { q: 'UninsuredMotoristUmbi', ask: 'Uninsured Motorist Bodily Injury (UMBI)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury, UMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
         kind: 'choice', source: 'standard', value: () => UM_LIMIT },
-      { q: 'UnderinsuredMotorist', ask: 'Underinsured Motorist Bodily Injury (UIMBI)', control: 'select', tni: 'geico.um', name: 'Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)',
+      { q: 'UnderinsuredMotorist', ask: 'Underinsured Motorist Bodily Injury (UIMBI)', control: 'select', tni: 'geico.um', name: `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
         kind: 'choice', source: 'standard', value: () => UM_LIMIT },
       // TNI, 2026-10-27: when a state asks UM/UIM type or deductible (another form of the UM
       // questions), type is Add-On and deductible $1,000; the deductible isn't always shown.
@@ -1444,7 +1446,7 @@ export const geico = {
       { q: 'Stacked', ask: 'Is Stacked', control: 'select', name: 'Stacked uninsured motorist', ...pipKept('stacked uninsured motorist') },
       // Medical Payments $5,000, Not Included where GEICO lists no limit; Basic PIP declined beside
       // medical payments, $2,500 without (TNI, 2026-10-26, W44-26; above). The page kit reads the lists.
-      { q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', tni: 'geico.medpay-pip', name: 'Medical payments (TNI: $5,000; Not Included where GEICO offers no limit)', kind: 'choice',
+      { q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', tni: 'geico.medpay-pip', name: `Medical payments (TNI: ${MED_PAY}; Not Included where GEICO offers no limit)`, kind: 'choice',
         source: 'standard', value: () => MED_PAY, onlyIf: [{ limit: true }, { limit: false, value: 'Not Included' }],
         unofferedNote: 'GEICO doesn\'t list $5,000 medical payments here: pick it yourself (TNI takes $5,000 medical payments wherever GEICO offers them).' },
       { q: 'BasicPip', ask: 'Basic Personal Injury Protection', control: 'select', tni: 'geico.medpay-pip', name: 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)', kind: 'choice',

@@ -481,3 +481,59 @@ export const companyStructureWarn = (name) => (companyStructure(name).mid
   ? `The company name "${companyName(name)}" has LLC inside it, not at the end: confirm it is an LLC.` : null);
 export const companyStructureNote = (name) => (companyStructure(name).structure == null
   ? `The company name "${companyName(name)}" doesn't end in LLC, Inc or Corp, so its structure isn't known: answer it yourself.` : null);
+
+// What they haul names something that may be hazardous material (fuel, propane, chemicals…;
+// "non-hazardous" and "no hazmat" don't count): the placard question is then the agent's
+// (TNI, 2026-10-19; every carrier's placard rule).
+export const HAZ_HAUL = /(?<!\bnon[- ]?|\bno\s)\bhaz(?:ard(?:ous)?|mat)\b|\b(?:fuel|gasoline|diesel|propane|butane|explosives?|ammunition|fireworks|flammable|corrosive|radioactive|chemicals?|acids?|lithium|placard\w*)\b/i;
+
+// The business owner and their driver row (for date of birth and a clean name split). TNI,
+// 2026-10-27 (answer to PR question V4): "The owner is always the first driver on the intake's driver
+// list", Sr or Jr regardless, so the owner's row is the first (ownerRow), whatever its name;
+// the rows after it are ordinary drivers, even with the owner's name. This replaces finding the row
+// by the owner's name (and, of several, T2's exact full name), and the 2026-10-20 rule that an owner
+// no row's name matched got no date of birth: a first row with another name is still the owner's,
+// and the Intake step says so (normalize.js `drivers.owner-name-differs`).
+// - `driver`: the owner's row while the owner drives (as their driver row); none when the intake
+//   says the owner doesn't drive (ownerDrivesSaid: the box's No, unless the agent set the
+//   owner's row not excluded, which is the owner driving: the maintainer, 2026-10-28).
+// - `dob` from `dobDriver`: that row, or with the intake's No the owner's row all the same
+//   (nonDrivingOwnerRow; TNI, 2026-10-26: answer to PR question, T3, asked of GEICO, and V2,
+//   2026-10-27: confirmed here and on AmWINS). None with no driver rows: the agent's (ownerDobNote).
+// - The name parts come from the row only when it carries the owner box's name (`named`: the same
+//   words, the owner's first name and surname by ownerIsDriver, the first name repeated in the
+//   sole driver's last-name box, or an owner box holding only the first name); otherwise, and when the
+//   owner doesn't drive, from the owner box (never another person's name: the FL run that put the
+//   first driver in the owner boxes, the 2026-10-08 audit's "Alice Sample" and "Bob Sample").
+export function owner(r) {
+  const full = r.applicant.owner1 ?? '';
+  const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
+  const row = ownerRow(r);
+  const driver = ownerDrivesSaid(r) === false ? null : row;
+  const fullMatch = !!driver && !!nameKey(full) && nameKey(`${driver.first ?? ''} ${driver.middle ?? ''} ${driver.last ?? ''} ${driver.suffix ?? ''}`) === nameKey(full);
+  // Some intakes repeat the first name in the sole driver's last-name box. Only connect
+  // that row's name when the intake explicitly says the owner drives and the owner's first name agrees.
+  // A blank box, TNI's Yes for the owner-driver question (W44-25), is no evidence of the name.
+  const sole = r.drivers.length === 1 ? r.drivers[0] : null;
+  const repeatedFirst = !!driver && driver === sole && ownerDrivesSaid(r) === true && !!nameKey(sole.first)
+    && nameKey(sole.first) === nameKey(sole.last)
+    && nameKey(sole.first) === nameKey(full.split(/\s+/).slice(0, -1).join(' '));
+  // The owner box sometimes holds only the first name ("IBRAHIM"): the row whose first name starts
+  // with it gives the rest of the name.
+  const firstOnly = !!driver && !/\s/.test(full.trim()) && !!full.trim()
+    && (driver.first ?? '').trim().split(/\s+/)[0].toLowerCase() === full.trim().toLowerCase();
+  const named = driver && (fullMatch || ownerIsDriver(full, driver) || repeatedFirst || firstOnly) ? driver : null;
+  const first = named?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
+  const dobDriver = ownerDrivesSaid(r) === false ? nonDrivingOwnerRow(r) : driver;
+  return { driver, named, dob: dobDriver?.dob ?? null, dobDriver, first: first || null, middle: named?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : named?.last ?? full.split(/\s+/).at(-1) ?? null };
+}
+
+// The owner's date of birth left to the agent, and why (every carrier).
+export function ownerDobNote(r) {
+  const o = owner(r);
+  if (o.dob) return null;
+  if (o.dobDriver) return 'The owner\'s driver row has no date of birth: enter it yourself.';
+  // The owner's row is the first (V4), so only an intake with no driver rows gets here.
+  if (ownerDrivesSaid(r) === false) return 'The intake says the owner doesn\'t drive and lists no drivers, so no driver row gives their date of birth: enter it yourself.';
+  return 'The intake lists no drivers, so no driver row gives the owner\'s date of birth: enter it yourself.';
+}

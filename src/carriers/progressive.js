@@ -30,11 +30,19 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity, carPartsMixedNote } from '../util.js';
-import { ownerDrives, ownerDrivesSaid, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, nonDrivingOwnerRow } from '../util.js';
+import { priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity, carPartsMixedNote } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded } from '../util.js';
 import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitRaised,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
 import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
+import { owner, ownerDobNote, HAZ_HAUL } from '../util.js';
+import { STANDARDS, usd, usdK } from '../standards.js';
+
+// TNI's standard coverages (src/standards.js), as Progressive's options write them.
+const UM_CSL = `${usdK(STANDARDS.umCsl)} CSL`;
+const DEDUCTIBLE = `${usd(STANDARDS.deductible)} Deductible`;
+const RENTAL = `${usd(STANDARDS.rental.perDay)} per day, ${usd(STANDARDS.rental.max)} max`;
+const MED_PAY = `${usd(STANDARDS.medPay)} per person`;
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -46,57 +54,6 @@ const explicitBoolean = (record, path) => {
   for (const part of tail) value = value?.[part];
   return typeof value === 'boolean' ? value : null;
 };
-
-// The business owner and their driver row (for date of birth and a clean name split). TNI,
-// 2026-10-27 (answer to PR question V4): "The owner is always the first driver on the intake's driver
-// list", Sr or Jr regardless, so the owner's row is the first (util.js ownerRow), whatever its name;
-// the rows after it are ordinary drivers, even with the owner's name. This replaces finding the row
-// by the owner's name (and, of several, T2's exact full name), and the 2026-10-20 rule that an owner
-// no row's name matched got no date of birth: a first row with another name is still the owner's,
-// and the Intake step says so (normalize.js `drivers.owner-name-differs`).
-// - `driver`: the owner's row while the owner drives (as their driver row); none when the intake
-//   says the owner doesn't drive (util.js ownerDrivesSaid: the box's No, unless the agent set the
-//   owner's row not excluded, which is the owner driving: the maintainer, 2026-10-28).
-// - `dob` from `dobDriver`: that row, or with the intake's No the owner's row all the same
-//   (util.js nonDrivingOwnerRow; TNI, 2026-10-26: answer to PR question, T3, asked of GEICO, and V2,
-//   2026-10-27: confirmed here and on AmWINS). None with no driver rows: the agent's (ownerDobNote).
-// - The name parts come from the row only when it carries the owner box's name (`named`: the same
-//   words, the owner's first name and surname by util.js ownerIsDriver, the first name repeated in the
-//   sole driver's last-name box, or an owner box holding only the first name); otherwise, and when the
-//   owner doesn't drive, from the owner box (never another person's name: the FL run that put the
-//   first driver in the owner boxes, the 2026-10-08 audit's "Alice Sample" and "Bob Sample").
-export function owner(r) {
-  const full = r.applicant.owner1 ?? '';
-  const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
-  const row = ownerRow(r);
-  const driver = ownerDrivesSaid(r) === false ? null : row;
-  const fullMatch = !!driver && !!nameKey(full) && nameKey(`${driver.first ?? ''} ${driver.middle ?? ''} ${driver.last ?? ''} ${driver.suffix ?? ''}`) === nameKey(full);
-  // Some intakes repeat the first name in the sole driver's last-name box. Only connect
-  // that row's name when the intake explicitly says the owner drives and the owner's first name agrees.
-  // A blank box, TNI's Yes for the owner-driver question (W44-25), is no evidence of the name.
-  const sole = r.drivers.length === 1 ? r.drivers[0] : null;
-  const repeatedFirst = !!driver && driver === sole && ownerDrivesSaid(r) === true && !!nameKey(sole.first)
-    && nameKey(sole.first) === nameKey(sole.last)
-    && nameKey(sole.first) === nameKey(full.split(/\s+/).slice(0, -1).join(' '));
-  // The owner box sometimes holds only the first name ("IBRAHIM"): the row whose first name starts
-  // with it gives the rest of the name.
-  const firstOnly = !!driver && !/\s/.test(full.trim()) && !!full.trim()
-    && (driver.first ?? '').trim().split(/\s+/)[0].toLowerCase() === full.trim().toLowerCase();
-  const named = driver && (fullMatch || ownerIsDriver(full, driver) || repeatedFirst || firstOnly) ? driver : null;
-  const first = named?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
-  const dobDriver = ownerDrivesSaid(r) === false ? nonDrivingOwnerRow(r) : driver;
-  return { driver, named, dob: dobDriver?.dob ?? null, dobDriver, first: first || null, middle: named?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : named?.last ?? full.split(/\s+/).at(-1) ?? null };
-}
-
-// The owner's date of birth left to the agent, and why (Progressive and AmWINS).
-export function ownerDobNote(r) {
-  const o = owner(r);
-  if (o.dob) return null;
-  if (o.dobDriver) return 'The owner\'s driver row has no date of birth: enter it yourself.';
-  // The owner's row is the first (V4), so only an intake with no driver rows gets here.
-  if (ownerDrivesSaid(r) === false) return 'The intake says the owner doesn\'t drive and lists no drivers, so no driver row gives their date of birth: enter it yourself.';
-  return 'The intake lists no drivers, so no driver row gives the owner\'s date of birth: enter it yourself.';
-}
 
 // "Is the customer currently insured with Progressive Commercial Auto?" Yes only when the
 // intake's current-insurance section is a Progressive *commercial* auto policy, not expired. A
@@ -231,7 +188,6 @@ const hasClaimsNote = (r) => (typeof r.claims?.hasClaims !== 'boolean' && claimS
 // No (standard) unless the intake says they haul hazardous material, or what they haul names
 // something that may be (fuel, propane, chemicals…; "non-hazardous" and "no hazmat" don't count);
 // then it's the agent's, with a note saying why.
-export const HAZ_HAUL = /(?<!\bnon[- ]?|\bno\s)\bhaz(?:ard(?:ous)?|mat)\b|\b(?:fuel|gasoline|diesel|propane|butane|explosives?|ammunition|fireworks|flammable|corrosive|radioactive|chemicals?|acids?|lithium|placard\w*)\b/i;
 const hazPlacardNote = (r) => {
   if (typeof r.operations.hazPlacard === 'boolean') return null;
   if (r.operations.hazmat === true) return 'The intake says they haul hazardous material but doesn\'t answer the placard question: answer it yourself.';
@@ -1105,18 +1061,18 @@ export const progressive = {
       // loss and 5k accidental death alone or together. Progressive picked all three; TNI's standard
       // is 5k Medical and Hospital alone. Other states with this control keep Progressive's choice.
       { q: '1FB2', tni: 'progressive.arkansas-pip', source: 'standard', field: 'PIPInput.Limit', name: 'Personal injury protection, AR (standard: 5k Medical and Hospital; other states: as Progressive set it)', kind: 'choice', value: (r) => (isArkansas(r) ? '5k Medical and Hospital' : null), ignore: (r) => !isArkansas(r), emptyNote: (r) => (isArkansas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida, Texas and Arkansas only: choose it yourself.') },
-      { q: '1DEE', tni: 'progressive.um', source: 'standard', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
+      { q: '1DEE', tni: 'progressive.um', source: 'standard', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => UM_CSL, scope: 'policy' },
       // SC (2026-10-07): uninsured and underinsured motorist as BI & PD together, each $100k CSL with
       // the deductible Progressive lists for it (the agent's picks on that quote).
-      { q: '1E68', tni: 'progressive.um', source: 'standard', field: 'LineInput.UMBIPDLimit', ask: 'Uninsured Motorist Bodily Injury & Property Damage', name: 'Uninsured motorist BI & PD (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL w/ $200 Deductible' },
-      { q: '1E6C', tni: 'progressive.um', source: 'standard', field: 'LineInput.UIMBIPDLimit', ask: 'Underinsured Motorist Bodily Injury & Property Damage', name: 'Underinsured motorist BI & PD (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL w/ $0 Deductible' },
+      { q: '1E68', tni: 'progressive.um', source: 'standard', field: 'LineInput.UMBIPDLimit', ask: 'Uninsured Motorist Bodily Injury & Property Damage', name: `Uninsured motorist BI & PD (standard: ${UM_CSL})`, kind: 'choice', value: () => `${UM_CSL} w/ $200 Deductible` },
+      { q: '1E6C', tni: 'progressive.um', source: 'standard', field: 'LineInput.UIMBIPDLimit', ask: 'Underinsured Motorist Bodily Injury & Property Damage', name: `Underinsured motorist BI & PD (standard: ${UM_CSL})`, kind: 'choice', value: () => `${UM_CSL} w/ $0 Deductible` },
       // States that ask UM and UIM separately (PA 1DCA/1DDE, IN and AR 1DBF/1DD8): the same $100k
       // CSL. Uninsured first: AR offers underinsured only up to the uninsured limit (live run
       // 2026-10-19: tried while uninsured was still $1 million, it offered only that, and failed).
       // A fill answers down the page, not in this order: every captured page (IA, IN) lists
       // uninsured above underinsured.
       ...[{ q: '1DCA', ask: 'Uninsured Motorist Bodily Injury' }, { q: '1DDE', ask: 'Underinsured Motorist Bodily Injury' }, { q: '1DBF', field: 'LineInput.UMBILimit' }, { q: '1DD8', field: 'LineInput.UIMBILimit' }]
-        .map(/** @param {CarrierRule} which @returns {CarrierRule} */ (which) => ({ ...which, source: 'standard', tni: 'progressive.um', name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
+        .map(/** @param {CarrierRule} which @returns {CarrierRule} */ (which) => ({ ...which, source: 'standard', tni: 'progressive.um', name: `Uninsured / underinsured motorist (standard: ${UM_CSL})`, kind: 'choice', value: () => UM_CSL })),
       // Pennsylvania first-party benefits: not on the intake means not bought, except medical
       // expense, which PA requires (its lowest, $5,000).
       { q: '1E66', tni: 'progressive.pa-benefits', source: 'standard', ask: 'Medical Expense Benefits', name: 'PA medical expense benefits (required: lowest, $5,000)', kind: 'choice', value: () => '$5,000' },
@@ -1132,9 +1088,9 @@ export const progressive = {
       // SC (2026-10-07) lists comprehensive with a $0 glass deductible ("$1,000 Deductible w/ $0
       // Glass Deductible"): the same deductible.
       // TNI's standard deductibles (the intake has no deductible field).
-      { q: '1FCD', tni: 'progressive.deductibles', source: 'standard', field: 'ComprehensiveInput.Deductible', name: 'Comprehensive deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000 Deductible', choiceAliases: () => ['$1,000 Deductible w/ $0 Glass Deductible'], scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-      { q: '1FD2', tni: 'progressive.deductibles', source: 'standard', field: 'CollisionInput.Deductible', name: 'Collision deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000 Deductible', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-      { q: '1FF2', tni: 'progressive.rental', source: 'standard', field: 'RentalInput.Limit', name: 'Rental reimbursement (standard: $40/day, $1,200 max)', kind: 'choice', value: () => '$40 per day, $1,200 max', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '1FCD', tni: 'progressive.deductibles', source: 'standard', field: 'ComprehensiveInput.Deductible', name: `Comprehensive deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE, choiceAliases: () => [`${DEDUCTIBLE} w/ $0 Glass Deductible`], scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '1FD2', tni: 'progressive.deductibles', source: 'standard', field: 'CollisionInput.Deductible', name: `Collision deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '1FF2', tni: 'progressive.rental', source: 'standard', field: 'RentalInput.Limit', name: `Rental reimbursement (standard: ${usd(STANDARDS.rental.perDay)}/day, ${usd(STANDARDS.rental.max)} max)`, kind: 'choice', value: () => RENTAL, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       // Offered for a truck tractor next to Rental reimbursement (FL, 2026-10-05). TNI: Not selected.
       { q: '1FF9', tni: 'progressive.rental-downtime', source: 'standard', field: 'RentalWithDTInput.Limit', name: 'Rental with downtime (TNI: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '2000', tni: 'progressive.roadside', source: 'standard', field: 'RoadsideInput.Limit', name: 'Roadside / towing (first selected option)', kind: 'selected-option', value: () => 'Selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
@@ -1143,7 +1099,7 @@ export const progressive = {
       { q: '1FDD', tni: 'progressive.umpd', source: 'standard', field: 'UMPDInput.Limit', ask: 'UMPDInput.Limit', name: 'UMPD limit (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle' },
       // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle):
       // $5,000 wherever Progressive offers it (TNI, 2026-10-26, W44-26).
-      { q: '1FE4', tni: 'progressive.medpay', source: 'standard', field: 'MedicalPaymentInput.Limit', name: 'Medical payments per person (standard: $5,000)', kind: 'choice', value: () => '$5,000 per person', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '1FE4', tni: 'progressive.medpay', source: 'standard', field: 'MedicalPaymentInput.Limit', name: `Medical payments per person (standard: ${usd(STANDARDS.medPay)})`, kind: 'choice', value: () => MED_PAY, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '2158', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
       { q: '215A', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },
       // TNI: an unselected Reefer option on the intake means this coverage is not requested.
@@ -1189,8 +1145,8 @@ export const progressive = {
     // They carry the vehicle rows' data-model names: each row is found by its trailer's year, make
     // and model, on this page only.
     ...onPage('CoveragesRates', [
-      { q: 'TR1FCD', tni: 'progressive.trailer-row', source: 'standard', field: 'ComprehensiveInput.Deductible', name: 'Trailer comprehensive deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000 Deductible', choiceAliases: () => ['$1,000 Deductible w/ $0 Glass Deductible'] },
-      { q: 'TR1FD2', tni: 'progressive.trailer-row', source: 'standard', field: 'CollisionInput.Deductible', name: 'Trailer collision deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000 Deductible' },
+      { q: 'TR1FCD', tni: 'progressive.trailer-row', source: 'standard', field: 'ComprehensiveInput.Deductible', name: `Trailer comprehensive deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE, choiceAliases: () => [`${DEDUCTIBLE} w/ $0 Glass Deductible`] },
+      { q: 'TR1FD2', tni: 'progressive.trailer-row', source: 'standard', field: 'CollisionInput.Deductible', name: `Trailer collision deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE },
       { q: 'TR1FF2', tni: 'progressive.trailer-row', source: 'standard', field: 'RentalInput.Limit', name: 'Trailer rental reimbursement (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
       { q: 'TR200F', tni: 'progressive.trailer-row', source: 'standard', field: 'FireAndTheftInput.Deductible', name: 'Trailer fire / theft (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
       { q: 'TR2CE0', source: 'derived', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },

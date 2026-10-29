@@ -191,10 +191,11 @@ const READ_INDIRECTLY = {
     'drivers[].excluded': 'util.driverExcluded (the exclude question: the intake\'s mark, or the owner\'s row when the owner doesn\'t drive)',
     'trailerInfo.interchange': 'util.interchangeRequested (trailer interchange added and answered: TNI\'s answers on every carrier)',
     'trailerInfo.interchangeLimit': 'util.interchangeLimitPick (the intake\'s trailer interchange limit, or the next one up)',
+    'drivers[].suffix': 'util.owner (the owner\'s name parts, from their driver row)',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag; how long with the current carrier, round 3, T6)',
-    'applicant.ownerDrives': 'owner() in progressive.js (the owner\'s driver row)',
+    'applicant.ownerDrives': 'util.owner (the owner\'s driver row)',
     'drivers[].excluded': 'util.driverExcluded ("(Excluded)" after the license number)',
     'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
     'claims.text': 'normalize.ntlDotFilingsHold (an NTL mention not answered yet holds Filing required and the DOT boxes) and insurerTenure (a longer time with the insurer than the 1 TO 2 YEARS standard, W44-29)',
