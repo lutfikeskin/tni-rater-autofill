@@ -18,7 +18,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 91 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 92 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -1893,9 +1893,16 @@
     const list = `${FRAME}:${listIds.get(all)}`;
     const had = Number(seen?.[list]) || 0;
     const since = had > 0 && had <= all.length ? had : 0;
+    // Each row with its place on the page as the last round read it (`order`), so the panel lists the
+    // answers and the items in the page's order.
+    const placeOf = running.places ?? (() => null);
     const rows = all.slice(since).map((x) => ({ key: x.key ?? null, label: x.label || x.name || '', shown: x.shown ?? '', standard: !!x.standard,
-      stepId: x.stepId ?? null, path: x.path ?? null, otherStep: !!x.otherStep }));
-    return { frame: FRAME, list, filled: all.length, since, rows, phase: running.phase ?? null };
+      stepId: x.stepId ?? null, path: x.path ?? null, otherStep: !!x.otherStep, order: placeOf(x) }));
+    // The items judged so far (the fill's streamItems: one snapshot a round), only when the panel
+    // doesn't have this round's (`seen['items@<frame>']`).
+    const items = running.items ?? null;
+    const fresh = !!items && Number(seen?.[`items@${FRAME}`]) !== items.at;
+    return { frame: FRAME, list, filled: all.length, since, rows, phase: running.phase ?? null, itemsAt: items?.at ?? 0, ...(fresh ? { items: items.list } : {}) };
   }
   function stop(run = null) {
     if (run != null && (!running || running.run !== run)) stoppedRuns.add(run);
@@ -2332,6 +2339,19 @@
     // The questions the last round read (in document order): where the items are on the page
     // when a helper has opened the next page by the end of the fill.
     let roundControls = [];
+    // Judged at the cursor, top to bottom (docs/browser-filling.md, "Judged at the cursor"): the page
+    // is answered top to bottom, and what is above decides what appears below (GEICO live run,
+    // 2026-10-28: a CSL liability limit took Property Damage and UMPD off the page after a round had
+    // made them needs-you items). Each round judges only the questions above its cursor, the first
+    // one the fill still has to act on; those below it are provisional, with no item, mark or
+    // blocker, until the cursor reaches them. `lastAnswered`: the question the last round answered
+    // (where the page isn't ExtJS and fills one answer at a time: GEICO), whose redraw may land after
+    // the page went quiet, so the next round judges nothing below it until it acts further down
+    // (`lagBound`). `judgedTo`: how far down the last round judged (Infinity: all of it), and
+    // `provisionalLeft`, how many questions it left below that, which hold `whenClear` helpers.
+    let lastAnswered = null;
+    let judgedTo = Infinity;
+    let provisionalLeft = 0;
     const halt = (reason) => { report.halted = true; report.reason = reason; };
     // Answers this fill gave that their field no longer shows (a later server response rewrote or
     // cleared them), each with its question as `pairs` read it. A field the agent edited, and a
@@ -2519,6 +2539,20 @@
       // The agent's edits made where the kit is now, before anything asks whether a field is theirs.
       if (skipBy) skipWhere(allPairs.units);
       unitGroups.noteRound(controls, allPairs, skippedField);
+      // Each question's place on the page (its place among the controls read, which are read in page
+      // order through shadow roots): what the round's cursor and its judgments go by.
+      const place = new Map(controls.map((c, i) => [c, i]));
+      // The question the last round answered, here (`lastAnswered`): nothing below it is judged this
+      // round until the fill acts further down (`lagBound`, past it), since GEICO draws what an answer
+      // changes below it after the page went quiet (2026-10-28: Property Damage and UMPD taken off a
+      // moment after the CSL limit). Not on ExtJS pages, whose wait covers the server's response, nor
+      // for a batch, whose cursor is the end of what it fills.
+      let lagBound = Infinity;
+      if (lastAnswered) {
+        const answeredNow = allPairs.find((p) => p.step.id === lastAnswered.stepId)?.control;
+        lagBound = (answeredNow ? place.get(answeredNow) : lastAnswered.at) + 1;
+        lastAnswered = null;
+      }
       // Review items are flagged in yellow and the rest of the page still fills. Only a stuck
       // page or an agent edit stops the fill.
       const mapped = new Set(allPairs.map((p) => p.control));
@@ -2526,45 +2560,26 @@
       const flag = (list, item) => { if (!list.some((x) => x.key === item.key && x.label === item.label)) list.push(item); };
       // The unit forms on screen (assign): one the plan answers for the active unit is that unit's,
       // for the panel (report.unitForm) and for the rest of this fill; one that may be another unit's
-      // is held, as one check for the agent, named by its place in the intake's list. Marked done in
-      // the panel (its first question is then the agent's), the form stays held, without the check;
-      // with `skipBy` only an edit filed under that form counts, never one of the active unit's.
+      // is held, as one check for the agent (judgeControls), named by its place in the intake's list.
+      // Marked done in the panel (its first question is then the agent's), the form stays held,
+      // without the check; with `skipBy` only an edit filed under that form counts, never one of the
+      // active unit's.
       for (const u of allPairs.units) {
-        if (u.held) {
-          report.unitHeld = { list: u.list, id: u.id };
-          if (!skippedField(u.marker)) flag(report.checks, { label: u.marker.label, path: null, name: `${unitNoun(u.list)} ${Number(u.active) + 1}`, key: fieldKey(u.marker), q: null, controlKind: null, note: heldFormNote(u) });
-        } else if (answeredLists.has(u.list)) {
+        if (u.held) report.unitHeld = { list: u.list, id: u.id };
+        else if (answeredLists.has(u.list)) {
           report.unitForm = { list: u.list, id: u.id };
           (fillUnits.bound[u.list] ??= {})[u.id] = u.active;
         }
       }
-      // Known questions whose wording changed (answered, and flagged when answered), and fields that
-      // read like a known question whose data-model name isn't on the page (left for the agent).
-      for (const p of allPairs.filter((x) => x.reworded)) flag(report.reworded, { label: p.control.label, key: fieldKey(p.control), name: p.step.name, field: p.step.field });
       const renamed = new Map(allPairs.renamed.map((r) => [r.control, r.step]));
-      for (const [c, step] of renamed) flag(report.renamed, { label: c.label, key: fieldKey(c), name: step.name, field: step.field, now: c.ref ?? null });
-      // A per-unit question's row naming a unit no step's unit matched (none of the intake's
-      // vehicles or trailers, or two alike): a known question left to the agent, named by its row.
       const unmatched = new Map(allPairs.unmatchedRows.map((r) => [r.control, r.step]));
-      for (const [c, step] of unmatched) {
-        if (skippedField(c)) continue;
-        const note = unmatchedRowNote(step);
-        flag(report.checks, { label: c.label, path: null, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, note, ...describe(c) });
-        mark(c, 'needs', note);
-      }
-      for (const c of controls) {
-        // A row a witness step chooses among is a known question (its unit is named instead), and
-        // so is a held unit form's (the form is named instead), and a unit's row no unit matched.
-        if (mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c) || allPairs.held.has(c) || unmatched.has(c)) continue;
-        flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, ref: c.ref ?? null, controlKind: c.kind, required: c.required, ...describe(c) });
-        mark(c, 'needs', renamed.has(c) ? `Looks like "${renamed.get(c).name}", but the carrier renamed this field: left for you.` : 'Unfamiliar question — left for you.');
-      }
+      // An answer the page invalidated after another one changed (Progressive's liability limit after
+      // a PIP change) is picked again, at most twice; then it's the agent's (judgeControls). Never one
+      // the identity check left to the agent, nor a `keepChoice` answer this fill didn't give (a
+      // person's): those stay as they are, flagged.
+      const invalidLeft = [];
       for (const c of controls) {
         if (!mapped.has(c) || skippedField(c) || !hasValue(c) || !invalidControl(c)) continue;
-        // An answer the page invalidated after another one changed (Progressive's liability limit
-        // after a PIP change) is picked again, at most twice; then it's the agent's. Never one the
-        // identity check left to the agent, nor a `keepChoice` answer this fill didn't give (a
-        // person's): those stay as they are, flagged.
         const own = allPairs.find((p) => p.control === c)?.step;
         const ours = !!own && handled.get(own.id)?.note !== IDENTITY_NOTE
           && (!(own.keepChoice || own.keepPreset) || refill.has(own.id) || report.filled.some((x) => x.stepId === own.id));
@@ -2574,22 +2589,70 @@
           refill.add(own.id);
           continue;
         }
-        flag(report.failed, { label: c.label, key: fieldKey(c), q: c.q, controlKind: c.kind, reason: 'The page marks this answer invalid.', ...describe(c) });
-        mark(c, 'failed', 'the page marks this answer invalid');
+        invalidLeft.push(c);
       }
-      for (const { step, control } of allPairs) {
-        if (skippedField(control) || !hasValue(control)) continue;
-        if (step.verifyOnly && !agreesWith(step, control)) {
-          flag(report.failed, { label: control.label, key: fieldKey(control), q: control.q, reason: 'The looked-up value differs from the intake. Check the VIN.' });
-          mark(control, 'failed', 'lookup result differs from the intake');
-        } else if (!step.verifyOnly && !step.ignore && !step.note && !step.replace && !step.trustPage && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id) && !givenForOtherUnit(step, control)) {
-          // The page already had a different value (e.g. from the USDOT lookup): keep it, show it.
-          // Not what a fill gave for another unit (W43-38): that is replaced below.
-          flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, name: step.name, differs: true });
-          mark(control, 'needs', `page says something different from the intake (${step.name})`);
-          handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
+      // A text box the page already has a different value in (e.g. from the USDOT lookup): kept and
+      // shown, not replaced. Not what a fill gave for another unit (W43-38): that is replaced below.
+      const keptDiffers = (step, control) => !skippedField(control) && hasValue(control) && !step.verifyOnly && !step.ignore && !step.note && !step.replace && !step.trustPage && step.value != null
+        && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id) && !givenForOtherUnit(step, control);
+      const keepDiffering = (step, control) => {
+        flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, name: step.name, differs: true });
+        mark(control, 'needs', `page says something different from the intake (${step.name})`);
+        handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
+      };
+      // A batch is judged whole, as before the loop (its cursor is the end of what it fills); one
+      // answer at a time, each such box when the loop reaches it, at its place.
+      if (batch) for (const { step, control } of allPairs) if (keptDiffers(step, control)) keepDiffering(step, control);
+      // What the round judges of the page's questions themselves, above `upTo` (a place: the round's
+      // cursor), each once a round: a held unit form's check, wording changes, rows no unit matched,
+      // unfamiliar questions, answers the page marks invalid, and looked-up values that differ.
+      // Below it nothing is said or marked yet (`provisionalLeft`).
+      let judgedThrough = 0;
+      const judgeControls = (upTo) => {
+        const from = judgedThrough;
+        const to = Math.min(upTo, controls.length);
+        if (to <= from) return;
+        judgedThrough = to;
+        // Not one the page has taken away since the round read it (an answer's redraw).
+        const here = (c) => { const at = place.get(c); return at !== undefined && at >= from && at < to && c.el?.isConnected !== false; };
+        for (const u of allPairs.units) {
+          if (u.held && here(u.marker) && !skippedField(u.marker)) flag(report.checks, { label: u.marker.label, path: null, name: `${unitNoun(u.list)} ${Number(u.active) + 1}`, key: fieldKey(u.marker), q: null, controlKind: null, note: heldFormNote(u) });
         }
-      }
+        // Known questions whose wording changed (answered, and flagged when answered), and fields that
+        // read like a known question whose data-model name isn't on the page (left for the agent).
+        for (const p of allPairs.filter((x) => x.reworded && here(x.control))) flag(report.reworded, { label: p.control.label, key: fieldKey(p.control), name: p.step.name, field: p.step.field });
+        for (const [c, step] of renamed) if (here(c)) flag(report.renamed, { label: c.label, key: fieldKey(c), name: step.name, field: step.field, now: c.ref ?? null });
+        // A per-unit question's row naming a unit no step's unit matched (none of the intake's
+        // vehicles or trailers, or two alike): a known question left to the agent, named by its row.
+        for (const [c, step] of unmatched) {
+          if (!here(c) || skippedField(c)) continue;
+          const note = unmatchedRowNote(step);
+          flag(report.checks, { label: c.label, path: null, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, note, ...describe(c) });
+          mark(c, 'needs', note);
+        }
+        for (const c of controls) {
+          // A row a witness step chooses among is a known question (its unit is named instead), and
+          // so is a held unit form's (the form is named instead), and a unit's row no unit matched.
+          if (!here(c) || mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c) || allPairs.held.has(c) || unmatched.has(c)) continue;
+          flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, ref: c.ref ?? null, controlKind: c.kind, required: c.required, ...describe(c) });
+          mark(c, 'needs', renamed.has(c) ? `Looks like "${renamed.get(c).name}", but the carrier renamed this field: left for you.` : 'Unfamiliar question — left for you.');
+        }
+        // Said once for its field, also when this round's answer to it failed too (its own item).
+        for (const c of invalidLeft) {
+          if (!here(c)) continue;
+          const reason = 'The page marks this answer invalid.';
+          const key = fieldKey(c);
+          if (!report.failed.some((x) => x.key === key && x.label === c.label && (x.reason === reason || !x.stepId))) report.failed.push({ label: c.label, key, q: c.q, controlKind: c.kind, reason, ...describe(c) });
+          mark(c, 'failed', 'the page marks this answer invalid');
+        }
+        for (const { step, control } of allPairs) {
+          if (!here(control) || skippedField(control) || !hasValue(control)) continue;
+          if (step.verifyOnly && !agreesWith(step, control)) {
+            flag(report.failed, { label: control.label, key: fieldKey(control), q: control.q, reason: 'The looked-up value differs from the intake. Check the VIN.' });
+            mark(control, 'failed', 'lookup result differs from the intake');
+          }
+        }
+      };
       for (const { previous, pair } of changedSinceFilled(allPairs)) {
         if (retryOnce(pair.step.id)) {
           report.filled = report.filled.filter((x) => x !== previous);
@@ -2604,9 +2667,22 @@
         }
       }
       identityAfterAnswer(allPairs, controls);
-      if (report.halted) break;
-      // Buttons that must come right after their field (Verify DOT, Lookup VIN) go first.
+      // The round's judgments made, above `upTo`, and what it streams to the panel (progress): one
+      // snapshot of the items in page order a round.
+      // `atCursor`: the question at `upTo` is the cursor's own, still to give (it holds `whenClear`
+      // helpers as one not judged yet), and said failed at the end of the fill if never given: only
+      // those below it are left unjudged by the fill's end (`judgedTo`).
+      const judged = (upTo, atCursor = false) => {
+        judgeControls(upTo);
+        provisionalLeft = upTo >= controls.length ? 0 : controls.length - upTo;
+        judgedTo = provisionalLeft - (atCursor ? 1 : 0) > 0 ? upTo : Infinity;
+        streamItems(controls);
+      };
+      if (report.halted) { judged(Math.min(lagBound, firstOpen(allPairs, place))); break; }
+      // Buttons that must come right after their field (Verify DOT, Lookup VIN) go first: the page
+      // is judged down to the first question still to act on (the helper's own field is above it).
       if (window === window.top && clickNextAction(controls, true)) {
+        judged(Math.min(lagBound, firstOpen(allPairs, place)));
         // A lookup (Import Data) may wait on its server without changing the page for a while.
         phase('helper', pendingAction?.label ?? report.actions.at(-1)?.text ?? null);
         if (!await settle(serverBacked ? {} : { quietMs: 800, maxMs: 8000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
@@ -2622,10 +2698,7 @@
       // the owner's name at the top). A batch round keeps the rules' order: its answers land
       // together, and AmWINS' driver names and license number come before gender, marital status
       // and the license year, which sit between them on the page.
-      if (!batch) {
-        const place = new Map(controls.map((c, i) => [c, i]));
-        pairs.sort((a, b) => place.get(a.control) - place.get(b.control));
-      }
+      if (!batch) pairs.sort((a, b) => place.get(a.control) - place.get(b.control));
       let changed = false;
       // A failed answer may still have redrawn the page (new questions): look again next round.
       let retry = false;
@@ -2634,8 +2707,40 @@
       // Another step on screen since the round began (the agent clicked Next): this round's
       // questions are that step's no longer, and nothing more is given or clicked for them.
       let stepMoved = false;
-      for (const { step: planned, control: c, how, reworded } of pairs) {
+      // The round's cursor (`stopAt`): the first question, in page order, the fill still has to act on
+      // (an answer to give, or one waiting for the page), where one answer at a time stops. Judged
+      // only above it; `acted`, the round gave or tried an answer, or waits on one. A pair at or below
+      // `bound` (the last answer's lag) is provisional: whatever it would be judged (needs you, kept,
+      // a check) waits, untouched, and a choice that finds no option there is tried again in a later
+      // round (the page may still redraw its options). The second pass judges what waited, from the
+      // same read, once the page has settled after this round's own answer (the waits for the last
+      // one's redraw), each only while its field is still in the page (an answer above took it away
+      // otherwise), or when the round had nothing to act on. It gives and waits for nothing
+      // (`judgeOnly`): an answer it finds still to give is the next round's.
+      let stopAt = Infinity;
+      // The first question still to give or wait for (the cursor's own; stopAt also ends where a
+      // failure made the round read the page again).
+      let pendingAt = Infinity;
+      let acted = false;
+      let bound = batch ? Infinity : lagBound;
+      let todo = pairs;
+      let judgeOnly = false;
+      for (let pass = 0; pass < 2; pass++) {
+      const later = [];
+      for (const pair of todo) {
+        const { step: planned, control: c, how, reworded } = pair;
         if (stepChanged() || stopStepOn(stopSteps)) { stepMoved = true; break; }
+        const at = place.get(c);
+        const provisional = at >= bound;
+        // Not judged this pass: kept for the second.
+        const notYet = () => { if (!provisional) return false; later.push(pair); return true; };
+        // The cursor: an answer the fill still has to give here (or wait for).
+        const cursor = () => { acted = true; stopAt = Math.min(stopAt, at); pendingAt = Math.min(pendingAt, at); };
+        if (!batch && keptDiffers(planned, c)) {
+          if (notYet()) continue;
+          keepDiffering(planned, c);
+          continue;
+        }
         // A known field whose question reads differently now: answered, and the agent checks it.
         const step = reworded ? { ...planned, warn: [planned.warn, `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check the answer.`].filter(Boolean).join(' ') } : planned;
         const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how, standard: !!step.standard, manualOnly: !!step.manualOnly,
@@ -2649,15 +2754,17 @@
         // any more, so the agent checks it (Continue waits).
         const leftAlone = step.verifyOnly || step.ignore;
         if (leftAlone && reworded) {
+          if (notYet()) continue;
           const note = `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check what the page has.`;
           if (step.verifyOnly) report.kept.push(item);
           report.checks.push({ ...item, note, ...describe(c) });
           handled.set(step.id, { status: 'needs', note });
           continue;
         }
-        if (step.verifyOnly) { report.kept.push(item); handled.set(step.id, { status: null }); continue; }
-        if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { handled.set(step.id, { status: null }); continue; }
+        if (step.verifyOnly) { if (notYet()) continue; report.kept.push(item); handled.set(step.id, { status: null }); continue; }
+        if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { if (notYet()) continue; handled.set(step.id, { status: null }); continue; }
         if (identityDiffers(step, controls)) {
+          if (notYet()) continue;
           report.noData.push({ ...item, note: IDENTITY_NOTE, reviewOnly: true, ...describe(c) });
           handled.set(step.id, { status: 'needs', note: IDENTITY_NOTE });
           continue;
@@ -2668,6 +2775,7 @@
         if (step.labelHas?.length && step.value != null && !step.note) {
           const text = ` ${squash(`${c.label ?? ''} ${c.text ?? ''} ${legendWords(c.radios)}`)} `;
           if (!step.labelHas.every((w) => squash(w) && text.includes(` ${squash(w)} `))) {
+            if (notYet()) continue;
             report.noData.push({ ...item, note: step.labelNote, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.labelNote });
             continue;
@@ -2680,12 +2788,14 @@
         // alone, with `onlyNote`: a limit TNI doesn't name is never the AI's.
         if (step.onlyIf && step.value != null && !step.note) {
           if (!holdingCondition(step, c, allPairs)) {
+            if (notYet()) continue;
             report.noData.push({ ...item, note: step.onlyNote, manualOnly: true, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.onlyNote });
             continue;
           }
         }
         if (step.note || step.value == null) {
+          if (notYet()) continue;
           if (step.optional) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note, ...describe(c) });
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
@@ -2695,16 +2805,20 @@
         // is still working. Once it is in, what it redraws comes a moment later: the page goes quiet
         // first, and the round reads it again.
         if (step.waitFor) waitShown = true;
+        // Something to give or wait for in the second pass: the next round's.
+        if (judgeOnly && step.waitFor && !waitOver.has(step.id)) { retry = true; continue; }
         if (step.waitFor && !waitOver.has(step.id)) {
           const pending = shownControl(controls, { field: step.waitFor });
           const anchor = (step.whenShown ? shownControl(controls, step.whenShown)?.el : null) ?? document.body;
           const undrawn = waitedOutUndrawn.get(anchor) ?? new Set();
           const working = pending ? !hasValue(pending) && !waitedOut.has(pending.el) : !undrawn.has(step.id);
           if (working) {
-            if (mayWait(step.id)) { retry = true; waited = true; continue; }
+            // The page is still working on what is above: the cursor stays here (a batch goes on).
+            if (mayWait(step.id)) { retry = true; waited = true; cursor(); if (batch) continue; break; }
             if (pending) waitedOut.add(pending.el); else waitedOutUndrawn.set(anchor, undrawn.add(step.id));
             waitOver.add(step.id);
           } else if (waitingSince.has(step.id)) {
+            cursor();
             waitOver.add(step.id);
             phase('waiting');
             await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS });
@@ -2729,6 +2843,7 @@
         // A street an earlier fill left without a suggestion is not answered while the box holds
         // what that fill left: it stays the agent's, never taken as the page's.
         if (step.checkNumber && unpicked.has(c.el) && unpicked.get(c.el) === c.el.value) {
+          if (notYet()) continue;
           const reason = 'no address suggestion was picked for it: pick the address yourself';
           report.failed.push({ ...item, reason, ...describe(c) });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason}` });
@@ -2750,6 +2865,7 @@
         // driver's name and date of birth were kept as differing and left to the agent).
         const otherUnits = answered && !agreesWith(step, c) && givenForOtherUnit(step, c);
         if (legacyHold || sameAnswer || presetKept || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+          if (notYet()) continue;
           report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
@@ -2787,17 +2903,28 @@
         const prereqs = needsOf(step);
         if (prereqs.length && !agreesWith(step, c)) {
           const root = prereqs.map((p) => unitHeld.get(p.id) ?? unitHeld.get(heldFor.get(p.id))).find(Boolean);
-          if (root) { holdDependent(step, root); continue; }
-          if (prereqs.some((p) => !handled.has(p.id) && refill.has(p.id) && allPairs.some((x) => x.step.id === p.id && !skippedField(x.control)))) { retry = true; continue; }
+          if (root) { if (notYet()) continue; holdDependent(step, root); continue; }
+          // Its prerequisite, above it, is still to be given again: the cursor stays here.
+          if (prereqs.some((p) => !handled.has(p.id) && refill.has(p.id) && allPairs.some((x) => x.step.id === p.id && !skippedField(x.control)))) {
+            retry = true;
+            if (judgeOnly) continue;
+            cursor();
+            if (batch) continue;
+            break;
+          }
           const theirs = prereqs.find((p) => allPairs.some((x) => x.step.id === p.id && skippedField(x.control) && !agreesWith(x.step, x.control)));
           if (theirs && isChoice && !matchOption(optionsOf(c), step)) {
+            if (notYet()) continue;
             handled.set(step.id, { status: 'needs', note: `Left as it is: it needs ${coverageName(theirs)} on this vehicle, which you have taken over.` });
             continue;
           }
         }
+        // An answer still to give, in the second pass: the next round's.
+        if (judgeOnly) { retry = true; continue; }
         // An answer the page didn't keep is given again once the page and its own requests have been
         // quiet (`keepWait`), each time, and read again first.
         if (keepWait.has(step.id) && !keepSettled.has(step.id) && !agreesWith(step, c)) {
+          cursor();
           keepSettled.add(step.id);
           phase('waiting');
           await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000, requests: () => !report.halted });
@@ -2805,6 +2932,7 @@
           break;
         }
         if (isChoice && !resetWaited && !keepWait.has(step.id) && !agreesWith(step, c) && (refill.has(step.id) || (!step.scope && filledKeys.has(fieldKey(c))))) {
+          cursor();
           resetWaited = true;
           phase('waiting');
           await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000 });
@@ -2816,6 +2944,7 @@
         // other answers change.
         // Batch: a field an earlier answer this round redrew is answered next round.
         if (batch && c.el.isConnected === false) { retry = true; continue; }
+        acted = true;
         const snap = (list) => new Map(list.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
         const before = batch ? null : snap(controls);
         const t0 = Date.now();
@@ -2883,9 +3012,21 @@
             handled.set(step.id, { status: 'needs', note: step.warn });
           }
           changed = true;
+          // One at a time, the cursor is here, and on a page that isn't ExtJS the next round judges
+          // nothing below this answer until it acts further down (lagBound).
+          if (!batch) {
+            cursor();
+            if (!serverBacked) lastAnswered = { stepId: step.id, at };
+          }
           // Batch: carry on with the next answer, except before a helper button that waits on
           // this one (Import Data after the VIN list): it's clicked first thing next round.
           if (!batch || immediateAfter.has(step.path)) break;
+        } else if (provisional && !step.whenOffered && /^no option matches/.test(result.reason ?? '')) {
+          // Below the last answer, whose redraw may still be on its way (GEICO's UM, tried against
+          // the split limits shown before the CSL limit redrew them: 2026-10-28): no item yet. The
+          // cursor stays here, and the choice is tried again once the cursor is below it.
+          cursor();
+          retry = true;
         } else if (step.unofferedNote && /^no option matches/.test(result.reason ?? '')) {
           // A list without the answer, which no helper shows later (GEICO's Basic PIP without
           // $2,500): the agent's alone at once, so a `whenClear` helper (Print) waits for it.
@@ -2902,12 +3043,15 @@
           if (isChoice) keepWait.add(step.id);
           keepSettled.delete(step.id);
           retry = true;
-          if (serverBacked) break;
+          // Still to give: the cursor stays here, and nothing below is answered or judged before it
+          // (a batch goes on).
+          cursor();
+          if (!batch || serverBacked) break;
         } else if (holdUnit(step, c, item, result.reason, assign(collectControls(), plan))) {
           // A prerequisite that didn't take, with answers on its unit waiting on it (`needs`): one
           // item for the unit, not a failure for each.
           retry = true;
-          if (serverBacked) break;
+          if (serverBacked) { stopAt = Math.min(stopAt, at + 1); break; }
         } else if (step.keepUnlisted && /^no option matches/.test(result.reason ?? '') && hasValue(c) && !/^other\b/i.test(oneLine(selectedText(c) ?? ''))) {
           // A list without the answer that already holds the page's own (`keepUnlisted`: GEICO's
           // cities for the ZIP, TNI, 2026-10-21, W43-35: one city and OTHER in GA, "failed: City"
@@ -2921,12 +3065,29 @@
           report.failed.push({ ...item, reason: result.reason, ...describe(c), ...(result.vanished ? { vanished: true } : {}) });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
           retry = true;
-          if (report.halted) break;
+          if (report.halted) { stopAt = Math.min(stopAt, at + 1); break; }
           // On pages that redraw after every answer, a failed answer may have redrawn it too: the
-          // controls read this round may be gone, so read the page again before the next one.
-          if (serverBacked) break;
+          // controls read this round may be gone, so read the page again before the next one. Judged
+          // down to it.
+          if (serverBacked) { stopAt = Math.min(stopAt, at + 1); break; }
         }
       }
+      // Nothing left to act on in this round: what it left below the last answer is judged now,
+      // from the same read (no round, read or wait of its own).
+      if (pass === 0 && (!acted || changed) && !batch && later.length && !report.halted && !stepMoved) {
+        todo = later.filter((p) => place.get(p.control) < stopAt && p.control.el?.isConnected !== false);
+        bound = Infinity;
+        judgeOnly = true;
+        continue;
+      }
+      break;
+      }
+      // The round's judgments of the page's questions themselves, down to its cursor (all of them
+      // when it had nothing left to act on, or for a batch), and its items streamed to the panel.
+      // Once this round's own answer settled, down to it (what an answer above took off the page since
+      // the round read it is no question: judgeControls passes over it).
+      const judgeTo = batch || !acted ? Infinity : changed ? stopAt : Math.min(stopAt, lagBound);
+      judged(judgeTo, judgeTo === pendingAt);
       if (report.halted) break;
       // The next round's start ends the fill (or stops it on a step that is the agent's).
       if (stepMoved) continue;
@@ -3435,7 +3596,36 @@
         // An answer the page didn't keep, still to give again (`keepWait`): not done yet.
         + [...keepWait].filter((id) => !handled.has(id)).length
         + report.kept.filter((x) => x.differs && here(x)).length
-        + controls.filter((c) => !hasValue(c) && !skippedField(c) && report.unknown.some((x) => x.key === fieldKey(c))).length;
+        + controls.filter((c) => !hasValue(c) && !skippedField(c) && report.unknown.some((x) => x.key === fieldKey(c))).length
+        // Questions below the round's cursor, not judged yet: what they hold isn't known.
+        + provisionalLeft;
+    }
+
+    // The place of the first question in `pairsNow` the fill hasn't settled (not answered, kept or
+    // left yet, and not the agent's): at most where the round's cursor is (Infinity: none).
+    function firstOpen(pairsNow, place) {
+      let first = Infinity;
+      for (const { step, control } of pairsNow) if (!handled.has(step.id) && !skippedField(control)) first = Math.min(first, place.get(control) ?? Infinity);
+      return first;
+    }
+
+    // What the panel streams while the fill runs (progress): the items judged so far, each with its
+    // place on the page as this round read it (`order`), in one snapshot a round (`at`), and the
+    // places the answers' rows take from the same read.
+    function streamItems(controls) {
+      const at = new Map();
+      controls.forEach((c, i) => {
+        const key = fieldKey(c);
+        if (!at.has(`${key}|${c.label}`)) at.set(`${key}|${c.label}`, i);
+        if (!at.has(key)) at.set(key, i);
+      });
+      const order = (x) => (x.key == null ? null : at.get(`${x.key}|${x.label}`) ?? at.get(x.key) ?? null);
+      const lists = [['unknown', report.unknown], ['failed', report.failed], ['noData', report.noData], ['leftRequired', report.leftRequired], ['differs', report.kept.filter((x) => x.differs)], ['checks', report.checks]];
+      thisFill.places = order;
+      // In page order; those with no field on the page (a helper, a unit without its row) last.
+      const list = lists.flatMap(([kind, xs]) => xs.filter((x) => !x.otherStep).map((x) => ({ kind, key: x.key ?? null, label: x.label || x.name || '', order: order(x) })));
+      list.sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
+      thisFill.items = { at: (thisFill.items?.at ?? 0) + 1, list };
     }
 
     // What the report says of the page holds only for questions on it (the invariant in
@@ -3750,7 +3940,9 @@
       report.failed.push({ ...base, reason, ...describe(control) });
       handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason.replace(/; check it$/, '')}` });
     }
-    if (progressed && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
+    // Out of rounds with questions still below the cursor, never judged (it waited on the page to the
+    // end): the same, as nothing said of them may be taken for nothing left.
+    if ((progressed || judgedTo !== Infinity) && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
     // The page may have redrawn while filling, so mark the final fields: those just read, the page
     // unchanged since (only the report changed). Read again only when the fill left its page.
     const controls = stoppedAt || unreadStep ? [] : stillHere ? finalControls : collectControls();
@@ -4462,5 +4654,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 91, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, present, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 92, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, present, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

@@ -5023,6 +5023,55 @@ test('while a fill runs the panel asks each frame only for new rows and keeps th
   assert.equal(renders, 3);
 });
 
+// Judged at the cursor (the maintainer, 2026-10-28: the page is answered top to bottom): while a fill
+// runs, the panel lists what the fill has judged with the answers in so far, in the page's order, as
+// each round streams it (pagekit progress `items`, one snapshot a round, asked for only when the panel
+// doesn't have it), frame by frame. Nothing it lists is below where the fill has got to: the kit
+// judges nothing there yet.
+test('while a fill runs the panel streams the items judged with the answers, in the page order', async () => {
+  let tick = null;
+  let reply = [];
+  let renders = 0;
+  const asked = [];
+  const state = { fillingFor: { run: 'r1', tabId: 3, filled: 0, rows: [] } };
+  const context = {
+    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; },
+    setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+    chrome: { scripting: { executeScript: async (o) => { asked.push(JSON.parse(JSON.stringify(o.args[0]))); return reply; } } },
+  };
+  vm.runInNewContext(['watchFill', 'liveEntries'].map(extractFunction).join('\n'), context);
+  context.watchFill({ run: 'r1', tabId: 3, carrier: {} });
+  // Round 1: the first answer; nothing judged above it.
+  reply = [{ frameId: 0, result: { frame: 'f', list: 'f:1', since: 0, rows: [{ key: 'kind', label: 'Kind', shown: 'Owner', order: 0 }], itemsAt: 1, items: [] } }];
+  await tick();
+  // Round 2: the next answer, and the items above it (the kit's snapshot); another frame's own.
+  reply = [
+    { frameId: 0, result: { frame: 'f', list: 'f:1', since: 1, rows: [{ key: 'size', label: 'Size', shown: 'Large', order: 3 }], itemsAt: 2,
+      items: [{ kind: 'unknown', key: 'deed', label: 'Deed year', order: 1 }, { kind: 'failed', key: 'zip', label: 'Zip', order: 2 }] } },
+    { frameId: 1, result: { frame: 'g', list: 'g:1', since: 0, rows: [], itemsAt: 1, items: [{ kind: 'noData', key: 'x', label: 'Other frame', order: 0 }] } },
+  ];
+  await tick();
+  assert.deepEqual(asked.at(-1), { 'f:1': 1, 'items@f': 1 });
+  // A round with nothing new: nothing sent again, nothing drawn again.
+  reply = [{ frameId: 0, result: { frame: 'f', list: 'f:1', since: 2, rows: [], itemsAt: 2 } }, { frameId: 1, result: { frame: 'g', list: 'g:1', since: 0, rows: [], itemsAt: 1 } }];
+  const drawn = renders;
+  await tick();
+  assert.deepEqual(asked.at(-1), { 'f:1': 2, 'g:1': 0, 'items@f': 2, 'items@g': 1 });
+  assert.equal(renders, drawn);
+  const f = state.fillingFor;
+  assert.deepEqual(Array.from(context.liveEntries(f.rows, f.items, f.frames), (e) => (e.row ?? e.item).label), ['Kind', 'Deed year', 'Zip', 'Size', 'Other frame']);
+  // Drawn so in the live list: the answers as answers, the items as what is left for the agent.
+  const live = { hidden: true, dataset: {}, children: [], replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); }, get lastElementChild() { return this.children.at(-1); } };
+  const view = { scrollHeight: 0, scrollTop: 0, clientHeight: 0 };
+  const panel = { state: { filling: true, tab: { id: 3 }, fillingFor: f }, $: (id) => (id === 'live' ? live : view),
+    h: (tag, props, ...children) => ({ tag, props, children: children.flat(), scrollIntoView() {} }), phaseSaid: () => ['Next answer', 'Working…'] };
+  vm.runInNewContext(['renderLive', 'liveEntries'].map(extractFunction).join('\n'), panel);
+  panel.renderLive();
+  assert.equal(live.hidden, false);
+  assert.deepEqual(live.children.filter((n) => !/typing/.test(n.props.class)).map(rowSaid).map((r) => [r.label, r.value, r.need]), [
+    ['Kind', 'Owner', false], ['Deed year', 'Needs your answer', true], ['Zip', 'Couldn’t fill', true], ['Size', 'Large', false], ['Other frame', 'Needs your answer', true]]);
+});
+
 // AdGuard and browser-harness comparison (2026-10-22): a message box on the page (alert, confirm,
 // beforeunload) holds its scripts, and the dock said "Working…" with no word why. A reading the
 // page hasn't answered for 5 s is said; nothing is done to the page, and the word goes once it answers.
