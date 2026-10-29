@@ -7475,7 +7475,7 @@ test('a quiet page is one whose components are all defined, each waited for up t
       }, definedAfter);
     }
     const start = clock.Date.now();
-    const report = await h.kit.fill(plan, { maxRounds: 6, advance, components: 'gds-' });
+    const report = await h.kit.fill(plan, { maxRounds: 6, advance });
     return { clicks: plain(clicks), advanced: report.advanced ?? null, halted: report.halted, took: clock.Date.now() - start };
   };
   // Defined after 2.5 s, drawing a question without an answer: waited for, and it holds Next.
@@ -7494,13 +7494,13 @@ test('a quiet page is one whose components are all defined, each waited for up t
 // A wait with a limit of 3 s (after a helper click, after an answer) and a component that appears
 // with it and is never defined: the wait for it ends at the limit, and the page counts as settled.
 test('a component never defined doesn\'t make a short wait fail', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   const vin = makeInput({ id: 'vin', ariaLabel: 'VIN' });
   h.document.body.append(vin);
   const lookup = addButton(h, 'Lookup VIN');
   lookup.onclick = () => { lookup._clicked = true; h.document.body.append(notDefinedYet(new FakeNode('gds-vin-result'))); };
   // Clicked in its round (not right after the VIN), so the page is waited for after it, 3 s at most.
-  const report = await h.kit.fill([vinPlan[0], { ...vinPlan[1], immediate: false }], { maxRounds: 6, components: 'gds-' });
+  const report = await h.kit.fill([vinPlan[0], { ...vinPlan[1], immediate: false }], { maxRounds: 6 });
   assert.deepEqual([lookup._clicked, report.halted, report.reason ?? null], [true, false, null]);
 });
 
@@ -8392,12 +8392,12 @@ test("a fill's first wait is its whole 400 ms from when it begins, whatever the 
   setTimeout(() => { loader._visible = false; }, 100);
   assert.equal(await answeredAfter(busy), 400, 'busy as it began');
   // A GEICO component the page defines 100 ms after the fill begins.
-  const parts = harness({ pathname: '/quote' });
+  const parts = harness({ adapter: 'geico', pathname: '/quote' });
   await later(1000);
   let defined = false;
   parts.document.body.append(notDefinedYet(new FakeNode('gds-address-check'), () => defined));
   setTimeout(() => { defined = true; }, 100);
-  assert.equal(await answeredAfter(parts, { components: 'gds-' }), 400, 'a component undefined as it began');
+  assert.equal(await answeredAfter(parts), 400, 'a component undefined as it began');
 });
 
 // GEICO live run, 2026-10-28 (FL, 4 vehicles and a trailer; synthetic units here): Quote &

@@ -291,6 +291,7 @@
     onRequest: () => {},
     offRequest: () => {},
     listOwner: () => null,
+    components: null,
   };
   // The adapter is read when it's needed: one injected again (an extension update) replaces it.
   let adapterSource;
@@ -328,7 +329,7 @@
       .some((m) => m.getClientRects().length && getComputedStyle(m).visibility !== 'hidden');
   }
 
-  // The carrier's own components the page hasn't defined yet (`components`, a fill option: GEICO's
+  // The carrier's own components the page hasn't defined yet (its adapter's `components`: GEICO's
   // gds-* while their script loads): no control of theirs is drawn, and defining one draws its
   // shadow root without a mutation record. In the page only: a part inside a component's shadow root
   // exists once that component is defined, by the same script (the GEICO mock's are copies that
@@ -337,8 +338,8 @@
   // from when a wait first saw it, and never past a wait's own limit (settle).
   const UNDEFINED_MS = 3000;
   const undefinedSince = new WeakMap();
-  let componentPrefix = null;
   function partsUndefined() {
+    const componentPrefix = adapter().components;
     if (!componentPrefix) return false;
     let parts;
     try { parts = [...document.querySelectorAll(':not(:defined)')].filter((el) => el.localName.startsWith(componentPrefix)); } catch { return false; }
@@ -2120,7 +2121,7 @@
    * @param {FillOptions} [options]
    * @returns {Promise<FillReport>}
    */
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, components = null, formUnit = null, givenBefore = {}, pager = null } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -2241,7 +2242,6 @@
       report.pageMoved = topPage;
       return report;
     }
-    componentPrefix = components;
     if (window === window.top) watchRequests();
     if (!keepMarks) clear();
     stopSteps = [].concat(stopSteps ?? []);

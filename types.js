@@ -324,7 +324,6 @@
  * @property {SupportedClass[]} [supportedClasses]
  * @property {boolean} [replaceChoices]
  * @property {boolean} [batch]
- * @property {string} [components]  the carrier's own element prefix (GEICO's gds-)
  * @property {{ pages: string[], key: string }} [quoteState]
  * @property {string[]} [vehicleSteps]
  * @property {string[]} [driverSteps]
@@ -518,7 +517,6 @@
  * @property {number} [loadResultMs]
  * @property {string[]} [filledBefore]
  * @property {string | null} [expectPage]
- * @property {string | null} [components]
  * @property {{ list: UnitList, text: string, names: string[][], active: number, label: string } | null} [formUnit]
  *   a form that names its unit (carrier `unitNames`): each intake unit's name words, and the plan's unit
  * @property {{ [key: string]: any }} [givenBefore]
@@ -934,6 +932,7 @@
  * @property {(fn: () => void) => void} onRequest  count the page's requests (per-answer timing)
  * @property {(fn: () => void) => void} offRequest
  * @property {(list: Element) => { label: string, fixed: boolean } | null} listOwner  the question an open list belongs to
+ * @property {string | null} components  the tag prefix of the carrier's own web components (GEICO's gds-): a fill waits for those the page hasn't defined yet
  */
 
 /**

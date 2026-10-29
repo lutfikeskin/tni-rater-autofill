@@ -31,6 +31,9 @@
       // A pick on a design-system radio redraws nothing: its group's `active-index` changes (and
       // its host's `checked`, which the kit watches on any page).
       changeAttributes: ['active-index'],
+      // Its own components' tag prefix: a fill waits for those the page hasn't defined yet (they
+      // draw no control while GEICO's script loads).
+      components: 'gds-',
     };
   }
 

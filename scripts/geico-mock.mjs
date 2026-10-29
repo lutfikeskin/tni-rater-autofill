@@ -381,7 +381,7 @@ async function fill(form, { asked = false, expectFailed = [] } = {}) {
   const fillActive = { ...active };
   const plan = buildPlan(record, geico, adding ? { ...fillActive, adding } : fillActive);
   const options = {
-    overwrite: false, replaceChoices: !!geico.replaceChoices, batch: !!geico.batch, components: geico.components ?? null, doneSteps: [...doneSteps],
+    overwrite: false, replaceChoices: !!geico.replaceChoices, batch: !!geico.batch, doneSteps: [...doneSteps],
     advance: settings.autoAdvance && geico.advance ? advanceFor(geico, unitsListed) : null, hold: false, confirmed: null,
     doneActions: [...doneActions], visitedPages: [], stopPages: Object.keys(geico.stopPages ?? {}), stopSteps: STOP_STEPS,
     units: {

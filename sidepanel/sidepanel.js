@@ -1918,8 +1918,6 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
   filledBefore: [...(state.filled?.keys() ?? [])],
   // Carriers whose pages never wait on a server per answer are filled a round at a time.
   batch: !!carrier.batch,
-  // The carrier's own components (GEICO's gds-*): a fill waits for those not defined yet.
-  components: carrier.components ?? null,
   // Steps of a one-address application already continued from (a step the agent goes back to
   // isn't continued again). Each entry is scoped by its own step, not the one the panel last heard
   // the tab was on: GEICO's Vehicles is continued per vehicle, its other steps once a quote, and
