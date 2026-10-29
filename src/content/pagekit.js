@@ -1,5 +1,5 @@
 // Injected into rater pages (every frame) by the side panel. Classic script, no imports.
-// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, readBack, receipt, aiBanner, capture, clear, … }.
+// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, readBack, present, receipt, aiBanner, capture, clear, … }.
 //
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
 // page already filled alone.
@@ -18,7 +18,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 90 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 91 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -427,13 +427,22 @@
   // In a step section that isn't the one on screen (AmWINS' .form-tab, hidden).
   const otherStep = (el) => { const tab = el?.closest?.('.form-tab'); return !!tab && !isVisible(tab); };
 
+  // The lists of a fill report whose items are the agent's to look at (fill's reconcile).
+  const REVIEW_LISTS = ['unknown', 'failed', 'noData', 'leftRequired', 'checks'];
+  // Reads of the page's questions so far (collectControls), so a fill can say what its end cost
+  // (report.reconcile.reads).
+  let controlReads = 0;
   function collectControls() {
+    controlReads++;
     const out = [];
     const groups = new Map();
+    // Fields in the page but not shown or not open to an answer (a collapsed card, a closed section):
+    // no question of this read, but not gone from the page either (hiddenKeys).
+    const hidden = [];
     for (const el of deepQueryAll(document, CONTROL_SELECTOR)) {
       const type = el.tagName === 'INPUT' ? (el.type || 'text').toLowerCase() : el.tagName.toLowerCase();
       if (el.tagName === 'INPUT' && SKIP_INPUT_TYPES.has(type) && !(type === 'search' && safeMatches(el, ADDRESS_SEARCH))) continue;
-      if (el.disabled || (!isVisible(el) && !hiddenOk.some((sel) => safeMatches(el, sel)))) continue;
+      if (el.disabled || (!isVisible(el) && !hiddenOk.some((sel) => safeMatches(el, sel)))) { hidden.push(el); continue; }
       const cmp = extCmp(el);
       if (type === 'radio') {
         const extGroup = cmp?.up?.('radiogroup') ?? null;
@@ -491,7 +500,46 @@
       rowVehicle.set(c.row, rowVehicle.has(c.row) && rowVehicle.get(c.row) !== c.text ? null : c.text);
     }
     for (const c of out) c.vehicle = VEHICLE_LABEL.test(c.label ?? '') ? c.text : (c.row && rowVehicle.get(c.row)) || null;
+    hiddenOf.set(out, hidden);
     return out;
+  }
+  // The fields one read found in the page but not shown (collectControls' `hidden`), and their keys,
+  // worked out only when asked (an item not among the read's questions).
+  const hiddenOf = new WeakMap();
+  const hiddenKeySets = new WeakMap();
+  function hiddenKeys(controls) {
+    let keys = hiddenKeySets.get(controls);
+    if (!keys) {
+      keys = new Set((hiddenOf.get(controls) ?? []).map((el) => globalThis.__raterFieldKey(el, { q: dctQuestionId(extCmp(el)?.id ?? el.id) })));
+      hiddenKeySets.set(controls, keys);
+    }
+    return keys;
+  }
+
+  // One read's questions by field key (each key's controls in page order), worked out once per read.
+  const keyIndexes = new WeakMap();
+  function keyIndex(controls) {
+    let index = keyIndexes.get(controls);
+    if (!index) {
+      index = new Map();
+      for (const c of controls) {
+        const key = fieldKey(c);
+        if (!index.has(key)) index.set(key, []);
+        index.get(key).push(c);
+      }
+      keyIndexes.set(controls, index);
+    }
+    return index;
+  }
+  // A report item's field among one read's questions, by its key and, where rows of one question
+  // share the key, its label (as readBack and reveal find it). `sure`: false when several rows share
+  // the key and the label doesn't tell which is its (none has it any more, or several do): the
+  // question is there, but which row is its isn't known.
+  function controlOf(index, key, label) {
+    const same = index.get(key) ?? [];
+    if (same.length < 2) return { c: same[0] ?? null, sure: true };
+    const own = same.filter((x) => x.label === label);
+    return { c: own[0] ?? same[0], sure: own.length === 1 };
   }
 
   // A several-choice answer's option texts ("a; b": W43-23). Parts joined by "; " that make one
@@ -2426,6 +2474,10 @@
     const answeredLists = new Set(plan.filter((s) => s.whenShown?.unit && s.value != null && s.value !== '').map((s) => s.whenShown.unit));
     // A page that draws its units' rows a few at a time behind group buttons (`pager`, makePager).
     const unitGroups = makePager(plan, pager, startPage);
+    // The rules of coverage sections the page closes (offPage), and the failed choices given once more
+    // against options the page redrew (retryRedrawn), by step id.
+    const closable = new Set(plan.filter((s) => Object.values(CLOSED_SECTIONS).some(({ tag }) => s[tag] === 'section')).map((s) => s.id));
+    const redrawRetried = new Set();
 
     for (let round = 0; round < maxRounds; round++) {
       report.rounds = round + 1;
@@ -2791,7 +2843,10 @@
           // An address box may collapse once a suggestion is picked; the ZIP/city rules check it.
           const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : step.kind === 'address-suggest' || summaryAccepted(step, currentControls);
           if (!settled || !accepted || report.halted) {
-            result = { ok: false, reason: !settled ? 'the page did not settle after the answer' : !fresh ? 'the field disappeared after the answer; check the page' : report.halted ? 'the agent interrupted filling' : 'the page did not keep the answer; check it' };
+            result = { ok: false, reason: !settled ? 'the page did not settle after the answer' : !fresh ? 'the field disappeared after the answer; check the page' : report.halted ? 'the agent interrupted filling' : 'the page did not keep the answer; check it',
+              // The page took the question away on this answer (a summary in its place): the item is
+              // about the fill's answer, kept with no field (reconcile's `offPage: 'answer'`).
+              ...(settled && !fresh ? { vanished: true } : {}) };
           }
         }
         if (result.ok) {
@@ -2863,7 +2918,7 @@
           report.checks.push({ ...item, note, ...describe(c) });
           handled.set(step.id, { status: 'needs', note });
         } else {
-          report.failed.push({ ...item, reason: result.reason, ...describe(c) });
+          report.failed.push({ ...item, reason: result.reason, ...describe(c), ...(result.vanished ? { vanished: true } : {}) });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
           retry = true;
           if (report.halted) break;
@@ -2947,6 +3002,9 @@
           quietSig = signature();
           continue;
         }
+        // Nothing left to do: a choice that failed against options the page has redrawn since is
+        // tried once more against the ones it shows now (retryRedrawn), in the next round.
+        if (retryRedrawn(allPairs)) { progressed = true; continue; }
         break;
       }
       if (!changed) {
@@ -3368,12 +3426,142 @@
     // What this fill has left for the agent so far (`whenClear` helpers wait for none): its needs-you,
     // failed and check items, an answer kept that differs, and an empty question it reported as
     // unfamiliar (only those the panel lists, so the agent can answer or mark each one done).
+    // Only items whose question is on the page now count (liveOn): one an answer took off the page
+    // holds nothing (GEICO, 2026-10-28: Property Damage Liability, gone once the liability limit was
+    // CSL, held Recalculate until the agent marked it done).
     function leftForAgent(controls) {
-      return report.noData.length + report.failed.length + report.checks.length + report.leftRequired.length
+      const here = liveOn(controls);
+      return report.noData.filter(here).length + report.failed.filter(here).length + report.checks.filter(here).length + report.leftRequired.filter(here).length
         // An answer the page didn't keep, still to give again (`keepWait`): not done yet.
         + [...keepWait].filter((id) => !handled.has(id)).length
-        + report.kept.filter((x) => x.differs).length
+        + report.kept.filter((x) => x.differs && here(x)).length
         + controls.filter((c) => !hasValue(c) && !skippedField(c) && report.unknown.some((x) => x.key === fieldKey(c))).length;
+    }
+
+    // What the report says of the page holds only for questions on it (the invariant in
+    // docs/browser-filling.md, "Only what is on the page"). An answer may take questions off the page
+    // or redraw them after the fill read them (GEICO, 2026-10-28: a CSL liability limit removes
+    // Property Damage Liability and UMPD and redraws UM's limits as CSL), so the items are checked
+    // against the page as the fill ends.
+    // `offPage`: an item whose field isn't on screen now but is still this page's question, as the
+    // kit knows: read while another group of units was shown ('group': `pager`), or in a coverage
+    // section the page closes ('section': CLOSED_SECTIONS, Progressive's cargo, GL and trailer
+    // interchange behind their Done); or an item about the fill's own answer, whose field the page
+    // took away on it ('answer': a summary in its place, `vanished`), which the agent still checks.
+    // And one whose field is in the page but not shown or open now ('hidden': a collapsed card such as
+    // GEICO's cargo after Recalculate, a section closed), as `controls`, the read, found it.
+    function offPage(x, controls) {
+      return x.vanished ? 'answer' : x.key != null && unitGroups.readElsewhere(x.key) ? 'group' : x.stepId != null && closable.has(x.stepId) ? 'section'
+        : x.key != null && hiddenKeys(controls).has(x.key) ? 'hidden' : null;
+    }
+    // A row the intake doesn't have (pairs.extraRows): its check's key is the row's own token, no field's.
+    function rowCheck(x) { return String(x.key ?? '').startsWith('extra-row:'); }
+    // Whether a report item's question is on the page `controls` were read from: its field, by its
+    // key or by the rule that found it (a row whose key moved), or one off screen for now (offPage).
+    // An item with no field (a helper, a unit without its row) is.
+    function liveOn(controls) {
+      const index = keyIndex(controls);
+      let steps = null;
+      return (x) => {
+        if (x.key == null || rowCheck(x) || index.has(x.key) || offPage(x, controls)) return true;
+        if (x.stepId == null) return false;
+        steps ??= new Set(assign(controls, plan).map((p) => p.step.id));
+        return steps.has(x.stepId);
+      };
+    }
+    // The report made to agree with one read of the page as the fill ends (`now`, with `pairsNow`,
+    // assign's pairs of it): an item whose field is gone (and isn't offPage) is dropped, so it is no
+    // blocker and the panel never lists it; each other one takes what its field shows and offers now
+    // (describe), never what an earlier round read, and its key and label where its rule now finds
+    // another row. Answers (filled, and kept as the page had them) stay in the report, for what the
+    // fill did (the usage log, the panel's bookkeeping), each with what its field shows now (`now`,
+    // shownNow: the panel shows that, never what the fill put in), `changed` when that is no longer
+    // the fill's answer ('you': a field the agent took over; 'page': the page's change), and `gone`
+    // when its field isn't on the page (the panel shows no row for it). `reads`: the page reads
+    // since the rounds ended, said in `report.reconcile` with its time (`ms`), the items it dropped
+    // and the answers gone.
+    function reconcile(now, pairsNow, reads = null) {
+      const t0 = perfNow();
+      const index = keyIndex(now);
+      const byStep = new Map(pairsNow.map((p) => [p.step.id, p.control]));
+      const rows = new Set((pairsNow.extraRows ?? []).map((r) => r.key));
+      const steps = new Map(plan.map((s) => [s.id, s]));
+      let dropped = 0;
+      let gone = 0;
+      const answer = (x, filled) => {
+        if (x.key == null || rowCheck(x)) return;
+        const ruled = x.stepId != null ? byStep.get(x.stepId) ?? null : null;
+        const { c, sure } = ruled ? { c: ruled, sure: true } : controlOf(index, x.key, x.label);
+        delete x.now;
+        delete x.changed;
+        if (!c) {
+          const off = offPage(x, now);
+          if (off) { x.offPage = off; delete x.gone; } else { x.gone = true; delete x.offPage; gone++; }
+          return;
+        }
+        delete x.gone;
+        delete x.offPage;
+        if (!sure) return;
+        x.now = shownNow(c);
+        // Not the fill's answer any more: neither what it put in nor the answer as the fill judges it
+        // (a ZIP+4, an address in the page's own format, the plan picked in place of one never offered).
+        const step = steps.get(x.stepId);
+        if (filled && step && loose(x.now) !== loose(x.shown) && !agreesWith(step, c)) x.changed = skippedField(c) ? 'you' : 'page';
+      };
+      const live = (x) => {
+        if (x.key == null) return true;
+        if (rowCheck(x)) {
+          if (rows.has(x.key)) return true;
+          dropped++;
+          return false;
+        }
+        const ruled = x.stepId != null ? byStep.get(x.stepId) ?? null : null;
+        const { c, sure } = ruled ? { c: ruled, sure: true } : controlOf(index, x.key, x.label);
+        if (!c) {
+          const off = offPage(x, now);
+          if (!off) { dropped++; return false; }
+          // Not on screen now: nothing it shows is the page's now; a field taken away offers nothing.
+          x.offPage = off;
+          if ('current' in x) x.current = null;
+          if (off === 'answer' && 'options' in x) x.options = [];
+          return true;
+        }
+        delete x.offPage;
+        const key = fieldKey(c);
+        if (key !== x.key) Object.assign(x, { key, label: c.label, q: c.q ?? null });
+        if ('controlKind' in x) x.controlKind = c.kind;
+        // A row of a shared key that can't be told now shows nothing as the page's.
+        if ('current' in x || 'options' in x) Object.assign(x, sure ? describe(c) : { current: null });
+        return true;
+      };
+      for (const k of REVIEW_LISTS) report[k] = report[k].filter(live);
+      report.kept = report.kept.filter((x) => !x.differs || live(x));
+      for (const x of report.filled) answer(x, true);
+      for (const x of report.kept) if (!x.differs) answer(x, false);
+      const was = report.reconcile;
+      report.reconcile = { ms: Math.round(((was?.ms ?? 0) + perfNow() - t0) * 100) / 100, reads: reads ?? was?.reads ?? 0, dropped: (was?.dropped ?? 0) + dropped, gone, retried: redrawRetried.size };
+    }
+    // A choice that failed against options the page has redrawn since (GEICO, 2026-10-28: UM was tried
+    // against the split limits shown before the CSL liability limit redrew them as CSL) is given once
+    // more, against the options on the page now: taken off the report, the next round answers it as
+    // any other answer. Once a fill (redrawRetried); never after a halt or the agent's own button.
+    function retryRedrawn(pairsNow) {
+      if (report.halted || agentPressed) return false;
+      const byStep = new Map(pairsNow.map((p) => [p.step.id, p]));
+      let again = false;
+      for (const x of [...report.failed]) {
+        const pair = x.stepId == null || redrawRetried.has(x.stepId) ? null : byStep.get(x.stepId);
+        if (!pair || !Array.isArray(x.options) || !['radio', 'select'].includes(pair.control.kind) || skippedField(pair.control)) continue;
+        const { step, control } = pair;
+        if (step.value == null || step.note || step.ignore || step.verifyOnly) continue;
+        const options = describe(control).options;
+        if (options.length === x.options.length && options.every((o, i) => o === x.options[i])) continue;
+        redrawRetried.add(step.id);
+        report.failed = report.failed.filter((y) => y !== x);
+        handled.delete(step.id);
+        again = true;
+      }
+      return again;
     }
 
     function clickNextAction(controls, immediateOnly = false) {
@@ -3518,6 +3706,9 @@
     const stillHere = !report.navigatedTo && currentPage() === startPage && !stepChanged() && !stoppedAt && !unreadStep;
     // Answers still waiting for another try when the fill ended are left for the agent, and so is
     // a field the page should have filled itself (emptyNote) but didn't.
+    // The page's questions are read once here for the end of the fill: these checks, the marks, the
+    // report's labels and order, and its reconciliation with the page (reconcile).
+    const endReads = controlReads;
     const finalControls = stillHere ? collectControls() : [];
     const finalPairs = stillHere ? assign(finalControls, plan) : [];
     // A unit form drawn after the last round read the page has its own edits, never the last one's.
@@ -3560,8 +3751,9 @@
       handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason.replace(/; check it$/, '')}` });
     }
     if (progressed && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
-    // The page may have redrawn while filling, so mark the final fields.
-    const controls = stoppedAt || unreadStep ? [] : collectControls();
+    // The page may have redrawn while filling, so mark the final fields: those just read, the page
+    // unchanged since (only the report changed). Read again only when the fill left its page.
+    const controls = stoppedAt || unreadStep ? [] : stillHere ? finalControls : collectControls();
     const pairs = assign(controls, plan);
     if (skipBy && stillHere) skipWhere(pairs.units);
     for (const { step, control } of stillHere ? pairs : []) {
@@ -3575,7 +3767,7 @@
     // An unfamiliar question that went away during the fill (hidden by an answer, such as the
     // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
     if (stillHere) {
-      const onPageNow = new Set(controls.map((c) => fieldKey(c)));
+      const onPageNow = keyIndex(controls);
       report.unknown = report.unknown.filter((x) => onPageNow.has(x.key) || unitGroups.readElsewhere(x.key));
       // Likewise a field that looked renamed (Codex on PR #43): it no longer holds Continue.
       report.renamed = report.renamed.filter((x) => onPageNow.has(x.key));
@@ -3652,6 +3844,9 @@
     // Helpers still held by something open over them: the panel names them (`coveredHelpers`).
     const coveredHelpers = report.blocked.filter((b) => b.why === COVERED_HELPER).map((b) => b.text);
     if (coveredHelpers.length) report.coveredHelpers = coveredHelpers;
+    // The items as the page is now, from the read above (no read or wait of its own): one whose
+    // question is gone is no item and holds nothing; the others say what the page shows now.
+    if (stillHere) reconcile(controls, pairs, controlReads - endReads);
     // Where each item's field is on the page (`order`: its place among the page's questions, in
     // document order), so the side panel lists what's left in the page's order, whichever kind
     // of item it is. Read once, from the page as it is now (as the last round read it when a
@@ -3719,6 +3914,10 @@
       phase(hold && confirmed == null ? 'waiting' : 'continue');
       if (serverBacked) await settle({ quietMs: 500, maxMs: 6000 });
       else if (advance.quietMs && quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000 });
+      // The report as the page is after that wait, from one read (reconcile), halted or not.
+      const now = collectControls();
+      const nowPairs = assign(now, plan);
+      reconcile(now, nowPairs);
       // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
       // the report says why. (Reproduced 2026-10-08: halted, and Continue clicked all the same.)
       if (report.halted) {
@@ -3727,8 +3926,6 @@
         // The carrier may have rewritten an answer during that wait (a late server response). An
         // answer whose field no longer shows it is the agent's to check (no retry here): it moves
         // to `failed`, is marked, and Continue waits.
-        const now = collectControls();
-        const nowPairs = assign(now, plan);
         const changed = changedSinceFilled(nowPairs);
         for (const { previous, pair } of changed) {
           const item = { ...previous, reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
@@ -3994,6 +4191,32 @@
     return out;
   }
 
+  // Which of the side panel's review items are on the page now, so the panel lists only questions the
+  // page has and says what it shows from the page itself (docs/browser-filling.md, "Only what is on
+  // the page"): `items` is [{ key, label }] as the fill reports them; `hidden`, the selectors of rules
+  // allowed to fill a field that isn't on screen (a fill's hiddenOk: AmWINS' earlier steps). Returns
+  // [{ key, label, controlKind, options, section, current }] for each one this frame has (describe: a
+  // box's typed text never leaves the page as `current`), in one read of the page for all of them;
+  // `shown`, what the field shows (readBack's `shown`: the text of a box too), for the answers the
+  // panel lists, and `agrees`, as in readBack, for an item with its `stepId` among `steps`; `shared`
+  // (with `current` and `shown` null) where rows of one question share the key and the label doesn't
+  // tell which row is the item's; `{ key, label, hidden: true }` alone for one whose field is in the
+  // page but not shown (a collapsed card, a closed section). It reads only.
+  function present(items, hidden = [], steps = []) {
+    const fillHidden = hiddenOk;
+    let controls;
+    try { if (!running) hiddenOk = [].concat(hidden ?? []); controls = collectControls(); } finally { hiddenOk = fillHidden; }
+    const index = keyIndex(controls);
+    return (items ?? []).flatMap(({ key, label = null, stepId = null }) => {
+      const { c, sure } = key == null ? { c: null, sure: false } : controlOf(index, key, label);
+      // In the page but not shown (a collapsed card, a closed section): there, with nothing to say.
+      if (!c) return key != null && hiddenKeys(controls).has(key) ? [{ key, label, hidden: true }] : [];
+      const step = stepId == null ? null : (steps ?? []).find((s) => String(s.id) === String(stepId));
+      return [{ key, label, controlKind: c.kind, ...describe(c), shown: shownNow(c), agrees: step ? !!agreesWith(step, c) : null,
+        ...(sure ? {} : { current: null, shown: null, agrees: null, shared: true }) }];
+    });
+  }
+
   // The page's answers as they stand, as one short fingerprint (top frame only, where Continue is;
   // null elsewhere): every question's key, label and what it shows (shownNow), but not another
   // step's hidden fields (otherStep: AmWINS' prior carriers, filled again on every step). The panel
@@ -4239,5 +4462,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 90, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 91, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, present, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

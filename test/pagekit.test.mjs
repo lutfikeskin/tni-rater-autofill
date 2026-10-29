@@ -448,7 +448,52 @@ function harness({ ext = false, pathname = '/rater', search = '' } = {}) {
   }
   vm.runInNewContext(FIELD_KEY, context, { filename: 'src/content/field-key.js' });
   vm.runInNewContext(PAGEKIT, context, { filename: 'src/content/pagekit.js' });
-  return { context, document, kit: context.__raterKit };
+  // Every fill in this file is held to the review invariant as it returns (assertLive).
+  const kit = context.__raterKit;
+  const fill = kit.fill;
+  kit.fill = async (plan, options) => {
+    const report = await fill(plan, options);
+    assertLive(kit, report, plan);
+    return report;
+  };
+  return { context, document, kit };
+}
+
+// The invariant of a fill's report (docs/browser-filling.md, "Only what is on the page"): each item
+// left for the agent is a question on the page as the fill ends, or one the kit knows is off screen
+// for now (`offPage`); and what it says the page shows and offers (`current`, `options`) is what the
+// page's field shows and offers then. Read with the kit's `present`, one read of the page. Only for
+// a fill that ended on its page (`reconcile`) and clicked no Continue.
+const REVIEW_LISTS = ['unknown', 'failed', 'noData', 'leftRequired', 'checks'];
+// How many fills and items it held over (the last test checks it covered this file's fills).
+const liveChecked = { fills: 0, items: 0, answers: 0 };
+function assertLive(kit, report, plan = []) {
+  if (!report?.reconcile || report.advanced) return;
+  const items = [...REVIEW_LISTS.flatMap((k) => report[k] ?? []), ...(report.kept ?? []).filter((x) => x.differs)]
+    .filter((x) => x.key != null && !String(x.key).startsWith('extra-row:') && !x.offPage);
+  liveChecked.fills++;
+  liveChecked.items += items.length;
+  const hidden = (plan ?? []).filter((s) => s.hidden && s.selector).map((s) => s.selector);
+  const live = kit.present(items.map((x) => ({ key: x.key, label: x.label ?? null })), hidden);
+  for (const x of items) {
+    const now = live.find((y) => y.key === x.key && y.label === (x.label ?? null));
+    assert.ok(now, `the report's "${x.label}" (${x.key}) is on the page as the fill ends`);
+    // Rows of one question sharing the key and the label: the report knows its row by its rule, the
+    // page read alone only that the question is there.
+    if ('current' in x && !now.shared) assert.deepEqual(x.current, now.current, `what "${x.label}" shows is the page's now`);
+    if ('options' in x) assert.deepEqual([...x.options], [...now.options], `what "${x.label}" offers is the page's now`);
+  }
+  // The answers the panel lists (filled, and kept as the page had them): each not `gone` is on the
+  // page (or known off screen), and what it says the page shows (`now`) is what its field shows.
+  const answers = [...(report.filled ?? []), ...(report.kept ?? []).filter((x) => !x.differs)]
+    .filter((x) => x.key != null && !String(x.key).startsWith('extra-row:') && !x.offPage && !x.gone);
+  liveChecked.answers += answers.length;
+  const shown = kit.present(answers.map((x) => ({ key: x.key, label: x.label ?? null })), hidden);
+  for (const x of answers) {
+    const now = shown.find((y) => y.key === x.key && y.label === (x.label ?? null));
+    assert.ok(now, `the answer "${x.label}" (${x.key}) is on the page as the fill ends, or said gone`);
+    if (!now.shared) assert.equal(x.now, now.shown, `the answer "${x.label}" shows what the page shows now`);
+  }
 }
 
 function recorderHarness(document = new FakeDocument()) {
@@ -8421,4 +8466,160 @@ test('GEICO coverage rows: a row naming no intake unit is named for the agent, n
   const named = plain(report.checks.filter((x) => /2012 KENWORTH/.test(x.label)).map((x) => [x.name, x.note]));
   assert.equal(named.length, 5, JSON.stringify(named));
   for (const [, note] of named) assert.match(note, /matches none of the intake's vehicles and trailers/);
+});
+
+// GEICO live run, 2026-10-28 (TX, build 0.9.27): Quote & Coverages came with GEICO's split defaults
+// (bodily injury $30,000/$60,000, property damage $25,000, UM $30,000/$60,000, UMPD $25,000). The
+// fill read property damage and UMPD as the agent's and set the intake's $1,000,000 CSL, on which
+// GEICO took both off the page and drew UM's limits again as CSL, a moment later; UM was tried
+// against the split limits shown before ("no option matches"). The report kept both items ("On the
+// page now: $25,000", on a page without them) and they held Recalculate until the agent marked them
+// done. Scrubbed: GEICO's captions and limits only.
+function cslRedrawPage() {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  h.document.body.innerText = STALE;
+  let n = 30000;
+  // A policy-level list as GEICO draws it: a new uuid each time, captioned by its legend's [for].
+  // `box`: drawn again in its place (GEICO's redraw), its old list gone.
+  const list = (caption, options, value, box = new FakeNode('div')) => {
+    const id = `Id_${randomUUID()}_${n++}`;
+    const legend = new FakeNode('gds-label-legend', { attrs: { element: 'label', for: id } });
+    legend.append(new FakeNode('span', { textContent: caption }));
+    const select = new SelectNode(options, { id, ariaLabel: caption, value });
+    for (const old of [...box.children]) old.remove();
+    box.append(legend, select);
+    return { box, select };
+  };
+  const UM = 'Uninsured Motorist Bodily Injury (includes Underinsured)';
+  const page = {
+    h, recalcs: 0,
+    liability: list('Liability Coverage', ['Bodily Injury and Property Damage Liability', 'Non-Trucking Liability'], 'Bodily Injury and Property Damage Liability'),
+    bi: list('Bodily Injury or Combined Single Limit Liability', ['$30,000/$60,000', '$100,000/$300,000', '$500,000 Combined Single Limit', '$1,000,000 Combined Single Limit'], '$30,000/$60,000'),
+    pd: list('Property Damage Liability (PD)', ['$25,000', '$50,000', '$100,000'], '$25,000'),
+    // UM no higher than bodily injury: only its split limit while that is $30,000/$60,000.
+    um: list(UM, ['$30,000/$60,000'], '$30,000/$60,000'),
+    umpd: list('Uninsured Motorist Property Damage (UMPD)', ['$25,000'], '$25,000'),
+    med: list('Medical Payments (MED)', [{ text: 'Not Included', value: '' }, '$5,000'], ''),
+  };
+  for (const k of ['liability', 'bi', 'pd', 'um', 'umpd', 'med']) h.document.body.append(page[k].box);
+  // A CSL limit: 200 ms later, property damage and UMPD gone, and UM drawn again with CSL limits.
+  let redrawn = false;
+  page.bi.select.addEventListener('change', () => {
+    if (redrawn || !/combined/i.test(page.bi.select.value)) return;
+    redrawn = true;
+    setTimeout(() => {
+      page.pd.box.remove();
+      page.umpd.box.remove();
+      page.um = list(UM, ['$100,000 Combined Single Limit', '$300,000 Combined Single Limit', '$500,000 Combined Single Limit'], '$300,000 Combined Single Limit', page.um.box);
+    }, 200);
+  });
+  const recalc = addButton(h, 'Recalculate');
+  recalc.onclick = () => { page.recalcs++; rate(h); };
+  const record = { ...geicoRecord(), garaging: { state: 'TX' }, coverage: { autoLiability: 'Yes', autoLiabLimit: '$1M CSL' } };
+  const rules = geico.rules.filter((r) => ['LiabilityCoverage', 'PropertyDamage', 'UninsuredMotorist', 'UninsuredMotoristPd', 'MedicalPayments'].includes(r.q) || r.ask === 'Bodily Injury or Combined Single Limit Liability');
+  page.plan = buildPlan(record, { id: 'geico', useGenericRules: false, rules, actions: geico.actions.filter((a) => a.id === 'recalculate') });
+  return page;
+}
+
+test('GEICO coverages: a CSL limit takes property damage and UMPD off the page and redraws UM; the report has only what is left, UM given again (2026-10-28)', async () => {
+  const p = cslRedrawPage();
+  const report = await p.h.kit.fill(p.plan, { replaceChoices: true, maxRounds: 20 });
+  // Property damage and UMPD are gone from the page: no item, no blocker, nothing that held Recalculate.
+  // (GEICO's pay plans, drawn once rated, are the only question left: no rule for them here.)
+  assert.deepEqual(plain([...report.noData, ...report.failed, ...report.checks, ...report.unknown, ...report.leftRequired].map((x) => x.label)), ['give pay plan v2']);
+  assert.ok(!report.blockers.some((b) => /Property Damage|UMPD|Uninsured/.test(b)), report.blockers.join(' / '));
+  // UM, tried against the split limits before the redraw, is given once more against the CSL ones.
+  assert.equal(p.um.select.value, '$100,000 Combined Single Limit');
+  assert.deepEqual(plain(report.filled.filter((x) => /Uninsured/.test(x.label)).map((x) => [x.key, x.shown])),
+    [['cov:uninsured motorist bodily injury includes underinsured', '$100,000 Combined Single Limit']]);
+  assert.equal(p.bi.select.value, '$1,000,000 Combined Single Limit');
+  assert.equal(p.med.select.value, '$5,000');
+  // Nothing left for the agent: Recalculate clicked, once.
+  assert.equal(p.recalcs, 1);
+  // The end of the fill read the page once, and that read reconciled the report: two items dropped.
+  assert.deepEqual(plain({ reads: report.reconcile.reads, dropped: report.reconcile.dropped, retried: report.reconcile.retried }), { reads: 1, dropped: 2, retried: 1 });
+  assert.ok(report.reconcile.ms >= 0);
+});
+
+test('the review items left on the page say what the page shows now; a gone question is dropped and holds nothing', async () => {
+  const h = harness({ pathname: '/quote' });
+  const stays = new SelectNode(['', 'A', 'B'], { id: 'Id_GiveStays_1', ariaLabel: 'Stays', value: 'A' });
+  const goes = new SelectNode(['', 'X'], { id: 'Id_GiveGoes_1', ariaLabel: 'Goes', value: 'X' });
+  const answer = new SelectNode(['', 'Yes', 'No'], { id: 'Id_GiveAnswer_1', ariaLabel: 'Answer', value: '' });
+  h.document.body.append(stays, goes, answer);
+  // The answer redraws the page: Stays offers C and shows B, Goes is taken away.
+  answer.addEventListener('change', () => {
+    stays.options.push(new OptionNode('C'));
+    stays.value = 'B';
+    goes.remove();
+  });
+  const plan = [
+    { id: 1, field: 'GiveStays', path: 'geico.qStays', name: 'Stays', kind: 'choice', value: null },
+    { id: 2, field: 'GiveGoes', path: 'geico.qGoes', name: 'Goes', kind: 'choice', value: null },
+    { id: 3, field: 'GiveAnswer', path: 'geico.qAnswer', name: 'Answer', kind: 'choice', value: 'Yes' },
+  ];
+  const report = await h.kit.fill(plan, { maxRounds: 5 });
+  assert.equal(answer.value, 'Yes');
+  // Read before the answer (A, without C), said as the page has it as the fill ends.
+  assert.deepEqual(plain(report.noData.map((x) => [x.key, x.current, x.options])), [['ref:GiveStays', 'B', ['A', 'B', 'C']]]);
+  assert.deepEqual(plain(report.blockers), ['needs you: Stays']);
+  assert.equal(report.reconcile.dropped, 1);
+});
+
+// An answer that went in and whose question a later answer then takes off the page (GEICO: property
+// damage answered, then the CSL liability limit removes it) is said `gone`: the panel lists no row for
+// it. The answers left say what the page shows now (`now`), in the page's own format.
+test('an answer the fill gave whose question a later answer takes off the page is gone; the others show the page', async () => {
+  const h = harness({ pathname: '/quote' });
+  const pd = new SelectNode(['', '$25,000', '$50,000'], { id: 'Id_GivePd_1', ariaLabel: 'Property Damage Liability (PD)', value: '$25,000' });
+  const bi = new SelectNode(['', '$30,000/$60,000', '$1,000,000 Combined Single Limit'], { id: 'Id_GiveBi_1', ariaLabel: 'Bodily Injury or Combined Single Limit Liability', value: '$30,000/$60,000' });
+  const zip = makeInput({ id: 'Id_GiveZip_1', ariaLabel: 'Zip Code', value: '' });
+  h.document.body.append(pd, bi, zip);
+  bi.addEventListener('change', () => { if (/Combined/.test(bi.value)) pd.remove(); });
+  // The page writes its own format of the ZIP a moment after it is typed, as GEICO's mask does.
+  zip.addEventListener('change', () => { setTimeout(() => { zip.value = `${zip.value}-1234`; }, 50); });
+  const plan = [
+    { id: 1, field: 'GivePd', path: 'geico.qPd', name: 'Property damage', kind: 'choice', value: '$50,000' },
+    { id: 2, field: 'GiveBi', path: 'coverage.autoLiabLimit', name: 'Liability limit', kind: 'choice', value: '$1,000,000 Combined Single Limit' },
+    { id: 3, field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'zip', value: '21000' },
+  ];
+  const report = await h.kit.fill(plan, { replaceChoices: true, maxRounds: 6 });
+  assert.equal(h.document.getElementById('Id_GivePd_1'), null, 'the liability limit took property damage off the page');
+  assert.deepEqual(plain(report.filled.map((x) => [x.key, x.shown, x.gone ?? false, x.now ?? null, x.changed ?? null])), [
+    ['ref:GivePd', '$50,000', true, null, null],
+    ['ref:GiveBi', '$1,000,000 Combined Single Limit', false, '$1,000,000 Combined Single Limit', null],
+    ['ref:GiveZip', '21000', false, '21000-1234', null],
+  ]);
+  assert.equal(report.reconcile.gone, 1);
+  assert.equal(report.reconcile.reads, 1, 'from the end of the fill\'s own read');
+});
+
+// A card the page collapses after its questions were answered (GEICO's cargo card after Recalculate,
+// in the GEICO mock): its fields are in the page, not shown. Its answers and items stay, off screen
+// ('hidden'), saying nothing of what the page shows; the panel's reading says the same (present).
+test('answers and items in a section the page closes stay, off screen, with nothing said of the page', async () => {
+  const h = harness({ pathname: '/quote' });
+  const cargo = new SelectNode(['', 'Yes', 'No'], { id: 'Id_GiveCargo_1', ariaLabel: 'Cargo', value: '' });
+  const limit = new SelectNode(['', '$50,000', '$100,000'], { id: 'Id_GiveLimit_1', ariaLabel: 'Cargo limit', value: '' });
+  const close = new SelectNode(['', 'Done'], { id: 'Id_GiveClose_1', ariaLabel: 'Close', value: '' });
+  h.document.body.append(cargo, limit, close);
+  close.addEventListener('change', () => { cargo._visible = false; limit._visible = false; });
+  const plan = [
+    { id: 1, field: 'GiveCargo', path: 'coverage.cargo', name: 'Cargo', kind: 'choice', value: 'Yes' },
+    { id: 2, field: 'GiveLimit', path: 'coverage.cargoLimit', name: 'Cargo limit', kind: 'choice', value: null },
+    { id: 3, field: 'GiveClose', path: 'geico.qClose', name: 'Close', kind: 'choice', value: 'Done' },
+  ];
+  const report = await h.kit.fill(plan, { maxRounds: 6 });
+  assert.deepEqual(plain(report.filled.map((x) => [x.key, x.offPage ?? null, x.gone ?? false, x.now ?? null])),
+    [['ref:GiveCargo', 'hidden', false, null], ['ref:GiveClose', null, false, 'Done']]);
+  assert.deepEqual(plain(report.noData.map((x) => [x.key, x.offPage, x.current])), [['ref:GiveLimit', 'hidden', null]]);
+  assert.deepEqual(plain(h.kit.present([{ key: 'ref:GiveLimit', label: 'Cargo limit' }, { key: 'ref:Nothing', label: 'x' }])), [{ key: 'ref:GiveLimit', label: 'Cargo limit', hidden: true }]);
+});
+
+// Last in this file: the invariant (assertLive) held over the fills of every test above, not a few.
+test('every fill in this file ended with only what is on the page in its report', () => {
+  assert.ok(liveChecked.fills >= 500, `${liveChecked.fills} fills checked`);
+  assert.ok(liveChecked.items >= 300, `${liveChecked.items} items checked`);
+  assert.ok(liveChecked.answers >= 500, `${liveChecked.answers} answers checked`);
 });

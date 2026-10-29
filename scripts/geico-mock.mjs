@@ -360,6 +360,9 @@ const filledKeys = new Set();
 const left = {};
 let run = 0;
 let totalMs = 0;
+// What the fills' end cost to make their reports agree with the page (pagekit reconcile): each one's
+// time and page reads, said with the filling time.
+const reconciled = [];
 
 // One fill of the page as the panel starts it (fillPage): the recorder paused, the plan for the
 // picker's units, the options of sidepanel.js fillOptions for GEICO, then rememberFill's bookkeeping.
@@ -393,6 +396,7 @@ async function fill(form, { asked = false, expectFailed = [] } = {}) {
   const report = await inWorld(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify(options)})`);
   const ms = Date.now() - t0;
   totalMs += ms;
+  if (report.reconcile) reconciled.push(report.reconcile);
   // Its Continue: the view it leads to drawn before anything else (the panel waits for the page to change).
   if (report.advanced) {
     doneSteps.push(report.advanceKey ?? report.stepKey);
@@ -443,6 +447,9 @@ async function fill(form, { asked = false, expectFailed = [] } = {}) {
   if (report.unitHeld) lines.push(`  held: this ${report.unitHeld.list.slice(0, -1)} form may be another unit's`);
   if (report.advanced) lines.push(`  → ${report.advanced}`);
   if (report.halted) lines.push(`  halted: ${report.reason}`);
+  // Answers whose question the page took away after they went in: no row in the panel (reconcile).
+  const goneAnswers = [...report.filled, ...report.kept].filter((x) => x.gone);
+  if (goneAnswers.length) lines.push(`  gone from the page since: ${named(goneAnswers)}`);
   for (const x of report.unknown ?? []) fail(`${form}: unfamiliar question "${x.label}" (${x.key}): left for the agent and offered to the AI assistant`);
   for (const x of report.failed ?? []) if (!expectFailed.some((re) => re.test(String(x.key)))) fail(`${form}: failed "${x.label}" (${x.key}): ${x.reason}`);
   return report;
@@ -1216,6 +1223,11 @@ await browser.close();
 
 const views = final.log.filter((e) => e.type === 'view').map((e) => e.target);
 lines.push(`Filling time: ${(totalMs / 1000).toFixed(1)} s over ${fills.length} fills`);
+if (reconciled.length) {
+  const total = reconciled.reduce((n, r) => n + r.ms, 0);
+  lines.push(`Reports made to agree with the page at the end: ${reconciled.length} fills, ${total.toFixed(1)} ms in all (${Math.max(...reconciled.map((r) => r.ms)).toFixed(1)} ms at most), `
+    + `${Math.max(...reconciled.map((r) => r.reads))} page read(s) at most each, ${reconciled.reduce((n, r) => n + r.dropped, 0)} item(s) gone dropped, ${reconciled.reduce((n, r) => n + (r.gone ?? 0), 0)} answer(s) gone, ${reconciled.reduce((n, r) => n + r.retried, 0)} choice(s) given again`);
+}
 lines.push(`Views: ${views.join(' → ')}`);
 lines.push(`Recalculate ×${final.recalcs} (premium ${final.premium ? 'rated' : 'out of date'}) · agent's protected keys: ${[...agentKeys].map(([s, k]) => `${s === PAGE ? 'page' : s.slice(PAGE.length + 1)} ${k.size}`).join(', ')}`);
 lines.push('', failures.length ? `${failures.length} problem(s):` : `All ${answers} answers as expected; every needs-you item left for the agent; vehicle 2 and driver 2 added by the extension, once each; continued only where nothing was left for the agent; nothing clicked or filled that is the agent's.`);
