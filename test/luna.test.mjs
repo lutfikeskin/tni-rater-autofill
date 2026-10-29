@@ -5,6 +5,7 @@ import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
   firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES } from '../src/ai/luna.js';
 import { settingsFrom } from '../src/ai/providers.js';
+import { NTL_RATES } from '../src/normalize.js';
 
 const context = { carrier: 'geico', page: 'operations', active: { drivers: 0, vehicles: 0 },
   record: { operations: { hazPlacard: false }, drivers: [{ licenseNumber: 'private-identifier' }, { name: 'inactive-person' }], vehicles: [] } };
@@ -411,6 +412,8 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.deepEqual(notesWarnings(results, review).map((w) => [w.code, w.path, w.level]), [['ai.coverage-change', 'claims.text', 'check'], ['ai.ntl', 'coverage.ntl', 'check']],
     'NTL and other coverage changes are separate flags');
   assert.ok(notesWarnings(results, review)[1].msg.includes('needs coverage off dispatch'), 'the line is quoted');
+  // As the intake's own NTL items say it (PR #176): with cargo or GL too, the rest of Rates is the agent's.
+  assert.ok(notesWarnings(results, review)[1].msg.includes(NTL_RATES), 'Luna\'s NTL item says what is left to the agent on Rates');
   assert.ok(notesWarnings(parseNotesReview(flags([[false, false], [false, false], [false, false], [true, false]]), review), review).length === 0,
     'the line the intake already quotes for NTL is not repeated');
   // Codex on PR #22: only that line, not every NTL line ("does not want bobtail" quoted first).
@@ -476,7 +479,7 @@ test('claims-box review counts flagged lines and says when the box was too long 
   const all = await reviewNotes(long, { apiKey: 'k' }, { call: async ({ body }) => envelope({ lines: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).claimsBox).map((id) => [id, { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false }])) }) });
   assert.equal(all.lines, 20);
   assert.deepEqual(all.warnings.map((w) => [w.code, w.level]), [['ai.claims-truncated', 'check']]);
-  assert.match(all.warnings[0].msg, /first 20 lines only/);
+  assert.match(all.warnings[0].msg, /first 20 lines of the notes/);
 });
 
 // Codex on PR #22: a later "NTL" line isn't the quoted "Does not want NTL"; "GL" alone is read.
@@ -559,7 +562,7 @@ test('claims-box review: a general liability mention the form lacks is a check i
 
   const items = notesWarnings(parseNotesReview(lines(true), review), review);
   assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.gl', 'coverage.hasGl', 'check']]);
-  assert.match(items[0].msg, /mention general liability: "Also has general liability with another agency, wants it quoted"/);
+  assert.match(items[0].msg, /mention GL: "Also has general liability with another agency, wants it quoted"/);
   assert.match(items[0].msg, /None of the above.*left to you/);
   assert.doesNotMatch(items[0].msg, /GL limit|Requested coverage/, 'not a GL request');
   assert.deepEqual(items[0].choices, [{ label: 'Client has GL', path: 'coverage.hasGl', value: true }, { label: 'Not GL' }]);
@@ -614,7 +617,7 @@ test('driver names: only first names are sent, the answer is a bounded guess, li
   const reply = (d0, d1 = 'likely_male') => envelope({ drivers: { d0, d1 } });
   const items = nameWarnings(parseNameReview(reply('likely_female'), review), review, record);
   assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.driver-gender', 'drivers[0].gender', 'check']]);
-  assert.match(items[0].msg, /^Luna: driver 1's gender is filled Male \(TNI standard\)\. "Maria" is more often a woman's name\. This is a guess from the first name only/);
+  assert.match(items[0].msg, /^Luna: driver 1 is filled Male \(TNI standard\), but "Maria" is more often a woman's name: a guess from the first name only\. Check\./);
   assert.deepEqual(items[0].choices, [{ label: 'Use Female', path: 'drivers[0].gender', value: 'FEMALE' }, { label: 'Keep Male', path: 'drivers[0].gender', value: 'MALE' }]);
   assert.deepEqual(nameWarnings(parseNameReview(reply('unclear'), review), review, record), [], 'unclear: the standard stands');
   // Set meanwhile, or a renamed driver: no item.
