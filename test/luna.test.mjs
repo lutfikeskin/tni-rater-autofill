@@ -476,7 +476,7 @@ test('claims-box review counts flagged lines and says when the box was too long 
   const all = await reviewNotes(long, { apiKey: 'k' }, { call: async ({ body }) => envelope({ lines: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).claimsBox).map((id) => [id, { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false }])) }) });
   assert.equal(all.lines, 20);
   assert.deepEqual(all.warnings.map((w) => [w.code, w.level]), [['ai.claims-truncated', 'check']]);
-  assert.match(all.warnings[0].msg, /first 20 lines only/);
+  assert.match(all.warnings[0].msg, /first 20 lines of the notes/);
 });
 
 // Codex on PR #22: a later "NTL" line isn't the quoted "Does not want NTL"; "GL" alone is read.
@@ -559,7 +559,7 @@ test('claims-box review: a general liability mention the form lacks is a check i
 
   const items = notesWarnings(parseNotesReview(lines(true), review), review);
   assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.gl', 'coverage.hasGl', 'check']]);
-  assert.match(items[0].msg, /mention general liability: "Also has general liability with another agency, wants it quoted"/);
+  assert.match(items[0].msg, /mention GL: "Also has general liability with another agency, wants it quoted"/);
   assert.match(items[0].msg, /None of the above.*left to you/);
   assert.doesNotMatch(items[0].msg, /GL limit|Requested coverage/, 'not a GL request');
   assert.deepEqual(items[0].choices, [{ label: 'Client has GL', path: 'coverage.hasGl', value: true }, { label: 'Not GL' }]);
@@ -614,7 +614,7 @@ test('driver names: only first names are sent, the answer is a bounded guess, li
   const reply = (d0, d1 = 'likely_male') => envelope({ drivers: { d0, d1 } });
   const items = nameWarnings(parseNameReview(reply('likely_female'), review), review, record);
   assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.driver-gender', 'drivers[0].gender', 'check']]);
-  assert.match(items[0].msg, /^Luna: driver 1's gender is filled Male \(TNI standard\)\. "Maria" is more often a woman's name\. This is a guess from the first name only/);
+  assert.match(items[0].msg, /^Luna: driver 1 is filled Male \(TNI standard\), but "Maria" is more often a woman's name\. Check\./);
   assert.deepEqual(items[0].choices, [{ label: 'Use Female', path: 'drivers[0].gender', value: 'FEMALE' }, { label: 'Keep Male', path: 'drivers[0].gender', value: 'MALE' }]);
   assert.deepEqual(nameWarnings(parseNameReview(reply('unclear'), review), review, record), [], 'unclear: the standard stands');
   // Set meanwhile, or a renamed driver: no item.

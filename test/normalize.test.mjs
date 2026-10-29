@@ -31,7 +31,7 @@ test('business details are cleaned up', () => {
 
 test('garaging address without commas is split and flagged', () => {
   assert.deepEqual(record.garaging, { street: '125 Maple Leaf Dr', unit: 'Apt 4', city: 'Springfield', state: 'IL', zip: '62704' });
-  assert.match(msgs, /garaging\.city: Address had no commas/);
+  assert.match(msgs, /garaging\.city: Split an address with no commas/);
 });
 
 test('drivers: license prefix removed, two-word first name flagged, short dates fixed', () => {
@@ -40,7 +40,7 @@ test('drivers: license prefix removed, two-word first name flagged, short dates 
   assert.equal(d1.licenseNumber, 'ILS12345678901', 'leading state code stays in the number');
   assert.equal(d1.licenseState, 'IL');
   assert.equal(d1.first, 'Jordan Avery', 'kept as written, not guessed');
-  assert.match(msgs, /drivers\[0\]\.first: .*more than one word/);
+  assert.match(msgs, /drivers\[0\]\.first: .*has two words/);
   assert.equal(d1.maritalStatus, 'Single');
   assert.equal(d2.dob, '07/09/1995');
   assert.equal(d2.cdl, true);
@@ -126,7 +126,7 @@ test('radius: long-haul phrases, miles, ranges and other units, with what each c
   const range = normalizeIntake({ ...raw, avg_radius: '100-500 miles' }, today).warnings.find((w) => w.code === 'radius.range');
   assert.equal(range.level, 'check');
   assert.equal(range.path, 'operations.radiusMiles', 'the check card edits the miles');
-  assert.match(range.msg, /"100-500 miles", a range/);
+  assert.match(range.msg, /"100-500 miles" is a range/);
   const disclosure = (written) => buildPlan(normalizeIntake({ ...raw, avg_radius: written }, today).record, amwins).find((s) => s.re === '^disclosure details$').value;
   assert.match(disclosure('48 states'), /More than 500 miles radius/, 'AmWINS disclosure line for the lower 48');
   assert.match(disclosure('48'), /^48 miles radius/m);
@@ -267,7 +267,7 @@ test('split trailer ownership notes never become vehicle ownership on either car
     const check = warnings.find((w) => w.code === 'ownership.notes');
     assert.equal(check?.path, 'operations.vehicleOwnership');
     assert.equal(check?.level, 'check');
-    assert.match(check?.msg ?? '', /don't settle it for the vehicles/);
+    assert.match(check?.msg ?? '', /Notes mention ownership/);
     assert.deepEqual(targets(r), missingTargets, `${notes}: neither carrier receives an inferred vehicle fact`);
   }
   for (const notes of ['Financed', 'Truck financed.', 'Truck.\nFinanced.', 'No claims in 3 years\nVehicle financed.']) {
@@ -722,7 +722,7 @@ test('a blank "owner drives" box: the record stays blank, and an owner missing f
   const blank = read({ owner_drives: '' });
   assert.equal(blank.record.applicant.ownerDrives, null, 'blank stays blank on the record');
   assert.deepEqual([notListed(blank)?.level, notListed(blank)?.path], ['check', 'drivers']);
-  assert.match(notListed(blank).msg, /"Owner drives" is blank.*TNI's standard Yes.*"SOMEONE ELSE" isn't in the driver list/);
+  assert.match(notListed(blank).msg, /Owner drives is blank \(TNI standard Yes\).*"SOMEONE ELSE" isn't a driver/);
   assert.match(notListed(read({ owner_drives: true })).msg, /^Owner drives, but "SOMEONE ELSE" isn't in the driver list\.$/);
   assert.equal(notListed(read({ owner_drives: false })), undefined, 'the intake\'s No: no driver details needed');
   assert.equal(notListed(read({ owner_drives: '', drv_first_1: 'SAMPLE', drv_last_1: 'EXAMPLO' })), undefined, 'a driver row: the owner\'s, the first');
@@ -740,7 +740,7 @@ test('a suffix or a middle initial written in a name box is kept apart from the 
   assert.deepEqual(parts(jr), ['SAMPLE', null, 'EXAMPLO', 'JR']);
   assert.ok(codes(jr).includes('name.suffix') && !codes(jr).includes('name.multi-word-first'), codes(jr).join(' '));
   assert.equal(jr.warnings.find((w) => w.code === 'name.suffix').level, 'info');
-  assert.match(jr.warnings.find((w) => w.code === 'name.suffix').msg, /"SAMPLE, JR" read as first name SAMPLE and suffix JR/);
+  assert.match(jr.warnings.find((w) => w.code === 'name.suffix').msg, /first-name box "SAMPLE, JR" read as first name SAMPLE, suffix JR/);
   const initial = one('JORDAN L');
   assert.deepEqual(parts(initial), ['JORDAN', 'L', 'EXAMPLO', null]);
   assert.ok(codes(initial).includes('name.middle-initial') && !codes(initial).includes('name.multi-word-first'));
@@ -787,7 +787,7 @@ test('"Excluded" in a license-number box marks the driver excluded and is left o
     assert.deepEqual(read(r), [number, true], box);
     const w = r.warnings.find((x) => x.code === 'license.excluded');
     assert.deepEqual([w?.level, w?.path], ['check', 'drivers[0].excluded'], box);
-    assert.ok(w.msg.includes(`license-number box "${box}"`), `${box}: the item quotes the box`);
+    assert.ok(w.msg.includes(`("${box}")`), `${box}: the item quotes the box`);
     // Nothing left is no license number, as for a blank box.
     assert.equal(codes(r).includes('license.missing'), number == null, box);
   }
@@ -819,7 +819,7 @@ test('"Excluded" in a license-number box marks the driver excluded and is left o
   // 2026-10-28; the carriers' answers above stay in their plans), but never that the quote handles an
   // exclusion GEICO can't (PR #216 review): the owner's row, here, GEICO leaves out; the signed form.
   const said = (box) => one(box).warnings.find((w) => w.code === 'license.excluded').msg;
-  assert.equal(said('12345678 EXCLUDED'), 'Jordan Avery Sample: license-number box "12345678 EXCLUDED" marks this driver excluded. GEICO\'s quote leaves them out, as the owner. An exclusion usually needs the insured\'s signed form.');
+  assert.equal(said('12345678 EXCLUDED'), 'Jordan Avery Sample: marked excluded ("12345678 EXCLUDED"). GEICO leaves them out, as the owner. Needs the insured\'s signed form.');
   for (const box of ['12345678 EXCLUDED', 'Excluded']) assert.doesNotMatch(said(box), /Progressive|AmWINS|lists them as an excluded/, box);
 });
 
@@ -844,7 +844,7 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
   // walkthrough. Before, it was on the owner's row's Excluded driver (`drivers[0].excluded`), where
   // the agent's No meant "not excluded" while the box stayed No (2026-10-28 runs).
   assert.deepEqual(items(no).map((w) => [w.level, w.path]), [['check', 'applicant.ownerDrives']]);
-  assert.equal(item(no).msg, 'Does the owner drive? The intake says No: No quotes the owner (Jordan Avery Sample, the first driver) as an excluded driver, Yes as a driver.');
+  assert.equal(item(no).msg, 'Does the owner drive? The intake says No, so the owner (Jordan Avery Sample, the first driver) is quoted as excluded.');
   assert.ok(!no.warnings.some((w) => w.path === 'drivers[0].excluded' || w.path === 'drivers[1].excluded'), 'nothing on a row\'s Excluded driver');
   // The agent's answer on that box: Yes, the owner drives and isn't excluded on every carrier; the
   // No stands as excluded.
@@ -878,7 +878,7 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
   const noNumber = read({ owner_drives: 'No', drv_lic_1: '' });
   assert.equal(amwinsLicense(noNumber, 0).value, null);
   assert.match(amwinsLicense(noNumber, 0).note, /owner doesn't drive.*type their license number yourself, then "\(Excluded\)" after it/);
-  assert.equal(item(noNumber).msg, 'Does the owner drive? The intake says No: No quotes the owner (Jordan Avery Sample, the first driver) as an excluded driver, Yes as a driver.');
+  assert.equal(item(noNumber).msg, 'Does the owner drive? The intake says No, so the owner (Jordan Avery Sample, the first driver) is quoted as excluded.');
   // A row the intake marks excluded keeps its own item (license.excluded), not this one, with the
   // same plain sentence whatever the box says (before, its GEICO sentence changed for the owner's row).
   const marked = read({ owner_drives: 'No', drv_lic_1: 'IL - S12345678901 EXCLUDED' });
@@ -886,11 +886,11 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
   const licenseItem = (r, i) => r.warnings.find((w) => w.code === 'license.excluded' && w.path === `drivers[${i}].excluded`).msg;
   for (const box of ['No', '', 'Yes']) {
     const r = read({ owner_drives: box, drv_lic_1: 'IL - S12345678901 EXCLUDED' });
-    assert.equal(licenseItem(r, 0), `Jordan Avery Sample: license-number box "IL - S12345678901 EXCLUDED" marks this driver excluded. GEICO's quote leaves them out, as the owner. An exclusion usually needs the insured's signed form.`, box);
+    assert.equal(licenseItem(r, 0), `Jordan Avery Sample: marked excluded ("IL - S12345678901 EXCLUDED"). GEICO leaves them out, as the owner. Needs the insured's signed form.`, box);
   }
   // Another driver: GEICO has no exclusion question, so the item never says the quote handles it.
   const otherDriver = licenseItem(read({ owner_drives: 'No', drv_lic_2: 'E98765432101 EXCLUDED' }), 1);
-  assert.match(otherDriver, /: license-number box "E98765432101 EXCLUDED" marks this driver excluded\. GEICO has no exclusion question, so exclude them there yourself\. An exclusion usually needs the insured's signed form\.$/);
+  assert.match(otherDriver, /: marked excluded \("E98765432101 EXCLUDED"\)\. On GEICO, exclude them yourself\. Needs the insured's signed form\.$/);
   // Counterexamples: a blank box or the intake's Yes leaves the owner's unmarked row a listed driver.
   for (const box of ['', 'Yes']) {
     const r = read({ owner_drives: box });
@@ -917,7 +917,7 @@ test('the owner is the first driver (V4): a first row with another name is taken
   // A first row with another name: the owner, with the check.
   const other = read({ drv_first_1: 'Riley', drv_last_1: 'Example' });
   assert.deepEqual([item(other)?.level, item(other)?.path], ['check', 'drivers[0]']);
-  assert.match(item(other).msg, /first driver's name differs from the owner's.*taken as the owner/);
+  assert.match(item(other).msg, /first driver is taken as the owner, though the names differ/);
   assert.doesNotMatch(item(other).msg, /Riley|Example|Jordan|Avery|Sample/, 'no names in the item');
   assert.equal(other.warnings.find((w) => w.code === 'drivers.owner-not-listed'), undefined, 'the owner is on the list: the first row');
   // The owner's name on row 2 only: row 1 is still the owner (the check), row 2 an ordinary driver.
@@ -1075,7 +1075,7 @@ test('NTL with cargo asked for is a check for the agent, on every carrier', () =
   const w = both.warnings.find((x) => x.code === 'coverage.ntl-cargo');
   assert.equal(w?.level, 'check');
   assert.equal(w.path, 'coverage.cargo');
-  assert.match(w.msg, /non-trucking/i);
+  assert.match(w.msg, /NTL/);
   assert.match(w.msg, /cargo/i);
   for (const changes of [{ auto_liability: 'Non-Trucking', cargo_cov: 'No' }, { auto_liability: 'Yes', cargo_cov: 'Yes' }, { auto_liability: 'Non-Trucking', cargo_cov: '' }]) {
     assert.ok(!normalizeIntake({ ...raw, ...changes }, today).warnings.some((x) => x.code === 'coverage.ntl-cargo'), JSON.stringify(changes));
@@ -1093,7 +1093,7 @@ test('NTL with filings or a USDOT number on the intake: an info item says TNI ad
   const filings = item({ auto_liability: 'Non-Trucking', fed_state_filings: 'Yes', dot_number: '1234567' });
   assert.equal(filings?.level, 'info');
   assert.equal(filings.path, 'operations.filingsRequired');
-  assert.match(filings.msg, /non-trucking liability/i);
+  assert.match(filings.msg, /NTL quote: TNI adds no USDOT and no filings/);
   assert.match(filings.msg, /no filings/i);
   assert.match(filings.msg, /USDOT/);
   // A USDOT number without filings: said on the number.
@@ -1865,7 +1865,7 @@ test('a statement not read beside a figure read leaves years in business to the 
   // Across the two boxes: both named, and the answer points at both.
   const both = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'N/A', claims_details: 'No\nin business for 3 years', additional_notes: 'several years in business' }, W44);
   assert.equal(both.record.applicant.yearsInBusinessUnread, true);
-  assert.match(both.warnings.find((x) => x.code === 'years-in-business.notes').msg, /the claims box and the Additional Notes box say "in business for 3 years" and "several years in business"/);
+  assert.match(both.warnings.find((x) => x.code === 'years-in-business.notes').msg, /the claims box and the Additional Notes box say "in business for 3 years" and "several years in business"/i);
   assert.deepEqual(both.readFrom, { 'applicant.yearsInBusiness': ['claims_details', 'additional_notes'] });
   assert.equal(buildPlan(both.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, null);
   // Counterexamples: a figure beside notes about something else, or agreeing figures, still reads.

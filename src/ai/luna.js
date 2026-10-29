@@ -1,7 +1,7 @@
 // Luna resolves bounded choices; code gates automatic picks and the agent approves them.
 import { AssistError, RequestTooLarge, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake, rowsFor, entityOf, intakeValue } from './common.js';
 import { fieldInfo } from '../schema.js';
-import { ntlMention, intakeNotes, NTL_WORDS, NTL_FILLS } from '../normalize.js';
+import { ntlMention, intakeNotes, NTL_WORDS } from '../normalize.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
 export const API_URL = 'https://api.openai.com/v1/responses';
@@ -408,7 +408,7 @@ export function notesWarnings(results, { quotedFragments = [], ntlSet = false, i
   const gl = results.find((x) => x.generalLiability === true && (!lines || lines.includes(x.line)));
   if (gl) {
     out.push({ line: gl.line, code: 'ai.gl', path: 'coverage.hasGl', level: 'check', choices: GL_CHOICES.map((c) => ({ ...c })),
-      msg: `Luna: the claims box or Additional Notes mention general liability: "${shortQuote(gl.line)}". Progressive's other business coverages are filled None of the above unless the client has GL. If they have it, confirm it: those questions are then left to you.` });
+      msg: `Luna: notes mention GL: "${shortQuote(gl.line)}". Progressive fills None of the above unless you confirm it; then those questions are left to you.` });
   }
   const stated = results.find((x) => statedYears(x, year) != null);
   const years = stated ? statedYears(stated, year) : null;
@@ -426,10 +426,10 @@ export function notesWarnings(results, { quotedFragments = [], ntlSet = false, i
     // The intake's own NTL item already covers NTL here; another request in it still counts.
     const quotedNtl = quotedFragments.includes(x.line) && NTL_WORDS.test(x.line);
     if (x.ntl && !quotedNtl && !ntlSet) {
-      out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: the claims box or Additional Notes may be about non-trucking liability (NTL): "${x.line}". If the client wants NTL, set Non-trucking liability to Yes. ${NTL_FILLS}` });
+      out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: notes may be about NTL: "${x.line}". If the client wants it, set Non-trucking liability to Yes.` });
     }
     if (x.coverageChange) {
-      out.push({ line: x.line, code: 'ai.coverage-change', path: fromNotes.includes(x.line) ? 'notes.text' : 'claims.text', level: 'check', msg: `Luna: the claims box or Additional Notes may ask for a coverage change: "${x.line}". The filler uses the coverages ticked on the form; change them under Requested coverage if the client wants this.` });
+      out.push({ line: x.line, code: 'ai.coverage-change', path: fromNotes.includes(x.line) ? 'notes.text' : 'claims.text', level: 'check', msg: `Luna: notes may ask for a coverage change: "${x.line}". Change Requested coverage if so.` });
     }
   }
   return out;
@@ -445,7 +445,7 @@ export async function reviewNotes(record, config, { call = callModel, redact, to
   const flagged = new Set(warnings.map(w => w.line)).size;
   for (const w of warnings) delete w.line;
   // Past the first lines nothing was read: the agent reads the rest.
-  if (review.truncated) warnings.push({ code: 'ai.claims-truncated', path: 'claims.text', level: 'check', msg: `The claims box and Additional Notes are long: Luna read its first ${MAX_NOTE_LINES} lines only. Read the rest yourself for coverage requests.` });
+  if (review.truncated) warnings.push({ code: 'ai.claims-truncated', path: 'claims.text', level: 'check', msg: `Luna read only the first ${MAX_NOTE_LINES} lines of the notes. Check the rest.` });
   const count = value => Number.isFinite(value) && value >= 0 ? value : 0;
   // The same usage counters as page reviews (suggest), cache included.
   return { warnings, lines: review.lines.length, flagged, modelCalls: 1, tokensIn: count(json.usage?.input_tokens), tokensOut: count(json.usage?.output_tokens),
@@ -512,7 +512,7 @@ export function nameWarnings(results, { names }, record) {
   return results.filter(x => x.guess === 'likely_female' && !record?.drivers?.[x.index]?.gender
     && firstNameOf(record?.drivers?.[x.index]?.first) === names[x.id]).map(x => ({
     code: 'ai.driver-gender', path: `drivers[${x.index}].gender`, level: 'check', choices: genderChoices(x.index),
-    msg: `Luna: driver ${x.index + 1}'s gender is filled Male (TNI standard). "${names[x.id]}" is more often a woman's name. This is a guess from the first name only: check, then choose.`,
+    msg: `Luna: driver ${x.index + 1} is filled Male (TNI standard), but "${names[x.id]}" is more often a woman's name. Check.`,
   }));
 }
 
