@@ -2433,7 +2433,7 @@ test('home address takes the first offered option with or without DOT and collap
 });
 
 test('home address retains manual entry when no address suggestion is offered', async () => {
-  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
   const manual = makeInput({ id: `f_U${'A'.repeat(32)}2A5_1_1`, name: 'home_2A5', type: 'radio', value: 'Enter a different address', checked: true, attrs: { fieldref: 'BusinessOwnerHomeAddressInputNonShredded.AddressOptionsForPrimaryBsnsAdrs' } });
   h.document.body.append(radioGroup('Home Address', manual));
   const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
@@ -2963,7 +2963,7 @@ test('each filled answer carries its timing and side effects (revealed / removed
 });
 
 test('Google address autocomplete (hidden .pac-item list): first suggestion picked with arrow down + enter', async () => {
-  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
   const street = makeInput({ id: `f_U${'A'.repeat(32)}27E_1_1`, ariaLabel: 'Street Address', attrs: { fieldref: 'PrimaryBusinessAddressOutputNonShredded.StreetAddressDup' } });
   const zip = makeInput({ id: `f_U${'A'.repeat(32)}284_1_1`, ariaLabel: 'Zip Code', attrs: { fieldref: 'PrimaryBusinessAddressInput.ZipCode' } });
   const city = makeInput({ id: `f_U${'A'.repeat(32)}286_1_1`, ariaLabel: 'City', attrs: { fieldref: 'PrimaryBusinessAddressInput.City' } });
@@ -8384,8 +8384,8 @@ test("a fill's first wait is its whole 400 ms from when it begins, whatever the 
   const quiet = harness();
   await later(1000);
   assert.equal(await answeredAfter(quiet), 400, 'quiet for a second already');
-  // GEICO's spinner, shown by its style as the fill begins, gone 100 ms in.
-  const busy = harness({ pathname: '/quote' });
+  // GEICO's spinner, shown by its style as the fill begins, gone 100 ms in (its adapter names it).
+  const busy = harness({ adapter: 'geico', pathname: '/quote' });
   await later(1000);
   const loader = new FakeNode('div', { id: 'page-load', className: 'loader-container section-loader--show' });
   busy.document.body.append(loader);

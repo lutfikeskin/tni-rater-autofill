@@ -338,8 +338,9 @@
   // from when a wait first saw it, and never past a wait's own limit (settle).
   const UNDEFINED_MS = 3000;
   const undefinedSince = new WeakMap();
+  // Set as a fill starts (its adapter's `components`), and kept: an AI apply before any fill doesn't wait.
+  let componentPrefix = null;
   function partsUndefined() {
-    const componentPrefix = adapter().components;
     if (!componentPrefix) return false;
     let parts;
     try { parts = [...document.querySelectorAll(':not(:defined)')].filter((el) => el.localName.startsWith(componentPrefix)); } catch { return false; }
@@ -2242,6 +2243,7 @@
       report.pageMoved = topPage;
       return report;
     }
+    componentPrefix = adapter().components;
     if (window === window.top) watchRequests();
     if (!keepMarks) clear();
     stopSteps = [].concat(stopSteps ?? []);
