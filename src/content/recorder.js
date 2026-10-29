@@ -48,6 +48,14 @@
   const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
   // As pagekit's squash and humanize.
   const squash = (s) => String(s ?? '').toLowerCase().replace(/['’*]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+  // What only one carrier's pages draw is its page adapter's `shared` part (src/content/carriers/,
+  // which the panel injects into this world before the recorder): its own elements by role, its
+  // page names, how it names questions and draws dropdowns. None on a plain page.
+  const shared = () => globalThis.__raterAdapter?.shared ?? {};
+  const own = (role) => shared().selectors?.[role] ?? [];
+  const withOwn = (base, role) => [base, ...own(role)].filter(Boolean).join(', ');
+  const closestOwn = (el, role) => (own(role).length ? el?.closest?.(own(role).join(', ')) ?? null : null);
   const humanize = (s) => squash(String(s ?? '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\-.[\]$:]+/g, ' '));
 
   // Every match under root in page order, open shadow roots included: a shadow root's matches at
@@ -83,12 +91,12 @@
     return host ? host.hasAttribute?.('checked') === true : !!el.checked;
   };
   // The words of a host's direct child in slot `name`, without a tooltip in it (GEICO's legend holds
-  // a <gds-tooltip> whose body is ordinary text).
+  // a <gds-tooltip> whose body is ordinary text: its adapter's `tooltips`).
   const slotText = (host, name) => {
     const part = [...(host?.children ?? [])].find((n) => n.getAttribute?.('slot') === name);
     if (!part) return '';
     let text = part.textContent ?? '';
-    for (const tip of part.querySelectorAll?.('gds-tooltip, [role=tooltip]') ?? []) text = text.replace(tip.textContent, ' ');
+    for (const tip of part.querySelectorAll?.(withOwn('[role=tooltip]', 'tooltips')) ?? []) text = text.replace(tip.textContent, ' ');
     return oneLine(text);
   };
   // The radio of the option a gesture is on: its card, its slotted words, anything in its shadow root.
@@ -120,11 +128,12 @@
     if (isControl(direct)) return direct;
     const option = optionRadio(target);
     if (option) return option;
-    const wrapper = target?.closest?.('.x-form-trigger-wrap');
+    // Inside a widget's box with its own buttons (the adapter's `fieldWrap`: an ExtJS trigger wrap).
+    const wrapper = closestOwn(target, 'fieldWrap');
     const nested = wrapper?.querySelector?.('input, select, textarea');
     if (isControl(nested)) return nested;
-    const listOption = target?.closest?.('[role=option], .x-boundlist-item');
-    const popup = listOption?.closest?.('[role=listbox], .x-boundlist');
+    const listOption = target?.closest?.(withOwn('[role=option]', 'options'));
+    const popup = listOption?.closest?.(withOwn('[role=listbox]', 'lists'));
     if (popup) {
       const popupId = popup.id || popup.getAttribute?.('id');
       if (popupId) {
@@ -207,9 +216,8 @@
     if (!isControl(el)) return false;
     const type = (el.type || el.tagName).toLowerCase();
     if (type === 'radio' || type === 'checkbox' || el.tagName?.toUpperCase() === 'SELECT') return true;
-    // ExtJS combos are text inputs with a discrete option selection.
-    const trigger = el.closest?.('.x-form-trigger-wrap')?.querySelector?.('.x-form-trigger');
-    return !!trigger && /arrow|combo/.test(trigger.className) && !/date|time|picker-date/.test(trigger.className);
+    // A carrier's dropdown drawn as a text box (its adapter's `combo`: an ExtJS combo) is a pick too.
+    return !!shared().combo?.(el);
   };
 
   // input/change fires after the native control has its new value. Store that value so a page
@@ -243,8 +251,9 @@
   listen('input', trustedValue);
   listen('change', trustedValue);
 
-  // Duck Creek question id from an element id (f_<letter><32 hex><q>_<page>_<row>) or field name.
-  const questionId = (el) => el.id?.match(/^f_[a-z]([0-9A-F]{32})([0-9A-F]+)_\d+_\d+/i)?.[2]?.toUpperCase()
+  // The page's own question id: the carrier's (its adapter's `keys.question`: Duck Creek's, from the
+  // element id), else one a field name carries.
+  const questionId = (el) => shared().keys?.question?.(el)
     ?? el.name?.match(/^[a-z]+_([0-9A-F]+)(\||$)/i)?.[1]?.toUpperCase() ?? null;
 
   const fieldKey = (el, q, radio) => {
@@ -272,18 +281,9 @@
     return '';
   }
 
-  // A Duck Creek question's caption (Progressive): its own label c_<id> for the field f_<id>, drawn
-  // above the answers, without the smaller note under it (.lowerLabelText). pagekit names the field
-  // by the same caption (ExtJS dctCaption, which this isolated world can't read). textBefore skips
-  // labels, so a radio group took the text of the row above it (2026-10-20: "Does the customer earn
-  // 100% of his or her income from for hire trucking operations?" logged as a cargo commodity).
-  function dctCaption(el) {
-    const id = el.id?.match(/^f_([a-z][0-9a-f]{32}[0-9a-f]+_\d+_\d+)/i)?.[1];
-    const caption = id ? document.getElementById?.(`c_${id}`) : null;
-    if (!caption) return '';
-    return oneLine([...(caption.childNodes ?? [])]
-      .filter((n) => !n.classList?.contains?.('lowerLabelText')).map((n) => n.textContent).join(' ')).slice(0, 160);
-  }
+  // A question's caption as the carrier draws it (its adapter's `caption`: Progressive's c_<id>
+  // label, which pagekit reads from ExtJS where this isolated world can't). textBefore skips labels.
+  const captionOf = (el) => shared().caption?.(el) || '';
 
   // A design-system radio group's question (GEICO), as pagekit's radioGroupLabel reads it: the
   // [slot=legend] child of the nearest element around the option. The option's own shadow root has
@@ -307,18 +307,15 @@
     if (!labels.has(key)) {
       const own = oneLine([...(el.labels ?? [])].map((l) => l.textContent).join(' ') || el.getAttribute('aria-label') || '');
       const name = dataName(control);
-      labels.set(key, dctCaption(control) || legendFor(control) || (el.type === 'radio' ? '' : own) || textBefore(el) || own
+      labels.set(key, captionOf(control) || legendFor(control) || (el.type === 'radio' ? '' : own) || textBefore(el) || own
         || el.placeholder || (name ? humanize(name) : el.name) || '');
     }
     return labels.get(key);
   }
 
-  // ExtJS dropdowns have an arrow trigger. Date pickers also have a trigger (and ARIA role
-  // combobox), but what's in them is typed text, so they must stay 'text'.
-  const isCombo = (el) => {
-    const trigger = el.closest('.x-form-trigger-wrap')?.querySelector('.x-form-trigger');
-    return !!trigger && /arrow|combo/.test(trigger.className) && !/date|time|picker-date/.test(trigger.className);
-  };
+  // A carrier's dropdown drawn as a text box (its adapter's `combo`: an ExtJS combo, never a date
+  // picker, whose text is typed).
+  const isCombo = (el) => !!shared().combo?.(el);
 
   function snapshot() {
     const out = new Map();
@@ -357,8 +354,9 @@
   }
 
   // Progressive reloads a page as "<Page>-Reload" after some answers; it's the same page.
-  // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
-  const pageKey = () => (new URLSearchParams(location.search).get('pageName') || (location.pathname + ((location.hash ?? '').startsWith('#/') ? location.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
+  // A page's name: the carrier's own (its adapter's `page`: Progressive's ?pageName=), else its path
+  // or #/route (ids normalised).
+  const pageKey = () => (shared().page?.(location) || (location.pathname + ((location.hash ?? '').startsWith('#/') ? location.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
   const isTop = window === window.top;
   // The step of a one-address application (AmWINS), as pagekit's stepKey reads it: the visible
   // h1-h3 headings. Sent with each batch of changes, new questions and page arrival, so the panel
@@ -369,7 +367,8 @@
   // pagekit's stepKey reads it, only while the page title names it too: mid-redraw, the bar and the
   // form can be different steps', and then no step is named.
   const stepKey = () => {
-    const bars = [...(document.querySelectorAll?.('gds-progress-bar[value]') ?? [])].filter((el) => el.tagName === 'GDS-PROGRESS-BAR');
+    // The bar's parts are the adapter's `stepBar` (GEICO's <gds-progress-bar>).
+    const bars = own('stepBar').length ? [...(document.querySelectorAll?.(own('stepBar').join(', ')) ?? [])] : [];
     if (bars.length) {
       const current = bars.filter((el) => { const v = Number(el.getAttribute?.('value')); return v > 0 && v < 100; });
       const step = current.length === 1 ? oneLine(current[0].textContent) : '';
@@ -383,8 +382,7 @@
   // Error and validation messages on screen, as pagekit's capture reads them. When one appears that
   // wasn't there (a Continue the carrier refused: "This field is required"), the panel records the
   // page's layout again, which carries the messages. Only that one appeared is sent, never its text.
-  const MESSAGES = '[role=alert], .x-form-error-msg, .x-form-invalid-under, [class*="error-message"], [class*="validation-message"], [class*="help-block"]';
-  const messages = () => new Set([...(document.querySelectorAll?.(MESSAGES) ?? [])]
+  const messages = () => new Set([...(document.querySelectorAll?.(withOwn('[role=alert], [class*="error-message"], [class*="validation-message"], [class*="help-block"]', 'errors')) ?? [])]
     .filter((el) => el.getClientRects?.().length).map((el) => oneLine(el.textContent)).filter(Boolean));
 
   // The unit forms on screen as the kit reads them (pagekit unitFormsNow): GEICO draws every
@@ -573,7 +571,8 @@
   // extension's own clicks are untrusted and never reported. Only the button's text (60
   // characters), the step on screen and the unit forms on it (element names, no values; the panel
   // logs neither the forms nor more than the text).
-  const BUTTONS = 'a, button, [role=button], input[type=button], input[type=submit], .x-btn';
+  // With the carrier's own buttons (its adapter's `buttons`: ExtJS's .x-btn).
+  const buttons = () => withOwn('a, button, [role=button], input[type=button], input[type=submit]', 'buttons');
   // A button's words: its own, else the words slotted into it. GEICO's <gds-button> draws a
   // <button> in its shadow root around a <slot>: "Next" is the host's text, shown through the slot.
   // Not the host's whole text: a tooltip's icon button (<gds-tooltip>) would be logged with the help
@@ -585,7 +584,8 @@
     if (!isCurrent() || !e.isTrusted) return;
     // The button on the click's path, also inside a shadow root: the click reaches the window as the
     // <gds-button> host's, which is no button, and was never reported (2026-10-20 GEICO captures).
-    const el = (e.composedPath?.() ?? []).find((n) => n.matches?.(BUTTONS)) ?? e.target?.closest?.(BUTTONS);
+    const selector = buttons();
+    const el = (e.composedPath?.() ?? []).find((n) => n.matches?.(selector)) ?? e.target?.closest?.(selector);
     if (!el) return;
     const text = buttonText(el).slice(0, 60);
     // With the unit forms on screen (element names only), so a discarded form lets go of its unit (W44-05).
@@ -641,7 +641,7 @@
     dispose,
     alive: () => !!chrome.runtime?.id,
     // Reading only (docs/developer-recording.md).
-    read: { controlForEvent, describe, choiceText, stepKey, pageKey, buttonText, BUTTONS },
+    read: { controlForEvent, describe, choiceText, stepKey, pageKey, buttonText, buttons },
   };
   globalThis.__raterRecorder = api;
 

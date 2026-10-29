@@ -7,11 +7,68 @@
 // filling goes one field at a time and waits for the page to settle. ExtJS is only reachable from
 // the page's own JS world (the config's `world: 'MAIN'`).
 //
-// The kit's side of this (what each hook is for, and its behavior with no adapter) is ADAPTER in
-// pagekit.js. A widget here is the field's ExtJS component.
-/** @import { PageAdapter, PageAdapterKit } from '../../../types.js' */
+// `shared` is what field-key.js, the usage recorder and the kit all read, in whichever world each
+// runs (the recorder in the extension's own, the kit in the page's): plain DOM, no ExtJS. `create`
+// is the kit's alone. What each hook is for, and its behavior with no adapter, is NO_ADAPTER in
+// pagekit.js (PageAdapter in types.js). A widget here is the field's ExtJS component.
+/** @import { PageAdapter, PageAdapterKit, PageAdapterShared } from '../../../types.js' */
 
 (() => {
+  // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>. The
+  // question id is a number Progressive reassigns: it keeps a page's rows of one question
+  // together, and is logged, but never says which question a field is (see the kit's assign).
+  const questionId = (id) => String(id ?? '').match(/^f_[a-z]([0-9a-f]{32})([0-9a-f]+)_\d+_\d+/i)?.[2]?.toUpperCase() ?? null;
+  // Its <page>_<row>: on Progressive's Rates every question of one vehicle shares the row, and
+  // one of them is labelled with the vehicle ("2025 RAM PROMASTER 2500").
+  const pageRow = (id) => String(id ?? '').match(/^f_[a-z][0-9a-f]{32}[0-9a-f]+_(\d+_\d+)/i)?.[1] ?? null;
+  const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+  // An ExtJS combo's box and its trigger.
+  const triggerOf = (el) => el?.closest?.('.x-form-trigger-wrap')?.querySelector?.('.x-form-trigger') ?? null;
+
+  /** @type {PageAdapterShared} */
+  const shared = {
+    selectors: {
+      busy: ['.x-mask-msg', '.x-mask-loading'],
+      buttons: ['.x-btn'],
+      disabled: ['.x-item-disabled', '.x-btn-disabled'],
+      // ExtJS draws a combo's options in a bound list outside the combo.
+      options: ['.x-boundlist-item'],
+      lists: ['.x-boundlist'],
+      errors: ['.x-form-error-msg', '.x-form-invalid-under'],
+      // A combo's box and its trigger: a click there is on the combo.
+      fieldWrap: ['.x-form-trigger-wrap'],
+    },
+    // Progressive names its pages in ?pageName=.
+    page: (loc) => new URLSearchParams(loc.search).get('pageName') || null,
+    keys: {
+      // The field's name in the carrier's data model: Duck Creek puts it on every input
+      // (fieldref="RiskInput.VIN", "ComprehensiveInput.Deductible"). It names what the field
+      // holds, where the question id is only a number, which Progressive renumbers (2026-10-07).
+      ref: (el) => el?.getAttribute?.('fieldref') || null,
+      // A question repeated per vehicle on one page (Rates rows _<page>_2, _<page>_3, …): its row.
+      row: (el) => String(el?.id ?? '').match(/^f_[a-z][0-9a-f]{32}[0-9a-f]+_\d+_(\d+)/i)?.[1] ?? null,
+      question: (el) => questionId(el?.id),
+    },
+    // A question's caption as the page draws it: its own label c_<id> for the field f_<id>, above
+    // the answers, without the smaller note under it (.lowerLabelText). The kit reads the same
+    // caption from ExtJS (dctCaption), which the recorder's world can't reach; nearby text would
+    // give a radio group the row above's (2026-10-20: "Does the customer earn 100% of his or her
+    // income from for hire trucking operations?" logged as a cargo commodity).
+    caption: (el) => {
+      const id = el?.id?.match(/^f_([a-z][0-9a-f]{32}[0-9a-f]+_\d+_\d+)/i)?.[1];
+      const caption = id ? document.getElementById?.(`c_${id}`) : null;
+      if (!caption) return '';
+      return squash([...(caption.childNodes ?? [])]
+        .filter((n) => !n.classList?.contains?.('lowerLabelText')).map((n) => n.textContent).join(' ')).slice(0, 160);
+    },
+    // An ExtJS dropdown: a text input with an arrow trigger, picked from a list. A date picker has a
+    // trigger too, but what's in it is typed text.
+    combo: (el) => {
+      const trigger = triggerOf(el);
+      return !!trigger && /arrow|combo/.test(trigger.className) && !/date|time|picker-date/.test(trigger.className);
+    },
+  };
+
   /** @param {PageAdapterKit} kit @returns {Partial<PageAdapter>} */
   function create(kit) {
     const { oneLine, sleep, matchOption, noMatch, textFor, hasOptions, labelFor } = kit;
@@ -24,19 +81,6 @@
         if (c.dctCaption) return words(c.dctCaption);
       }
       return null;
-    }
-
-    // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>. The
-    // question id is a number Progressive reassigns: it keeps a page's rows of one question
-    // together, and is logged, but never says which question a field is (see the kit's assign).
-    function questionId(id) {
-      return String(id ?? '').match(/^f_[a-z]([0-9a-f]{32})([0-9a-f]+)_\d+_\d+/i)?.[2]?.toUpperCase() ?? null;
-    }
-
-    // Its <page>_<row>: on Progressive's Rates every question of one vehicle shares the row, and
-    // one of them is labelled with the vehicle ("2025 RAM PROMASTER 2500").
-    function row(id) {
-      return String(id ?? '').match(/^f_[a-z][0-9a-f]{32}[0-9a-f]+_(\d+_\d+)/i)?.[1] ?? null;
     }
 
     // An ExtJS field's value. A combo whose list was never loaded (or was torn down by a redraw)
@@ -145,11 +189,7 @@
       label: (cmp, kind) => (kind === 'checkbox' && cmp?.boxLabel ? words(cmp.boxLabel) : null) ?? caption(cmp),
       optionText: (cmp) => words(cmp?.boxLabel),
       question: (cmp, el) => questionId(cmp?.id ?? el?.id),
-      row: (cmp, el) => row(cmp?.id ?? el?.id),
-      // The field's name in the carrier's data model: Duck Creek puts it on every input
-      // (fieldref="RiskInput.VIN", "ComprehensiveInput.Deductible"). It names what the field
-      // holds, where the question id is only a number, which Progressive renumbers (2026-10-07).
-      ref: (el) => el?.getAttribute?.('fieldref') || null,
+      row: (cmp, el) => pageRow(cmp?.id ?? el?.id),
       // Only the field itself (or its radio group) says whether it's required; outer containers
       // carrying dctRequired made optional fields like Suffix and DBA look required.
       required: (cmp) => !!cmp?.dctRequired,
@@ -182,19 +222,6 @@
       highlight: (cmp) => cmp?.el?.dom?.querySelector?.('.x-form-trigger-wrap') ?? null,
       typeName: (cmp) => cmp?.xtype ?? null,
       busy: () => !!ext()?.Ajax?.isLoading?.(),
-      selectors: {
-        busy: ['.x-mask-msg', '.x-mask-loading'],
-        buttons: ['.x-btn'],
-        disabled: ['.x-item-disabled', '.x-btn-disabled'],
-        // ExtJS draws a combo's options in a bound list outside the combo.
-        options: ['.x-boundlist-item'],
-        lists: ['.x-boundlist'],
-        errors: ['.x-form-error-msg', '.x-form-invalid-under'],
-        // A combo's box and its trigger: a click there is on the combo.
-        fieldWrap: ['.x-form-trigger-wrap'],
-      },
-      // Progressive names its pages in ?pageName=.
-      page: (loc) => new URLSearchParams(loc.search).get('pageName') || null,
       // An answer on Rates (CoveragesRates) makes Recalculate and Print due again: the bill plan
       // (payment method) stays chosen, the premium needs recalculating. A cargo, general liability or
       // trailer interchange answer re-arms its Done with this coverage too.
@@ -215,5 +242,5 @@
     };
   }
 
-  globalThis.__raterAdapter = { carrier: 'progressive', create };
+  globalThis.__raterAdapter = { carrier: 'progressive', shared, create };
 })();

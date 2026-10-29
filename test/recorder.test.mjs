@@ -5,6 +5,8 @@ import vm from 'node:vm';
 
 const RECORDER = fs.readFileSync(new URL('../src/content/recorder.js', import.meta.url), 'utf8');
 const FIELD_KEY = fs.readFileSync(new URL('../src/content/field-key.js', import.meta.url), 'utf8');
+// A carrier's page adapter, loaded into the recorder's world as the panel does (harness `adapter`).
+const ADAPTERS = Object.fromEntries(['progressive', 'geico', 'amwins'].map((id) => [id, fs.readFileSync(new URL(`../src/content/carriers/${id}.js`, import.meta.url), 'utf8')]));
 
 // The selectors the recorder asks a node about: comma-separated parts made of a tag, [attr],
 // [attr=value], .class and :not(.class).
@@ -161,8 +163,8 @@ class Document {
 }
 
 // realKeys: the field keys of src/content/field-key.js (GEICO's data-model names), not this file's
-// explicit stand-in.
-function harness({ realKeys = false } = {}) {
+// explicit stand-in. adapter: the carrier whose page adapter is in the recorder's world.
+function harness({ realKeys = false, adapter = null } = {}) {
   const document = new Document();
   const sent = [];
   const listeners = new Map();
@@ -207,6 +209,7 @@ function harness({ realKeys = false } = {}) {
   };
   context.window = context;
   context.top = context;
+  if (adapter) vm.runInNewContext(ADAPTERS[adapter], context, { filename: `src/content/carriers/${adapter}.js` });
   if (realKeys) {
     delete context.__raterFieldKey;
     vm.runInNewContext(FIELD_KEY, context, { filename: 'src/content/field-key.js' });
@@ -472,7 +475,7 @@ function extField(id, trigger, value = '') {
 }
 
 test('an ExtJS combo is reported as a combo, so its typed text is not logged as a choice', () => {
-  const h = harness();
+  const h = harness({ adapter: 'progressive' });
   const model = extField('model', 'x-form-arrow-trigger');
   const effective = extField('effective', 'x-form-date-trigger');
   const native = select({ id: 'native' });
@@ -743,7 +746,7 @@ const dctCaption = (id, text, note = '') => ({ id: `c_${id}`, childNodes: [
 // Live run 2026-10-20 (AR Progressive): the agent's Yes on Rates question 222B was logged with the
 // text of the cargo commodity row above it. textBefore skips labels, and the caption is one.
 test('a Duck Creek question is named by its caption, as pagekit names it', () => {
-  const h = harness();
+  const h = harness({ adapter: 'progressive' });
   const radio = (option, value) => {
     const el = new Control('input', { id: `f_${DCT}222B_8_1_${option}-inputEl`, name: 'boolean_222B', type: 'radio', value });
     el.labels = [{ textContent: value === '1' ? 'Yes' : 'No' }];
@@ -831,7 +834,7 @@ test('reinjection while paused leaves the fill\'s answers unreported until resum
 // option: the recorder saw 3 of the 7 questions on Business Class & USDOT, and an agent's radio
 // correction was never logged (the input event reaches the window retargeted to the host).
 test('GEICO radios in shadow roots are fields in page order, and the agent\'s pick is theirs once the option shows it', async () => {
-  const h = harness({ realKeys: true });
+  const h = harness({ adapter: 'geico', realKeys: true });
   const name = 'Id_GiveCurrentGeicoCommercialAutoPolicyYesNo_48657';
   const yes = gdsOption(name, 0, 'Yes', 'Yes', { checked: true });
   const no = gdsOption(name, 1, 'No', 'No');
@@ -860,7 +863,7 @@ test('GEICO radios in shadow roots are fields in page order, and the agent\'s pi
 });
 
 test('while paused, a gesture inside a GEICO option counts for its radio; the fill\'s own click does not', () => {
-  const h = harness({ realKeys: true });
+  const h = harness({ adapter: 'geico', realKeys: true });
   const name = 'Id_GiveDepartmentOfTransportationNumberStatus_10683';
   const yes = gdsOption(name, 0, 'Yes', 'Yes');
   const no = gdsOption(name, 1, 'No', 'No');
@@ -886,7 +889,7 @@ test('while paused, a gesture inside a GEICO option counts for its radio; the fi
 // A GEICO list without a legend (the two pay plan lists on Quote & Coverages) and its options'
 // words: the label is not the raw name, whose render number changes on every redraw.
 test('a GEICO question with no words of its own is named by its data-model name, without the render number', () => {
-  const h = harness({ realKeys: true });
+  const h = harness({ adapter: 'geico', realKeys: true });
   const name = 'Id_GivePayPlanV2_77120';
   const full = gdsOption(name, 0, 'GEICO_PP_1Pay', 'Pay In Full');
   const monthly = gdsOption(name, 1, 'GEICO_PP_Monthly', 'Monthly');
@@ -944,7 +947,7 @@ const geicoSteps = (current) => ['Business Class & USDOT', 'Business & Owner Inf
   .map((step, i, all) => stepBar(step, i < all.indexOf(current) ? 100 : step === current ? 50 : 0));
 
 test('a GEICO step is the progress bar\'s part under way, only while the page title names it', () => {
-  const h = harness();
+  const h = harness({ adapter: 'geico' });
   const field = select({ id: 'yrsInBusiness' });
   h.append(field);
   h.context.__raterRecorder.rebaseline();
@@ -973,7 +976,7 @@ test('a GEICO step is the progress bar\'s part under way, only while the page ti
 // The panel closed and opened again attaches to the recorder already in the page, which had sent the
 // step before: on GEICO the step is the only thing telling the panel where the agent is.
 test('told to resume while not paused, the recorder sends the step on screen again', () => {
-  const h = harness();
+  const h = harness({ adapter: 'geico' });
   h.document.bars = geicoSteps('Vehicles');
   h.document.title = 'GEICO Vehicles';
   h.tick();

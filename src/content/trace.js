@@ -100,7 +100,8 @@
       try { field = read.describe(control); } catch { field = { key: null, q: null, kind: null, label: '' }; }
       return { control, field: { key: field.key, q: field.q, kind: field.kind, label: field.label, rect: box(control) } };
     }
-    const button = path.find((n) => n?.matches?.(read.BUTTONS));
+    const selector = read.buttons();
+    const button = path.find((n) => n?.matches?.(selector));
     if (button) return { button: { text: read.buttonText(button).slice(0, 60), rect: box(button) } };
     return { other: { tag: String(el?.tagName ?? '').toLowerCase() || null } };
   }
