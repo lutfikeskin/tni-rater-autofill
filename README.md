@@ -212,7 +212,7 @@ Updates reach agents through the Chrome Web Store; their usage logs go to TNI's 
 
 | Path | What it does |
 | --- | --- |
-| `sidepanel/` | The side panel UI |
+| `sidepanel/` | The side panel UI: `sidepanel.js` wires its parts in `sidepanel/panel/` (state and storage, the workflow coordinator, filling, the assistant, the PDF view…) |
 | `src/intake.js` | Reads the PDF's form fields (pdf.js) |
 | `src/normalize.js` | Cleans the answers into a client record and produces the warnings |
 | `src/schema.js` | Every client-record field: label and value kind |

@@ -380,7 +380,7 @@ The wording read: GEICO's "12 Month Total Premium: $… Due Today $… 10 Additi
 
 The warehouse has every reading in `quote_premiums`, and the last per quote and carrier, test runs left out, in `v_quote_premium`. **It is a quoted premium, never a bound one:** the carrier's figure on screen, before underwriting (on GEICO before the MVR and CLUE reports). Compare it with the printed quote on a few real quotes per carrier before trusting it.
 
-The whole feature can be removed as one piece: `src/premium.js`, its import and one call in `sidepanel.js` (`captureLayout`), `quote_premium` in `server/index.mjs`, and `quote_premiums` with `v_quote_premium` in [warehouse.mjs](../scripts/lib/warehouse.mjs).
+The whole feature can be removed as one piece: `src/premium.js`, its import and one call in `sidepanel/panel/coordinator.js` (`captureLayout`), `quote_premium` in `server/index.mjs`, and `quote_premiums` with `v_quote_premium` in [warehouse.mjs](../scripts/lib/warehouse.mjs).
 
 ## Limits
 

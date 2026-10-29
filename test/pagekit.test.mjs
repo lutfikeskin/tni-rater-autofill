@@ -11,6 +11,7 @@ import { geico } from '../src/carriers/geico.js';
 import { advanceFor } from '../src/units.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
 import { assistContextKey } from '../src/ai/common.js';
+import { PANEL_SOURCE } from './panel-source.mjs';
 
 // This is a deliberately small DOM/ExtJS replay.  It exercises the injected MAIN-world
 // script itself, without a browser session, real quote data, or customer identifiers.
@@ -4993,7 +4994,7 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
       tellRecorder: async () => {}, persistAiPending: async () => {},
       agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => {} },
       usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
-    const source = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
+    const source = PANEL_SOURCE;
     const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
       'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'formScoped', 'stepScope', 'tabStep', 'stopNoteFor', 'noteChangedAfterDone', 'finishingAction'];

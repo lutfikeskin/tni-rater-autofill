@@ -17,6 +17,7 @@ import { CARRIERS } from '../src/carriers.js';
 import { DEFAULT_SERVER } from '../sidepanel/usage-log.js';
 import { fillEvents, fieldChangeEvent, intakeProfile, redactor, ID_LIKE as EXTENSION_ID_LIKE, LIMIT as EXTENSION_LIMIT, PROFILE_UNITS as EXTENSION_UNITS } from '../src/usage.js';
 import { findPii } from '../scripts/lib/privacy.mjs';
+import { PANEL_SOURCE } from './panel-source.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -129,7 +130,7 @@ test('profiles of real intakes, odd values included, are ones the server keeps w
 // Earlier AI clients emitted decision scores; current builders omit them, but ingestion must
 // retain valid historical evidence without expanding the fields accepted on other event types.
 test('legacy AI evidence is accepted only on decisions and current clients do not emit it', () => {
-  const builder = read('sidepanel/sidepanel.js').match(/function aiDecisionEvent[\s\S]*?\n}/)[0];
+  const builder = PANEL_SOURCE.match(/function aiDecisionEvent[\s\S]*?\n}/)[0];
   for (const legacy of ['probability', 'support', 'evidenceProbability', 'confidence']) {
     assert.ok(EVENT_FIELDS.ai_decision.includes(legacy));
     assert.doesNotMatch(builder, new RegExp(`\\b${legacy}\\s*:`), `current decisions omit ${legacy}`);

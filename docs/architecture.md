@@ -50,9 +50,9 @@ Each layer knows only the one below it, and a carrier's knowledge lives in that 
 | Plan | The mapping resolved for one client: one step per answer, with its source | [plan.js](../src/plan.js) |
 | Fill engine | Finds fields, fills, waits, re-reads and reports, for any page | [pagekit.js](../src/content/pagekit.js) |
 | Carrier page adapter | How only this carrier's pages work: its widgets, spinners, page names, step bar, and how its fields are named and keyed (for the fill engine, field-key.js and the usage recorder) | `src/content/carriers/<carrier>.js` ([browser filling](browser-filling.md#execution)) |
-| Panel | Intake, review, agent decisions, AI suggestions; it never touches the carrier's page itself | [sidepanel.js](../sidepanel/sidepanel.js) |
+| Panel | Intake, review, agent decisions, AI suggestions; it never touches the carrier's page itself | [sidepanel/panel/](../sidepanel/panel/), one file per part (state and storage in `core.js`, which fill runs when in `coordinator.js`, filling in `fill.js`, the assistant in `assistant.js`…); [sidepanel.js](../sidepanel/sidepanel.js) wires them |
 
-A carrier's files import only the shared layers, never another carrier's. Still to separate, each a change of its own with no change in behavior: the panel is one file. Then the plan step's source becomes one resolution (answer, method, explanation, status) the report, the panel and the AI share, and the client record keeps where each value came from.
+A carrier's files import only the shared layers, never another carrier's. Next, each a change of its own: the plan step's source becomes one resolution (answer, method, explanation, status) the report, the panel and the AI share, and the client record keeps where each value came from.
 
 ## Design direction, not implemented guarantees
 
@@ -65,6 +65,6 @@ Measure automatic-answer accuracy, the share automated, and whole-quote correctn
 - [intake.js](../src/intake.js), [normalize.js](../src/normalize.js), [schema.js](../src/schema.js): extraction and record.
 - [plan.js](../src/plan.js), [carriers.js](../src/carriers.js): plans and carrier registration.
 - [types.js](../types.js), at the root: the carrier config, plan steps, fill report and usage events as JSDoc types, checked by `npm run typecheck` in the files that opt in ([testing](testing.md)).
-- [sidepanel.js](../sidepanel/sidepanel.js), [pagekit.js](../src/content/pagekit.js): orchestration and browser execution; [src/content/carriers/](../src/content/carriers/): each carrier's page adapter.
+- [sidepanel/panel/](../sidepanel/panel/) and [sidepanel.js](../sidepanel/sidepanel.js), [pagekit.js](../src/content/pagekit.js): orchestration and browser execution; [src/content/carriers/](../src/content/carriers/): each carrier's page adapter.
 
 For changes to answer semantics, continue to [intake and rules](intake-and-rules.md). For feedback behavior, use [learning](learning.md).

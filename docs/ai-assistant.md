@@ -78,7 +78,7 @@ Potential extensions include confirmed extraction of free-text requests, a final
 - [luna.js](../src/ai/luna.js): Luna request/response contract, evidence checks, bounded request planning, and automatic-selection policy.
 - [common.js](../src/ai/common.js): `collectItems`, `scopedIntake` and its redaction, and the read-only context (`rowsFor`, `entityOf`, `pageAnswers`).
 - [providers.js](../src/ai/providers.js): the Luna-only settings adapter.
-- [sidepanel.js](../sidepanel/sidepanel.js): `runAssist`, `pendingAi`, `applyAi`, `renderAi`, caching, approval and manual-edit protection.
+- [panel/assistant.js](../sidepanel/panel/assistant.js): `runAssist`, `pendingAi`, `applyAi`, `renderAi`, caching, approval and manual-edit protection.
 - [pagekit.js](../src/content/pagekit.js): `answer`, `decisionSnapshot`, retained-value checks and marks.
 - [Luna tests](../test/luna.test.mjs), [panel safety tests](../test/sidepanel-safety.test.mjs), and [luna-mock.mjs](../scripts/luna-mock.mjs): validation and controlled-provider interaction tests.
 - [evaluation cases](../test/ai-eval/cases.json) and [evaluation runner](../scripts/ai-eval.mjs): Luna-only evaluation scaffolding.
