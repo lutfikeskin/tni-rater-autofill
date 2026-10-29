@@ -5304,7 +5304,7 @@ test('the fill hint says Continue is clicked for the agent only while that setti
   const prog = { name: 'Progressive', advance: { text: 'Continue' } };
   const plain = { name: 'Plain' };
   const sub = (o) => dockHarness(o).dock().sub;
-  assert.equal(sub({ carrier: geico }), 'Adds the intake’s vehicles, trailers and drivers not on the quote yet, and clicks Next once nothing is left for you, up to Quote & Coverages. Never submits or binds.');
+  assert.equal(sub({ carrier: geico }), 'Adds missing vehicles, trailers and drivers, and clicks Next up to Quote & Coverages. Never submits or binds.');
   assert.equal(sub({ carrier: prog }), 'Clicks Continue once nothing is left for you. Never submits or binds.');
   for (const carrier of [geico, prog]) assert.equal(sub({ carrier, switches: { 'auto-advance': { checked: false } } }), 'Nothing is submitted. Review, then click Next yourself.');
   assert.equal(sub({ carrier: plain }), 'Nothing is submitted. Review, then click Next yourself.');
@@ -6265,7 +6265,7 @@ test('GEICO\'s referral page: read from its layout\'s buttons, logged once, said
   assert.equal(t.ui['stop-note'].hidden, false);
   assert.match(text, /"class":"issue","role":"alert"/);
   assert.match(text, /GEICO stopped this quote/);
-  assert.match(text, /GEICO won't quote this business online/);
+  assert.match(text, /GEICO won't quote this online/);
   assert.match(text, /Nothing on this page is filled or clicked/);
   assert.doesNotMatch(text, /issue quiet|GEICO referral: yours|Additional Business Info: yours/);
   // The dock: GEICO's stop, no fill offered.

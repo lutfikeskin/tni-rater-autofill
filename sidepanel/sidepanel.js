@@ -3367,7 +3367,7 @@ function dockFor() {
   const hint = state.tab.background ? 'Fills the quote tab in the background. Go back to it to review.'
     // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd), and Next only up to
     // Additional Business Info (advance `steps`).
-    : $('auto-advance').checked && carrier.advance && carrier.unitLists ? 'Adds the intake’s vehicles, trailers and drivers not on the quote yet, and clicks Next once nothing is left for you, up to Quote & Coverages. Never submits or binds.'
+    : $('auto-advance').checked && carrier.advance && carrier.unitLists ? 'Adds missing vehicles, trailers and drivers, and clicks Next up to Quote & Coverages. Never submits or binds.'
     : $('auto-advance').checked && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
     : 'Nothing is submitted. Review, then click Next yourself.';
   const progress = quoteProgress(carrier, page, state.tabSteps.get(state.tab.id));

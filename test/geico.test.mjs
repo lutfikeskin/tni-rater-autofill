@@ -167,7 +167,7 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   // The quote stops at Quote & Coverages: said there, and on the steps after it.
   assert.deepEqual(Object.keys(geico.stepNotes), [QC]);
   assert.match(geico.stepNotes[QC], /Recalculate.*Print Quote Proposal.*MVR & CLUE/);
-  for (const step of ['Final Quote Details', 'MVR & CLUE']) assert.match(geico.stopSteps[step], /stops GEICO quotes at Quote & Coverages/);
+  for (const step of ['Final Quote Details', 'MVR & CLUE']) assert.match(geico.stopSteps[step], /stops at Quote & Coverages/);
 });
 
 // The gateway: its own rules, by selector on any gateway page (never the quote), before any step.
