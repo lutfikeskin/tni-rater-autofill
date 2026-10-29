@@ -1129,7 +1129,7 @@ export const geico = {
   // reports cost the agency and are run only once the client shows interest in the offer.
   stopSteps: {
     'Final Quote Details': `This step is yours: nothing is filled or clicked. ${STOP_AT_QUOTE}`,
-    'MVR & CLUE': `These reports cost the agency: yours. Nothing is filled or clicked. ${STOP_AT_QUOTE}`,
+    'MVR & CLUE': `This step orders driving and claims reports, which cost the agency: yours. Nothing is filled or clicked. ${STOP_AT_QUOTE}`,
     'Payment Information': 'This step is yours: nothing is filled or clicked.',
   },
   // The quote ends at Quote & Coverages with the proposal printed (TNI, 2026-10-21): the panel says
@@ -1137,7 +1137,7 @@ export const geico = {
   finishedBy: 'printProposal',
   // What the panel says on a step the fill still answers.
   stepNotes: {
-    [COVERAGES]: 'Answer what is left, then Fill this page. The fill clicks Recalculate, picks the most payments and clicks Print Quote Proposal. Stop here: MVR & CLUE reports cost the agency.',
+    [COVERAGES]: 'Answer what is left, then Fill this page. With nothing left, the fill clicks Recalculate once; an answer GEICO changes is marked red, and Recalculate is yours from then on. Then it picks the most payments and clicks Print Quote Proposal. Stop here: MVR & CLUE reports cost the agency, so run them only once the client is interested.',
   },
   // GEICO requotes when a coverage changes, and puts back its own choices when the agent backs out
   // (FL live run, 2026-10-21: every follow-up fill set the liability limit again, and GEICO redrew the

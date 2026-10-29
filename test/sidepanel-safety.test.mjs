@@ -5264,13 +5264,15 @@ test('Continue\'s word leaves Continue to the agent where the panel may not clic
   const { said, ui, state } = continueHarness();
   const pageOff = said({}, { advance: { text: 'Continue', exceptPages: ['Quote'] } });
   assert.deepEqual([pageOff.phase, pageOff.button, pageOff.alt], ['ready-continue', null, 'fill-again']);
-  assert.equal(pageOff.sub, 'Click Continue on this page yourself.');
+  assert.equal(pageOff.sub, 'Click Continue on this page yourself. Never Binds or Submits.');
   assert.equal(said({ left: 1 }, { advance: { text: 'Continue', exceptPages: ['Quote'] } }).sub, 'Then click Continue on this page yourself. Nothing is submitted or bound.');
   // GEICO's Quote & Coverages: its Next is never clicked (advance `steps`).
   const geico = { layoutSteps: ['Vehicles', 'Quote & Coverages'], advance: { text: 'Next', steps: ['Vehicles'] } };
   state.tabSteps.set(7, 'Quote & Coverages');
   const off = said({}, geico);
   assert.deepEqual([off.phase, off.title, off.button, off.alt], ['yours', 'Moving on is yours', null, 'fill-again']);
+  // Where moving on is the agent's, the panel still says nothing is bound or submitted.
+  assert.equal(off.sub, 'Nothing here is clicked for you. Never Binds or Submits.');
   assert.equal(said({ left: 2 }, geico).sub, 'Then moving on is yours: nothing on this step is clicked for you.');
   assert.equal(said({ settled: true }, geico).button, null, 'not even once all is settled');
   state.tabSteps.set(7, 'Vehicles');

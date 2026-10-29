@@ -5,6 +5,7 @@ import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
   firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES } from '../src/ai/luna.js';
 import { settingsFrom } from '../src/ai/providers.js';
+import { NTL_RATES } from '../src/normalize.js';
 
 const context = { carrier: 'geico', page: 'operations', active: { drivers: 0, vehicles: 0 },
   record: { operations: { hazPlacard: false }, drivers: [{ licenseNumber: 'private-identifier' }, { name: 'inactive-person' }], vehicles: [] } };
@@ -411,6 +412,8 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.deepEqual(notesWarnings(results, review).map((w) => [w.code, w.path, w.level]), [['ai.coverage-change', 'claims.text', 'check'], ['ai.ntl', 'coverage.ntl', 'check']],
     'NTL and other coverage changes are separate flags');
   assert.ok(notesWarnings(results, review)[1].msg.includes('needs coverage off dispatch'), 'the line is quoted');
+  // As the intake's own NTL items say it (PR #176): with cargo or GL too, the rest of Rates is the agent's.
+  assert.ok(notesWarnings(results, review)[1].msg.includes(NTL_RATES), 'Luna\'s NTL item says what is left to the agent on Rates');
   assert.ok(notesWarnings(parseNotesReview(flags([[false, false], [false, false], [false, false], [true, false]]), review), review).length === 0,
     'the line the intake already quotes for NTL is not repeated');
   // Codex on PR #22: only that line, not every NTL line ("does not want bobtail" quoted first).

@@ -3179,10 +3179,10 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
   }
   if (held === 'changed') return { phase: 'check', tone: 'warn', eyebrow: 'The page changed', title: 'Check the answers again', sub: 'The page changed. Check it, then continue.', ...looks };
   if (held || (check && settled)) return { phase: 'check', tone: 'good', eyebrow: 'All answered', title: 'Look over the answers, then continue', sub: 'Never Binds or Submits.', ...looks };
-  if (offSteps) return { phase: 'yours', tone: 'good', eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing here is clicked for you.', ...again };
+  if (offSteps) return { phase: 'yours', tone: 'good', eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing here is clicked for you. Never Binds or Submits.', ...again };
   if (!autoAdvance) {
     return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', ...again,
-      sub: carrier?.advance && $('auto-advance').checked ? 'Click Continue on this page yourself.' : 'Click Continue, then fill the next page.' };
+      sub: carrier?.advance && $('auto-advance').checked ? 'Click Continue on this page yourself. Never Binds or Submits.' : 'Click Continue, then fill the next page.' };
   }
   // Nothing left and the page not moved on: the main button continues (a fill, which clicks the
   // page's Continue once nothing is left: W43-40). The same once the agent settled what was left,
@@ -3438,7 +3438,7 @@ function showReviewMode() {
   if (!on) { box.replaceChildren(); return; }
   const cls = String(record.operations?.businessClass ?? '').trim();
   box.replaceChildren(issueCard({ tone: 'warn', title: `Review mode: ${cls ? `"${cls}"` : 'no business class'} on the intake`,
-    text: `${carrier.name}'s rules cover expediters and general freight. Confirm the marked answers.` }));
+    text: `${carrier.name}'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.` }));
 }
 
 // A card above the page's answers (or in them): what's wrong or different, in the panel's own

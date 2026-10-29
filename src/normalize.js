@@ -351,8 +351,6 @@ export const nonTruckingAnswer = (v) => /^\s*non[\s-]*trucking\s*$/i.test(String
 export const cdlStandard = (driver) => !!driver && typeof driver.cdl !== 'boolean' && driver.cdlYear == null;
 export const cdlAnswer = (driver) => (cdlStandard(driver) ? false : typeof driver?.cdl === 'boolean' ? driver.cdl : null);
 export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
-// What the filler does on an NTL quote, carrier by carrier (the NTL items below and Luna's).
-export const NTL_FILLS = 'On Progressive the filler adds it on Rates, answers the permanent lease question Yes, puts the limit in the NTL limit and leaves Bodily Injury and Property Damage Liability Not selected, then does the rest of Rates through Print, Email, Fax; with cargo or general liability too, the rest of Rates is yours. On GEICO it picks Non-Trucking Liability, answers "Yes, under permanent lease" and puts the limit in the NTL list. On AmWINS it is written in the disclosure details on Underwriting.';
 export const NTL_RATES = 'On Progressive, with cargo or general liability too, the rest of Rates is yours.';
 export const ntlCheckMessage = (line) => `Notes mention non-trucking liability (NTL): "${line}". If the client wants it, set it to Yes. ${NTL_RATES}`;
 // The intake's info item when the form's auto liability is Non-Trucking (coverage.ntl-form).
@@ -385,7 +383,7 @@ export const ntlDotFilingsHold = (record) => (ntlWithPrimary(record)
 // The intake's info item when an NTL intake asks for filings or gives a USDOT number (coverage.ntl-filings).
 export const ntlFilingsMessage = (record) => `NTL quote: TNI adds no USDOT and no filings. ${record?.operations?.filingsRequired === true
   ? `Filings are answered No${record?.applicant?.dot ? ' and the USDOT number is left out' : ''}.`
-  : 'The USDOT number is left out.'}`;
+  : 'The USDOT number is left out, and "has a USDOT number" is answered No.'}`;
 
 // Words in the claims notes that answer the ownership question. Only the form's three answers
 // are taken as the answer; the others count as mentions, so "on a lease, truck owned" is not
@@ -1033,7 +1031,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     record.drivers.push(d);
     rows.drivers.push(n);
   });
-  if (companyAsWritten && !companyName(companyAsWritten)) info('company.none', 'applicant.name', `"${companyAsWritten}": sole proprietor.`);
+  if (companyAsWritten && !companyName(companyAsWritten)) info('company.none', 'applicant.name', `Company name "${companyAsWritten}": sole proprietor.`);
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
   // A blank "owner drives" box is TNI's Yes on the carriers (2026-10-26, W44-25: util.js
   // ownerDrives; the record keeps it blank): an owner missing from the driver list is then listed as a
@@ -1164,8 +1162,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       ['policy type', prior.type], ['carrier', prior.carrier], ['limit', prior.limit], ['expiration date', prior.expiration],
     ].filter(([, value]) => !value).map(([name]) => name);
     const named = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
-    if (missing.length && priorInsuranceAssumed(record, prior)) check('prior.incomplete', 'priorInsurance[0]', `Missing the ${named}. Proof of prior insurance (1-3 years) is assumed (TNI); get the rest from the client.`);
-    else if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Missing the ${named}. Confirm before quoting.`);
+    if (missing.length && priorInsuranceAssumed(record, prior)) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Proof of prior insurance (1-3 years) is assumed (TNI); get the rest from the client.`);
+    else if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Confirm before quoting.`);
     if (prior.expiration && /^\d{2}\/\d{2}\/\d{4}$/.test(prior.expiration)) {
       const [mm, dd, yyyy] = prior.expiration.split('/').map(Number);
       const expiry = Date.UTC(yyyy, mm - 1, dd);

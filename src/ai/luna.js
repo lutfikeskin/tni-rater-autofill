@@ -1,7 +1,7 @@
 // Luna resolves bounded choices; code gates automatic picks and the agent approves them.
 import { AssistError, RequestTooLarge, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake, rowsFor, entityOf, intakeValue } from './common.js';
 import { fieldInfo } from '../schema.js';
-import { ntlMention, intakeNotes, NTL_WORDS } from '../normalize.js';
+import { ntlMention, intakeNotes, NTL_WORDS, NTL_RATES } from '../normalize.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
 export const API_URL = 'https://api.openai.com/v1/responses';
@@ -426,7 +426,7 @@ export function notesWarnings(results, { quotedFragments = [], ntlSet = false, i
     // The intake's own NTL item already covers NTL here; another request in it still counts.
     const quotedNtl = quotedFragments.includes(x.line) && NTL_WORDS.test(x.line);
     if (x.ntl && !quotedNtl && !ntlSet) {
-      out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: notes may be about NTL: "${x.line}". If the client wants it, set Non-trucking liability to Yes.` });
+      out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: notes may be about NTL: "${x.line}". If the client wants it, set Non-trucking liability to Yes. ${NTL_RATES}` });
     }
     if (x.coverageChange) {
       out.push({ line: x.line, code: 'ai.coverage-change', path: fromNotes.includes(x.line) ? 'notes.text' : 'claims.text', level: 'check', msg: `Luna: notes may ask for a coverage change: "${x.line}". Change Requested coverage if so.` });

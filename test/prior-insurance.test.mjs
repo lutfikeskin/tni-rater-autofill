@@ -61,10 +61,10 @@ test('the Intake step names the current insurance boxes left blank, with the pro
   const partial = warned({ ins_type_1: 'Commercial Auto', ins_carrier_1: 'Synthetic Mutual' });
   assert.equal(partial.level, 'check', 'shown on the Intake step like the other checks');
   assert.equal(partial.path, 'priorInsurance[0]');
-  assert.match(partial.msg, /Missing the limit and expiration date/);
+  assert.match(partial.msg, /^Current insurance: missing the limit and expiration date/, 'it says it is about current insurance');
   assert.match(partial.msg, /proof of prior insurance \(1-3 years\)/i);
   assert.doesNotMatch(partial.msg, /Synthetic Mutual/, 'no client value');
-  assert.match(warned({ ins_limit_1: '$1M CSL' }).msg, /Missing the policy type, carrier and expiration date/);
+  assert.match(warned({ ins_limit_1: '$1M CSL' }).msg, /Current insurance: missing the policy type, carrier and expiration date/);
   // All four filled, or none: nothing to name. A remark in the date box has its own check.
   assert.equal(warned(DATED), undefined);
   assert.equal(warned({}), undefined);
@@ -73,7 +73,7 @@ test('the Intake step names the current insurance boxes left blank, with the pro
   assert.ok(ne.warnings.some((w) => w.code === 'prior-expiration.invalid' && w.level === 'check'));
   // Not assumed (another kind of policy): the details are still asked for, without the assumption.
   const gl = warned({ ins_type_1: 'General Liability', ins_carrier_1: 'Synthetic Mutual' });
-  assert.match(gl.msg, /Missing the limit and expiration date/);
+  assert.match(gl.msg, /Current insurance: missing the limit and expiration date/);
   assert.doesNotMatch(gl.msg, /proof of prior/i);
 });
 
