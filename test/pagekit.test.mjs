@@ -162,6 +162,15 @@ class FakeNode {
     return n.parentNode instanceof FakeShadowRoot ? n.parentNode : this.ownerDocument ?? this;
   }
 
+  // In the document: up through its parents, a shadow root to its host, to the document.
+  get isConnected() {
+    for (let n = this; n;) {
+      if (n instanceof FakeDocument) return true;
+      n = n.parentElement ?? (n.parentNode instanceof FakeShadowRoot ? n.parentNode : null) ?? (n instanceof FakeShadowRoot ? n.host : null);
+    }
+    return false;
+  }
+
   // An open shadow root (GEICO draws its radios and buttons in them): reached through shadowRoot,
   // never by a querySelectorAll of the page.
   attachShadow() {
@@ -8173,7 +8182,7 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.match(PAGEKIT, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
   assert.match(PAGEKIT, /if \(helperClicked\) phase\('helper', pendingAction\?\.label \?\? report\.actions\.at\(-1\)\?\.text \?\? null\);/);
   assert.match(PAGEKIT, /report\.rounds = round \+ 1;\s+phase\(null\);/, 'a new round answers again');
-  assert.match(PAGEKIT, /phase: running\.phase \?\? null \};/);
+  assert.match(PAGEKIT, /phase: running\.phase \?\? null, itemsAt:/);
 });
 
 // Review of PR #170: the phase test read the kit's source. Run: as the fill begins, progress() says
@@ -8537,9 +8546,101 @@ test('GEICO coverages: a CSL limit takes property damage and UMPD off the page a
   assert.equal(p.med.select.value, '$5,000');
   // Nothing left for the agent: Recalculate clicked, once.
   assert.equal(p.recalcs, 1);
-  // The end of the fill read the page once, and that read reconciled the report: two items dropped.
-  assert.deepEqual(plain({ reads: report.reconcile.reads, dropped: report.reconcile.dropped, retried: report.reconcile.retried }), { reads: 1, dropped: 2, retried: 1 });
+  // The end of the fill read the page once, and that read reconciled the report. Judged at the cursor,
+  // property damage and UMPD were never items (nothing to drop), and UM, never failed against the
+  // split limits, was given once the cursor reached it (not given again by retryRedrawn).
+  assert.deepEqual(plain({ reads: report.reconcile.reads, dropped: report.reconcile.dropped, retried: report.reconcile.retried }), { reads: 1, dropped: 0, retried: 0 });
   assert.ok(report.reconcile.ms >= 0);
+});
+
+// What a fill streams to the panel while it runs (progress: the items judged so far, one snapshot a
+// round), read as the page takes each answer and every few ms, until `done` settles.
+function watchStream(kit, controls, done) {
+  const seen = [];
+  const look = (at) => { const p = kit.progress(); if (p?.items) seen.push({ at, items: plain(p.items) }); };
+  for (const c of controls) c.addEventListener('change', () => look(c.id));
+  const timer = setInterval(() => look(null), 2);
+  return done.finally(() => clearInterval(timer)).then((report) => ({ report, seen }));
+}
+
+// Judged at the cursor (the maintainer, 2026-10-28: the page is answered top to bottom, and what is
+// above decides what appears below). GEICO live run, 2026-10-28 (usage session 75b6, 20:23 UTC):
+// round by round, Property Damage and UMPD, below the bodily injury limit, were made "not on the
+// intake: needs you" before the fill's $1,000,000 CSL above them took them off the page, and UM was
+// failed against the split limits drawn before. #226 drops them as the fill ends (reconcile); judged
+// at the cursor, no round ever makes them items: they are below the last answer until the page has
+// settled after the next one, and by then GEICO has taken them away. Nothing to drop at the end.
+test('GEICO coverages judged at the cursor: property damage and UMPD below the CSL limit are never items in any round, UM never failed', async () => {
+  const p = cslRedrawPage();
+  const fill = p.h.kit.fill(p.plan, { replaceChoices: true, maxRounds: 20 });
+  const { report, seen } = await watchStream(p.h.kit, [p.bi.select, p.pd.select, p.um.select, p.umpd.select, p.med.select], fill);
+  // Not in the report as the fill ends, and #226's end-of-fill reconciliation (the safety net) had
+  // nothing to drop: no round made them items.
+  const items = [...report.noData, ...report.failed, ...report.checks, ...report.unknown, ...report.leftRequired];
+  assert.ok(!items.some((x) => /Property Damage|UMPD|Uninsured/.test(x.label)), JSON.stringify(plain(items.map((x) => x.label))));
+  assert.equal(report.reconcile.dropped, 0, 'no item was made for a question the page then took away');
+  assert.equal(report.reconcile.retried, 0, 'UM was never failed against the split limits');
+  // Nor streamed to the panel in any round.
+  assert.ok(seen.length >= 3, `the panel had the fill's items while it ran (${seen.length} snapshots)`);
+  const said = seen.flatMap((s) => s.items.map((x) => x.label));
+  assert.ok(!said.some((l) => /Property Damage|UMPD|Uninsured/.test(l)), `streamed: ${[...new Set(said)].join(' / ')}`);
+  assert.equal(p.um.select.value, '$100,000 Combined Single Limit');
+  assert.equal(p.recalcs, 1);
+});
+
+// The cursor, generically: on a page answered top to bottom, a question is judged only once every
+// answer above it is in and the page has settled; an answer's own redraw (a question taken away, one
+// drawn, 200 ms after it, as GEICO draws them) decides what is below it. At each answer the fill
+// gives, nothing below it has an item or a mark yet. The report lists what is left in page order.
+test('judged at the cursor: no item or mark below an answer still to give; what an answer removes is never an item; the review list in page order', async () => {
+  const h = harness({ pathname: '/quote' });
+  const sel = (id, label, options, value = '') => new SelectNode(['', ...options], { id: `Id_${id}_1`, ariaLabel: label, value });
+  const kind = sel('GiveKind', 'Kind', ['Owner', 'Renter']);
+  const unknown = makeInput({ id: 'Id_GiveNickname_1', ariaLabel: 'Nickname' });
+  const landlord = sel('GiveLandlord', 'Landlord', ['Yes', 'No']);
+  const size = sel('GiveSize', 'Size', ['Small', 'Large']);
+  const color = sel('GiveColor', 'Color', ['Red', 'Blue']);
+  const box = new FakeNode('div');
+  box.append(kind, unknown, landlord, size, color);
+  h.document.body.append(box);
+  // Owner: the page takes the nickname and the landlord question away, a moment after the answer,
+  // and draws the deed's year in their place.
+  const deed = makeInput({ id: 'Id_GiveDeedYear_1', ariaLabel: 'Deed year' });
+  kind.addEventListener('change', () => setTimeout(() => {
+    unknown.remove();
+    landlord.remove();
+    box.children.splice(1, 0, deed);
+    deed.parentElement = box;
+    deed.ownerDocument = h.document;
+  }, 200));
+  const order = () => [...box.children];
+  const plan = [
+    { id: 1, field: 'GiveKind', path: 'x.kind', name: 'Kind', kind: 'choice', value: 'Owner' },
+    { id: 2, field: 'GiveLandlord', path: 'x.landlord', name: 'Landlord', kind: 'choice', value: null },
+    { id: 3, field: 'GiveSize', path: 'x.size', name: 'Size', kind: 'choice', value: 'Large' },
+    { id: 4, field: 'GiveColor', path: 'x.color', name: 'Color', kind: 'choice', value: null },
+  ];
+  // At each answer, the questions below it: none has an item streamed or a mark on the page.
+  const below = [];
+  for (const c of [kind, size]) c.addEventListener('change', () => {
+    const under = order().slice(order().indexOf(c) + 1);
+    const p = h.kit.progress();
+    below.push({ at: c.id, marked: under.filter((n) => n.getAttribute('data-rater-autofill')).map((n) => n.id),
+      items: (p?.items ?? []).filter((x) => under.some((n) => x.key === `ref:${n.id.replace(/^Id_|_1$/g, '')}`)).map((x) => x.key) });
+  });
+  const { report, seen } = await watchStream(h.kit, [], h.kit.fill(plan, { maxRounds: 10 }));
+  assert.deepEqual(below.map((x) => x.at), ['Id_GiveKind_1', 'Id_GiveSize_1'], 'two answers, top to bottom');
+  for (const x of below) assert.deepEqual(plain([x.marked, x.items]), [[], []], `nothing below ${x.at} judged while it was given`);
+  // What the first answer took away was never an item, streamed or reported.
+  const streamed = new Set(seen.flatMap((s) => s.items.map((x) => x.key)));
+  assert.ok(!streamed.has('ref:GiveNickname') && !streamed.has('ref:GiveLandlord'), [...streamed].join(' / '));
+  assert.equal(report.reconcile.dropped, 0);
+  // What is left, in the page's order: the deed's year (drawn by the answer, unfamiliar), then the color.
+  const left = [...report.unknown, ...report.noData].sort((a, b) => a.order - b.order);
+  assert.deepEqual(plain(left.map((x) => [x.key, x.order])), [['ref:GiveDeedYear', 1], ['ref:GiveColor', 3]]);
+  // Each snapshot streamed lists its items in the page's order too.
+  for (const s of seen) assert.deepEqual(s.items.map((x) => x.order), s.items.map((x) => x.order).sort((a, b) => a - b));
+  assert.deepEqual([kind.value, size.value], ['Owner', 'Large']);
 });
 
 test('the review items left on the page say what the page shows now; a gone question is dropped and holds nothing', async () => {

@@ -2053,10 +2053,15 @@ function fillErrorMessage(ctx, e) {
 // open on it holds its scripts, or a frame is stuck) is said in the dock and the list
 // (`unanswered`); nothing is done to the page, and the fill goes on once it answers. Returns what
 // stops the reading.
+// The items the fill has judged so far come with them (pagekit progress `items`: what is left for the
+// agent above the fill's cursor, one snapshot a round, sent only when the panel doesn't have that
+// round's), each frame's latest kept, and listed with the answers in the page's order (liveEntries).
 const UNANSWERED_MS = 5000;
 function watchFill(ctx) {
   if (!inExtension) return () => {};
   const lists = new Map();
+  // Each frame's latest items (pagekit `itemsAt`, the round's snapshot, and its list).
+  const judged = new Map();
   let reading = null;
   const timer = setInterval(async () => {
     if (state.fillingFor?.run !== ctx.run) { clearInterval(timer); return; }
@@ -2070,7 +2075,7 @@ function watchFill(ctx) {
     reading = Date.now();
     let frames;
     try {
-      const seen = Object.fromEntries([...lists].map(([list, rows]) => [list, rows.length]));
+      const seen = Object.fromEntries([...[...lists].map(([list, rows]) => [list, rows.length]), ...[...judged].map(([frame, x]) => [`items@${frame}`, x.at])]);
       frames = await chrome.scripting.executeScript({ target: { tabId: ctx.tabId, allFrames: true }, world: worldFor(ctx.carrier),
         func: (s) => globalThis.__raterKit?.progress?.(s) ?? null, args: [seen] });
     } catch { return; /* the page is navigating */ } finally { reading = null; }
@@ -2084,19 +2089,26 @@ function watchFill(ctx) {
     // earlier page, reads it as every fill begins (the review of PR #170).
     const top = frames.find((x) => x.frameId === 0)?.result;
     const phase = top ? top.phase ?? null : frames.find((x) => x.result?.phase)?.result.phase ?? null;
+    // Frames in the page's order (the top frame first), for listing their rows and items in turn.
+    const order = frames.map((x) => x.result?.frame).filter(Boolean);
     for (const { result } of frames) {
       if (!result?.list) continue;
       // A list the frame has rewritten (an answer given again) comes whole (`since` 0), as a new one.
       const had = result.since ? lists.get(result.list) ?? [] : [];
       if (!result.since) for (const list of lists.keys()) if (list.startsWith(`${result.frame}:`)) lists.delete(list);
-      lists.set(result.list, [...had.slice(0, result.since), ...result.rows]);
+      lists.set(result.list, [...had.slice(0, result.since), ...result.rows.map((x) => ({ ...x, frame: result.frame }))]);
+      if (Array.isArray(result.items)) judged.set(result.frame, { at: result.itemsAt, list: result.items.map((x) => ({ ...x, frame: result.frame })) });
     }
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
     const rows = [...lists.values()].flat().filter((x) => !x.otherStep);
+    const itemsKey = [...judged].map(([frame, x]) => `${frame}@${x.at}`).join('|');
     const phaseKey = phase ? `${phase.name}|${phase.what ?? ''}` : '';
-    if (!answered && phaseKey === (f.phaseKey ?? '') && rows.length === f.filled && rows.every((x, i) => f.rows[i] === x)) return;
+    if (!answered && phaseKey === (f.phaseKey ?? '') && itemsKey === (f.itemsKey ?? '') && rows.length === f.filled && rows.every((x, i) => f.rows[i] === x)) return;
     f.filled = rows.length;
     f.rows = rows;
+    f.items = [...judged.values()].flatMap((x) => x.list);
+    f.itemsKey = itemsKey;
+    if (order.length) f.frames = order;
     f.phase = phase;
     f.phaseKey = phaseKey;
     renderSteps();
@@ -2104,9 +2116,22 @@ function watchFill(ctx) {
   return () => clearInterval(timer);
 }
 
-// The answers going in now, one row each as the page takes them, and a row for the one coming:
-// read from the page (pagekit progress), nothing typed or guessed here. Shown in the page view in
-// place of the report while a fill on the tab in front runs.
+// The live list's entries in the page's order: the answers in so far (`rows`) and the items judged
+// (`items`, pagekit progress), each by its frame (`frames`, the page's frames in order) and its place
+// on the page as the fill's last round read it (`order`); those with no place after them, as they
+// came. [{ row } | { item }].
+function liveEntries(rows, items, frames = []) {
+  const all = [...rows.map((x, i) => ({ row: x, x, i })), ...items.map((x, i) => ({ item: x, x, i: rows.length + i }))];
+  const rank = (e) => { const at = frames.indexOf(e.x.frame); return at < 0 ? frames.length : at; };
+  const placed = (e) => Number.isInteger(e.x.order);
+  return [...all.filter(placed).sort((a, b) => rank(a) - rank(b) || a.x.order - b.x.order || a.i - b.i), ...all.filter((e) => !placed(e))]
+    .map(({ row, item }) => (row ? { row } : { item }));
+}
+
+// The answers going in now, one row each as the page takes them, the items left for the agent as the
+// fill judges them (top to bottom: only questions above where it has got to), all in the page's order
+// (liveEntries), and a row for the one coming: read from the page (pagekit progress), nothing typed or
+// guessed here. Shown in the page view in place of the report while a fill on the tab in front runs.
 function renderLive() {
   const f = state.fillingFor;
   const live = $('live');
@@ -2114,27 +2139,28 @@ function renderLive() {
   live.hidden = !on;
   if (!on) { live.replaceChildren(); delete live.dataset.count; live.drawn = []; return; }
   const rows = f.rows ?? [];
-  const count = `${rows.length}${f.stopping ? 's' : ''}${f.unanswered ? 'u' : ''}|${f.phaseKey ?? ''}`;
+  const count = `${rows.length}${f.stopping ? 's' : ''}${f.unanswered ? 'u' : ''}|${f.phaseKey ?? ''}|${f.itemsKey ?? ''}`;
   if (live.dataset.count === count && live.drawn === rows) return;
   live.dataset.count = count;
   // The list follows the answers only while the agent is at its end (or it is new): one who
   // scrolled up to read the page's notes isn't pulled back down every half second.
   const view = $('view');
   const follow = !(live.drawn ?? []).length || view.scrollHeight - view.scrollTop - view.clientHeight < 80;
-  // The new answers join those listed already; a list the page rewrote is listed anew.
-  const drawn = live.drawn ?? [];
-  const more = drawn.length <= rows.length && drawn.every((x, i) => rows[i] === x);
-  if (more) {
-    live.querySelector(':scope > .typing')?.remove();
-    live.querySelector(':scope > .fresh')?.classList.remove('fresh');
-  } else live.replaceChildren();
-  live.append(...rows.slice(more ? drawn.length : 0).map((x) => h('div', { class: 'row' },
-    h('div', { class: 'row-head' },
-      h('span', { class: 'row-icon', 'aria-hidden': 'true' }, '✓'),
-      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, x.label || 'Answer'), h('span', { class: 'row-value' }, x.shown || 'filled')),
-      x.standard ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'TNI standard') : null))));
+  // The answer that just went in (the last one new since the list was drawn) is marked fresh.
+  const drawn = new Set(live.drawn ?? []);
+  const fresh = rows.findLast((x) => !drawn.has(x)) ?? null;
+  const said = { failed: 'Couldn’t fill' };
+  live.replaceChildren(...liveEntries(rows, f.items ?? [], f.frames ?? []).map(({ row: x, item }) => (item
+    ? h('div', { class: `row need${item.kind === 'failed' ? ' failed' : ''}` },
+      h('div', { class: 'row-head' },
+        h('span', { class: 'row-icon', 'aria-hidden': 'true' }, item.kind === 'failed' ? '!' : '?'),
+        h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, item.label || 'Question'), h('span', { class: 'row-value' }, said[item.kind] ?? 'Needs your answer'))))
+    : h('div', { class: `row${x === fresh ? ' fresh' : ''}` },
+      h('div', { class: 'row-head' },
+        h('span', { class: 'row-icon', 'aria-hidden': 'true' }, '✓'),
+        h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, x.label || 'Answer'), h('span', { class: 'row-value' }, x.shown || 'filled')),
+        x.standard ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'TNI standard') : null)))));
   live.drawn = rows;
-  if (rows.length) live.lastElementChild?.classList.add('fresh');
   if (!f.stopping) {
     const [label, value] = f.unanswered ? ['Waiting for the page', 'It isn’t answering'] : phaseSaid(f.phase, rows.length);
     live.append(h('div', { class: 'row typing' }, h('div', { class: 'row-head' },
