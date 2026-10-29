@@ -957,6 +957,9 @@ export const geico = {
   // only then, as with a mouse click. A script's click sent Recalculate without it, rated with
   // GEICO's own liability, UM, road service and cargo (W43-44).
   pressInPage: true,
+  // What its pages draw that no other carrier does (gds-* components, the step bar, its spinners),
+  // injected before the fill engine.
+  pageAdapter: 'src/content/carriers/geico.js',
   // Fills on the quote and on the gateway, where the quote starts with the ZIP (TNI, 2026-10-21);
   // nothing else of the gateway. Page layouts as the agent works: the quote only.
   autoFillUrl: FILLED,

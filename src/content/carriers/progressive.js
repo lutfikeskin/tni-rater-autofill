@@ -182,7 +182,24 @@
       highlight: (cmp) => cmp?.el?.dom?.querySelector?.('.x-form-trigger-wrap') ?? null,
       typeName: (cmp) => cmp?.xtype ?? null,
       busy: () => !!ext()?.Ajax?.isLoading?.(),
-      busySelectors: ['.x-mask-msg', '.x-mask-loading'],
+      selectors: {
+        busy: ['.x-mask-msg', '.x-mask-loading'],
+        buttons: ['.x-btn'],
+        disabled: ['.x-item-disabled', '.x-btn-disabled'],
+        // ExtJS draws a combo's options in a bound list outside the combo.
+        options: ['.x-boundlist-item'],
+        lists: ['.x-boundlist'],
+        errors: ['.x-form-error-msg', '.x-form-invalid-under'],
+        // A combo's box and its trigger: a click there is on the combo.
+        fieldWrap: ['.x-form-trigger-wrap'],
+      },
+      // Progressive names its pages in ?pageName=.
+      page: (loc) => new URLSearchParams(loc.search).get('pageName') || null,
+      // An answer on Rates (CoveragesRates) makes Recalculate and Print due again: the bill plan
+      // (payment method) stays chosen, the premium needs recalculating. A cargo, general liability or
+      // trailer interchange answer re-arms its Done with this coverage too.
+      rearm: (page, step) => (page !== 'CoveragesRates' ? []
+        : ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : []), ...(step.interchange === 'section' ? ['doneInterchange'] : [])]),
       // The page sends its server each answer: a fill waits for it between answers.
       serverBacked: () => !!ext(),
       onRequest: (fn) => { try { ext()?.Ajax?.on?.('beforerequest', fn); } catch { /* no ExtJS events */ } },

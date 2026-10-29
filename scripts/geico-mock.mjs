@@ -52,7 +52,8 @@ import { stopScreen } from '../src/carriers.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
 const source = (file) => fs.readFileSync(path.join(root, 'src/content', file), 'utf8');
-const KIT = ['field-key.js', 'pagekit.js'].map(source).join('\n');
+// GEICO's page adapter goes in before the engine, as the side panel injects it (`pageAdapter`).
+const KIT = ['field-key.js', 'carriers/geico.js', 'pagekit.js'].map(source).join('\n');
 // In the page's own world, as the side panel injects it for GEICO (pressInPage): the buttons the kit
 // presses are clicked there (W43-44).
 const PRESS = source('page-press.js');

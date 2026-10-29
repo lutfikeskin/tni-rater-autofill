@@ -926,9 +926,30 @@
  * @property {(widget: any) => Element | null} highlight  the element to mark for a widget's field
  * @property {(widget: any) => string | null} typeName  the widget's type, for captures
  * @property {() => boolean} busy  the page is waiting on its server
- * @property {string[]} busySelectors  the carrier's own spinners and masks
+ * @property {PageAdapterSelectors} selectors  the carrier's own elements, by role, added to the engine's own selectors
+ * @property {string[]} changeAttributes  attributes whose change is the page changing (GEICO's radio group `active-index`), besides `checked`
+ * @property {(loc: Location) => string | null} page  the page's name, where the carrier names its pages itself (Progressive's ?pageName=); null for the path or #/route
+ * @property {(page: string, step: FieldStep) => string[]} rearm  the helpers (action ids) an answer on this page makes due again (Progressive's Rates: Recalculate and Print)
  * @property {() => boolean} serverBacked  the page sends its server each answer: a fill waits between answers
  * @property {(fn: () => void) => void} onRequest  count the page's requests (per-answer timing)
  * @property {(fn: () => void) => void} offRequest
  * @property {(list: Element) => { label: string, fixed: boolean } | null} listOwner  the question an open list belongs to
+ */
+
+/**
+ * A carrier's own elements by what they are, each a list of selectors (pagekit.js withAdapter).
+ * @typedef {object} PageAdapterSelectors
+ * @property {string[]} [busy]  spinners and masks while the page works
+ * @property {string[]} [buttons]  buttons the page draws as other elements (ExtJS's .x-btn)
+ * @property {string[]} [agentPress]  what the agent presses to move on, besides buttons (GEICO's <gds-button> host)
+ * @property {string[]} [disabled]  a disabled button's marks
+ * @property {string[]} [options]  a list's items (ExtJS's bound list items)
+ * @property {string[]} [lists]  open lists (ExtJS's bound lists)
+ * @property {string[]} [suggestions]  an address box's suggestions (GEICO's)
+ * @property {string[]} [errors]  validation messages
+ * @property {string[]} [tooltips]  tooltips whose words are never a question's (by tag name too)
+ * @property {string[]} [fieldWrap]  a field's box with its own buttons: a click there is on the field
+ * @property {string[]} [stepBar]  the parts of a step progress bar (GEICO's)
+ * @property {string[]} [stepLinks]  the step bar's links: never a helper or a Continue
+ * @property {string[]} [otherStep]  a step's own section in a page that holds every step (AmWINS' .form-tab)
  */

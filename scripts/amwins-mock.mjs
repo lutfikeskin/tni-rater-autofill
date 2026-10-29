@@ -19,7 +19,8 @@ import { amwins } from '../src/carriers/amwins.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
-const PAGEKIT = ['field-key.js', 'pagekit.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')).join('\n');
+// AmWINS' page adapter goes in before the engine, as the side panel injects it (`pageAdapter`).
+const PAGEKIT = ['field-key.js', 'carriers/amwins.js', 'pagekit.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')).join('\n');
 
 // A synthetic client like the recorded quotes: an expediter with box trucks, no company name, and
 // (as on those intakes) no marital status, so the agent answers it here (AGENT_ANSWERS).

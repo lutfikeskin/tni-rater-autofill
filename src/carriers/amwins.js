@@ -438,6 +438,9 @@ export const amwins = {
   id: 'amwins',
   name: 'AmWINS',
   hosts: [/(^|\.)amwinsadmittedplacement\.com$/],
+  // What its pages draw that no other carrier does (its loading overlay, a tab per step),
+  // injected before the fill engine.
+  pageAdapter: 'src/content/carriers/amwins.js',
   // Where page layouts are taken as the agent works without a fill: the application only.
   layoutUrl: /\/application\/businessauto/i,
   // Where fills run (also "Fill this page"): the start page, where the risk state is picked and the

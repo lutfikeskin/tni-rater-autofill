@@ -16,8 +16,8 @@ import { assistContextKey } from '../src/ai/common.js';
 // script itself, without a browser session, real quote data, or customer identifiers.
 const PAGEKIT = fs.readFileSync(new URL('../src/content/pagekit.js', import.meta.url), 'utf8');
 const FIELD_KEY = fs.readFileSync(new URL('../src/content/field-key.js', import.meta.url), 'utf8');
-// Progressive's page adapter: loaded before the kit in a harness with ExtJS (`ext`), as the panel does.
-const PROGRESSIVE = fs.readFileSync(new URL('../src/content/carriers/progressive.js', import.meta.url), 'utf8');
+// A carrier's page adapter, loaded before the kit as the panel does it (harness `adapter`).
+const ADAPTERS = Object.fromEntries(['progressive', 'geico', 'amwins'].map((id) => [id, fs.readFileSync(new URL(`../src/content/carriers/${id}.js`, import.meta.url), 'utf8')]));
 const RECORDER = fs.readFileSync(new URL('../src/content/recorder.js', import.meta.url), 'utf8');
 
 // A virtual clock for the fill engine's waits (sleep, settle, the retry loops that read Date.now()).
@@ -423,8 +423,9 @@ function extCmp(id, input, { caption = 'Synthetic question', required = false, v
   return cmp;
 }
 
-// `progressive`: Progressive's page adapter is loaded (always with `ext`), as on its tabs.
-function harness({ ext = false, progressive = ext, pathname = '/rater', search = '' } = {}) {
+// `adapter`: the carrier whose page adapter is loaded, as on its tabs (`progressive`, always with
+// `ext`, is Progressive's).
+function harness({ ext = false, progressive = ext, adapter = progressive ? 'progressive' : null, pathname = '/rater', search = '' } = {}) {
   const document = new FakeDocument();
   const location = { origin: 'https://synthetic.example', pathname, search };
   const context = {
@@ -459,7 +460,7 @@ function harness({ ext = false, progressive = ext, pathname = '/rater', search =
     };
   }
   vm.runInNewContext(FIELD_KEY, context, { filename: 'src/content/field-key.js' });
-  if (progressive) vm.runInNewContext(PROGRESSIVE, context, { filename: 'src/content/carriers/progressive.js' });
+  if (adapter) vm.runInNewContext(ADAPTERS[adapter], context, { filename: `src/content/carriers/${adapter}.js` });
   vm.runInNewContext(PAGEKIT, context, { filename: 'src/content/pagekit.js' });
   // Every fill in this file is held to the review invariant as it returns (assertLive).
   const kit = context.__raterKit;
@@ -763,7 +764,7 @@ test('vehicle-named additional coverage q200F is mapped and does not block Rates
 
 test('TX refrigeration options fill from the intake without an AI review stop', async () => {
   for (const selected of [null, false, true]) {
-    const h = harness({ search: '?pageName=CoveragesRates' });
+    const h = harness({ progressive: true, search: '?pageName=CoveragesRates' });
     const radios = ['Yes, match Motor Truck Cargo limits', 'No'].map((value, i) => makeInput({
       id: i ? 'reefer-no' : `f_U${'A'.repeat(32)}215C_1_1`, name: 'string_215C', type: 'radio', value,
     }));
@@ -789,7 +790,7 @@ test('TX refrigeration options fill from the intake without an AI review stop', 
 // an answer already on the page is left as it is and flagged, never replaced.
 test('an edit kept under an old question id leaves answers on the page as they are', async () => {
   for (const skip of [[], ['3C01']]) {
-    const h = harness({ search: '?pageName=CoveragesRates' });
+    const h = harness({ progressive: true, search: '?pageName=CoveragesRates' });
     const radios = ['Yes, match Motor Truck Cargo limits', 'No'].map((value, i) => makeInput({
       id: i ? 'reefer-no' : `f_U${'A'.repeat(32)}9ABC_1_1`, name: 'string_9ABC', type: 'radio', value,
     }));
@@ -1172,7 +1173,7 @@ test('ignored reviews leave unknown, repeated and invalid fields untouched while
 });
 
 test('selected Agent Fax Cover Page is preserved without stopping Print-page filling', async () => {
-  const h = harness({ search: '?pageName=PrintEmailFax' });
+  const h = harness({ progressive: true, search: '?pageName=PrintEmailFax' });
   const faxCover = makeInput({ id: `f_c${'A'.repeat(32)}32CE_1_1`, ariaLabel: 'Agent Fax Cover Page', type: 'checkbox', checked: true });
   const print = makeInput({ id: `f_c${'A'.repeat(32)}32CC_1_1`, ariaLabel: 'Print', type: 'checkbox' });
   h.document.body.append(faxCover, print);
@@ -1187,7 +1188,7 @@ test('selected Agent Fax Cover Page is preserved without stopping Print-page fil
 // TNI 2026-10-07: Chrome opens the quote PDF only after the agent's own click, so the Print page
 // is filled (document, Print, fax cover kept) and Print/Send is left to the agent.
 test('the Print page is filled and Print/Send is left to the agent, preserving fax cover', async () => {
-  const h = harness({ search: '?pageName=PrintEmailFax' });
+  const h = harness({ progressive: true, search: '?pageName=PrintEmailFax' });
   const quote = makeInput({ id: `f_c${'A'.repeat(32)}32B0_1_1`, name: 'docs_32B0', type: 'radio', value: 'Insurance Quote (with all bill plans)', checked: true });
   const docs = makeInput({ id: 'doc-set', name: 'docs_32B0', type: 'radio', value: 'Document Set' });
   const print = makeInput({ id: `f_c${'A'.repeat(32)}32CC_1_1`, ariaLabel: 'Print', type: 'checkbox', checked: true });
@@ -1727,7 +1728,7 @@ function coverageActionPlan() {
 }
 
 function premiumHarness({ recalcResult = 'Total premium: $12,345.67', billDisabled = false } = {}) {
-  const h = harness({ search: '?pageName=CoveragesRates' });
+  const h = harness({ progressive: true, search: '?pageName=CoveragesRates' });
   const limit = makeInput({ id: 'liab-limit', ariaLabel: 'Liability limit', value: '1M CSL' });
   h.document.body.append(limit);
   h.document.body.innerText = 'Rates changed **** — please recalculate';
@@ -1803,7 +1804,7 @@ test('back from the bill plan: Recalculate again only when the rates are out of 
 // clicked its Continue, and the same fill read Rates as its next round and clicked Print, Email, Fax
 // as the agent did: two presses, 0.2 s apart.
 test('a fill whose page the agent moved on stops there, and clicks nothing on the next page', async () => {
-  const h = harness({ search: '?pageName=ChangePaymentPlan' });
+  const h = harness({ progressive: true, search: '?pageName=ChangePaymentPlan' });
   const method = makeInput({ id: 'method', ariaLabel: 'Payment method' });
   h.document.body.append(method);
   let print = null;
@@ -1827,7 +1828,7 @@ test('a fill whose page the agent moved on stops there, and clicks nothing on th
 // move, as GEICO's is (W43-13), and the fill clicks no helper or Continue after it.
 test('an ExtJS button the agent clicks during a fill is theirs: the fill clicks nothing after it', async () => {
   const run = async (press) => {
-    const h = harness({ search: '?pageName=CoveragesRates' });
+    const h = harness({ progressive: true, search: '?pageName=CoveragesRates' });
     const limit = makeInput({ id: 'limit', ariaLabel: 'Liability limit' });
     const cont = new FakeNode('a', { className: 'x-btn', textContent: 'Continue' });
     h.document.body.append(limit, cont);
@@ -2715,7 +2716,7 @@ test('readBack reports what each field shows now, row by row, and changes nothin
 });
 
 test('home address box: whole address typed, first suggestion picked, ZIP/city then checked', async () => {
-  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
   const address = makeInput({ id: `f_U${'A'.repeat(32)}2A9_1_1`, ariaLabel: 'Home Address' });
   const zip = makeInput({ id: `f_U${'A'.repeat(32)}2AE_1_1`, ariaLabel: 'ZIP Code' });
   const city = makeInput({ id: `f_U${'A'.repeat(32)}2B0_1_1`, ariaLabel: 'City' });
@@ -2742,7 +2743,7 @@ test('home address box: whole address typed, first suggestion picked, ZIP/city t
 });
 
 test('home address box without a suggestion is flagged for the agent', async () => {
-  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
   const address = makeInput({ id: `f_U${'A'.repeat(32)}2A9_1_1`, ariaLabel: 'Home Address' });
   h.document.body.append(address);
   const record = { applicant: {}, garaging: { street: '1 Nowhere Rd', city: 'X', state: 'IL', zip: '60000' }, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
@@ -2753,7 +2754,7 @@ test('home address box without a suggestion is flagged for the agent', async () 
 });
 
 test('Add Vehicle inside the Add menu: the menu is opened first, then Add Vehicle clicked', async () => {
-  const h = harness({ search: '?pageName=VehicleSummary' });
+  const h = harness({ progressive: true, search: '?pageName=VehicleSummary' });
   const add = addButton(h, 'Add');
   const addVehicle = addButton(h, 'Add Vehicle');
   addVehicle._visible = false;
@@ -2779,7 +2780,7 @@ test('business type list picks General Freight Trucking when offered, else For H
     [['For Hire Trucking Haul goods for others.', 'General Freight Trucking Haul general goods.', 'General Freight Trucking (Local) Haul general goods nearby.'], null],
   ];
   for (const [offered, want] of lists) {
-    const h = harness({ search: '?pageName=BECAPopup' });
+    const h = harness({ progressive: true, search: '?pageName=BECAPopup' });
     const names = ['Expediters/Hotshotters Express delivery of packages or time sensitive materials over a 50-mile radius.', ...offered];
     const radios = names.map((value, i) => makeInput({ id: i ? `bt-${i}` : `f_U${'A'.repeat(32)}36_1_1`, name: 'bt_36', type: 'radio', value }));
     h.document.body.append(radioGroup('Business Type Label', ...radios));
@@ -2894,7 +2895,7 @@ test('a ZIP+4 from the carrier agrees with the intake ZIP', async () => {
 });
 
 test('Recalculate is skipped (not waited for) when the rates are current, and Print goes ahead', async () => {
-  const h = harness({ search: '?pageName=CoveragesRates' });
+  const h = harness({ progressive: true, search: '?pageName=CoveragesRates' });
   h.document.body.innerText = 'Total premium: $4,321.00';
   const print = addButton(h, 'Print, Email, Fax');
   print.onclick = () => { print._clicked = true; };
@@ -3123,7 +3124,7 @@ test('Stop halts a running fill after the answer going in; progress counts what 
 // Bitwarden comparison (2026-10-22): the page the panel asked to fill is checked as the fill starts.
 // Another one in the top frame is left alone: nothing filled, and the marks of an earlier fill stay.
 test('a fill meant for another page than the top frame shows fills nothing and names the page found', async () => {
-  const h = harness({ search: '?pageName=Drivers' });
+  const h = harness({ progressive: true, search: '?pageName=Drivers' });
   const a = makeInput({ id: 'a', ariaLabel: 'First' });
   h.document.body.append(a);
   const step = { id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'one' };
@@ -3237,7 +3238,7 @@ test('an answer the page marks invalid after another change is picked again, the
 
 test('rates helpers wait while the liability limit differs from the intake; a limit the agent set counts as resolved', async () => {
   for (const agentSet of [false, true]) {
-    const h = harness({ search: '?pageName=CoveragesRates' });
+    const h = harness({ progressive: true, search: '?pageName=CoveragesRates' });
     const limit = makeInput({ id: 'liab-limit', ariaLabel: 'Liability limit', value: '500k CSL' });
     h.document.body.append(limit);
     h.document.body.innerText = 'Rates changed **** — please recalculate';
@@ -3554,7 +3555,7 @@ test('on a carrier stop page (Progressive DeclinationNotice) the kit fills and c
   const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
   const [action] = buildPlan(record, { id: 'synthetic', useGenericRules: false, rules: [], actions: [{ id: 'go', text: '^go$' }] }).filter((s) => s.kind === 'action');
   for (const page of ['DeclinationNotice', 'BusinessOwnerInfo']) {
-    const h = harness({ search: `?pageName=${page}` });
+    const h = harness({ progressive: true, search: `?pageName=${page}` });
     const zip = makeInput({ id: 'zip', ariaLabel: 'Zip code' });
     const go = addButton(h, 'Go');
     const next = addButton(h, 'Continue');
@@ -5169,7 +5170,7 @@ test('GEICO field keys: the data-model name without its render number, a filing 
 });
 
 test('GEICO radios: in page order among the other fields, asked by their legend, each option by its words', () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   const zip = makeInput({ id: 'Id_GiveInitialZipCode_11111', name: 'Id_GiveInitialZipCode_11111', ariaLabel: '5-Digit ZIP Code' });
   const kind = gdsRadios('GiveVehicleOrTrailer', 36353, 'What would the customer like to add?', [['Yes', 'Vehicle'], ['No', 'Trailer']], { tooltip: 'A trailer has no engine of its own.' });
   // Two pay-plan lists share their data-model name and have no legend: two questions, named by it.
@@ -5199,7 +5200,7 @@ test('GEICO radios: in page order among the other fields, asked by their legend,
 // of its own: after Yes then No, Yes's input may stay checked while its host isn't. The page shows
 // the hosts.
 test('a GEICO radio is read from its hosts: a stale inner input neither passes for the answer nor blocks the click', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   const observed = [];
   h.context.MutationObserver = class { observe(_, options) { observed.push(options); } disconnect() {} };
   const team = gdsRadios('TeamDrivingOrSlipSeatingYesNo', 36353, 'Do any vehicles require team driving or slip seating?', [['Yes', 'Yes'], ['No', 'No']], { checked: 0 });
@@ -5247,7 +5248,7 @@ test('an agent click on a GEICO radio during a fill is the agent\'s edit: protec
 });
 
 test('GEICO buttons: a gds-button by its words, not when its host is disabled; progress links never; add icons by token', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   const progress = new FakeNode('div', { id: 'progressIndicator' });
   const bar = new FakeNode('gds-progress-bar', { attrs: { value: '100', max: '100' } });
   const stepLink = new FakeNode('a', { textContent: 'Vehicles', role: 'button', attrs: { href: '#', tabindex: '0' } });
@@ -5460,7 +5461,7 @@ test('a unit added but never entered is said on its list, not on the unit\'s own
 
 test('GEICO spinners keep the page busy while they show', () => {
   for (const id of ['page-load', 'extendedWaiting']) {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     const loader = new FakeNode('div', { id, className: 'loader-container section-loader--show' });
     h.document.body.append(loader);
     assert.equal(h.kit.busy(), true, id);
@@ -5495,7 +5496,7 @@ function rate(h) {
   h.document.body.append(gdsRadios('GivePayPlanV2', 52525, null, [['GEICO_PP_1Pay', 'Pay In Full']], { checked: 0 }).group);
 }
 function recalcPage({ redraw = () => {}, rows = [], plans = true } = {}) {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   const row = (suffix, options, value) => new SelectNode(options, { id: `Id_${randomUUID()}_${suffix === 'COMP' ? 11111 : suffix === 'COLL' ? 11112 : 11113}_${suffix}`, value });
   const comp = row('COMP', ['$500 deductible', '$1,000 deductible'], '$1,000 deductible');
@@ -5608,7 +5609,7 @@ test('GEICO\'s Recalculate: a redraw seconds later is caught before View More; o
   assert.ok(moreAt - quietPage.clickedAt >= 15000, `View More clicked ${moreAt - quietPage.clickedAt} ms after Recalculate`);
   // Two boxes with one field key (ref:GiveFoo), each its own step: GEICO changes the second; the
   // first stays filled.
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   const first = new SelectNode(['A', 'B'], { id: 'Id_GiveFoo_11', value: '' });
   const second = new SelectNode(['A', 'B'], { id: 'Id_GiveFoo_22', value: '' });
@@ -5629,7 +5630,7 @@ test('GEICO\'s Recalculate: a redraw seconds later is caught before View More; o
 // the card is opened first, its questions get TNI's answers and the intake's limit, and Recalculate
 // waits for them; a card the agent opened already isn't clicked (its chevron would close it).
 function glCardPage({ expanded = false } = {}) {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   const card = new FakeNode('li', { id: 'Id_MotorTruckGeneralLiabilityEligibilityComboActivityData_33590', className: `expandable-form${expanded ? ' expanded' : ''}` });
   const icon = new FakeNode('span', { className: 'expandable-form-control', attrs: { 'data-testid': 'editIcon', tabindex: '0' } });
@@ -5797,7 +5798,7 @@ test('GEICO\'s Recalculate waits until the page\'s own requests stop finishing, 
 // and its own requests are quiet; one that never takes is one item for its vehicle, and what needs it
 // waits behind it, Recalculate held.
 function dependentCoverages({ busyUntil = 3000, never = false } = {}) {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   const t0 = clock.Date.now();
   let observer = null;
@@ -6013,7 +6014,7 @@ test('Continue is pressed from the page\'s own world where it takes the press (W
 // four runs (one left 12 minutes); a kit's click opened the proposal on all 11 runs before that press.
 // It is clicked by the kit (`kitClick`), while the page's world presses the step's other buttons.
 test('GEICO\'s Print Quote Proposal is clicked by the kit, View More Payment Plans pressed from the page\'s own world (2026-10-23)', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   h.document.body.append(new SelectNode(['9 Payments', '11 Payments'], { id: `Id_${randomUUID()}_11114_PAY`, value: '11 Payments' }));
   h.document.body.innerText = RATED;
@@ -6088,7 +6089,7 @@ test('the page\'s own world presses a button inside an event the browser dispatc
 // Pay In Full, 4 Payments Bi-Monthly Plan, 9 Payments), the plan with the most payments offered,
 // named in the report; Print follows it.
 function payPlanPage({ installments, inFull = true, checked = null }) {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   const groups = [...(inFull ? [gdsRadios('GivePayPlanV2', 52525, null, [['GEICO_PP_1Pay', 'Pay In Full']], { checked: checked == null ? 0 : null })] : []), gdsRadios('GivePayPlanV2', 52526, null, installments, { checked })];
   h.document.body.append(...groups.map((g) => g.group));
@@ -6174,7 +6175,7 @@ test('a search box that is an address question is a question; a site search or a
 const GEICO_ADDRESS = { ...geicoRecord(), trailers: [], trailerInfo: {}, notes: {},
   applicant: { name: 'Synthetic Freight LLC' }, garaging: { street: '1 Test Way', unit: null, city: 'Testville', state: 'NE', zip: '68000' } };
 function geicoStreetPage(suggest, { prefilled = '' } = {}) {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Business & Owner Info');
   const street = geicoBox('GiveStreet', 501, 'Street address', { type: 'search', attrs: { 'aria-autocomplete': 'list', 'aria-controls': 'address-dropdown-list' } });
   street.value = prefilled;
@@ -6291,7 +6292,7 @@ test('GEICO\'s gateway: a Start New Quote ZIP the page carried over is replaced 
 // Vehicles), and the agent kept GEICO's: now GEICO's is kept, with a check naming the intake's.
 test('GEICO\'s City: one the list doesn\'t have leaves GEICO\'s, with a check naming the intake\'s; one it has is picked (W43-35)', async () => {
   const run = async (step, options, value) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, step);
     // On Vehicles, a vehicle's form (its VIN question) holds the parking address.
     if (step === 'Vehicles') h.document.body.append(gdsRadios('YesNoPreQuoteHaveFullVinActivity', 41205, 'Do you have the VIN handy?', [['Yes', 'Yes'], ['No', 'No']]).group);
@@ -6387,7 +6388,7 @@ test('GEICO\'s vehicle type for an intake box truck: Box Truck where offered, el
 });
 
 test('GEICO\'s step is its progress bar\'s part under way while the title names it too; pages without a bar read their headings', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   // GEICO's headings read "Dashboard" on every step: never the step.
   h.document.body.append(new FakeNode('h1', { textContent: 'Dashboard' }));
   const bar = geicoBar(h, 'Vehicles');
@@ -6405,7 +6406,7 @@ test('GEICO\'s step is its progress bar\'s part under way while the title names 
   for (const b of bar.bars) b.setAttribute('value', '100');
   assert.equal(h.kit.step(), '');
   // No bar (AmWINS): the visible headings, as before.
-  const plainPage = harness();
+  const plainPage = harness({ adapter: 'amwins' });
   plainPage.document.body.append(new FakeNode('h3', { textContent: 'Vehicles' }), new FakeNode('h3', { textContent: 'Drivers' }));
   assert.equal(plainPage.kit.step(), 'Vehicles / Drivers');
 });
@@ -6417,7 +6418,7 @@ test('GEICO steps: a rule kept to a step answers only there, a rule kept to none
     { id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' },
   ];
   const run = async (step, title) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, step, { title });
     const first = geicoBox('GiveFirstName', 40001, 'First Name');
     const zip = geicoBox('GiveZip', 40002, '5-Digit ZIP Code');
@@ -6451,7 +6452,7 @@ test('GEICO forms: a vehicle form\'s rules answer beside its own question, a tra
   const record = { ...geicoRecord(), vehicles: [{ year: '2022' }], trailers: [{ year: '2019' }], drivers: [{ firstName: 'Sam' }] };
   const plan = buildPlan(record, carrier, { vehicles: 0, trailers: 0, drivers: 0 });
   const vehicleStep = async (kind) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Vehicles');
     if (kind === 'vehicle') h.document.body.append(gdsRadios('YesNoPreQuoteHaveFullVinActivity', 85493, 'Do you have the VIN handy?', [['Yes', 'Yes'], ['No', 'No']]).group);
     if (kind !== 'neither') h.document.body.append(geicoList('GiveOtherVehicleType', 85494, `Which of the following best describes the customer's ${kind}?`, ['Box Truck', 'Flatbed']));
@@ -6472,7 +6473,7 @@ test('GEICO forms: a vehicle form\'s rules answer beside its own question, a tra
   assert.equal(r.report.unitForm, null);
 
   const driverStep = async (added) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Drivers & Incidents');
     const first = geicoBox('GiveFirstName', 34001, 'First Name');
     h.document.body.append(first);
@@ -6507,7 +6508,7 @@ const geicoUnits = (active, bound, count = 2) => ({
 });
 
 test('a GEICO unit form that may be another vehicle\'s is held: nothing typed, one check naming the vehicle by its place, its questions not unfamiliar', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Vehicles');
   const a = geicoVehicleForm(h, 85493);
   // A new form, nothing bound yet: vehicle 1's, filled, and named for the panel to bind.
@@ -6554,7 +6555,7 @@ test('a GEICO unit form that may be another vehicle\'s is held: nothing typed, o
 });
 
 test('a GEICO unit form drawn during a fill is held for the rest of it: the unit it began on was answered on the earlier one', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Vehicles');
   const a = geicoVehicleForm(h, 85493);
   let b = null;
@@ -6584,7 +6585,7 @@ test('GEICO skipBy: an edit made on a step protects its field there only; the sa
     { id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' },
   ];
   const run = async (step, options) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, step);
     const last = geicoBox('GiveLastName', 40001, 'Last Name');
     const zip = geicoBox('GiveZip', 40002, '5-Digit ZIP Code');
@@ -6614,7 +6615,7 @@ test('GEICO skipBy on a unit step: a vehicle form gets the active vehicle\'s edi
     { id: 'tyear', field: 'GiveYear', steps: ['Vehicles'], whenShown: TRAILER_FORM, path: 'trailers[0].year', name: 'Trailer year', kind: 'choice', value: '2019' },
   ];
   const run = async (kind, skipBy) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Vehicles');
     if (kind === 'vehicle') h.document.body.append(gdsRadios('YesNoPreQuoteHaveFullVinActivity', 85493, 'Do you have the VIN handy?', [['Yes', 'Yes'], ['No', 'No']]).group);
     h.document.body.append(geicoList('GiveOtherVehicleType', 85494, `Which of the following best describes the customer's ${kind}?`, ['Box Truck', 'Flatbed']));
@@ -6642,7 +6643,7 @@ test('GEICO skipBy on a unit step: a vehicle form gets the active vehicle\'s edi
 test('GEICO skipBy on a unit step with no unit form on screen: the step\'s own edits, never a unit\'s', async () => {
   const plan = [{ id: 'count', field: 'GiveNumberOfUnits', steps: ['Vehicles', 'Drivers & Incidents'], path: 'operations.units', name: 'Number of units', kind: 'text', value: '2' }];
   const run = async (step, skipBy) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, step);
     const box = geicoBox('GiveNumberOfUnits', 1, 'How many?');
     h.document.body.append(box);
@@ -6657,7 +6658,7 @@ test('GEICO skipBy on a unit step with no unit form on screen: the step\'s own e
 });
 
 test('GEICO skipBy on a held form: only an edit filed under that form dismisses its check, never the active unit\'s; its own edits stay once its unit is picked', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Vehicles');
   // Vehicle 1 was filled on an earlier form; the next form is on screen and the picker is still on vehicle 1.
   const earlier = 'Id_YesNoPreQuoteHaveFullVinActivity_85493';
@@ -6681,7 +6682,7 @@ test('GEICO skipBy on a held form: only an edit filed under that form dismisses 
 });
 
 test('a GEICO unit form is bound only when the plan answers it: the owner-listed Add Driver binds nothing, and the driver picked next fills it', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Drivers & Incidents');
   const first = geicoBox('GiveFirstName', 34001, 'First Name');
   h.document.body.append(first, geicoList('GiveDriverRelationshipToBusiness', 34002, 'What is their relationship to the business?', ['Owner', 'Employee']));
@@ -6701,7 +6702,7 @@ test('a GEICO unit form is bound only when the plan answers it: the owner-listed
 });
 
 test('a GEICO form filled for one driver while the panel has another picked: the note says both ways out', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Drivers & Incidents');
   const first = geicoBox('GiveFirstName', 34001, 'First Name');
   h.document.body.append(first, geicoList('GiveDriverRelationshipToBusiness', 34002, 'What is their relationship to the business?', ['Owner', 'Employee']));
@@ -6726,7 +6727,7 @@ const trailerForm = (h, n) => {
 };
 
 test('unitFormsNow names the unit forms on screen between fills, by the markers a fill here was given, element names only', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Vehicles');
   const zipOnly = [{ id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' }];
   // No fill has said which questions start a form: the kit can't tell.
@@ -6757,7 +6758,7 @@ test('unitFormsNow names the unit forms on screen between fills, by the markers 
 });
 
 test('GEICO skipBy is read again each round: a form drawn partway through a fill gets its own edits, never the previous form\'s', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Vehicles');
   const a = geicoVehicleForm(h, 85493);
   let b = null;
@@ -6786,7 +6787,7 @@ test('GEICO skipBy on a unit step with no unit form (the owner check under Vehic
     ...vehicleFormPlan(0),
   ];
   const run = async (skipBy, { form = false } = {}) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Vehicles');
     const last = geicoBox('GiveLastName', 61001, 'Business Owner Last Name');
     const zip = geicoBox('GiveZip', 61002, '5-Digit ZIP Code');
@@ -6845,7 +6846,7 @@ test('a GEICO step that can\'t be read (its bar and title disagree): a plan kept
     { id: 'owner', field: 'GiveFirstName', steps: ['Business & Owner Info'], path: 'applicant.firstName', name: 'Owner first name', kind: 'text', value: 'Pat' },
     { id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' },
   ];
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   const bar = geicoBar(h, 'Quote & Coverages', { title: 'GEICO Final Quote Details' });
   const zip = geicoBox('GiveZip', 1, '5-Digit ZIP Code', { required: true });
   const payPlan = gdsRadios('GivePayPlanV2', 2, 'How would the customer like to pay?', [['GEICO_PP_1Pay', 'Pay In Full'], ['GEICO_PP_12Pay', 'Monthly']]);
@@ -6886,7 +6887,7 @@ test('on a step that is the agent\'s (stopSteps) nothing is typed or clicked, al
     go,
   ];
   const page = (step, title) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     const bar = geicoBar(h, step, { title });
     const zip = geicoBox('GiveZip', 1, '5-Digit ZIP Code');
     const city = geicoBox('GiveCity', 2, 'City');
@@ -6942,7 +6943,7 @@ test('a fill ends when the agent moves to another step: the rest of its plan is 
     { id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' },
     { id: 'city', field: 'GiveCity', path: 'garaging.city', name: 'City', kind: 'text', value: 'Omaha' },
   ];
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   const bar = geicoBar(h, 'Vehicles');
   const zip = geicoBox('GiveZip', 1, '5-Digit ZIP Code');
   const city = geicoBox('GiveCity', 2, 'City');
@@ -6960,7 +6961,7 @@ test('a fill ends when the agent moves to another step: the rest of its plan is 
   assert.deepEqual(plain([...report.unknown, ...report.leftRequired, ...report.noData]), []);
   // The step changes as an answer goes in that the page then drops (a round goes on to its next
   // answer after one not kept): that next answer isn't given on the new step either.
-  const dropped = harness({ pathname: '/quote' });
+  const dropped = harness({ adapter: 'geico', pathname: '/quote' });
   const droppedBar = geicoBar(dropped, 'Vehicles');
   const zip2 = geicoBox('GiveZip', 1, '5-Digit ZIP Code');
   const city2 = geicoBox('GiveCity', 2, 'City');
@@ -6970,7 +6971,7 @@ test('a fill ends when the agent moves to another step: the rest of its plan is 
   assert.equal(city2.value, '');
 
   // Without a bar (AmWINS' headings change with its dialogs) the fill goes on as before.
-  const amwinsLike = harness({ pathname: '/app' });
+  const amwinsLike = harness({ adapter: 'amwins', pathname: '/app' });
   const heading = new FakeNode('h3', { textContent: 'Vehicles' });
   const z = geicoBox('GiveZip', 1, 'ZIP');
   const c = geicoBox('GiveCity', 2, 'City');
@@ -6986,7 +6987,7 @@ test('a helper kept to a step (GEICO\'s Recalculate) is clicked, or the agent\'s
     { id: 'addVehicle', text: '^add vehicle$', steps: ['Vehicles'], missing: 'Add each vehicle yourself.' },
   ] }).filter((s) => s.kind === 'action');
   const run = async (step) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, step);
     // A later step's text can read like the stale premium too.
     h.document.body.innerText = 'Quote $ --.-- Due Today $ --.-- Total';
@@ -7035,7 +7036,7 @@ test('a GEICO box showing only its mask has no answer yet: the intake\'s date of
 // back, and the agent's choices went with it. A choice the page took back is the page's (or the
 // agent's, through GEICO's own dialog): kept, flagged, never given again on that step.
 test('GEICO Quote & Coverages: a choice an earlier fill gave that the page took back is kept and flagged', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   const bar = geicoBar(h, 'Quote & Coverages');
   const comp = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_20000_COMP`, value: 'Not Included' });
   h.document.body.append(comp);
@@ -7069,7 +7070,7 @@ test('GEICO Quote & Coverages: a choice an earlier fill gave that the page took 
 // Coverages set 9–12 coverages again to the values they already had, once right after Recalculate.
 // Replace replaces a different value; one that already is the answer is kept, and nothing fires.
 test('Replace existing answers keeps a value that already is the answer, and replaces a different one', async () => {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   const comp = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_20000_COMP`, value: '$1,000 deductible' });
   const coll = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_20001_COLL`, value: '$500 deductible' });
@@ -7099,7 +7100,7 @@ test('a Continue kept to steps, never inside the chooser, and continued per form
   const advance = { text: '^(next|save and continue)$', steps: ['Business Class & USDOT', 'Vehicles'], notWithin: '[id^="Id_Chooser_"]', byForm: true };
   const plan = [{ id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' }];
   const page = (step, { chooser = false } = {}) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, step);
     h.document.body.append(geicoBox('GiveZip', 1, '5-Digit ZIP Code'));
     const clicks = [];
@@ -7129,7 +7130,7 @@ test('a Continue kept to steps, never inside the chooser, and continued per form
   assert.deepEqual(plain([p.clicks, report.advanced ?? null]), [[], null]);
   // A unit's form: its key names the form, so the next unit's form is continued too.
   const formPage = (n) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Vehicles');
     const f = geicoVehicleForm(h, n);
     const clicks = [];
@@ -7160,7 +7161,7 @@ test('GEICO\'s owner the only driver, not driving (V1): a needs-you item on Driv
     vehicles: [], trailers: [], drivers: [{ first: 'Pat', last: 'Owner', excluded: null }] };
   const steps = (r) => buildPlan(r, geico, { vehicles: 0, drivers: 0, trailers: 0 }).filter((s) => s.kind === 'action' && s.action === 'noOtherDriver');
   const page = () => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Drivers & Incidents');
     const clicks = [];
     const looksGood = gdsButton('Looks Good');
@@ -7190,7 +7191,7 @@ test('a Continue with quietMs waits for the page, and a question drawn meanwhile
   const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
   const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
   const page = (draws) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Business Class & USDOT');
     const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
     const clicks = [];
@@ -7222,7 +7223,7 @@ const LATE_PLAN = [
 // Business Class & USDOT, where team driving and the placard are drawn 400 ms after "more about the
 // business" is answered (with `draws`), once that answer's own wait is over.
 async function lateQuestionsFill(draws, { maxRounds = 10 } = {}) {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Business Class & USDOT');
   const more = geicoBox('GiveSecondaryBusinessDescription', 57011, 'Please give us a little more information about what the customer\'s business does.');
   const section = new FakeNode('div');
@@ -7267,7 +7268,7 @@ test('a fill whose rounds run out on its wait for a quiet page stops at the roun
 // agent's own answer just before the fill drew it), which the fill never read, holds Continue.
 test('a fill that gave no answers waits before Continue, and a question drawn meanwhile without an answer holds it', async () => {
   const run = async (draws) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Business Class & USDOT');
     const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?', { value: '1234567' });
     const clicks = [];
@@ -7320,7 +7321,7 @@ test('a button the agent clicks during a fill is the step\'s move: the fill clic
   const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
   const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
   const run = async (press) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Business Class & USDOT');
     const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
     const clicks = [];
@@ -7422,7 +7423,7 @@ test('a helper with something open over it waits, holding Continue, and is click
 // page, or its host. Neither is over it.
 test('a button drawn in a shadow root is not covered by its own host or the words its slot shows', async () => {
   for (const at of ['host', 'words']) {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Business Class & USDOT');
     const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
     const next = gdsButton('');
@@ -7455,7 +7456,7 @@ test('a quiet page is one whose components are all defined, each waited for up t
   const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
   const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
   const run = async ({ definedAfter = null, tags = ['gds-chat', 'gds-survey'] } = {}) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Business Class & USDOT');
     const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
     const clicks = [];
@@ -7508,7 +7509,7 @@ test('a component never defined doesn\'t make a short wait fail', async () => {
 test('a frame inside the page fills nothing once the top frame shows another page', async () => {
   const plan = [{ id: 'zip-step', selector: '#zip', path: 'garaging.zip', kind: 'text', value: '17101' }];
   const frame = (top) => {
-    const h = harness({ search: '?pageName=AddVehicle' });
+    const h = harness({ progressive: true, search: '?pageName=AddVehicle' });
     h.context.top = top;
     const zip = makeInput({ id: 'zip', ariaLabel: 'Zip code' });
     h.document.body.append(zip);
@@ -8211,7 +8212,7 @@ test('progress says the fill is reading the page as it begins', async () => {
 test('a frame loaded with another page\'s address never says the page isn\'t drawn', async () => {
   const plan = [{ id: 'name', selector: '#name', path: 'applicant.name', kind: 'text', value: 'X', pages: ['BusinessOwnerInfo'] }];
   const frame = (topPage) => {
-    const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+    const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
     h.context.top = { location: { origin: 'https://synthetic.example', pathname: '/rater', search: `?pageName=${topPage}`, hash: '' } };
     return h;
   };
@@ -8219,7 +8220,7 @@ test('a frame loaded with another page\'s address never says the page isn\'t dra
   assert.equal(stale.notDrawn, undefined, 'the hidden frame keeps another page\'s address: not this page\'s questions');
   const same = await frame('BusinessOwnerInfo').kit.fill(plan, { maxRounds: 2 });
   assert.equal(same.notDrawn, true, 'a frame of the page itself, with none of its questions drawn yet');
-  const top = await harness({ search: '?pageName=BusinessOwnerInfo' }).kit.fill(plan, { maxRounds: 2 });
+  const top = await harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' }).kit.fill(plan, { maxRounds: 2 });
   assert.equal(top.notDrawn, true, 'the top frame, as before');
 });
 
@@ -8312,7 +8313,7 @@ test('GEICO: Medical Payments $5,000 wherever offered and PIP declined beside it
   assert.equal(rules.length, 2);
   const actions = [{ id: 'printProposal', text: '^print quote proposal$', whenClear: true }];
   const run = async ({ med, pip, state = 'TX', pipHas = '' }) => {
-    const h = harness({ pathname: '/quote' });
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, 'Quote & Coverages');
     const list = (options, ariaLabel, id, has = '') => new SelectNode(['Please Select', ...options].map((t) => ({ text: t, value: t === 'Please Select' ? '' : t })), { id, ariaLabel, value: has });
     const medList = med && list(med, 'Medical Payments (MED)', 'Id_med_11');
@@ -8420,7 +8421,7 @@ class GatedSelect extends SelectNode {
   set options(v) { this._open = v; }
 }
 function coverageRowsPage(units = COVERED_ROWS) {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   // GEICO's lists show their first choice as a blank placeholder ("Not Included", value "").
   const choices = (texts) => [{ text: texts[0], value: '' }, ...texts];
@@ -8489,7 +8490,7 @@ test('GEICO coverage rows: a row naming no intake unit is named for the agent, n
 // page now: $25,000", on a page without them) and they held Recalculate until the agent marked them
 // done. Scrubbed: GEICO's captions and limits only.
 function cslRedrawPage() {
-  const h = harness({ pathname: '/quote' });
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   h.document.body.innerText = STALE;
   let n = 30000;

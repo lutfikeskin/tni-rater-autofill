@@ -84,12 +84,13 @@
   }
 
   // The words of a host's light-DOM part for one of its slots ([slot=label], [slot=legend]), without
-  // its tooltip's (GEICO's legend holds a <gds-tooltip> whose body is in the page too).
+  // its tooltip's (a legend may hold one whose body is in the page too: GEICO's <gds-tooltip>, its
+  // adapter's `tooltips`).
   function slotText(host, name) {
     const part = [...(host?.children ?? [])].find((n) => n.getAttribute?.('slot') === name);
     if (!part) return '';
     let text = part.textContent ?? '';
-    for (const tip of part.querySelectorAll('gds-tooltip, [role=tooltip]')) if (tip.textContent) text = text.replace(tip.textContent, ' ');
+    for (const tip of part.querySelectorAll(withAdapter('[role=tooltip]', 'tooltips'))) if (tip.textContent) text = text.replace(tip.textContent, ' ');
     return oneLine(text);
   }
 
@@ -198,11 +199,13 @@
   // with nothing between them, so textContent runs the business name into the house number
   // (W43-46): here each text node, or each element in a page without them, is its own words.
   // Tooltips are left out, as in slotText.
+  // A node named as one of the carrier's tooltips (its adapter's `tooltips`, by tag name).
+  const ownTooltipTag = (n) => (adapter().selectors?.tooltips ?? []).some((t) => t.toUpperCase() === String(n.tagName ?? '').toUpperCase());
   function legendWords(radios) {
     const part = [...(legendHolder(radios)?.children ?? [])].find((n) => n.getAttribute?.('slot') === 'legend');
     const words = (n) => {
       if (n.nodeType === 3) return n.nodeValue ?? n.textContent ?? '';
-      if (n.matches?.('gds-tooltip, [role=tooltip]') || /^GDS-TOOLTIP$/i.test(n.tagName ?? '') || n.getAttribute?.('role') === 'tooltip') return '';
+      if (n.matches?.(withAdapter('[role=tooltip]', 'tooltips')) || ownTooltipTag(n) || n.getAttribute?.('role') === 'tooltip') return '';
       const nodes = n.childNodes ? [...n.childNodes] : null;
       if (nodes) return nodes.map(words).join(' ');
       return n.children?.length ? [...n.children].map(words).join(' ') : (n.textContent ?? '');
@@ -280,7 +283,10 @@
     highlight: () => null,
     typeName: () => null,
     busy: () => false,
-    busySelectors: [],
+    selectors: {},
+    changeAttributes: [],
+    page: () => null,
+    rearm: () => [],
     serverBacked: () => false,
     onRequest: () => {},
     offRequest: () => {},
@@ -297,6 +303,14 @@
     }
     return adapterNow;
   }
+  // A selector list with the carrier's own selectors for one role added (its adapter's
+  // `selectors[role]`: Progressive's ExtJS buttons and lists, GEICO's gds-* components, …).
+  const withAdapter = (base, role) => [base, ...(adapter().selectors?.[role] ?? [])].filter(Boolean).join(', ');
+  // The nearest of the carrier's own elements for one role around `el`, or null (none named).
+  const closestOwn = (el, role) => {
+    const own = adapter().selectors?.[role] ?? [];
+    return own.length ? el?.closest?.(own.join(', ')) ?? null : null;
+  };
 
   // The field's name in the carrier's data model: the adapter's (Progressive's fieldref) or, for
   // GEICO, the one in its element names (dataName: Id_GiveYear_81515 is GiveYear).
@@ -309,11 +323,8 @@
   function pageBusy() {
     const a = adapter();
     if (a.busy()) return true;
-    // #loadingDefault: AmWINS' overlay while it saves or reloads the application (it redraws every
-    // step when the reload lands, so nothing may be filled before that).
-    // #page-load / #extendedWaiting: GEICO's spinners while a step loads and while Recalculate rates
-    // (both stay in the page, display:none, when idle).
-    return [...document.querySelectorAll(['[class*="loading-mask"]', '[class*="LoadingMessage"]', '#loadingDefault', '#page-load.loader-container', '#extendedWaiting.loader-container', ...a.busySelectors].join(', '))]
+    // A loading mask or message on screen, or one of the carrier's own (its adapter's `busy`).
+    return [...document.querySelectorAll(withAdapter('[class*="loading-mask"], [class*="LoadingMessage"]', 'busy'))]
       .some((m) => m.getClientRects().length && getComputedStyle(m).visibility !== 'hidden');
   }
 
@@ -410,10 +421,10 @@
   async function settle({ quietMs = 250, maxMs = 15000, requests = null } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
-    // A pick on a design-system radio redraws nothing: its host's `checked` and its group's
-    // `active-index` change (GEICO). Only these two attributes, so a page's own animations don't
-    // keep the wait going.
-    mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', 'active-index'] });
+    // A pick on a design-system radio redraws nothing: its host's `checked` changes, and what the
+    // carrier's adapter names (`changeAttributes`: GEICO's group `active-index`). Only these, so a
+    // page's own animations don't keep the wait going.
+    mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', ...adapter().changeAttributes] });
     const start = Date.now();
     try {
       const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
@@ -439,8 +450,9 @@
   // The units a fill is for (fill `units`, set while a fill runs): which vehicle, driver and
   // trailer the plan answers for, and which unit forms are already theirs (see assign).
   let fillUnits = null;
-  // In a step section that isn't the one on screen (AmWINS' .form-tab, hidden).
-  const otherStep = (el) => { const tab = el?.closest?.('.form-tab'); return !!tab && !isVisible(tab); };
+  // In a step section that isn't the one on screen (the adapter's `otherStep` sections: AmWINS'
+  // .form-tab, hidden).
+  const otherStep = (el) => { const tab = closestOwn(el, 'otherStep'); return !!tab && !isVisible(tab); };
 
   // The lists of a fill report whose items are the agent's to look at (fill's reconcile).
   const REVIEW_LISTS = ['unknown', 'failed', 'noData', 'leftRequired', 'checks'];
@@ -1227,14 +1239,16 @@
   // <gds-dropdown-list-item type="address">, in its address wrapper's shadow root, read as list items
   // (its script; FL live run 3, 2026-10-21).
   // What the agent may click to move a page on (`notePress` in fill): a button or an add icon, also
-  // ExtJS's (`.x-btn`: Progressive's Continue, whose press during a fill went unseen, live recording,
-  // 2026-10-23). A toggle (aria-expanded: GEICO's section headings, a menu) or a link moves nothing.
-  const AGENT_PRESS = 'button, gds-button, input[type=submit], input[type=button], [data-testid=addIcon], .x-btn';
-  const SUGGESTION_SELECTOR = '[role=option], .x-boundlist-item, .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li, gds-dropdown-list-item[type=address]';
+  // the carrier's own (its adapter's `buttons` and `agentPress`: ExtJS's .x-btn, Progressive's
+  // Continue, whose press during a fill went unseen, live recording, 2026-10-23). A toggle
+  // (aria-expanded: GEICO's section headings, a menu) or a link moves nothing.
+  const agentPress = () => withAdapter(withAdapter('button, input[type=submit], input[type=button], [data-testid=addIcon]', 'agentPress'), 'buttons');
+  // A list's items (the adapter's `options`) and the carrier's own suggestions (its `suggestions`).
+  const suggestionSelector = () => withAdapter(withAdapter('[role=option], .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li', 'options'), 'suggestions');
   // An address's house number (its leading number) and ZIP (after a state's two letters).
   const houseNumberOf = (text) => String(text ?? '').match(/^\s*(\d+)\b/)?.[1] ?? null;
   const zipOf = (text) => String(text ?? '').match(/\b[A-Z]{2}\s+(\d{5})(?:-\d{4})?\b/i)?.[1] ?? null;
-  const shownSuggestions = () => deepQueryAll(document, SUGGESTION_SELECTOR).filter((el) => el.getClientRects().length && oneLine(el.textContent));
+  const shownSuggestions = () => deepQueryAll(document, suggestionSelector()).filter((el) => el.getClientRects().length && oneLine(el.textContent));
   async function applyAddress(step, c) {
     const text = String(step.value);
     const { el, widget } = c;
@@ -1597,12 +1611,12 @@
   // throwing away a form (GEICO's Discard Changes and its "Yes, please discard."), ordering reports
   // (MVR & CLUE) and signing (eSignature). The words are literal: \bsign\b misses "signature".
   const NEVER_CLICK = /\b(continue|next|start quote|finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|order|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out)\b/i;
-  // Links of a step progress bar (GEICO's #progressIndicator): each opens its step, so none is a
-  // helper or a Continue.
-  const STEP_LINKS = '#progressIndicator';
+  // Links of a step progress bar (the adapter's `stepLinks`: GEICO's #progressIndicator) each open
+  // their step, so none is a helper or a Continue (closestOwn(el, 'stepLinks')).
 
-  // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
-  const pageAt = (loc) => (new URLSearchParams(loc.search).get('pageName') || (loc.pathname + ((loc.hash ?? '').startsWith('#/') ? loc.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
+  // A page's name: the carrier's own (its adapter's `page`: Progressive's ?pageName=), else its path
+  // or #/route (ids normalised).
+  const pageAt = (loc) => (adapter().page(loc) || (loc.pathname + ((loc.hash ?? '').startsWith('#/') ? loc.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
   const currentPage = () => pageAt(location);
 
   // src/premium.js keeps a copy of this test (STALE): change both together.
@@ -1707,8 +1721,8 @@
   function findAdvanceButton(pattern, { notWithin = null } = {}) {
     const re = new RegExp(pattern, 'i');
     let best = null;
-    for (const el of deepQueryAll(document, 'a, button, [role=button], input[type=button], input[type=submit], .x-btn')) {
-      if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]') || hostDisabled(el) || el.closest(STEP_LINKS)) continue;
+    for (const el of deepQueryAll(document, withAdapter('a, button, [role=button], input[type=button], input[type=submit]', 'buttons'))) {
+      if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el) || closestOwn(el, 'stepLinks')) continue;
       if (notWithin && insideOf(el, notWithin)) continue;
       const text = buttonText(el);
       // "Save & Continue" (AmWINS) only saves the draft and opens the next step.
@@ -1738,10 +1752,10 @@
     const separate = [];
     // [data-testid][tabindex]: an icon the keyboard reaches that has no role (GEICO's add icons:
     // Add Driver's +). Never a Continue (findAdvanceButton).
-    for (const el of deepQueryAll(document, 'a, button, [role=button], [role=link], input[type=button], input[type=submit], .x-btn, [onclick], [data-testid][tabindex]:not([tabindex="-1"])')) {
-      if (!el.getClientRects().length || el.closest(STEP_LINKS)) continue;
+    for (const el of deepQueryAll(document, withAdapter('a, button, [role=button], [role=link], input[type=button], input[type=submit], [onclick], [data-testid][tabindex]:not([tabindex="-1"])', 'buttons'))) {
+      if (!el.getClientRects().length || closestOwn(el, 'stepLinks')) continue;
       if (step.within && !insideOf(el, step.within)) continue;
-      if (!disabledToo && (el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]') || hostDisabled(el))) continue;
+      if (!disabledToo && (el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el))) continue;
       const text = buttonText(el);
       if (step.moveOn && step.within ? NEVER_ADVANCE.test(text) : NEVER_CLICK.test(text)) continue;
       const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
@@ -1761,7 +1775,7 @@
     const want = near.toLowerCase();
     for (let p = el.parentElement, i = 0; p && i < 10; p = p.parentElement, i++) {
       if (!p.textContent.toLowerCase().includes(want)) continue;
-      const alike = [...p.querySelectorAll('a, button, [role=button], .x-btn, [onclick]')].filter((b) => re && re.test(buttonText(b)));
+      const alike = [...p.querySelectorAll(withAdapter('a, button, [role=button], [onclick]', 'buttons'))].filter((b) => re && re.test(buttonText(b)));
       return alike.filter((b) => !b.contains(el) && !el.contains(b)).length === 0;
     }
     return false;
@@ -1838,18 +1852,19 @@
   // own click on a radio or checkbox fires trusted input/change too: an agent click elsewhere
   // just before it is not an edit of that question. On the control means its target is the
   // control, a radio of its group (arrow keys move the pick), its label (label[for] or a wrapping
-  // label; for a radio, the label of any radio in its group), inside its ExtJS trigger wrap, or an
+  // label; for a radio, the label of any radio in its group), inside its widget's wrap (the
+  // adapter's `fieldWrap`: an ExtJS trigger wrap), or an
   // element holding no other control than it (or its radio group). Returns the function that
   // takes the listeners off again.
   function guardEdits(onEdit) {
     let lastGesture = -Infinity;
     let gestureTarget = null;
     let gestureControl = null;
-    // ExtJS draws its options outside the combo. Resolve ownership at pointerdown, while the
+    // A widget may draw its options outside its box (ExtJS). Resolve ownership at pointerdown, while the
     // combo still owns focus; the carrier can move focus before its input/change event.
     const popupControl = (target) => {
-      const option = target?.closest?.('[role=option], .x-boundlist-item');
-      const popup = option?.closest?.('[role=listbox], .x-boundlist');
+      const option = target?.closest?.(withAdapter('[role=option]', 'options'));
+      const popup = option?.closest?.(withAdapter('[role=listbox]', 'lists'));
       if (!popup) return null;
       const isControl = (el) => /^(INPUT|SELECT|TEXTAREA)$/.test(el?.tagName ?? '');
       if (popup.id) {
@@ -1891,7 +1906,7 @@
           ?? label.querySelector?.('input, select, textarea');
         if (sameGroup(linked, el)) return true;
       }
-      if (target.closest?.('.x-form-trigger-wrap')?.contains?.(el)) return true;
+      if (closestOwn(target, 'fieldWrap')?.contains?.(el)) return true;
       if (target === document.body || target === document.documentElement || !target.contains?.(el)) return false;
       return [...(target.querySelectorAll?.('input, select, textarea') ?? [])].every((x) => sameGroup(x, el));
     };
@@ -1960,7 +1975,7 @@
     // disabled, out of the keyboard's reach (tabindex -1) or inside the carrier's `current`.
     const buttons = () => {
       if (!on) return [];
-      const hits = deepQueryAll(document, 'a, button, [role=button], .x-btn').filter((el) => el.getClientRects().length && re.test(buttonText(el)));
+      const hits = deepQueryAll(document, withAdapter('a, button, [role=button]', 'buttons')).filter((el) => el.getClientRects().length && re.test(buttonText(el)));
       return hits.filter((el) => !hits.some((x) => x !== el && el.contains(x))).map((el) => ({
         el, text: oneLine(buttonText(el)),
         current: !!el.disabled || el.getAttribute('aria-disabled') === 'true' || el.getAttribute('tabindex') === '-1' || (!!pager.current && !!el.closest(pager.current)),
@@ -2370,7 +2385,7 @@
     const notePress = (event) => {
       if (!event.isTrusted) return;
       const path = event.composedPath?.() ?? [event.target];
-      if (path.some((n) => n?.nodeType === 1 && safeMatches(n, AGENT_PRESS) && !n.hasAttribute('aria-expanded'))) agentPressed = true;
+      if (path.some((n) => n?.nodeType === 1 && safeMatches(n, agentPress()) && !n.hasAttribute('aria-expanded'))) agentPressed = true;
     };
     document.addEventListener('click', notePress, true);
     // Whether the registered names a USDOT lookup offers (Progressive's Business Name choice) are
@@ -2899,14 +2914,12 @@
           }
         }
         if (result.ok) {
-          if (currentPage() === 'CoveragesRates') {
-            // The bill plan (payment method) stays chosen; the premium needs recalculating.
-            // A cargo, general liability or trailer interchange answer re-arms its Done with this coverage too.
-            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : []), ...(step.interchange === 'section' ? ['doneInterchange'] : [])]) {
-              clicked.delete(id);
-              report.actions = report.actions.filter((x) => x.id !== id);
-              if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
-            }
+          // The helpers an answer here makes due again (the adapter's `rearm`: on Progressive's
+          // Rates, Recalculate and Print, and the Done of the coverage answered).
+          for (const id of adapter().rearm(currentPage(), step)) {
+            clicked.delete(id);
+            report.actions = report.actions.filter((x) => x.id !== id);
+            if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
           }
           // A step-fenced recalculation is due again after any later answer on its step (the
           // premium showed "$ --.--" until it was clicked, and Next stayed hidden: GEICO mock run,
@@ -4433,23 +4446,23 @@
         selected: c.kind === 'text' ? undefined : r(selectedText(c) ?? ''),
       })),
       // Buttons and links on the page (text only), so button actions can be written from layouts.
-      buttons: [...new Set(deepQueryAll(document, 'a, button, [role=button], input[type=button], input[type=submit], .x-btn')
+      buttons: [...new Set(deepQueryAll(document, withAdapter('a, button, [role=button], input[type=button], input[type=submit]', 'buttons'))
         .filter((el) => el.getClientRects().length).map((el) => r(buttonText(el)).slice(0, 60)).filter(Boolean))].slice(0, 80),
       customWidgets: deepQueryAll(document, '[role=combobox]:not(input):not(select), [role=listbox], [contenteditable=true]')
         .filter(isVisible).slice(0, 50).map((el) => ({ role: el.getAttribute('role') ?? 'contenteditable', label: r(labelFor(el)), selector: cssPath(el) })),
       // Validation and help messages on screen (what the page said about the answers), redacted. A
       // message can repeat what was typed into a box (a corrected VIN, a phone number): the boxes'
       // text and anything shaped like a VIN or a long number are taken out as well.
-      messages: [...new Set(deepQueryAll(document, '[role=alert], .x-form-error-msg, .x-form-invalid-under, [class*="error-message"], [class*="validation-message"], [class*="help-block"]')
+      messages: [...new Set(deepQueryAll(document, withAdapter('[role=alert], [class*="error-message"], [class*="validation-message"], [class*="help-block"]', 'errors'))
         .filter(isVisible).map((el) => withoutTyped(r(oneLine(el.textContent)), controls).slice(0, 200)).filter(Boolean))].slice(0, 40),
       // Dropdown lists open on screen (a capture taken with the keyboard shortcut while one is open):
       // their choices as shown, and which question opened them. Choices are kept only for a fixed
       // list of a known question: never agency staff lists, never a list whose question can't be
       // found, and never a lookup filled from what was typed (addresses, businesses, customers).
-      openLists: deepQueryAll(document, '[role=listbox], .x-boundlist').filter(isVisible).slice(0, 10).map((list) => {
+      openLists: deepQueryAll(document, withAdapter('[role=listbox]', 'lists')).filter(isVisible).slice(0, 10).map((list) => {
         const owner = listOwner(list);
         const label = owner?.label ?? null;
-        const items = [...list.querySelectorAll('[role=option], .x-boundlist-item')].map((o) => withoutTyped(r(oneLine(o.textContent)), controls)).filter(Boolean);
+        const items = [...list.querySelectorAll(withAdapter('[role=option]', 'options'))].map((o) => withoutTyped(r(oneLine(o.textContent)), controls)).filter(Boolean);
         const kept = !!owner?.fixed && label !== null && !/agent|producer/i.test(label);
         return { label: label === null ? null : r(label), selector: cssPath(list), count: items.length, fixed: !!owner?.fixed,
           options: kept ? items.slice(0, CAPTURE_OPTIONS) : [], optionsTruncated: (kept && items.length > CAPTURE_OPTIONS) || undefined };
@@ -4516,9 +4529,12 @@
     return parts.join(' > ');
   }
 
-  // A step progress bar's parts (GEICO's #progressIndicator: one <gds-progress-bar> per step, in
-  // the page itself, value 100 done, 0 to come).
-  const stepBars = () => [...(document.querySelectorAll?.('gds-progress-bar[value]') ?? [])];
+  // A step progress bar's parts (the adapter's `stepBar`: GEICO's one <gds-progress-bar> per step,
+  // in the page itself, value 100 done, 0 to come).
+  const stepBars = () => {
+    const own = adapter().selectors?.stepBar ?? [];
+    return own.length ? [...(document.querySelectorAll?.(own.join(', ')) ?? [])] : [];
+  };
 
   // The bar's one part under way (0 < value < 100), by its words; '' when none or several are.
   function barStep() {
