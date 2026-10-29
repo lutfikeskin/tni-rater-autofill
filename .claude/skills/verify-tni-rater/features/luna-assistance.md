@@ -12,7 +12,7 @@ Luna assistance shows unresolved choice questions in the panel for the agent to 
 
 ## How to get to it (user POV)
 
-- Choose the brain button (Assistant settings) to turn suggestions off, or to use a personal OpenAI key.
+- Open Settings (the gear; its dot shows when the assistant needs a key) to turn suggestions off, or to use a personal OpenAI key.
 - On Review page, choose **Use this answer** or **No thanks** on a suggestion. **Approve** in the bar confirms automatic picks.
 
 ## Driving it with the repo harness

@@ -11,7 +11,7 @@ Fill Progressive replays committed per-state layouts in a real browser with the 
 ## How to get to it (user POV)
 
 - On a Progressive Duck Creek page, choose **Fill this page**. The fill goes one answer at a time. Follow-ups appear as the page accepts values.
-- Continue is clicked only when nothing is left for the agent and Click Continue when the page is done is on. Finish, Buy, Bind, and Submit are never clicked.
+- Continue is clicked only when nothing is left for the agent and Continue when the page is done is on. Finish, Buy, Bind, and Submit are never clicked.
 
 ## Driving it with the repo harness
 

@@ -12,7 +12,7 @@ Fill GEICO runs the real fill engine on the saved quote fixture with GEICO's `gd
 
 ## How to get to it (user POV)
 
-- On a GEICO quote tab, choose **Fill this page** (or let Fill each page as soon as it opens run).
+- On a GEICO quote tab, choose **Fill this page** (or let Fill pages when they open run).
 - Answer what the bar lists as Need you. Click Recalculate yourself after the fill's Recalculate if GEICO put coverages back.
 - Stop at Print Quote Proposal. Do not open MVR and CLUE (those reports cost the agency).
 

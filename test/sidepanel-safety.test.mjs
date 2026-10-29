@@ -732,7 +732,7 @@ test('the page list keeps items in the page order of their fields, the first ope
   // helper the fill couldn't click) has no Mark done, so its row says only where to do it (the
   // maintainer, 2026-10-26: a row said "mark it done here" with no button to press).
   const say = (r) => nodesIn(r).find((n) => n.props?.class === 'row-say')?.children[0];
-  assert.deepEqual(needs.map(say), [...Array(8).fill('Answer it on the rater page, then mark it done here.'), 'Do it on the rater page.'],
+  assert.deepEqual(needs.map(say), [...Array(8).fill('Answer it on the page, then mark it done.'), 'Do it on the rater page.'],
     'an item the panel can not answer says where to answer it');
   const notes = needs.map((r) => r.children[1].children.at(-1));
   assert.ok(notes.every((note) => note.props.class === 'need-note' && note.props.hidden === true && !note.children.length), 'each note empty and hidden while open');
@@ -4174,7 +4174,7 @@ test('the panel warns when the quote state picked on the carrier page is not the
   t.pick('Utah');
   assert.equal(t.note().hidden, false);
   assert.match(t.text(), /This Progressive quote is for Utah\. The intake says Florida\./);
-  assert.match(t.text(), /A Utah quote won’t take Florida ZIP codes or rules/);
+  assert.match(t.text(), /Start the quote in Florida, or check the intake\./);
   assert.equal(t.button().children[0], 'Utah is right');
   assert.match(t.text(), /"role":"alert"/);
   assert.doesNotMatch(t.text(), /Synthetic Client/);
@@ -5264,7 +5264,7 @@ test('Continue\'s word leaves Continue to the agent where the panel may not clic
   const { said, ui, state } = continueHarness();
   const pageOff = said({}, { advance: { text: 'Continue', exceptPages: ['Quote'] } });
   assert.deepEqual([pageOff.phase, pageOff.button, pageOff.alt], ['ready-continue', null, 'fill-again']);
-  assert.equal(pageOff.sub, 'Click Continue on this page yourself. Nothing is submitted or bound.');
+  assert.equal(pageOff.sub, 'Click Continue on this page yourself.');
   assert.equal(said({ left: 1 }, { advance: { text: 'Continue', exceptPages: ['Quote'] } }).sub, 'Then click Continue on this page yourself. Nothing is submitted or bound.');
   // GEICO's Quote & Coverages: its Next is never clicked (advance `steps`).
   const geico = { layoutSteps: ['Vehicles', 'Quote & Coverages'], advance: { text: 'Next', steps: ['Vehicles'] } };
@@ -5280,7 +5280,7 @@ test('Continue\'s word leaves Continue to the agent where the panel may not clic
   for (const c of [{ advance: { text: 'Continue' } }, {}]) {
     const own = said({ settled: true }, c);
     assert.deepEqual([own.phase, own.button, own.alt], ['ready-continue', null, 'fill-again']);
-    assert.equal(own.sub, 'Click Continue yourself, then Fill this page on the next one.');
+    assert.equal(own.sub, 'Click Continue, then fill the next page.');
     assert.equal(said({ left: 1 }, c).sub, 'Then click Continue yourself, and Fill this page on the next one.');
   }
   // With "Let me look" on but the panel not clicking Continue, there is nothing to approve.
@@ -5990,11 +5990,11 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   vm.createContext(sandbox);
   vm.runInContext(['checkShown', 'renderWarnings', 'toggleDone', 'agentEdit', 'applyCheckChoice'].map(extractFunction).join('\n') + `\nconst CHOICE_FIELDS = ${SIDEPANEL.match(/const CHOICE_FIELDS = (.*);/)[1]};`, sandbox);
   sandbox.renderWarnings();
-  assert.equal(nodes['check-title'].textContent, '4 things to look at on the intake');
+  assert.equal(nodes['check-title'].textContent, '4 to check on the intake');
   // The open items' cards (a checked one is a row with Undo), and their buttons.
   const cards = () => nodes.warnings.kids.filter((c) => c.props?.class === 'check');
   const buttons = (card) => nodesIn(card).filter((c) => c.tag === 'button');
-  assert.deepEqual(buttons(cards()[0]).map((b) => b.children[0]), ['Looks right now', 'Show in client details'], 'other cards unchanged');
+  assert.deepEqual(buttons(cards()[0]).map((b) => b.children[0]), ['Looks right', 'Show details'], 'other cards unchanged');
   assert.deepEqual(buttons(cards()[1]).map((b) => b.children[0]), ['Client has GL', 'Not GL']);
   assert.deepEqual(buttons(cards()[2]).map((b) => b.children[0]), ['Use Female', 'Keep Male']);
 
@@ -6036,8 +6036,8 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
 
 // TNI, 2026-10-26 (answer to PR #189's question 9): the current carrier being one the panel quotes
 // is said in red on the intake check screen, before any carrier page, first among the checks. It is
-// a check like the others (its field, Looks right now), no stop (question 19).
-test('an alert intake check is red and first on the check screen, with its field and Looks right now', () => {
+// a check like the others (its field, Looks right), no stop (question 19).
+test('an alert intake check is red and first on the check screen, with its field and Looks right', () => {
   const el = (tag, props = {}, ...children) => ({ tag, props, children: children.flat().filter((c) => c != null && c !== false) });
   const nodes = {};
   const $ = (id) => (nodes[id] ??= { id, hidden: false, textContent: '', replaceChildren(...kids) { this.kids = kids; } });
@@ -6052,11 +6052,11 @@ test('an alert intake check is red and first on the check screen, with its field
   vm.runInContext(extractFunction('checkShown'), sandbox);
   vm.runInContext(extractFunction('renderWarnings'), sandbox);
   sandbox.renderWarnings();
-  assert.equal(nodes['check-title'].textContent, '2 things to look at on the intake');
+  assert.equal(nodes['check-title'].textContent, '2 to check on the intake');
   const [first, second] = nodes.warnings.kids;
   assert.deepEqual([first.props.class, first.props.role, first.props.dataset.check], ['check alert', 'alert', '1'], 'red, said at once, first');
   assert.deepEqual([second.props.class, second.props.role ?? null], ['check', null], 'the others as before');
-  assert.ok(JSON.stringify(first).includes('Looks right now'));
+  assert.ok(JSON.stringify(first).includes('Looks right'));
   assert.deepEqual(rows, ['priorInsurance[0].carrier', 'applicant.name']);
   // Checked, it is a row like any other.
   intake.done = [1];
@@ -6071,7 +6071,7 @@ test('an alert intake check is red and first on the check screen, with its field
     sandbox.state.tab = tab;
     rows.length = 0;
     sandbox.renderWarnings();
-    assert.equal(nodes['check-title'].textContent, '1 thing to look at on the intake', tab?.carrier.id ?? 'no carrier');
+    assert.equal(nodes['check-title'].textContent, '1 to check on the intake', tab?.carrier.id ?? 'no carrier');
     assert.deepEqual(rows, ['applicant.name']);
   }
 });
@@ -8508,7 +8508,7 @@ test('Progressive\'s quote is done at Print, Email, Fax, and the dock says so in
 
 test('Sound when the quote is done is a Filling switch, on by default, kept on this computer and never logged', () => {
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
-  assert.match(html, /<label class="opt"><span class="opt-text"><b>Sound when the quote is done<\/b><span>A short sound when the quote reaches its end\.<\/span><\/span><input type="checkbox" role="switch" class="switch" id="finish-sound" checked><\/label>/);
+  assert.match(html, /<label class="opt"><span class="opt-text"><b>Sound when the quote is done<\/b><\/span><input type="checkbox" role="switch" class="switch" id="finish-sound" checked><\/label>/);
   assert.match(extractFunction('wireUsage'), /\$\('finish-sound'\)\.addEventListener\('change', \(e\) => \{ usage\.saveSettings\(\{ finishSound: e\.target\.checked \}\); \}\);/);
   assert.match(extractFunction('wireUsage'), /document\.addEventListener\('pointerdown', unlockAudio, \{ once: true, capture: true \}\);/, 'the audio is unlocked by the agent\'s first click in the panel');
   assert.match(extractFunction('init'), /\$\('finish-sound'\)\.checked = saved\.finishSound \?\? true;/);

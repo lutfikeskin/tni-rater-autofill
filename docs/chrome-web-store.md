@@ -71,7 +71,7 @@ pin the extension → click it to open the side panel. Then, once each:
 
 - **Settings → You → Your initials** (the gear at the top of the panel). The usage log goes to TNI's server by itself (see hosting.md).
 - Nothing to do for the assistant: *Suggest answers* is on and uses TNI's key on the usage server
-  (`OPENAI_API_KEY`, [hosting](hosting.md)). Leave *Put checked picks in for me* off for the first
+  (`OPENAI_API_KEY`, [hosting](hosting.md)). Leave *Put checked picks in* off for the first
   weeks of the pilot.
 
 ## 5. Updates

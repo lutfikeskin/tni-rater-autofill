@@ -8,10 +8,6 @@
 </head>
 <body>
   <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <symbol id="brain" viewBox="0 0 24 24">
-      <path d="M12 18V5a3 3 0 0 0-5.8-1.1A4 4 0 0 0 3 10a4 4 0 0 0 .8 7.6A4 4 0 0 0 12 18Zm0 0V5a3 3 0 0 1 5.8-1.1A4 4 0 0 1 21 10a4 4 0 0 1-.8 7.6A4 4 0 0 1 12 18Z"/>
-      <path d="M8 3.5A3 3 0 0 0 9 8m-6 2a4 4 0 0 1 3-.5m-2.2 8.1A4 4 0 0 1 8 14m8-10.5A3 3 0 0 1 15 8m6 2a4 4 0 0 0-3-.5m2.2 8.1A4 4 0 0 0 16 14"/>
-    </symbol>
     <symbol id="gear" viewBox="0 0 24 24">
       <path d="m9.5 3-.5 2a7 7 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A7 7 0 0 0 9 19l.5 2h5l.5-2a7 7 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A7 7 0 0 0 15 5l-.5-2Z"/>
       <circle cx="12" cy="12" r="3"/>
@@ -29,7 +25,7 @@
   <h1 class="sr-only">TNI Rater Autofill</h1>
 
   <!-- Where the panel works: the rater page's carrier, page and place in the quote (the panel's own
-       name off a rater), with Settings and the assistant on its right. -->
+       name off a rater), with Settings on its right. -->
   <header class="top">
     <div class="top-main">
       <div id="carrier-line" class="carrier-line">
@@ -49,7 +45,6 @@
       <button type="button" id="pop-out" class="icon-btn" aria-label="Open in its own window" title="Open in its own window" hidden><svg aria-hidden="true"><use href="#new-window"/></svg></button>
       <button type="button" id="dock-back" class="icon-btn" aria-label="Back to the side panel" title="Back to the side panel" hidden><svg aria-hidden="true"><use href="#dock-in"/></svg></button>
       <button type="button" id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings" aria-expanded="false" aria-controls="settings"><svg aria-hidden="true"><use href="#gear"/></svg><span id="settings-dot" class="dot" hidden></span></button>
-      <button type="button" id="agent-btn" class="icon-btn brain-btn" aria-label="Assistant settings" aria-controls="settings" title="Assistant"><svg aria-hidden="true"><use href="#brain"/></svg><span id="agent-dot" class="dot" hidden></span></button>
     </span>
   </header>
 
@@ -107,11 +102,11 @@
     <section id="home" class="pane">
       <div class="intro">
         <h2>Start a quote</h2>
-        <p class="muted">Add the client’s TNI quote application.</p>
+        <p class="muted">Add the client’s quote application.</p>
       </div>
       <section id="load" class="drop" tabindex="0">
         <input id="file" type="file" accept="application/pdf,.pdf" hidden>
-        <div><h3 class="drop-title">Drop your intake PDF here</h3><p class="drop-hint">or choose a file</p></div>
+        <div><h3 class="drop-title">Drop your intake PDF here</h3><p class="drop-hint">or</p></div>
         <button type="button" id="choose" class="primary">Choose a PDF</button>
       </section>
       <p class="privacy-line">Stays on this computer. Cleared when Chrome closes.</p>
@@ -210,31 +205,31 @@
       <div class="group">
         <div class="eyebrow">You</div>
         <div class="card">
-          <label class="opt"><span class="opt-text"><b>Your initials</b><span>So your quotes count as yours.</span></span><input id="agent" type="text" maxlength="6" autocomplete="off" placeholder="e.g. JK"></label>
+          <label class="opt" title="So your quotes count as yours"><span class="opt-text"><b>Your initials</b></span><input id="agent" type="text" maxlength="6" autocomplete="off" placeholder="e.g. JK"></label>
         </div>
       </div>
 
       <div class="group">
         <div class="eyebrow">Filling</div>
         <div class="card">
-          <label class="opt"><span class="opt-text"><b>Fill new questions as they appear</b><span>Some answers open more questions.</span></span><input type="checkbox" role="switch" class="switch" id="auto-followups" checked></label>
-          <label class="opt"><span class="opt-text"><b>Click Continue when the page is done</b><span>Only when nothing is left for you. Never Bind or Submit.</span></span><input type="checkbox" role="switch" class="switch" id="auto-advance" checked></label>
-          <label id="check-continue-row" class="opt"><span class="opt-text"><b>Let me look before Continue</b><span>Waits for you to press Looks right, continue.</span></span><input type="checkbox" role="switch" class="switch" id="check-continue" checked></label>
-          <label class="opt"><span class="opt-text"><b>Sound when the quote is done</b><span>A short sound when the quote reaches its end.</span></span><input type="checkbox" role="switch" class="switch" id="finish-sound" checked></label>
-          <label class="opt"><span class="opt-text"><b>Fill each page as soon as it opens</b><span>You won’t need to press Fill this page.</span></span><input type="checkbox" role="switch" class="switch" id="auto-pages" checked></label>
-          <label class="opt"><span class="opt-text"><b>Replace answers already on the page</b><span>Off keeps what the rater filled itself, like a DOT lookup.</span></span><input type="checkbox" role="switch" class="switch" id="overwrite"></label>
+          <label class="opt" title="You won’t need to press Fill this page"><span class="opt-text"><b>Fill pages when they open</b></span><input type="checkbox" role="switch" class="switch" id="auto-pages" checked></label>
+          <label class="opt" title="Some answers open more questions"><span class="opt-text"><b>Fill follow-up questions</b></span><input type="checkbox" role="switch" class="switch" id="auto-followups" checked></label>
+          <label class="opt" title="Only when nothing is left for you"><span class="opt-text"><b>Continue when the page is done</b></span><input type="checkbox" role="switch" class="switch" id="auto-advance" checked></label>
+          <label id="check-continue-row" class="opt sub" title="Waits for you to press Looks right, continue"><span class="opt-text"><b>Let me look first</b></span><input type="checkbox" role="switch" class="switch" id="check-continue" checked></label>
+          <label class="opt" title="Off keeps what the rater filled itself, like a DOT lookup"><span class="opt-text"><b>Replace prefilled answers</b></span><input type="checkbox" role="switch" class="switch" id="overwrite"></label>
+          <label class="opt"><span class="opt-text"><b>Sound when the quote is done</b></span><input type="checkbox" role="switch" class="switch" id="finish-sound" checked></label>
         </div>
+        <p class="fine">Never Binds or Submits.</p>
       </div>
 
       <div id="assistant" class="group">
         <div class="eyebrow">Assistant</div>
         <div id="agent-card" class="card">
           <div class="agent-head">
-            <span class="agent-avatar"><svg aria-hidden="true"><use href="#brain"/></svg></span>
             <span class="opt-text"><b id="agent-name">GPT-6 Luna</b><span id="ai-note"></span></span>
           </div>
-          <label class="opt"><span class="opt-text"><b>Suggest answers</b><span>For questions the intake doesn’t answer.</span></span><input id="ai-on" type="checkbox" role="switch" class="switch"></label>
-          <label id="ai-auto-option" class="opt"><span class="opt-text"><b>Put checked picks in for me</b><span>Shown in purple. You still approve them before Continue.</span></span><input id="ai-auto" type="checkbox" role="switch" class="switch"></label>
+          <label class="opt" title="For questions the intake doesn’t answer"><span class="opt-text"><b>Suggest answers</b></span><input id="ai-on" type="checkbox" role="switch" class="switch"></label>
+          <label id="ai-auto-option" class="opt" title="Shown in purple. You still approve them before Continue."><span class="opt-text"><b>Put checked picks in</b></span><input id="ai-auto" type="checkbox" role="switch" class="switch"></label>
           <div class="key-row">
             <div class="opt">
               <span class="opt-text"><b id="key-label">OpenAI key</b><span id="key-status"></span></span>
@@ -246,14 +241,14 @@
             </div>
           </div>
         </div>
-        <p id="ai-privacy" class="fine"></p>
+        <details class="fine-more"><summary class="fine">What is sent</summary><p id="ai-privacy" class="fine"></p></details>
       </div>
 
       <div class="group">
         <div class="eyebrow">Usage log</div>
         <div id="usage" class="card padded">
           <p id="upload-status" class="status-line"></p>
-          <p class="fine">Records how the panel is used on rater pages, and a profile of each client's business (no names, numbers or addresses), to improve it and analyse TNI's quoting.</p>
+          <p class="fine">How the panel is used, and each client's business profile. No names, numbers or addresses.</p>
           <p id="usage-count" class="fine"></p>
           <p id="usage-note" class="fine" aria-live="polite"></p>
         </div>
@@ -319,7 +314,7 @@
         </div>
       </div>
       <div class="sheet-foot">
-        <button type="button" id="pdf-tab" class="link">Open the full PDF</button>
+        <button type="button" id="pdf-tab" class="ghost small-btn">Open full PDF</button>
         <button type="button" id="pdf-back" class="primary small-btn">Back</button>
       </div>
     </section>
@@ -358,7 +353,7 @@
       </div>
     </div>
     <div id="problem-form" class="problem" hidden>
-      <textarea id="problem-text" rows="3" placeholder="What went wrong? Sent as typed: no client names, numbers or addresses." aria-label="What went wrong"></textarea>
+      <textarea id="problem-text" rows="3" placeholder="What went wrong? No client names, numbers or addresses." aria-label="What went wrong"></textarea>
       <div class="problem-actions">
         <button type="button" id="cancel-problem" class="ghost small-btn">Cancel</button>
         <button type="button" id="send-problem" class="primary small-btn">Save report</button>

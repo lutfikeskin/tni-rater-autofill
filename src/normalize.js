@@ -1155,7 +1155,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     const quoted = quotedCarriersOf(prior);
     if (quoted.length) {
       warnings.push({ code: 'prior.carrier-is-quoted', path: 'priorInsurance[0].carrier', level: 'check', alert: true,
-        msg: `Current insurance is with ${quoted.join(' and ')}: a ${quoted.join(' or ')} quote may be declined or routed. Check with the client before filling ${quoted.join(' or ')}'s pages; filling goes on as usual.` });
+        msg: `Current insurance is with ${quoted.join(' and ')}: a ${quoted.join(' or ')} quote may be declined or routed. Check with the client first.` });
     }
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
     // TNI (2026-10-26, W44-29): any box filled is proof of prior insurance, 1-3 years (util.js
