@@ -1170,16 +1170,16 @@ function renderWarnings() {
   const checks = warnings.map((w, i) => [w, i]).filter(([w]) => checkShown(w)).sort(([a], [b]) => Number(!!b.alert) - Number(!!a.alert));
   const infos = warnings.filter((w) => w.level === 'info');
   const open = checks.filter(([, i]) => !done.includes(i)).length;
-  $('check-title').textContent = open ? `${open} thing${open === 1 ? '' : 's'} to look at on the intake` : 'The intake is checked';
+  $('check-title').textContent = open ? `${open} to check on the intake` : 'Intake checked';
   $('check-sub').textContent = open
-    ? 'These looked wrong or missing. Fix the value or say it looks right. You can do this before or after filling.'
-    : 'Nothing else looked wrong. You can change these any time.';
+    ? 'Fix or confirm each one, before or after filling.'
+    : 'Nothing else looked wrong.';
   const editable = (path) => path && /\.|\]$/.test(path) && fieldInfo(path).label !== path;
   // "See intake" only where the PDF shows the item (an answer only the agent gives: none).
   const pdfLink = (w, label) => {
     const place = sourcePlace(w.path, state.intake);
     return place && pdfAvailable()
-      ? h('button', { type: 'button', class: 'link small', onclick: () => openPdf({ path: w.path, label, kind: 'check' }) }, `See intake${pdfPageSaid(place.page, ', page ')}`)
+      ? h('button', { type: 'button', class: 'ghost', onclick: () => openPdf({ path: w.path, label, kind: 'check' }) }, `See intake${pdfPageSaid(place.page, ' · p')}`)
       : null;
   };
   const head = (info, w) => h('div', { class: 'issue-head' }, h('span', { class: 'bang', 'aria-hidden': 'true' }, '!'),
@@ -1204,8 +1204,8 @@ function renderWarnings() {
       h('div', { class: 'check-body' },
         info ? fieldRow(w.path, info.label, info.kind, true, 'input') : null,
         h('div', { class: 'check-actions' },
-          h('button', { type: 'button', class: 'ghost', onclick: () => toggleDone(i, true) }, 'Looks right now'),
-          pdfLink(w, label) ?? (w.path && !info ? h('button', { type: 'button', class: 'link small', onclick: () => jumpTo(w.path) }, 'Show in client details') : null))));
+          h('button', { type: 'button', class: 'tinted', onclick: () => toggleDone(i, true) }, 'Looks right'),
+          pdfLink(w, label) ?? (w.path && !info ? h('button', { type: 'button', class: 'ghost', onclick: () => jumpTo(w.path) }, 'Show details') : null))));
   });
   $('warnings').replaceChildren(...cards,
     ...(infos.length ? [h('details', { class: 'cleanup' }, h('summary', { class: 'small muted' }, `Cleanup notes (${infos.length})`), h('ul', {}, infos.map((w) => h('li', {}, w.msg))))] : []));
@@ -3063,7 +3063,7 @@ function renderSteps() {
     $(`${prefix}-summary`).textContent = note;
   };
   // 1. Intake.
-  step('check', 'check', '1', { tone: open ? 'warn' : 'done', note: open ? `${open} to look at` : 'All checked', current: state.view === 'check' });
+  step('check', 'check', '1', { tone: open ? 'warn' : 'done', note: open ? `${open} to check` : 'All checked', current: state.view === 'check' });
   // 2. Fill page: the page in front's.
   step('fill', 'fill', '2', {
     tone: !onRater ? '' : error || (stopped && !filled) ? 'bad' : filled ? 'done' : 'active',
@@ -3165,7 +3165,7 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
     // Buttons waiting on others (Progressive's bill plan before Recalculate): the fill clicks them
     // in turn, and a question one waits on is a row of its own.
     // Something open on the page over the button: never clicked in turn until it is closed.
-    if (!left && covered) return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled`, title: 'Close what is open over the button', sub: 'Then fill this page again. Never Bind or Submit.', ...again };
+    if (!left && covered) return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled`, title: 'Close what is open over the button', sub: 'Then fill again. Never Binds or Submits.', ...again };
     // Only buttons left: the main button is the fill that clicks them in turn (and the page's
     // Continue after them, where the panel may): nothing clicks them by itself (it read "The fill
     // clicks the rest in turn" with no button for it). With Let me look before Continue on, the fill
@@ -3179,19 +3179,19 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
     return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled · ${left} need${left === 1 ? 's' : ''} you`,
       title: left === 1 ? 'Answer the last question' : `Answer ${left} questions`, sub: then, button: 'dock-next', label: 'Show the next one', ...again };
   }
-  if (held === 'changed') return { phase: 'check', tone: 'warn', eyebrow: 'The page changed', title: 'Check the answers again', sub: 'It changed after you clicked Looks right. Check them, or click Continue on the page yourself.', ...looks };
-  if (held || (check && settled)) return { phase: 'check', tone: 'good', eyebrow: 'All answered', title: 'Look over the answers, then continue', sub: 'The panel clicks Continue. Never Bind or Submit.', ...looks };
-  if (offSteps) return { phase: 'yours', tone: 'good', eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing on this step is clicked for you. Nothing is submitted or bound.', ...again };
+  if (held === 'changed') return { phase: 'check', tone: 'warn', eyebrow: 'The page changed', title: 'Check the answers again', sub: 'The page changed. Check it, then continue.', ...looks };
+  if (held || (check && settled)) return { phase: 'check', tone: 'good', eyebrow: 'All answered', title: 'Look over the answers, then continue', sub: 'Never Binds or Submits.', ...looks };
+  if (offSteps) return { phase: 'yours', tone: 'good', eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing here is clicked for you. Never Binds or Submits.', ...again };
   if (!autoAdvance) {
     return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', ...again,
-      sub: carrier?.advance && $('auto-advance').checked ? 'Click Continue on this page yourself. Nothing is submitted or bound.' : 'Click Continue yourself, then Fill this page on the next one.' };
+      sub: carrier?.advance && $('auto-advance').checked ? 'Click Continue on this page yourself. Never Binds or Submits.' : 'Click Continue, then fill the next page.' };
   }
   // Nothing left and the page not moved on: the main button continues (a fill, which clicks the
   // page's Continue once nothing is left: W43-40). The same once the agent settled what was left,
   // on the page or here (`settled`): it read "Fill again and continue" then, for the same fill that
   // replaces nothing (the maintainer, 2026-10-23: "I update something manually and the button still
   // says Fill again").
-  return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', sub: 'Continue clicks the page’s Continue for you. Nothing is submitted or bound.', button: 'fill', label: 'Continue', go: 'continue', ...again };
+  return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', sub: 'Never Binds or Submits.', button: 'fill', label: 'Continue', go: 'continue', ...again };
 }
 
 // Whether the quote is done where TNI stops on this rater: the carrier's `finishedBy` action (GEICO's
@@ -3289,7 +3289,7 @@ function playChime() {
 // The dock: the one next thing to do, always in the same place under the panel, and its button.
 // #dock[data-phase] names it, and data-report the fill it is about (the panel harness reads both).
 function dockFor() {
-  if (!state.intake) return { phase: 'start', eyebrow: 'Step 1 of 3', title: 'Add the client’s intake PDF', sub: 'Then the panel checks it and fills the rater for you.' };
+  if (!state.intake) return { phase: 'start', eyebrow: 'Step 1 of 3', title: 'Add the client’s intake PDF', sub: 'The panel checks it and fills the rater.' };
   const { warnings, done } = state.intake;
   const open = warnings.filter((w, i) => checkShown(w) && !done.includes(i)).length;
   const checksSaid = state.view === 'check' && open ? `${open} intake item${open === 1 ? '' : 's'} not looked at yet. You can still fill.` : null;
@@ -3298,7 +3298,7 @@ function dockFor() {
   if (!carrier) {
     return state.tab && !state.tab.url
       ? { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.' }
-      : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? 'Progressive, GEICO or AmWINS. Filling starts on its page.' };
+      : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? 'Progressive, GEICO or AmWINS.' };
   }
   const f = state.fillingFor;
   if (state.filling && f?.tabId === state.tab.id && (!f.auto || !!f.rows?.length)) {
@@ -3325,7 +3325,7 @@ function dockFor() {
   // The tab's quote is for another state than the intake's: no fill until the agent says which.
   const issue = stateIssue();
   if (issue) {
-    return { phase: 'hold', tone: 'bad', eyebrow: 'Check first', title: 'Sort out the state above', sub: `Filling a ${issue.picked} quote with ${issue.intake} answers will fail on later pages.`,
+    return { phase: 'hold', tone: 'bad', eyebrow: 'Check first', title: 'Sort out the state above', sub: `${issue.intake} answers fail on a ${issue.picked} quote.`,
       button: 'fill', label: 'Fill this page', disabled: true, alt: 'fill-anyway', altLabel: 'Fill anyway' };
   }
   // The carrier's portal pages outside a quote are never filled (fillPage).
@@ -3335,7 +3335,7 @@ function dockFor() {
   // step has a report.
   const filledBefore = carrier.layoutSteps ? !!report?.fields : state.autoPages.has(page);
   const fill = { button: 'fill', label: filledBefore || report?.fields ? 'Fill this page again' : 'Fill this page' };
-  if (report?.error) return { phase: 'error', tone: 'bad', eyebrow: 'Didn’t finish', title: 'Check the page, then fill again', sub: 'What went in stays; your changes are kept.', ...fill };
+  if (report?.error) return { phase: 'error', tone: 'bad', eyebrow: 'Didn’t finish', title: 'Check the page, then fill again', sub: 'Your changes are kept.', ...fill };
   // The quote is done where TNI stops on this rater (quoteFinished): said, in place of "Moving on
   // is yours" or "Ready for Continue" on a page that is the end of the quote.
   if (report && quoteFinished(carrier, report, page, step) && !pendingAi(state.tab.id, page).length) {
@@ -3346,7 +3346,7 @@ function dockFor() {
   // Continue is next (W43-40: the dock offered Fill this page again on finished vehicle lists).
   if (report?.empty) return continueSaid({ ...report, tabId: state.tab.id }, carrier);
   if (report?.fields) {
-    if (report.stopped) return { phase: 'stopped-fill', tone: 'warn', eyebrow: 'Stopped', title: `${report.filled} filled before you stopped`, sub: 'What went in stays. Fill again to finish the rest; your changes are kept.', button: 'fill', label: 'Fill this page again' };
+    if (report.stopped) return { phase: 'stopped-fill', tone: 'warn', eyebrow: 'Stopped', title: `${report.filled} filled before you stopped`, sub: 'Fill again to finish. Your changes are kept.', button: 'fill', label: 'Fill this page again' };
     // AI picks waiting for approval hold Continue: approved (or confirmed) from here or their rows.
     const aiDock = state.aiDocks.get(`${state.tab.id}|${page}`);
     const ai = aiDock ? pendingAi(state.tab.id, page) : [];
@@ -3369,7 +3369,7 @@ function dockFor() {
   const hint = state.tab.background ? 'Fills the quote tab in the background. Go back to it to review.'
     // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd), and Next only up to
     // Additional Business Info (advance `steps`).
-    : $('auto-advance').checked && carrier.advance && carrier.unitLists ? 'Adds the intake’s vehicles, trailers and drivers not on the quote yet, and clicks Next once nothing is left for you, up to Quote & Coverages. Never submits or binds.'
+    : $('auto-advance').checked && carrier.advance && carrier.unitLists ? 'Adds missing vehicles, trailers and drivers, and clicks Next up to Quote & Coverages. Never submits or binds.'
     : $('auto-advance').checked && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
     : 'Nothing is submitted. Review, then click Next yourself.';
   const progress = quoteProgress(carrier, page, state.tabSteps.get(state.tab.id));
@@ -3440,7 +3440,7 @@ function showReviewMode() {
   if (!on) { box.replaceChildren(); return; }
   const cls = String(record.operations?.businessClass ?? '').trim();
   box.replaceChildren(issueCard({ tone: 'warn', title: `Review mode: ${cls ? `"${cls}"` : 'no business class'} on the intake`,
-    text: `${carrier.name}'s rules cover expediters and general freight. Standard answers are filled but marked for you to confirm; Continue waits on each page.` }));
+    text: `${carrier.name}'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.` }));
 }
 
 // A card above the page's answers (or in them): what's wrong or different, in the panel's own
@@ -3563,11 +3563,11 @@ function showStateNote() {
   const place = sourcePlace('garaging.state', state.intake);
   const pdf = place && pdfAvailable();
   box.replaceChildren(issueCard({ role: 'alert', title: `This ${name} quote is for ${picked}. The intake says ${intake}.`,
-    text: `${before ? `The quote was started in ${picked} before this intake was loaded. ` : ''}A ${picked} quote won’t take ${intake} ZIP codes or rules. Start the quote in ${intake}, or check the intake.`,
+    text: `${before ? `Quote started in ${picked} before this intake was loaded. ` : ''}Start the quote in ${intake}, or check the intake.`,
     compare: [['Rater', picked], [`Intake${place ? pdfPageSaid(place.page, ' page ') : ''}`, address || intake]],
     actions: [
-      h('button', { type: 'button', class: 'ghost', onclick: dismissState }, `${picked} is right`),
-      pdf ? h('button', { type: 'button', class: 'link small', onclick: () => openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' }) }, `See intake${pdfPageSaid(place.page, ', page ')}`) : null,
+      h('button', { type: 'button', class: 'tinted', onclick: dismissState }, `${picked} is right`),
+      pdf ? h('button', { type: 'button', class: 'ghost', onclick: () => openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' }) }, `See intake${pdfPageSaid(place.page, ' · p')}`) : null,
     ] }));
 }
 
@@ -4584,7 +4584,7 @@ function renderReport(frames, ctx = {}) {
     // Not clicked through what is open over them (Continue, a helper), which the agent closes.
     !advanced && covered.length
       ? issueCard({ tone: 'warn', title: `${covered.length > 1 ? `${covered.slice(0, -1).join(', ')} and ${covered.at(-1)} weren’t` : `${covered[0]} wasn’t`} clicked`,
-        text: `Something is open over ${covered.length > 1 ? 'them' : 'it'} on the page, such as a dialog or a message. Close it, then fill again${covered.includes('Continue') ? ' or click Continue yourself' : ''}.` }) : null,
+        text: `Close what is open over ${covered.length > 1 ? 'them' : 'it'}, then fill again.` }) : null,
     halted ? (stopped
       ? issueCard({ tone: 'quiet', title: 'You stopped the fill', text: 'Nothing more was filled or clicked. What went in stays.' })
       : issueCard({ title: 'Filling stopped', text: `${halted.reason ?? ''} Check the page, then fill again.`.trim(), role: 'alert' })) : null,
@@ -4682,7 +4682,7 @@ function answerRow(row, { tabId, page, carrier }) {
     h('div', { class: 'change-slot' }),
     row.answer && row.key || place ? h('div', { class: 'row-actions' },
       row.answer && row.key ? h('button', { type: 'button', class: 'ghost change', 'aria-label': `Change answer: ${row.label}`, onclick: () => changeAnswer(item, row, { tabId, page, carrier }) }, 'Change answer') : null,
-      place ? h('button', { type: 'button', class: 'link small src',
+      place ? h('button', { type: 'button', class: 'ghost src',
         title: kind === 'edited' ? 'Show what the intake said before your edit' : kind === 'derived' ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake',
         onclick: () => openPdf({ path: row.path, from: row.from, label: row.label, kind: 'filled' }) }, 'See in intake') : null) : null,
     row.key ? h('span', { class: 'need-where', hidden: true }) : null,
@@ -4709,9 +4709,9 @@ function needRow(x, { tabId, page, carrier }, open = false) {
     ? item.aiAccept(button) : agentAnswer(item, x, choice, { tabId, page, carrier }, button));
   let shownChoices = options;
   let choices = pickable ? choiceList(options, { current: now, onPick })
-    : h('p', { class: 'row-say' }, x.key || x.action ? 'Answer it on the rater page, then mark it done here.' : 'Do it on the rater page.');
+    : h('p', { class: 'row-say' }, x.key || x.action ? 'Answer it on the page, then mark it done.' : 'Do it on the rater page.');
   // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
-  const show = x.key ? h('button', { class: 'link small show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
+  const show = x.key ? h('button', { class: 'ghost show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
     'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
   // A helper's reminder has no field. One the carrier marks `markable` (Progressive's Rates on an NTL
   // quote with cargo) carries the helper's own id (`action`), and its Mark done marks the helper done
@@ -5939,10 +5939,10 @@ function renderAi(holder, suggestions, ctx) {
         h('div', { class: 'ai-says' }, 'Picked by the AI: ', h('b', {}, x.choice)),
         x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null,
         ...notes(x).map((n) => h('div', { class: 'ai-tip' }, n)),
-        h('div', { class: 'ai-why' }, 'Purple on the page. Continue waits until you approve or reject it.'),
+        h('div', { class: 'ai-why' }, 'Continue waits for your answer.'),
         h('div', { class: 'ai-actions' },
           h('button', { type: 'button', class: 'primary accept', onclick: () => decide([x], 'approved') }, 'Approve'),
-          h('button', { type: 'button', class: 'link ai-reject', onclick: () => decide([x], 'rejected') }, 'Reject')));
+          h('button', { type: 'button', class: 'ghost ai-reject', onclick: () => decide([x], 'rejected') }, 'Reject')));
     }
     if (x.done) return h('div', { class: 'ai-done' }, h('b', {}, '✓'), h('span', { class: 'grow' }, `Put in ${answer(x)} (purple on the page).`));
     if (x.dismissed) return null;
@@ -6056,18 +6056,11 @@ async function renderAiSettings() {
   $('key-status').textContent = cfg.apiKey ? 'Saved on this computer' : cfg.proxy ? `Not needed: ${lender} provides it` : 'Not added yet';
   $('key-status').className = cfg.ready ? 'ok' : 'warn';
   if ($('key-form').hidden) $('key-edit').textContent = cfg.apiKey ? 'Change' : cfg.proxy ? 'Use my own key' : 'Add key';
-  // On without a key: it can't help yet, said on its card and with a dot on the brain button.
+  // On without a key: it can't help yet, said on its card and with a dot on the Settings button.
   $('agent-card').classList.toggle('warn', cfg.on && !cfg.ready);
-  $('agent-btn').dataset.on = String(cfg.on);
-  $('agent-dot').hidden = !(cfg.on && !cfg.ready);
-  $('agent-btn').title = !cfg.on ? 'Assistant off'
-    : cfg.ready ? `${provider.name} assistant on · ${cfg.model}` : `Assistant needs an ${provider.keyLabel}`;
-  $('ai-note').textContent = !cfg.on ? 'Off. Questions are left for you.' : !cfg.ready ? 'On, but it needs a key to work.'
-    : cfg.auto ? 'On. Picks answers; you approve them.' : 'On. Suggests answers; you choose.';
+  $('ai-note').textContent = !cfg.on ? 'Off' : !cfg.ready ? 'Needs a key'
+    : cfg.auto ? 'On. Picks answers you approve.' : 'On. Suggests answers.';
   $('ai-note').className = !cfg.on ? 'off' : !cfg.ready ? 'warn' : 'on';
-  const route = cfg.apiKey ? 'with your key' : central ? "through TNI's server, with TNI's key"
-    : cfg.proxy ? "through the usage server set under Advanced, with that server's key" : 'with your key, once you add one';
-  $('ai-privacy').textContent = `Sent to ${provider.company} ${route}: the questions left for you, TNI's rules, and the intake with client names, birth dates, address, contact and ID numbers replaced by [client]. Written differently in the claims box or notes, they may still go. Business, coverage, vehicle, driver and prior-insurance details are sent. Missing facts stay unanswered. Report orders, exclusions, signatures and payment stay with you.${cfg.apiKey ? ' Key saved on this device.' : ''}`;
   renderUsage();
 }
 
@@ -6113,7 +6106,7 @@ async function renderHealth({ up }) {
     up.state === 'off' && 'set the usage server (Advanced)',
   ].filter(Boolean);
   $('setup-note').hidden = !setup.length;
-  $('setup-text').textContent = `To finish setting up, ${joinAnd(setup)}. Filling still works without ${setup.length === 1 ? 'it' : 'them'}.`;
+  $('setup-text').textContent = `To finish setup, ${joinAnd(setup)}.`;
   $('settings-dot').hidden = !setup.length;
   $('agent').classList.toggle('missing', !agent);
   // Events that can't even be saved here are lost: that is said where the agent works.
@@ -6733,8 +6726,6 @@ function wire() {
   $('pop-out').addEventListener('click', popOut);
   $('dock-back').addEventListener('click', dock);
   $('settings-done').addEventListener('click', () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); });
-  // The brain button: the assistant's settings, at its key when it is on without one.
-  $('agent-btn').addEventListener('click', async () => { const cfg = await aiSettings(); openSettings(cfg.on && !cfg.ready ? 'ai-openai-key' : 'ai-on'); });
   $('step-check').addEventListener('click', () => setView('check'));
   $('step-fill').addEventListener('click', () => setView('page'));
   $('step-confirm').addEventListener('click', () => { setView('page'); refreshAnswers(); checkItems(); });

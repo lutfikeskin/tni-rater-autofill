@@ -61,10 +61,10 @@ test('the Intake step names the current insurance boxes left blank, with the pro
   const partial = warned({ ins_type_1: 'Commercial Auto', ins_carrier_1: 'Synthetic Mutual' });
   assert.equal(partial.level, 'check', 'shown on the Intake step like the other checks');
   assert.equal(partial.path, 'priorInsurance[0]');
-  assert.match(partial.msg, /missing the limit and expiration date/);
+  assert.match(partial.msg, /^Current insurance: missing the limit and expiration date/, 'it says it is about current insurance');
   assert.match(partial.msg, /proof of prior insurance \(1-3 years\)/i);
   assert.doesNotMatch(partial.msg, /Synthetic Mutual/, 'no client value');
-  assert.match(warned({ ins_limit_1: '$1M CSL' }).msg, /missing the policy type, carrier and expiration date/);
+  assert.match(warned({ ins_limit_1: '$1M CSL' }).msg, /Current insurance: missing the policy type, carrier and expiration date/);
   // All four filled, or none: nothing to name. A remark in the date box has its own check.
   assert.equal(warned(DATED), undefined);
   assert.equal(warned({}), undefined);
@@ -73,7 +73,7 @@ test('the Intake step names the current insurance boxes left blank, with the pro
   assert.ok(ne.warnings.some((w) => w.code === 'prior-expiration.invalid' && w.level === 'check'));
   // Not assumed (another kind of policy): the details are still asked for, without the assumption.
   const gl = warned({ ins_type_1: 'General Liability', ins_carrier_1: 'Synthetic Mutual' });
-  assert.match(gl.msg, /missing the limit and expiration date/);
+  assert.match(gl.msg, /Current insurance: missing the limit and expiration date/);
   assert.doesNotMatch(gl.msg, /proof of prior/i);
 });
 
@@ -343,7 +343,7 @@ test('AmWINS: a General Liability, Cargo or Other policy with a time with the in
   for (const boxes of [DATED, { ...DATED, ins_type_1: 'Personal Auto' }, { ...DATED, ins_type_1: 'Select*' }]) {
     const { record: r, warnings } = intake(boxes, { additional_notes: 'Insured with Synthetic Mutual for 6 years' });
     assert.deepEqual([howLong(r).value, howLong(r).source], ['MORE THAN 3 YEARS', 'derived'], JSON.stringify(boxes));
-    assert.match(warnings.find((w) => w.code === 'prior.tenure').msg, /take the band/);
+    assert.match(warnings.find((w) => w.code === 'prior.tenure').msg, /band is filled/);
   }
 });
 
@@ -379,7 +379,7 @@ test('AmWINS: an expired policy with a time with the insurer in the notes leaves
   for (const [line, band, source] of [['Insured with Synthetic Mutual for 6 years', 'MORE THAN 3 YEARS', 'derived'], ['Insured 2 years with Synthetic Mutual', '2 TO 3 YEARS', 'derived']]) {
     const r = intake(DATED, { additional_notes: line }).record;
     assert.deepEqual([howLong(r).value, howLong(r).source], [band, source], line);
-    assert.match(intake(DATED, { additional_notes: line }).warnings.find((w) => w.code === 'prior.tenure').msg, /take the band/, line);
+    assert.match(intake(DATED, { additional_notes: line }).warnings.find((w) => w.code === 'prior.tenure').msg, /band is filled/, line);
   }
   const expiredNoTime = intake(EXPIRED).record;
   assert.deepEqual([howLong(expiredNoTime).value, howLong(expiredNoTime).source, howLong(expiredNoTime).note], ['1 TO 2 YEARS', 'standard', null]);
