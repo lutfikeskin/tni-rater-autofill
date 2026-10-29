@@ -6057,9 +6057,6 @@ async function renderAiSettings() {
   $('ai-note').textContent = !cfg.on ? 'Off' : !cfg.ready ? 'Needs a key'
     : cfg.auto ? 'On. Picks answers you approve.' : 'On. Suggests answers.';
   $('ai-note').className = !cfg.on ? 'off' : !cfg.ready ? 'warn' : 'on';
-  const route = cfg.apiKey ? 'with your key' : central ? "through TNI's server, with TNI's key"
-    : cfg.proxy ? "through the usage server set under Advanced, with that server's key" : 'with your key, once you add one';
-  $('ai-privacy').textContent = `Sent to ${provider.company} ${route}: the questions left for you, TNI's rules, and the intake with client names, birth dates, address, contact and ID numbers replaced by [client]. Written differently in the claims box or notes, they may still go. Business, coverage, vehicle, driver and prior-insurance details are sent. Missing facts stay unanswered. Report orders, exclusions, signatures and payment stay with you.${cfg.apiKey ? ' Key saved on this device.' : ''}`;
   renderUsage();
 }
 
