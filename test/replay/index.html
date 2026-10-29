@@ -231,7 +231,8 @@
     let layout = null;
     let runner = params.get('runner') ?? (bakeoff ? 'agent' : 'extension');
 
-    for (const file of ['field-key.js', 'pagekit.js']) {
+    // The replays are Progressive's layouts: its page adapter goes in before the engine, as the panel does it.
+    for (const file of ['field-key.js', 'carriers/progressive.js', 'pagekit.js']) {
       await new Promise((res) => { const s = document.createElement('script'); s.src = `/src/content/${file}`; s.onload = res; document.head.append(s); });
     }
 

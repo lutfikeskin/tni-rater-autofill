@@ -4,11 +4,9 @@
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
 // page already filled alone.
 //
-// Two kinds of pages are handled:
-//  - plain HTML / React / Angular forms: values are set on the DOM elements;
-//  - ExtJS pages (Progressive's Duck Creek "DCT" app): values are set through the ExtJS
-//    components, and the page talks to its server after each answer, so filling goes one field
-//    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
+// It handles plain HTML / React / Angular forms itself: values are set on the DOM elements. What a
+// carrier's own widgets need (Progressive's ExtJS components) is that carrier's page adapter,
+// src/content/carriers/<carrier>.js, injected before this file (see "The carrier's page adapter").
 //
 // Not type-checked yet; the plan it takes, the fill's options and the report it returns are typed
 // in types.js, at the repository's root.
@@ -86,12 +84,13 @@
   }
 
   // The words of a host's light-DOM part for one of its slots ([slot=label], [slot=legend]), without
-  // its tooltip's (GEICO's legend holds a <gds-tooltip> whose body is in the page too).
+  // its tooltip's (a legend may hold one whose body is in the page too: GEICO's <gds-tooltip>, its
+  // adapter's `tooltips`).
   function slotText(host, name) {
     const part = [...(host?.children ?? [])].find((n) => n.getAttribute?.('slot') === name);
     if (!part) return '';
     let text = part.textContent ?? '';
-    for (const tip of part.querySelectorAll('gds-tooltip, [role=tooltip]')) if (tip.textContent) text = text.replace(tip.textContent, ' ');
+    for (const tip of part.querySelectorAll(withAdapter('[role=tooltip]', 'tooltips'))) if (tip.textContent) text = text.replace(tip.textContent, ' ');
     return oneLine(text);
   }
 
@@ -200,11 +199,13 @@
   // with nothing between them, so textContent runs the business name into the house number
   // (W43-46): here each text node, or each element in a page without them, is its own words.
   // Tooltips are left out, as in slotText.
+  // A node named as one of the carrier's tooltips (its adapter's `tooltips`, by tag name).
+  const ownTooltipTag = (n) => (adapter().selectors?.tooltips ?? []).some((t) => t.toUpperCase() === String(n.tagName ?? '').toUpperCase());
   function legendWords(radios) {
     const part = [...(legendHolder(radios)?.children ?? [])].find((n) => n.getAttribute?.('slot') === 'legend');
     const words = (n) => {
       if (n.nodeType === 3) return n.nodeValue ?? n.textContent ?? '';
-      if (n.matches?.('gds-tooltip, [role=tooltip]') || /^GDS-TOOLTIP$/i.test(n.tagName ?? '') || n.getAttribute?.('role') === 'tooltip') return '';
+      if (n.matches?.(withAdapter('[role=tooltip]', 'tooltips')) || ownTooltipTag(n) || n.getAttribute?.('role') === 'tooltip') return '';
       const nodes = n.childNodes ? [...n.childNodes] : null;
       if (nodes) return nodes.map(words).join(' ');
       return n.children?.length ? [...n.children].map(words).join(' ') : (n.textContent ?? '');
@@ -252,57 +253,83 @@
   }
 
   // ---------------------------------------------------------------------------------------------
-  // ExtJS / Duck Creek helpers (only work in the page's own JS world)
+  // The carrier's page adapter
 
-  const ext = () => (typeof globalThis.Ext?.getCmp === 'function' ? globalThis.Ext : null);
-  const extCmp = (el) => (el?.id && ext() ? ext().getCmp(el.id.replace(/-inputEl$/, '')) ?? null : null);
-
-  function dctCaption(cmp) {
-    for (let c = cmp, i = 0; c && i < 6; c = c.ownerCt, i++) {
-      if (c.dctCaption) return oneLine(String(c.dctCaption).replace(/<[^>]+>/g, ' '));
+  // What one carrier's page code knows (src/content/carriers/<carrier>.js, injected before this file
+  // on that carrier's tabs when its config names a `pageAdapter`): how its own widgets hold values,
+  // name their questions and show the page busy. A widget is whatever the adapter's widget(el)
+  // returns for a field (Progressive's: the field's ExtJS component); the kit only hands it back.
+  // A page without an adapter is plain HTML: every hook has its default here.
+  const NO_ADAPTER = {
+    widget: () => null,
+    radioGroup: () => null,
+    groupKey: () => null,
+    choices: () => null,
+    label: () => null,
+    optionText: () => '',
+    question: () => null,
+    row: () => null,
+    ref: () => null,
+    required: () => false,
+    value: (widget, el) => el?.value ?? null,
+    shown: () => null,
+    holds: () => false,
+    invalid: () => false,
+    groupOf: () => null,
+    setText: () => {},
+    changed: () => {},
+    apply: async () => ({ ok: false, reason: 'no page adapter for this widget' }),
+    reselect: () => {},
+    highlight: () => null,
+    typeName: () => null,
+    busy: () => false,
+    selectors: {},
+    changeAttributes: [],
+    page: () => null,
+    rearm: () => [],
+    serverBacked: () => false,
+    onRequest: () => {},
+    offRequest: () => {},
+    listOwner: () => null,
+    components: null,
+  };
+  // The adapter is read when it's needed: one injected again (an extension update) replaces it.
+  let adapterSource;
+  let adapterNow = NO_ADAPTER;
+  function adapter() {
+    const source = globalThis.__raterAdapter ?? null;
+    if (source !== adapterSource) {
+      adapterSource = source;
+      adapterNow = { ...NO_ADAPTER, ...(source?.create?.({ oneLine, sleep, matchOption, noMatch, textFor, hasOptions, labelFor }) ?? {}) };
     }
-    return null;
+    return adapterNow;
   }
+  // A selector list with the carrier's own selectors for one role added (its adapter's
+  // `selectors[role]`: Progressive's ExtJS buttons and lists, GEICO's gds-* components, …).
+  const withAdapter = (base, role) => [base, ...(adapter().selectors?.[role] ?? [])].filter(Boolean).join(', ');
+  // The nearest of the carrier's own elements for one role around `el`, or null (none named).
+  const closestOwn = (el, role) => {
+    const own = adapter().selectors?.[role] ?? [];
+    return own.length ? el?.closest?.(own.join(', ')) ?? null : null;
+  };
 
-  // Only the field itself (or its radio group) says whether it's required; outer containers
-  // carrying dctRequired made optional fields like Suffix and DBA look required.
-  function dctRequired(cmp) {
-    return !!cmp?.dctRequired;
-  }
+  // The field's name in the carrier's data model: the adapter's (Progressive's fieldref) or, for
+  // GEICO, the one in its element names (dataName: Id_GiveYear_81515 is GiveYear).
+  const fieldRef = (el) => adapter().ref(el) || dataName(el) || null;
 
-  // The field's name in the carrier's data model: Duck Creek puts it on every input
-  // (fieldref="RiskInput.VIN", "ComprehensiveInput.Deductible"). It names what the field holds,
-  // where the question id below is only a number, which Progressive renumbers (2026-10-07). GEICO
-  // has it in its names instead (dataName: Id_GiveYear_81515 is GiveYear).
-  const fieldRef = (el) => el?.getAttribute?.('fieldref') || dataName(el) || null;
-
-  // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>. The
-  // question id is a number Progressive reassigns: it keeps a page's rows of one question
-  // together, and is logged, but never says which question a field is (see assign).
-  function dctQuestionId(id) {
-    return String(id ?? '').match(/^f_[a-z]([0-9a-f]{32})([0-9a-f]+)_\d+_\d+/i)?.[2]?.toUpperCase() ?? null;
-  }
-
-  // Its <page>_<row>: on Progressive's Rates every question of one vehicle shares the row, and
-  // one of them is labelled with the vehicle ("2025 RAM PROMASTER 2500").
+  // A question labelled with a vehicle ("2025 RAM PROMASTER 2500") names its row (collectControls).
   const VEHICLE_LABEL = /^(?:19|20)\d{2}\s+\S/;
-  function dctRow(id) {
-    return String(id ?? '').match(/^f_[a-z][0-9a-f]{32}[0-9a-f]+_(\d+_\d+)/i)?.[1] ?? null;
-  }
 
   // The page is waiting on its server or re-drawing after an answer.
   function pageBusy() {
-    const X = ext();
-    if (X?.Ajax?.isLoading?.()) return true;
-    // #loadingDefault: AmWINS' overlay while it saves or reloads the application (it redraws every
-    // step when the reload lands, so nothing may be filled before that).
-    // #page-load / #extendedWaiting: GEICO's spinners while a step loads and while Recalculate rates
-    // (both stay in the page, display:none, when idle).
-    return [...document.querySelectorAll('.x-mask-msg, .x-mask-loading, [class*="loading-mask"], [class*="LoadingMessage"], #loadingDefault, #page-load.loader-container, #extendedWaiting.loader-container')]
+    const a = adapter();
+    if (a.busy()) return true;
+    // A loading mask or message on screen, or one of the carrier's own (its adapter's `busy`).
+    return [...document.querySelectorAll(withAdapter('[class*="loading-mask"], [class*="LoadingMessage"]', 'busy'))]
       .some((m) => m.getClientRects().length && getComputedStyle(m).visibility !== 'hidden');
   }
 
-  // The carrier's own components the page hasn't defined yet (`components`, a fill option: GEICO's
+  // The carrier's own components the page hasn't defined yet (its adapter's `components`: GEICO's
   // gds-* while their script loads): no control of theirs is drawn, and defining one draws its
   // shadow root without a mutation record. In the page only: a part inside a component's shadow root
   // exists once that component is defined, by the same script (the GEICO mock's are copies that
@@ -311,6 +338,7 @@
   // from when a wait first saw it, and never past a wait's own limit (settle).
   const UNDEFINED_MS = 3000;
   const undefinedSince = new WeakMap();
+  // Set as a fill starts (its adapter's `components`), and kept: an AI apply before any fill doesn't wait.
   let componentPrefix = null;
   function partsUndefined() {
     if (!componentPrefix) return false;
@@ -395,10 +423,10 @@
   async function settle({ quietMs = 250, maxMs = 15000, requests = null } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
-    // A pick on a design-system radio redraws nothing: its host's `checked` and its group's
-    // `active-index` change (GEICO). Only these two attributes, so a page's own animations don't
-    // keep the wait going.
-    mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', 'active-index'] });
+    // A pick on a design-system radio redraws nothing: its host's `checked` changes, and what the
+    // carrier's adapter names (`changeAttributes`: GEICO's group `active-index`). Only these, so a
+    // page's own animations don't keep the wait going.
+    mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', ...adapter().changeAttributes] });
     const start = Date.now();
     try {
       const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
@@ -424,8 +452,9 @@
   // The units a fill is for (fill `units`, set while a fill runs): which vehicle, driver and
   // trailer the plan answers for, and which unit forms are already theirs (see assign).
   let fillUnits = null;
-  // In a step section that isn't the one on screen (AmWINS' .form-tab, hidden).
-  const otherStep = (el) => { const tab = el?.closest?.('.form-tab'); return !!tab && !isVisible(tab); };
+  // In a step section that isn't the one on screen (the adapter's `otherStep` sections: AmWINS'
+  // .form-tab, hidden).
+  const otherStep = (el) => { const tab = closestOwn(el, 'otherStep'); return !!tab && !isVisible(tab); };
 
   // The lists of a fill report whose items are the agent's to look at (fill's reconcile).
   const REVIEW_LISTS = ['unknown', 'failed', 'noData', 'leftRequired', 'checks'];
@@ -434,6 +463,7 @@
   let controlReads = 0;
   function collectControls() {
     controlReads++;
+    const a = adapter();
     const out = [];
     const groups = new Map();
     // Fields in the page but not shown or not open to an answer (a collapsed card, a closed section):
@@ -443,59 +473,59 @@
       const type = el.tagName === 'INPUT' ? (el.type || 'text').toLowerCase() : el.tagName.toLowerCase();
       if (el.tagName === 'INPUT' && SKIP_INPUT_TYPES.has(type) && !(type === 'search' && safeMatches(el, ADDRESS_SEARCH))) continue;
       if (el.disabled || (!isVisible(el) && !hiddenOk.some((sel) => safeMatches(el, sel)))) { hidden.push(el); continue; }
-      const cmp = extCmp(el);
+      const widget = a.widget(el);
       if (type === 'radio') {
-        const extGroup = cmp?.up?.('radiogroup') ?? null;
+        const widgetGroup = a.radioGroup(widget);
         // By its name too: two groups with one data-model name (GEICO's two pay-plan lists, both
         // ref:GivePayPlanV2) are two questions. Nameless radios group as before.
-        const key = extGroup ? `x:${extGroup.id}` : `${el.form ? 'f' : ''}:${globalThis.__raterFieldKey(el)}|${el.name ?? ''}`;
+        const key = widgetGroup ? a.groupKey(widgetGroup) : `${el.form ? 'f' : ''}:${globalThis.__raterFieldKey(el)}|${el.name ?? ''}`;
         let g = groups.get(key);
         if (!g) {
-          g = { kind: 'radio', el, type, radios: [], cmp: extGroup };
+          g = { kind: 'radio', el, type, radios: [], widget: widgetGroup };
           groups.set(key, g);
           out.push(g);
         }
         g.radios.push(el);
         continue;
       }
-      const c = { kind: el.tagName === 'SELECT' ? 'select' : type === 'checkbox' ? 'checkbox' : 'text', el, type, cmp };
-      if (cmp?.store && cmp.displayField) {
-        // ExtJS combo box: a text input backed by a list of records.
+      const c = { kind: el.tagName === 'SELECT' ? 'select' : type === 'checkbox' ? 'checkbox' : 'text', el, type, widget };
+      // A widget backed by a list of choices (an ExtJS combo box) is a list, whatever its input.
+      const choices = a.choices(widget);
+      if (choices) {
         c.kind = 'select';
-        c.options = cmp.store.getRange().map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
+        c.options = choices;
       }
-      // A checkbox in a group ("Filings: [ ] Federal [ ] MCS-90") is named by its own box label.
-      c.label = (c.kind === 'checkbox' && cmp?.boxLabel ? oneLine(String(cmp.boxLabel).replace(/<[^>]+>/g, ' ')) : null) ?? dctCaption(cmp) ?? labelFor(el);
+      c.label = a.label(widget, c.kind) ?? labelFor(el);
       // No caption or label of its own: its "label" is its name, which says nothing of its wording
       // (assign's `reworded`). Progressive draws TX's PIP limit so (live recording, 2026-10-23).
       c.nameOnly = !!c.label && (c.label === oneLine(humanize(el.name || el.id)) || (!!dataName(el) && c.label === oneLine(humanize(dataName(el)))));
-      c.q = dctQuestionId(cmp?.id ?? el.id);
+      c.q = a.question(widget, el);
       c.ref = fieldRef(el);
       out.push(c);
     }
     for (const g of groups.values()) {
       g.options = g.radios.map((r) => {
-        const item = extCmp(r);
+        const item = a.widget(r);
         // A design-system option's words are its host's [slot=label] part (GEICO: "Vehicle" for
         // the value Yes, "Pay In Full" for GEICO_PP_1Pay); its shadow <label> holds only a <slot>.
         const host = radioHost(r);
-        return { el: r, cmp: item, host, text: oneLine(String(item?.boxLabel ?? '').replace(/<[^>]+>/g, ' ')) || oneLine([...(r.labels ?? [])].map(textOutsideControls).join(' ')) || slotText(host, 'label') || r.value, value: r.value };
+        return { el: r, widget: item, host, text: a.optionText(item) || oneLine([...(r.labels ?? [])].map(textOutsideControls).join(' ')) || slotText(host, 'label') || r.value, value: r.value };
       });
-      g.label = dctCaption(g.cmp) ?? radioGroupLabel(g.radios, g.options.map((o) => o.text));
-      g.q = dctQuestionId(g.cmp?.id ?? g.el.id) ?? (String(g.el.name).match(/^[a-z]+_([0-9A-F]+)/)?.[1] ?? null);
+      g.label = a.label(g.widget, 'radio') ?? radioGroupLabel(g.radios, g.options.map((o) => o.text));
+      g.q = a.question(g.widget, g.el) ?? (String(g.el.name).match(/^[a-z]+_([0-9A-F]+)/)?.[1] ?? null);
       g.ref = g.radios.map(fieldRef).find(Boolean) ?? null;
     }
     for (const c of out) {
       c.text = squash(c.label);
       c.hint = humanize(dataName(c.el) || c.el.name || c.el.id || '');
-      c.required = dctRequired(c.cmp) || isRequired(c.el, c.label);
+      c.required = a.required(c.widget) || isRequired(c.el, c.label);
     }
     // The vehicle a per-vehicle row belongs to: a question labelled with it ("2025 RAM PROMASTER
     // 2500") names its row, and the row's unlabelled questions (vehicle value, equipment) are its
     // too. A row naming two vehicles names none.
     const rowVehicle = new Map();
     for (const c of out) {
-      c.row = dctRow(c.cmp?.id ?? c.el.id);
+      c.row = a.row(c.widget, c.el);
       if (!c.row || !VEHICLE_LABEL.test(c.label ?? '')) continue;
       rowVehicle.set(c.row, rowVehicle.has(c.row) && rowVehicle.get(c.row) !== c.text ? null : c.text);
     }
@@ -510,7 +540,8 @@
   function hiddenKeys(controls) {
     let keys = hiddenKeySets.get(controls);
     if (!keys) {
-      keys = new Set((hiddenOf.get(controls) ?? []).map((el) => globalThis.__raterFieldKey(el, { q: dctQuestionId(extCmp(el)?.id ?? el.id) })));
+      const a = adapter();
+      keys = new Set((hiddenOf.get(controls) ?? []).map((el) => globalThis.__raterFieldKey(el, { q: a.question(a.widget(el), el) })));
       hiddenKeySets.set(controls, keys);
     }
     return keys;
@@ -573,15 +604,10 @@
     return { options, section: sectionOf(c.el), current: c.kind === 'text' ? (textValue(c.el) ? 'has a value' : null) : selectedText(c) };
   }
 
-  // An ExtJS field's value. A combo whose list was never loaded (or was torn down by a redraw)
-  // throws from getValue(); its box text is then the best answer there is.
-  function cmpValue(cmp, el) {
-    try { return cmp.getValue(); } catch { return el?.value || null; }
-  }
-
-  // Whether a radio option is the pick: its ExtJS component's value; a design-system option's host
-  // `checked` (radioHost: its own input may still be checked from an earlier pick); else the input.
-  const optionOn = (o) => (o.cmp ? !!cmpValue(o.cmp, o.el) : o.host ? o.host.hasAttribute('checked') : o.el.checked);
+  // Whether a radio option is the pick: its widget's value (the page adapter's); a design-system
+  // option's host `checked` (radioHost: its own input may still be checked from an earlier pick);
+  // else the input.
+  const optionOn = (o) => (o.widget ? !!adapter().value(o.widget, o.el) : o.host ? o.host.hasAttribute('checked') : o.el.checked);
 
   // A masked box that shows only its mask ("__/__/____", "MM/DD/YYYY", a VIN's seventeen "_") holds
   // no answer yet: GEICO's owner date of birth and VIN were kept as page values that differ from
@@ -591,10 +617,7 @@
 
   function hasValue(c) {
     if (c.kind === 'radio') return c.options.some(optionOn);
-    if (c.cmp && c.kind === 'select') {
-      const v = cmpValue(c.cmp, c.el);
-      return v != null && v !== '' && !isPlaceholderOption(c.cmp.getRawValue?.() ?? '');
-    }
+    if (c.widget && c.kind === 'select') return adapter().holds(c.widget, c.el, isPlaceholderOption);
     if (c.kind === 'text') return textValue(c.el).trim() !== '';
     if (c.kind === 'checkbox') return c.el.checked;
     const o = c.el.selectedOptions?.[0];
@@ -604,20 +627,19 @@
   function selectedText(c) {
     if (c.kind === 'checkbox') return c.el.checked ? 'checked' : 'unchecked';
     if (c.kind === 'radio') return c.options.find(optionOn)?.text ?? null;
-    if (c.cmp) return oneLine(c.cmp.getRawValue?.() ?? '') || null;
+    if (c.widget) return adapter().shown(c.widget);
     // A list taking several choices (GEICO's commodities): all of them.
     if (c.kind === 'select' && c.el.multiple) return [...(c.el.selectedOptions ?? [])].map((x) => oneLine(x.text)).filter((t) => t && !isPlaceholderOption(t)).join('; ') || null;
     const o = c.el.selectedOptions?.[0];
     return o && !isPlaceholderOption(o.text) ? oneLine(o.text) : null;
   }
 
-  // ExtJS keeps a stale "you must select one item" error on a group until it re-validates, so
-  // ask the component to validate now rather than reading the old message.
+  // The page says the answer is wrong: the field's own validity, or its widget's (a radio group's
+  // through its first option), as the page adapter reads it.
   function invalidControl(c) {
     if (c.el.getAttribute('aria-invalid') === 'true' || c.el.validity?.valid === false) return true;
-    const cmp = c.cmp ?? c.options?.[0]?.cmp?.up?.('radiogroup');
-    if (typeof cmp?.isValid === 'function') { try { return !cmp.isValid(); } catch { return false; } }
-    return typeof cmp?.getActiveError === 'function' && !!cmp.getActiveError();
+    const widget = c.widget ?? adapter().groupOf(c.options?.[0]);
+    return !!widget && adapter().invalid(widget);
   }
 
   // Same answer, different formatting: 45000 / "45,000" / "$45,000", 02/03/1988 / 1988-02-03.
@@ -1219,17 +1241,19 @@
   // <gds-dropdown-list-item type="address">, in its address wrapper's shadow root, read as list items
   // (its script; FL live run 3, 2026-10-21).
   // What the agent may click to move a page on (`notePress` in fill): a button or an add icon, also
-  // ExtJS's (`.x-btn`: Progressive's Continue, whose press during a fill went unseen, live recording,
-  // 2026-10-23). A toggle (aria-expanded: GEICO's section headings, a menu) or a link moves nothing.
-  const AGENT_PRESS = 'button, gds-button, input[type=submit], input[type=button], [data-testid=addIcon], .x-btn';
-  const SUGGESTION_SELECTOR = '[role=option], .x-boundlist-item, .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li, gds-dropdown-list-item[type=address]';
+  // the carrier's own (its adapter's `buttons` and `agentPress`: ExtJS's .x-btn, Progressive's
+  // Continue, whose press during a fill went unseen, live recording, 2026-10-23). A toggle
+  // (aria-expanded: GEICO's section headings, a menu) or a link moves nothing.
+  const agentPress = () => withAdapter(withAdapter('button, input[type=submit], input[type=button], [data-testid=addIcon]', 'agentPress'), 'buttons');
+  // A list's items (the adapter's `options`) and the carrier's own suggestions (its `suggestions`).
+  const suggestionSelector = () => withAdapter(withAdapter('[role=option], .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li', 'options'), 'suggestions');
   // An address's house number (its leading number) and ZIP (after a state's two letters).
   const houseNumberOf = (text) => String(text ?? '').match(/^\s*(\d+)\b/)?.[1] ?? null;
   const zipOf = (text) => String(text ?? '').match(/\b[A-Z]{2}\s+(\d{5})(?:-\d{4})?\b/i)?.[1] ?? null;
-  const shownSuggestions = () => deepQueryAll(document, SUGGESTION_SELECTOR).filter((el) => el.getClientRects().length && oneLine(el.textContent));
+  const shownSuggestions = () => deepQueryAll(document, suggestionSelector()).filter((el) => el.getClientRects().length && oneLine(el.textContent));
   async function applyAddress(step, c) {
     const text = String(step.value);
-    const { el, cmp } = c;
+    const { el, widget } = c;
     const before = new Set(shownSuggestions());
     // Google's address autocomplete (Progressive uses it): its list (.pac-item) is only shown
     // while the box has focus, which it doesn't while the agent works in the side panel. The
@@ -1239,11 +1263,11 @@
     const freshPac = () => deepQueryAll(document, '.pac-item').find((x) => pacBefore.get(x) !== x.textContent && oneLine(x.textContent) && (!houseNumber || x.textContent.includes(houseNumber))) ?? null;
     el.focus?.({ preventScroll: true });
     el.dispatchEvent(new Event('focus'));
-    if (cmp) cmp.setValue(text);
+    if (widget) adapter().setText(widget, text);
     else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, text);
     // Suggestion lists listen for typing: send the events typing would.
     for (const type of ['input', 'keydown', 'keyup']) el.dispatchEvent(new Event(type, { bubbles: true }));
-    try { cmp?.fireEvent?.('change', cmp, text); } catch { /* page handler expected a real event */ }
+    if (widget) adapter().changed(widget, text);
     // What the page adds while it thinks: when no known list shows up, the reason names the new
     // elements (tag.class), so the carrier's suggestion list can be recognised next time.
     const added = [];
@@ -1273,7 +1297,7 @@
     if (!first) {
       // A box with its own city/ZIP boxes gets back just the street.
       if (step.fallback) {
-        if (cmp) cmp.setValue(step.fallback);
+        if (widget) adapter().setText(widget, step.fallback);
         else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, step.fallback);
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1313,7 +1337,7 @@
   const select2Box = (select) => [select.nextElementSibling, ...(select.parentElement?.children ?? [])]
     .find((n) => n && n !== select && /\bselect2\b/.test(String(n.className))) ?? null;
   // A list select2 draws (its own <select> hidden by select2), not one it only searches for.
-  const isSelect2 = (c) => c.kind === 'select' && !c.cmp && !!c.el.classList?.contains('select2-hidden-accessible') && !!select2Box(c.el);
+  const isSelect2 = (c) => c.kind === 'select' && !c.widget && !!c.el.classList?.contains('select2-hidden-accessible') && !!select2Box(c.el);
 
   // Opens a select2 list and types `text` in its search box: { box, results } as the list then
   // shows them, or { reason } when it can't. A list taking several choices types in its own box,
@@ -1445,7 +1469,7 @@
   async function apply(step, c) {
     if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
     if (step.kind === 'search-select') return applySearchSelect(step, c);
-    if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
+    if (c.widget || c.options?.some((o) => o.widget)) return adapter().apply(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
     if (isSelect2(c)) return applySelect2(step, c);
     // A list taking several choices (GEICO's commodities: W43-23): exactly the answer's options,
@@ -1497,96 +1521,8 @@
     return { ok: true, shown: opt.text };
   }
 
-  // Runs ExtJS's own "field lost focus" handling, which is when Duck Creek sends an answer to
-  // its server. A real focus/blur doesn't fire while the agent is clicking in the side panel
-  // (the page window isn't focused), so fall back to calling Ext's handler directly.
-  function extFocusAndBlur(cmp, el, set) {
-    let blurred = false;
-    cmp.on('blur', () => { blurred = true; }, null, { single: true });
-    el.focus();
-    set();
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.blur();
-    if (!blurred && typeof cmp.onFocusLeave === 'function') {
-      cmp.onFocusLeave({ type: 'focusleave', event: new FocusEvent('blur'), target: el, relatedTarget: document.body, fromComponent: cmp, toComponent: null });
-    }
-    if (!blurred) cmp.fireEvent('blur', cmp, new FocusEvent('blur'));
-  }
-
-  // ExtJS pages: go through the components so the page's own change/blur handlers run (Duck
-  // Creek sends each answer to the server when the field loses focus).
-  // Type-ahead lists (e.g. Progressive's business type list) only hold what matches the typed
-  // text: type the value, wait for the list to load, then pick.
-  async function queryCombo(cmp, text) {
-    if (typeof cmp.doQuery !== 'function') return null;
-    cmp.doQuery(text, false, true);
-    const start = Date.now();
-    await sleep(200);
-    if (!cmp.store) return null;
-    while (cmp.store?.isLoading?.() && Date.now() - start < 6000) await sleep(100);
-    return storeOptions(cmp);
-  }
-
-  // A list redrawn while it's answered may have lost its store (TX 2026-10-07): no options.
-  const storeOptions = (cmp) => (cmp.store?.getRange?.() ?? []).map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
+  // Whether a list offers any real choice (not only its placeholder).
   const hasOptions = (options) => options.some((o) => !isPlaceholderOption(o.text));
-
-  async function applyExt(step, c) {
-    const { cmp, el } = c;
-    if (c.kind === 'radio') {
-      const opt = matchOption(c.options, step);
-      if (!opt) return noMatch(step, c.options);
-      const isOn = () => (opt.cmp ? !!opt.cmp.getValue() : opt.el.checked);
-      if (!isOn()) opt.el.click();
-      if (!isOn() && opt.cmp) opt.cmp.setValue(true);
-      return isOn() ? { ok: true, shown: opt.text } : { ok: false, reason: "the page didn't accept the choice" };
-    }
-    if (cmp?.readOnly) return { ok: false, reason: 'the field is read-only — set it by hand' };
-    if (c.kind === 'select') {
-      // `search`: the word an agent types to narrow the list (Progressive's LA business description,
-      // "Trucking"); the answer is picked among its results only, none of them is a miss.
-      const searched = step.search ? await queryCombo(cmp, step.search) : null;
-      if (searched) {
-        const hit = matchOption(searched, step);
-        if (!hit) return noMatch(step, searched);
-        extFocusAndBlur(cmp, el, () => {
-          cmp.setValue(hit.value);
-          cmp.fireEvent('select', cmp, hit.rec);
-        });
-        return { ok: true, shown: cmp.getRawValue?.() || hit.text };
-      }
-      let opt = matchOption(c.options, step);
-      if (!opt && step.kind !== 'bool') {
-        for (const q of [String(step.value), String(step.value).split(/\s+/).slice(0, 2).join(' ')]) {
-          const loaded = await queryCombo(cmp, q);
-          opt = loaded && matchOption(loaded, step);
-          if (opt) break;
-        }
-      }
-      // A list that fills in only after another answer (Progressive's cargo commodities, once
-      // their category is picked) may still be empty: give it a few seconds to load.
-      for (const start = Date.now(); !opt && !hasOptions(storeOptions(cmp)) && Date.now() - start < 6000;) {
-        await sleep(250);
-        opt = matchOption(storeOptions(cmp), step);
-      }
-      if (!opt) return noMatch(step, hasOptions(c.options) ? c.options : storeOptions(cmp));
-      extFocusAndBlur(cmp, el, () => {
-        cmp.setValue(opt.value);
-        cmp.fireEvent('select', cmp, opt.rec);
-      });
-      return { ok: true, shown: cmp.getRawValue?.() || opt.text };
-    }
-    if (c.kind === 'checkbox') {
-      if (typeof step.value !== 'boolean') return { ok: false, reason: 'checkbox needs a yes/no answer' };
-      if (!!cmp.getValue() !== step.value) cmp.setValue(step.value);
-      return { ok: true, shown: step.value ? 'checked' : 'unchecked' };
-    }
-    const text = textFor(step, c);
-    if (c.el.maxLength > 0 && text.length > c.el.maxLength) return { ok: false, reason: `value is longer than the field allows (${c.el.maxLength})` };
-    extFocusAndBlur(cmp, el, () => cmp.setValue(text));
-    if (!el.value && !cmp.getValue()) return { ok: false, reason: 'the page cleared the value (it may need a different format)' };
-    return { ok: true, shown: el.value || String(cmp.getValue()) };
-  }
 
   // ---------------------------------------------------------------------------------------------
   // Highlighting
@@ -1595,7 +1531,7 @@
     if (c.kind !== 'radio') {
       // A select2 list's own <select> is a 1-px box: the box drawn after it is what the agent sees.
       const drawn = c.el.classList?.contains('select2-hidden-accessible') ? c.el.nextElementSibling?.querySelector?.('.select2-selection') ?? null : null;
-      return drawn ? [drawn, c.el] : [c.cmp?.el?.dom?.querySelector?.('.x-form-trigger-wrap') ?? c.el];
+      return drawn ? [drawn, c.el] : [adapter().highlight(c.widget) ?? c.el];
     }
     // A design-system option is drawn by its host (its own input may be drawn invisibly).
     return c.radios.map((r) => {
@@ -1640,7 +1576,7 @@
     // intake's house number.
     if (step.kind === 'address-suggest') return c.kind === 'text' && hasValue(c) && (!step.checkNumber || houseNumberOf(c.el.value) === houseNumberOf(step.value));
     if (step.kind === 'search-select') return squash(selectedText(c) ?? '').includes(squash(step.value));
-    if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) === step.value;
+    if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.widget ? !!adapter().value(c.widget, c.el) : c.el.checked) === step.value;
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
       if (loose(c.el.value) === loose(textFor(step, c))) return true;
@@ -1677,12 +1613,12 @@
   // throwing away a form (GEICO's Discard Changes and its "Yes, please discard."), ordering reports
   // (MVR & CLUE) and signing (eSignature). The words are literal: \bsign\b misses "signature".
   const NEVER_CLICK = /\b(continue|next|start quote|finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|order|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out)\b/i;
-  // Links of a step progress bar (GEICO's #progressIndicator): each opens its step, so none is a
-  // helper or a Continue.
-  const STEP_LINKS = '#progressIndicator';
+  // Links of a step progress bar (the adapter's `stepLinks`: GEICO's #progressIndicator) each open
+  // their step, so none is a helper or a Continue (closestOwn(el, 'stepLinks')).
 
-  // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
-  const pageAt = (loc) => (new URLSearchParams(loc.search).get('pageName') || (loc.pathname + ((loc.hash ?? '').startsWith('#/') ? loc.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
+  // A page's name: the carrier's own (its adapter's `page`: Progressive's ?pageName=), else its path
+  // or #/route (ids normalised).
+  const pageAt = (loc) => (adapter().page(loc) || (loc.pathname + ((loc.hash ?? '').startsWith('#/') ? loc.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
   const currentPage = () => pageAt(location);
 
   // src/premium.js keeps a copy of this test (STALE): change both together.
@@ -1787,8 +1723,8 @@
   function findAdvanceButton(pattern, { notWithin = null } = {}) {
     const re = new RegExp(pattern, 'i');
     let best = null;
-    for (const el of deepQueryAll(document, 'a, button, [role=button], input[type=button], input[type=submit], .x-btn')) {
-      if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]') || hostDisabled(el) || el.closest(STEP_LINKS)) continue;
+    for (const el of deepQueryAll(document, withAdapter('a, button, [role=button], input[type=button], input[type=submit]', 'buttons'))) {
+      if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el) || closestOwn(el, 'stepLinks')) continue;
       if (notWithin && insideOf(el, notWithin)) continue;
       const text = buttonText(el);
       // "Save & Continue" (AmWINS) only saves the draft and opens the next step.
@@ -1818,10 +1754,10 @@
     const separate = [];
     // [data-testid][tabindex]: an icon the keyboard reaches that has no role (GEICO's add icons:
     // Add Driver's +). Never a Continue (findAdvanceButton).
-    for (const el of deepQueryAll(document, 'a, button, [role=button], [role=link], input[type=button], input[type=submit], .x-btn, [onclick], [data-testid][tabindex]:not([tabindex="-1"])')) {
-      if (!el.getClientRects().length || el.closest(STEP_LINKS)) continue;
+    for (const el of deepQueryAll(document, withAdapter('a, button, [role=button], [role=link], input[type=button], input[type=submit], [onclick], [data-testid][tabindex]:not([tabindex="-1"])', 'buttons'))) {
+      if (!el.getClientRects().length || closestOwn(el, 'stepLinks')) continue;
       if (step.within && !insideOf(el, step.within)) continue;
-      if (!disabledToo && (el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]') || hostDisabled(el))) continue;
+      if (!disabledToo && (el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el))) continue;
       const text = buttonText(el);
       if (step.moveOn && step.within ? NEVER_ADVANCE.test(text) : NEVER_CLICK.test(text)) continue;
       const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
@@ -1841,7 +1777,7 @@
     const want = near.toLowerCase();
     for (let p = el.parentElement, i = 0; p && i < 10; p = p.parentElement, i++) {
       if (!p.textContent.toLowerCase().includes(want)) continue;
-      const alike = [...p.querySelectorAll('a, button, [role=button], .x-btn, [onclick]')].filter((b) => re && re.test(buttonText(b)));
+      const alike = [...p.querySelectorAll(withAdapter('a, button, [role=button], [onclick]', 'buttons'))].filter((b) => re && re.test(buttonText(b)));
       return alike.filter((b) => !b.contains(el) && !el.contains(b)).length === 0;
     }
     return false;
@@ -1918,18 +1854,19 @@
   // own click on a radio or checkbox fires trusted input/change too: an agent click elsewhere
   // just before it is not an edit of that question. On the control means its target is the
   // control, a radio of its group (arrow keys move the pick), its label (label[for] or a wrapping
-  // label; for a radio, the label of any radio in its group), inside its ExtJS trigger wrap, or an
+  // label; for a radio, the label of any radio in its group), inside its widget's wrap (the
+  // adapter's `fieldWrap`: an ExtJS trigger wrap), or an
   // element holding no other control than it (or its radio group). Returns the function that
   // takes the listeners off again.
   function guardEdits(onEdit) {
     let lastGesture = -Infinity;
     let gestureTarget = null;
     let gestureControl = null;
-    // ExtJS draws its options outside the combo. Resolve ownership at pointerdown, while the
+    // A widget may draw its options outside its box (ExtJS). Resolve ownership at pointerdown, while the
     // combo still owns focus; the carrier can move focus before its input/change event.
     const popupControl = (target) => {
-      const option = target?.closest?.('[role=option], .x-boundlist-item');
-      const popup = option?.closest?.('[role=listbox], .x-boundlist');
+      const option = target?.closest?.(withAdapter('[role=option]', 'options'));
+      const popup = option?.closest?.(withAdapter('[role=listbox]', 'lists'));
       if (!popup) return null;
       const isControl = (el) => /^(INPUT|SELECT|TEXTAREA)$/.test(el?.tagName ?? '');
       if (popup.id) {
@@ -1971,7 +1908,7 @@
           ?? label.querySelector?.('input, select, textarea');
         if (sameGroup(linked, el)) return true;
       }
-      if (target.closest?.('.x-form-trigger-wrap')?.contains?.(el)) return true;
+      if (closestOwn(target, 'fieldWrap')?.contains?.(el)) return true;
       if (target === document.body || target === document.documentElement || !target.contains?.(el)) return false;
       return [...(target.querySelectorAll?.('input, select, textarea') ?? [])].every((x) => sameGroup(x, el));
     };
@@ -2040,7 +1977,7 @@
     // disabled, out of the keyboard's reach (tabindex -1) or inside the carrier's `current`.
     const buttons = () => {
       if (!on) return [];
-      const hits = deepQueryAll(document, 'a, button, [role=button], .x-btn').filter((el) => el.getClientRects().length && re.test(buttonText(el)));
+      const hits = deepQueryAll(document, withAdapter('a, button, [role=button]', 'buttons')).filter((el) => el.getClientRects().length && re.test(buttonText(el)));
       return hits.filter((el) => !hits.some((x) => x !== el && el.contains(x))).map((el) => ({
         el, text: oneLine(buttonText(el)),
         current: !!el.disabled || el.getAttribute('aria-disabled') === 'true' || el.getAttribute('tabindex') === '-1' || (!!pager.current && !!el.closest(pager.current)),
@@ -2185,7 +2122,7 @@
    * @param {FillOptions} [options]
    * @returns {Promise<FillReport>}
    */
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, components = null, formUnit = null, givenBefore = {}, pager = null } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -2281,10 +2218,10 @@
     // was quiet then.
     let quietDue = false;
     let quietSig = null;
-    // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
+    // Server requests the page sends (as its adapter sees them), counted for the per-answer timing.
     let ajaxCount = 0;
     const countAjax = () => { ajaxCount++; };
-    try { ext()?.Ajax?.on?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
+    adapter().onRequest(countAjax);
     const visited = new Set(visitedPages);
     const startPage = currentPage();
     // The plan has questions for this page (a field rule for it, not only helpers): while it shows no
@@ -2302,11 +2239,11 @@
     let topPage = null;
     try { topPage = window === window.top ? startPage : pageAt(window.top.location); } catch { /* another origin */ }
     if (expectPage != null && topPage != null && topPage !== expectPage) {
-      try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
+      adapter().offRequest(countAjax);
       report.pageMoved = topPage;
       return report;
     }
-    componentPrefix = components;
+    componentPrefix = adapter().components;
     if (window === window.top) watchRequests();
     if (!keepMarks) clear();
     stopSteps = [].concat(stopSteps ?? []);
@@ -2329,7 +2266,7 @@
       report.stepKey = stepKey();
       return report;
     }
-    const serverBacked = !!ext();
+    const serverBacked = adapter().serverBacked();
     let pendingAction = null;
     // A helper that loads a view, due but not clicked until the page has been quiet (`loadDue`), and
     // the page it was quiet on (`quiet`: its action and signature).
@@ -2450,7 +2387,7 @@
     const notePress = (event) => {
       if (!event.isTrusted) return;
       const path = event.composedPath?.() ?? [event.target];
-      if (path.some((n) => n?.nodeType === 1 && safeMatches(n, AGENT_PRESS) && !n.hasAttribute('aria-expanded'))) agentPressed = true;
+      if (path.some((n) => n?.nodeType === 1 && safeMatches(n, agentPress()) && !n.hasAttribute('aria-expanded'))) agentPressed = true;
     };
     document.addEventListener('click', notePress, true);
     // Whether the registered names a USDOT lookup offers (Progressive's Business Name choice) are
@@ -2979,14 +2916,12 @@
           }
         }
         if (result.ok) {
-          if (currentPage() === 'CoveragesRates') {
-            // The bill plan (payment method) stays chosen; the premium needs recalculating.
-            // A cargo, general liability or trailer interchange answer re-arms its Done with this coverage too.
-            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : []), ...(step.interchange === 'section' ? ['doneInterchange'] : [])]) {
-              clicked.delete(id);
-              report.actions = report.actions.filter((x) => x.id !== id);
-              if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
-            }
+          // The helpers an answer here makes due again (the adapter's `rearm`: on Progressive's
+          // Rates, Recalculate and Print, and the Done of the coverage answered).
+          for (const id of adapter().rearm(currentPage(), step)) {
+            clicked.delete(id);
+            report.actions = report.actions.filter((x) => x.id !== id);
+            if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
           }
           // A step-fenced recalculation is due again after any later answer on its step (the
           // premium showed "$ --.--" until it was clicked, and Next stayed hidden: GEICO mock run,
@@ -3807,14 +3742,10 @@
           const pair = pairs.find(({ step }) => step.path === a.nudge && step.value != null);
           if (pair && agreesWith(pair.step, pair.control)) {
             nudged.add(a.action);
-            // ExtJS's select hands its listeners the picked record, as a real pick does (Codex on PR #43).
-            const { cmp } = pair.control;
-            if (cmp) {
-              const value = cmpValue(cmp, pair.control.el);
-              const rec = storeOptions(cmp).find((o) => o.value === value || o.text === oneLine(value))?.rec ?? null;
-              cmp.fireEvent?.('select', cmp, rec ?? value);
-            }
-            if (!cmp) setNativeValue(pair.control.el, pair.control.el.value);
+            // A widget is picked again its own way (the page adapter's reselect), a field set again.
+            const { widget } = pair.control;
+            if (widget) adapter().reselect(widget, pair.control.el);
+            else setNativeValue(pair.control.el, pair.control.el.value);
             return true;
           }
         }
@@ -3966,9 +3897,9 @@
     }
     // Question text for every field on the page, keyed like the usage recorder's changes.
     report.labels = controls.map((c) => [fieldKey(c), c.label]);
-    // Each ExtJS combo's loaded choices (never agency staff lists), so the usage log can tell a
-    // pick from text typed into the box.
-    report.choices = controls.filter((c) => c.cmp && c.kind === 'select' && c.options && !/agent|producer/i.test(c.label ?? ''))
+    // Each widget list's loaded choices (an ExtJS combo's; never agency staff lists), so the usage
+    // log can tell a pick from text typed into the box.
+    report.choices = controls.filter((c) => c.widget && c.kind === 'select' && c.options && !/agent|producer/i.test(c.label ?? ''))
       .map((c) => [fieldKey(c), [...new Set(c.options.map((o) => o.text).filter(Boolean))]]);
     report.skipped = controls.filter((c) => skippedField(c)).map((c) => ({ label: c.label, key: fieldKey(c) }));
     const matched = new Set(pairs.map((p) => p.control));
@@ -4180,7 +4111,7 @@
     } finally {
       hiddenOk = [];
       fillUnits = null;
-      try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
+      adapter().offRequest(countAjax);
       releaseEditGuard();
       document.removeEventListener('click', notePress, true);
       if (running === thisFill) running = null;
@@ -4210,7 +4141,7 @@
     if (expectedSnapshots && !expectedSnapshots.includes(decisionSnapshot())) {
       return answers.map(a => ({ key: a.key, label: a.label, ok: false, reason: 'the page changed since the assistant evaluated it; request fresh suggestions' }));
     }
-    const serverBacked = !!ext();
+    const serverBacked = adapter().serverBacked();
     const find = (key, label) => {
       const same = collectControls().filter((c) => fieldKey(c) === key);
       return same.length > 1 ? same.find((c) => c.label === label) ?? null : same[0] ?? null;
@@ -4435,8 +4366,8 @@
   }
 
   function shownNow(c) {
-    if (c.kind === 'checkbox') return (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) ? 'checked' : 'unchecked';
-    if (c.kind === 'text') return textValue(c.el) || (c.cmp ? String(cmpValue(c.cmp, c.el) ?? '') : '');
+    if (c.kind === 'checkbox') return (c.widget ? !!adapter().value(c.widget, c.el) : c.el.checked) ? 'checked' : 'unchecked';
+    if (c.kind === 'text') return textValue(c.el) || (c.widget ? String(adapter().value(c.widget, c.el) ?? '') : '');
     return selectedText(c) ?? '';
   }
 
@@ -4500,7 +4431,7 @@
         // Its row (Duck Creek "<page>_<row>": one per vehicle or trailer on Rates), numbers only.
         row: c.row ?? undefined,
         kind: c.kind,
-        type: c.cmp?.xtype ?? c.type,
+        type: adapter().typeName(c.widget) ?? c.type,
         label: r(c.label),
         name: c.el.name || null,
         id: c.el.id || null,
@@ -4517,23 +4448,23 @@
         selected: c.kind === 'text' ? undefined : r(selectedText(c) ?? ''),
       })),
       // Buttons and links on the page (text only), so button actions can be written from layouts.
-      buttons: [...new Set(deepQueryAll(document, 'a, button, [role=button], input[type=button], input[type=submit], .x-btn')
+      buttons: [...new Set(deepQueryAll(document, withAdapter('a, button, [role=button], input[type=button], input[type=submit]', 'buttons'))
         .filter((el) => el.getClientRects().length).map((el) => r(buttonText(el)).slice(0, 60)).filter(Boolean))].slice(0, 80),
       customWidgets: deepQueryAll(document, '[role=combobox]:not(input):not(select), [role=listbox], [contenteditable=true]')
         .filter(isVisible).slice(0, 50).map((el) => ({ role: el.getAttribute('role') ?? 'contenteditable', label: r(labelFor(el)), selector: cssPath(el) })),
       // Validation and help messages on screen (what the page said about the answers), redacted. A
       // message can repeat what was typed into a box (a corrected VIN, a phone number): the boxes'
       // text and anything shaped like a VIN or a long number are taken out as well.
-      messages: [...new Set(deepQueryAll(document, '[role=alert], .x-form-error-msg, .x-form-invalid-under, [class*="error-message"], [class*="validation-message"], [class*="help-block"]')
+      messages: [...new Set(deepQueryAll(document, withAdapter('[role=alert], [class*="error-message"], [class*="validation-message"], [class*="help-block"]', 'errors'))
         .filter(isVisible).map((el) => withoutTyped(r(oneLine(el.textContent)), controls).slice(0, 200)).filter(Boolean))].slice(0, 40),
       // Dropdown lists open on screen (a capture taken with the keyboard shortcut while one is open):
       // their choices as shown, and which question opened them. Choices are kept only for a fixed
       // list of a known question: never agency staff lists, never a list whose question can't be
       // found, and never a lookup filled from what was typed (addresses, businesses, customers).
-      openLists: deepQueryAll(document, '[role=listbox], .x-boundlist').filter(isVisible).slice(0, 10).map((list) => {
+      openLists: deepQueryAll(document, withAdapter('[role=listbox]', 'lists')).filter(isVisible).slice(0, 10).map((list) => {
         const owner = listOwner(list);
         const label = owner?.label ?? null;
-        const items = [...list.querySelectorAll('[role=option], .x-boundlist-item')].map((o) => withoutTyped(r(oneLine(o.textContent)), controls)).filter(Boolean);
+        const items = [...list.querySelectorAll(withAdapter('[role=option]', 'options'))].map((o) => withoutTyped(r(oneLine(o.textContent)), controls)).filter(Boolean);
         const kept = !!owner?.fixed && label !== null && !/agent|producer/i.test(label);
         return { label: label === null ? null : r(label), selector: cssPath(list), count: items.length, fixed: !!owner?.fixed,
           options: kept ? items.slice(0, CAPTURE_OPTIONS) : [], optionsTruncated: (kept && items.length > CAPTURE_OPTIONS) || undefined };
@@ -4569,10 +4500,8 @@
       const owner = deepQueryAll(document, 'input, [role=combobox]').find((el) =>
         `${el.getAttribute('aria-owns') ?? ''} ${el.getAttribute('aria-controls') ?? ''}`.split(/\s+/).includes(list.id));
       if (owner) return { label: labelFor(owner), fixed: fixedBox(owner) && owner.getAttribute('aria-autocomplete') !== 'list' };
-      const cmp = ext()?.getCmp(list.id);
-      const field = cmp?.pickerField ?? cmp?.ownerCmp;
-      const label = field?.dctCaption ?? field?.fieldLabel ?? (field?.inputEl?.dom ? labelFor(field.inputEl.dom) : null);
-      if (label) return { label, fixed: field.queryMode === 'local' && !field.remoteFilter };
+      const owned = adapter().listOwner(list);
+      if (owned) return owned;
     }
     const focused = document.activeElement;
     return focused && focused !== document.body && /^(INPUT|SELECT)$/.test(focused.tagName ?? '')
@@ -4602,9 +4531,12 @@
     return parts.join(' > ');
   }
 
-  // A step progress bar's parts (GEICO's #progressIndicator: one <gds-progress-bar> per step, in
-  // the page itself, value 100 done, 0 to come).
-  const stepBars = () => [...(document.querySelectorAll?.('gds-progress-bar[value]') ?? [])];
+  // A step progress bar's parts (the adapter's `stepBar`: GEICO's one <gds-progress-bar> per step,
+  // in the page itself, value 100 done, 0 to come).
+  const stepBars = () => {
+    const own = adapter().selectors?.stepBar ?? [];
+    return own.length ? [...(document.querySelectorAll?.(own.join(', ')) ?? [])] : [];
+  };
 
   // The bar's one part under way (0 < value < 100), by its words; '' when none or several are.
   function barStep() {

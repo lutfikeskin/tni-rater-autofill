@@ -220,7 +220,8 @@ Updates reach agents through the Chrome Web Store; their usage logs go to TNI's 
 | `src/carriers.js`, `src/carriers/` | Per-carrier domains and exact mappings (`carriers/progressive.js`, `carriers/amwins.js`, `carriers/geico.js`) |
 | `src/plan.js` | Resolves values into fill steps; builds the capture redaction list |
 | `types.js` | The shapes passed between parts (carrier config, plan steps, fill report, usage events) as JSDoc types for `npm run typecheck`; comments only, at the root so it is never packaged |
-| `src/content/pagekit.js` | Runs inside the rater page: find fields, fill, put in AI answers, highlight, capture |
+| `src/content/pagekit.js` | Runs inside the rater page: find fields, fill, put in AI answers, highlight, capture (the engine every carrier shares) |
+| `src/content/carriers/` | Each carrier's page adapter, injected before pagekit on that carrier's tabs: how its own widgets and pages work (Progressive's ExtJS, GEICO's gds-* components, AmWINS' step tabs) |
 | `src/content/page-press.js` | On GEICO, presses the buttons the fill clicks from the page's own world, as a mouse click would (not Print Quote Proposal, which the fill clicks itself) |
 | `src/ai/` | AI assistant: Luna request/response checks and TNI's rules as the model reads them (`tni-rules.js`: a general part and one part per carrier, in `rulebook/`) |
 | `captures/` | Page layouts captured from real quotes (no client data) |

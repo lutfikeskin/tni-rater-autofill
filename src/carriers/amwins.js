@@ -49,10 +49,10 @@
 //   2026-10-26, W44-26: Medical Payments $5,000 wherever offered, PIP not selected).
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
-import { owner, ownerDobNote, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
-import { driverExcluded, ownerRowExcluded } from '../util.js';
+import { driverExcluded, ownerRowExcluded, owner, ownerDobNote, HAZ_HAUL } from '../util.js';
+import { STANDARDS, usd, usdK } from '../standards.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -438,6 +438,9 @@ export const amwins = {
   id: 'amwins',
   name: 'AmWINS',
   hosts: [/(^|\.)amwinsadmittedplacement\.com$/],
+  // What its pages draw that no other carrier does (its loading overlay, a tab per step),
+  // injected before the fill engine.
+  pageAdapter: 'src/content/carriers/amwins.js',
   // Where page layouts are taken as the agent works without a fill: the application only.
   layoutUrl: /\/application\/businessauto/i,
   // Where fills run (also "Fill this page"): the start page, where the risk state is picked and the
@@ -631,11 +634,11 @@ export const amwins = {
     // Uninsured motorists Yes at $100K, rental $40 a day ($1,200) and towing $75: TNI's (recorded
     // 2026-10-26, W44-32: "limits are fine").
     { tni: 'amwins.um', name: 'Uninsured motorists (standard: Yes)', label: '^uninsured motorists$', kind: 'bool', source: 'standard', value: () => true },
-    { tni: 'amwins.rental', name: 'Rental reimbursement (standard: $40/day, $1,200)', label: 'transportation expense|rental reimbursement', kind: 'choice', source: 'standard', value: () => '$40 day / $1,200 total' },
-    { selector: '#uninsuredMotoristsLimit', tni: 'amwins.um', name: 'UM limit (standard: $100K)', kind: 'choice', source: 'standard', value: () => '$100K' },
-    { selector: '#medicalPayment', tni: 'amwins.medpay-pip', name: 'Medical payments (standard: $5,000)', kind: 'choice', source: 'standard', value: () => '$5,000' },
-    { selector: '#comprehensiveDeductible', tni: 'amwins.comp-coll', name: 'Comprehensive deductible (standard: $1,000)', kind: 'choice', source: 'standard', value: () => '$1,000' },
-    { selector: '#collisionDeductible', tni: 'amwins.comp-coll', name: 'Collision deductible (standard: $1,000)', kind: 'choice', source: 'standard', value: () => '$1,000' },
+    { tni: 'amwins.rental', name: `Rental reimbursement (standard: ${usd(STANDARDS.rental.perDay)}/day, ${usd(STANDARDS.rental.max)})`, label: 'transportation expense|rental reimbursement', kind: 'choice', source: 'standard', value: () => `${usd(STANDARDS.rental.perDay)} day / ${usd(STANDARDS.rental.max)} total` },
+    { selector: '#uninsuredMotoristsLimit', tni: 'amwins.um', name: `UM limit (standard: ${usdK(STANDARDS.umCsl, 'K')})`, kind: 'choice', source: 'standard', value: () => usdK(STANDARDS.umCsl, 'K') },
+    { selector: '#medicalPayment', tni: 'amwins.medpay-pip', name: `Medical payments (standard: ${usd(STANDARDS.medPay)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.medPay) },
+    { selector: '#comprehensiveDeductible', tni: 'amwins.comp-coll', name: `Comprehensive deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.deductible) },
+    { selector: '#collisionDeductible', tni: 'amwins.comp-coll', name: `Collision deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.deductible) },
     { tni: 'amwins.waiver-collision', name: 'Waiver of collision (standard: No)', label: '^has waiver of collision$', kind: 'bool', source: 'standard', value: () => false },
     { selector: '#towingAndLaborReimbursement', tni: 'amwins.towing', name: 'Towing and labor (standard: $75)', kind: 'choice', source: 'standard', value: () => '$75' },
     // PIP: No whenever Medical Payments is offered, which on AmWINS is always (the Coverages step

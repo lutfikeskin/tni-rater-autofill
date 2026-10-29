@@ -26,7 +26,8 @@ const carriers = arg('carrier', 'both') === 'both' ? ['amwins', 'progressive'] :
 if (!selected.length || carriers.some(c => !['amwins', 'progressive'].includes(c))) throw new Error('Select at least one case and a supported carrier: amwins, progressive, or both.');
 const workers = Math.max(1, Math.min(8, Number(arg('workers', '4'))));
 fs.mkdirSync(out, { recursive: true });
-const kit = ['field-key.js', 'pagekit.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')).join('\n');
+// The engine with a carrier's page adapter before it, as the side panel injects them (`pageAdapter`).
+const kitFor = (carrier) => ['field-key.js', `carriers/${carrier}.js`, 'pagekit.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')).join('\n');
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.css': 'text/css' };
 const server = http.createServer((req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
@@ -60,7 +61,7 @@ async function amwinsCase(page, c, record, lookup) {
   for (const sequence of lookup.attempts?.vinLookups ?? []) for (const v of sequence) if (v.status === 'found') v.grossVehicleWeight = '9000';
   await page.addInitScript(scenario => { window.__intakeScenario = scenario; }, { lookups: lookup });
   await page.goto(`${base}/test/fixtures/amwins/application.html`);
-  await page.evaluate(kit);
+  await page.evaluate(kitFor('amwins'));
   await page.waitForFunction(() => !window.__raterKit.busy());
   const checks = [], reports = [], handoffs = [];
   const done = new Set();

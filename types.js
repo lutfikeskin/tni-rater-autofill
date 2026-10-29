@@ -313,6 +313,7 @@
  * @property {CarrierAdvance} [advance]
  * @property {'MAIN'} [world]  the page script in the page's own JavaScript world (ExtJS)
  * @property {boolean} [pressInPage]  buttons pressed from the page's own world (src/content/page-press.js)
+ * @property {string} [pageAdapter]  the carrier's page adapter (src/content/carriers/<carrier>.js: how its own widgets hold values, name questions and show the page busy), injected before the fill engine; none for plain HTML forms
  * @property {RegExp | null} [autoFillUrl]  null on a practice page
  * @property {RegExp | null} [layoutUrl]
  * @property {RegExp} [fillOnDraw]
@@ -323,7 +324,6 @@
  * @property {SupportedClass[]} [supportedClasses]
  * @property {boolean} [replaceChoices]
  * @property {boolean} [batch]
- * @property {string} [components]  the carrier's own element prefix (GEICO's gds-)
  * @property {{ pages: string[], key: string }} [quoteState]
  * @property {string[]} [vehicleSteps]
  * @property {string[]} [driverSteps]
@@ -517,7 +517,6 @@
  * @property {number} [loadResultMs]
  * @property {string[]} [filledBefore]
  * @property {string | null} [expectPage]
- * @property {string | null} [components]
  * @property {{ list: UnitList, text: string, names: string[][], active: number, label: string } | null} [formUnit]
  *   a form that names its unit (carrier `unitNames`): each intake unit's name words, and the plan's unit
  * @property {{ [key: string]: any }} [givenBefore]
@@ -879,4 +878,77 @@
  * @property {boolean} test  marked as a test run, not a client
  * @property {number} events  how many events were kept
  * @property {number} dropped  how many the trace couldn't keep
+ */
+
+// ---------------------------------------------------------------------------------------------
+// A carrier's page adapter (src/content/carriers/<carrier>.js), injected before the fill engine
+
+/**
+ * What the fill engine (pagekit.js) hands an adapter's `create`: its own helpers, so the adapter
+ * matches options, words its misses and waits the way the engine does.
+ * @typedef {object} PageAdapterKit
+ * @property {(s: any) => string} oneLine  one line of text, spaces squashed
+ * @property {(ms: number) => Promise<void>} sleep
+ * @property {(options: any[], step: FieldStep) => any} matchOption  the option a step's answer picks, or null
+ * @property {(step: FieldStep, options: any[]) => { ok: false, reason: string, options?: string[] }} noMatch  the result for an answer none of the options takes
+ * @property {(step: FieldStep, control: any) => string} textFor  the text a step types into a field
+ * @property {(options: any[]) => boolean} hasOptions  a list offers a real choice, not only its placeholder
+ * @property {(el: Element) => string | null} labelFor  a field's label as the page shows it
+ */
+
+/**
+ * One carrier's page code: how its own widgets hold values, name their questions and show the page
+ * busy. A widget is whatever `widget(el)` returns for a field (Progressive's ExtJS component); the
+ * engine only hands it back. Every hook is optional: the engine's default is a plain HTML form's
+ * (pagekit.js NO_ADAPTER).
+ * @typedef {object} PageAdapter
+ * @property {(el: Element) => any} widget  the field's widget, or null
+ * @property {(widget: any) => any} radioGroup  a radio's group widget, or null
+ * @property {(group: any) => string} groupKey  one key per radio group widget
+ * @property {(widget: any) => { text: string, value: any }[] | null} choices  a widget that holds a list of choices: its options (it is then a select)
+ * @property {(widget: any, kind: string) => string | null} label  the question's words, from the widget
+ * @property {(widget: any) => string} optionText  a radio option's words, from its widget
+ * @property {(widget: any, el: Element) => string | null} question  the page's own question id (logged; never how a rule finds a field)
+ * @property {(widget: any, el: Element) => string | null} row  the row of a repeating question (one per vehicle on Progressive's Rates)
+ * @property {(el: Element) => string | null} ref  the field's name in the carrier's data model (Progressive's fieldref)
+ * @property {(widget: any) => boolean} required
+ * @property {(widget: any, el: Element) => any} value  the widget's value
+ * @property {(widget: any) => string | null} shown  the text a list widget shows
+ * @property {(widget: any, el: Element, isPlaceholder: (text: string) => boolean) => boolean} holds  a list widget holds an answer
+ * @property {(widget: any) => boolean} invalid  the widget says its answer is wrong
+ * @property {(option: any) => any} groupOf  a radio option's group widget, for its validity
+ * @property {(widget: any, text: string) => void} setText  an address typed into a widget's box
+ * @property {(widget: any, text: string) => void} changed  after the typing events: the widget's own change
+ * @property {(step: FieldStep, control: any) => Promise<{ ok: boolean, shown?: string, reason?: string }>} apply  puts an answer into a widget's field
+ * @property {(widget: any, el: Element) => void} reselect  picks a widget's answer again (a nudge that makes the page show what follows it)
+ * @property {(widget: any) => Element | null} highlight  the element to mark for a widget's field
+ * @property {(widget: any) => string | null} typeName  the widget's type, for captures
+ * @property {() => boolean} busy  the page is waiting on its server
+ * @property {PageAdapterSelectors} selectors  the carrier's own elements, by role, added to the engine's own selectors
+ * @property {string[]} changeAttributes  attributes whose change is the page changing (GEICO's radio group `active-index`), besides `checked`
+ * @property {(loc: Location) => string | null} page  the page's name, where the carrier names its pages itself (Progressive's ?pageName=); null for the path or #/route
+ * @property {(page: string, step: FieldStep) => string[]} rearm  the helpers (action ids) an answer on this page makes due again (Progressive's Rates: Recalculate and Print)
+ * @property {() => boolean} serverBacked  the page sends its server each answer: a fill waits between answers
+ * @property {(fn: () => void) => void} onRequest  count the page's requests (per-answer timing)
+ * @property {(fn: () => void) => void} offRequest
+ * @property {(list: Element) => { label: string, fixed: boolean } | null} listOwner  the question an open list belongs to
+ * @property {string | null} components  the tag prefix of the carrier's own web components (GEICO's gds-): a fill waits for those the page hasn't defined yet
+ */
+
+/**
+ * A carrier's own elements by what they are, each a list of selectors (pagekit.js withAdapter).
+ * @typedef {object} PageAdapterSelectors
+ * @property {string[]} [busy]  spinners and masks while the page works
+ * @property {string[]} [buttons]  buttons the page draws as other elements (ExtJS's .x-btn)
+ * @property {string[]} [agentPress]  what the agent presses to move on, besides buttons (GEICO's <gds-button> host)
+ * @property {string[]} [disabled]  a disabled button's marks
+ * @property {string[]} [options]  a list's items (ExtJS's bound list items)
+ * @property {string[]} [lists]  open lists (ExtJS's bound lists)
+ * @property {string[]} [suggestions]  an address box's suggestions (GEICO's)
+ * @property {string[]} [errors]  validation messages
+ * @property {string[]} [tooltips]  tooltips whose words are never a question's (by tag name too)
+ * @property {string[]} [fieldWrap]  a field's box with its own buttons: a click there is on the field
+ * @property {string[]} [stepBar]  the parts of a step progress bar (GEICO's)
+ * @property {string[]} [stepLinks]  the step bar's links: never a helper or a Continue
+ * @property {string[]} [otherStep]  a step's own section in a page that holds every step (AmWINS' .form-tab)
  */
