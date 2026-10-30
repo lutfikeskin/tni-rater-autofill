@@ -222,12 +222,10 @@
         <p class="fine">Never Binds or Submits.</p>
       </div>
 
-      <div id="assistant" class="group">
-        <div class="eyebrow">Assistant</div>
+      <!-- Folded until opened: its title row says whether AI is on (renderAiSettings). -->
+      <details id="assistant" class="group fold">
+        <summary class="eyebrow"><span>AI</span><span id="ai-note"></span></summary>
         <div id="agent-card" class="card">
-          <div class="agent-head">
-            <span class="opt-text"><b id="agent-name">GPT-6 Luna</b><span id="ai-note"></span></span>
-          </div>
           <label class="opt" title="For questions the intake doesn’t answer"><span class="opt-text"><b>Suggest answers</b></span><input id="ai-on" type="checkbox" role="switch" class="switch"></label>
           <label id="ai-auto-option" class="opt" title="Shown in purple. You still approve them before Continue."><span class="opt-text"><b>Put checked picks in</b></span><input id="ai-auto" type="checkbox" role="switch" class="switch"></label>
           <div class="key-row">
@@ -241,7 +239,7 @@
             </div>
           </div>
         </div>
-      </div>
+      </details>
 
       <div class="group">
         <div class="eyebrow">Usage log</div>
