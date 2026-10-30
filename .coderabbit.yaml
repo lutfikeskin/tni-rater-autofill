@@ -9,10 +9,9 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
-  # Ignored or generated: never committed, or not worth a review.
+  # Generated: not worth a review. layouts/ stays in, so a capture added with `git add -f` is seen.
   path_filters:
     - "!dist/**"
-    - "!layouts/**"
     - "!package-lock.json"
   # The repository documents with JSDoc where it helps; a coverage threshold is noise.
   pre_merge_checks:
