@@ -89,9 +89,11 @@ Every carrier rule with a `value` declares where its answer comes from ([test/pr
 
 Every field step and every fill report item also carries one `resolution` ([resolution.js](../src/resolution.js), typed in [types.js](../types.js)): `answer`, `method`, `explanation` and `status`. It is built only from the fields above and says the same thing in one place. The panel and the AI read it through `resolutionOf`:
 - the review list's reason for an item left is its `explanation`, and its "TNI standard" tag is `method: 'standard'` (`isStandard`);
-- an item Luna is never given is one whose `status` is `agent` (`agentsAlone`, in `collectItems` and `manualOnlyReason`).
+- an item Luna is never given is one whose `status` is `agent` (`agentsAlone`, in `collectItems` and `manualOnlyReason`);
+- a `fill_field` usage event's `source` is the `method`, its `standard` is `isStandard`, and its `manualOnly` is status `agent` (`fieldWhy` in [usage.js](../src/usage.js)). The event fields and their values are the same as before.
+  - Its `review` is still the item's own flag. An item's resolution gives the `review` status only to check items, and the log never records those: a filled review-mode standard is `answered`.
 
-A report kept from a build before resolutions has none. `resolutionOf` rebuilds it from the item's fields; a `standard` item without a `source`, from before items carried one, counts as a standard. The old fields stay on every step and item, and the usage log, Luna's request and its cache keys still read them. The usage events, the server and the extension's local storage are unchanged; kept reports in session storage carry the resolution with the rest of each item.
+A report kept from a build before resolutions has none. `resolutionOf` rebuilds it from the item's fields. `isStandard` also counts a `standard` item without a `source`, from before items carried one, as a standard; such an item still logs no `source`. The old fields stay on every step and item. `review`, Luna's request text (`reason ?? note`) and its cache keys (`aiItemFingerprint`) still read them. The usage events, the server and the extension's local storage are unchanged; kept reports in session storage carry the resolution with the rest of each item.
 
 - `answer`: the step's `value`; on an item, its plan step's value where the fill gave it, else null.
 - `method`: the `source` (intake, derived, standard, fact, attestation), null for a rule without one.

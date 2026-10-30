@@ -2,8 +2,8 @@
 // One answer's resolution: the answer, how it was decided, why, and what it still needs from the
 // agent (docs/intake-and-rules.md, "Resolution"). Built only from the fields a plan step or a fill
 // report item already has (source, standard, manualOnly, reviewRequired / review, note, warn), so
-// it always agrees with them. The panel and the AI read it (resolutionOf below), the usage log
-// still the old fields. The page kit builds an item's the same way
+// it always agrees with them. The panel, the AI and the usage log read it (resolutionOf below).
+// The page kit builds an item's the same way
 // (pagekit.js resolveItems, a classic script that can't import this), and test/resolution.test.mjs
 // holds both to the old fields.
 
@@ -53,14 +53,14 @@ export function itemResolution(item, list, answer) {
  * @returns {Resolution}
  */
 export function resolutionOf(item, list = 'noData') {
-  if (item.resolution) return item.resolution;
-  const rebuilt = itemResolution(item, list, null);
-  // A build before items carried `source` marked a TNI standard by `standard` alone.
-  return rebuilt.method == null && item.standard ? { ...rebuilt, method: 'standard' } : rebuilt;
+  return item.resolution ?? itemResolution(item, list, null);
 }
 
-// A TNI standard answer (the panel's tag), and an item the agent answers alone (never the AI's).
+// A TNI standard answer (the panel's tag, the usage log's `standard`), and an item the agent
+// answers alone (never the AI's).
 /** @param {FillItem} item @param {string} [list] */
-export const isStandard = (item, list) => resolutionOf(item, list).method === 'standard';
+export const isStandard = (item, list) => resolutionOf(item, list).method === 'standard'
+  // A build before items carried `source` marked a TNI standard by `standard` alone.
+  || (!item.resolution && item.source == null && !!item.standard);
 /** @param {FillItem} item */
 export const agentsAlone = (item) => resolutionOf(item).status === 'agent';

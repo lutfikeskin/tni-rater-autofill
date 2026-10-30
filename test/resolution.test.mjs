@@ -14,7 +14,8 @@ import { CARRIERS } from '../src/carriers.js';
 import { unitMissingItem } from '../src/units.js';
 import { agentsAlone, isStandard, itemResolution, resolutionOf, stepResolution } from '../src/resolution.js';
 import { collectItems, manualOnlyReason } from '../src/ai/common.js';
-import { assertStepResolution, assertItemResolution } from './resolution-check.mjs';
+import { assertStepResolution, assertItemResolution, assertEventsAgree } from './resolution-check.mjs';
+import { fillEvents } from '../src/usage.js';
 
 const FIXTURES = ['sample-intake.pdf', 'sample-intake-2026-10.pdf', 'multi-vehicle-intake.pdf'];
 const today = new Date('2026-10-30');
@@ -99,6 +100,16 @@ test('Luna\'s items, and the fields it is never given, are the same with resolut
   for (const x of [...ITEMS.noData, ...ITEMS.failed]) {
     assert.equal(manualOnlyReason({ ...x, resolution: itemResolution(x, 'noData', null) }), manualOnlyReason(x), x.label);
   }
+});
+
+test('the usage log\'s events are the same with resolutions or without, and say what the old flags said', () => {
+  const ctx = { carrier: 'amwins', page: 'p', view: 'v', overwrite: false, ms: 0, redact: (s) => s, run: 'r' };
+  assert.deepEqual(fillEvents(withResolutions(), ctx), fillEvents(without(), ctx));
+  assertEventsAgree(withResolutions()[0], 'with');
+  assertEventsAgree(without()[0], 'without');
+  // A build before items carried `source`: still logged a standard, and no source it never had.
+  const [legacy] = fillEvents([{ filled: [{ key: 'k', label: 'Gender', standard: true }] }], ctx).filter((e) => e.type === 'fill_field');
+  assert.deepEqual([legacy.source, legacy.standard], [undefined, true]);
 });
 
 test('the panel\'s own item for a unit missing from the list carries a resolution like the kit\'s', () => {

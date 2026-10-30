@@ -3,6 +3,7 @@
 // for plan steps and by test/pagekit.test.mjs for every report item its fills return.
 import assert from 'node:assert/strict';
 import { agentsAlone, isStandard, itemResolution } from '../src/resolution.js';
+import { fillEvents } from '../src/usage.js';
 
 const KEYS = ['answer', 'explanation', 'method', 'status'];
 const blank = (v) => v === null || v === undefined || v === '';
@@ -68,5 +69,27 @@ export function assertReportResolutions(report, plan = [], where = '') {
       statuses.push(item.resolution.status);
     }
   }
+  assertEventsAgree(copy(report), where);
   return statuses;
+}
+
+// The usage log reads each item's resolution (usage.js fieldWhy); its fill_field events must say
+// what the old flags said: source, standard, manualOnly and review, each only when set.
+const LOGGED = [['filled', 'filled'], ['failed', 'failed'], ['noData', 'noData'], ['kept', 'kept'], ['leftRequired', 'leftRequired'], ['unknown', 'unfamiliar']];
+export function oldWhy(x) {
+  return { ...(x.source ? { source: x.source } : {}), ...(x.standard ? { standard: true } : {}), ...(x.manualOnly ? { manualOnly: true } : {}), ...(x.review ? { review: true } : {}) };
+}
+export function assertEventsAgree(report, where = '') {
+  const events = fillEvents([report], { carrier: 'c', page: 'p', view: 'v', overwrite: false, ms: 0, redact: (s) => s }).filter((e) => e.type === 'fill_field');
+  const items = LOGGED.flatMap(([list, result]) => (report[list] ?? []).map((x) => [x, result]));
+  assert.equal(events.length, items.length, `${where}: one event per logged item`);
+  items.forEach(([x, result], i) => {
+    const e = events[i];
+    assert.equal(e.result, result, `${where}: event order`);
+    const why = { ...(e.source ? { source: e.source } : {}), ...(e.standard ? { standard: true } : {}), ...(e.manualOnly ? { manualOnly: true } : {}), ...(e.review ? { review: true } : {}) };
+    const want = oldWhy(x);
+    // A plan marks `standard` exactly when its source is; a hand-made test step may have one only.
+    if (x.resolution && x.source == null) { delete want.standard; delete why.standard; }
+    assert.deepEqual(why, want, `${where} ${result} ${x.label ?? x.name}: the usage log's why fields`);
+  });
 }
