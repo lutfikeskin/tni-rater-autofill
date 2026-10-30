@@ -273,8 +273,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .checked-row .tick { flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 10px; background: var(--success-soft); color: var(--success); font-weight: 700; font-size: 11px; }
 .checked-row .grow { color: var(--ink); }
 .checked-row .link { color: var(--ink-secondary); font-weight: 400; }
-.cleanup summary { cursor: pointer; font-size: 12px; color: var(--ink-secondary); }
-.cleanup ul { margin: 8px 0 0; padding-left: 16px; display: grid; gap: 4px; font-size: 12px; color: var(--ink-secondary); }
+.cleanup .card > p { margin: 0; padding: 8px 12px; font-size: 12px; line-height: 1.4; color: var(--ink-secondary); overflow-wrap: anywhere; }
 
 /* All client details: a row under the checks and a button by the client's name open the drawer */
 .list-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 0 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); color: var(--ink-strong); font-size: 13px; font-weight: 600; text-align: left; }
@@ -483,7 +482,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .switch:disabled { cursor: not-allowed; }
 #agent { flex: 0 0 auto; width: 64px; min-height: 30px; padding: 2px 8px; font-size: 13px; font-weight: 600; text-transform: uppercase; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
 #agent.missing { border-color: var(--warning-bar); }
-/* The AI settings: a button row that opens its card under it, the two joined while open. */
+/* A button row that opens its card under it, the two joined while open (AI settings, Cleanup notes). */
 .fold { display: block; }
 .fold > summary { cursor: pointer; list-style: none; }
 .fold > summary::-webkit-details-marker { display: none; }
