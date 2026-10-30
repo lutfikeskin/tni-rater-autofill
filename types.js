@@ -434,8 +434,8 @@
 
 /**
  * One answer's resolution (src/resolution.js), built from a plan step's or a report item's own
- * fields and always agreeing with them (test/resolution.test.mjs). Nothing reads it yet; the panel,
- * the AI and the usage log will, in place of those fields.
+ * fields and always agreeing with them (test/resolution.test.mjs). The panel and the AI read it
+ * (resolution.js resolutionOf); the usage log still reads those fields.
  * @typedef {object} Resolution
  * @property {any} answer  the answer the rules give (the step's `value`), null when there is none: open, the agent's, or an unfamiliar question
  * @property {string | null} method  how it was decided: the step's `source` (intake, derived, standard, fact, attestation), null for a rule without one

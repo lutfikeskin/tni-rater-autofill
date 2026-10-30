@@ -9,6 +9,7 @@ import { quotedCarrierPolicy } from '../../src/util.js';
 import { fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../../src/usage.js';
 import { stateCode, stateMismatch } from '../../src/quote-state.js';
 import { notePremium, premiumHere } from '../../src/premium.js';
+import { isStandard } from '../../src/resolution.js';
 import * as usage from '../usage-log.js';
 import { inExtension, popped } from './env.js';
 import { $, forgetKeptReports, h, persistAgentKeys, persistDoneActions, persistUnitForms, retireAiOrigins, state, store } from './core.js';
@@ -616,7 +617,7 @@ async function autoFill(page) {
         // With their sources and groups as the report has them (answerSources, groupRows).
         const rctx = { tabId, page, carrier };
         const { fromOf, groupOf, ticks, editedBy } = answerSources(plan);
-        const answers = groupRows(added.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null })), ticks);
+        const answers = groupRows(added.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: isStandard(x, 'filled'), path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null })), ticks);
         const rows = [...answers.map((row) => answerRow({ ...row, fresh: true }, rctx)),
           ...frames.flatMap((f) => f.actions ?? []).map((a) => answerRow({ label: 'Clicked', value: a.text || a.id, kind: 'clicked', fresh: true }, rctx))];
         let list = $('report').querySelector(':scope > .rows');
@@ -1084,7 +1085,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
     persistUnitForms(tabId, maps.unitForms);
     if (copied) persistAgentKeys(tabId, maps.agentKeys);
   }
-  for (const x of frames.flatMap((f) => f.filled)) maps.filled.set(x.key, { path: x.path, shown: x.shown, standard: !!x.standard });
+  for (const x of frames.flatMap((f) => f.filled)) maps.filled.set(x.key, { path: x.path, shown: x.shown, standard: isStandard(x, 'filled') });
   // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
   const quoteKey = carrier?.quoteState?.key;
   const pickedState = quoteKey && frames.flatMap((f) => f.filled).find((x) => x.key === quoteKey);

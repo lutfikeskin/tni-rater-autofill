@@ -4,6 +4,7 @@ import { rulebookFor } from './tni-rules.js';
 import { noPriorInsurance, priorPolicyExpired } from '../util.js';
 import { redactionTerms } from '../plan.js';
 import { redactor } from '../usage.js';
+import { agentsAlone, resolutionOf } from '../resolution.js';
 
 export const LEAVE = '__leave__';
 const CHOICE_KINDS = new Set(['radio', 'select', 'checkbox']);
@@ -41,7 +42,7 @@ const TYPED_ID = /\b(vin|license|licence|usdot|dot (number|no|#)|mc (number|no|#
 const MANUAL_FIELD_TYPES = new Set(['number', 'numeric', 'date', 'limit', 'identity', 'identifier']);
 const REVIEW = /\b(age|date|dob|birth|years?|months?|days?|miles?|mileage|radius|limit|deductible|value|amount|premium|gvw|weight|count|distance|csl)\b|\b(?:(?:us)?dot|vin)\b.*\b(belong|match|registered|correct|valid|verified|identity|same)\b/i;
 export function manualOnlyReason(item) {
-  if (item.manualOnly === true) return 'this field requires agent review';
+  if (agentsAlone(item)) return 'this field requires agent review';
   if (item.reviewOnly === true) return 'this field requires agent review';
   const fieldType = String(item.fieldType ?? item.valueType ?? item.semanticType ?? '').trim().toLowerCase();
   if (MANUAL_FIELD_TYPES.has(fieldType)) return `${fieldType} fields require agent review`;
@@ -66,7 +67,8 @@ export function collectItems(frames) {
     for (const x of frames.flatMap(f => f?.[group] ?? [])) {
       const sig = `${x.key}|${x.label}`;
       const flags = restrictions.get(sig) ?? { manualOnly: false, reviewOnly: false };
-      flags.manualOnly ||= x.manualOnly === true;
+      // The agent's alone: its resolution says so (resolution.js; rebuilt for a report kept from before).
+      flags.manualOnly ||= resolutionOf(x, group).status === 'agent';
       flags.reviewOnly ||= x.reviewOnly === true;
       restrictions.set(sig, flags);
     }

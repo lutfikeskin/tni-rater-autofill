@@ -2061,7 +2061,7 @@
   // Each report item's resolution, as the fill returns: the answer, how it was decided, why, and
   // what it needs, from its list and its own fields (src/resolution.js itemResolution says the same;
   // this classic script can't import it, and test/resolution.test.mjs holds both to the old fields).
-  // Nothing reads it yet.
+  // The panel and the AI read it.
   const LIST_STATUS = { filled: 'answered', kept: 'kept', noData: 'open', leftRequired: 'open', failed: 'failed', unknown: 'unknown' };
   function resolveItems(report, plan) {
     const values = new Map(plan.filter((s) => s.kind !== 'action').map((s) => [s.id, s.value]));
