@@ -52,7 +52,7 @@ Each layer knows only the one below it, and a carrier's knowledge lives in that 
 | Carrier page adapter | How only this carrier's pages work: its widgets, spinners, page names, step bar, and how its fields are named and keyed (for the fill engine, field-key.js and the usage recorder) | `src/content/carriers/<carrier>.js` ([browser filling](browser-filling.md#execution)) |
 | Panel | Intake, review, agent decisions, AI suggestions; it never touches the carrier's page itself | [sidepanel/panel/](../sidepanel/panel/), one file per part (state and storage in `core.js`, which fill runs when in `coordinator.js`, filling in `fill.js`, the assistant in `assistant.js`…); [sidepanel.js](../sidepanel/sidepanel.js) wires them |
 
-A carrier's files import only the shared layers, never another carrier's. Next, each a change of its own: the plan step's source becomes one resolution (answer, method, explanation, status) the report, the panel and the AI share, and the client record keeps where each value came from.
+A carrier's files import only the shared layers, never another carrier's. Each plan step and report item carries one resolution (answer, method, explanation, status; [intake and rules](intake-and-rules.md#resolution)), built from its source and flags and held to them by tests. Next, each a change of its own: the panel, the AI and the usage log read the resolution instead of those fields, and the client record keeps where each value came from.
 
 ## Design direction, not implemented guarantees
 

@@ -85,6 +85,24 @@ Every carrier rule with a `value` declares where its answer comes from ([test/pr
 | `fact` | A client fact the intake doesn't supply (loss runs, current-carrier tenure, the year licensed without a readable date of birth, other business coverages when the notes say the client has general liability, …) | Never filled: `value: null`, `manualOnly: true` (the AI assistant leaves it) and the rule's `note` (else "<name> isn't on the intake: answer it yourself") |
 | `attestation` | Something the agent must assert (the AmWINS declaration, Progressive continuous coverage when the intake doesn't show the customer currently insured, Progressive "USDOT belongs to the business" when the intake has no business or owner name to check) | Never filled, as `fact` |
 
+### Resolution
+
+Every field step and every fill report item also carries one `resolution` ([resolution.js](../src/resolution.js), typed in [types.js](../types.js)): `answer`, `method`, `explanation` and `status`. It is built only from the fields above and says the same thing in one place. Nothing reads it yet: the panel, the AI and the usage log still read `source`, `standard`, `manualOnly`, `reviewRequired` / `review`, `note` and `warn`, and will move to it one change at a time. The usage events, the server and the extension's local storage are unchanged; kept reports in session storage carry it with the rest of each item.
+
+- `answer`: the step's `value`; on an item, its plan step's value where the fill gave it, else null.
+- `method`: the `source` (intake, derived, standard, fact, attestation), null for a rule without one.
+- `explanation`: a step's `note`, else its `warn`; an item's `note`, else its `reason`.
+- `status`: what the answer still needs.
+  - `agent`: `manualOnly`, the agent's alone and never the AI's.
+  - `kept`: left as the page has it (a step's `ignore` or `verifyOnly`, the report's `kept`).
+  - `open`: no answer (noData, leftRequired).
+  - `review`: a review-mode standard (`reviewRequired`).
+  - `confirm`: given with a `warn`, or any other check item.
+  - `answered`: given with nothing to do (filled).
+  - `failed` and `unknown`: the report's lists of those names.
+
+The page kit builds an item's in `resolveItems` as the fill returns, the same way (it is a classic script and can't import resolution.js). [resolution.test.mjs](../test/resolution.test.mjs) holds every carrier's plan steps to the old fields, on the fixture intakes, in review mode, with cargo but no deductible, and on a sparse intake. [resolution-check.mjs](../test/resolution-check.mjs) does the same for every report item of every fill in `test/pagekit.test.mjs` and of `npm run mock:amwins` and `npm run mock:geico`, and checks the kit's against resolution.js. A change to either side that makes them disagree fails.
+
 A rule's `source` may be a function of the record when the intake decides it. "No equipment" (Progressive's vehicle and trailer "has no equipment", on Add Vehicle, Add Trailer and the trailer's Rates row, and AmWINS "Permanently attached equipment" No) is `standard`, TNI's like the $0 to $2,000 band, when the intake gives no equipment value (blank or unreadable, such as N/A), so it is tagged and becomes a check item in review mode; with a value on the intake it is `derived` (Progressive: up to $2,000 Yes, more No; AmWINS: $0 No, any other amount the agent's).
 
 A rule marked `clientFact` (AmWINS marital status, entity type, prior loss, attached equipment; Progressive business structure, has a USDOT number and vehicle / trailer loan / lease; GEICO current GEICO policy, has a USDOT number, filing type, owner date of birth and marital status, ownership type, customizations, a driver's relationship to the business, current auto insurance and the liability insurance the business has) answers from the intake when it can; when it can't (no value, or a note), its step is `manualOnly` too, so the AI assistant never suggests or picks it.

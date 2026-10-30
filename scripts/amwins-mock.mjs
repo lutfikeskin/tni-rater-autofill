@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { buildPlan } from '../src/plan.js';
 import { amwins } from '../src/carriers/amwins.js';
+import { assertReportResolutions } from '../test/resolution-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
@@ -130,6 +131,8 @@ for (let i = 0; i < 12; i++) {
   const step = await page.evaluate(() => document.querySelector('.form-tab:not([style*="none"])')?.getAttribute('data-title'));
   const t0 = Date.now();
   const report = await page.evaluate(([p, o]) => globalThis.__raterKit.fill(p, o), [plan, { advance: amwins.advance, batch: !process.argv.includes('--no-batch') && !!amwins.batch, doneActions: [...done], skip: [...skip], optional: amwins.optional ?? [], maxRounds: 120 }]);
+  // Each item's resolution agrees with its list and fields (test/resolution-check.mjs).
+  assertReportResolutions(report, plan, `AmWINS ${step}`);
   for (const a of report.actions ?? []) done.add(a.id);
   unfamiliar.push(...(report.unknown ?? []).map((x) => `${step}: ${x.label}`));
   const list = (k) => (report[k] ?? []).map((x) => x.label + (x.reason ? ` (${x.reason})` : ''));

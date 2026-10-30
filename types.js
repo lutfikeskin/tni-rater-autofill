@@ -429,6 +429,23 @@
  * @property {any} value  null when there is none
  * @property {string[] | null} from  a derived answer's evidence: the record paths it read
  * @property {{ selector: string, path: string, value: any } | null} witness
+ * @property {Resolution} resolution  the answer, how it was decided, why, and what it needs (src/resolution.js stepResolution, from the fields above)
+ */
+
+/**
+ * One answer's resolution (src/resolution.js), built from a plan step's or a report item's own
+ * fields and always agreeing with them (test/resolution.test.mjs). Nothing reads it yet; the panel,
+ * the AI and the usage log will, in place of those fields.
+ * @typedef {object} Resolution
+ * @property {any} answer  the answer the rules give (the step's `value`), null when there is none: open, the agent's, or an unfamiliar question
+ * @property {string | null} method  how it was decided: the step's `source` (intake, derived, standard, fact, attestation), null for a rule without one
+ * @property {string | null} explanation  why, in the agent's words: a step's `note`, else its `warn`; an item's `note`, else its `reason`
+ * @property {'answered' | 'confirm' | 'review' | 'open' | 'agent' | 'kept' | 'failed' | 'unknown'} status  what it needs:
+ *   answered: given, nothing to do; confirm: given, the agent checks it (a `warn`, a check item);
+ *   review: given, a review-mode standard the agent confirms (`reviewRequired`); open: no answer
+ *   (the intake is silent), the agent's or the AI's; agent: the agent's alone, never the AI's
+ *   (`manualOnly`); kept: left as the page has it (a step's `ignore` or `verifyOnly`, the report's
+ *   `kept`); failed and unknown: the report's lists of those names
  */
 
 /**
@@ -569,6 +586,7 @@
  * @property {string} [now]  filled or kept: what its field shows as the fill ends (reconcile; the panel shows this, not `shown`)
  * @property {'you' | 'page'} [changed]  filled: the field no longer holds the fill's answer as the fill ends, the agent's change or the page's
  * @property {boolean} [gone]  filled or kept: its field isn't on the page as the fill ends (no row in the panel)
+ * @property {Resolution} [resolution]  set as the fill returns (pagekit resolveItems), from its list and the fields above; the panel's own items (src/units.js unitMissingItem) carry one too
  */
 
 /**
