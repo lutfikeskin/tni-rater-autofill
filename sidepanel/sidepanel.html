@@ -8,6 +8,10 @@
 </head>
 <body>
   <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="brain" viewBox="0 0 24 24">
+      <path d="M12 18V5a3 3 0 0 0-5.8-1.1A4 4 0 0 0 3 10a4 4 0 0 0 .8 7.6A4 4 0 0 0 12 18Zm0 0V5a3 3 0 0 1 5.8-1.1A4 4 0 0 1 21 10a4 4 0 0 1-.8 7.6A4 4 0 0 1 12 18Z"/>
+      <path d="M8 3.5A3 3 0 0 0 9 8m-6 2a4 4 0 0 1 3-.5m-2.2 8.1A4 4 0 0 1 8 14m8-10.5A3 3 0 0 1 15 8m6 2a4 4 0 0 0-3-.5m2.2 8.1A4 4 0 0 0 16 14"/>
+    </symbol>
     <symbol id="gear" viewBox="0 0 24 24">
       <path d="m9.5 3-.5 2a7 7 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A7 7 0 0 0 9 19l.5 2h5l.5-2a7 7 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A7 7 0 0 0 15 5l-.5-2Z"/>
       <circle cx="12" cy="12" r="3"/>
@@ -224,7 +228,7 @@
 
       <!-- A button row that opens the settings under it; the row says whether AI is on (renderAiSettings). -->
       <details id="assistant" class="group fold">
-        <summary class="list-row"><span class="fold-name"><span aria-hidden="true">🧠</span> AI</span><span id="ai-note"></span><span class="chev" aria-hidden="true">›</span></summary>
+        <summary class="list-row"><svg class="fold-icon" aria-hidden="true"><use href="#brain"/></svg><span class="fold-name">AI</span><span id="ai-note"></span><span class="chev" aria-hidden="true">›</span></summary>
         <div id="agent-card" class="card">
           <label class="opt" title="For questions the intake doesn’t answer"><span class="opt-text"><b>Suggest answers</b></span><input id="ai-on" type="checkbox" role="switch" class="switch"></label>
           <label id="ai-auto-option" class="opt" title="Shown in purple. You still approve them before Continue."><span class="opt-text"><b>Put checked picks in</b></span><input id="ai-auto" type="checkbox" role="switch" class="switch"></label>
