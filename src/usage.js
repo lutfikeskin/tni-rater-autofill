@@ -10,6 +10,7 @@
 
 import { toMoney, toDate } from './normalize.js';
 import { noPriorInsurance } from './util.js';
+import { isStandard, resolutionOf } from './resolution.js';
 
 /** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, IntakeProfileEvent, IntakeResult, IntakeSummary, UsageEvent } from '../types.js' */
 
@@ -397,6 +398,18 @@ export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }
 
+// A fill_field event's why fields, set only when true or given, from the item's resolution (one
+// rebuilt from its fields for a report from before resolutions): `source` its method, `standard` a
+// TNI standard, `manualOnly` the agent's alone; `review` the item's own (see fillEvents).
+/** @param {FillItem} x @param {string} list @returns {Pick<FillFieldEvent, 'source' | 'standard' | 'manualOnly' | 'review'>} */
+function fieldWhy(x, list) {
+  const r = resolutionOf(x, list);
+  return {
+    ...(r.method ? { source: r.method } : {}), ...(isStandard(x, list) ? { standard: true } : {}),
+    ...(r.status === 'agent' ? { manualOnly: true } : {}), ...(x.review ? { review: true } : {}),
+  };
+}
+
 // Fill results, minus typed values (text boxes) and client names.
 //   run: one fill invocation's id, shared by its fill_run and fill_field events (and a fill_error);
 //   rules: the rule files' fingerprint (rulesHash); settings: the panel's filling switches in force
@@ -436,13 +449,15 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     reworded: all('reworded').length,
     renamed: all('renamed').slice(0, 12).map((x) => ({ name: redact(x.name), field: x.field ?? null, now: x.now ?? null })),
   }];
-  /** @type {(result: FillFieldEvent['result']) => (x: FillItem) => FillFieldEvent} */
-  const item = (result) => (x) => ({
+  /** @type {(result: FillFieldEvent['result'], list?: string) => (x: FillItem) => FillFieldEvent} */
+  const item = (result, list = result) => (x) => ({
     type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
     how: x.how ?? undefined,
-    // Why this answer: where it comes from (intake, derived, standard, fact, attestation), a TNI
-    // standard, the agent's only (never the AI's), and a review-mode answer the agent confirms.
-    ...(x.source ? { source: x.source } : {}), ...(x.standard ? { standard: true } : {}), ...(x.manualOnly ? { manualOnly: true } : {}), ...(x.review ? { review: true } : {}),
+    // Why this answer, from its resolution (resolution.js): where it comes from (its method: intake,
+    // derived, standard, fact, attestation), a TNI standard, the agent's only (never the AI's); and
+    // a review-mode answer the agent confirms, which an item's resolution doesn't say outside the
+    // check items (never logged), so it is the item's own `review`.
+    ...fieldWhy(x, list),
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
     reason: x.reason ? redact(x.reason) : undefined,
     options: x.options?.map(redact),
@@ -450,7 +465,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     ...(x.timing ? { timing: x.timing } : {}),
   });
   events.push(...all('filled').map(item('filled')), ...all('failed').map(item('failed')), ...all('noData').map(item('noData')),
-    ...all('kept').map(item('kept')), ...all('leftRequired').map(item('leftRequired')), ...all('unknown').map(item('unfamiliar')));
+    ...all('kept').map(item('kept')), ...all('leftRequired').map(item('leftRequired')), ...all('unknown').map(item('unfamiliar', 'unknown')));
   // A helper the fill clicked that rates the answers (GEICO's Recalculate, W43-44), as a layout the
   // review scripts don't read as the page's (reason 'recalculate'): each choice it kept, what the
   // page showed at the click (`selected`) and after it ([ms after the click, value]), whether the
