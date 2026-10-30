@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit reviews pull requests (trial from 2026-10-30). It reads CLAUDE.md/AGENTS.md as the
+# project's guidelines; the instructions below only say what matters most here.
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  # Generated: not worth a review. layouts/ stays in, so a capture added with `git add -f` is seen.
+  path_filters:
+    - "!dist/**"
+    - "!package-lock.json"
+  # The repository documents with JSDoc where it helps; a coverage threshold is noise.
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Look first, in this order, for: wrong insurance answers (invented client facts, or missing
+        information, explicit No and not applicable treated alike; a `standard` rule that
+        docs/intake-and-rules.md records as TNI's is not invented); weakened safety (anything that
+        could bind, purchase, submit, order reports or sign; lost agent corrections, answer-retention
+        checks or review blockers); client values, raw carrier pages or credentials committed to the
+        repository (client data sent to TNI's own server or an AI provider is fine); then
+        correctness bugs, and docs not updated when the behavior they describe changed.

@@ -3,11 +3,16 @@
 # To review again after more pushes, comment `@claude review` (claude.yml handles that); to have
 # the findings fixed, comment `@claude fix the review comments`.
 # Needs the repository secret CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`) and the Claude GitHub App.
+#
+# Paused from 2026-10-30 for the CodeRabbit trial (14 days): CodeRabbit gives the automatic review;
+# `@claude review` and `@claude fix the review comments` (claude.yml) still work on request.
+# Until the pull_request trigger is put back, this workflow never runs on a pull request.
 name: Claude review
 
 on:
-  pull_request:
-    types: [opened, ready_for_review, reopened]
+  # pull_request:
+  #   types: [opened, ready_for_review, reopened]
+  workflow_dispatch:
 
 concurrency:
   group: claude-review-${{ github.event.pull_request.number }}
@@ -15,7 +20,7 @@ concurrency:
 
 jobs:
   review:
-    if: github.event.pull_request.draft == false
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
