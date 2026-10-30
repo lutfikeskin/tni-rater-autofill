@@ -174,10 +174,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .client-title:hover, .client-title[aria-expanded="true"] { background: var(--surface-hover); }
 .client-name { display: block; font-size: 14px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.25; color: var(--ink-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .client-meta { display: block; font-size: 12px; color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Intake, Change file, New quote and Clear: one group on a shared gray background. */
-.client-tools { flex-shrink: 0; display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: 9px; background: var(--surface-sunken); }
-.client-tools > button { min-height: 26px; background: none; border-color: transparent; }
-.client-tools > button:hover:not(:disabled) { background: var(--surface); border-color: var(--border-soft); }
+/* Intake, Change file, New quote and Clear: no background until hovered. */
+.client-tools { flex-shrink: 0; display: flex; align-items: center; gap: 2px; }
+.client-tools > button { background: none; border-color: transparent; }
+.client-tools > button:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
 .client-tools > .danger:hover:not(:disabled) { background: var(--signal-soft); border-color: var(--signal-line); }
 .intake-btn { flex-shrink: 0; display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 8px; border-radius: 7px; }
 .pdf-icon { display: inline-grid; place-items: center; width: 14px; height: 17px; border: 1px solid var(--border-strong); border-radius: 2px; color: var(--signal); font: 700 5.5px/1 var(--font-mono); }
