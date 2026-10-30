@@ -483,13 +483,16 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .switch:disabled { cursor: not-allowed; }
 #agent { flex: 0 0 auto; width: 64px; min-height: 30px; padding: 2px 8px; font-size: 13px; font-weight: 600; text-transform: uppercase; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
 #agent.missing { border-color: var(--warning-bar); }
-/* The AI settings fold (a <details>): its title row says whether AI is on. */
-.fold > summary { display: flex; align-items: baseline; gap: 8px; cursor: pointer; list-style: none; }
+/* The AI settings: a button row that opens its card under it, the two joined while open. */
+.fold { display: block; }
+.fold > summary { cursor: pointer; list-style: none; }
 .fold > summary::-webkit-details-marker { display: none; }
-.fold > summary::before { content: "▸"; flex: 0 0 auto; width: 10px; color: var(--ink-muted); font-size: 10px; }
-.fold[open] > summary::before { content: "▾"; }
-.fold[open] > summary { margin-bottom: 4px; }
-#ai-note { font-weight: 500; }
+.fold .fold-name { flex: 0 0 auto; }
+#ai-note { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fold .chev { transition: transform 0.15s; }
+.fold[open] .chev { transform: rotate(90deg); }
+.fold[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-color: var(--border); }
+.fold[open] > .card { border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
 #ai-note.off { color: var(--ink-muted); }
 #ai-note.warn { color: var(--warning-ink); }
 #ai-note.on { color: var(--success); }
