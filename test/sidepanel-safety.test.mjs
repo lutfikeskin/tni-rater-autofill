@@ -9,6 +9,7 @@ import { assistContextKey, stableJson, neverReason, pageAnswers } from '../src/a
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
+import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
 import { intakeNotes } from '../src/normalize.js';
 import { amwins } from '../src/carriers/amwins.js';
@@ -161,6 +162,8 @@ function harness() {
   const context = {
     URL,
     state,
+    isStandard,
+    resolutionOf,
     inExtension: true,
     $: (id) => ui[id],
     onQuotePage: () => true,
@@ -388,7 +391,7 @@ function reportHarness(state, extra = {}) {
   const box = { className: '', children: [], replaceChildren(...children) { this.children = children; } };
   const context = {
     $: () => box, knownStep, renderSteps() {}, announce() {}, refreshAnswers() {}, currentReportKey: () => null,
-    state, pageOf: (url) => url, neverReason, sourcePlace: () => null, fieldInfo: (path) => ({ label: path }), get: () => undefined,
+    state, pageOf: (url) => url, neverReason, isStandard, resolutionOf, sourcePlace: () => null, fieldInfo: (path) => ({ label: path }), get: () => undefined,
     h: (tag, props, ...children) => ({ tag, props, children }),
     reportKey: (tabId, page) => `${tabId}|${page}`,
     putReport(entry, nodes) { box.replaceChildren(...nodes); state.reportFor = entry; },
@@ -1087,7 +1090,7 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
     state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {}, querySelector: (sel) => (sel === ':scope > .rows' ? list : null) }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: () => {}, renderSteps: () => {}, announce: () => {}, h: () => ({}), answerRow: (row) => row,
-    fillEvents: () => [], knownStep, fillSkip: () => [], fillSkipBy: () => null, tabMaps: () => ({ agentKeys: new Map() }), showFinish: () => {},
+    fillEvents: () => [], isStandard, knownStep, fillSkip: () => [], fillSkipBy: () => null, tabMaps: () => ({ agentKeys: new Map() }), showFinish: () => {},
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
     runAssist: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {}, fillProblem() {}, reportShown: () => true,
     // The list moved the picker to the vehicle it adds (pickUnitToAdd).
@@ -2932,7 +2935,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
   const context = {
     state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0, layoutGeneration: 0, layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), layoutLatest: null, viewTabs: new Map(),
       lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set(), stopScreens: new Map() },
-    stopScreen, fillEvents, renderSite: () => { context.rendered = (context.rendered ?? 0) + 1; },
+    stopScreen, fillEvents, isStandard, resolutionOf, renderSite: () => { context.rendered = (context.rendered ?? 0) + 1; },
     // These carriers declare no quote-state control (the state warning has its own test).
     quoteStatePick: () => undefined, showStateNote: () => {},
     sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
@@ -3880,7 +3883,7 @@ function stopHarness(page = 'DeclinationNotice') {
   };
   const logged = [], kits = [], timers = [];
   const context = {
-    state, URL, h: node, $: (id) => ui[id], onQuotePage: () => true, fillEvents,
+    state, URL, h: node, $: (id) => ui[id], onQuotePage: () => true, fillEvents, isStandard, resolutionOf,
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
     usage: { log: (...events) => logged.push(...events), currentSession: () => ({ id: 'quote-1' }) },
     runKit: async (...args) => { kits.push(args); return []; }, tellRecorder: async () => {}, ensureRecorder: async () => {},
@@ -4149,7 +4152,7 @@ async function stateNoteHarness() {
     usage: { log: (...e) => logged.push(...e), currentSession: () => session.current },
     fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), knownStep, redactor: () => (x) => x, redactionTerms: () => [],
     scheduleLayout: () => {}, persistAgentKeys: () => {}, persistDoneActions: () => {}, save: () => {}, settleRejectedAi: async () => false,
-    scheduleAutoFill: () => {}, syncAiBanner: () => {}, showStopPage: () => {}, fillEvents, store: { set: async () => {} },
+    scheduleAutoFill: () => {}, syncAiBanner: () => {}, showStopPage: () => {}, fillEvents, isStandard, resolutionOf, store: { set: async () => {} },
     unitArrival: () => {}, onQuotePage: () => false, fillPage: async () => {}, setTimeout: () => 0, answeredOnPage() {},
     renderSteps() {}, sourcePlace: () => null, pdfPageSaid: () => '', openPdf() {},
     // The page's quote-state control as the page shows it (chrome.scripting in the extension).
@@ -4330,7 +4333,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
     buildPlan: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
     fillOptions: () => ({}), pendingAi: () => [], ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
     runKit: async (tabId, carrier, func, args) => { seen.options = args[1]; markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
-    fillEvents, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
+    fillEvents, isStandard, resolutionOf, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
     renderReport: (frames, ctx) => { seen.rendered++; seen.reportTabs.push(ctx?.tabId); }, renderSite() {}, renderSteps() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
     reportKey: (tabId) => `${tabId}|report`, watchFill: () => () => {}, showFinish() {}, reportShown: () => true,
     fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text }); },

@@ -87,7 +87,11 @@ Every carrier rule with a `value` declares where its answer comes from ([test/pr
 
 ### Resolution
 
-Every field step and every fill report item also carries one `resolution` ([resolution.js](../src/resolution.js), typed in [types.js](../types.js)): `answer`, `method`, `explanation` and `status`. It is built only from the fields above and says the same thing in one place. Nothing reads it yet: the panel, the AI and the usage log still read `source`, `standard`, `manualOnly`, `reviewRequired` / `review`, `note` and `warn`, and will move to it one change at a time. The usage events, the server and the extension's local storage are unchanged; kept reports in session storage carry it with the rest of each item.
+Every field step and every fill report item also carries one `resolution` ([resolution.js](../src/resolution.js), typed in [types.js](../types.js)): `answer`, `method`, `explanation` and `status`. It is built only from the fields above and says the same thing in one place. The panel and the AI read it through `resolutionOf`:
+- the review list's reason for an item left is its `explanation`, and its "TNI standard" tag is `method: 'standard'` (`isStandard`);
+- an item Luna is never given is one whose `status` is `agent` (`agentsAlone`, in `collectItems` and `manualOnlyReason`).
+
+A report kept from a build before resolutions has none. `resolutionOf` rebuilds it from the item's fields; a `standard` item without a `source`, from before items carried one, counts as a standard. The old fields stay on every step and item, and the usage log, Luna's request and its cache keys still read them. The usage events, the server and the extension's local storage are unchanged; kept reports in session storage carry the resolution with the rest of each item.
 
 - `answer`: the step's `value`; on an item, its plan step's value where the fill gave it, else null.
 - `method`: the `source` (intake, derived, standard, fact, attestation), null for a rule without one.

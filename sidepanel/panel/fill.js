@@ -8,6 +8,7 @@ import { get } from '../../src/util.js';
 import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { neverReason } from '../../src/ai/common.js';
+import { isStandard, resolutionOf } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
 import { $, aiSnapshotFieldMatches, h, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state } from './core.js';
 import { save } from './intake.js';
@@ -859,11 +860,11 @@ function itemsLeft(frames) {
   return [
     ...framed('unknown').map((x) => ({ ...x, mark: 'needs', why: `Unfamiliar question${x.required ? ' (required)' : ''}: no TNI rule for it yet.` })),
     ...framed('failed').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'failed', why: `Couldn't fill: ${x.reason}` })),
-    ...framed('noData').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
+    ...framed('noData').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: resolutionOf(x, 'noData').explanation ?? 'Not on the intake.' })),
     ...framed('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
     ...framed('kept').filter((x) => !x.otherStep && x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
     // Defaults filled for the agent to confirm (e.g. marital status missing on the intake).
-    ...framed('checks').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: x.note })),
+    ...framed('checks').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: resolutionOf(x, 'checks').explanation })),
   ];
 }
 
@@ -942,14 +943,14 @@ function renderReport(frames, ctx = {}) {
     // (checkAnswers) and changing it (changeAnswer); `kind`: what it is when it's no answer of ours.
     // Its value is what the page shows (`now`), not what the fill put in; one the page or the agent
     // changed since (`changed`) is theirs, not counted as the fill's ('changed', 'yours').
-    ...filled.map((x) => ({ label: x.label || x.name, value: x.now ?? x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId,
+    ...filled.map((x) => ({ label: x.label || x.name, value: x.now ?? x.shown ?? '', standard: isStandard(x, 'filled'), path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId,
       answer: !x.changed, ...(x.changed ? { kind: x.changed === 'you' ? 'yours' : 'changed' } : {}), key: x.key, field: x.label ?? null, q: x.q ?? null, offPage: x.offPage ?? null, frame: x.frame, order: x.order })),
     ...earlier.map((x) => {
       const was = before.get(x.key);
-      return { label: x.label || x.name, value: x.now || was.shown || 'filled', standard: !!(x.standard || was.standard), path: was.path, from: fromOf.get(x.stepId), edited: editedBy(was.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: was.shown ? x.key : null, field: x.label ?? null, q: x.q ?? null, offPage: x.offPage ?? null, frame: x.frame, order: x.order };
+      return { label: x.label || x.name, value: x.now || was.shown || 'filled', standard: isStandard(x, 'kept') || !!was.standard, path: was.path, from: fromOf.get(x.stepId), edited: editedBy(was.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: was.shown ? x.key : null, field: x.label ?? null, q: x.q ?? null, offPage: x.offPage ?? null, frame: x.frame, order: x.order };
     }),
     ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
-    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: !!x.standard, group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page', frame: x.frame, order: x.order })),
+    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: isStandard(x, 'kept'), group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page', frame: x.frame, order: x.order })),
     ...all('skipped').map((x) => ({ label: x.label, value: 'yours, not filled', kind: 'yours' })),
   ], ticks);
   const count = doneRows.filter((row) => row.answer).length;

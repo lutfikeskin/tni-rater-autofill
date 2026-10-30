@@ -12,7 +12,8 @@ import { normalizeIntake } from '../src/normalize.js';
 import { buildPlan } from '../src/plan.js';
 import { CARRIERS } from '../src/carriers.js';
 import { unitMissingItem } from '../src/units.js';
-import { stepResolution } from '../src/resolution.js';
+import { agentsAlone, isStandard, itemResolution, resolutionOf, stepResolution } from '../src/resolution.js';
+import { collectItems, manualOnlyReason } from '../src/ai/common.js';
 import { assertStepResolution, assertItemResolution } from './resolution-check.mjs';
 
 const FIXTURES = ['sample-intake.pdf', 'sample-intake-2026-10.pdf', 'multi-vehicle-intake.pdf'];
@@ -58,6 +59,46 @@ test('a review-mode standard is given and reviewed; a fact the intake lacks is t
   assert.deepEqual(stepResolution(step), { answer: 'Yes', method: 'standard', explanation: 'Review mode: confirm.', status: 'review' });
   assert.deepEqual(stepResolution({ ...step, value: null, source: 'fact', manualOnly: true, note: 'Ask the client.', warn: null }),
     { answer: null, method: 'fact', explanation: 'Ask the client.', status: 'agent' });
+});
+
+// A report kept from a build before resolutions (session storage, restoreReports) has none: the
+// panel and the AI rebuild it from the item's fields and read the same.
+const ITEMS = {
+  filled: [{ key: 'a', label: 'Liability', source: 'standard', standard: true, manualOnly: false, review: false }, { key: 'b', label: 'Name', source: 'intake', standard: false, manualOnly: false, review: false }],
+  kept: [{ key: 'c', label: 'Deductible', source: 'standard', standard: true, manualOnly: false, review: false }],
+  noData: [{ key: 'd', label: 'Prior loss', source: 'fact', standard: false, manualOnly: true, review: false, note: 'Ask the client.', controlKind: 'radio', options: ['Yes', 'No'] },
+    { key: 'e', label: 'Marital status', source: 'derived', standard: false, manualOnly: false, review: false, note: 'Not on the intake.', controlKind: 'select', options: ['Single', 'Married'] }],
+  checks: [{ key: 'f', label: 'Medical payments', source: 'standard', standard: true, manualOnly: false, review: true, note: 'Review mode: confirm.' }],
+  failed: [{ key: 'g', label: 'Radius', source: 'intake', standard: false, manualOnly: false, review: false, reason: 'no such option', controlKind: 'select', options: ['50 miles'] }],
+  leftRequired: [{ key: 'h', label: 'Garaging ZIP', controlKind: 'text' }],
+  unknown: [{ key: 'i', label: 'New question', controlKind: 'radio', options: ['Yes', 'No'] }],
+};
+const withResolutions = () => [Object.fromEntries(Object.entries(ITEMS).map(([list, xs]) => [list, xs.map((x) => ({ ...x, resolution: itemResolution(x, list, null) }))]))];
+const without = () => [structuredClone(ITEMS)];
+
+test('a kept report from before resolutions reads the same: each item\'s is rebuilt from its fields', () => {
+  for (const [list, xs] of Object.entries(withResolutions()[0])) {
+    for (const x of xs) {
+      const { resolution, ...old } = x;
+      assert.deepEqual(resolutionOf(old, list), resolution, `${list} ${x.label}`);
+      assert.equal(resolutionOf(x, list), resolution, 'its own when it has one');
+      assert.equal(agentsAlone(old), agentsAlone(x));
+      assert.equal(isStandard(old, list), isStandard(x, list));
+    }
+  }
+  // A build before items carried `source` marked a standard by `standard` alone.
+  assert.equal(isStandard({ label: 'Gender', standard: true }, 'filled'), true);
+  assert.equal(isStandard({ label: 'Name' }, 'filled'), false);
+});
+
+test('Luna\'s items, and the fields it is never given, are the same with resolutions or without', () => {
+  assert.deepEqual(collectItems(withResolutions()), collectItems(without()));
+  const { items, blocked } = collectItems(withResolutions());
+  assert.deepEqual(blocked.filter((x) => x.manualOnly).map((x) => x.key), ['d'], 'the agent\'s alone, never the AI\'s');
+  assert.ok(items.some((x) => x.key === 'e'), 'an open answer is the AI\'s to suggest');
+  for (const x of [...ITEMS.noData, ...ITEMS.failed]) {
+    assert.equal(manualOnlyReason({ ...x, resolution: itemResolution(x, 'noData', null) }), manualOnlyReason(x), x.label);
+  }
 });
 
 test('the panel\'s own item for a unit missing from the list carries a resolution like the kit\'s', () => {

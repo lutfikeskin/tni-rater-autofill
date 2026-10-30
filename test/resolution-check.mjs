@@ -2,7 +2,7 @@
 // from, so a later change to either that makes them disagree fails. Used by test/resolution.test.mjs
 // for plan steps and by test/pagekit.test.mjs for every report item its fills return.
 import assert from 'node:assert/strict';
-import { itemResolution } from '../src/resolution.js';
+import { agentsAlone, isStandard, itemResolution } from '../src/resolution.js';
 
 const KEYS = ['answer', 'explanation', 'method', 'status'];
 const blank = (v) => v === null || v === undefined || v === '';
@@ -47,6 +47,12 @@ export function assertItemResolution(item, list, step, where = '') {
   const given = !['agent', 'open', 'unknown'].includes(status);
   assert.deepEqual(r.answer, given ? step?.value ?? null : null, `${at}: answer`);
   assert.deepEqual(r, itemResolution(item, list, step?.value ?? null), `${at}: the page kit's and resolution.js disagree`);
+  // What the panel and the AI read in place of the old flags (resolution.js) says what they said.
+  assert.equal(agentsAlone(item), !!item.manualOnly, `${at}: agentsAlone`);
+  if (item.source != null) assert.equal(isStandard(item, list), !!item.standard, `${at}: isStandard`);
+  // The panel's reason for an item left (fill.js itemsLeft) is its explanation, which is its note
+  // there only while these lists never carry a failure's `reason`.
+  if (['noData', 'checks', 'leftRequired'].includes(list)) assert.equal(item.reason, undefined, `${at}: a reason on a ${list} item`);
 }
 
 // Every item of a fill report against the plan the fill had; the statuses it saw. Copied first: a
