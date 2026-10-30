@@ -38,7 +38,7 @@ Agents install it from its private Chrome Web Store listing (see [docs/chrome-we
 
 ### AI assistant
 
-**Suggest answers** is on from the start, and no key is needed: Luna goes through TNI's usage server, which adds TNI's OpenAI key (`OPENAI_API_KEY` on Railway, [hosting](docs/hosting.md)). To turn it off, or to use your own key, open **Settings** (the gear at the top of the side panel) and go to **Assistant**. **Use my own key** takes your **OpenAI API key** (**Save** or Enter); it stays in this device's extension settings, goes straight to OpenAI, and is never included in usage logs. Luna uses the fixed `gpt-6-luna` model.
+**Suggest answers** is on from the start, and no key is needed: Luna goes through TNI's usage server, which adds TNI's OpenAI key (`OPENAI_API_KEY` on Railway, [hosting](docs/hosting.md)). To turn it off, or to use your own key, open **Settings** (the gear at the top of the side panel) and open **AI**. **Use my own key** takes your **OpenAI API key** (**Save** or Enter); it stays in this device's extension settings, goes straight to OpenAI, and is never included in usage logs. Luna uses the fixed `gpt-6-luna` model.
 
 The rules run first. Luna receives unresolved choice questions, the carrier's actual options, active driver/vehicle context, intake facts and carrier-scoped TNI rules. It proposes a visible option or leaves it for the agent. Luna can explain a suggestion, but it never types names, identifiers, dates, amounts or other free-text answers.
 

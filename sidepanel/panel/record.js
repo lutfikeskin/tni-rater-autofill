@@ -162,7 +162,11 @@ function renderWarnings() {
           pdfLink(w, label) ?? (w.path && !info ? h('button', { type: 'button', class: 'ghost', onclick: () => jumpTo(w.path) }, 'Show details') : null))));
   });
   $('warnings').replaceChildren(...cards,
-    ...(infos.length ? [h('details', { class: 'cleanup' }, h('summary', { class: 'small muted' }, `Cleanup notes (${infos.length})`), h('ul', {}, infos.map((w) => h('li', {}, w.msg))))] : []));
+    // A row like All client details below it, opening its notes in a card joined under it.
+    ...(infos.length ? [h('details', { class: 'fold cleanup' },
+      h('summary', { class: 'list-row' }, h('span', { class: 'grow' }, 'Cleanup notes'),
+        h('span', { class: 'small muted' }, `${infos.length} change${infos.length === 1 ? '' : 's'}`), h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')),
+      h('div', { class: 'card' }, infos.map((w) => h('p', {}, w.msg))))] : []));
   renderSteps();
 }
 

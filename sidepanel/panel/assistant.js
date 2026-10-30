@@ -868,7 +868,6 @@ async function renderAiSettings() {
   $('ai-auto').checked = cfg.auto;
   $('ai-auto').disabled = !cfg.on || !provider.automatic;
   $('ai-auto-option').hidden = !provider.automatic;
-  $('agent-name').textContent = provider.name;
   // No key of the agent's own: the usage server in use lends its key (settingsFrom), so none is
   // needed. TNI's unless a test server is set under Advanced.
   const central = !!cfg.proxy && new URL(cfg.proxy.url).origin === new URL(usage.DEFAULT_SERVER).origin;
@@ -878,6 +877,8 @@ async function renderAiSettings() {
   if ($('key-form').hidden) $('key-edit').textContent = cfg.apiKey ? 'Change' : cfg.proxy ? 'Use my own key' : 'Add key';
   // On without a key: it can't help yet, said on its card and with a dot on the Settings button.
   $('agent-card').classList.toggle('warn', cfg.on && !cfg.ready);
+  // Folded otherwise; opened so that warning isn't hidden.
+  if (cfg.on && !cfg.ready) $('assistant').open = true;
   $('ai-note').textContent = !cfg.on ? 'Off' : !cfg.ready ? 'Needs a key'
     : cfg.auto ? 'On. Picks answers you approve.' : 'On. Suggests answers.';
   $('ai-note').className = !cfg.on ? 'off' : !cfg.ready ? 'warn' : 'on';

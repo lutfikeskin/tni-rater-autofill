@@ -243,10 +243,13 @@ try {
     // them for Playwright's native select actions while keeping the real page structure intact.
     await mock.evaluate(() => document.querySelectorAll('#priorCarrierPanel > .app-rp-section .card-body').forEach((body) => { body.style.display = ''; }));
   };
-  // Settings holds the assistant; Done closes it. The gear toggles Settings: clicked only when it is shut.
+  // Settings holds the assistant, folded under its AI row; Done closes it. The gear toggles
+  // Settings: clicked only when it is shut, and the AI row only when it is folded.
   const openAgent = async () => {
     if (await panel.locator('#settings').isHidden()) await panel.locator('#settings-btn').click();
     await panel.locator('#settings').waitFor({ state: 'visible' });
+    if (!await panel.locator('#assistant').evaluate((d) => d.open)) await panel.locator('#assistant > summary').click();
+    await panel.locator('#agent-card').waitFor({ state: 'visible' });
   };
   const closeAgent = () => panel.locator('#settings-done').click();
   // The dock's Fill: its button, or its "Fill this page again" while questions remain. Found again
