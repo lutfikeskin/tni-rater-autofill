@@ -3,6 +3,8 @@
 // (pickUnitToAdd) reads the lists through the kit and keeps the state, and the GEICO mock plays the
 // panel with this same code.
 
+import { itemResolution } from './resolution.js';
+
 const word = (w) => String(w ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const words = (d) => [d?.first, d?.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
 // What the list is read for, per unit (pagekit unitList): a vehicle's or trailer's VIN, a driver's
@@ -98,7 +100,8 @@ export function unitMissingItem(carrier, record, { list, index }) {
   const unit = { vehicles: 'Vehicle', trailers: 'Trailer', drivers: 'Driver' }[list];
   const note = spec?.missing?.(record, list, index)
     ?? `${unit} ${index + 1} of the intake isn't on ${carrier?.name ?? 'the carrier'}'s list: add it yourself.`;
-  return { label: `Add ${unit}`, name: `${unit} ${index + 1} of the intake`, path: `${list}[${index}]`, key: null, q: null, controlKind: null, note };
+  const item = { label: `Add ${unit}`, name: `${unit} ${index + 1} of the intake`, path: `${list}[${index}]`, key: null, q: null, controlKind: null, note };
+  return { ...item, resolution: itemResolution(item, 'noData', null) };
 }
 
 // The carrier's Continue for one fill (fill `advance`), or null without one: its `listed` button

@@ -3,6 +3,7 @@
 // the rater page. Values are resolved here so the page script only has to match and type.
 
 import { GENERIC_RULES } from './rules.js';
+import { stepResolution } from './resolution.js';
 import { fieldInfo } from './schema.js';
 import { get, listOf } from './util.js';
 
@@ -253,7 +254,8 @@ function fieldSteps(rules, record, carrier, active) {
     const v = scope === 'vehicle' && unitRows(record) ? (unit === 'trailers' ? record.trailers?.[active.trailers ?? 0] : record.vehicles[active.vehicles ?? 0])
       : scope === 'trailer' ? record.trailers?.[active.trailers ?? 0] : null;
     const vehicleHint = v ? [v.year, v.make, v.model].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).filter((x) => x.length >= 2) : null;
-    return {
+    /** @type {Omit<FieldStep, 'resolution'>} */
+    const step = {
       id,
       path,
       name,
@@ -385,6 +387,8 @@ function fieldSteps(rules, record, carrier, active) {
       // is resolved for the unit so the page kit can name it ("vehicle 2"); never its position.
       witness: rule.witness ? { selector: rule.witness.selector, path: withIndex(rule.witness.path, active), value: get(record, withIndex(rule.witness.path, active)) ?? null } : null,
     };
+    // The answer, how it was decided, why, and what it needs, from the fields above (resolution.js).
+    return { ...step, resolution: stepResolution(step) };
   });
 }
 

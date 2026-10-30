@@ -48,6 +48,7 @@ import { geico } from '../src/carriers/geico.js';
 import { knownStep } from '../src/usage.js';
 import { advanceFor, unitListSpecs, unitToAdd } from '../src/units.js';
 import { stopScreen } from '../src/carriers.js';
+import { assertReportResolutions } from '../test/resolution-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
@@ -397,6 +398,8 @@ async function fill(form, { asked = false, expectFailed = [] } = {}) {
   const report = await inWorld(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify(options)})`);
   const ms = Date.now() - t0;
   totalMs += ms;
+  // Each item's resolution agrees with its list and fields (test/resolution-check.mjs).
+  assertReportResolutions(report, plan, `GEICO ${form}`);
   if (report.reconcile) reconciled.push(report.reconcile);
   // Its Continue: the view it leads to drawn before anything else (the panel waits for the page to change).
   if (report.advanced) {

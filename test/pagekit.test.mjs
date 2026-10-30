@@ -12,6 +12,7 @@ import { advanceFor } from '../src/units.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
 import { assistContextKey } from '../src/ai/common.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
+import { assertReportResolutions } from './resolution-check.mjs';
 
 // This is a deliberately small DOM/ExtJS replay.  It exercises the injected MAIN-world
 // script itself, without a browser session, real quote data, or customer identifiers.
@@ -469,6 +470,7 @@ function harness({ ext = false, progressive = ext, adapter = progressive ? 'prog
   kit.fill = async (plan, options) => {
     const report = await fill(plan, options);
     assertLive(kit, report, plan);
+    assertResolved(report, plan);
     return report;
   };
   return { context, document, kit };
@@ -480,6 +482,15 @@ function harness({ ext = false, progressive = ext, adapter = progressive ? 'prog
 // page's field shows and offers then. Read with the kit's `present`, one read of the page. Only for
 // a fill that ended on its page (`reconcile`) and clicked no Continue.
 const REVIEW_LISTS = ['unknown', 'failed', 'noData', 'leftRequired', 'checks'];
+
+// Every report item's resolution agrees with its list and old fields, and with resolution.js
+// (test/resolution-check.mjs), over every fill in this file (the last test checks how many).
+const resolutionChecked = { items: 0, statuses: new Set() };
+function assertResolved(report, plan = []) {
+  const statuses = assertReportResolutions(report, plan, 'pagekit');
+  resolutionChecked.items += statuses.length;
+  for (const s of statuses) resolutionChecked.statuses.add(s);
+}
 // How many fills and items it held over (the last test checks it covered this file's fills).
 const liveChecked = { fills: 0, items: 0, answers: 0 };
 function assertLive(kit, report, plan = []) {
@@ -8733,4 +8744,10 @@ test('every fill in this file ended with only what is on the page in its report'
   assert.ok(liveChecked.fills >= 500, `${liveChecked.fills} fills checked`);
   assert.ok(liveChecked.items >= 300, `${liveChecked.items} items checked`);
   assert.ok(liveChecked.answers >= 500, `${liveChecked.answers} answers checked`);
+});
+
+// And every item of those fills carried a resolution that agrees with it (assertResolved).
+test('every report item of this file\'s fills has a resolution that agrees with its list and fields', () => {
+  assert.ok(resolutionChecked.items >= 1000, `${resolutionChecked.items} items checked`);
+  for (const status of ['answered', 'kept', 'open', 'agent', 'confirm', 'review', 'failed', 'unknown']) assert.ok(resolutionChecked.statuses.has(status), `no item was ${status}`);
 });

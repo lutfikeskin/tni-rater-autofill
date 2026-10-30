@@ -2058,6 +2058,22 @@
     };
   }
 
+  // Each report item's resolution, as the fill returns: the answer, how it was decided, why, and
+  // what it needs, from its list and its own fields (src/resolution.js itemResolution says the same;
+  // this classic script can't import it, and test/resolution.test.mjs holds both to the old fields).
+  // Nothing reads it yet.
+  const LIST_STATUS = { filled: 'answered', kept: 'kept', noData: 'open', leftRequired: 'open', failed: 'failed', unknown: 'unknown' };
+  function resolveItems(report, plan) {
+    const values = new Map(plan.filter((s) => s.kind !== 'action').map((s) => [s.id, s.value]));
+    for (const list of [...Object.keys(LIST_STATUS), 'checks']) {
+      for (const x of report[list] ?? []) {
+        const status = x.manualOnly ? 'agent' : list === 'checks' ? (x.review ? 'review' : 'confirm') : LIST_STATUS[list];
+        const answer = status === 'agent' || status === 'open' || status === 'unknown' ? null : values.get(x.stepId) ?? null;
+        x.resolution = { answer, method: x.source ?? null, explanation: x.note ?? x.reason ?? null, status };
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Public API
 
@@ -4108,6 +4124,7 @@
         }
       }
     }
+    resolveItems(report, plan);
     return report;
     } finally {
       hiddenOk = [];
