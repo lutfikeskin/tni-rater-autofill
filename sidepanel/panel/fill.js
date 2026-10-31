@@ -636,7 +636,7 @@ function liveFrames(frames, live) {
   });
 }
 
-/// The report shown, checked against its page as it is now (liveItems, one message for every item):
+// The report shown, checked against its page as it is now (liveItems, one message for every item):
 // an item whose question has gone from the page (and isn't one the fill knew off screen) leaves the
 // list (`gone`, hidden: back if the page draws it again) and holds nothing, Continue included; the
 // others say what the page shows and offers now. Only on the report's own tab and page, never while a
