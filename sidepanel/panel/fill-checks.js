@@ -58,7 +58,5 @@ function fillErrorText(ctx, e) { return redactor(redactionTerms(ctx.intake.recor
 // The step a one-address application (AmWINS) showed to the fill: the top frame's headings, sent
 // only as one of the carrier's step names (knownStep).
 function stepOfResults(carrier, results) { return knownStep(carrier, results.find((r) => r.frameId === 0)?.result?.stepKey); }
-// The events of a fill, redacted with the intake it filled from.
-/** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {FillReport[]} frames */
 
 export { fillCurrent, fillErrorMessage, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded };

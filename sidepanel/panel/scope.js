@@ -120,11 +120,10 @@ function agentEdited(page, key) {
   return !!keys && (keys.has(key) || keys.has(String(key ?? '').match(/^(.+)#\d+$/)?.[1]));
 }
 
-// `active`: the vehicle, driver and trailer the fill's plan is for (fillContext), which the agent's
-// picker may have left since. `unitsListed`: the unit list on screen holds every intake unit
-// (pickUnitToAdd), so its Looks Good may be clicked (advanceFor).
-/** @type {(carrier: CarrierConfig, extra?: FillOptions, autoAdvance?: boolean, active?: object, unitsListed?: boolean) => FillOptions} */
-
+// For the kit (fill `formUnit`) on a page whose form names its unit (carrier.unitNames): the
+// pattern, each intake unit's name words (first and last, 2 letters or more), the plan's unit and
+// its name as the panel shows it.
+/** @returns {FillOptions['formUnit']} */
 function unitNameFor(carrier, page, active, record) {
   const spec = (carrier?.unitNames ?? []).find((s) => s.page === page);
   if (!spec || !record) return null;

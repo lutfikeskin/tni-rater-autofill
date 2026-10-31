@@ -829,12 +829,6 @@ function refreshAnswers() {
   if (entry?.fields && entry.tabId === state.tab?.id) checkAnswers($('report'), entry.tabId, entry.page, entry.carrier ?? state.tab.carrier, entry.plan);
 }
 
-// What a fill left for the agent on its page: its report's items (renderReport), and none for the
-// quote done with its chime (rememberFill). Each item with its frame's place among the page's frames
-// (pagekit's `order` counts within one). A field of another step (pagekit otherStep: AmWINS' prior
-// carriers, filled again while hidden) isn't this step's: left out of its list and count (live run
-// 2026-10-09).
-/** @param {FillReport[]} frames */
 // After a fill: the page's answers in one list, in the order of their fields on the page. Each
 // answer that went in says what and where it came from (the intake, worked out from it, a TNI
 // standard, the agent, the page) and opens to its source, Change answer and See in intake; each

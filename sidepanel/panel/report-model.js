@@ -109,6 +109,12 @@ function looseText(s) {
   return String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+// What a fill left for the agent on its page: its report's items (renderReport), and none for the
+// quote done with its chime (rememberFill). Each item with its frame's place among the page's frames
+// (pagekit's `order` counts within one). A field of another step (pagekit otherStep: AmWINS' prior
+// carriers, filled again while hidden) isn't this step's: left out of its list and count (live run
+// 2026-10-09).
+/** @param {FillReport[]} frames */
 function itemsLeft(frames) {
   const framed = (k) => frames.flatMap((f, frame) => (f[k] ?? []).map((x) => ({ ...x, frame })));
   const unknownKeys = new Set(framed('unknown').map((x) => x.key));

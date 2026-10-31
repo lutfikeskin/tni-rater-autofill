@@ -60,6 +60,10 @@ function resetViews() {
   saveViews();
 }
 
+// `active`: the vehicle, driver and trailer the fill's plan is for (fillContext), which the agent's
+// picker may have left since. `unitsListed`: the unit list on screen holds every intake unit
+// (pickUnitToAdd), so its Looks Good may be clicked (advanceFor).
+/** @type {(carrier: CarrierConfig, extra?: FillOptions, autoAdvance?: boolean, active?: object, unitsListed?: boolean) => FillOptions} */
 const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checked, active = state.active, unitsListed = false) => ({
   replaceChoices: !!carrier.replaceChoices,
   // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
@@ -113,10 +117,6 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
   ...extra,
 });
 
-// For the kit (fill `formUnit`) on a page whose form names its unit (carrier.unitNames): the
-// pattern, each intake unit's name words (first and last, 2 letters or more), the plan's unit and
-// its name as the panel shows it.
-/** @returns {FillOptions['formUnit']} */
 // Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
 // from the extension's own package when the panel starts, on every fill_run. Null outside the
 // extension or until it's read; then the run just carries none.
@@ -309,6 +309,8 @@ function showFinish({ auto = false } = {}) {
   renderSteps();
   $('page-view').scrollIntoView({ block: 'start', behavior: scrollBehavior() });
 }
+// The events of a fill, redacted with the intake it filled from.
+/** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {FillReport[]} frames */
 function logFill(ctx, frames, results, started) {
   if (ctx.carrier.practice) return;
   const redact = redactor(redactionTerms(ctx.intake.record));
