@@ -3,7 +3,7 @@
 // words find it in whichever part it lives.
 import fs from 'node:fs';
 
-export const PANEL_FILES = ['env', 'state-store', 'core', 'intake', 'record', 'tab', 'usage', 'scope', 'fill-checks', 'live', 'report-model', 'coordinator', 'fill', 'dev-recording',
+export const PANEL_FILES = ['env', 'state-store', 'core', 'intake', 'record', 'tab', 'usage', 'scope', 'fill-checks', 'live', 'report-model', 'report-rows', 'coordinator', 'fill', 'dev-recording',
   'assistant', 'usage-panel', 'pdf-view', 'window'].map((part) => `sidepanel/panel/${part}.js`).concat('sidepanel/sidepanel.js');
 
 export const PANEL_SOURCE = PANEL_FILES.map((f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')).join('\n');
