@@ -2,6 +2,15 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "panel-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "node_modules/vite/bin/vite.js"
+      ],
+      "port": 5180,
+      "url": "http://127.0.0.1:5180"
+    },
+    {
       "name": "tni-rater-autofill",
       "runtimeExecutable": "python3",
       "runtimeArgs": [

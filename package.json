@@ -10,6 +10,7 @@
     "test": "node --test \"test/*.test.mjs\" && vitest run --passWithNoTests",
     "panel": "vite build",
     "panel:watch": "vite build --watch",
+    "preview": "vite",
     "lint": "oxlint",
     "typecheck": "tsc -p .",
     "server": "node server/index.mjs",
