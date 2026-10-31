@@ -23,6 +23,7 @@ import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNa
 import { fillCurrent, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded } from './fill-checks.js';
 import { DOCK_PHASES, phaseSaid } from './live.js';
 import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
+import { answerRecord, leftOf, listCounts } from './report-rows.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -391,11 +392,12 @@ async function autoFill(page) {
         const rctx = { tabId, page, carrier };
         const { fromOf, groupOf, ticks, editedBy } = answerSources(plan);
         const answers = groupRows(added.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: isStandard(x, 'filled'), path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null })), ticks);
-        const rows = [...answers.map((row) => answerRow({ ...row, fresh: true }, rctx)),
-          ...frames.flatMap((f) => f.actions ?? []).map((a) => answerRow({ label: 'Clicked', value: a.text || a.id, kind: 'clicked', fresh: true }, rctx))];
+        const recs = [...answers.map((row) => answerRecord({ ...row, fresh: true })),
+          ...frames.flatMap((f) => f.actions ?? []).map((a) => answerRecord({ label: 'Clicked', value: a.text || a.id, kind: 'clicked', fresh: true }))];
+        state.reportFor.list = [...(state.reportFor.list ?? []), ...recs];
         let list = $('report').querySelector(':scope > .rows');
         if (!list) { list = h('div', { class: 'rows' }); $('report').append(list); }
-        list.append(...rows);
+        list.append(...recs.map((rec) => answerRow(rec, rctx)));
         state.reportFor.filled = (state.reportFor.filled ?? 0) + answers.filter((row) => row.answer).length;
         renderSteps();
         announce(`Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically.`);
@@ -995,9 +997,8 @@ function recount() {
   const entry = state.reportFor;
   if (!entry?.fields) return;
   // A question gone from the page since (checkItems) isn't left: it holds nothing.
-  const items = [...$('report').querySelectorAll('.row.need')].filter((n) => !n.classList.contains('gone'));
-  const left = items.filter((n) => !n.classList.contains('resolved')).length;
-  entry.otherLeft = items.filter((n) => !n.classList.contains('resolved') && n.dataset?.finish !== '1').length;
+  const { left, otherLeft } = leftOf(entry.list);
+  entry.otherLeft = otherLeft;
   if (left === entry.left) return;
   // Settled since the fill: the panel's Continue is a click away now, never on its own.
   entry.settled = !left && entry.left > 0;
@@ -1101,10 +1102,8 @@ function renderSteps() {
   $('past-when').textContent = past ? `${reportTitle(past)} · filled ${at(past)} · view only` : '';
   $('report').hidden = !filled || !!past;
   $('report').dataset.filter = state.filter;
-  const rows = filled ? [...$('report').querySelectorAll('.rows > .row')] : [];
-  const needing = rows.filter((n) => n.classList.contains('need') && !n.classList.contains('resolved')).length;
-  const counts = { all: rows.length, needs: needing, done: rows.length - needing };
-  $('filters').hidden = !filled || !rows.length || !!past;
+  const counts = listCounts(filled ? report.list : []);
+  $('filters').hidden = !filled || !counts.all || !!past;
   for (const b of $('filters').querySelectorAll('button')) {
     b.setAttribute('aria-pressed', String(b.dataset.filter === state.filter));
     b.querySelector('span').textContent = String(counts[b.dataset.filter] ?? 0);
@@ -1307,7 +1306,7 @@ function dockFor() {
     }
     const said = continueSaid(report, carrier);
     // A question open now with others after it: the dock moves on past it.
-    if (said.button === 'dock-next' && (report.left ?? 0) > 1 && $('report').querySelector('.row.need.open:not(.resolved)')) said.label = 'Skip to the next one';
+    if (said.button === 'dock-next' && (report.left ?? 0) > 1 && (state.reportFor?.list ?? []).some((r) => r.type === 'need' && r.open && !r.settled)) said.label = 'Skip to the next one';
     return said;
   }
   // Nothing filled on this page yet: what the fill will and won't do here.

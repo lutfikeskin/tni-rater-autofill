@@ -20,6 +20,7 @@ import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep } from 
 import { fillCurrent, fillErrorMessage, staleFill } from './fill-checks.js';
 import { liveOf } from './live.js';
 import { agentPickable, answerSources, choiceSaid, choicesOf, currentReportKey, finishLeftOk, groupRows, itemsLeft, looseText, reportKey, stopNoteFor } from './report-model.js';
+import { answerRecord, needId, needRecord, reopenRow, rowClass, rowHead, setHead, settleRow, showLive } from './report-rows.js';
 /** @import { CarrierConfig, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -494,8 +495,8 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
 // "Mark done" on an item left for the agent: they answered it, or it stays as the page has it.
 // Its field then joins the agent's on this page, as an edit there does: no fill changes it and
 // Continue no longer waits on it. Nothing is filled or clicked now (Continue stays its own click),
-// and it can be undone until the agent edits the field.
-async function markDone(item, key, tabId, page, x = null) {
+// and it can be undone until the agent edits the field. `rec`: its row (needRecord).
+async function markDone(rec, key, tabId, page, x = null) {
   if (!key || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   // Which question the agent marked done, and why it needed them: the review sees what was
   // waved through, not only what was filled.
@@ -511,13 +512,13 @@ async function markDone(item, key, tabId, page, x = null) {
   await persistAgentKeys();
   // Already the agent's (an edit on the page): nothing to undo. The undo takes it back from where
   // it was marked: the step, unit or form may be another by then (Next, a pick, a fill).
-  settleNeed(item, 'marked', had ? null : () => undoMarkDone(item, key, tabId, page, scope));
+  settleNeed(rec, 'marked', had ? null : () => undoMarkDone(rec, key, tabId, page, scope));
 }
 
 // "Mark done" on a helper's reminder (no field: Progressive's Rates on an NTL quote with cargo, after
 // NTL): the helper joins the tab's done actions, as one the fill clicked, so no fill reports it again
 // and what waits on it goes on. Logged as a Mark done is. It can be undone, as Mark done can.
-async function markActionDone(item, id, tabId, page, x = null) {
+async function markActionDone(rec, id, tabId, page, x = null) {
   if (!id || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   if (x && state.intake && !state.tab?.carrier?.practice) {
     usage.log({ ...checkDismissedEvent(x, { redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }),
@@ -526,34 +527,24 @@ async function markActionDone(item, id, tabId, page, x = null) {
   const had = state.doneActions.has(id);
   state.doneActions.add(id);
   await persistDoneActions(tabId);
-  settleNeed(item, 'marked', had ? null : async () => {
-    if (state.filling || state.tab?.id !== tabId || item.dataset.settled !== 'marked') return;
+  settleNeed(rec, 'marked', had ? null : async () => {
+    if (state.filling || state.tab?.id !== tabId || rec.settled !== 'marked') return;
     state.doneActions.delete(id);
     await persistDoneActions(tabId);
-    item.classList.remove('resolved');
-    delete item.dataset.settled;
-    item.querySelector('.mark-done').hidden = false;
-    setRowHead(item, { icon: item.dataset.icon, value: item.dataset.wait });
-    const note = item.querySelector('.need-note');
-    note.replaceChildren();
-    note.hidden = true;
+    reopenRow(rec);
+    drawRow(rec);
     recount();
   });
 }
 
-async function undoMarkDone(item, key, tabId, page, scope = editScope(page)) {
-  if (state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || item.dataset.settled !== 'marked') return;
+async function undoMarkDone(rec, key, tabId, page, scope = editScope(page)) {
+  if (state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || rec.settled !== 'marked') return;
   state.agentKeys.get(scope)?.delete(key);
   await persistAgentKeys();
-  item.classList.remove('resolved');
-  delete item.dataset.settled;
-  item.querySelector('.mark-done').hidden = false;
   // Open again: its row says what it waits on, and the note is empty.
-  setRowHead(item, { icon: item.dataset.icon, value: item.dataset.wait });
-  const note = item.querySelector('.need-note');
-  note.replaceChildren();
-  note.hidden = true;
-  item.querySelector('.mark-done').focus();
+  reopenRow(rec);
+  drawRow(rec);
+  rowNodes.get(rec)?.node.querySelector('.mark-done')?.focus();
   recount();
 }
 
@@ -561,24 +552,24 @@ async function undoMarkDone(item, key, tabId, page, scope = editScope(page)) {
 // field's mark flashes (pagekit reveal), in whichever frame has it. Nothing is filled, clicked or
 // focused there. Only on the item's own tab and page, as for Mark done. A field the page doesn't
 // show now (in a closed section, or gone) is said on the item for a few seconds.
-async function showOnPage(item, x, tabId, page, carrier) {
+async function showOnPage(rec, x, tabId, page, carrier) {
   if (!x.key || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   let found = false;
   try {
     const frames = await runKit(tabId, carrier, (key, label) => globalThis.__raterKit?.reveal?.(key, label) === true, [x.key, x.label ?? null]);
     found = frames.some((f) => f.result === true);
   } catch { /* the page is navigating */ }
-  const where = item.querySelector('.need-where');
-  if (!where) return;
-  clearTimeout(where.hideTimer);
-  where.hidden = found;
-  where.textContent = found ? '' : 'Not on the page now (it may be in a closed section).';
+  clearTimeout(whereTimers.get(rec));
+  rec.where = found ? null : 'Not on the page now (it may be in a closed section).';
+  drawRow(rec);
   if (found) return;
-  announce(where.textContent);
-  where.hideTimer = setTimeout(() => { where.hidden = true; where.textContent = ''; }, 6000);
+  announce(rec.where);
+  whereTimers.set(rec, setTimeout(() => { rec.where = null; drawRow(rec); }, 6000));
   // Gone from the page, not in a closed section the fill knew of: it leaves the list (checkItems).
   checkItems();
 }
+// The timer that clears what Show on page said of a row.
+const whereTimers = new WeakMap();
 
 // The invariant of the review list (docs/browser-filling.md, "Only what is on the page"): it lists
 // only questions the rater page has, and says what they show from the page itself. The fill's report
@@ -645,7 +636,7 @@ function liveFrames(frames, live) {
   });
 }
 
-// The report shown, checked against its page as it is now (liveItems, one message for every item):
+/// The report shown, checked against its page as it is now (liveItems, one message for every item):
 // an item whose question has gone from the page (and isn't one the fill knew off screen) leaves the
 // list (`gone`, hidden: back if the page draws it again) and holds nothing, Continue included; the
 // others say what the page shows and offers now. Only on the report's own tab and page, never while a
@@ -654,49 +645,46 @@ async function checkItems() {
   const entry = state.reportFor;
   const here = () => !state.filling && state.reportFor === entry && entry.tabId === state.tab?.id && pageOf(state.tab?.url) === entry.page;
   if (!entry?.fields || !here()) return;
-  const rows = [...$('report').querySelectorAll('.row.need')].filter((row) => row.dataset.key && !row.classList.contains('resolved'));
+  const rows = (entry.list ?? []).filter((r) => r.type === 'need' && r.key && !r.settled);
   // The answers listed (answerRow), with the rule that answered each.
-  const answers = [...$('report').querySelectorAll('.row:not(.need)[data-key]')].filter((row) => row.dataset.key);
+  const answers = (entry.list ?? []).filter((r) => r.type === 'answer' && r.key);
   if (!rows.length && !answers.length) return;
-  const asked = [...rows.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null })),
-    ...answers.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null, stepId: row.dataset.step || null }))];
+  const asked = [...rows.map((r) => ({ key: r.key, label: r.field || null })),
+    ...answers.map((r) => ({ key: r.key, label: r.field || null, stepId: stepOf(r) }))];
   const live = await liveItems(entry.tabId, entry.carrier ?? state.tab.carrier, asked, entry.plan);
   if (!live || !here()) return;
   // An answer whose field is gone has no row (back if the page draws it again); one whose field shows
   // something else now shows that, as the page's (its tag said so where the fill wouldn't call it its
   // answer any more).
-  for (const row of answers) {
-    const now = liveOf(live, row.dataset.key, row.dataset.field);
-    const gone = !now && row.dataset.offpage !== '1';
-    row.classList.toggle('gone', gone);
-    row.hidden = gone;
-    if (!now || now.shared || now.shown == null || looseText(now.shown) === looseText(row.dataset.value)) continue;
-    row.dataset.value = now.shown;
-    row.classList.remove('changed');
-    const note = row.querySelector('.kv-now');
-    if (note) { note.hidden = true; note.textContent = ''; }
-    if (now.agrees === true) {
-      const value = row.querySelector('.row-head .row-value');
-      if (value) value.textContent = now.shown;
-    } else {
-      setRowHead(row, { icon: '•', value: now.shown, tag: { kind: 'page', text: 'Changed on the page', title: 'Not the fill’s answer: the page shows this now' } });
+  for (const r of answers) {
+    const now = liveOf(live, r.key, r.field ?? '');
+    r.gone = !now && !r.offPage;
+    if (now && !now.shared && now.shown != null && looseText(now.shown) !== looseText(r.value)) {
+      r.value = now.shown;
+      r.changed = null;
+      if (now.agrees === true) { if (r.head) r.head = { ...r.head, value: now.shown }; }
+      else setHead(r, { icon: '•', value: now.shown, tag: { kind: 'page', text: 'Changed on the page', title: 'Not the fill’s answer: the page shows this now' } });
     }
+    drawRow(r);
   }
   let changed = false;
-  for (const row of rows) {
-    if (row.classList.contains('resolved')) continue;
-    const now = liveOf(live, row.dataset.key, row.dataset.field);
-    const gone = !now && row.dataset.offpage !== '1';
+  for (const r of rows) {
+    if (r.settled) continue;
+    const now = liveOf(live, r.key, r.field);
+    const gone = !now && !r.offPage;
     // In the page but not shown (a collapsed card): kept, saying nothing of what it shows.
-    row.showLive?.(now?.hidden ? null : now);
-    if (gone === row.classList.contains('gone')) continue;
-    row.classList.toggle('gone', gone);
-    row.hidden = gone;
-    if (gone && row.classList.contains('open')) toggleRow(row, false);
-    changed = true;
+    showLive(r, now?.hidden ? null : now);
+    if (gone !== r.gone) {
+      r.gone = gone;
+      if (gone && r.open) toggleRow(r, false);
+      changed = true;
+    }
+    drawRow(r);
   }
   if (changed) recount();
 }
+// An answer's rule (its plan step's id), as the kit is asked about it.
+function stepOf(rec) { return rec.stepId == null || rec.stepId === '' ? null : String(rec.stepId); }
 
 // checkItems once the page has been quiet a moment (the recorder's changes come in bursts).
 function scheduleCheckItems() {
@@ -712,38 +700,16 @@ function noteLiveItems(msg, sender) {
   if (['field_changes', 'new_fields', 'removed_fields', 'step_shown', 'page_view'].includes(msg.event)) scheduleCheckItems();
 }
 
-// An item left for the agent that is settled now: answered on the page ('answered'), put in from
-// its row ('picked', with what the page shows), or marked done ('marked', with `undo`). It leaves
-// "need you" at once, without a refill: its row says the answer is theirs.
-function settleNeed(item, how, undo = null, value = null) {
-  item.classList.add('resolved');
-  item.dataset.settled = how;
-  const focused = item.contains(document.activeElement);
-  const button = item.querySelector('.mark-done');
-  if (button) button.hidden = true;
-  setRowHead(item, { icon: '✓', value: value ?? (how === 'marked' ? 'Marked done' : 'Answered on the page'),
-    tag: { kind: 'you', text: 'You', title: how === 'picked' ? 'Your answer, put in from the panel' : 'Your answer' } });
-  const note = item.querySelector('.need-note');
-  note.hidden = false;
-  note.classList.remove('bad');
-  note.replaceChildren(...(how === 'answered'
-    ? ['✓ You answered it on the page.']
-    : how === 'picked' ? ['✓ Put in for you. No fill changes it now.']
-      : ['✓ Marked done: won’t be filled or waited on.',
-        undo ? h('button', { type: 'button', class: 'link small', onclick: undo }, 'Undo') : null].filter(Boolean)));
+// An item left for the agent that is settled now (settleRow): answered on the page ('answered'), put
+// in from its row ('picked', with what the page shows), or marked done ('marked', with `undo`).
+function settleNeed(rec, how, undo = null, value = null) {
+  const node = rowNodes.get(rec)?.node;
+  const focused = !!node?.contains(document.activeElement);
+  settleRow(rec, how, undo, value);
+  drawRow(rec);
   // Keyboard focus stays on the item: on its Undo, or on its row.
-  if (focused) (note.querySelector('button') ?? item.querySelector('.row-head') ?? item).focus();
+  if (focused) (node.querySelector('.need-note button') ?? node.querySelector('.row-head') ?? node).focus();
   recount();
-}
-
-// A row's head: its icon, what it says now, and its source tag (none for an open item).
-function setRowHead(item, { icon, value = null, tag = null }) {
-  const head = item.querySelector('.row-head');
-  if (!head) return;
-  if (icon != null) head.querySelector('.row-icon').textContent = icon;
-  if (value != null) head.querySelector('.row-value').textContent = value;
-  head.querySelector('.tag')?.remove();
-  if (tag) head.append(h('span', { class: `tag ${tag.kind}`, title: tag.title ?? '' }, tag.text));
 }
 
 // The agent changed questions on the page (the recorder's field_changes: { key, label, after }, `after`
@@ -753,18 +719,20 @@ function setRowHead(item, { icon, value = null, tag = null }) {
 // it is when the change doesn't say which.
 function answeredOnPage(page, changes) {
   if (!changes.length || pageOf(state.tab?.url) !== page || !state.reportFor?.fields) return;
-  for (const item of $('report').querySelectorAll('.row.need')) {
-    const change = changes.findLast((c) => c.key === item.dataset.key);
-    if (change && item.dataset.settled !== 'answered') settleNeed(item, 'answered', null, change.after || null);
+  const list = state.reportFor.list ?? [];
+  for (const item of list.filter((r) => r.type === 'need')) {
+    const change = changes.findLast((c) => c.key === item.key);
+    if (change && item.settled !== 'answered') settleNeed(item, 'answered', null, change.after || null);
   }
-  const rows = [...$('report').querySelectorAll('.row:not(.need)[data-key]')];
+  const rows = list.filter((r) => r.type === 'answer' && r.key);
   for (const row of rows) {
-    const shared = rows.some((r) => r !== row && r.dataset.key === row.dataset.key);
-    const change = changes.findLast((c) => c.key === row.dataset.key && (!shared || c.label === row.dataset.field));
+    const shared = rows.some((r) => r !== row && r.key === row.key);
+    const change = changes.findLast((c) => c.key === row.key && (!shared || c.label === (row.field ?? '')));
     if (!change?.after) continue;
-    row.dataset.value = change.after;
-    row.classList.remove('changed');
-    setRowHead(row, { icon: '✓', value: row.dataset.value, tag: { kind: 'you', text: 'You', title: 'You changed it on the page: no fill puts it back' } });
+    row.value = change.after;
+    row.changed = null;
+    setHead(row, { icon: '✓', value: row.value, tag: { kind: 'you', text: 'You', title: 'You changed it on the page: no fill puts it back' } });
+    drawRow(row);
   }
 }
 
@@ -791,12 +759,13 @@ async function lookRight(tabId, page, carrier, button = null) {
 // Whether the page still shows the answers the fill put in (pagekit readBack: reads only). A row
 // whose field shows something else now (the carrier's server, or the agent) says what; one whose
 // field isn't on the page now (a closed section) is left as it was. Only for the page in front.
-// `plan`: the fill's plan, so the kit judges each answer as fill does (readBack `agrees`).
-async function checkAnswers(body, tabId, page, carrier, plan = []) {
+// `list`: the report's rows; `plan`: the fill's plan, so the kit judges each answer as fill does
+// (readBack `agrees`).
+async function checkAnswers(list, tabId, page, carrier, plan = []) {
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
-  const rows = [...body.querySelectorAll('.row:not(.need)[data-key]')];
+  const rows = list.filter((r) => r.type === 'answer' && r.key);
   if (!rows.length) return;
-  const items = rows.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null, stepId: row.dataset.step || null }));
+  const items = rows.map((r) => ({ key: r.key, label: r.field || null, stepId: stepOf(r) }));
   const ids = new Set(items.map((x) => x.stepId).filter(Boolean));
   const steps = (plan ?? []).filter((s) => ids.has(String(s.id)));
   let frames;
@@ -807,18 +776,16 @@ async function checkAnswers(body, tabId, page, carrier, plan = []) {
   const now = new Map(frames.flatMap((f) => Array.isArray(f.result) ? f.result : []).map((x) => [`${x.key}|${x.label ?? ''}`, x]));
   // Spacing, case and punctuation aside: a phone number the page formats on blur is the same.
   const loose = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-  for (const row of rows) {
-    const x = now.get(`${row.dataset.key}|${row.dataset.field}`) ?? now.get(`${row.dataset.key}|`);
+  for (const r of rows) {
+    const x = now.get(`${r.key}|${r.field ?? ''}`) ?? now.get(`${r.key}|`);
     if (!x) continue;
     // The kit's word first (an address the page rewrote in its own format is the same answer);
     // without it, the text. An unticked box we left unticked reads back 'unchecked' (and empty).
-    const differs = x.agrees === true ? false : loose(x.shown) !== loose(row.dataset.value);
-    row.classList.toggle('changed', differs);
-    const note = row.querySelector('.kv-now');
-    note.hidden = !differs;
-    note.textContent = differs ? `Now on the page: ${x.shown || 'empty'}` : '';
+    const differs = x.agrees === true ? false : loose(x.shown) !== loose(r.value);
+    r.changed = differs ? `Now on the page: ${x.shown || 'empty'}` : null;
+    drawRow(r);
   }
-  const changed = rows.filter((row) => row.classList.contains('changed')).length;
+  const changed = rows.filter((r) => r.changed).length;
   if (changed) announce(`${changed} answer${changed === 1 ? '' : 's'} on the page changed since the fill.`);
 }
 
@@ -826,7 +793,7 @@ async function checkAnswers(body, tabId, page, carrier, plan = []) {
 // what is in (the Filled filter, step 3) and when the fill holds Continue for their check.
 function refreshAnswers() {
   const entry = state.reportFor;
-  if (entry?.fields && entry.tabId === state.tab?.id) checkAnswers($('report'), entry.tabId, entry.page, entry.carrier ?? state.tab.carrier, entry.plan);
+  if (entry?.fields && entry.tabId === state.tab?.id) checkAnswers(entry.list ?? [], entry.tabId, entry.page, entry.carrier ?? state.tab.carrier, entry.plan);
 }
 
 // After a fill: the page's answers in one list, in the order of their fields on the page. Each
@@ -937,6 +904,9 @@ function renderReport(frames, ctx = {}) {
     ...listed.filter((e) => !onPage(e.at) && e.x), ...listed.filter((e) => !onPage(e.at) && e.row)];
   const first = ordered.find((e) => e.x);
   const rctx = { tabId, page, carrier };
+  // Each row as data (report-rows.js), the first item open: what is left, the filters and the dock
+  // read them; the panel changes them and drawRow draws them.
+  entry.list = ordered.map((e) => (e.x ? needRecord(e.x, carrier, page, e === first) : answerRecord(e.row)));
   const halted = frames.find((f) => f.halted);
   const nodes = [
     // An agent page's note: a yellow box on a page that needs more attention (`warnPages`:
@@ -960,7 +930,7 @@ function renderReport(frames, ctx = {}) {
     h('div', { class: 'needs-head', hidden: true }),
     // Buttons waiting on others (Progressive's bill plan before Recalculate) aren't listed: the fill
     // clicks them in turn, and a question one waits on is a row. The fill log keeps them (blockerList).
-    ordered.length ? h('div', { class: 'rows' }, ordered.map((e) => (e.x ? needRow(e.x, rctx, e === first) : answerRow(e.row, rctx)))) : null,
+    entry.list.length ? h('div', { class: 'rows' }, entry.list.map((rec) => (rec.type === 'need' ? needRow(rec, rctx) : answerRow(rec, rctx)))) : null,
   ].filter((node) => node != null && node !== false);
   if (key === currentReportKey()) state.filter = 'all';
   putReport(entry, nodes);
@@ -970,159 +940,228 @@ function renderReport(frames, ctx = {}) {
   if (held) refreshAnswers();
 }
 
+// The node drawn for each row (answerRow, needRow) with what it shows now, so drawRow draws again
+// only what changed: `ctx` the report's tab, page and carrier, `tag` an answer's source tag.
+const rowNodes = new WeakMap();
+
+// A source tag on a row's head.
+function tagNode(tag) { return h('span', { class: `tag ${tag.kind}`, title: tag.title ?? '' }, tag.text); }
+
 // One answer in the page's list (renderReport): what went in and where it came from, opening to its
-// source with Change answer and See in intake. `row.kind`: 'clicked', 'page' (left as the page had
-// it) or 'yours' (the agent's own answer, not filled); otherwise an answer, by its source.
-function answerRow(row, { tabId, page, carrier }) {
-  const kind = row.kind ?? (row.edited ? 'edited' : row.standard ? 'standard' : row.from ? 'derived' : 'intake');
+// source with Change answer and See in intake. `rec`: its row (answerRecord): `kind` 'clicked',
+// 'page' (left as the page had it) or 'yours' (the agent's own answer, not filled); otherwise an
+// answer, by its source.
+function answerRow(rec, { tabId, page, carrier }) {
+  const { kind } = rec;
   // Where it is on the intake PDF: the field an answer came from, or those a derived one was worked
   // out from. A TNI standard is no intake fact; no link while the PDF isn't kept.
   const pdfHere = pdfAvailable();
-  const paths = [].concat(row.from ?? row.path ?? []);
+  const paths = [].concat(rec.from ?? rec.path ?? []);
   const place = ['intake', 'derived', 'edited'].includes(kind) && pdfHere && state.intake && paths.length ? sourcePlace(paths, state.intake) : null;
   const tag = {
-    intake: { cls: 'intake', text: `Intake${place ? pdfPageSaid(place.page, ' p.') : ''}`, title: 'From the intake' },
-    derived: { cls: 'derived', text: 'Worked out', title: 'Worked out from intake answers' },
-    standard: { cls: 'standard', text: 'TNI standard', title: 'A TNI standard answer, not a fact from the intake' },
-    edited: { cls: 'you', text: 'Your edit', title: 'From your correction in the panel' },
-    page: row.standard ? { cls: 'standard', text: 'TNI standard', title: 'The page already had the TNI standard answer' } : { cls: 'page', text: 'On the page', title: 'The page already had it' },
-    clicked: { cls: 'clicked', text: 'Clicked', title: 'Clicked for you' },
-    yours: { cls: 'you', text: 'You', title: 'Your answer: no fill changes it' },
-    changed: { cls: 'page', text: 'Changed on the page', title: 'Not the fill’s answer: the page shows this now' },
+    intake: { kind: 'intake', text: `Intake${place ? pdfPageSaid(place.page, ' p.') : ''}`, title: 'From the intake' },
+    derived: { kind: 'derived', text: 'Worked out', title: 'Worked out from intake answers' },
+    standard: { kind: 'standard', text: 'TNI standard', title: 'A TNI standard answer, not a fact from the intake' },
+    edited: { kind: 'you', text: 'Your edit', title: 'From your correction in the panel' },
+    page: rec.standard ? { kind: 'standard', text: 'TNI standard', title: 'The page already had the TNI standard answer' } : { kind: 'page', text: 'On the page', title: 'The page already had it' },
+    clicked: { kind: 'clicked', text: 'Clicked', title: 'Clicked for you' },
+    yours: { kind: 'you', text: 'You', title: 'Your answer: no fill changes it' },
+    changed: { kind: 'page', text: 'Changed on the page', title: 'Not the fill’s answer: the page shows this now' },
   }[kind];
   const fmt = (v) => (v === true ? 'Yes' : v === false ? 'No' : v == null || v === '' ? 'not on the intake' : String(v));
   const said = (path) => `${fieldInfo(path).label}: ${fmt(get(state.intake?.record ?? {}, path))}`;
   const [title, quote] = {
-    intake: [`Intake${place ? pdfPageSaid(place.page, ', page ') : ''}`, row.path ? said(row.path) : `Answer: ${row.value}`],
-    derived: ['Worked out from the intake', (row.from ?? []).map(said).join(' · ')],
-    standard: ['TNI standard answer', `Answer: ${row.value}`],
-    edited: ['Your correction in the panel', row.path ? said(row.path) : `Answer: ${row.value}`],
+    intake: [`Intake${place ? pdfPageSaid(place.page, ', page ') : ''}`, rec.path ? said(rec.path) : `Answer: ${rec.value}`],
+    derived: ['Worked out from the intake', (rec.from ?? []).map(said).join(' · ')],
+    standard: ['TNI standard answer', `Answer: ${rec.value}`],
+    edited: ['Your correction in the panel', rec.path ? said(rec.path) : `Answer: ${rec.value}`],
     page: ['Already on the page', 'The fill left it as the page had it.'],
-    clicked: ['Clicked for you', `“${row.value}”`],
+    clicked: ['Clicked for you', `“${rec.value}”`],
     yours: ['Your answer', 'You changed it on the page, so no fill puts it back.'],
     changed: ['Changed on the page', 'The page shows this now, not the answer the fill put in. Check it.'],
   }[kind];
-  const item = h('div', { class: `row${{ page: ' page', changed: ' page', clicked: ' clicked', yours: ' yours' }[kind] ?? ''}${row.fresh ? ' fresh' : ''}`,
-    dataset: row.key ? { key: row.key, field: row.field ?? '', value: row.value, step: row.stepId ?? '', offpage: row.offPage ? '1' : '' } : {} },
-  h('button', { type: 'button', class: 'row-head', 'aria-expanded': 'false', onclick: () => toggleRow(item) },
-    h('span', { class: 'row-icon', 'aria-hidden': 'true' }, kind === 'page' || kind === 'yours' || kind === 'changed' ? '•' : '✓'),
-    h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, row.label), h('span', { class: 'row-value' }, row.value),
-      row.key ? h('span', { class: 'kv-now', hidden: true }) : null),
-    // From the intake is the usual source: no tag to read past (said to screen readers), so the
-    // others stand out.
-    kind === 'intake' ? h('span', { class: 'sr-only' }, tag.title) : h('span', { class: `tag ${tag.cls}`, title: tag.title }, tag.text)),
-  h('div', { class: 'row-body', hidden: true },
+  // From the intake is the usual source: no tag to read past (said to screen readers), so the
+  // others stand out.
+  const head = rowHead(rec, kind === 'intake' ? null : tag);
+  const item = h('div', { class: rowClass(rec),
+    dataset: rec.key ? { key: rec.key, field: rec.field ?? '', value: rec.value, step: rec.stepId ?? '', offpage: rec.offPage ? '1' : '' } : {} },
+  h('button', { type: 'button', class: 'row-head', 'aria-expanded': String(rec.open), onclick: () => toggleRow(rec) },
+    h('span', { class: 'row-icon', 'aria-hidden': 'true' }, head.icon),
+    h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, rec.label), h('span', { class: 'row-value' }, head.value),
+      rec.key ? h('span', { class: 'kv-now', hidden: !rec.changed }, rec.changed) : null),
+    kind === 'intake' ? h('span', { class: 'sr-only' }, tag.title) : null,
+    head.tag ? tagNode(head.tag) : null),
+  h('div', { class: 'row-body', hidden: !rec.open },
     h('div', { class: 'src-box' }, h('span', { class: 'src-title' }, title), quote ? h('span', { class: 'src-quote' }, quote) : null),
     h('div', { class: 'change-slot' }),
-    row.answer && row.key || place ? h('div', { class: 'row-actions' },
-      row.answer && row.key ? h('button', { type: 'button', class: 'ghost change', 'aria-label': `Change answer: ${row.label}`, onclick: () => changeAnswer(item, row, { tabId, page, carrier }) }, 'Change answer') : null,
+    rec.answer && rec.key || place ? h('div', { class: 'row-actions' },
+      rec.answer && rec.key ? h('button', { type: 'button', class: 'ghost change', 'aria-label': `Change answer: ${rec.label}`, onclick: () => changeAnswer(rec, { tabId, page, carrier }) }, 'Change answer') : null,
       place ? h('button', { type: 'button', class: 'ghost src',
         title: kind === 'edited' ? 'Show what the intake said before your edit' : kind === 'derived' ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake',
-        onclick: () => openPdf({ path: row.path, from: row.from, label: row.label, kind: 'filled' }) }, 'See in intake') : null) : null,
-    row.key ? h('span', { class: 'need-where', hidden: true }) : null,
+        onclick: () => openPdf({ path: rec.path, from: rec.from, label: rec.label, kind: 'filled' }) }, 'See in intake') : null) : null,
+    rec.key ? h('span', { class: 'need-where', hidden: true }) : null,
     h('p', { class: 'need-note', hidden: true })));
+  rowNodes.set(rec, { node: item, ctx: { tabId, page, carrier }, tag: kind === 'intake' ? null : tag, shown: { tag: head.tag, note: null, change: null } });
   return item;
 }
 
+// What an item's row says the page shows now, and the options of a failed choice the panel can't
+// put in.
+function nowSaid(current) { return current ? ` On the page now: ${choiceSaid(current)}.` : ''; }
+function optionsSaid(list) { return list?.length ? `Options: ${list.slice(0, 25).join(' · ')}${list.length > 25 ? ' · …' : ''}` : ''; }
+
 // One item left for the agent (renderReport): why, and its choices where the panel may put the
 // agent's pick in (agentPickable; the AI's suggestion joins them, renderAi), with Show on page and
-// Mark done. `open`: the first one starts open.
-function needRow(x, { tabId, page, carrier }, open = false) {
-  const label = x.label || x.name;
-  const pickable = agentPickable(x, carrier, page);
-  const options = [...new Set(choicesOf(x.controlKind, x.options))];
-  const kind = x.mark === 'failed' ? 'failed' : pickable ? 'need' : 'yours';
-  const icon = { failed: '!', need: '?', yours: '•' }[kind];
-  const wait = { failed: 'Couldn’t fill', need: 'Needs your answer', yours: 'Left for you' }[kind];
-  // What the page shows: only as the page has it (the fill's report as the fill ended, or the panel's
-  // own reading since: checkItems), never for a question off screen (`offPage`).
-  const now = x.controlKind !== 'text' && x.current && !x.offPage ? x.current : null;
-  const nowSaid = (current) => (current ? ` On the page now: ${choiceSaid(current)}.` : '');
-  const pageNow = h('span', { class: 'page-now' }, nowSaid(now));
-  const onPick = (choice, button) => (item.aiAccept && choice === item.dataset.aiPick
-    ? item.aiAccept(button) : agentAnswer(item, x, choice, { tabId, page, carrier }, button));
-  let shownChoices = options;
-  let choices = pickable ? choiceList(options, { current: now, onPick })
+// Mark done. `rec`: its row (needRecord); the first one starts open.
+function needRow(rec, { tabId, page, carrier }) {
+  const { x, label } = rec;
+  const ctx = { tabId, page, carrier };
+  const head = rowHead(rec);
+  // A pick on the AI's own choice accepts its suggestion (applyAi).
+  const onPick = (choice, button) => (rec.aiAccept && choice === rec.aiPick ? rec.aiAccept(button) : agentAnswer(rec, x, choice, ctx, button));
+  const choices = rec.pickable ? choiceList(rec.options, { current: rec.pressed, aiPick: rec.aiPick, onPick })
     : h('p', { class: 'row-say' }, x.key || x.action ? 'Answer it on the page, then mark it done.' : 'Do it on the rater page.');
   // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
   const show = x.key ? h('button', { class: 'ghost show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
-    'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
+    'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(rec, x, tabId, page, carrier) }, 'Show on page') : null;
   // A helper's reminder has no field. One the carrier marks `markable` (Progressive's Rates on an NTL
   // quote with cargo) carries the helper's own id (`action`), and its Mark done marks the helper done
   // (markActionDone); the others (NTL still on the quote, a vehicle tile) are settled on the page.
   const actionId = x.key ? null : x.action ?? null;
   const done = x.key ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page',
-    'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page, x) }, 'Mark done')
+    'aria-label': `Mark done: ${label}`, onclick: () => markDone(rec, x.key, tabId, page, x) }, 'Mark done')
     : actionId ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You did it on the page: the panel stops waiting on it for this quote',
-      'aria-label': `Mark done: ${label}`, onclick: () => markActionDone(item, actionId, tabId, page, x) }, 'Mark done') : null;
-  // A failed choice the panel can't put in: the options the page offers, as for `now`.
-  const optionsSaid = (list) => (list?.length ? `Options: ${list.slice(0, 25).join(' · ')}${list.length > 25 ? ' · …' : ''}` : '');
-  const offered = !pickable && x.mark === 'failed' ? h('div', { class: 'options', hidden: !x.options?.length }, optionsSaid(x.options)) : null;
+      'aria-label': `Mark done: ${label}`, onclick: () => markActionDone(rec, actionId, tabId, page, x) }, 'Mark done') : null;
   // `field` and `offpage`: the label the kit tells rows of one question apart by, and an item the
   // fill knew is off screen for now (checkItems keeps it).
-  const item = h('div', { class: `row need${kind === 'need' ? '' : ` ${kind}`}${open ? ' open' : ''}`, tabindex: '-1',
-    dataset: { need: `${x.key}|${x.label}`, key: x.key ?? '', field: x.label ?? '', offpage: x.offPage ? '1' : '', icon, wait, finish: finishLeftOk(carrier, x) ? '1' : '' } },
-    h('button', { type: 'button', class: 'row-head', 'aria-expanded': String(open), onclick: () => toggleRow(item) },
-      h('span', { class: 'row-icon', 'aria-hidden': 'true' }, icon),
-      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, label), h('span', { class: 'row-value' }, wait))),
-    h('div', { class: 'row-body', hidden: !open },
-      h('p', { class: 'why' }, x.why, pageNow),
+  const item = h('div', { class: rowClass(rec), tabindex: '-1',
+    dataset: { need: needId(rec), key: rec.key, field: rec.field, offpage: rec.offPage ? '1' : '', icon: rec.icon, wait: rec.wait, finish: rec.finish ? '1' : '' } },
+    h('button', { type: 'button', class: 'row-head', 'aria-expanded': String(rec.open), onclick: () => toggleRow(rec) },
+      h('span', { class: 'row-icon', 'aria-hidden': 'true' }, head.icon),
+      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, label), h('span', { class: 'row-value' }, head.value))),
+    h('div', { class: 'row-body', hidden: !rec.open },
+      h('p', { class: 'why' }, x.why, h('span', { class: 'page-now' }, nowSaid(rec.now))),
       h('div', { class: 'ai-slot' }),
       choices,
-      offered,
+      rec.offered ? h('div', { class: 'options', hidden: !rec.offered.length }, optionsSaid(rec.offered)) : null,
       h('div', { class: 'row-actions' }, show, done),
       show ? h('span', { class: 'need-where', hidden: true }) : null,
       // Empty while the item is open: what settled it, once it is (settleNeed), or why the page
       // didn't take a pick (agentAnswer).
       h('p', { class: 'need-note', hidden: true })));
-  // What the page shows and offers for it now (checkItems: pagekit present), or nothing when its
-  // field isn't on screen (`live` null): what it said before is never left as the page's.
-  item.showLive = (live) => {
-    const current = live && !live.shared && x.controlKind !== 'text' ? live.current ?? null : null;
-    pageNow.textContent = nowSaid(current);
-    if (!live) return;
-    if (offered) {
-      offered.textContent = optionsSaid(live.options);
-      offered.hidden = !live.options?.length;
-    }
-    const next = pickable ? [...new Set(choicesOf(x.controlKind, live.options))] : [];
-    if (!next.length) return;
-    // The same choices: only which one the page shows (an AI pick's mark on them stays).
-    if (next.length === shownChoices.length && next.every((o, i) => o === shownChoices[i])) {
-      for (const b of choices.querySelectorAll('.opt-btn')) b.setAttribute('aria-pressed', String(b.dataset.choice === current));
-      const select = choices.querySelector('select');
-      if (select) select.value = current != null && next.includes(current) ? current : '';
-      return;
-    }
-    x.options = live.options;
-    shownChoices = next;
-    const list = choiceList(next, { current, onPick });
-    choices.replaceWith(list);
-    choices = list;
-  };
+  rowNodes.set(rec, { node: item, ctx, tag: null, shown: { tag: head.tag, note: null, options: rec.options, pressed: rec.pressed, aiPick: rec.aiPick, onPick } });
   return item;
 }
 
+// Draws a row again from its record, in place: its classes, head, note and what Show on page said;
+// an item's page answer, options and choices (the pressed one, the AI's pick); an answer's word on
+// what the page shows now and Change answer's choices. A part that didn't change isn't drawn again,
+// so the button the agent is on keeps its focus. The AI's slot is the AI's (renderAi).
+function drawRow(rec) {
+  const drawn = rowNodes.get(rec);
+  if (!drawn) return;
+  const { node: item, ctx, shown } = drawn;
+  item.className = rowClass(rec);
+  item.hidden = !!rec.gone;
+  const head = rowHead(rec, drawn.tag);
+  const top = item.querySelector('.row-head');
+  top.setAttribute('aria-expanded', String(!!rec.open));
+  top.querySelector('.row-icon').textContent = head.icon;
+  top.querySelector('.row-value').textContent = head.value;
+  if (head.tag !== shown.tag) {
+    top.querySelector('.tag')?.remove();
+    if (head.tag) top.append(tagNode(head.tag));
+    shown.tag = head.tag;
+  }
+  item.querySelector('.row-body').hidden = !rec.open;
+  if (rec.note !== shown.note) {
+    const note = item.querySelector('.need-note');
+    note.hidden = !rec.note;
+    note.classList.toggle('bad', !!rec.note?.bad);
+    note.replaceChildren(...(rec.note ? [rec.note.text, rec.note.undo ? h('button', { type: 'button', class: 'link small', onclick: rec.note.undo }, 'Undo') : null].filter(Boolean) : []));
+    shown.note = rec.note;
+  }
+  const where = item.querySelector('.need-where');
+  if (where) {
+    where.hidden = !rec.where;
+    where.textContent = rec.where ?? '';
+  }
+  if (rec.type === 'answer') {
+    const now = item.querySelector('.kv-now');
+    if (now) {
+      now.hidden = !rec.changed;
+      now.textContent = rec.changed ?? '';
+    }
+    if (rec.change !== shown.change) {
+      const { change } = rec;
+      item.querySelector('.change-slot').replaceChildren(...(change ? [h('p', { class: 'why' }, 'Pick the answer to put in instead:'),
+        choiceList(change.options, { current: change.current, onPick: (choice, button) => agentAnswer(rec, change.x, choice, ctx, button) })] : []));
+      shown.change = change;
+    }
+    return;
+  }
+  // Settled by the agent (answered, put in, marked done): nothing left to mark.
+  const done = item.querySelector('.mark-done');
+  if (done) done.hidden = ['answered', 'picked', 'marked'].includes(rec.settled);
+  item.querySelector('.page-now').textContent = nowSaid(rec.now);
+  const offered = item.querySelector('.options');
+  if (offered && rec.offered) {
+    offered.textContent = optionsSaid(rec.offered);
+    offered.hidden = !rec.offered.length;
+  }
+  if (!rec.pickable) return;
+  // Other choices: drawn again. The same: only which one is pressed, and the AI's pick.
+  if (rec.options !== shown.options) {
+    item.querySelector('.opts, .opt-select').replaceWith(choiceList(rec.options, { current: rec.pressed, aiPick: rec.aiPick, onPick: shown.onPick }));
+    Object.assign(shown, { options: rec.options, pressed: rec.pressed, aiPick: rec.aiPick });
+    return;
+  }
+  if (rec.pressed !== shown.pressed) {
+    for (const b of item.querySelectorAll('.opt-btn')) b.setAttribute('aria-pressed', String(b.dataset.choice === rec.pressed));
+    const select = item.querySelector('.opt-select select');
+    if (select) select.value = rec.pressed != null && rec.options.includes(rec.pressed) ? rec.pressed : '';
+    shown.pressed = rec.pressed;
+  }
+  if (rec.aiPick !== shown.aiPick) {
+    for (const b of item.querySelectorAll('.opt-btn')) {
+      const pick = b.dataset.choice === rec.aiPick;
+      b.classList.toggle('ai-pick', pick);
+      b.querySelector('.ai-badge')?.remove();
+      if (pick) b.append(h('span', { class: 'ai-badge' }, 'AI pick'));
+    }
+    for (const o of item.querySelectorAll('.opt-select option')) if (o.value) o.textContent = `${choiceSaid(o.value)}${o.value === rec.aiPick ? ' (AI pick)' : ''}`;
+    shown.aiPick = rec.aiPick;
+  }
+}
+
+// The slot on an item's row where the AI's suggestion goes (renderAi), while the row is drawn.
+function aiSlotOf(rec) { return rowNodes.get(rec)?.node.querySelector('.ai-slot') ?? null; }
+
 // The choices the panel may put in for the agent: buttons, or a list past six; the page's answer now
-// pressed. `onPick(choice, button)`.
-function choiceList(options, { current = null, onPick }) {
+// pressed, and the AI's pick marked. `onPick(choice, button)`.
+function choiceList(options, { current = null, aiPick = null, onPick }) {
   if (options.length <= 6) {
-    return h('div', { class: 'opts', role: 'group', 'aria-label': 'Answers' }, options.map((o) => h('button', { type: 'button', class: 'opt-btn',
-      'aria-pressed': String(o === current), dataset: { choice: o }, onclick: (e) => onPick(o, e.currentTarget) }, h('span', {}, choiceSaid(o)))));
+    return h('div', { class: 'opts', role: 'group', 'aria-label': 'Answers' }, options.map((o) => h('button', { type: 'button', class: o === aiPick ? 'opt-btn ai-pick' : 'opt-btn',
+      'aria-pressed': String(o === current), dataset: { choice: o }, onclick: (e) => onPick(o, e.currentTarget) }, h('span', {}, choiceSaid(o)),
+    o === aiPick ? h('span', { class: 'ai-badge' }, 'AI pick') : null)));
   }
   const select = h('select', { 'aria-label': 'Answer' }, h('option', { value: '' }, 'Choose…'),
-    options.map((o) => h('option', { value: o, selected: o === current }, choiceSaid(o))));
+    options.map((o) => h('option', { value: o, selected: o === current }, `${choiceSaid(o)}${o === aiPick ? ' (AI pick)' : ''}`)));
   return h('div', { class: 'opt-select' }, select,
     h('button', { type: 'button', class: 'ghost', onclick: (e) => { if (select.value) onPick(select.value, e.currentTarget); } }, 'Put it in'));
 }
 
 // Opens a row of the page's list in place (closing the one open before), or closes it.
-function toggleRow(item, open = !item.classList.contains('open')) {
-  if (open) for (const other of item.parentNode?.querySelectorAll(':scope > .row.open') ?? []) if (other !== item) toggleRow(other, false);
-  item.classList.toggle('open', open);
-  item.querySelector('.row-head')?.setAttribute('aria-expanded', String(open));
-  const body = item.querySelector('.row-body');
-  if (body) body.hidden = !open;
+function toggleRow(rec, open = !rec.open) {
+  if (open) {
+    for (const other of state.reportFor?.list ?? []) {
+      if (other === rec || !other.open) continue;
+      other.open = false;
+      drawRow(other);
+    }
+  }
+  rec.open = open;
+  drawRow(rec);
   renderDock();
 }
 
@@ -1136,40 +1175,39 @@ function showNextNeed() {
     showScreen();
     renderSteps();
   }
-  const open = [...$('report').querySelectorAll('.row.need:not(.resolved):not(.gone)')];
+  const list = state.reportFor?.list ?? [];
+  const open = list.filter((r) => r.type === 'need' && !r.settled && !r.gone);
   if (!open.length) return;
-  const now = $('report').querySelector('.row.open');
-  const next = (now && open.find((n) => n !== now && (now.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING))) || open.find((n) => n !== now) || open[0];
+  const now = list.find((r) => r.open);
+  const next = (now && open.find((n) => n !== now && list.indexOf(n) > list.indexOf(now))) || open.find((n) => n !== now) || open[0];
   toggleRow(next, true);
-  next.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
-  next.querySelector('.row-head')?.focus({ preventScroll: true });
+  const node = rowNodes.get(next)?.node;
+  node?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
+  node?.querySelector('.row-head')?.focus({ preventScroll: true });
 }
 
 // Change answer on a row that went in: the choices the page offers now, put in for the agent from
 // the row (agentAnswer); a typed answer, or one the panel may not answer, is shown on the page for
 // the agent to change there (showOnPage), where their answer then stays theirs.
-async function changeAnswer(item, row, { tabId, page, carrier }) {
+async function changeAnswer(rec, { tabId, page, carrier }) {
   if (state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
-  const slot = item.querySelector('.change-slot');
-  if (slot.childElementCount) { slot.replaceChildren(); return; }
+  if (rec.change) { rec.change = null; drawRow(rec); return; }
   let frames = null;
   try { frames = await runKit(tabId, carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); } catch { /* the page is navigating */ }
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
-  const matches = aiSnapshotFieldMatches(frames, { key: row.key, label: row.field });
+  const matches = aiSnapshotFieldMatches(frames, { key: rec.key, label: rec.field });
   const field = matches.length === 1 ? matches[0].field : null;
-  const x = field ? { key: field.key, label: field.label, section: field.section, controlKind: field.kind, q: row.q ?? null, current: field.current,
+  const x = field ? { key: field.key, label: field.label, section: field.section, controlKind: field.kind, q: rec.q ?? null, current: field.current,
     options: choicesOf(field.kind, field.options) } : null;
   if (!x || !agentPickable(x, carrier, page)) {
-    const note = item.querySelector('.need-note');
-    note.hidden = false;
-    note.classList.remove('bad');
-    note.textContent = 'Change it on the rater page. Your answer there stays: no fill puts this one back.';
-    showOnPage(item, { key: row.key, label: row.field }, tabId, page, carrier);
+    rec.note = { text: 'Change it on the rater page. Your answer there stays: no fill puts this one back.', bad: false, undo: null };
+    drawRow(rec);
+    showOnPage(rec, { key: rec.key, label: rec.field }, tabId, page, carrier);
     return;
   }
-  slot.replaceChildren(h('p', { class: 'why' }, 'Pick the answer to put in instead:'),
-    choiceList(x.options, { current: x.current, onPick: (choice, button) => agentAnswer(item, x, choice, { tabId, page, carrier }, button) }));
-  slot.querySelector('button, select')?.focus();
+  rec.change = { x, options: x.options, current: x.current };
+  drawRow(rec);
+  rowNodes.get(rec)?.node.querySelector('.change-slot')?.querySelector('button, select')?.focus();
 }
 
 // The agent's pick for a question, from its row (an item left for them, or Change answer): put in
@@ -1177,10 +1215,9 @@ async function changeAnswer(item, row, { tabId, page, carrier }) {
 // only while the page still shows the question and the choice as the row read them, never on a
 // stop step. The field then joins the agent's on this page, as their own edit there does: no fill
 // changes it and Continue no longer waits on it. Logged as the agent's field change.
-async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = null) {
+async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = null) {
   if (state.filling || state.closing || !state.intake || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || !agentPickable(x, carrier, page)) return;
-  const note = item.querySelector('.need-note');
-  const say = (text) => { note.hidden = false; note.classList.add('bad'); note.replaceChildren(text); };
+  const say = (text) => { rec.note = { text, bad: true, undo: null }; drawRow(rec); };
   const intake = state.intake;
   const revision = state.intakeRevision;
   const scope = usage.currentSession()?.intakeId;
@@ -1253,7 +1290,7 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
   if (!current()) return;
   // The AI's word on it, if any: a suggestion the agent answered otherwise is dismissed (logged);
   // a pick it put in that waits for approval is the agent's answer now, as after an edit there.
-  const sugg = item.aiSuggestion;
+  const sugg = rec.ai;
   if (sugg && [...state.aiCache.values()].includes(sugg)) {
     if (sugg.done === 'auto' && !sugg.approved && !sugg.manual) {
       sugg.manual = true;
@@ -1264,23 +1301,21 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
       if (!carrier.practice) usage.log(aiDecisionEvent(sugg, { carrier, page }, 'dismissed'));
     }
   }
-  item.querySelector('.ai-slot')?.replaceChildren();
-  for (const b of item.querySelectorAll('.opt-btn')) b.setAttribute('aria-pressed', String(b.dataset.choice === choice));
+  aiSlotOf(rec)?.replaceChildren();
+  if (rec.type === 'need') rec.pressed = choice;
   // The question's other row too: a filled answer with a check shows as an answer and as a check.
+  // Rows of the report shown only (a report kept for another page isn't changed).
   const label = x.label ?? field.label ?? '';
-  const same = [...(item.closest?.('#report')?.querySelectorAll('.row[data-key]') ?? [])]
-    .filter((r) => r.dataset.key === x.key && (r.dataset.need ?? `|${r.dataset.field ?? ''}`).endsWith(`|${label}`));
-  for (const row of new Set([item, ...same])) {
-    if (row.classList.contains('need')) { settleNeed(row, 'picked', null, choiceSaid(shown)); continue; }
-    row.dataset.value = shown;
-    row.classList.remove('changed');
-    setRowHead(row, { icon: '✓', value: choiceSaid(shown), tag: { kind: 'you', text: 'You', title: 'Your answer, put in from the panel' } });
-    row.querySelector('.change-slot')?.replaceChildren();
-    const n = row.querySelector('.need-note');
-    if (!n) continue;
-    n.hidden = false;
-    n.classList.remove('bad');
-    n.replaceChildren('✓ Put in for you. No fill changes it now.');
+  const list = state.reportFor?.list ?? [];
+  const same = list.includes(rec) ? list.filter((r) => r.key === x.key && (r.type === 'need' ? needId(r) : `|${r.field ?? ''}`).endsWith(`|${label}`)) : [];
+  for (const row of new Set([rec, ...same])) {
+    if (row.type === 'need') { settleNeed(row, 'picked', null, choiceSaid(shown)); continue; }
+    row.value = shown;
+    row.changed = null;
+    setHead(row, { icon: '✓', value: choiceSaid(shown), tag: { kind: 'you', text: 'You', title: 'Your answer, put in from the panel' } });
+    row.change = null;
+    row.note = { text: '✓ Put in for you. No fill changes it now.', bad: false, undo: null };
+    drawRow(row);
   }
   // Questions the answer revealed are filled as after an edit on the page.
   scheduleAutoFill(page);
@@ -1395,4 +1430,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, answerRow, answeredOnPage, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, setRowHead, showNextNeed, unitArrival, worldFor };
+export { afterFill, aiSlotOf, answerRow, answeredOnPage, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, needRow, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };
