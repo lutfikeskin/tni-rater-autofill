@@ -6,6 +6,7 @@ import * as usage from '../usage-log.js';
 import { migrateStorage } from '../../src/storage-version.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../../src/ai/luna.js';
 import { inExtension } from './env.js';
+import { storeState } from './state-store.js';
 import { firstUnits } from './intake.js';
 import { pageOf } from './usage.js';
 import { liveFrames, liveItems, refreshAnswers, renderReport, runKit, worldFor } from './fill.js';
@@ -247,7 +248,9 @@ let aiPersistQueue = Promise.resolve();
 const aiRetiredSignatures = new Set();
 
 const $ = (id) => document.getElementById(id);
-const state = {
+// What the panel knows and shows, kept in the panel's store (state-store.js): read and assigned as
+// a plain object here, and subscribed to by the React views.
+const state = storeState({
   intake: null, // { record, warnings, stats, fileName, done: number[] }
   // The developer recording under way (startRecording): { store, tabId, carrier, redact, started, timer, stopping }.
   recording: null,
@@ -389,7 +392,7 @@ const state = {
   // panel is giving way to a newer one (giveWay).
   browserWindow: null,
   closing: false,
-};
+});
 
 // A fill starting and ending, noted for the developer recording: its events count as during a fill
 // by their own time, not by when their batch reached the panel (a fill's last click, its Continue,
