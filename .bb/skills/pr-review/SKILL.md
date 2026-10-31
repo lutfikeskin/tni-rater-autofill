@@ -81,10 +81,10 @@ Do step 1 of [ship-pr](../../../.claude/skills/ship-pr/SKILL.md) ("Review the di
 Choose them from the table in [Testing](../../../docs/testing.md) ("Choose checks for the change"), row by row for the changed files; that table is the source of truth. A changed test file also runs itself; `types.js` or a file with `// @ts-check` adds `npm run typecheck`; documentation only gets that row's checks and `git diff --check`.
 
 1. A fast signal first: oxlint on the changed JavaScript files (`npm run lint -- <changed .js and .mjs files>`, with the project's `.oxlintrc.json`), then the focused test files (`node --test test/<a>.test.mjs test/<b>.test.mjs`).
-2. For any code change, `npm test`; the PR's GitHub Checks run the rest of `npm run ci` (lint, type check, package, the mocks and replays) on its head: read them with `gh pr checks <n>`.
+2. For any code change, `npm test`; the PR's GitHub Checks run the rest (lint, type check, package, the mocks and replays) on its head: read them with `gh pr checks <n>`.
 3. The harnesses the matched rows name (`npm run mock:geico`, `npm run mock:amwins`, `npm run e2e -- --fixtures`, `npm run mock:luna`, `npm run e2e:extension` with `npm run replay` serving port 8792 in a bb terminal).
 
-The full `npm run ci` isn't needed here: GitHub's Checks are the gate. Run it, or one job's command, only to reproduce a failing job.
+No local CI run is needed here: GitHub's Checks are the gate. Run one job's command only to reproduce a failing job.
 
 Record each command, its result and its time. A check that can't run here (no Playwright Chromium, no captures or intake PDFs) is reported as not run, with the reason, never as passed. The PR's GitHub check status is evidence only for a run that actually happened.
 

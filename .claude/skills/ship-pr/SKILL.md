@@ -60,7 +60,7 @@ Follow `docs/corrections.md` and the document for the layer (the table in `CLAUD
 npm test                    # the unit tests, plus the focused checks docs/testing.md names for what changed
 ```
 
-The full set (lint, type check, unit tests, package, store ZIP, packaged E2E, AmWINS, GEICO, Progressive replays, Luna) runs on GitHub as the PR's Checks after the push (step 5): that is the gate, so a local `npm run ci` isn't needed. Use it only to reproduce a failing job. Add the extra comparisons `docs/testing.md` and apply-review-fixes step 3 list for the layers touched: the E2E baseline report, the benchmark, TNI's answer key. A check that already fails on the base branch is reported as such, with its output, and not fixed silently.
+The full set (lint, type check, unit tests, package, store ZIP, packaged E2E, AmWINS, GEICO, Progressive replays, Luna) runs on GitHub as the PR's Checks after the push (step 5): that is the gate, so no local CI run is needed. To reproduce a failing job, run that job's own command. Add the extra comparisons `docs/testing.md` and apply-review-fixes step 3 list for the layers touched: the E2E baseline report, the benchmark, TNI's answer key. A check that already fails on the base branch is reported as such, with its output, and not fixed silently.
 
 A check that didn't run (Playwright missing, port 8792 taken) is a failure, not a pass.
 
@@ -72,7 +72,7 @@ git fetch origin && git rev-parse HEAD origin/<branch>   # both the same: the pu
 gh pr checks <n> --watch                              # every job passed on that head
 ```
 
-Never push with `--no-verify` unless the maintainer said so; if you did, say so in the report. The Checks run every step of `npm run ci` on Ubuntu; a failed job is fixed and pushed again, reproduced locally with `npm run ci` or the job's own command when its log isn't enough. Don't dispatch `windows-smoke.yml` unless asked. If Actions didn't run or failed for runner reasons, say so: the PR is not ready until its Checks passed.
+Never push with `--no-verify` unless the maintainer said so; if you did, say so in the report. The Checks run every check on Ubuntu; a failed job is fixed and pushed again, reproduced locally with the job's own command when its log isn't enough. Don't dispatch `windows-smoke.yml` unless asked. If Actions didn't run or failed for runner reasons, say so: the PR is not ready until its Checks passed.
 
 Then post one comment on the PR (`gh pr review <n> --comment --body-file <file>`; `--approve` isn't possible on your own PR): the findings and what was decided for each, the tests added (and that each failed before the fix), the local `npm test` result, the GitHub Checks state (each job, on which head), and what remains unverified. No client data.
 

@@ -28,6 +28,29 @@ export function stampProvenance(text, { channel, commit }) {
   return text.replace(PROVENANCE, `const PROVENANCE = { channel: '${channel}', commit: ${commit ? `'${commit}'` : 'null'} };`);
 }
 
+// The panel is bundled (vite.config.js), so its copy of usage-log.js is stamped as the build reads
+// it. A build that never read the file fails, rather than logging every event as 'source'.
+export function provenancePlugin(stamp) {
+  let stamped = false;
+  return {
+    name: 'tni-provenance',
+    // On the file as written, before Vite's own transforms change its text.
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.replaceAll('\\', '/').endsWith(`/${PROVENANCE_FILE}`)) return null;
+      stamped = true;
+      return { code: stampProvenance(code, stamp), map: null };
+    },
+    buildEnd(error) {
+      if (!error && !stamped) throw new Error(`the panel's build didn't include ${PROVENANCE_FILE}`);
+    },
+  };
+}
+
+// Panel files the build bundles (sidepanel/*.js, .html, .css): left out of the copy, which gets the
+// build's instead. Its sounds and images stay, since the panel names some of them at run time.
+export const bundledPanelFile = (rel) => /^sidepanel\/.*\.(js|html|css)$/.test(rel.replaceAll('\\', '/'));
+
 // The unpacked copy (Load unpacked) gets a fixed extension ID through this public key, so its
 // settings (the agent's OpenAI key among them) survive removing and loading it again, from any
 // folder. Only the public half: Chrome needs nothing else for an unpacked extension. Never in the

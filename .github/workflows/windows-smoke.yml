@@ -1,7 +1,7 @@
 # The browser steps of checks.yml on Windows, in one job, with the store ZIP extracted by Windows
 # itself. By hand only (Actions > Windows browser smoke > Run workflow): checks.yml runs the same
 # steps on Ubuntu for every pull request. The repository is public, so a run costs nothing.
-# `npm run ci` runs the same steps on a local Windows computer. No secrets.
+# No secrets.
 name: Windows browser smoke
 
 on:
@@ -37,6 +37,7 @@ jobs:
           if ($manifest.key) { throw 'The store ZIP must not contain the development key' }
           if ($manifest.version -ne $version) { throw 'Store version does not match source' }
           if (!(Test-Path (Join-Path $destination $manifest.side_panel.default_path))) { throw 'Missing side panel' }
+          if (!(Test-Path (Join-Path $destination 'sidepanel/bundle/sidepanel.js')) -or (Test-Path (Join-Path $destination 'sidepanel/sidepanel.js'))) { throw 'The side panel is not the built one' }
       - name: Packaged extension with the Node replay server
         shell: pwsh
         run: |

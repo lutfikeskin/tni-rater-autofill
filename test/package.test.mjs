@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance } from '../scripts/lib/package.mjs';
+import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile } from '../scripts/lib/package.mjs';
 
 const read = (f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 
@@ -29,6 +29,23 @@ test('usage events name the copy and commit they come from: store, unpacked, or 
   assert.throws(() => stampProvenance(text, { channel: 'beta', commit: null }));
   assert.throws(() => stampProvenance(text, { channel: 'store', commit: "x'; alert(1); '" }));
   assert.throws(() => stampProvenance('no placeholder', { channel: 'store', commit: null }));
+});
+
+// The panel is bundled since 2026-10-31: usage-log.js is stamped as the build reads it, not as a file.
+test('the panel build stamps usage-log.js, and fails if the build never read it', () => {
+  const plugin = provenancePlugin({ channel: 'store', commit: '7a5cdb5244' });
+  assert.equal(plugin.enforce, 'pre', 'before Vite reformats the file');
+  assert.equal(plugin.transform('const x = 1;', 'C:\\repo\\sidepanel\\panel\\core.js'), null, 'other files as they are');
+  const out = plugin.transform(read(PROVENANCE_FILE), 'C:\\repo\\sidepanel\\usage-log.js');
+  assert.ok(out.code.includes("const PROVENANCE = { channel: 'store', commit: '7a5cdb5244' };"), 'Windows paths too');
+  plugin.buildEnd();
+  assert.throws(() => provenancePlugin({ channel: 'store', commit: null }).buildEnd(), /usage-log\.js/);
+  assert.doesNotThrow(() => provenancePlugin({ channel: 'store', commit: null }).buildEnd(new Error('build failed')), 'the build\'s own error is the one reported');
+});
+
+test('the package leaves out the panel files the build bundles, and keeps its sounds and images', () => {
+  for (const f of ['sidepanel/sidepanel.html', 'sidepanel/sidepanel.css', 'sidepanel/usage-log.js', 'sidepanel/panel/core.js', 'sidepanel\\panel\\fill.js']) assert.ok(bundledPanelFile(f), f);
+  for (const f of ['sidepanel/sounds/quote-done.mp3', 'sidepanel/assets/raters/geico.gif', 'sidepanel/logo.png', 'src/content/pagekit.js', 'background.js', 'lib/pdf.min.mjs']) assert.ok(!bundledPanelFile(f), f);
 });
 
 test('the unpacked copy has a fixed extension ID; the store manifest stays without a key', () => {
