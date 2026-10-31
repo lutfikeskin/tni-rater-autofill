@@ -1,6 +1,7 @@
 // Pieces of scripts/package.mjs that are checked by tests.
 
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 // The scripts injected into the carrier page's own JavaScript world stay there across an extension
 // reload or update; each names its build, and one from another build is replaced, not reused.
@@ -27,6 +28,49 @@ export function stampProvenance(text, { channel, commit }) {
   if (commit != null && !/^[0-9a-f]{7,12}(\+dirty)?$/.test(commit)) throw new Error(`not a commit: ${commit}`);
   return text.replace(PROVENANCE, `const PROVENANCE = { channel: '${channel}', commit: ${commit ? `'${commit}'` : 'null'} };`);
 }
+
+// What the extension runs: the files and folders npm run package copies (the panel's built).
+export const PACKAGED = ['manifest.json', 'background.js', 'icons', 'lib', 'sidepanel', 'src'];
+
+// The commit the packaged files come from, +dirty when they, or what builds the panel, have changes
+// git doesn't have; none when git can't say (the package is still built).
+export function packagedCommit(root) {
+  try {
+    const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const sha = git('rev-parse', '--short=10', 'HEAD');
+    return git('status', '--porcelain', '--', ...PACKAGED, 'vite.config.js', 'package.json', 'package-lock.json') ? `${sha}+dirty` : sha;
+  } catch {
+    return null;
+  }
+}
+
+// The panel is bundled (vite.config.js), so its copy of usage-log.js is stamped as the build reads
+// it. A build that never read the file fails, rather than logging every event as 'source'.
+export function provenancePlugin(stamp) {
+  let stamped = false;
+  return {
+    name: 'tni-provenance',
+    // On the file as written, before Vite's own transforms change its text.
+    enforce: 'pre',
+    // A watch build (npm run panel:watch) is rebuilt from files being edited after the commit was
+    // read, so it is never a clean commit (review of #239).
+    buildStart() {
+      if (this.meta.watchMode && stamp.commit && !stamp.commit.endsWith('+dirty')) stamp = { ...stamp, commit: `${stamp.commit}+dirty` };
+    },
+    transform(code, id) {
+      if (!id.replaceAll('\\', '/').endsWith(`/${PROVENANCE_FILE}`)) return null;
+      stamped = true;
+      return { code: stampProvenance(code, stamp), map: null };
+    },
+    buildEnd(error) {
+      if (!error && !stamped) throw new Error(`the panel's build didn't include ${PROVENANCE_FILE}`);
+    },
+  };
+}
+
+// Panel files the build bundles (sidepanel/*.js, .html, .css): left out of the copy, which gets the
+// build's instead. Its sounds and images stay, since the panel names some of them at run time.
+export const bundledPanelFile = (rel) => /^sidepanel\/.*\.(js|html|css)$/.test(rel.replaceAll('\\', '/'));
 
 // The unpacked copy (Load unpacked) gets a fixed extension ID through this public key, so its
 // settings (the agent's OpenAI key among them) survive removing and loading it again, from any

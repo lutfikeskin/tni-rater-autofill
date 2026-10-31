@@ -7,8 +7,9 @@
   "description": "Chrome extension that fills Progressive and GEICO rater pages from a TNI quote application PDF",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
-    "prepare": "git config core.hooksPath .githooks",
-    "test": "node --test \"test/*.test.mjs\"",
+    "test": "node --test \"test/*.test.mjs\" && vitest run --passWithNoTests",
+    "panel": "vite build",
+    "panel:watch": "vite build --watch",
     "lint": "oxlint",
     "typecheck": "tsc -p .",
     "server": "node server/index.mjs",
@@ -31,7 +32,6 @@
     "mock:luna": "node scripts/luna-mock.mjs",
     "ai:eval": "node scripts/ai-eval.mjs",
     "e2e:extension": "node scripts/extension-e2e.mjs",
-    "ci": "node scripts/ci-local.mjs",
     "pull": "node scripts/logs-pull.mjs",
     "daily": "node scripts/daily.mjs",
     "push-logs": "node scripts/logs-push.mjs",
@@ -43,11 +43,22 @@
   },
   "devDependencies": {
     "@duckdb/node-api": "1.5.6-r.1",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
     "@types/chrome": "0.3.4",
+    "@vitejs/plugin-react": "6.1.2",
     "fflate": "0.8.3",
+    "jsdom": "30.1.3",
     "oxlint": "1.89.0",
     "pdfjs-dist": "^4.10.38",
     "playwright": "^1.63.0",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zustand": "5.0.16"
   }
 }

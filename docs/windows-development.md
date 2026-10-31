@@ -32,9 +32,7 @@ packaging. The two PDF.js runtime files are already committed in `lib/`;
 `npm run vendor` is only for deliberately refreshing them after a dependency
 update. Do not copy `node_modules` from the Mac.
 
-`npm ci` also turns on the repository's pre-push hook (`.githooks/pre-push`).
-A plain `git push` runs no checks: the pull request's Checks on GitHub are the
-gate. `TNI_CI=full git push` runs the full `npm run ci` on this computer first.
+A `git push` runs no checks: the pull request's Checks on GitHub are the gate.
 See [Testing](testing.md#ci-and-authorized-releases).
 
 ## Load and develop the extension
@@ -45,7 +43,8 @@ See [Testing](testing.md#ci-and-authorized-releases).
    when developing with `npm run server`, or blank it to disable uploads.
    The default is the production collection server.
 4. After source edits, run `npm run package`, reload the extension in Chrome,
-   and reopen its side panel.
+   and reopen its side panel. For side panel edits only, `npm run panel` (or
+   `npm run panel:watch`, which rebuilds on every save) is enough: reopen the panel.
 
 The fixed development extension ID does not transfer settings between computers.
 Enter your initials, server preference and optional OpenAI API key on the new

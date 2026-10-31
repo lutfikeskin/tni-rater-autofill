@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "allowJs": true,
+    "jsx": "react-jsx",
     "checkJs": false,
     "noEmit": true,
     "target": "ES2023",
@@ -12,5 +13,5 @@
     "strict": false,
     "skipLibCheck": true
   },
-  "include": ["background.js", "types.js", "src", "sidepanel", "server", "scripts", "test"]
+  "include": ["background.js", "types.js", "vite.config.js", "vitest.config.js", "src", "sidepanel", "server", "scripts", "test"]
 }

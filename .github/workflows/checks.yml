@@ -1,5 +1,5 @@
-# Every step of `npm run ci` on Ubuntu, split into parallel jobs: lint, type, unit and package
-# checks, then the browser checks with Playwright Chromium. The repository is public, so these runs
+# The pull-request checks on Ubuntu, split into parallel jobs: lint, type, unit and package checks,
+# then the browser checks with Playwright Chromium. The repository is public, so these runs
 # cost nothing. The same browser checks on Windows are windows-smoke.yml, run by hand.
 # No secrets: a pull request from a fork runs this code, and nothing here needs a credential.
 name: Checks
@@ -60,6 +60,7 @@ jobs:
           if jq -e 'has("key")' "$manifest" > /dev/null; then echo 'The store ZIP must not contain the development key'; exit 1; fi
           if [ "$(jq -r .version "$manifest")" != "$version" ]; then echo 'Store version does not match source'; exit 1; fi
           if [ ! -f "$destination/$(jq -r .side_panel.default_path "$manifest")" ]; then echo 'Missing side panel'; exit 1; fi
+          if [ ! -f "$destination/sidepanel/bundle/sidepanel.js" ] || [ -f "$destination/sidepanel/sidepanel.js" ]; then echo 'The side panel is not the built one'; exit 1; fi
       - name: Packaged extension with the Node replay server
         run: |
           node scripts/replay.mjs &
