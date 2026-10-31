@@ -88,3 +88,16 @@ test('the type check\'s types hold comments only, and no module of the extension
   }
   for (const f of ['background.js', ...modules('src'), ...modules('sidepanel')]) assert.doesNotMatch(read(f), IMPORTS_TYPES, `${f} imports the types as code`);
 });
+
+// Review of #239: npm run panel rebuilt the unpacked copy without the stamp, so its events said 'source'.
+test('every panel build stamps its copy: store in store mode, unpacked otherwise, none on the dev server', async () => {
+  const { default: config } = await import('../vite.config.js');
+  const stampOf = (env) => {
+    const plugin = config(env).plugins.flat().find((p) => p?.name === 'tni-provenance');
+    return plugin && plugin.transform(read(PROVENANCE_FILE), `/repo/${PROVENANCE_FILE}`).code.match(/channel: '(\w+)'/)[1];
+  };
+  assert.equal(stampOf({ command: 'build', mode: 'store' }), 'store');
+  assert.equal(stampOf({ command: 'build', mode: 'unpacked' }), 'unpacked');
+  assert.equal(stampOf({ command: 'build', mode: 'production' }), 'unpacked', 'npm run panel');
+  assert.equal(stampOf({ command: 'serve', mode: 'development' }), undefined);
+});

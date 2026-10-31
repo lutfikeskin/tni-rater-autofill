@@ -1,6 +1,7 @@
 // Pieces of scripts/package.mjs that are checked by tests.
 
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 // The scripts injected into the carrier page's own JavaScript world stay there across an extension
 // reload or update; each names its build, and one from another build is replaced, not reused.
@@ -26,6 +27,21 @@ export function stampProvenance(text, { channel, commit }) {
   if (!['store', 'unpacked'].includes(channel)) throw new Error(`unknown channel ${channel}`);
   if (commit != null && !/^[0-9a-f]{7,12}(\+dirty)?$/.test(commit)) throw new Error(`not a commit: ${commit}`);
   return text.replace(PROVENANCE, `const PROVENANCE = { channel: '${channel}', commit: ${commit ? `'${commit}'` : 'null'} };`);
+}
+
+// What the extension runs: the files and folders npm run package copies (the panel's built).
+export const PACKAGED = ['manifest.json', 'background.js', 'icons', 'lib', 'sidepanel', 'src'];
+
+// The commit the packaged files come from, +dirty when they, or what builds the panel, have changes
+// git doesn't have; none when git can't say (the package is still built).
+export function packagedCommit(root) {
+  try {
+    const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const sha = git('rev-parse', '--short=10', 'HEAD');
+    return git('status', '--porcelain', '--', ...PACKAGED, 'vite.config.js', 'package.json', 'package-lock.json') ? `${sha}+dirty` : sha;
+  } catch {
+    return null;
+  }
 }
 
 // The panel is bundled (vite.config.js), so its copy of usage-log.js is stamped as the build reads

@@ -11,15 +11,14 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { build as buildPanel } from 'vite';
 import { zipDirectory } from './lib/zip.mjs';
-import { STAMPED, buildId, stampBuild, devManifest, provenancePlugin, bundledPanelFile } from './lib/package.mjs';
+import { STAMPED, buildId, stampBuild, devManifest, bundledPanelFile, PACKAGED } from './lib/package.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
-const INCLUDE = ['manifest.json', 'background.js', 'icons', 'lib', 'sidepanel', 'src'];
+const INCLUDE = PACKAGED;
 
 // Every file the manifest names must be in the package.
 const named = [manifest.background?.service_worker, manifest.side_panel?.default_path, ...Object.values(manifest.icons ?? {})].filter(Boolean);
@@ -28,30 +27,18 @@ for (const f of named) {
   if (!INCLUDE.some((p) => f === p || f.startsWith(`${p}/`))) throw new Error(`manifest names ${f}, which isn't packaged`);
 }
 
-// The commit the packaged files come from, +dirty when they have changes git doesn't have; none
-// when git can't say (the package is still built).
-function packagedCommit() {
-  try {
-    const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    const sha = git('rev-parse', '--short=10', 'HEAD');
-    return git('status', '--porcelain', '--', ...INCLUDE, 'vite.config.js') ? `${sha}+dirty` : sha;
-  } catch {
-    return null;
-  }
-}
-const commit = packagedCommit();
-
 const copy = async (to, channel) => {
   fs.rmSync(to, { recursive: true, force: true });
   const keep = (src) => !src.endsWith('.DS_Store') && !bundledPanelFile(path.relative(root, src));
   for (const p of INCLUDE) fs.cpSync(path.join(root, p), path.join(to, p), { recursive: true, filter: keep });
   const build = buildId(STAMPED.map((f) => fs.readFileSync(path.join(root, f), 'utf8')));
   for (const f of STAMPED) fs.writeFileSync(path.join(to, f), stampBuild(fs.readFileSync(path.join(to, f), 'utf8'), build));
-  // The panel, bundled (vite.config.js), stamped with which copy logs the usage events, from which commit.
+  // The panel, bundled (vite.config.js), stamped with which copy logs the usage events (the build's
+  // mode), from which commit.
   await buildPanel({
     configFile: path.join(root, 'vite.config.js'),
+    mode: channel,
     logLevel: 'warn',
-    plugins: [provenancePlugin({ channel, commit })],
     build: { outDir: path.join(to, 'sidepanel') },
   });
 };

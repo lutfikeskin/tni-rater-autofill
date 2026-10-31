@@ -9,17 +9,25 @@
 // No dev server or HMR: an extension page can't load from one. Files keep fixed names (no content
 // hash), so a rebuild into the same folder replaces them instead of leaving old ones behind.
 
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { packagedCommit, provenancePlugin } from './scripts/lib/package.mjs';
 
-export default defineConfig({
-  root: 'sidepanel',
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+// Every build stamps the panel's usage-log.js with its copy and commit: `store` for the store zip
+// (npm run package builds in that mode), otherwise `unpacked` (the Load unpacked copy, also when
+// npm run panel rebuilds it).
+export default defineConfig(({ command, mode }) => ({
+  root: path.join(here, 'sidepanel'),
   base: './',
   // The sounds, logos and rater badges the panel names at run time are copied by package.mjs.
   publicDir: false,
-  plugins: [react()],
+  plugins: [react(), ...(command === 'build' ? [provenancePlugin({ channel: mode === 'store' ? 'store' : 'unpacked', commit: packagedCommit(here) })] : [])],
   build: {
-    outDir: '../dist/tni-rater-autofill/sidepanel',
+    outDir: path.join(here, 'dist/tni-rater-autofill/sidepanel'),
     emptyOutDir: false,
     // Not minified, with source maps: the bundle reads like the source in DevTools.
     minify: false,
@@ -30,7 +38,7 @@ export default defineConfig({
     modulePreload: { polyfill: false },
     rollupOptions: {
       // The page the manifest names (side_panel.default_path), not Vite's index.html.
-      input: 'sidepanel/sidepanel.html',
+      input: path.join(here, 'sidepanel/sidepanel.html'),
       output: {
         entryFileNames: 'bundle/[name].js',
         chunkFileNames: 'bundle/[name].js',
@@ -38,4 +46,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));
