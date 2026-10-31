@@ -109,8 +109,9 @@ function extractFunction(name) {
         // step with the stops it may carry (tabStep, stopNoteFor: GEICO's stop steps), and the agent's
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
-        // panel's cards and row heads (issueCard, setRowHead) come along as they are.
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
+        // panel's cards come along as they are (issueCard), and the report's rows as data with their
+        // drawing (report-rows.js, drawRow: nothing is drawn for a row the test didn't draw).
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'tagNode', 'nowSaid', 'optionsSaid', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -120,6 +121,10 @@ function extractFunction(name) {
         // elsewhere nothing is kept, unless the harness gives a store. So has the agent's change
         // after the quote's finishing action (noteChangedAfterDone): elsewhere nothing is marked. And
         // the chime when the quote is done (noteQuoteDone): elsewhere nothing sounds.
+        // The rows drawn (rowNodes) and Show on page's timers: the harness's, or none.
+        for (const map of ['rowNodes', 'whereTimers']) {
+          if (new RegExp(`\\b${map}\\b`).test(source) && !new RegExp(`const ${map} =`).test(source)) source += `\nvar ${map} = globalThis.${map} ?? new WeakMap();`;
+        }
         for (const kept of ['keepReport', 'forgetKeptReports', 'noteChangedAfterDone', 'noteQuoteDone']) {
           if (name !== kept && new RegExp(`\\b${kept}\\(`).test(source) && !new RegExp(`function ${kept}\\(`).test(source)) source += `\nvar ${kept} = globalThis.${kept} ?? (() => {});`;
         }
@@ -519,18 +524,14 @@ test('fill report lists a question asked as several boxes once, with the boxes t
 // read-only). One the page shows differently now says what it shows; spacing and punctuation
 // aside, and one whose field isn't on the page now is left alone. Only for the page in front.
 test('answers on this page mark an answer the page shows differently now', async () => {
-  const row = (key, field, value, step = '') => {
-    const r = { dataset: { key, field, value, step }, changed: false, now: { hidden: true, textContent: '' } };
-    r.classList = { toggle: (name, on) => { r.changed = on; }, contains: () => r.changed };
-    r.querySelector = () => r.now;
-    return r;
-  };
+  // The report's rows (answerRecord): `changed`, what the row says the page shows now.
+  const row = (key, field, value, stepId = null) => ({ type: 'answer', key, field, value, stepId, changed: null });
   const rows = [row('phone', 'Phone', '(312) 555-0100'), row('limit', 'Limit', '$1,000,000'), row('box', 'Box', 'checked'), row('gone', 'Gone', 'x'), row('off', 'Off', 'unchecked'), row('text', 'Text', 'Main St'),
     // The Google suggestion picked; the page then keeps the street only (the kit says it agrees).
-    row('addr', 'Address', '5001 Sheridan Street Davenport, IA, USA', '7')];
+    row('addr', 'Address', '5001 Sheridan Street Davenport, IA, USA', 7)];
+  // An item left for the agent, and a click: no answers of the fill's to read back.
+  const body = [...rows, { type: 'need', key: 'q', field: 'Q', settled: null }, { type: 'answer', key: null, kind: 'clicked', value: 'Rates' }];
   const asked = [];
-  const selectors = [];
-  const body = { querySelectorAll: (sel) => { selectors.push(sel); return rows; } };
   const said = [];
   const context = {
     state: { tab: { id: 1, url: 'Quote' } }, pageOf: (url) => url, announce: (text) => said.push(text),
@@ -546,21 +547,19 @@ test('answers on this page mark an answer the page shows differently now', async
   await context.checkAnswers(body, 1, 'Quote', { id: 'progressive' }, plan);
   assert.deepEqual(asked[0][0].map((x) => x.key), ['phone', 'limit', 'box', 'gone', 'off', 'text', 'addr']);
   assert.deepEqual(asked[0][1].map((s) => s.id), [7], 'only the steps of the rows asked about');
-  assert.equal(rows[6].changed, false, 'an address the page wrote its own way is the same answer');
-  assert.equal(rows[0].changed, false, 'the page formatting a phone number is the same answer');
-  assert.equal(rows[1].changed, true);
-  assert.equal(rows[1].now.textContent, 'Now on the page: $500,000');
-  assert.equal(rows[2].now.textContent, 'Now on the page: unchecked');
-  assert.equal(rows[4].changed, false, 'a box we left unticked is still our answer');
-  assert.equal(rows[5].now.textContent, 'Now on the page: empty', 'a box the page cleared');
-  assert.equal(rows[3].changed, false, 'not on the page now: left alone');
-  assert.deepEqual(selectors, ['.row:not(.need)[data-key]'], 'the answers that went in, not the items left');
+  assert.equal(rows[6].changed, null, 'an address the page wrote its own way is the same answer');
+  assert.equal(rows[0].changed, null, 'the page formatting a phone number is the same answer');
+  assert.equal(rows[1].changed, 'Now on the page: $500,000');
+  assert.equal(rows[2].changed, 'Now on the page: unchecked');
+  assert.equal(rows[4].changed, null, 'a box we left unticked is still our answer');
+  assert.equal(rows[5].changed, 'Now on the page: empty', 'a box the page cleared');
+  assert.equal(rows[3].changed, null, 'not on the page now: left alone');
+  assert.equal(asked[0][0].length, rows.length, 'the answers that went in, not the items left or a click');
   assert.deepEqual(said, ['3 answers on the page changed since the fill.']);
   // Opened again once the agent put it back: no longer said changed.
   context.runKit = async () => [{ result: [{ key: 'limit', label: 'Limit', shown: '$1,000,000', empty: false }] }];
   await context.checkAnswers(body, 1, 'Quote', { id: 'progressive' });
-  assert.equal(rows[1].changed, false);
-  assert.equal(rows[1].now.hidden, true);
+  assert.equal(rows[1].changed, null);
   assert.deepEqual(said.at(-1), '2 answers on the page changed since the fill.', 'the box and the box cleared: not read again');
   // Another page in front: nothing read.
   context.state.tab.url = 'Drivers';
@@ -653,21 +652,22 @@ test('Mark done settles only the chosen field on the current page, without filli
 
 test('Undo after Mark done gives the field back only while the agent hasn\'t answered it on the page', async () => {
   const state = { tab: { id: 1, url: 'Rates' }, agentKeys: new Map([['Rates', new Set(['200F'])]]), filling: false };
-  const node = () => ({ hidden: true, children: [], focus() {}, replaceChildren(...c) { this.children = c; } });
-  const parts = { '.mark-done': node(), '.need-note': node() };
-  const item = { dataset: { settled: 'answered' }, classList: { remove() {} }, querySelector: (sel) => parts[sel] };
+  // Its row (needRecord), answered on the page since it was marked.
+  const answered = { head: { icon: '✓', value: 'Answered on the page', tag: { kind: 'you', text: 'You' } }, note: { text: '✓ You answered it on the page.', bad: false, undo: null } };
+  const item = { type: 'need', kind: 'need', icon: '?', wait: 'Needs your answer', settled: 'answered', ...answered };
   let counted = 0;
   const context = { state, persistAgentKeys: async () => {}, pageOf: (url) => url, recount: () => { counted++; } };
   vm.runInNewContext(extractFunction('undoMarkDone'), context);
   await context.undoMarkDone(item, '200F', 1, 'Rates');
   assert.deepEqual([...state.agentKeys.get('Rates')], ['200F'], 'answered on the page since: the agent\'s edit stays protected');
-  item.dataset.settled = 'marked';
-  Object.assign(parts['.need-note'], { hidden: false, children: ['✓ Marked done'] });
+  assert.deepEqual([item.settled, item.note, counted], ['answered', answered.note, 0]);
+  Object.assign(item, { settled: 'marked', note: { text: '✓ Marked done: won’t be filled or waited on.', bad: false, undo: () => {} } });
   await context.undoMarkDone(item, '200F', 1, 'Rates');
   assert.deepEqual([...state.agentKeys.get('Rates')], []);
-  assert.deepEqual([parts['.mark-done'].hidden, item.dataset.settled, counted], [false, undefined, 1]);
-  // Open again: its note is empty and hidden (the row itself says where to answer it).
-  assert.deepEqual([parts['.need-note'].hidden, parts['.need-note'].children.length], [true, 0]);
+  assert.deepEqual([item.settled, counted], [null, 1]);
+  // Open again: Mark done is back (drawRow shows it on a row not settled), its row says what it
+  // waits on and its note is empty (the row itself says where to answer it).
+  assert.deepEqual(plain([context.rowClass(item), context.rowHead(item), item.note]), ['row need', { icon: '?', value: 'Needs your answer', tag: null }, null]);
 });
 
 // pagekit `covered`: something on the page was open over Continue, so the fill didn't click it.
@@ -747,25 +747,23 @@ test('the page list keeps items in the page order of their fields, the first ope
 // What's left follows what the agent settles (recount): the count, the steps and the dock, and once
 // nothing is left the panel's Continue is a click away (settled), never on its own.
 test('what is left on the page follows the items settled and opened again', () => {
-  const need = () => ({ classList: { set: new Set(['row', 'need']), contains(c) { return this.set.has(c); } } });
+  // The report's rows (report-rows.js): two items left, and an answer, which is never left.
+  const need = () => ({ type: 'need', settled: null, gone: false });
   const items = [need(), need()];
-  const asked = [];
-  const report = { querySelectorAll: (sel) => { asked.push(sel); return items; } };
-  const entry = { key: 'k', fields: 2, left: 2 };
+  const entry = { key: 'k', fields: 2, left: 2, list: [...items, { type: 'answer', key: 'a' }] };
   const said = [];
   let drawn = 0;
-  const context = { state: { reportFor: entry }, $: () => report, renderSteps() { drawn++; }, announce: (t) => said.push(t) };
+  const context = { state: { reportFor: entry }, renderSteps() { drawn++; }, announce: (t) => said.push(t) };
   vm.runInNewContext(extractFunction('recount'), context);
   context.recount();
   assert.deepEqual([drawn, said.length], [0, 0], 'nothing settled: nothing to redraw');
-  items.forEach((n) => n.classList.set.add('resolved'));
+  items.forEach((n) => { n.settled = 'marked'; });
   context.recount();
   assert.deepEqual([entry.left, entry.settled, drawn], [0, true, 1]);
-  items[0].classList.set.delete('resolved');
+  items[0].settled = null;
   context.recount();
   assert.deepEqual([entry.left, entry.settled, drawn], [1, false, 2]);
   assert.deepEqual(said, ['Nothing is left for you on this page.', '1 left for you on this page.']);
-  assert.ok(asked.every((sel) => sel === '.row.need'));
   // No fill report shown: nothing counted.
   context.state.reportFor = { key: 'x' };
   context.recount();
@@ -799,8 +797,8 @@ test('Show on page asks every frame of the item\'s own tab to reveal its field, 
   let frames = [{ frameId: 0, result: false }, { frameId: 3, result: true }];
   const said = [];
   const timers = [];
-  const where = { hidden: true, textContent: '' };
-  const item = { querySelector: (sel) => (sel === '.need-where' ? where : null) };
+  // Its row (needRecord): `where`, what Show on page said on it.
+  const item = { type: 'need', where: null };
   let checked = 0;
   const context = { state, pageOf: (u) => u, announce: (t) => said.push(t),
     runKit: async (...args) => { runs.push(args); if (frames instanceof Error) throw frames; return frames; },
@@ -816,7 +814,7 @@ test('Show on page asks every frame of the item\'s own tab to reveal its field, 
   assert.equal(runs.length, 1);
   const [tabId, kitCarrier, func, args] = runs[0];
   assert.deepEqual([tabId, kitCarrier, [...args]], [7, carrier, ['200F', 'Vehicle field']]);
-  assert.deepEqual([where.hidden, where.textContent, said.length], [true, '', 0], 'found in a frame: nothing to say');
+  assert.deepEqual([item.where, said.length], [null, 0], 'found in a frame: nothing to say');
   // What runs in each frame: the kit's reveal, nothing else of it. A kit without it finds nothing.
   const seen = [];
   context.__raterKit = { reveal: (...a) => { seen.push(a); return true; }, fill: () => { throw new Error('never fills'); }, answer: () => { throw new Error('never answers'); } };
@@ -827,16 +825,16 @@ test('Show on page asks every frame of the item\'s own tab to reveal its field, 
   // No frame has it: said on the item and announced, for a few seconds.
   frames = [{ frameId: 0, result: false }];
   await context.showOnPage(item, x, 7, 'Rates', carrier);
-  assert.deepEqual([where.hidden, where.textContent], [false, 'Not on the page now (it may be in a closed section).']);
+  assert.equal(item.where, 'Not on the page now (it may be in a closed section).');
   assert.deepEqual(said, ['Not on the page now (it may be in a closed section).']);
   // And the list is checked against the page (checkItems): gone, and in no closed section, it leaves.
   assert.equal(checked, 1, 'found: nothing checked; not found: the list checked once');
   timers.at(-1)();
-  assert.deepEqual([where.hidden, where.textContent], [true, '']);
+  assert.equal(item.where, null);
   // The page navigating meanwhile: not found either.
   frames = new Error('Frame was removed');
   await context.showOnPage(item, x, 7, 'Rates', carrier);
-  assert.equal(where.hidden, false);
+  assert.equal(item.where, 'Not on the page now (it may be in a closed section).');
 });
 
 // Live run 2026-10-09: with automatic filling on, the agent moved to AmWINS' Vehicles step (same
@@ -964,20 +962,17 @@ test('each tab, page and AmWINS step keeps its own fill report, shown again with
 /// Live review 2026-10-09: "3 left for you" stayed at 3 after the agent answered them on the page.
 // An answer that went in and that the agent changed on the page is theirs now: said so on its row.
 test('"left for you" follows what the agent settles, without a refill', () => {
-  const need = (key) => ({ dataset: { key }, classList: { set: new Set(['row', 'need']), contains(c) { return this.set.has(c); }, add(c) { this.set.add(c); } } });
+  // The report's rows (report-rows.js): two items left, and an answer that went in from the intake.
+  const need = (key) => ({ type: 'need', key, settled: null, gone: false });
   const items = [need('a'), need('b')];
-  // An answer that went in, with its head (setRowHead): its icon, its value and its source tag.
-  const parts = { '.row-icon': { textContent: '✓' }, '.row-value': { textContent: 'Old' }, '.tag': { remove() { head.tag = null; } } };
-  const head = { tag: 'Intake', querySelector: (sel) => (sel === '.tag' ? (head.tag ? parts[sel] : null) : parts[sel]), append(node) { head.tag = node; } };
-  const done = { dataset: { key: 'c', value: 'Old' }, classList: { remove(c) { this.removed = c; } }, querySelector: (sel) => (sel === '.row-head' ? head : null) };
-  const report = { querySelectorAll: (sel) => (sel === '.row.need' ? items : sel === '.row:not(.need)[data-key]' ? [done] : []) };
+  const done = { type: 'answer', kind: 'intake', key: 'c', field: 'C', value: 'Old', changed: 'Now on the page: x', head: null };
   const said = [];
   const settledWith = [];
-  const entry = { key: 'k', fields: 4, left: 2, advanced: null };
+  const entry = { key: 'k', fields: 4, left: 2, advanced: null, list: [...items, done] };
   const state = { tab: { id: 1, url: 'Rates' }, reportFor: entry };
-  const context = { state, $: () => report, renderSteps() {}, announce: (t) => said.push(t), pageOf: (u) => u, h: (tag, props, ...children) => ({ tag, props, children }),
-    settleNeed: (item, how, undo, shown) => { settledWith.push([item.dataset.key, how, shown]); item.classList.add('resolved'); context.recount(); } };
-  vm.runInNewContext(['recount', 'answeredOnPage'].map(extractFunction).join('\n'), context);
+  const context = { state, renderSteps() {}, announce: (t) => said.push(t), pageOf: (u) => u,
+    settleNeed: (item, how, undo, shown) => { settledWith.push([item.key, how, shown]); item.settled = how; context.recount(); } };
+  vm.runInNewContext(['recount', 'answeredOnPage', 'rowHead'].map(extractFunction).join('\n'), context);
   context.answeredOnPage('Rates', [{ key: 'a', label: 'A', after: 'Yes' }, { key: 'zzz' }]);
   assert.deepEqual([entry.left, entry.settled, said], [1, false, ['1 left for you on this page.']]);
   assert.deepEqual(settledWith, [['a', 'answered', 'Yes']], 'with what the page holds now');
@@ -986,31 +981,26 @@ test('"left for you" follows what the agent settles, without a refill', () => {
   context.answeredOnPage('Rates', [{ key: 'b' }, { key: 'c', label: 'Something else', after: 'New' }]);
   assert.deepEqual([entry.left, entry.settled], [0, true]);
   assert.equal(said.at(-1), 'Nothing is left for you on this page.');
-  assert.deepEqual([done.dataset.value, done.classList.removed, parts['.row-value'].textContent], ['New', 'changed', 'New']);
-  assert.deepEqual(JSON.parse(JSON.stringify(head.tag)), { tag: 'span', props: { class: 'tag you', title: 'You changed it on the page: no fill puts it back' }, children: ['You'] }, 'tagged the agent\'s');
+  assert.deepEqual([done.value, done.changed], ['New', null]);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.rowHead(done))), { icon: '✓', value: 'New', tag: { kind: 'you', text: 'You', title: 'You changed it on the page: no fill puts it back' } }, 'tagged the agent\'s');
   // An answer changed without a value read: left as it was.
-  parts['.row-value'].textContent = 'Kept';
+  const head = done.head;
   context.answeredOnPage('Rates', [{ key: 'c' }]);
-  assert.equal(parts['.row-value'].textContent, 'Kept');
+  assert.deepEqual([done.value, done.head], ['New', head]);
 });
 
 // Review 2026-10-22: rows of one repeated question share its key (one per driver). The agent's change
 // to one of them retags that row only, by its label; one that doesn't say which leaves them all.
 test('an answer the agent changes on the page retags only its own row where rows share a key', () => {
-  const row = (field) => {
-    const parts = { '.row-icon': { textContent: '✓' }, '.row-value': { textContent: 'Old' }, '.tag': { remove() {} } };
-    const head = { querySelector: (sel) => parts[sel] ?? null, append(node) { head.tag = node; } };
-    return { parts, head, dataset: { key: 'k', field, value: 'Old' }, classList: { remove() {} }, querySelector: (sel) => (sel === '.row-head' ? head : null) };
-  };
+  const row = (field) => ({ type: 'answer', kind: 'intake', key: 'k', field, value: 'Old', head: null });
   const rows = [row('Driver 1'), row('Driver 2')];
-  const report = { querySelectorAll: (sel) => (sel === '.row:not(.need)[data-key]' ? rows : []) };
-  const state = { tab: { id: 1, url: 'Drivers' }, reportFor: { key: 'k', fields: 2, left: 0 } };
-  const context = { state, $: () => report, pageOf: (u) => u, h: (tag, props, ...children) => ({ tag, props, children }), settleNeed() {} };
-  vm.runInNewContext(extractFunction('answeredOnPage'), context);
+  const state = { tab: { id: 1, url: 'Drivers' }, reportFor: { key: 'k', fields: 2, left: 0, list: rows } };
+  const context = { state, pageOf: (u) => u, settleNeed() {} };
+  vm.runInNewContext(['answeredOnPage', 'rowHead'].map(extractFunction).join('\n'), context);
   context.answeredOnPage('Drivers', [{ key: 'k', label: 'Driver 2', after: 'No' }]);
-  assert.deepEqual(rows.map((r) => [r.dataset.value, r.parts['.row-value'].textContent, !!r.head.tag]), [['Old', 'Old', false], ['No', 'No', true]]);
+  assert.deepEqual(rows.map((r) => [r.value, context.rowHead(r).value, !!context.rowHead(r).tag]), [['Old', 'Old', false], ['No', 'No', true]]);
   context.answeredOnPage('Drivers', [{ key: 'k', label: 'Driver', after: 'Yes' }]);
-  assert.deepEqual(rows.map((r) => r.dataset.value), ['Old', 'No'], 'a change that names neither row leaves both');
+  assert.deepEqual(rows.map((r) => r.value), ['Old', 'No'], 'a change that names neither row leaves both');
 });
 
 test('a file loaded again keeps the agent\'s corrections and checks, and says what stayed', () => {
@@ -2241,32 +2231,28 @@ test('an answer whose question is gone has no row; each answer row shows the pag
 // gone from the page leaves the list and the count (back if the page draws it again), one the fill
 // knew off screen stays, a settled one is left as it is, and each other one says what the page shows.
 test('the review list follows the page: a gone question leaves it and holds nothing, in one read of the page', async () => {
-  const classes = (...names) => { const set = new Set(names); return { set, contains: (c) => set.has(c), add: (c) => set.add(c), remove: (c) => set.delete(c), toggle: (c, on) => (on ? set.add(c) : set.delete(c)) }; };
-  const shown = [];
-  const row = (key, field, { offpage = '', resolved = false } = {}) => {
-    const r = { dataset: { key, field, offpage, finish: '' }, classList: classes('row', 'need', ...(resolved ? ['resolved'] : [])), hidden: false };
-    r.showLive = (live) => shown.push([key, live?.current ?? null]);
-    return r;
-  };
-  const rows = [row('cov:pd', 'Property Damage Liability (PD)'), row('cov:um', 'UM'), row('cov:gl', 'GL limit', { offpage: '1' }), row('cov:done', 'Marked', { resolved: true })];
-  const entry = { key: '7|/quote', tabId: 7, page: '/quote', fields: 6, left: 3, plan: [] };
+  // The report's rows (needRecord): `now`, what each says the page shows (showLive).
+  const row = (key, field, { offPage = false, settled = null } = {}) => ({ type: 'need', x: { key, label: field, controlKind: 'select' }, key, field, offPage, settled,
+    finish: false, gone: false, pickable: false, options: [], offered: null, now: 'before' });
+  const rows = [row('cov:pd', 'Property Damage Liability (PD)'), row('cov:um', 'UM'), row('cov:gl', 'GL limit', { offPage: true }), row('cov:done', 'Marked', { settled: 'marked' })];
+  const entry = { key: '7|/quote', tabId: 7, page: '/quote', fields: 6, left: 3, plan: [], list: rows };
   const state = { tab: { id: 7, url: '/quote', carrier: { id: 'geico' } }, reportFor: entry, filling: false };
   let live = [{ key: 'cov:um', label: 'UM', current: '$300,000 Combined Single Limit', options: [] }];
   const asked = [];
   const said = [];
-  const context = { state, $: () => ({ querySelectorAll: (sel) => (sel === '.row.need' ? rows : []) }), pageOf: (u) => u, renderSteps() {}, announce: (t) => said.push(t), toggleRow() {},
+  const context = { state, pageOf: (u) => u, renderSteps() {}, announce: (t) => said.push(t), toggleRow() {},
     liveItems: async (tabId, carrier, items) => { asked.push(items); return live; } };
   vm.runInNewContext(['checkItems', 'liveOf', 'recount'].map(extractFunction).join('\n'), context);
   await context.checkItems();
   assert.equal(asked.length, 1, 'one read for every item');
   assert.deepEqual(plain(asked[0].map((x) => x.key)), ['cov:pd', 'cov:um', 'cov:gl'], 'a settled item is not asked about');
-  assert.deepEqual(rows.map((r) => [r.dataset.key, r.hidden]), [['cov:pd', true], ['cov:um', false], ['cov:gl', false], ['cov:done', false]]);
-  assert.deepEqual(shown, [['cov:pd', null], ['cov:um', '$300,000 Combined Single Limit'], ['cov:gl', null]]);
+  assert.deepEqual(rows.map((r) => [r.key, r.gone]), [['cov:pd', true], ['cov:um', false], ['cov:gl', false], ['cov:done', false]]);
+  assert.deepEqual(rows.map((r) => r.now), [null, '$300,000 Combined Single Limit', null, 'before'], 'what the page shows now, never what it showed before');
   assert.deepEqual([entry.left, entry.otherLeft, said], [2, 2, ['2 left for you on this page.']], 'the gone question holds nothing');
   // Drawn again: back in the list.
   live = [...live, { key: 'cov:pd', label: 'Property Damage Liability (PD)', current: '$50,000', options: [] }];
   await context.checkItems();
-  assert.deepEqual([rows[0].hidden, rows[0].classList.contains('gone'), entry.left], [false, false, 3]);
+  assert.deepEqual([rows[0].gone, rows[0].now, entry.left], [false, '$50,000', 3]);
   // A page that couldn't be read, another page in front, or a fill running: nothing is judged.
   live = null;
   await context.checkItems();
@@ -2276,7 +2262,7 @@ test('the review list follows the page: a gone question leaves it and holds noth
   state.tab.url = '/quote';
   state.filling = true;
   await context.checkItems();
-  assert.deepEqual([rows.map((r) => r.hidden), asked.length], [[false, false, false, false], 3]);
+  assert.deepEqual([rows.map((r) => r.gone), asked.length], [[false, false, false, false], 3]);
 });
 
 test('kept reports go with the shown ones: a closed tab\'s, a cleared page\'s, all for a new or cleared client (W43-39)', async () => {
@@ -5181,7 +5167,8 @@ test('a follow-up fill lists its answers with their sources and groups, as the r
   const rows = context.groupRows([{ label: 'Name', answer: true }, { label: '1', group: 'Symbols', stepId: 'g1', answer: true, standard: true }, { label: '2', group: 'Symbols', stepId: 'g2', answer: false, standard: true }], ticks);
   assert.deepEqual(JSON.parse(JSON.stringify(rows)), [{ label: 'Name', answer: true },
     { label: 'Symbols', grouped: 'Symbols', ticked: ['1'], standard: true, answer: true, value: '1' }]);
-  assert.match(extractFunction('autoFill'), /answerSources\(plan\)[\s\S]{0,600}groupRows\(added\.map[\s\S]{0,600}answerRow\(\{ \.\.\.row, fresh: true \}/);
+  // Each a row of the report shown (answerRecord), drawn at the end of its list, marked new.
+  assert.match(extractFunction('autoFill'), /answerSources\(plan\)[\s\S]{0,600}groupRows\(added\.map[\s\S]{0,600}answerRecord\(\{ \.\.\.row, fresh: true \}\)[\s\S]{0,300}state\.reportFor\.list = \[\.\.\.\(state\.reportFor\.list \?\? \[\]\), \.\.\.recs\];[\s\S]{0,200}list\.append\(\.\.\.recs\.map\(\(rec\) => answerRow\(rec, rctx\)\)\);/);
   assert.match(extractFunction('renderReport'), /answerSources\(ctx\.plan\)[\s\S]{0,40}const doneRows = groupRows\(\[/);
 });
 
@@ -7068,14 +7055,11 @@ test('a GEICO form bound to its unit takes the edits filed under it to that unit
 test('undoing Mark done takes the field back from where it was marked, though the step or form moved on', async () => {
   const state = { tab: { id: 1, url: 'https://sales.geico.com/quote', carrier: geico }, active: { vehicles: 1, drivers: 0, trailers: 0 }, tabSteps: new Map([[1, 'Vehicles']]),
     unitShown: { step: 'Vehicles', list: 'vehicles', id: 'Id_H', held: true }, agentKeys: new Map([['/quote|v1', new Set(['ref:GiveYear'])]]), filling: false };
-  const node = () => ({ hidden: true, children: [], focus() {}, replaceChildren(...c) { this.children = c; } });
-  const itemOf = () => {
-    const parts = { '.mark-done': node(), '.need-note': node() };
-    return { dataset: {}, classList: { remove() {} }, querySelector: (sel) => parts[sel] };
-  };
+  // Its row (needRecord).
+  const itemOf = () => ({ type: 'need', icon: '?', wait: 'Needs your answer', settled: null });
   const undos = [];
   const context = { state, URL, persistAgentKeys: async () => {}, pageOf: (url) => new URL(url).pathname, recount() {},
-    settleNeed: (item, how, undo) => { item.dataset.settled = how; undos.push(undo); } };
+    settleNeed: (item, how, undo) => { item.settled = how; undos.push(undo); } };
   vm.runInNewContext(`${extractFunction('markDone')}\n${extractFunction('undoMarkDone')}`, context);
   const keys = (scope) => [...(state.agentKeys.get(scope) ?? [])];
   // Marked on a held form; the agent then picks its vehicle and a fill binds it.
@@ -7092,7 +7076,7 @@ test('undoing Mark done takes the field back from where it was marked, though th
   await undos[1]();
   assert.deepEqual([keys('/quote|s:Business & Owner Info'), keys('/quote|d0')], [[], ['ref:GiveLastName']]);
   // Mark done hands its own scope to the undo.
-  assert.match(extractFunction('markDone'), /undoMarkDone\(item, key, tabId, page, scope\)/);
+  assert.match(extractFunction('markDone'), /undoMarkDone\(rec, key, tabId, page, scope\)/);
 });
 
 // Verifier, round 2 (L3): GEICO's progress bar and title disagree for a moment right after Next;
@@ -7436,18 +7420,19 @@ function agentAnswerHarness({ carrier = { id: 'progressive', stopSteps: { 'Payme
   const field = { key: 'k1', label: 'Hauls hazardous materials', kind: 'radio', options: ['Yes', 'No'], current: 'Yes', section: 'Operations' };
   const frame = (fields, frameId = 0) => ({ frameId, documentId: `doc-${frameId}`, result: JSON.stringify(['Operations', fields]) });
   const t = {
-    field, frame, frames: [frame([field])], kit: [], logged: [], settled: [], scheduled: [], said: null,
+    field, frame, frames: [frame([field])], kit: [], logged: [], settled: [], scheduled: [],
     answer: (items) => [{ frameId: 0, result: [{ key: items[0].key, ok: true, shown: items[0].value }] }],
   };
   const state = { tab: { id: 1, url: 'Quote', carrier }, intake: { record: {} }, intakeRevision: 0, filling: false, agentKeys: new Map(), aiCache: new Map(),
     active: {}, tabSteps: new Map(), filled: new Map(), labels: new Map(), choices: new Map(), tabSessions: new Map() };
-  const note = { hidden: true, classList: { add() {}, remove() {} }, replaceChildren(...c) { t.said = c.join(''); } };
-  t.item = { classList: { contains: (c) => c === 'need' }, querySelector: (sel) => (sel === '.need-note' ? note : null), querySelectorAll: () => [] };
+  // Its row (needRecord); what the row says (its note) when the page didn't take the pick.
+  t.item = { type: 'need', key: 'k1', field: 'Hauls hazardous materials', note: null, ai: null };
+  Object.defineProperty(t, 'said', { get: () => t.item.note?.text ?? null });
   t.x = { key: 'k1', label: 'Hauls hazardous materials', controlKind: 'radio', options: ['Yes', 'No'], q: 'q-hazmat' };
   const context = {
     state, crypto, neverReason, knownStep, pageOf: (u) => u,
     usage: { currentSession: () => ({ intakeId: 'intake-1', keySalt: 'salt' }), log: (e) => t.logged.push(e) },
-    tellRecorder: async () => {}, scheduleLayout() {}, scheduleAutoFill: (p) => t.scheduled.push(p),
+    tellRecorder: async () => {}, scheduleLayout() {}, scheduleAutoFill: (p) => t.scheduled.push(p), aiSlotOf: () => null,
     agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => t.stored ?? [], set: async (v) => { t.stored = JSON.parse(JSON.stringify(v)); } },
     redactor: () => (s) => s, redactionTerms: () => [], viewOf: () => 't1', fieldChangeEvent: (c) => ({ type: 'field_change', ...c }),
     settleNeed: (item, how, undo, shown) => t.settled.push([how, shown]),
@@ -8666,10 +8651,18 @@ test('the AmWINS fill that reaches the declaration chimes once; one that leaves 
 
 test('what is left besides the declaration is counted with the report, and again as the agent answers', () => {
   // renderReport keeps the count of items other than the finishing step's own (otherLeft), and
-  // needRow marks the declaration's row so recount keeps that count as the agent answers.
+  // the declaration's row is marked (needRecord's \`finish\`) so recount (leftOf) keeps that count as
+  // the agent answers.
   assert.match(extractFunction('renderReport'), /otherLeft: needs\.filter\(\(x\) => !finishLeftOk\(carrier, x\)\)\.length/);
-  assert.match(extractFunction('needRow'), /finish: finishLeftOk\(carrier, x\) \? '1' : ''/);
-  assert.match(extractFunction('recount'), /entry\.otherLeft = items\.filter\(\(n\) => !n\.classList\.contains\('resolved'\) && n\.dataset\?\.finish !== '1'\)\.length;/);
+  assert.match(extractFunction('recount'), /const \{ left, otherLeft \} = leftOf\(entry\.list\);\s+entry\.otherLeft = otherLeft;/);
+  const rows = { agentPickable: () => false };
+  vm.runInNewContext(['needRecord', 'leftOf'].map(extractFunction).join('\n'), rows);
+  const declaration = rows.needRecord(DECLARATION, amwins, 'Underwriting');
+  const marital = rows.needRecord({ name: 'Marital status', key: 'marital' }, amwins, 'Underwriting');
+  assert.deepEqual([declaration.finish, marital.finish], [true, false]);
+  assert.deepEqual(plain(rows.leftOf([declaration, marital])), { left: 2, otherLeft: 1 });
+  marital.settled = 'answered';
+  assert.deepEqual(plain(rows.leftOf([declaration, marital])), { left: 1, otherLeft: 0 });
   const context = {};
   vm.runInNewContext(extractFunction('finishLeftOk'), context);
   assert.equal(context.finishLeftOk(amwins, DECLARATION), true);
@@ -8785,19 +8778,19 @@ test('a helper\'s reminder has a Mark done that marks the helper done for the ta
   // scoped id), never one parsed from its path (ntlStillAdded's hold, a vehicle tile's `:0`).
   assert.match(src, /const actionId = x\.key \? null : x\.action \?\? null;/);
   assert.doesNotMatch(src, /x\.path\.slice\('action\.'/);
-  assert.match(src, /onclick: \(\) => markActionDone\(item, actionId, tabId, page, x\) \}, 'Mark done'\)/);
+  assert.match(src, /onclick: \(\) => markActionDone\(rec, actionId, tabId, page, x\) \}, 'Mark done'\)/);
   const state = { tab: { id: 4, url: 'CoveragesRates' }, filling: false, doneActions: new Set(), intake: null };
   const persisted = [];
   let settled = null;
-  const node = { hidden: true, textContent: '', replaceChildren() {}, remove() {}, append() {}, querySelector: (sel) => (sel === '.row-head' ? null : node) };
-  const item = { dataset: {}, classList: { remove() {} }, querySelector: (sel) => node.querySelector(sel) };
+  // Its row (needRecord).
+  const item = { type: 'need', icon: '•', wait: 'Left for you', settled: null };
   const context = { state, pageOf: (u) => u, persistDoneActions: async (tabId) => { persisted.push([tabId, [...state.doneActions]]); },
-    settleNeed: (it, how, undo) => { settled = { how, undo }; it.dataset.settled = how; }, setRowHead() {}, recount() {}, usage: { log() {} } };
+    settleNeed: (it, how, undo) => { settled = { how, undo }; it.settled = how; it.note = { text: '✓ Marked done' }; }, recount() {}, usage: { log() {} } };
   vm.runInNewContext(extractFunction('markActionDone'), context);
   await context.markActionDone(item, 'ntlRates', 4, 'CoveragesRates');
   assert.deepEqual([[...state.doneActions], settled.how, persisted.at(-1)], [['ntlRates'], 'marked', [4, ['ntlRates']]]);
   await settled.undo();
-  assert.deepEqual([...state.doneActions], [], 'undone');
+  assert.deepEqual([[...state.doneActions], item.settled, item.note], [[], null, null], 'undone: the row open again');
   // Another tab or page in front, or a fill running: nothing.
   await context.markActionDone(item, 'ntlRates', 5, 'CoveragesRates');
   state.filling = true;

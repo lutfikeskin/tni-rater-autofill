@@ -13,10 +13,10 @@ import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
 import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout } from './coordinator.js';
-import { fillPage, runKit, setRowHead } from './fill.js';
+import { aiSlotOf, drawRow, fillPage, runKit } from './fill.js';
+import { needId, setHead } from './report-rows.js';
 import { renderUsage } from './usage-panel.js';
 import { agentEdited, editScope, tabStep } from './scope.js';
-import { choiceSaid } from './report-model.js';
 
 // ---------------------------------------------------------------------------------------------
 // Luna assistant: after a fill, suggests answers for the questions left for the agent.
@@ -444,17 +444,19 @@ async function remarkAi(ctx) {
   }
   if (!answered.length) return;
   try {
-    await runKit(ctx.tabId, ctx.carrier, (list) => list.forEach(([k, l, n]) => globalThis.__raterKit.markKey(k, l, 'ai', n)),
+    await runKit(ctx.tabId, ctx.carrier, (list) => list.forEach(([k, l, n]) => globalThis.__raterKit?.markKey(k, l, 'ai', n)),
       [answered.map((x) => [x.key, x.label, x.done === 'auto' && !x.approved ? 'selected by the AI: approve it in the side panel' : 'AI answer'])]);
   } catch { /* page navigating */ }
   await syncAiBanner(ctx);
 }
 
-// The note at the bottom of the rater page listing the selections waiting for approval.
+// The note at the bottom of the rater page listing the selections waiting for approval. A page that
+// loaded again after the kit went in has none yet (the Luna mock, CI 2026-10-31): nothing is marked
+// there, as on this page's marks and the rejected pick's, and the page throws nothing.
 async function syncAiBanner(ctx) {
   if (state.tab?.id !== ctx.tabId) return;
   const lines = pendingAi(ctx.tabId, ctx.page).map((x) => `${x.label}: ${x.choice}`);
-  try { await runKit(ctx.tabId, ctx.carrier, (l) => globalThis.__raterKit.aiBanner(l), [lines]); } catch { /* page navigating */ }
+  try { await runKit(ctx.tabId, ctx.carrier, (l) => globalThis.__raterKit?.aiBanner(l), [lines]); } catch { /* page navigating */ }
 }
 
 // Puts AI answers into the page through the fill engine, which checks the page kept each one.
@@ -704,7 +706,7 @@ function renderAi(holder, suggestions, ctx) {
     }
     if (decision === 'rejected') {
       for (const x of list) {
-        try { await runKit(ctx.tabId, ctx.carrier, (k, l, n) => globalThis.__raterKit.markKey(k, l, 'needs', n), [x.key, x.label, 'AI choice rejected: set this answer yourself']); } catch { /* page navigating */ }
+        try { await runKit(ctx.tabId, ctx.carrier, (k, l, n) => globalThis.__raterKit?.markKey(k, l, 'needs', n), [x.key, x.label, 'AI choice rejected: set this answer yourself']); } catch { /* page navigating */ }
       }
     }
     await persistAiPending();
@@ -782,43 +784,38 @@ function renderAi(holder, suggestions, ctx) {
         h('button', { type: 'button', class: 'primary accept', onclick: (e) => act([x], 'accepted', e.target) }, 'Use this answer'),
         h('button', { type: 'button', class: 'ghost', onclick: () => { x.dismissed = true; if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } }, 'No thanks')));
   };
-  const rows = [...$('report').querySelectorAll('.row.need')];
+  // The rows of the report shown (report-rows.js): the AI's word goes on its question's.
+  const rows = (state.reportFor?.list ?? []).filter((r) => r.type === 'need');
   const orphans = [];
   for (const x of new Set([...suggestions, ...pending])) {
-    const item = rows.find((n) => n.dataset.need === `${x.key}|${x.label}`);
+    const item = rows.find((r) => needId(r) === `${x.key}|${x.label}`);
     const content = box(x);
     if (!item) {
       if (content) orphans.push(h('div', { class: 'ai-orphan' }, h('b', {}, x.label), content));
       continue;
     }
-    item.aiSuggestion = x;
-    item.querySelector('.ai-slot').replaceChildren(...(content ? [content] : []));
-    // The AI's choice among the row's own: picking it there is accepting it (applyAi).
+    item.ai = x;
+    aiSlotOf(item)?.replaceChildren(...(content ? [content] : []));
+    // The AI's choice among the row's own (marked there): picking it there is accepting it (applyAi).
     const offered = !x.done && !x.dismissed && !x.leave && x.applyable && x.controlKind !== 'text' ? x.choice : null;
     item.aiAccept = offered ? () => act([x], 'accepted') : null;
-    if (offered) item.dataset.aiPick = offered; else delete item.dataset.aiPick;
-    for (const b of item.querySelectorAll('.opt-btn')) {
-      const pick = b.dataset.choice === offered;
-      b.classList.toggle('ai-pick', pick);
-      b.querySelector('.ai-badge')?.remove();
-      if (pick) b.append(h('span', { class: 'ai-badge' }, 'AI pick'));
-    }
-    for (const o of item.querySelectorAll('.opt-select option')) if (o.value) o.textContent = `${choiceSaid(o.value)}${o.value === offered ? ' (AI pick)' : ''}`;
+    item.aiPick = offered;
     // The row says only what the agent settled (answered on the page or here, marked done), else
     // the AI's word: an answer the agent accepted or approved settles it; one waiting for approval
     // (or rejected, or not taken by the page) is still theirs.
-    if (['answered', 'marked', 'picked'].includes(item.dataset.settled)) continue;
-    item.querySelector('.need-note').hidden = true;
-    const settled = !!x.manual || (!!x.done && !x.rejected && !x.error && (x.done !== 'auto' || !!x.approved));
-    const waiting = !settled && x.done === 'auto' && !x.rejected && !x.error;
-    item.classList.toggle('resolved', settled);
-    item.classList.toggle('pending', waiting);
-    if (settled) item.dataset.settled = 'ai'; else delete item.dataset.settled;
-    setRowHead(item, settled
-      ? { icon: '✓', value: x.manual ? 'Your answer on the page' : x.choice, tag: x.manual ? { kind: 'you', text: 'You' }
-        : { kind: 'ai', text: x.done === 'auto' ? 'AI · approved' : 'AI · you chose', title: 'AI suggestion, chosen by you' } }
-      : waiting ? { icon: '?', value: x.choice, tag: { kind: 'ai', text: 'AI picked · approve', title: 'Picked by the AI: approve or reject it' } }
-        : { icon: item.dataset.icon, value: item.dataset.wait });
+    if (!['answered', 'marked', 'picked'].includes(item.settled)) {
+      item.note = null;
+      const settled = !!x.manual || (!!x.done && !x.rejected && !x.error && (x.done !== 'auto' || !!x.approved));
+      const waiting = !settled && x.done === 'auto' && !x.rejected && !x.error;
+      item.settled = settled ? 'ai' : null;
+      item.pending = waiting;
+      if (settled) {
+        setHead(item, { icon: '✓', value: x.manual ? 'Your answer on the page' : x.choice, tag: x.manual ? { kind: 'you', text: 'You' }
+          : { kind: 'ai', text: x.done === 'auto' ? 'AI · approved' : 'AI · you chose', title: 'AI suggestion, chosen by you' } });
+      } else if (waiting) setHead(item, { icon: '?', value: x.choice, tag: { kind: 'ai', text: 'AI picked · approve', title: 'Picked by the AI: approve or reject it' } });
+      else item.head = null;
+    }
+    drawRow(item);
   }
   holder.replaceChildren(...[
     sure.length > 1 ? h('div', { class: 'ai-actions' }, h('button', { type: 'button', class: 'ghost', onclick: (e) => act(sure, 'accepted', e.target) }, `Use all ${sure.length} AI answers`)) : null,
