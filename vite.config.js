@@ -27,18 +27,21 @@ const previewShim = {
   apply: 'serve',
   configureServer(server) {
     server.middlewares.use((req, res, next) => {
-      const { pathname } = new URL(req.url, 'http://preview');
+      let pathname;
+      try { pathname = decodeURIComponent(new URL(req.url, 'http://preview').pathname); } catch { return next(); }
       // The server's address opens the preview.
-      if (pathname === '/') {
+      if (pathname === '/' || pathname === '/preview') {
         res.statusCode = 302;
         res.setHeader('Location', '/preview/');
         return res.end();
       }
       // The preview page and the practice carrier pages as they are, without Vite's client: after
-      // an edit only the panel reloads, and the preview keeps what the panel stored.
-      const file = pathname === '/preview/' ? 'preview/index.html' : /^\/test\/.+\.html$/.test(pathname) ? decodeURIComponent(pathname.slice(1)) : null;
-      if (!file) return next();
-      fs.readFile(path.join(here, file), (error, html) => {
+      // an edit only the panel reloads, and the preview keeps what the panel stored. Only files
+      // under test/ (review of #241: an encoded `..` reached outside the repository).
+      const file = pathname === '/preview/' ? path.join(here, 'preview/index.html')
+        : /^\/test\/.+\.html$/.test(pathname) ? path.resolve(here, pathname.slice(1)) : null;
+      if (!file || !(file.startsWith(path.join(here, 'test') + path.sep) || pathname === '/preview/')) return next();
+      fs.readFile(file, (error, html) => {
         if (error) return next();
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.end(html);

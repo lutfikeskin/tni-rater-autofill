@@ -4,8 +4,9 @@
 // page opened by itself, outside the preview, keeps its own "Preview only" mode.
 //
 // What the panel stores lives in the preview page, as JSON, so it survives the panel reloading
-// after an edit and is gone when the preview reloads. Nothing leaves this computer: a request to
-// any other origin is refused, and uploads start switched off (the server setting is blank).
+// after an edit and is gone when the preview reloads. Uploads start switched off (the server setting
+// is blank), and the panel's fetch requests to any other origin are refused: fetch is how the panel
+// sends (uploads, AI providers); other request APIs are not guarded.
 (() => {
   const host = window.parent !== window ? window.parent.__tniPreview : null;
   if (!host) return;
@@ -103,7 +104,9 @@
   // Runs `func` or `files` in the practice carrier page's frames, as Chrome does in a tab: there is
   // one world (the page's), arguments and results go as JSON, and a frame whose script throws gives
   // no result (the error is in the console). Each runs with the frame's `window` from the preview
-  // (windowFor), whose `top` is the carrier page.
+  // (windowFor), whose `top` is the carrier page. Each file runs in a function scope of its own, so a
+  // file can't read another's top-level declarations as it could in Chrome; every page script today
+  // is one self-contained IIFE.
   const inFrame = (win, source, url) => win.eval(`(function (window) {\n${source}\n})${url ? `\n//# sourceURL=${url}` : ''}`).call(win, host.windowFor(win));
   const scripting = {
     async executeScript({ target, func, args = [], files: names }) {
@@ -166,7 +169,7 @@
     tabUpdated: (change) => fire(tabs.onUpdated, host.tab()?.id, clone(change), clone(host.tab())),
   };
 
-  // Nothing leaves this computer from the preview.
+  // The panel's fetch requests stay on this computer.
   const fetchHere = window.fetch.bind(window);
   window.fetch = (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), location.href);
