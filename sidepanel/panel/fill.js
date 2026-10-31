@@ -1288,31 +1288,40 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
       ...fieldChangeEvent({ key: field.key, q: x.q ?? null, label: field.label, kind: field.kind, before: field.current ?? '', after: shown, agent: true }, ctx) });
   }
   if (!current()) return;
-  // The AI's word on it, if any: a suggestion the agent answered otherwise is dismissed (logged);
-  // a pick it put in that waits for approval is the agent's answer now, as after an edit there.
-  const sugg = rec.ai;
-  if (sugg && [...state.aiCache.values()].includes(sugg)) {
+  // The question's other rows too: a filled answer with a check shows as an answer and as a check,
+  // and a field may be listed twice (failed, and not on the intake). Rows of the report shown only
+  // (a report kept for another page isn't changed).
+  const label = x.label ?? field.label ?? '';
+  const list = state.reportFor?.list ?? [];
+  const same = list.includes(rec) ? list.filter((r) => r.key === x.key && (r.type === 'need' ? needId(r) : `|${r.field ?? ''}`).endsWith(`|${label}`)) : [];
+  const rows = new Set([rec, ...same]);
+  // The AI's word on it, if any, on whichever of its rows it went (renderAi puts it on the first;
+  // review of #245): a suggestion the agent answered otherwise is dismissed (logged); a pick it put
+  // in that waits for approval is the agent's answer now, as after an edit there.
+  let taken = false;
+  for (const sugg of new Set([...rows].map((r) => r.ai).filter(Boolean))) {
+    if (![...state.aiCache.values()].includes(sugg)) continue;
     if (sugg.done === 'auto' && !sugg.approved && !sugg.manual) {
       sugg.manual = true;
-      persistAiPending();
-      syncAiBanner({ tabId, page, carrier });
+      taken = true;
     } else if (!sugg.done && !sugg.dismissed) {
       sugg.dismissed = true;
       if (!carrier.practice) usage.log(aiDecisionEvent(sugg, { carrier, page }, 'dismissed'));
     }
   }
-  // Its row says the agent's answer only: the AI's card goes, and its pick is no longer marked
+  if (taken) {
+    persistAiPending();
+    syncAiBanner({ tabId, page, carrier });
+  }
+  // Its rows say the agent's answer only: the AI's card goes, and its pick is no longer marked
   // among the choices or taken as accepting it (review of #245).
-  aiSlotOf(rec)?.replaceChildren();
-  rec.aiPick = null;
-  rec.aiAccept = null;
+  for (const row of rows) {
+    aiSlotOf(row)?.replaceChildren();
+    row.aiPick = null;
+    row.aiAccept = null;
+  }
   if (rec.type === 'need') rec.pressed = choice;
-  // The question's other row too: a filled answer with a check shows as an answer and as a check.
-  // Rows of the report shown only (a report kept for another page isn't changed).
-  const label = x.label ?? field.label ?? '';
-  const list = state.reportFor?.list ?? [];
-  const same = list.includes(rec) ? list.filter((r) => r.key === x.key && (r.type === 'need' ? needId(r) : `|${r.field ?? ''}`).endsWith(`|${label}`)) : [];
-  for (const row of new Set([rec, ...same])) {
+  for (const row of rows) {
     if (row.type === 'need') { settleNeed(row, 'picked', null, choiceSaid(shown)); continue; }
     row.value = shown;
     row.changed = null;

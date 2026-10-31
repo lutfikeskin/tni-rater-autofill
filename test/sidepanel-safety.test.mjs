@@ -7528,6 +7528,29 @@ test('the agent\'s pick goes in as theirs: by the agent, never on a stop step, l
   assert.deepEqual(t.stored, [{ scope: 'intake-1', tabId: 1, page: 'Quote', keys: ['k1'] }], 'kept for the panel opened again');
 });
 
+// Review of #245: a field listed twice (it failed, and isn't on the intake) has the AI's suggestion
+// on its first row only (renderAi). Answered from its other row, the suggestion is dismissed all the
+// same, and neither row keeps the AI's card, mark or accept; a pick waiting for approval is the
+// agent's answer then.
+test('the agent\'s pick from one row of a field settles the AI\'s word on its other row too', async () => {
+  for (const done of [undefined, 'auto']) {
+    const decisions = [];
+    let synced = 0;
+    const t = agentAnswerHarness({ extra: { aiDecisionEvent: (s, ctx, decision) => { decisions.push(decision); return { type: 'ai_decision', decision }; },
+      persistAiPending() {}, syncAiBanner: () => { synced++; } } });
+    const sugg = { key: 'k1', label: 'Hauls hazardous materials', choice: 'Yes', ...(done ? { done } : {}) };
+    t.state.aiCache.set('s', sugg);
+    const first = { type: 'need', key: 'k1', field: 'Hauls hazardous materials', x: { key: 'k1', label: 'Hauls hazardous materials' }, ai: sugg, aiPick: 'Yes', aiAccept: () => {} };
+    t.item.x = { key: 'k1', label: 'Hauls hazardous materials' };
+    t.state.reportFor = { list: [first, t.item] };
+    await t.pick('No');
+    assert.deepEqual([first.aiPick, first.aiAccept], [null, null], `${done ?? 'suggested'}: the AI's word off its row`);
+    assert.deepEqual(t.settled.map((s) => s[0]), ['picked', 'picked'], 'both rows settled');
+    if (done) assert.deepEqual([sugg.manual, sugg.dismissed, synced, decisions], [true, undefined, 1, []], 'a pick waiting for approval: the agent\'s now');
+    else assert.deepEqual([sugg.dismissed, decisions], [true, ['dismissed']], 'a suggestion: dismissed, and logged');
+  }
+});
+
 // Review 2026-10-22: the agent moved to another tab while their pick went in. The page holds it, so
 // it is theirs where it went in (no fill puts the intake value back) and logged; their row there
 // isn't touched from the other tab.
