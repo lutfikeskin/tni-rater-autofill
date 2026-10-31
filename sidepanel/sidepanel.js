@@ -17,6 +17,7 @@ import { renderAiSettings, reviewIntake, wireAi } from './panel/assistant.js';
 import { renderUsage, uploadNow, wireUsage } from './panel/usage-panel.js';
 import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, closeDetails, closePdf, drawPdf, newQuote, noteStep, openDetails, openPdf, openPdfInTab, pdfPage, pdfPan, pdfZoom, workSaid } from './panel/pdf-view.js';
 import { announceCopy, dock, keepPlace, onPanelMessage, popOut } from './panel/window.js';
+import { mountLive } from './panel/live-view.jsx';
 
 // ---------------------------------------------------------------------------------------------
 // Wiring
@@ -153,6 +154,7 @@ async function init() {
   // Stored data in this build's shape before anything reads it (migrateStoredData).
   await migrateStoredData();
   wire();
+  mountLive($('live-root'), $('view'));
   if (inExtension && popped) keepPlace();
   // An intake saved by an earlier panel: while the panel was closed the tabs may have moved to
   // another client's quote, so their layouts wait as after loading one (holdLayouts).

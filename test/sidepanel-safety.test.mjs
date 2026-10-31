@@ -5065,16 +5065,8 @@ test('while a fill runs the panel streams the items judged with the answers, in 
   assert.equal(renders, drawn);
   const f = state.fillingFor;
   assert.deepEqual(Array.from(context.liveEntries(f.rows, f.items, f.frames), (e) => (e.row ?? e.item).label), ['Kind', 'Deed year', 'Zip', 'Size', 'Other frame']);
-  // Drawn so in the live list: the answers as answers, the items as what is left for the agent.
-  const live = { hidden: true, dataset: {}, children: [], replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); }, get lastElementChild() { return this.children.at(-1); } };
-  const view = { scrollHeight: 0, scrollTop: 0, clientHeight: 0 };
-  const panel = { state: { filling: true, tab: { id: 3 }, fillingFor: f }, $: (id) => (id === 'live' ? live : view),
-    h: (tag, props, ...children) => ({ tag, props, children: children.flat(), scrollIntoView() {} }), phaseSaid: () => ['Next answer', 'Working…'] };
-  vm.runInNewContext(['renderLive', 'liveEntries'].map(extractFunction).join('\n'), panel);
-  panel.renderLive();
-  assert.equal(live.hidden, false);
-  assert.deepEqual(live.children.filter((n) => !/typing/.test(n.props.class)).map(rowSaid).map((r) => [r.label, r.value, r.need]), [
-    ['Kind', 'Owner', false], ['Deed year', 'Needs your answer', true], ['Zip', 'Couldn’t fill', true], ['Size', 'Large', false], ['Other frame', 'Needs your answer', true]]);
+  // How the live list draws them (the answers as answers, the items as what is left for the agent):
+  // test/panel/live-view.test.jsx, with this fillingFor.
 });
 
 // AdGuard and browser-harness comparison (2026-10-22): a message box on the page (alert, confirm,
@@ -5111,7 +5103,34 @@ test('a fill whose page stops answering is said in the dock, and the word goes w
   const word = d.dock();
   assert.deepEqual([word.phase, word.tone, word.title, word.sub, word.button, word.label],
     ['filling', 'warn', 'The page isn’t answering', 'If it shows a message box, answer it there. The fill goes on after.', 'fill-stop', 'Stop']);
-  assert.match(extractFunction('renderLive'), /f\.unanswered \? \['Waiting for the page'/);
+  // The live list's last row says it too: test/panel/live-view.test.jsx.
+});
+
+// React PR 3 (2026-10-31): the live list redraws on an assignment of fillingFor, so what a fill says
+// as it runs (watchFill's word that the page isn't answering, Stop) is a new fillingFor, not a change
+// in place; the fill it stops is the same one.
+test('the page not answering and Stop are said in a new fillingFor', async () => {
+  let tick = null;
+  let clock = 0;
+  const f = { run: 'r1', tabId: 3, carrier: {}, filled: 0, rows: [], stopping: false };
+  const state = { fillingFor: f };
+  const stopped = [];
+  const button = { disabled: false };
+  const context = {
+    inExtension: true, state, worldFor: () => 'MAIN', renderSteps() {}, UNANSWERED_MS: 5000, $: () => button,
+    Date: { now: () => clock }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+    chrome: { scripting: { executeScript: async (o) => { if (o.args[0] === 'r1') stopped.push(o.target.tabId); return new Promise(() => {}); } } },
+  };
+  vm.runInNewContext(['watchFill', 'stopFill'].map(extractFunction).join('\n'), context);
+  context.watchFill({ run: 'r1', tabId: 3, carrier: {} });
+  tick();
+  clock = 5000;
+  await tick();
+  assert.ok(state.fillingFor !== f && state.fillingFor.unanswered === true && f.unanswered === undefined);
+  const before = state.fillingFor;
+  context.stopFill();
+  assert.ok(state.fillingFor !== before && state.fillingFor.stopping === true && before.stopping === false);
+  assert.deepEqual([state.fillingFor.run, stopped, button.disabled], ['r1', [3], true]);
 });
 
 // Bitwarden comparison (2026-10-22): a fill went on with the page it was asked for while the panel
@@ -7682,14 +7701,8 @@ test('an automatic fill lists its answers as they go in, from the first one', as
   await run;
   assert.equal(t.state.fillingFor, null);
   assert.match(watched, /:stopped$/);
-  // Shown once a row is in, never for a follow-up that has answered nothing yet.
-  const ui = { live: { hidden: true, dataset: {}, replaceChildren() {}, drawn: [] } };
-  const state = { filling: true, tab: { id: 7 }, fillingFor: { auto: true, tabId: 7, rows: [] } };
-  const context = { state, $: (id) => ui[id] };
-  vm.runInNewContext(extractFunction('renderLive'), context);
-  context.renderLive();
-  assert.equal(ui.live.hidden, true);
-  assert.match(extractFunction('renderLive'), /const on = !!f && state\.filling && f\.tabId === state\.tab\?\.id && \(!f\.auto \|\| !!f\.rows\?\.length\);/);
+  // Shown once a row is in, never for a follow-up that has answered nothing yet: the dock here, the
+  // live list in test/panel/live-view.test.jsx.
   assert.match(extractFunction('dockFor'), /if \(state\.filling && f\?\.tabId === state\.tab\.id && \(!f\.auto \|\| !!f\.rows\?\.length\)\) \{/);
 });
 
@@ -8087,10 +8100,15 @@ test('the live list and the dock say what the kit waits on (its phase), and a ph
   vm.runInNewContext(extractFunction('watchFill'), wctx);
   wctx.watchFill({ run: 'r1', tabId: 3, carrier: {} });
   reply = [{ result: { frame: 'f', list: 'f:1', since: 0, rows: [], phase: { name: 'reading', what: null } } }];
+  const began = state.fillingFor;
   await tick();
   assert.deepEqual([JSON.parse(JSON.stringify(state.fillingFor.phase)), renders], [{ name: 'reading', what: null }, 1]);
+  // React PR 3: a new fillingFor is assigned (the live list redraws on it), the one before left as it was.
+  assert.ok(state.fillingFor !== began && began.phase === undefined);
+  const read = state.fillingFor;
   await tick();
   assert.equal(renders, 1, 'the same phase: nothing redrawn');
+  assert.equal(state.fillingFor, read, 'and nothing assigned');
   reply = [{ result: { frame: 'f', list: 'f:1', since: 0, rows: [], phase: { name: 'premium', what: null } } }];
   await tick();
   assert.deepEqual([state.fillingFor.phase.name, renders], ['premium', 2]);
@@ -8101,9 +8119,7 @@ test('the live list and the dock say what the kit waits on (its phase), and a ph
   assert.equal(d.dock().title, 'Waiting for the premium…');
   d.state.fillingFor.phase = { name: 'waiting' };
   assert.equal(d.dock().title, 'Just filled: Liability');
-  // The live list follows its last row only while the agent is at its end.
-  assert.match(extractFunction('renderLive'), /const follow = !\(live\.drawn \?\? \[\]\)\.length \|\| view\.scrollHeight - view\.scrollTop - view\.clientHeight < 80;/);
-  assert.match(extractFunction('renderLive'), /if \(follow\) live\.lastElementChild\?\.scrollIntoView\?\.\(\{ block: 'nearest' \}\);/);
+  // The live list follows its last row only while the agent is at its end: test/panel/live-view.test.jsx.
 });
 
 // Review of PR #170: "Quote done" stayed after the agent changed the quote on the page once the
