@@ -8,8 +8,9 @@ import { DEFAULT_MODEL, POLICY_VERSION } from '../../src/ai/luna.js';
 import { inExtension } from './env.js';
 import { firstUnits } from './intake.js';
 import { pageOf } from './usage.js';
-import { currentReportKey, editScope, stopNoteFor } from './coordinator.js';
-import { answerItems, liveFrames, liveItems, refreshAnswers, renderReport, reviewItems, runKit, worldFor } from './fill.js';
+import { liveFrames, liveItems, refreshAnswers, renderReport, runKit, worldFor } from './fill.js';
+import { editScope } from './scope.js';
+import { answerItems, currentReportKey, reviewItems, stopNoteFor } from './report-model.js';
 
 const memory = {};
 const store = inExtension

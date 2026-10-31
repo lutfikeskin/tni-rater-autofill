@@ -8,10 +8,11 @@ import * as usage from '../usage-log.js';
 import { $, h, persistUnitForms, state } from './core.js';
 import { profileLater, save } from './intake.js';
 import { pageOf } from './usage.js';
-import { intakeEdited, renderDock, renderSite, renderSteps, scheduleLayout, scrollBehavior, tabStep } from './coordinator.js';
+import { intakeEdited, renderDock, renderSite, renderSteps, scheduleLayout, scrollBehavior } from './coordinator.js';
 import { refreshAnswers } from './fill.js';
 import { applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, ntlPrimaryEdited, renderAiSettings, reviewClaimsBox, reviewDriverGender } from './assistant.js';
 import { openDetails, openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
+import { tabStep } from './scope.js';
 
 // ---------------------------------------------------------------------------------------------
 // Rendering the client record
