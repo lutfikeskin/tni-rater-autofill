@@ -16,9 +16,13 @@ import { $, forgetKeptReports, h, persistAgentKeys, persistDoneActions, persistU
 import { firstUnits, save } from './intake.js';
 import { checkShown, renderPickers, renderWarnings, showScreen } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
-import { afterFill, answerRow, answerSources, assistAfterFill, fillPage, groupRows, itemsLeft, noteMissingUnit, pickListItem, renderReport, runKit, worldFor } from './fill.js';
+import { afterFill, answerRow, assistAfterFill, fillPage, noteMissingUnit, pickListItem, renderReport, runKit, worldFor } from './fill.js';
 import { pendingAi } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
+import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNameFor, unitScope } from './scope.js';
+import { fillCurrent, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded } from './fill-checks.js';
+import { DOCK_PHASES, liveEntries, phaseSaid } from './live.js';
+import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -54,123 +58,6 @@ function saveViews() {
 function resetViews() {
   state.viewTabs = new Map();
   saveViews();
-}
-
-// The step a tab of a one-address application (AmWINS, GEICO) is on, as the panel last heard it
-// (noteStep, renderReport); undefined for carriers whose pages have their own addresses. It can lag
-// the page by a message: callers that have the step the page itself named pass that instead.
-function tabStep(carrier = state.tab?.carrier, tabId = state.tab?.id) {
-  return carrier?.layoutSteps ? state.tabSteps?.get(tabId) : undefined;
-}
-
-// On a one-address application, a step about one vehicle or driver (GEICO's Vehicles, Drivers &
-// Incidents: `vehicleSteps`, `driverSteps`) is scoped like Progressive's Add Vehicle and Add Driver.
-function stepScope(page, carrier = state.tab?.carrier, active = state.active, step = tabStep(carrier)) {
-  const entity = carrier?.vehiclePages?.includes(page) || (step && carrier?.vehicleSteps?.includes(step)) ? `v${active.vehicles ?? 0}`
-    : carrier?.trailerPages?.includes(page) ? `tr${active.trailers ?? 0}`
-      : (carrier?.driverPage && carrier.driverPage === page) || (step && carrier?.driverSteps?.includes(step)) ? `d${active.drivers ?? 0}` : '';
-  return `${page}|${entity}|`;
-}
-
-// Agent edits are protected per page, and on a page about one vehicle or driver per that vehicle
-// or driver (the scope of stepScope): correcting the first vehicle's value on Add Vehicle doesn't
-// leave the next vehicle's box alone. `step`: the step the page named, when the caller has it.
-// Where one address holds every step and unit form (formScoped: GEICO), whose steps and forms
-// share field names (the owner's and each driver's name, the business's and each vehicle's ZIP):
-// per step (`|s:<step>`), and on a unit step per form, the one the tab's latest fill ended on
-// there (unitShown): its own while held as maybe another unit's (`|f:<id>`), else its unit's
-// (`|v<i>`, `|tr<j>`, `|d<k>`); with none there (the owner check, the owner's driver form), the
-// step's (`|s:<step>`, as changeScopes); before a fill read the step, the step's unit. No step
-// known: the page.
-// `active`, `shown`: those of the fill's tab (rememberFill).
-function editScope(page, carrier = state.tab?.carrier, step = tabStep(carrier), { active = state.active, shown = state.unitShown } = {}) {
-  if (formScoped(carrier)) {
-    if (!step) return page;
-    const list = carrier.vehicleSteps?.includes(step) ? 'vehicles' : carrier.driverSteps?.includes(step) ? 'drivers' : null;
-    if (!list) return `${page}|s:${step}`;
-    const here = shown?.step === step ? shown : null;
-    if (here?.held) return `${page}|f:${here.id}`;
-    if (here && !here.list) return `${page}|s:${step}`;
-    const unit = here?.list ?? list;
-    return `${page}|${{ vehicles: 'v', trailers: 'tr', drivers: 'd' }[unit]}${active?.[unit] ?? 0}`;
-  }
-  const scope = stepScope(page, carrier, state.active, step);
-  return scope.endsWith('||') ? page : scope.slice(0, -1);
-}
-
-// One address for every step and every vehicle's, trailer's and driver's form (GEICO: its
-// vehicleSteps and driverSteps): the agent's edits are kept per step and form (editScope).
-function formScoped(carrier) {
-  return !!(carrier?.vehicleSteps?.length || carrier?.driverSteps?.length);
-}
-
-// One vehicle's (trailer's, driver's) edits on a one-address application: `|v<i>`, `|tr<j>`, `|d<k>`.
-function unitScope(page, list, index) {
-  return `${page}|${{ vehicles: 'v', trailers: 'tr', drivers: 'd' }[list]}${index ?? 0}`;
-}
-
-// Where the agent's changes on the page are filed (the recorder's field_changes). Where one address
-// holds every step and form (formScoped), on a unit step by the unit forms the recorder saw on
-// screen with them (`forms`: [{ list, id }], pagekit unitFormsNow): each form's own (`|f:<id>`),
-// and its unit's too unless the kit would hold it as maybe another unit's (bound to another, or new
-// while the active unit was filled on another: pagekit unitFormsOf, against the tab's unitForms).
-// None on screen (GEICO's owner check under Vehicles, a list): the step's. Forms not known (no fill
-// in that document has named them): the tab's latest form (editScope). Elsewhere one scope, as
-// editScope files it (Progressive and AmWINS as before). Element names only.
-function changeScopes(page, carrier = state.tab?.carrier, step = tabStep(carrier), forms = null, { active = state.active, bound = state.unitForms } = {}) {
-  if (!formScoped(carrier)) return [editScope(page, carrier, step)];
-  if (!step) return [page];
-  const list = carrier.vehicleSteps?.includes(step) ? 'vehicles' : carrier.driverSteps?.includes(step) ? 'drivers' : null;
-  if (!list) return [`${page}|s:${step}`];
-  if (!Array.isArray(forms)) return [editScope(page, carrier, step, { active })];
-  const shown = forms.filter((u) => ['vehicles', 'drivers', 'trailers'].includes(u?.list) && typeof u.id === 'string' && u.id);
-  if (!shown.length) return [`${page}|s:${step}`];
-  const scopes = new Set();
-  for (const { list: unit, id } of shown) {
-    const forUnit = bound?.[unit] ?? {};
-    const index = active?.[unit] ?? 0;
-    const boundTo = Object.hasOwn(forUnit, id) ? forUnit[id] : null;
-    const activeForm = Object.keys(forUnit).find((k) => forUnit[k] === index) ?? null;
-    const held = (boundTo != null && boundTo !== index) || (boundTo == null && activeForm != null && activeForm !== id);
-    scopes.add(`${page}|f:${id}`);
-    if (!held) scopes.add(unitScope(page, unit, index));
-  }
-  return [...scopes];
-}
-
-// The agent's keys a fill leaves alone wherever it is: its edit scope's. Where one address holds
-// every step and form (formScoped), only the page's own (edits made where no step was read): the
-// kit leaves each step's and form's alone as it reads them on screen (fillSkipBy).
-function fillSkip(agentKeys, scope, page, carrier) {
-  return [...(agentKeys?.get(formScoped(carrier) ? page : scope) ?? [])];
-}
-
-// Where one address holds every step and form (formScoped), the agent's edits by where they were
-// made, for the kit to leave alone on that step or form only (pagekit skipBy): per step (`|s:`),
-// the active units' (the plan's vehicle, trailer and driver), per form (`|f:`), and which steps are
-// about a vehicle or a driver. Null for other carriers. Keys and element names only.
-function fillSkipBy(agentKeys, page, carrier, active = state.active) {
-  if (!formScoped(carrier)) return null;
-  const keysOf = (scope) => [...(agentKeys?.get(scope) ?? [])];
-  const steps = {}, forms = {};
-  for (const [scope, keys] of agentKeys ?? []) {
-    const rest = String(scope).startsWith(`${page}|`) ? String(scope).slice(page.length + 1) : '';
-    if (rest.startsWith('s:')) steps[rest.slice(2)] = [...keys];
-    if (rest.startsWith('f:')) forms[rest.slice(2)] = [...keys];
-  }
-  return {
-    steps,
-    units: { vehicles: keysOf(`${page}|v${active?.vehicles ?? 0}`), trailers: keysOf(`${page}|tr${active?.trailers ?? 0}`), drivers: keysOf(`${page}|d${active?.drivers ?? 0}`) },
-    forms,
-    stepUnits: Object.fromEntries([...(carrier.vehicleSteps ?? []).map((s) => [s, 'vehicles']), ...(carrier.driverSteps ?? []).map((s) => [s, 'drivers'])]),
-  };
-}
-
-// Whether the agent settled this field on the page. A row key (name#<row>, field-key v3) is also
-// settled by its plain name, saved by an older build, which could have been any row's edit.
-function agentEdited(page, key) {
-  const keys = state.agentKeys.get(editScope(page));
-  return !!keys && (keys.has(key) || keys.has(String(key ?? '').match(/^(.+)#\d+$/)?.[1]));
 }
 
 // `active`: the vehicle, driver and trailer the fill's plan is for (fillContext), which the agent's
@@ -230,19 +117,6 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
   ...extra,
 });
 
-// For the kit (fill `formUnit`) on a page whose form names its unit (carrier.unitNames): the
-// pattern, each intake unit's name words (first and last, 2 letters or more), the plan's unit and
-// its name as the panel shows it.
-/** @returns {FillOptions['formUnit']} */
-function unitNameFor(carrier, page, active, record) {
-  const spec = (carrier?.unitNames ?? []).find((s) => s.page === page);
-  if (!spec || !record) return null;
-  const units = record[spec.list] ?? [];
-  const words = (d) => [d?.first, d?.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
-  const i = active?.[spec.list] ?? 0;
-  return { list: spec.list, text: spec.text, names: units.map(words), active: i, label: [units[i]?.first, units[i]?.last].filter(Boolean).join(' ') || 'the selected driver' };
-}
-
 // Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
 // from the extension's own package when the panel starts, on every fill_run. Null outside the
 // extension or until it's read; then the run just carries none.
@@ -270,12 +144,6 @@ function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = f
     settings: { autoAdvance: !!$('auto-advance').checked, autoFollowUps: !!$('auto-followups').checked, autoPages: !!$('auto-pages').checked, overwrite: !!overwrite },
   };
 }
-// The intake was replaced or corrected while the page was being filled: the answers on the page
-// are the earlier intake's, and nothing from this fill may be remembered, logged or shown as the
-// current intake's.
-function staleFill(ctx) { return state.intake !== ctx.intake || state.intakeRevision !== ctx.revision; }
-// Automatic work and panel reports belong only to the fill still shown in the panel.
-function fillCurrent(ctx) { return !staleFill(ctx) && state.tab?.id === ctx.tabId; }
 function noteStaleFill(ctx) {
   logFillError(ctx, 'stale: intake changed during the fill');
   fillProblem(ctx, 'The intake changed during the fill: the page may hold earlier answers. Check it, then fill again.');
@@ -298,20 +166,6 @@ function notePageMoved(ctx) {
   if (ctx.auto) return;
   logFillError(ctx, 'page moved before the fill began');
   fillProblem(ctx, 'The page changed before the fill began. Nothing was filled or clicked; fill the page in front.', 'notice');
-}
-
-// A fill's error in words the agent can act on, with the browser's own message (redacted with the
-// intake: it may quote the page) after it for a problem report.
-function fillErrorMessage(ctx, e) {
-  const raw = String(e?.message ?? e ?? '');
-  const plain = /cannot access|permission|not allowed|cannot be scripted|chrome:\/\//i.test(raw)
-    ? 'The browser blocked the extension on this page. Reload it, then fill again.'
-    : /no tab with id|tab was closed/i.test(raw) ? 'The tab was closed during the fill.'
-      : /frame|document|navigat|unload|back\/forward|receiving end/i.test(raw)
-        ? 'The page changed or reloaded during the fill. Let it load, then fill again.'
-        : 'Filling failed. Check the page, then fill again.';
-  const detail = fillErrorText(ctx, e);
-  return detail ? `${plain} (${detail})` : plain;
 }
 
 // While a fill runs: the answers in so far, read from the page every half second (pagekit
@@ -384,18 +238,6 @@ function watchFill(ctx) {
   return () => clearInterval(timer);
 }
 
-// The live list's entries in the page's order: the answers in so far (`rows`) and the items judged
-// (`items`, pagekit progress), each by its frame (`frames`, the page's frames in order) and its place
-// on the page as the fill's last round read it (`order`); those with no place after them, as they
-// came. [{ row } | { item }].
-function liveEntries(rows, items, frames = []) {
-  const all = [...rows.map((x, i) => ({ row: x, x, i })), ...items.map((x, i) => ({ item: x, x, i: rows.length + i }))];
-  const rank = (e) => { const at = frames.indexOf(e.x.frame); return at < 0 ? frames.length : at; };
-  const placed = (e) => Number.isInteger(e.x.order);
-  return [...all.filter(placed).sort((a, b) => rank(a) - rank(b) || a.x.order - b.x.order || a.i - b.i), ...all.filter((e) => !placed(e))]
-    .map(({ row, item }) => (row ? { row } : { item }));
-}
-
 // The answers going in now, one row each as the page takes them, the items left for the agent as the
 // fill judges them (top to bottom: only questions above where it has got to), all in the page's order
 // (liveEntries), and a row for the one coming: read from the page (pagekit progress), nothing typed or
@@ -438,24 +280,6 @@ function renderLive() {
   if (follow) live.lastElementChild?.scrollIntoView?.({ block: 'nearest' });
 }
 
-// The live list's last row, and the dock while a long wait is on: what the kit is doing (pagekit
-// `phase`), so a fill waiting on GEICO's Recalculate or a quiet page doesn't read as stuck on
-// "Working…" (the maintainer, 2026-10-23). `n`: answers in so far.
-function phaseSaid(phase, n = 0) {
-  const what = phase?.what ? `: ${phase.what}` : '';
-  switch (phase?.name) {
-    case 'reading': return ['Reading the page', 'Waiting for it to settle…'];
-    case 'waiting': return ['Waiting for the page', 'It’s working on the last answer…'];
-    case 'helper': return [`Clicked${what}`, 'Waiting for the page to answer…'];
-    case 'premium': return ['Waiting for the premium', 'The rater is rating the quote…'];
-    case 'continue': return ['Clicking Continue', 'Waiting for the page to settle…'];
-    default: return [n ? 'Next answer' : 'Reading the page', 'Working…'];
-  }
-}
-// The waits long enough to name in the dock's title (not the quiet wait after each answer, which
-// would flicker with "Just filled").
-const DOCK_PHASES = new Set(['reading', 'helper', 'premium', 'continue']);
-
 // Step 2's Stop: halts the running fill in every frame of its tab (pagekit stop), as an agent edit
 // does. What is in stays; nothing more is filled or clicked, Continue included.
 async function stopFill() {
@@ -485,9 +309,6 @@ function showFinish({ auto = false } = {}) {
   renderSteps();
   $('page-view').scrollIntoView({ block: 'start', behavior: scrollBehavior() });
 }
-// The step a one-address application (AmWINS) showed to the fill: the top frame's headings, sent
-// only as one of the carrier's step names (knownStep).
-function stepOfResults(carrier, results) { return knownStep(carrier, results.find((r) => r.frameId === 0)?.result?.stepKey); }
 // The events of a fill, redacted with the intake it filled from.
 /** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {FillReport[]} frames */
 function logFill(ctx, frames, results, started) {
@@ -502,7 +323,6 @@ function logFill(ctx, frames, results, started) {
     run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results),
   }));
 }
-function fillErrorText(ctx, e) { return redactor(redactionTerms(ctx.intake.record))(String(e?.message ?? e)).slice(0, 200); }
 // A rejected fill has no fill_run result to carry its rule version and switches.
 function logFillError(ctx, error) {
   if (ctx.carrier.practice) return;
@@ -705,20 +525,6 @@ function intakeEdited() {
   for (const reason of pending.reasons) scheduleLayout(pending.page, reason);
 }
 
-// A capture asked for by a page change is also dropped when a later change has been asked for
-// since: this one would log the later state under the earlier answer. The latest capture reads
-// the page after both and, until it's logged, takes this one's reasons. (A fill's own capture
-// has no generation.)
-function sameLayoutScope(a, b) {
-  return ['session', 'tabId', 'page', 'active'].every((k) => a[k] === b[k]);
-}
-function superseded(job) {
-  if (job.generation === undefined || job.generation === state.layoutGeneration) return false;
-  const later = state.layoutLatest;
-  if (job.reasons && later && later !== job && !later.done && sameLayoutScope(later, job)) job.reasons.forEach((r) => later.reasons.add(r));
-  return true;
-}
-
 // The last premium logged per quote, tab and carrier (notePremium).
 const premiumsSeen = new Map();
 
@@ -843,17 +649,6 @@ function layoutFailed({ tabId, carrier, page }, reason, error) {
   if (state.layoutErrorsLogged.has(once)) return;
   state.layoutErrorsLogged.add(once);
   usage.log({ type: 'layout_error', carrier: carrier.id, page, view: viewOf(tabId, page, carrier), reason, error });
-}
-
-// What kind of failure, never its message: Chrome's and the page's errors can quote the page's
-// address and values from it.
-function layoutErrorKind(e) {
-  const m = String(e?.message ?? e);
-  if (/frame/i.test(m) && /removed|not found|no frame/i.test(m)) return 'frame gone';
-  if (/no tab|tab\b.*\b(closed|not found)/i.test(m)) return 'tab gone';
-  if (/cannot access|cannot be scripted|permission|not allowed/i.test(m)) return 'page not accessible';
-  if (/__raterKit/.test(m)) return 'kit missing';
-  return /^[A-Za-z]*Error$/.test(e?.name ?? '') ? `other ${e.name}` : 'other';
 }
 
 // Layouts as the page changes, whether or not anything is filled: on arrival, when questions
@@ -1181,32 +976,6 @@ function renderSite() {
   renderSteps();
 }
 
-// Which report a page has: its tab and page (on a page or step about one vehicle or driver, that
-// one: stepScope) and, on a one-address application (AmWINS, GEICO), its step, which changes while
-// the address stays. Null off a rater page.
-function reportKey(tabId, page, carrier, active = state.active, step = state.tabSteps?.get(tabId)) {
-  if (!Number.isInteger(tabId) || !carrier) return null;
-  return `${tabId}|${stepScope(page, carrier, active, step ?? null)}${carrier.layoutSteps ? step ?? '' : ''}`;
-}
-function currentReportKey() { return reportKey(state.tab?.id, pageOf(state.tab?.url), state.tab?.carrier); }
-
-// The reports of other pages on the tab in front, in the order they were first filled: the
-// answers' page menu (renderSteps). Only reports with answers; never the page in front's.
-function earlierReports() {
-  const here = currentReportKey();
-  return [...state.reports.values()].filter((e) => e.fields && e.tabId === state.tab?.id && e.key !== here && e.nodes);
-}
-
-// An earlier page's name in the page menu: its step on a one-address application (AmWINS, GEICO),
-// else its page's name spaced out ("AddDriver": Add Driver); on a page about one vehicle, trailer
-// or driver, which one ("Add Driver · Driver 2"). From its report key (reportKey).
-function reportTitle(entry) {
-  const [, page = '', unit = '', step = ''] = String(entry?.key ?? '').split('|');
-  const place = step || page.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z])([A-Z][a-z])/g, '$1 $2');
-  const which = /^(v|tr|d)(\d+)$/.exec(unit);
-  return which ? `${place} · ${{ v: 'Vehicle', tr: 'Trailer', d: 'Driver' }[which[1]]} ${Number(which[2]) + 1}` : place;
-}
-
 // Shows an earlier page's answers (its report key), read-only, in place of this page's; null goes
 // back to this page's. Nothing on either page changes.
 function showPast(key) {
@@ -1458,48 +1227,6 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
   // replaces nothing (the maintainer, 2026-10-23: "I update something manually and the button still
   // says Fill again").
   return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', sub: 'Never Binds or Submits.', button: 'fill', label: 'Continue', go: 'continue', ...again };
-}
-
-// Whether the quote is done where TNI stops on this rater: the carrier's `finishedBy` action (GEICO's
-// Print Quote Proposal) was clicked on this tab, the report in front is on that action's step or
-// page, and nothing on it is left for the agent. The strip's Review page says "Quote done" and the
-// dock says so (dockFor), where they said "Ready" and "Moving on is yours" before (the maintainer,
-// 2026-10-23: the end of a GEICO quote read like every other page).
-// A report whose fill halted, or that found no questions, isn't the quote done either.
-function quoteFinished(carrier, report, page = pageOf(state.tab?.url), step = tabStep(carrier), doneActions = state.doneActions) {
-  // A rater whose quote ends at a step, not a button (`finishedAt`, AmWINS's declaration on
-  // Underwriting): a fill there with nothing left for the agent but the step's own items (otherLeft).
-  // There: the step the report's own fill read (renderReport's `step`; rememberFill passes its fill's),
-  // not the tab's, which stays at the last step it saw: Underwriting on the start page of the next
-  // quote in the same tab (the review of PR #173).
-  const at = carrier?.finishedAt;
-  if (at) {
-    const own = report?.step === undefined ? step : report.step;
-    return [].concat(at.steps).includes(own) && !!report?.fields && !report.error && !report.stopped && !report.halted
-      && (report.otherLeft ?? report.left ?? 0) === 0 && (report.waiting ?? 0) === 0;
-  }
-  const id = finishingAction(carrier, page, step);
-  return !!id && !!report?.fields && !report.error && !report.stopped && !report.halted && !!doneActions?.has(id) && !doneActions.has(`${id}:changed`)
-    && (report.left ?? 0) === 0 && (report.waiting ?? 0) === 0;
-}
-
-// The carrier's finishing action (`finishedBy`) where the page and step are its own (its `page` and
-// `steps`, each a name or a list), else null.
-function finishingAction(carrier, page, step) {
-  const id = carrier?.finishedBy;
-  if (!id) return null;
-  const action = carrier.actions?.find((a) => a.id === id);
-  const steps = [].concat(action?.steps ?? []);
-  const pages = [].concat(action?.page ?? []);
-  if (steps.length && !steps.includes(step)) return null;
-  if (pages.length && !pages.includes(page)) return null;
-  return id;
-}
-
-// An item left for the agent that the quote's end leaves them anyway (`finishedAt.left`, by rule
-// name: AmWINS's Declaration, ticked by the agent before their Submit).
-function finishLeftOk(carrier, x) {
-  return [].concat(carrier?.finishedAt?.left ?? []).includes(x?.name);
 }
 
 // The page changed on the finishing step after the action was clicked (a limit on GEICO's Quote &
@@ -1862,23 +1589,10 @@ function dismissState() {
   renderSteps();
 }
 
-// What the carrier's stop says on this page, or on the step this tab is on (`step`, its name):
-// null where filling and clicking are allowed. Every check of a stop goes through it, so a stop
-// step is refused wherever a stop page is (fill, follow-ups, Luna, the panel's buttons). `tabId`:
-// the tab being filled or asked about (a follow-up's, the AI's), the shown one by default.
-function stopNoteFor(carrier, page, step, tabId = state.tab?.id) {
-  if (step === undefined) step = tabStep(carrier, tabId);
-  // A screen that is the agent's (`stopButtons`), while that tab shows it on this page (noteStopScreen).
-  const screen = state.stopScreens?.get(tabId);
-  const said = screen?.page === page ? carrier?.stopButtons?.[screen.name]?.note : null;
-  return carrier?.stopPages?.[page] ?? (step ? carrier?.stopSteps?.[step] : null)
-    ?? (typeof said === 'function' ? said(state.intake?.record ?? null) : said) ?? null;
-}
-
 // A tab may still show the previous client's quote after an intake is loaded (or the panel
 // started): the same evidence as for layouts (a new page since, or a fill with this intake).
 function stopPageIsOurs() {
   return !state.layoutHold || state.layoutReadyTabs.has(state.tab?.id);
 }
 
-export { agentEdited, announce, cancelLayouts, changeScopes, currentReportKey, dismissState, dropReports, editScope, fillContext, fillCurrent, fillErrorMessage, fillOptions, fillProblem, fillSkip, fillSkipBy, finishLeftOk, formScoped, holdLayouts, inheritQuoteState, intakeEdited, issueCard, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, reportKey, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showPast, showStateNote, showStopPage, staleFill, stateIssue, stepScope, stopFill, stopNoteFor, stopPageIsOurs, tabMaps, tabStep, unlockAudio, viewOf, watchFill };
+export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueCard, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showPast, showStateNote, showStopPage, stateIssue, stopFill, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };

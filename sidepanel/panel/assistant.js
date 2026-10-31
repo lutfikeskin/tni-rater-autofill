@@ -12,9 +12,11 @@ import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPr
 import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
-import { agentEdited, announce, editScope, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout, tabStep } from './coordinator.js';
-import { choiceSaid, fillPage, runKit, setRowHead } from './fill.js';
+import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout } from './coordinator.js';
+import { fillPage, runKit, setRowHead } from './fill.js';
 import { renderUsage } from './usage-panel.js';
+import { agentEdited, editScope, tabStep } from './scope.js';
+import { choiceSaid } from './report-model.js';
 
 // ---------------------------------------------------------------------------------------------
 // Luna assistant: after a fill, suggests answers for the questions left for the agent.

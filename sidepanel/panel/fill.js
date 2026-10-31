@@ -7,16 +7,19 @@ import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem } from '../../sr
 import { get } from '../../src/util.js';
 import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { neverReason } from '../../src/ai/common.js';
-import { isStandard, resolutionOf } from '../../src/resolution.js';
+import { isStandard } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
 import { $, aiSnapshotFieldMatches, h, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
-import { announce, currentReportKey, dropReports, editScope, fillContext, fillCurrent, fillErrorMessage, fillOptions, fillProblem, fillSkip, fillSkipBy, finishLeftOk, formScoped, issueCard, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, reportKey, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showStateNote, showStopPage, staleFill, stateIssue, stepScope, stopNoteFor, tabMaps, tabStep, viewOf, watchFill } from './coordinator.js';
+import { announce, dropReports, fillContext, fillOptions, fillProblem, issueCard, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
 import { aiDecisionEvent, remarkAi, runAssist, syncAiBanner } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
+import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep } from './scope.js';
+import { fillCurrent, fillErrorMessage, staleFill } from './fill-checks.js';
+import { liveOf } from './live.js';
+import { agentPickable, answerSources, choiceSaid, choicesOf, currentReportKey, finishLeftOk, groupRows, itemsLeft, looseText, reportKey, stopNoteFor } from './report-model.js';
 /** @import { CarrierConfig, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -582,23 +585,6 @@ async function showOnPage(item, x, tabId, page, carrier) {
 // is made so as the fill ends (pagekit reconcile); the page may change after it (GEICO draws a CSL
 // liability limit's redraw a moment later), and a kept report is of the page as it was.
 
-// The review items of fill reports that are questions with a field (`key`), as the kit's present
-// takes them: [{ key, label }]. A row the intake doesn't have (`extra-row:`) is no field.
-function reviewItems(frames) {
-  return frames.flatMap((f) => [...['unknown', 'failed', 'noData', 'leftRequired', 'checks'].flatMap((k) => f[k] ?? []), ...(f.kept ?? []).filter((x) => x.differs)])
-    .filter((x) => x.key && !String(x.key).startsWith('extra-row:')).map((x) => ({ key: x.key, label: x.label || null }));
-}
-// The answers of fill reports the panel lists (filled, and kept as the page had them), as present
-// takes them, with the rule that answered each (`stepId`, for `agrees`).
-function answerItems(frames) {
-  return frames.flatMap((f) => [...(f.filled ?? []), ...(f.kept ?? []).filter((x) => !x.differs)])
-    .filter((x) => x.key && !String(x.key).startsWith('extra-row:')).map((x) => ({ key: x.key, label: x.label || null, stepId: x.stepId ?? null }));
-}
-// Spacing, case and punctuation aside (as checkAnswers compares): a phone number formatted on blur.
-function looseText(s) {
-  return String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-
 // What the page shows now for `items` ([{ key, label, stepId }]), from all of the tab's frames in one
 // message (pagekit present: one read of each frame): [{ key, label, controlKind, options, current,
 // shown, agrees, shared }] for those it has. Null when the page couldn't be read (navigating, no
@@ -617,11 +603,6 @@ async function liveItems(tabId, carrier, items, plan = []) {
   const read = (frames ?? []).filter((f) => Array.isArray(f.result));
   return read.length ? read.flatMap((f) => f.result) : null;
 }
-// An item's reading among liveItems', by its key and label as it was asked.
-function liveOf(live, key, label) {
-  return live.find((y) => y.key === key && (y.label || null) === (label || null)) ?? null;
-}
-
 // A kept report's frames as the page is now (restoreReports): an item with a field stays only where
 // the page has it (`live`, liveItems) or the fill knew it off screen (`offPage`), saying what the page
 // shows and offers now. Unread (`live` null: another page is in front, or the page couldn't be read),
@@ -848,26 +829,6 @@ function refreshAnswers() {
   if (entry?.fields && entry.tabId === state.tab?.id) checkAnswers($('report'), entry.tabId, entry.page, entry.carrier ?? state.tab.carrier, entry.plan);
 }
 
-// What a fill left for the agent on its page: its report's items (renderReport), and none for the
-// quote done with its chime (rememberFill). Each item with its frame's place among the page's frames
-// (pagekit's `order` counts within one). A field of another step (pagekit otherStep: AmWINS' prior
-// carriers, filled again while hidden) isn't this step's: left out of its list and count (live run
-// 2026-10-09).
-/** @param {FillReport[]} frames */
-function itemsLeft(frames) {
-  const framed = (k) => frames.flatMap((f, frame) => (f[k] ?? []).map((x) => ({ ...x, frame })));
-  const unknownKeys = new Set(framed('unknown').map((x) => x.key));
-  return [
-    ...framed('unknown').map((x) => ({ ...x, mark: 'needs', why: `Unfamiliar question${x.required ? ' (required)' : ''}: no TNI rule for it yet.` })),
-    ...framed('failed').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'failed', why: `Couldn't fill: ${x.reason}` })),
-    ...framed('noData').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: resolutionOf(x, 'noData').explanation ?? 'Not on the intake.' })),
-    ...framed('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
-    ...framed('kept').filter((x) => !x.otherStep && x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
-    // Defaults filled for the agent to confirm (e.g. marital status missing on the intake).
-    ...framed('checks').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: resolutionOf(x, 'checks').explanation })),
-  ];
-}
-
 // After a fill: the page's answers in one list, in the order of their fields on the page. Each
 // answer that went in says what and where it came from (the intake, worked out from it, a TNI
 // standard, the agent, the page) and opens to its source, Change answer and See in intake; each
@@ -1009,37 +970,6 @@ function renderReport(frames, ctx = {}) {
   if (held) refreshAnswers();
 }
 
-// Where a fill's answers came from, by their plan step (plan.js): `fromOf`, the intake answers a
-// derived one was worked out from; `groupOf`, the question several boxes answer together; `ticks`,
-// the boxes our answer ticks. `editedBy`: an answer filled from a field the agent set or corrected
-// in the panel (client details, an Intake check card's button such as Use Female) is the agent's, not the
-// client's (also openPdf's `edited`).
-function answerSources(plan) {
-  const steps = plan ?? [];
-  return {
-    fromOf: new Map(steps.filter((s) => s.from).map((s) => [s.id, s.from])),
-    groupOf: new Map(steps.filter((s) => s.group).map((s) => [s.id, s.group])),
-    ticks: new Set(steps.filter((s) => s.group && s.value === true).map((s) => s.id)),
-    editedBy: (path, from) => [path, ...(from ?? [])].some((p) => p && state.intake?.agentEdited?.includes(p)),
-  };
-}
-
-// One question asked as several boxes (plan.js `group`: AmWINS' auto symbols): one row, the
-// question and the boxes ticked, where the first box was (live run 2026-10-09: nine rows).
-function groupRows(rows, ticks) {
-  return rows.reduce((out, row) => {
-    if (!row.group) return [...out, row];
-    const g = out.find((r) => r.grouped === row.group)
-      ?? (out.push({ label: row.group, grouped: row.group, ticked: [], standard: true, answer: false, frame: row.frame, order: row.order }), out.at(-1));
-    // Ticked by our answer (filled now, earlier, or already so on the page).
-    if (ticks.has(row.stepId)) g.ticked.push(row.label);
-    g.answer ||= !!row.answer;
-    g.standard &&= row.standard;
-    g.value = g.ticked.join(', ') || 'none ticked';
-    return out;
-  }, []);
-}
-
 // One answer in the page's list (renderReport): what went in and where it came from, opening to its
 // source with Change answer and See in intake. `row.kind`: 'clicked', 'page' (left as the page had
 // it) or 'yours' (the agent's own answer, not filled); otherwise an answer, by its source.
@@ -1171,26 +1101,6 @@ function needRow(x, { tabId, page, carrier }, open = false) {
     choices = list;
   };
   return item;
-}
-
-// Whether the panel may put the agent's own pick in for a question (agentAnswer): a choice the page
-// offers, never one TNI leaves to the agent on the page (report orders, exclusions, signatures,
-// payment: neverReason) or a lookup identity they must verify there (reviewOnly), and nothing on a
-// stop page, step or screen.
-function agentPickable(x, carrier = state.tab?.carrier, page = pageOf(state.tab?.url)) {
-  if (!x?.key || !['radio', 'select', 'checkbox'].includes(x.controlKind)) return false;
-  const options = choicesOf(x.controlKind, x.options);
-  return options.length > 0 && !x.reviewOnly && !neverReason(x) && !stopNoteFor(carrier, page);
-}
-
-// The choices a question offers the agent: a checkbox's two states, or the options the page lists.
-function choicesOf(kind, options) {
-  return kind === 'checkbox' ? ['checked', 'unchecked'] : options ?? [];
-}
-
-// A choice as the agent reads it (a checkbox's two states named).
-function choiceSaid(choice) {
-  return choice === 'checked' ? 'Checked' : choice === 'unchecked' ? 'Unchecked' : String(choice);
 }
 
 // The choices the panel may put in for the agent: buttons, or a list past six; the page's answer now
@@ -1485,4 +1395,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, answerItems, answerRow, answerSources, answeredOnPage, assistAfterFill, captureFromShortcut, capturePage, checkItems, choiceSaid, clearMarks, fillPage, groupRows, itemsLeft, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, reviewItems, runKit, setRowHead, showNextNeed, unitArrival, worldFor };
+export { afterFill, answerRow, answeredOnPage, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, setRowHead, showNextNeed, unitArrival, worldFor };

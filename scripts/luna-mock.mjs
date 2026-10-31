@@ -116,7 +116,9 @@ try {
   mock = await context.newPage();
   panel = await context.newPage();
   await panel.setViewportSize({ width: 420, height: 900 });
-  for (const page of [mock, panel]) page.on('pageerror', error => errors.push(error.message));
+  // Which page, the phase and the stack's first lines: CI keeps no summary.json, so a failure on
+  // `browser errors` prints them (it failed now and then on Ubuntu only, 2026-10-31).
+  for (const [name, page] of [['mock', mock], ['panel', panel]]) page.on('pageerror', error => errors.push(`${name} (${phase}): ${String(error.stack ?? error.message).split('\n').slice(0, 4).join(' | ')}`));
   phase = 'initial-panel';
   // Configure the synthetic profile before panel init can upload to the default usage server.
   await worker.evaluate(() => chrome.storage.local.set({ settings: { aiOn: true, aiAuto: true, lunaAuto: false,
@@ -627,6 +629,7 @@ try {
   verify('assistance off: GL and gender stay as the intake has them', offIntake.record.coverage.gl !== true && offIntake.record.coverage.hasGl !== true && offIntake.record.drivers.every((d) => d.gender == null), true);
   verify('no unrecognized provider host was contacted', unexpectedProviderHosts.size, 0);
   verify('nothing was submitted', await mock.evaluate(() => window.__amwinsMock.submitted), false);
+  if (errors.length) console.error(`Browser errors:\n${errors.join('\n')}`);
   verify('browser errors', errors.length, 0);
   console.log(`Luna mock: ${checks.length} checks passed.`);
 } catch (error) {

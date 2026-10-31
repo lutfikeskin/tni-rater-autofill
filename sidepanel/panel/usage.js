@@ -7,9 +7,11 @@ import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
 import { $, persistAgentKeys, persistDoneActions, settleRejectedAi, state } from './core.js';
 import { releaseDiscardedForms } from './record.js';
-import { changeScopes, currentReportKey, noteChangedAfterDone, noteQuoteDone, noteQuoteState, onQuotePage, renderSteps, scheduleAutoFill, scheduleLayout, seedQuoteState, showStopPage, stopNoteFor, stopPageIsOurs, tabStep, viewOf } from './coordinator.js';
+import { noteChangedAfterDone, noteQuoteDone, noteQuoteState, onQuotePage, renderSteps, scheduleAutoFill, scheduleLayout, seedQuoteState, showStopPage, stopPageIsOurs, viewOf } from './coordinator.js';
 import { answeredOnPage, fillPage, unitArrival } from './fill.js';
 import { syncAiBanner } from './assistant.js';
+import { changeScopes, tabStep } from './scope.js';
+import { currentReportKey, stopNoteFor } from './report-model.js';
 
 // ---------------------------------------------------------------------------------------------
 // Usage recording (see src/usage.js for what is and isn't kept)
