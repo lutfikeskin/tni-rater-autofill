@@ -132,6 +132,22 @@ test('the list follows the answers only while the agent is at its end', () => {
   expect(scrolled.at(-1)).toEqual(['✓C3', { block: 'nearest' }]);
 });
 
+// Review of #244: before the first answer the list is shown all the same (the row for the one coming,
+// the items judged); a phase then doesn't pull an agent who scrolled up back down. A list shown again
+// follows its end.
+test('a list shown with no answer yet stays put once the agent scrolls up, and follows when shown again', () => {
+  const view = viewAt(500);
+  render(<LiveView view={view} />);
+  act(() => { Object.assign(state, { filling: true, fillingFor: { run: 'r1', tabId: 3, rows: [], items: [{ kind: 'unknown', key: 'd', label: 'Deed', frame: 'f' }] } }); });
+  expect(scrolled.length).toBe(1);
+  act(() => { state.fillingFor = { ...state.fillingFor, phase: { name: 'waiting' } }; });
+  act(() => { state.fillingFor = { ...state.fillingFor, unanswered: true }; });
+  expect(scrolled.length).toBe(1);
+  act(() => { state.filling = false; });
+  act(() => { Object.assign(state, { filling: true, fillingFor: { run: 'r2', tabId: 3, rows: [] } }); });
+  expect(scrolled.length).toBe(2);
+});
+
 test('each row is keyed by its field in its frame, answers and items apart, a field listed again counted', () => {
   expect(entryKeys([{ row: { key: 'k', frame: 'f' } }, { item: { key: 'k', frame: 'f' } }, { row: { key: 'k', frame: 'g' } },
     { row: { key: 'k', frame: 'f' } }, { row: { key: null, label: 'Zip', frame: 'f' } }])).toEqual(['a|f|k', 'i|f|k', 'a|g|k', 'a|f|k#1', 'a|f|Zip']);

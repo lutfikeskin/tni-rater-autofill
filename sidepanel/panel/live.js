@@ -1,5 +1,5 @@
 // The side panel's decision logic for the live fill view: the answers and items in the page's
-// order, and what the fill is doing. No DOM: renderLive draws it.
+// order, and what the fill is doing. No DOM: LiveView (live-view.jsx) draws it.
 // One part of the panel; sidepanel.js wires the parts together.
 
 // The live list's entries in the page's order: the answers in so far (`rows`) and the items judged

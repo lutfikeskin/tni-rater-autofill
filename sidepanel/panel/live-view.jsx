@@ -72,16 +72,20 @@ function LiveView({ view }) {
   const filling = useStore(panelStore, (s) => s.filling);
   const tabId = useStore(panelStore, (s) => s.tab?.id);
   const list = useRef(null);
-  // The answers the list last drew.
+  // The answers the list last drew, and whether it was shown: a list just shown follows its end,
+  // answers or not (review of #244: a phase before the first answer pulled an agent who had
+  // scrolled up back down).
   const drawn = useRef([]);
+  const shown = useRef(false);
   const on = !!f && !!filling && f.tabId === tabId && (!f.auto || !!f.rows?.length);
   const rows = on ? f.rows ?? [] : [];
-  const follow = on && (!drawn.current.length || view.scrollHeight - view.scrollTop - view.clientHeight < 80);
+  const follow = on && (!shown.current || view.scrollHeight - view.scrollTop - view.clientHeight < 80);
   // The answer that just went in (the last one new since the list was drawn) is marked fresh.
   const had = new Set(drawn.current);
   const fresh = rows.findLast((x) => !had.has(x)) ?? null;
   useLayoutEffect(() => {
     drawn.current = rows;
+    shown.current = on;
     if (follow) list.current?.lastElementChild?.scrollIntoView?.({ block: 'nearest' });
   });
   if (!on) return null;
