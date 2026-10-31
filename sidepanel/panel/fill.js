@@ -1301,7 +1301,11 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
       if (!carrier.practice) usage.log(aiDecisionEvent(sugg, { carrier, page }, 'dismissed'));
     }
   }
+  // Its row says the agent's answer only: the AI's card goes, and its pick is no longer marked
+  // among the choices or taken as accepting it (review of #245).
   aiSlotOf(rec)?.replaceChildren();
+  rec.aiPick = null;
+  rec.aiAccept = null;
   if (rec.type === 'need') rec.pressed = choice;
   // The question's other row too: a filled answer with a check shows as an answer and as a check.
   // Rows of the report shown only (a report kept for another page isn't changed).

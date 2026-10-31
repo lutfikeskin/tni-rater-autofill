@@ -7491,7 +7491,11 @@ test('the agent\'s pick is refused when the page no longer shows its question on
 
 test('the agent\'s pick goes in as theirs: by the agent, never on a stop step, logged, their field after', async () => {
   const t = agentAnswerHarness();
+  // The AI picked the other choice on this row: once the agent's own is in, it is no longer marked
+  // or taken as accepting the AI's (review of #245).
+  Object.assign(t.item, { aiPick: 'Yes', aiAccept: () => assert.fail('the AI is not accepted') });
   await t.pick('No');
+  assert.deepEqual([t.item.aiPick, t.item.aiAccept, t.item.pressed], [null, null, 'No']);
   const answer = t.kit.find((k) => k[0] === 'answer');
   const [items, token, options] = answer[1];
   assert.deepEqual(items, [{ key: 'k1', label: 'Hauls hazardous materials', value: 'No', expected: { kind: 'radio', section: 'Operations', options: ['Yes', 'No'], current: 'Yes' } }]);
