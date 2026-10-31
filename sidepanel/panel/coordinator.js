@@ -21,7 +21,7 @@ import { pendingAi } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNameFor, unitScope } from './scope.js';
 import { fillCurrent, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded } from './fill-checks.js';
-import { DOCK_PHASES, liveEntries, phaseSaid } from './live.js';
+import { DOCK_PHASES, phaseSaid } from './live.js';
 import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
@@ -169,7 +169,7 @@ function notePageMoved(ctx) {
 }
 
 // While a fill runs: the answers in so far, read from the page every half second (pagekit
-// progress), listed as they go in (renderLive) and counted in step 2 and the dock. Each frame sends
+// progress), listed as they go in (the live list, live-view.jsx) and counted in step 2 and the dock. Each frame sends
 // only the rows after those the panel has from its list (`seen`, by the frame's list); a reading
 // still under way skips the next. One the page hasn't answered for UNANSWERED_MS (a message box
 // open on it holds its scripts, or a frame is stuck) is said in the dock and the list
@@ -189,7 +189,7 @@ function watchFill(ctx) {
     if (state.fillingFor?.run !== ctx.run) { clearInterval(timer); return; }
     if (reading != null) {
       if (Date.now() - reading >= UNANSWERED_MS && !state.fillingFor.unanswered) {
-        state.fillingFor.unanswered = true;
+        state.fillingFor = { ...state.fillingFor, unanswered: true };
         renderSteps();
       }
       return;
@@ -204,7 +204,6 @@ function watchFill(ctx) {
     const f = state.fillingFor;
     if (f?.run !== ctx.run) return;
     const answered = !!f.unanswered;
-    f.unanswered = false;
     // What the kit is doing between answers (pagekit `phase`: reading the page, waiting for it, a
     // helper's response, the premium, Continue): the top frame's while its fill runs (null while it
     // answers), else the first other frame's that says. Progressive's hidden frame, loaded with an
@@ -226,58 +225,12 @@ function watchFill(ctx) {
     const itemsKey = [...judged].map(([frame, x]) => `${frame}@${x.at}`).join('|');
     const phaseKey = phase ? `${phase.name}|${phase.what ?? ''}` : '';
     if (!answered && phaseKey === (f.phaseKey ?? '') && itemsKey === (f.itemsKey ?? '') && rows.length === f.filled && rows.every((x, i) => f.rows[i] === x)) return;
-    f.filled = rows.length;
-    f.rows = rows;
-    f.items = [...judged.values()].flatMap((x) => x.list);
-    f.itemsKey = itemsKey;
-    if (order.length) f.frames = order;
-    f.phase = phase;
-    f.phaseKey = phaseKey;
+    // A new fillingFor, not a change in place: the live list (live-view.jsx) redraws on the assignment.
+    state.fillingFor = { ...f, unanswered: false, filled: rows.length, rows, items: [...judged.values()].flatMap((x) => x.list), itemsKey,
+      ...(order.length ? { frames: order } : {}), phase, phaseKey };
     renderSteps();
   }, 500);
   return () => clearInterval(timer);
-}
-
-// The answers going in now, one row each as the page takes them, the items left for the agent as the
-// fill judges them (top to bottom: only questions above where it has got to), all in the page's order
-// (liveEntries), and a row for the one coming: read from the page (pagekit progress), nothing typed or
-// guessed here. Shown in the page view in place of the report while a fill on the tab in front runs.
-function renderLive() {
-  const f = state.fillingFor;
-  const live = $('live');
-  const on = !!f && state.filling && f.tabId === state.tab?.id && (!f.auto || !!f.rows?.length);
-  live.hidden = !on;
-  if (!on) { live.replaceChildren(); delete live.dataset.count; live.drawn = []; return; }
-  const rows = f.rows ?? [];
-  const count = `${rows.length}${f.stopping ? 's' : ''}${f.unanswered ? 'u' : ''}|${f.phaseKey ?? ''}|${f.itemsKey ?? ''}`;
-  if (live.dataset.count === count && live.drawn === rows) return;
-  live.dataset.count = count;
-  // The list follows the answers only while the agent is at its end (or it is new): one who
-  // scrolled up to read the page's notes isn't pulled back down every half second.
-  const view = $('view');
-  const follow = !(live.drawn ?? []).length || view.scrollHeight - view.scrollTop - view.clientHeight < 80;
-  // The answer that just went in (the last one new since the list was drawn) is marked fresh.
-  const drawn = new Set(live.drawn ?? []);
-  const fresh = rows.findLast((x) => !drawn.has(x)) ?? null;
-  const said = { failed: 'Couldn’t fill' };
-  live.replaceChildren(...liveEntries(rows, f.items ?? [], f.frames ?? []).map(({ row: x, item }) => (item
-    ? h('div', { class: `row need${item.kind === 'failed' ? ' failed' : ''}` },
-      h('div', { class: 'row-head' },
-        h('span', { class: 'row-icon', 'aria-hidden': 'true' }, item.kind === 'failed' ? '!' : '?'),
-        h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, item.label || 'Question'), h('span', { class: 'row-value' }, said[item.kind] ?? 'Needs your answer'))))
-    : h('div', { class: `row${x === fresh ? ' fresh' : ''}` },
-      h('div', { class: 'row-head' },
-        h('span', { class: 'row-icon', 'aria-hidden': 'true' }, '✓'),
-        h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, x.label || 'Answer'), h('span', { class: 'row-value' }, x.shown || 'filled')),
-        x.standard ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'TNI standard') : null)))));
-  live.drawn = rows;
-  if (!f.stopping) {
-    const [label, value] = f.unanswered ? ['Waiting for the page', 'It isn’t answering'] : phaseSaid(f.phase, rows.length);
-    live.append(h('div', { class: 'row typing' }, h('div', { class: 'row-head' },
-      h('span', { class: 'row-icon', 'aria-hidden': 'true' }, h('span', { class: 'spinner' })),
-      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, label), h('span', { class: 'row-value' }, value)))));
-  }
-  if (follow) live.lastElementChild?.scrollIntoView?.({ block: 'nearest' });
 }
 
 // Step 2's Stop: halts the running fill in every frame of its tab (pagekit stop), as an agent edit
@@ -285,7 +238,7 @@ function renderLive() {
 async function stopFill() {
   const f = state.fillingFor;
   if (!f || f.stopping) return;
-  f.stopping = true;
+  state.fillingFor = { ...f, stopping: true };
   $('fill-stop').disabled = true;
   renderSteps();
   try {
@@ -1065,7 +1018,6 @@ function announce(text) {
 // and which one's view is shown; then the page view (the answers going in, or the last fill's, with
 // their filters) and the dock. Steps 2 and 3 show the last fill of the page in front.
 function renderSteps() {
-  renderLive();
   // Pop out or Dock: never while a fill runs.
   $('pop-out').hidden = !inExtension || popped;
   $('dock-back').hidden = !popped;
