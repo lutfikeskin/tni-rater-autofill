@@ -52,6 +52,11 @@ export function provenancePlugin(stamp) {
     name: 'tni-provenance',
     // On the file as written, before Vite's own transforms change its text.
     enforce: 'pre',
+    // A watch build (npm run panel:watch) is rebuilt from files being edited after the commit was
+    // read, so it is never a clean commit (review of #239).
+    buildStart() {
+      if (this.meta.watchMode && stamp.commit && !stamp.commit.endsWith('+dirty')) stamp = { ...stamp, commit: `${stamp.commit}+dirty` };
+    },
     transform(code, id) {
       if (!id.replaceAll('\\', '/').endsWith(`/${PROVENANCE_FILE}`)) return null;
       stamped = true;

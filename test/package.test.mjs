@@ -101,3 +101,16 @@ test('every panel build stamps its copy: store in store mode, unpacked otherwise
   assert.equal(stampOf({ command: 'build', mode: 'production' }), 'unpacked', 'npm run panel');
   assert.equal(stampOf({ command: 'serve', mode: 'development' }), undefined);
 });
+
+// Review of #239: npm run panel:watch read the commit once, so rebuilds after an edit claimed a clean commit.
+test('a watch build always says its commit is dirty', () => {
+  const stamped = (watchMode, commit) => {
+    const plugin = provenancePlugin({ channel: 'unpacked', commit });
+    plugin.buildStart.call({ meta: { watchMode } });
+    return plugin.transform(read(PROVENANCE_FILE), `/repo/${PROVENANCE_FILE}`).code;
+  };
+  assert.ok(stamped(true, '7a5cdb5244').includes("commit: '7a5cdb5244+dirty'"));
+  assert.ok(stamped(true, '7a5cdb5244+dirty').includes("commit: '7a5cdb5244+dirty'"), 'not twice');
+  assert.ok(stamped(true, null).includes('commit: null'), 'packaged without git');
+  assert.ok(stamped(false, '7a5cdb5244').includes("commit: '7a5cdb5244'"), 'a one-off build as git says');
+});
