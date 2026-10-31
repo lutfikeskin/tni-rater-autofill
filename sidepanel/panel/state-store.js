@@ -18,7 +18,7 @@ function storeState(initial) {
   return new Proxy({}, {
     get: (_, key) => now()[key],
     set: (_, key, value) => {
-      if (!Object.is(now()[key], value)) panelStore.setState({ [key]: value });
+      if (!Object.hasOwn(now(), key) || !Object.is(now()[key], value)) panelStore.setState({ [key]: value });
       return true;
     },
     has: (_, key) => key in now(),

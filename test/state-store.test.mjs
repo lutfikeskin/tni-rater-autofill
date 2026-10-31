@@ -21,6 +21,9 @@ test('state reads and assigns the store as a plain object does', () => {
   delete state.view;
   assert.ok(!('view' in state) && !('view' in panelStore.getState()));
   assert.equal(state.missing, undefined);
+  // Review of #243: assigning undefined to a field that isn't there makes it, as on a plain object.
+  state.pending = undefined;
+  assert.ok('pending' in state && Object.keys(state).includes('pending'));
 });
 
 test('an assignment tells the store\'s subscribers once; the same value and a change in place tell no one', () => {
