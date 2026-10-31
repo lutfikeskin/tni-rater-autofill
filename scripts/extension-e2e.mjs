@@ -9,9 +9,9 @@
 // Usage events go to a throwaway local usage server (server/index.mjs on a temporary folder), set
 // as the panel's Server before it opens. The run fails if any request leaves the machine (a host
 // other than localhost: the production usage server, an AI provider, a CDN), if the intake_loaded
-// event, or the intake_profile event whole (nothing in it out of the server's shapes), doesn't reach
-// the local server, or on any console error or uncaught exception in the panel,
-// the mock tab or the extension's service worker that isn't on BENIGN. It waits on what the mock
+// event, or the intake_profile event whole (nothing in it out of the server's shapes, its contact turned
+// into match codes), doesn't reach the local server, or on any console error or uncaught exception
+// in the panel, the mock tab or the extension's service worker that isn't on BENIGN. It waits on what the mock
 // and the panel do (quiet), never a fixed time, except where it watches that nothing happens.
 //
 //   npm run package && npm run replay   # (in another terminal)
@@ -26,7 +26,8 @@ const PRODUCTION_HOST = 'usage-server-production.up.railway.app';
 const ext = path.resolve('dist/tni-rater-autofill');
 const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-ext-'));
 const usageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-usage-'));
-const usageServer = createServer({ dataDir: usageDir });
+// A test MATCH_KEY, so the profile's contact becomes codes as on Railway (not dropped).
+const usageServer = createServer({ dataDir: usageDir, matchKey: 'e2e-match-key-'.padEnd(40, '0') });
 await new Promise((resolve) => usageServer.listen(0, '127.0.0.1', resolve));
 const usageUrl = `http://127.0.0.1:${usageServer.address().port}`;
 const ctx = await chromium.launchPersistentContext(userDir, { channel: 'chromium', headless: true, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`] });
@@ -473,7 +474,7 @@ await ctx.close();
 await new Promise((resolve) => usageServer.close(resolve));
 const received = eventsIn();
 const stored = fs.readdirSync(path.join(usageDir, 'events')).flatMap((f) => fs.readFileSync(path.join(usageDir, 'events', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
-const profileWhole = stored.some((e) => e.type === 'intake_profile' && !e.dropped);
+const profileWhole = stored.some((e) => e.type === 'intake_profile' && !e.dropped && e.match && e.contact === undefined);
 fs.rmSync(usageDir, { recursive: true, force: true });
 const toProduction = outside.filter((r) => r.includes(`//${PRODUCTION_HOST}/`));
 console.log(`Usage: ${received.length} events to the local server (${[...new Set(received)].join(', ')}), ${outside.length} requests off this machine (${toProduction.length} to production)`);
