@@ -444,17 +444,19 @@ async function remarkAi(ctx) {
   }
   if (!answered.length) return;
   try {
-    await runKit(ctx.tabId, ctx.carrier, (list) => list.forEach(([k, l, n]) => globalThis.__raterKit.markKey(k, l, 'ai', n)),
+    await runKit(ctx.tabId, ctx.carrier, (list) => list.forEach(([k, l, n]) => globalThis.__raterKit?.markKey(k, l, 'ai', n)),
       [answered.map((x) => [x.key, x.label, x.done === 'auto' && !x.approved ? 'selected by the AI: approve it in the side panel' : 'AI answer'])]);
   } catch { /* page navigating */ }
   await syncAiBanner(ctx);
 }
 
-// The note at the bottom of the rater page listing the selections waiting for approval.
+// The note at the bottom of the rater page listing the selections waiting for approval. A page that
+// loaded again after the kit went in has none yet (the Luna mock, CI 2026-10-31): nothing is marked
+// there, as on this page's marks and the rejected pick's, and the page throws nothing.
 async function syncAiBanner(ctx) {
   if (state.tab?.id !== ctx.tabId) return;
   const lines = pendingAi(ctx.tabId, ctx.page).map((x) => `${x.label}: ${x.choice}`);
-  try { await runKit(ctx.tabId, ctx.carrier, (l) => globalThis.__raterKit.aiBanner(l), [lines]); } catch { /* page navigating */ }
+  try { await runKit(ctx.tabId, ctx.carrier, (l) => globalThis.__raterKit?.aiBanner(l), [lines]); } catch { /* page navigating */ }
 }
 
 // Puts AI answers into the page through the fill engine, which checks the page kept each one.
@@ -704,7 +706,7 @@ function renderAi(holder, suggestions, ctx) {
     }
     if (decision === 'rejected') {
       for (const x of list) {
-        try { await runKit(ctx.tabId, ctx.carrier, (k, l, n) => globalThis.__raterKit.markKey(k, l, 'needs', n), [x.key, x.label, 'AI choice rejected: set this answer yourself']); } catch { /* page navigating */ }
+        try { await runKit(ctx.tabId, ctx.carrier, (k, l, n) => globalThis.__raterKit?.markKey(k, l, 'needs', n), [x.key, x.label, 'AI choice rejected: set this answer yourself']); } catch { /* page navigating */ }
       }
     }
     await persistAiPending();
