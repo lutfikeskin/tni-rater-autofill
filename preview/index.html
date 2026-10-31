@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel preview</title>
+  <style>
+    :root {
+      --panel-width: 400px;
+      --bar: #f3f4f6;
+      --line: #d1d5db;
+      --text: #111827;
+      --muted: #6b7280;
+      color-scheme: light;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      background: #fff;
+      color: var(--text);
+      font: 13px/1.4 system-ui, sans-serif;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      align-items: center;
+      padding: 6px 12px;
+      background: var(--bar);
+      border-bottom: 1px solid var(--line);
+    }
+    header strong { margin-right: 4px; }
+    header label { display: flex; gap: 4px; align-items: center; }
+    #address { color: var(--muted); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 160px; }
+    #note { color: var(--muted); }
+    main { display: grid; grid-template-columns: 1fr var(--panel-width); min-height: 0; }
+    iframe { width: 100%; height: 100%; border: 0; display: block; }
+    #panel { border-left: 1px solid var(--line); }
+    @media (max-width: 720px) {
+      main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+      #panel { border-left: 0; border-top: 1px solid var(--line); }
+    }
+  </style>
+  <script type="module" src="./preview.js"></script>
+</head>
+<body>
+  <header>
+    <strong>Panel preview</strong>
+    <label>Carrier page <select id="carrier-pick"></select></label>
+    <button id="reload-carrier" type="button">Reload page</button>
+    <button id="sample" type="button">Load sample intake</button>
+    <button id="reset" type="button">Start over</button>
+    <label>Panel width <input id="panel-width" type="number" min="280" max="800" step="20"></label>
+    <span id="address"></span>
+    <span id="note">Practice pages only. Nothing is uploaded.</span>
+  </header>
+  <main>
+    <iframe id="carrier" title="Practice carrier page"></iframe>
+    <iframe id="panel" title="Side panel"></iframe>
+  </main>
+</body>
+</html>

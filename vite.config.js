@@ -5,10 +5,13 @@
 //   npm run package       -> builds the panel into each packaged copy (scripts/package.mjs)
 //   npm run panel         -> rebuilds the panel in dist/tni-rater-autofill (after one npm run package)
 //   npm run panel:watch   -> the same on every save; reload the panel to see it
+//   npm run preview       -> the panel beside a practice carrier page, on Vite's dev server (preview/)
 //
-// No dev server or HMR: an extension page can't load from one. Files keep fixed names (no content
-// hash), so a rebuild into the same folder replaces them instead of leaving old ones behind.
+// The extension itself can't load from a dev server, so the packaged copies are built. Files keep
+// fixed names (no content hash), so a rebuild into the same folder replaces them instead of leaving
+// old ones behind.
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
@@ -17,15 +20,58 @@ import { packagedCommit, provenancePlugin } from './scripts/lib/package.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+// In the preview only: the panel page gets preview/panel-shim.js before its own code, so it runs
+// against the preview's chrome.* stand-in (preview/preview.js). Never in a build.
+const previewShim = {
+  name: 'tni-preview-shim',
+  apply: 'serve',
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      let pathname;
+      try { pathname = decodeURIComponent(new URL(req.url, 'http://preview').pathname); } catch { return next(); }
+      // The server's address opens the preview.
+      if (pathname === '/' || pathname === '/preview') {
+        res.statusCode = 302;
+        res.setHeader('Location', '/preview/');
+        return res.end();
+      }
+      // The preview page and the practice carrier pages as they are, without Vite's client: after
+      // an edit only the panel reloads, and the preview keeps what the panel stored. Only files
+      // under test/ (review of #241: an encoded `..` reached outside the repository).
+      const file = pathname === '/preview/' ? path.join(here, 'preview/index.html')
+        : /^\/test\/.+\.html$/.test(pathname) ? path.resolve(here, pathname.slice(1)) : null;
+      if (!file || !(file.startsWith(path.join(here, 'test') + path.sep) || pathname === '/preview/')) return next();
+      fs.readFile(file, (error, html) => {
+        if (error) return next();
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(html);
+      });
+    });
+  },
+  transformIndexHtml(html, ctx) {
+    if (ctx.path !== '/sidepanel/sidepanel.html') return html;
+    return [{ tag: 'script', attrs: { src: '/preview/panel-shim.js' }, injectTo: 'head-prepend' }];
+  },
+};
+
 // Every build stamps the panel's usage-log.js with its copy and commit: `store` for the store zip
 // (npm run package builds in that mode), otherwise `unpacked` (the Load unpacked copy, also when
 // npm run panel rebuilds it).
 export default defineConfig(({ command, mode }) => ({
-  root: path.join(here, 'sidepanel'),
+  // The dev server serves the repository, as the extension does, so the panel's src/ imports, the
+  // page scripts it injects and the practice carrier pages (test/fixtures/) share one origin.
+  root: command === 'serve' ? here : path.join(here, 'sidepanel'),
   base: './',
   // The sounds, logos and rater badges the panel names at run time are copied by package.mjs.
   publicDir: false,
-  plugins: [react(), ...(command === 'build' ? [provenancePlugin({ channel: mode === 'store' ? 'store' : 'unpacked', commit: packagedCommit(here) })] : [])],
+  plugins: [react(), previewShim, ...(command === 'build' ? [provenancePlugin({ channel: mode === 'store' ? 'store' : 'unpacked', commit: packagedCommit(here) })] : [])],
+  server: {
+    host: '127.0.0.1',
+    port: 5180,
+    strictPort: true,
+    watch: { ignored: ['**/dist/**', '**/layouts/**', '**/server-data/**', '**/reviews/**', '**/captures/**'] },
+  },
+  optimizeDeps: { entries: ['preview/index.html', 'sidepanel/sidepanel.html'] },
   build: {
     outDir: path.join(here, 'dist/tni-rater-autofill/sidepanel'),
     emptyOutDir: false,
