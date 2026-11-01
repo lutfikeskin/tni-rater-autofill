@@ -12,6 +12,7 @@ import { pageOf, samePage } from './usage.js';
 import { cancelLayouts, dropReports, holdLayouts, renderSite, resetViews, stopPageIsOurs, viewOf } from './coordinator.js';
 import { refreshAnswers, runKit } from './fill.js';
 import { stopRecording } from './dev-recording.js';
+import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
 // The intake PDF, shown in the panel with the item it was opened for marked on it
@@ -349,9 +350,8 @@ function workSaid(edits, checks) {
 function askFile(what, text, yes, from = what === 'replace' ? 'replace' : what === 'clear' ? 'clear-client' : 'new-quote') {
   state.fileConfirm = what;
   state.fileConfirmFrom = from;
-  $('file-confirm-text').textContent = text;
-  $('file-confirm-yes').textContent = yes;
-  render();
+  state.fileQuestion = { text, yes };
+  flushSync(render);
   $('file-confirm-no').focus();
 }
 
@@ -386,10 +386,9 @@ async function newQuote() {
   }
 }
 
-// A line under the client's name about the file just loaded (null hides it).
+// A line under the client's name about the file just loaded (null hides it): client-view.jsx.
 function clientNote(text) {
-  $('client-note').hidden = !text;
-  $('client-note').textContent = text ?? '';
+  state.clientNote = text ?? null;
 }
 
 async function clearClient() {

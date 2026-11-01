@@ -1021,9 +1021,15 @@ test('a file loaded again keeps the agent\'s corrections and checks, and says wh
 
 // Live review 2026-10-09: "Clear this client" and "Change file" took the agent's work in one click.
 test('Clear always asks first, and Change file asks once the agent has done work', () => {
-  assert.match(SIDEPANEL, /\$\('clear-client'\)\.addEventListener\('click', \(\) => \{[\s\S]{0,300}askFile\('clear'/);
-  assert.match(SIDEPANEL, /\$\('replace'\)\.addEventListener\('click', \(\) => \{\s+const work = workSaid\([\s\S]{0,200}if \(!work\) \{[\s\S]{0,120}\$\('file'\)\.click\(\); return; \}\s+askFile\('replace'/);
-  assert.match(SIDEPANEL, /\$\('file-confirm-no'\)\.addEventListener\('click', \(\) => \{ state\.fileConfirm = null;/);
+  // The header's buttons (client-view.jsx) ask the panel (mountClient's `act`).
+  const wire = extractFunction('wire');
+  assert.match(wire, /\n    clear: \(\) => \{[\s\S]{0,300}askFile\('clear'/);
+  assert.match(wire, /\n    replace: \(\) => \{\s+const work = workSaid\([\s\S]{0,200}if \(!work\) \{[\s\S]{0,120}\$\('file'\)\.click\(\); return; \}\s+askFile\('replace'/);
+  assert.match(wire, /\n    cancel: \(\) => \{ state\.fileConfirm = null;/);
+  const view = fs.readFileSync(new URL('../sidepanel/panel/client-view.jsx', import.meta.url), 'utf8');
+  for (const [id, act] of [['clear-client', 'clear'], ['replace', 'replace'], ['file-confirm-no', 'cancel']]) {
+    assert.match(view, new RegExp(`id="${id}"[^>]*onClick=\\{\\(\\) => act\\.${act}\\(\\)\\}`), id);
+  }
 });
 
 test('a fill error is said in words the agent can act on, with the redacted detail after', () => {
@@ -3671,7 +3677,7 @@ test('client details open in a drawer that takes focus and gives it back', () =>
   context.closeDetails();
   assert.equal(context.state.detailsOpen, false);
   assert.equal(context.document.activeElement, opener, 'focus back on the row that opened it');
-  assert.match(extractFunction('jumpTo'), /openDetails\(\);/, 'Show in client details opens it at the field');
+  assert.match(extractFunction('jumpTo'), /flushSync\(openDetails\);/, 'Show in client details opens it at the field');
   assert.match(extractFunction('wire'), /e\.key === 'Escape' && state\.detailsOpen[^\n]*closeDetails\(\)/);
   assert.match(extractFunction('wire'), /state\.detailsOpen && !\$\('details-view'\)\.hidden \? \$\('details-view'\)/, 'Tab stays inside it');
 });
@@ -5465,24 +5471,16 @@ test('failed manual and automatic fills retain bounded run metadata without a re
 // Audit 2026-10-08: a panel edit set one field and only bumped the capture revision, so the
 // radius typed as "Unlimited" kept its old 100 miles. The derived value follows the edit, its
 // row on screen shows it, and both happen before the capture revision moves on.
+// React PR 9 (2026-11-01): client details are said as data (renderSections, details-view.jsx draws
+// them): the row is read from what the drawer says, its edit is the row's own.
 test('editing a source field in the panel recomputes what derives from it and refreshes that row', async () => {
-  const { get, set } = await import('../src/util.js');
+  const { get, set, STATES } = await import('../src/util.js');
   const { parseEdit, rederive } = await import('../src/normalize.js');
   const record = { operations: { radius: '100', radiusMiles: 100 }, applicant: {} };
   const calls = [];
-  const inputs = [];
-  const fake = (tag) => {
-    const el = { tag, listeners: {}, value: '', addEventListener: (type, fn) => { el.listeners[type] = fn; }, removeAttribute() {}, append() {}, closest: () => null };
-    inputs.push(el);
-    return el;
-  };
-  const milesRow = { classList: { remove: (cls) => calls.push(['remove', cls]) } };
-  const milesInput = { value: '100', closest: () => milesRow };
-  const yearsInput = { value: '', closest: () => milesRow };
   const sandbox = {
-    state: { intake: { record, warnings: [] } },
-    get, set, parseEdit, rederive, h: fake, fieldInfo,
-    document: { getElementById: (id) => ({ 'f-operations_radiusMiles': milesInput, 'f-applicant_yearsInBusiness': yearsInput })[id] ?? null },
+    state: { intake: { record, warnings: [], done: [] }, detailsClosed: new Set(), showEmpty: false, details: null },
+    get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES,
     intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
     usage: { log: (e) => calls.push(['log', e.type, e.path]) },
     save: async () => { calls.push(['save']); stored = structuredClone(sandbox.state.intake); },
@@ -5490,61 +5488,50 @@ test('editing a source field in the panel recomputes what derives from it and re
   };
   let stored = null;
   vm.createContext(sandbox);
-  vm.runInContext(extractFunction('fieldRow') + extractFunction('agentEdit'), sandbox);
-  sandbox.fieldRow('operations.radius', 'Radius (as written)', 'text', false);
-  const radius = inputs.find((el) => el.tag === 'input');
-  radius.value = 'Unlimited';
-  await radius.listeners.change();
+  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'agentEdit'].map(extractFunction).join('\n'), sandbox);
+  sandbox.renderSections();
+  // A row as the drawer says it now, and the agent's edit of it (the box's change).
+  const row = (path) => sandbox.state.details.sections.flatMap((s) => s.rows).find((r) => r.path === path);
+  const edit = (path, value) => row(path).edit(value);
+  await edit('operations.radius', 'Unlimited');
   assert.equal(record.operations.radius, 'Unlimited');
   assert.equal(record.operations.radiusMiles, null, 'the miles follow the edit');
-  assert.equal(milesInput.value, '', 'the miles row on screen shows it');
+  assert.deepEqual([row('operations.radiusMiles').value, row('operations.radiusMiles').empty], ['', false], 'the miles row on screen shows it, and stays shown though it emptied');
   assert.deepEqual(calls, [['intakeEdited', null], ['log', 'intake_edit', 'operations.radius'], ['save']], 'recomputed before the revision moves on; one edit logged');
   // The agent's own miles are theirs: nothing else is recomputed from them.
   calls.length = 0;
-  sandbox.fieldRow('operations.radiusMiles', 'Radius (miles)', 'int', false);
-  const miles = inputs.filter((el) => el.tag === 'input').at(-1);
-  miles.value = '77';
-  await miles.listeners.change();
+  await edit('operations.radiusMiles', '77');
   assert.equal(record.operations.radiusMiles, 77);
   assert.equal(record.operations.radius, 'Unlimited');
   assert.deepEqual(calls, [['intakeEdited', 77], ['log', 'intake_edit', 'operations.radiusMiles'], ['save']]);
   // Codex review on a7ee49e: the agent's miles stay theirs when the radius text is edited later.
   calls.length = 0;
-  milesInput.value = '77';
-  radius.value = '100-500 miles';
-  await radius.listeners.change();
+  sandbox.renderSections();
+  await edit('operations.radius', '100-500 miles');
   assert.equal(record.operations.radius, '100-500 miles');
   assert.equal(record.operations.radiusMiles, 77, 'the corrected miles are not recomputed');
-  assert.equal(milesInput.value, '77');
+  assert.equal(row('operations.radiusMiles').value, '77');
   assert.deepEqual(calls, [['intakeEdited', 77], ['log', 'intake_edit', 'operations.radius'], ['save']]);
   // Same for years in business corrected directly, then a year established edit.
-  sandbox.fieldRow('applicant.yearsInBusiness', 'Years in business', 'int', false);
-  const years = inputs.filter((el) => el.tag === 'input').at(-1);
-  years.value = '12';
-  await years.listeners.change();
-  sandbox.fieldRow('applicant.yearEstablished', 'Year established', 'int', false);
-  const established = inputs.filter((el) => el.tag === 'input').at(-1);
-  established.value = '2020';
-  await established.listeners.change();
+  await edit('applicant.yearsInBusiness', '12');
+  await edit('applicant.yearEstablished', '2020');
   assert.equal(record.applicant.yearEstablished, 2020);
   assert.equal(record.applicant.yearsInBusiness, 12, 'the corrected years are not recomputed');
   // Codex review on f49a270: the panel restarts (init() reads the saved intake back); the edits
   // were saved with it, so a later source edit still leaves the agent's miles alone.
   sandbox.state.intake = structuredClone(stored);
-  sandbox.fieldRow('operations.radius', 'Radius (as written)', 'text', false);
-  const reopened = inputs.filter((el) => el.tag === 'input').at(-1);
-  reopened.value = '300 miles';
-  await reopened.listeners.change();
+  sandbox.renderSections();
+  await edit('operations.radius', '300 miles');
   assert.equal(sandbox.state.intake.record.operations.radius, '300 miles');
   assert.equal(sandbox.state.intake.record.operations.radiusMiles, 77, 'after a restart the corrected miles are still kept');
   assert.equal(stored.record.operations.radiusMiles, 77, 'and saved that way');
-  sandbox.state.intake = { record, warnings: [] };
+  sandbox.state.intake = { record, warnings: [], done: [] };
   // A new intake starts clean: its derived values follow their source again.
   assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places, test \};/, 'a loaded intake starts with no edits');
-  radius.value = '250';
-  await radius.listeners.change();
+  sandbox.renderSections();
+  await edit('operations.radius', '250');
   assert.equal(record.operations.radiusMiles, 250, 'another intake: the miles follow the edit');
-  assert.equal(milesInput.value, 250);
+  assert.equal(row('operations.radiusMiles').value, '250');
 });
 
 for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transport of ['complete', 'failure']) {
@@ -8095,19 +8082,25 @@ test('the PDF opens at the panel\'s width, a marked item at 200%, and drags or z
 // page in front filled and reviewed: "Confirm" read as the quote's end on every page.
 test('the client strip: the name opens client details, and Change file, New quote and Clear are buttons in view, no menu', () => {
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
-  assert.match(html, /<button type="button" id="client-card" class="client-title" aria-controls="details-view"/);
-  assert.match(html, /<span id="client-name" class="client-name"><\/span>\s+<span id="client-meta" class="client-meta"><\/span>\s+<\/button>/, 'phrasing content in the button, not a heading');
-  const toolsAt = html.indexOf('<div class="client-tools">');
-  const tools = html.slice(toolsAt, html.indexOf('</div>', toolsAt));
+  // The header is drawn by client-view.jsx (React PR 9, 2026-11-01): what it draws and that its
+  // buttons say whether client details are open, test/panel/client-view.test.jsx.
+  const view = fs.readFileSync(new URL('../sidepanel/panel/client-view.jsx', import.meta.url), 'utf8');
+  assert.match(html, /<section id="quote" class="client" hidden>\s+(<!--[\s\S]*?-->\s+)?<div id="client-root"><\/div>/);
+  assert.match(view, /<button type="button" id="client-card" className="client-title" aria-controls="details-view" aria-expanded=\{detailsOpen\}/);
+  assert.match(view, /<span id="client-name" className="client-name"[^>]*>\{client\?\.name \?\? ''\}<\/span>\s+<span id="client-meta" className="client-meta">\{client\?\.meta \?\? ''\}<\/span>\s+<\/button>/, 'phrasing content in the button, not a heading');
+  const toolsAt = view.indexOf('<div className="client-tools">');
+  const tools = view.slice(toolsAt, view.indexOf('</div>', toolsAt));
   for (const id of ['open-pdf', 'replace', 'new-quote', 'clear-client']) assert.match(tools, new RegExp(`id="${id}"`), id);
-  assert.doesNotMatch(html, /file-menu-btn|details-btn|⋯/);
-  assert.match(extractFunction('wire'), /\$\('client-card'\)\.addEventListener\('click', \(\) => \(state\.detailsOpen \? closeDetails\(\) : openDetails\(\)\)\);/);
-  // Both openers say whether client details are open: the name here, the checks' All client details
-  // row from the same state (test/panel/checks-view.test.jsx).
-  assert.match(extractFunction('showScreen'), /\$\('client-card'\)\.setAttribute\('aria-expanded', String\(!!state\.detailsOpen\)\);/);
+  assert.doesNotMatch(html + view, /file-menu-btn|details-btn|⋯/);
+  assert.match(extractFunction('wire'), /mountClient\(\$\('client-root'\), \{\s+details: \(\) => \(state\.detailsOpen \? closeDetails\(\) : openDetails\(\)\),/);
+  // Both openers say whether client details are open, from the same state: the name (client-view.jsx)
+  // and the checks' All client details row (test/panel/checks-view.test.jsx).
+  assert.match(view, /const detailsOpen = useStore\(panelStore, \(s\) => !!s\.detailsOpen\);/);
   assert.match(extractFunction('wire'), /mountChecks\(\$\('check-view'\), \{ openDetails: \(\) => openDetails\(\) \}\);/, 'the checks\' row opens client details');
   assert.match(extractFunction('askFile'), /state\.fileConfirmFrom = from;/, 'Cancel gives focus back to the button that asked');
-  assert.match(extractFunction('renderSteps'), /\$\('new-quote'\)\.disabled = !!state\.filling;/);
+  // New quote is off while answers go in: renderSteps says it, the header draws it.
+  assert.match(extractFunction('renderSteps'), /state\.newQuoteOff = !!state\.filling;/);
+  assert.match(view, /disabled=\{newQuoteOff\} onClick=\{\(\) => act\.newQuote\(\)\}/);
   // The three steps under the strip: drawn by steps-view.jsx (their labels and order:
   // test/panel/steps-view.test.jsx).
   assert.match(html, /<nav id="steps" class="steps" aria-label="Steps"><\/nav>\s+<\/section>/);
@@ -8139,7 +8132,7 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
   await context.newQuote();
   assert.deepEqual(calls.map((c) => c[0]), ['note', 'note']);
   // Asked first, under the client's name; loadFile says what stays and logs the reset.
-  assert.match(extractFunction('wire'), /\$\('new-quote'\)\.addEventListener\('click', \(\) => \{\s+if \(state\.filling\) return;\s+askFile\('new-quote'/);
+  assert.match(extractFunction('wire'), /\n    newQuote: \(\) => \{\s+if \(state\.filling\) return;\s+askFile\('new-quote'/);
   assert.match(extractFunction('wire'), /if \(what === 'new-quote'\) newQuote\(\);/);
   assert.match(extractFunction('loadFile'), /reset \? 'New quote with the same intake' : 'Same intake'/);
 });
@@ -8147,15 +8140,37 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
 // Client details: 96 fields on the sample intake, 44 px each, a third of them blank; the drawer was
 // too long to scroll (the maintainer, 2026-10-23). Dense rows, sections that fold, and the blank
 // fields hidden unless flagged, behind "Show N empty fields"; Show in client details brings one out.
-test('client details hide the fields the intake leaves blank unless flagged, fold by section, and a jump brings a hidden field out', () => {
+test('client details hide the fields the intake leaves blank unless flagged, fold by section, and a jump brings a hidden field out', async () => {
   const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
-  assert.match(css, /\.drawer\[data-empty="hidden"\] \.field\.empty:not\(\.flagged\) \{ display: none; \}/);
+  assert.match(css, /\.drawer-panel\[data-empty="hidden"\] \.field\.empty:not\(\.flagged\) \{ display: none; \}/);
   assert.match(css, /\.field \{[^}]*min-height: 30px;/);
-  const sections = extractFunction('renderSections');
-  assert.match(sections, /h\('details', \{ class: `section\$\{allEmpty \? ' all-empty' : ''\}`, open: !state\.detailsClosed\.has\(section\.id\)/);
-  assert.match(sections, /\$\('details-view'\)\.dataset\.empty = state\.showEmpty \? 'shown' : 'hidden';/);
-  assert.match(sections, /`Show \$\{hidden\} empty field\$\{hidden === 1 \? '' : 's'\}`/);
-  assert.match(extractFunction('jumpTo'), /if \(!state\.showEmpty && row\.classList\.contains\('empty'\) && !row\.classList\.contains\('flagged'\)\) \{\s+state\.showEmpty = true;\s+renderSections\(\);/);
+  // What the drawer says (renderSections; details-view.jsx draws it, with data-empty on the
+  // panel: test/panel/details-view.test.jsx).
+  const { get, STATES } = await import('../src/util.js');
+  const record = { applicant: { name: 'Acme' }, garaging: { city: 'Austin' }, operations: {}, coverage: {}, drivers: [{ first: 'A' }], vehicles: [], trailers: [], priorInsurance: [] };
+  const intake = { record, agentEdited: [], done: [], warnings: [{ code: 'x', level: 'check', path: 'garaging.zip', msg: 'Zip missing' }] };
+  const context = { state: { intake, detailsClosed: new Set(['coverage']), showEmpty: false, details: null }, get, fieldInfo, SECTIONS, STATES, parseEdit: (k, v) => v, agentEdit() {} };
+  vm.runInNewContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow'].map(extractFunction).join('\n'), context);
+  context.renderSections();
+  const said = context.state.details;
+  const section = (id) => context.state.details.sections.find((s) => s.id === id);
+  const rows = (id) => [...section(id).rows].filter((r) => r.path);
+  const blank = said.sections.flatMap((s) => s.rows).filter((r) => r.path && r.empty && !r.flagged).length;
+  assert.ok(blank > 10);
+  assert.equal(said.toggle, `Show ${blank} empty fields`);
+  assert.deepEqual(rows('garaging').filter((r) => !r.empty || r.flagged).map((r) => r.path).sort(), ['garaging.city', 'garaging.zip'], 'the answered field and the flagged blank one are shown');
+  assert.equal(section('garaging').flags, 1);
+  assert.equal(section('garaging').hiddenSaid, `${rows('garaging').length - 2} empty`);
+  assert.equal(section('coverage').open, false, 'a section the agent folded stays folded');
+  assert.equal(section('drivers').rows[0].item, 'Driver 1');
+  assert.ok(!said.sections.some((s) => s.id === 'vehicles'), 'an empty list has no section');
+  said.fold('coverage', true);
+  assert.equal(context.state.detailsClosed.has('coverage'), false);
+  // Shown: every field, and the button says Hide.
+  context.state.showEmpty = true;
+  context.renderSections();
+  assert.deepEqual([context.state.details.toggle, context.state.details.showEmpty, section('garaging').hiddenSaid], ['Hide empty fields', true, null]);
+  assert.match(extractFunction('jumpTo'), /if \(!state\.showEmpty && row\.classList\.contains\('empty'\) && !row\.classList\.contains\('flagged'\)\) \{\s+state\.showEmpty = true;\s+flushSync\(renderSections\);/);
   assert.match(extractFunction('jumpTo'), /if \(section instanceof HTMLDetailsElement\) section\.open = true;/);
 });
 
@@ -8276,33 +8291,36 @@ test('an agent change on the finishing step after the print, or a stopped fill, 
 // next render, its focus with it), and a derived row vanished as the agent typed. The agent's own
 // fields are never hidden, and a derived row that empties waits for the next render.
 test('client details never hide a field the agent edited, and a derived row that empties stays until the next render', () => {
-  const made = [];
-  const fake = (tag, props = {}, ...children) => { const el = { tag, props, children, addEventListener() {}, removeAttribute() {}, setAttribute() {} }; made.push(el); return el; };
-  const context = { state: { intake: { record: { x: { a: null, b: null, c: 'kept' } }, agentEdited: ['x.a'] } }, get: (o, p) => p.split('.').reduce((v, k) => v?.[k], o), h: fake, agentEdit() {}, parseEdit: (k, v) => v, fieldInfo };
+  const context = { state: { intake: { record: { x: { a: null, b: null, c: 'kept' } }, agentEdited: ['x.a'] } }, get: (o, p) => p.split('.').reduce((v, k) => v?.[k], o), agentEdit() {}, parseEdit: (k, v) => v, fieldInfo };
   vm.runInNewContext(extractFunction('fieldRow'), context);
-  const row = (path) => context.fieldRow(path, path, 'text', false).props.class;
-  assert.equal(row('x.a'), 'field', 'emptied by the agent: shown');
-  assert.equal(row('x.b'), 'field empty', 'blank on the intake: hidden unless flagged');
-  assert.equal(row('x.c'), 'field');
-  assert.match(extractFunction('agentEdit'), /if \(value != null\) row\.closest\('\.field'\)\?\.classList\.remove\('empty'\);/);
+  // Said as data (details-view.jsx draws `empty` as the row's class: test/panel/details-view.test.jsx).
+  const empty = (path, shown) => context.fieldRow(path, path, 'text', false, shown).empty;
+  assert.equal(empty('x.a'), false, 'emptied by the agent: shown');
+  assert.equal(empty('x.b'), true, 'blank on the intake: hidden unless flagged');
+  assert.equal(empty('x.c'), false);
+  assert.equal(empty('x.b', true), false, 'a row kept shown (a derived one that just emptied) stays');
+  // A derived row that empties is kept shown until the drawer is said again without it (the test
+  // 'editing a source field in the panel…' edits the radius and reads the miles row).
+  assert.match(extractFunction('agentEdit'), /if \(derived\.length\) renderSections\(\{ keep: derived \}\);/);
 });
 
 // TNI, 2026-10-27: the intake's dropdowns (business class, vehicle type, limits …) were plain text
 // boxes in client details. They are the form's dropdown, a value off the list kept as written.
 test('client details offer the intake form\'s dropdown options, and keep a value off the list', () => {
-  const fake = (tag, props = {}, ...children) => ({ tag, props, children: children.flat(), addEventListener() {}, removeAttribute() {}, setAttribute() {} });
   const record = { operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], coverage: { autoLiabLimit: null }, drivers: [{ licenseState: 'TX' }], applicant: { name: 'X' } };
-  const context = { state: { intake: { record, agentEdited: [] } }, get: (o, p) => p.split(/[.[\]]+/).filter(Boolean).reduce((v, k) => v?.[k], o), h: fake, agentEdit() {}, parseEdit: (k, v) => v, fieldInfo, STATES: { TX: 'Texas', MD: 'Maryland' } };
+  const context = { state: { intake: { record, agentEdited: [] } }, get: (o, p) => p.split(/[.[\]]+/).filter(Boolean).reduce((v, k) => v?.[k], o), agentEdit() {}, parseEdit: (k, v) => v, fieldInfo, STATES: { TX: 'Texas', MD: 'Maryland' } };
   vm.runInNewContext(extractFunction('fieldRow'), context);
-  const input = (path) => { const { kind } = fieldInfo(path); return context.fieldRow(path, path, kind, false).children[1]; };
-  const options = (el) => el.children.map((o) => [o.props.value, !!o.props.selected]);
+  // Said as data: the box, its options and the value it shows (details-view.jsx picks that option:
+  // test/panel/details-view.test.jsx).
+  const input = (path) => { const { kind } = fieldInfo(path); return context.fieldRow(path, path, kind, false); };
+  const options = (row) => [...row.options].map(([value]) => [value, value !== '' && value === row.value]);
   const cls = input('operations.businessClass');
-  assert.equal(cls.tag, 'select');
+  assert.equal(cls.control, 'select');
   assert.deepEqual(options(cls).slice(0, 3), [['', false], ['Expediter', true], ['Freight Hauler', false]]);
   assert.deepEqual(options(input('vehicles[0].type')).slice(0, 3), [['', false], ['Cargo Van', true], ['Van', false]], 'off the list: kept, first');
-  assert.deepEqual(options(input('coverage.autoLiabLimit')).filter(([, on]) => on), [], 'blank: nothing picked');
+  assert.deepEqual([options(input('coverage.autoLiabLimit')).filter(([, on]) => on), input('coverage.autoLiabLimit').value], [[], ''], 'blank: nothing picked');
   assert.deepEqual(options(input('drivers[0].licenseState')), [['', false], ['TX', true], ['MD', false]]);
-  assert.equal(input('applicant.name').tag, 'input', 'a text box stays one');
+  assert.equal(input('applicant.name').control, 'input', 'a text box stays one');
   // Every choice field has its list.
   for (const s of SECTIONS) for (const [path, , kind] of s.fields) if (kind === 'choice') assert.ok(fieldInfo(path).options?.length, path);
 });

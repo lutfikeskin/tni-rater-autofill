@@ -358,9 +358,19 @@ const state = storeState({
   checks: null,
   pickers: [],
   // The file tools' question before the agent's work would go: 'replace' | 'clear' | 'new-quote',
-  // and the button that asked, for focus on Cancel.
+  // the button that asked, for focus on Cancel, and what it says ({ text, yes }: askFile).
   fileConfirm: null,
   fileConfirmFrom: null,
+  fileQuestion: null,
+  // The client's header, as client-view.jsx draws it (render: the name, meta, the PDF button and the
+  // file tools' question; null with no intake); the line under it about the file just loaded
+  // (clientNote); and New quote off while answers go in (renderSteps).
+  client: null,
+  clientNote: null,
+  newQuoteOff: false,
+  // All client details, as details-view.jsx draws it (renderSections: the sections and their rows,
+  // the empty fields' button): null until an intake is said.
+  details: null,
   // New quote with this intake under way (newQuote): no fill starts.
   resetting: false,
   // The quote-done chime's audio element (noteQuoteDone).

@@ -5,7 +5,7 @@ import { parseEdit, rederive } from '../../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../../src/schema.js';
 import { get, set, STATES, quotedCarrierPolicy } from '../../src/util.js';
 import * as usage from '../usage-log.js';
-import { $, h, persistUnitForms, state } from './core.js';
+import { $, persistUnitForms, state } from './core.js';
 import { profileLater, save } from './intake.js';
 import { pageOf } from './usage.js';
 import { intakeEdited, renderDock, renderSite, renderSteps, scheduleLayout, scrollBehavior } from './coordinator.js';
@@ -18,24 +18,28 @@ import { flushSync } from 'react-dom';
 // ---------------------------------------------------------------------------------------------
 // Rendering the client record
 
+// The client's header is said as data (state.client), which client-view.jsx draws: the name, the
+// garaging state and what the quote is about, the intake PDF's button, and the file tools' question.
 function render() {
   const has = !!state.intake;
   showScreen();
   $('recording').hidden = !has;
   // Marking a test run (Settings → Advanced) needs an intake to mark.
   $('test-run-row').hidden = !has;
-  if (!has) return;
+  if (!has) { state.client = null; return; }
   const { record, stats, fileName } = state.intake;
   const n = (k, one) => `${record[k].length} ${one}${record[k].length === 1 ? '' : 's'}`;
   const st = record.garaging?.state;
-  $('client-name').textContent = record.applicant.name || record.applicant.owner1 || 'Unnamed business';
-  $('client-name').title = `${fileName} · ${stats.filled} answers`;
-  // The garaging state and what the quote is about: "Maryland · 2 drivers · 1 vehicle".
-  $('client-meta').textContent = [st ? STATES[st] ?? st : null, n('drivers', 'driver'), n('vehicles', 'vehicle'),
-    record.trailers.length ? n('trailers', 'trailer') : null].filter(Boolean).join(' · ');
+  state.client = {
+    name: record.applicant.name || record.applicant.owner1 || 'Unnamed business',
+    title: `${fileName} · ${stats.filled} answers`,
+    // "Maryland · 2 drivers · 1 vehicle".
+    meta: [st ? STATES[st] ?? st : null, n('drivers', 'driver'), n('vehicles', 'vehicle'),
+      record.trailers.length ? n('trailers', 'trailer') : null].filter(Boolean).join(' · '),
+    pdf: pdfAvailable(),
+    ask: state.fileConfirm ? state.fileQuestion : null,
+  };
   $('test-run').checked = !!state.intake.test;
-  $('open-pdf').hidden = !pdfAvailable();
-  $('file-confirm').hidden = !state.fileConfirm;
   renderWarnings();
   renderSections();
   renderPickers();
@@ -51,8 +55,8 @@ function showScreen() {
   $('settings').hidden = !settings;
   $('pdf-view').hidden = !(has && !settings && state.pdf);
   $('details-view').hidden = !(has && !settings && state.detailsOpen && !state.pdf);
-  // (The checks' All client details row says it too: checks-view.jsx.)
-  $('client-card').setAttribute('aria-expanded', String(!!state.detailsOpen));
+  // (The client's name and the checks' All client details row say whether it is open themselves:
+  // client-view.jsx, checks-view.jsx.)
   $('home').hidden = settings || has;
   $('quote').hidden = settings || !has;
   $('check-view').hidden = settings || !has || state.view !== 'check';
@@ -181,66 +185,59 @@ function openFlags(prefix) {
   return warnings.filter((w, i) => checkShown(w) && !done.includes(i) && w.path && (w.path === prefix || w.path.startsWith(`${prefix}.`) || w.path.startsWith(`${prefix}[`)));
 }
 
-// All client details, one card per section (the drawer), every field editable. Built again after
-// an edit: the drawer keeps its place and the field in focus. Each section folds (state.detailsClosed),
-// and fields the intake leaves blank are hidden unless flagged or the agent's own (`agentEdited`,
-// also one they emptied), behind "Show N empty fields" (state.showEmpty): the sample intake has 96
-// fields, a third of them blank, and the drawer was too long to scroll (the maintainer, 2026-10-23).
-// A section says how many it hides.
-function renderSections() {
+// All client details, one card per section (the drawer), every field editable. Said again after
+// an edit as data (state.details); details-view.jsx draws it, keeping the drawer's place and the
+// field in focus. Each section folds (state.detailsClosed), and fields the intake leaves blank are
+// hidden unless flagged or the agent's own (`agentEdited`, also one they emptied), behind "Show N
+// empty fields" (state.showEmpty): the sample intake has 96 fields, a third of them blank, and the
+// drawer was too long to scroll (the maintainer, 2026-10-23). A section says how many it hides.
+// `keep`: rows shown now that stay shown though blank (a derived value emptied by an edit: agentEdit).
+function renderSections({ keep = [] } = {}) {
   const { record } = state.intake;
-  const box = $('sections');
-  const focused = box.contains(document.activeElement) ? document.activeElement.id : null;
-  const top = box.scrollTop;
-  box.replaceChildren();
+  const shown = new Set((state.details?.sections ?? []).flatMap((s) => s.rows).filter((r) => r.path && !r.empty).map((r) => r.path));
   let hidden = 0;
+  const sections = [];
   for (const section of SECTIONS) {
     const items = section.list ? record[section.list] ?? [] : [record[section.id]];
     if (section.list && !items.length) continue;
     const flags = openFlags(section.list ?? section.id);
-    const body = h('div', { class: 'section-body' });
+    const rows = [];
     let empty = 0;
     let fields = 0;
     items.forEach((_, idx) => {
-      if (section.list) body.append(h('p', { class: 'item-title' }, `${section.item} ${idx + 1}`));
+      if (section.list) rows.push({ item: `${section.item} ${idx + 1}` });
       for (const [tpl, label, kind = 'text'] of section.fields) {
         const path = tpl.replace('[]', `[${idx}]`);
         const flagged = flags.some((w) => w.path === path);
-        const row = fieldRow(path, label, kind, flagged);
+        const row = fieldRow(path, label, kind, flagged, keep.includes(path) && shown.has(path));
         fields++;
-        if (row.classList.contains('empty') && !flagged) empty++;
-        body.append(row);
+        if (row.empty && !flagged) empty++;
+        rows.push(row);
       }
     });
     hidden += empty;
     const allEmpty = empty === fields;
-    const details = h('details', { class: `section${allEmpty ? ' all-empty' : ''}`, open: !state.detailsClosed.has(section.id), dataset: { id: section.id }, 'aria-label': section.title,
-      ontoggle: () => { if (details.open) state.detailsClosed.delete(section.id); else state.detailsClosed.add(section.id); } },
-    h('summary', { class: 'section-title' }, h('span', { class: 'title' }, section.title),
-      flags.length ? h('span', { class: 'flag' }, `${flags.length} to check`) : null,
-      empty && !state.showEmpty ? h('span', { class: 'hidden-count' }, allEmpty ? 'not on form' : `${empty} empty`) : null),
-    body);
-    box.append(details);
+    sections.push({ id: section.id, title: section.title, open: !state.detailsClosed.has(section.id), allEmpty, flags: flags.length,
+      hiddenSaid: empty && !state.showEmpty ? (allEmpty ? 'not on form' : `${empty} empty`) : null, rows });
   }
-  $('details-view').dataset.empty = state.showEmpty ? 'shown' : 'hidden';
-  const toggle = $('details-empty');
-  toggle.hidden = !hidden && !state.showEmpty;
-  toggle.textContent = state.showEmpty ? 'Hide empty fields' : `Show ${hidden} empty field${hidden === 1 ? '' : 's'}`;
-  toggle.setAttribute('aria-pressed', String(state.showEmpty));
-  box.scrollTop = top;
-  if (focused) $(focused)?.focus({ preventScroll: true });
+  state.details = {
+    sections,
+    showEmpty: state.showEmpty,
+    toggle: !hidden && !state.showEmpty ? null : state.showEmpty ? 'Hide empty fields' : `Show ${hidden} empty field${hidden === 1 ? '' : 's'}`,
+    fold: (id, open) => { if (open) state.detailsClosed.delete(id); else state.detailsClosed.add(id); },
+  };
 }
 
 // The drawer's empty fields shown or hidden again (the button in its head); focus stays on it.
 function showEmpty(on = !state.showEmpty) {
   state.showEmpty = on;
-  renderSections();
+  flushSync(renderSections);
   $('details-empty').focus();
 }
 
 // An intake field's box as data: its `id` in client details, the `control` ('select', 'textarea' or
 // 'input'), the `value` it shows, a select's `options` ([value, text]), and whether the intake leaves
-// it `blank`. fieldRow draws it in client details; checks-view.jsx on a check card.
+// it `blank`. In client details (fieldRow, details-view.jsx) and on a check card (checks-view.jsx).
 function fieldSaid(path, kind) {
   const value = get(state.intake.record, path);
   const said = { id: `f-${path.replace(/[^\w]/g, '_')}`, value: value == null ? '' : String(value), blank: value == null };
@@ -258,24 +255,13 @@ function fieldSaid(path, kind) {
   return { ...said, control: 'input', maxLength: kind === 'state' ? 2 : 200 };
 }
 
-// A field's row in client details.
-function fieldRow(path, label, kind, flagged) {
+// A field's row in client details, as data: its box (fieldSaid), whether a check flags it, and
+// whether it is `empty` (blank on the intake and not the agent's own; `shown` keeps it out), hidden
+// unless the empty fields are shown. Its edit is the agent's (agentEdit).
+function fieldRow(path, label, kind, flagged, shown = false) {
   const said = fieldSaid(path, kind);
-  const { id } = said;
-  let input;
-  if (said.control === 'select') {
-    input = h('select', { id }, ...said.options.map(([value, text]) => h('option', { value, selected: value !== '' && value === said.value }, text)));
-  } else if (said.control === 'textarea') {
-    input = h('textarea', { id, rows: 4 });
-    input.value = said.value;
-  } else {
-    input = h('input', { id, type: 'text', placeholder: 'not on form', maxLength: said.maxLength });
-    input.value = said.value;
-  }
-  input.addEventListener('change', () => agentEdit(path, parseEdit(kind, input.value), kind));
-  const empty = said.blank && !state.intake.agentEdited?.includes(path);
-  return h('div', { class: `field${flagged ? ' flagged' : ''}${empty ? ' empty' : ''}`, dataset: { path } },
-    h('label', { for: id }, label), input);
+  const empty = said.blank && !state.intake.agentEdited?.includes(path) && !shown;
+  return { ...said, path, label, flagged, empty, edit: (value) => agentEdit(path, parseEdit(kind, value), kind) };
 }
 
 // The agent's edit of one intake field, from All client details or a check card's button: set
@@ -288,16 +274,10 @@ async function agentEdit(path, after, kind) {
   state.intake.agentEdited = [...edited];
   // A value derived from this one (radius → miles, year established → years in business)
   // follows the edit, unless the agent set it here themselves; its row in the client details
-  // shows the new value without a re-render.
-  for (const derived of rederive(state.intake.record, path, { keep: edited })) {
-    const row = document.getElementById(`f-${derived.replace(/[^\w]/g, '_')}`);
-    if (!row) continue;
-    const value = get(state.intake.record, derived);
-    row.value = value ?? '';
-    // Shown as it fills in; one that empties stays until the drawer is built again (it would go
-    // under the agent's eyes as they typed).
-    if (value != null) row.closest('.field')?.classList.remove('empty');
-  }
+  // shows the new value, shown as it fills in. One that empties stays until the drawer is said
+  // again without it (it would go under the agent's eyes as they typed).
+  const derived = [...rederive(state.intake.record, path, { keep: edited })];
+  if (derived.length) renderSections({ keep: derived });
   intakeEdited();
   // Log that the agent corrected the intake here (and whether it was flagged), not the value.
   const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
@@ -318,7 +298,7 @@ async function agentEdit(path, after, kind) {
 // "Show in client details": the drawer opens at the field, which is focused and flashed. A field
 // hidden as empty, or in a folded section, is brought out first.
 function jumpTo(path) {
-  openDetails();
+  flushSync(openDetails);
   const info = fieldInfo(path);
   const sectionId = info.section?.id ?? SECTIONS.find((s) => s.id === path || s.list === path)?.id;
   let section = $('sections').querySelector(`.section[data-id="${sectionId}"]`);
@@ -326,7 +306,7 @@ function jumpTo(path) {
   let row = $('sections').querySelector(`.field[data-path="${CSS.escape(path)}"]`) ?? section;
   if (!state.showEmpty && row.classList.contains('empty') && !row.classList.contains('flagged')) {
     state.showEmpty = true;
-    renderSections();
+    flushSync(renderSections);
     section = $('sections').querySelector(`.section[data-id="${sectionId}"]`);
     row = $('sections').querySelector(`.field[data-path="${CSS.escape(path)}"]`) ?? section;
   }
