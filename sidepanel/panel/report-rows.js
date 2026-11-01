@@ -23,8 +23,8 @@ function answerRecord(row) {
 // (agentPickable). `now`: what the page shows for it, only as the page has it, never for a question
 // off screen; `pressed`: the choice shown as the page's answer; `offered`: the options of a failed
 // choice the panel can't put in. `settled`: 'answered', 'picked', 'marked' (with `undo`) or 'ai';
-// `ai`, `aiPick`, `aiAccept`: the AI's suggestion on it, its pick among the choices, and accepting it
-// (renderAi). `finish`: an item the quote may finish without (finishLeftOk).
+// `ai`, `aiCard`, `aiPick`, `aiAccept`: the AI's suggestion on it, its card in the row's slot
+// (ai-view.jsx), its pick among the choices, and accepting it (renderAi). `finish`: an item the quote may finish without (finishLeftOk).
 function needRecord(x, carrier, page, open = false) {
   const pickable = agentPickable(x, carrier, page);
   const kind = x.mark === 'failed' ? 'failed' : pickable ? 'need' : 'yours';
@@ -32,7 +32,7 @@ function needRecord(x, carrier, page, open = false) {
   return { id: ++rowIds, type: 'need', x, label: x.label || x.name, key: x.key ?? '', field: x.label ?? '', offPage: !!x.offPage, kind, pickable,
     icon: { failed: '!', need: '?', yours: '•' }[kind], wait: { failed: 'Couldn’t fill', need: 'Needs your answer', yours: 'Left for you' }[kind],
     finish: finishLeftOk(carrier, x), options: [...new Set(choicesOf(x.controlKind, x.options))], offered: !pickable && x.mark === 'failed' ? x.options ?? [] : null,
-    now, pressed: now, open, gone: false, settled: null, pending: false, head: null, note: null, where: null, ai: null, aiPick: null, aiAccept: null };
+    now, pressed: now, open, gone: false, settled: null, pending: false, head: null, note: null, where: null, ai: null, aiCard: null, aiPick: null, aiAccept: null };
 }
 
 // Which question an item is, as the AI names it: its field and label.

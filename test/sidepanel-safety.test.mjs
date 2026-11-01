@@ -1482,22 +1482,10 @@ const AI_ACTION_FUNCTIONS = [
   'aiCurrentAnswerPresent', 'aiActionCurrent', 'aiDecisionBlocks', 'pendingAi', 'renderAi',
 ].map(extractFunction).join('\n');
 
-function aiActionTreeText(node) {
-  if (!node) return '';
-  if (Array.isArray(node)) return node.map(aiActionTreeText).join('');
-  if (typeof node === 'string') return node;
-  return aiActionTreeText(node.children);
-}
-
-function aiActionButtons(node, out = []) {
-  if (!node) return out;
-  if (Array.isArray(node)) {
-    for (const child of node) aiActionButtons(child, out);
-    return out;
-  }
-  if (node.tag === 'button') out.push(node);
-  aiActionButtons(node.children, out);
-  return out;
+// The report's holder above the list (aiHolder in ai-view.jsx): what renderAi and runAssist said to it
+// (`said`; test/panel/ai-view.test.jsx checks that it is drawn as said).
+function aiHolderStub() {
+  return { isConnected: true, said: null, say(said) { this.said = said; }, remove() { this.isConnected = false; } };
 }
 
 function makeAiActionHarness({ rejected = false, via = 'row' } = {}) {
@@ -1528,28 +1516,16 @@ function makeAiActionHarness({ rejected = false, via = 'row' } = {}) {
     snapshots: [frame], carrier: { id: 'synthetic', practice: true, advance: () => {} },
   };
   const ui = { 'auto-advance': { checked: true }, 'ai-note': { textContent: '' } };
-  const holder = {
-    isConnected: true, children: [],
-    replaceChildren(...children) { this.children = children; },
-  };
+  const holder = aiHolderStub();
   const report = { querySelectorAll() { return []; }, append(...children) { this.children = children; } };
   let releaseSnapshot;
   let snapshotStarted;
   const snapshotStartedPromise = new Promise(resolve => { snapshotStarted = resolve; });
   const calls = [];
   let fillCalls = 0;
-  const fakeH = (tag, props = {}, ...children) => {
-    const node = {
-      tag, props, children: children.flat().filter(child => child != null && child !== false),
-      dataset: { ...(props.dataset ?? {}) }, disabled: false, textContent: '',
-    };
-    node.textContent = aiActionTreeText(node.children);
-    return node;
-  };
   const context = {
     state,
     $: id => id === 'report' ? report : ui[id],
-    h: fakeH,
     pageOf: url => new URL(url).pathname,
     assistContextKey: () => 'context',
     aiFingerprint: JSON.stringify,
@@ -1573,15 +1549,17 @@ function makeAiActionHarness({ rejected = false, via = 'row' } = {}) {
     fieldHash: context.aiLiveFieldHash({ key: 'choice', label: 'Choice', current: 'No' }),
   };
   context.renderAi(holder, [x], ctx);
-  // The pick has no row here: its card is above the list, with its own button; the dock's Approve
-  // (state.aiDocks, by tab and page) acts on every pick waiting on the page.
-  const phrase = rejected ? 'Confirm the current page answer' : 'Approve';
-  const own = () => aiActionButtons(holder.children)
-    .find(candidate => aiActionTreeText(candidate.children) === phrase);
-  assert.ok(own(), 'real renderAi ' + (rejected ? 'Confirm' : 'Approve') + ' button rendered');
+  // The pick has no row here: its card is above the list, with its own button (Approve, or Confirm
+  // the current page answer: ai-view.jsx); the dock's Approve (state.aiDocks, by tab and page) acts
+  // on every pick waiting on the page.
+  const [orphan] = holder.said.orphans;
+  assert.deepEqual([holder.said.orphans.length, orphan.label, orphan.card.kind], [1, 'Choice', rejected ? 'rejected' : 'picked'], 'its card is above the list');
+  const own = rejected ? orphan.card.confirm : orphan.card.approve;
+  assert.equal(typeof own, 'function', 'real renderAi ' + (rejected ? 'Confirm' : 'Approve') + ' button rendered');
   assert.deepEqual([[...state.aiDocks.keys()], state.aiDocks.get('1|/quote').canContinue], [['1|/quote'], true], 'the dock approves the picks of this page');
   const dockGo = state.aiDocks.get('1|/quote').go;
-  const button = () => (via === 'dock' ? { props: { onclick: dockGo } } : own());
+  // What the button clicked asks for.
+  const button = () => (via === 'dock' ? dockGo : own);
   return {
     state, ctx, x, frame, holder, calls, fillCalls: () => fillCalls, button,
     snapshotStartedPromise, release: (snapshot = [frame]) => releaseSnapshot(snapshot),
@@ -1589,26 +1567,82 @@ function makeAiActionHarness({ rejected = false, via = 'row' } = {}) {
 }
 
 test('a question Luna left shows its recommendation; an answered one shows none', () => {
-  const holder = { isConnected: true, children: [], replaceChildren(...c) { this.children = c; } };
-  const fakeH = (tag, props = {}, ...children) => ({ tag, props, children: children.flat().filter(c => c != null && c !== false), dataset: {} });
+  const holder = aiHolderStub();
   const state = { filling: false, tab: { id: 1, url: 'https://example.test/quote' }, intake: { record: {} }, active: {}, aiCache: new Map(), agentKeys: new Map(), aiRun: 0, aiDocks: new Map() };
-  const context = { state, $: id => (id === 'report' ? { querySelectorAll: () => [] } : { checked: false }), h: fakeH, pageOf: url => new URL(url).pathname,
+  const context = { state, $: id => (id === 'report' ? { querySelectorAll: () => [] } : { checked: false }), pageOf: url => new URL(url).pathname,
     assistContextKey: () => 'context', aiFingerprint: JSON.stringify, runKit: async () => [], usage: { log() {} }, recount() {}, renderSteps() {} };
   vm.runInNewContext(AI_ACTION_FUNCTIONS, context, { filename: 'sidepanel/sidepanel.js' });
   const ctx = { tabId: 1, page: '/quote', carrier: { id: 'synthetic', practice: true } };
   const left = { key: 'sr22', label: 'SR-22?', leave: true, applyable: true, controlKind: 'radio', options: ['Yes', 'No'], tip: 'Not on the intake.',
     nextStep: 'The intake leaves "Needs SR-22" blank: confirm it with the client, then add it under All client details.', checks: [] };
   context.renderAi(holder, [left], ctx);
-  const text = aiActionTreeText(holder.children);
-  assert.match(text, /this one is yours to decide/);
-  assert.match(text, /Luna recommends: The intake leaves "Needs SR-22" blank/);
-  assert.equal(aiActionButtons(holder.children).some(b => /Use this answer/.test(aiActionTreeText(b.children))), false, 'a recommendation is no answer to put in');
+  // Drawn as "AI: this one is yours to decide.", its tip, then "Luna recommends: …" (ai-view.jsx).
+  const { card } = holder.said.orphans[0];
+  assert.deepEqual({ ...card }, { kind: 'tip', says: 'AI: this one is yours to decide.', tip: 'Not on the intake.',
+    next: 'The intake leaves "Needs SR-22" blank: confirm it with the client, then add it under All client details.' });
+  assert.equal(card.use, undefined, 'a recommendation is no answer to put in');
   context.renderAi(holder, [{ ...left, leave: false, choice: 'No', nextStep: null, evidenceSources: [] }], ctx);
-  assert.doesNotMatch(aiActionTreeText(holder.children), /recommends/);
+  assert.equal(holder.said.orphans[0].card.kind, 'suggest');
+  assert.doesNotMatch(JSON.stringify(holder.said), /recommends|SR-22" blank/);
+});
+
+// Each suggestion's card on its question's row (the row's record, `aiCard`, drawn with the row by
+// report-view.jsx), or above the list without one; Use all for two or more sure picks; what each card
+// says and asks for.
+test('renderAi puts each suggestion\'s card on its question\'s row, and the rest above the list', async () => {
+  const holder = aiHolderStub();
+  const applied = [], announced = [], logged = [];
+  const state = { filling: false, tab: { id: 1, url: 'https://example.test/quote' }, intake: { record: {} }, active: {}, aiCache: new Map(), agentKeys: new Map(), aiRun: 0, aiDocks: new Map() };
+  const context = { state, $: () => ({ checked: false }), pageOf: url => new URL(url).pathname,
+    assistContextKey: () => 'context', aiFingerprint: JSON.stringify, runKit: async () => [], usage: { log: (e) => logged.push(e) }, recount() {}, renderSteps() {},
+    applyAi: async (list, c, decision) => { applied.push([Array.from(list, (x) => x.key), decision]); return true; }, announce: (s) => announced.push(s),
+    aiDecisionEvent: (x, c, decision) => ({ type: 'ai_decision', decision }) };
+  vm.runInNewContext(AI_ACTION_FUNCTIONS, context, { filename: 'sidepanel/sidepanel.js' });
+  const ctx = { tabId: 1, page: '/quote', carrier: { id: 'synthetic' } };
+  const base = { controlKind: 'radio', options: ['Yes', 'No'], applyable: true, autoOk: false, checks: ['"Yes" is one of the page\'s choices'], evidenceSources: [{ basis: 'intake', path: 'operations.hazmat' }] };
+  const sure = { ...base, key: 'k1', label: 'Hazmat', choice: 'No', tip: 'The intake says no hazmat.', autoOk: true };
+  const typed = { ...base, key: 'k2', label: 'Years', controlKind: 'text', choice: '7', autoOk: true, tip: '' };
+  const done = { ...base, key: 'k3', label: 'Placards', choice: 'No', done: 'accepted' };
+  const error = { ...base, key: 'k4', label: 'Radius', choice: '300', error: 'the page changed' };
+  const mine = { ...base, key: 'k5', label: 'Cargo', choice: 'Yes', manual: true };
+  const orphan = { ...base, key: 'k6', label: 'No row', choice: 'Yes', autoOk: true };
+  const rec = (x) => ({ type: 'need', x: { key: x.key, label: x.label }, settled: null });
+  const rows = [sure, typed, done, error, mine].map(rec);
+  state.reportFor = { list: rows };
+  context.renderAi(holder, [sure, typed, done, error, mine, orphan], ctx);
+  assert.deepEqual(rows.map((r) => r.aiCard.kind), ['suggest', 'suggest', 'done', 'error', 'mine'], 'each on its row');
+  // Each row drawn again (drawRow, report-view.jsx): its record's draw count.
+  assert.deepEqual([rows.map((r) => r.v), state.rowsDrawn], [[1, 1, 1, 1, 1], 5], 'each row drawn again');
+  const { use, noThanks, checks, ...said } = rows[0].aiCard;
+  assert.deepEqual(said, { kind: 'suggest', choice: 'No', tip: 'The intake says no hazmat.', why: 'cited evidence: operations.hazmat · Evidence checked · needs your review' });
+  assert.deepEqual([...checks], ['"Yes" is one of the page\'s choices']);
+  assert.deepEqual([rows[1].aiCard.choice, rows[1].aiCard.tip], ['typing “7”', null], 'a typed answer says so');
+  assert.equal(rows[2].aiCard.text, 'Put in “No” (purple on the page).');
+  assert.equal(rows[3].aiCard.text, 'The page didn\'t take the AI answer (the page changed). Answer it on the page.');
+  // The AI's pick among the row's own choices; picking it there accepts it.
+  assert.deepEqual([rows[0].aiPick, rows[1].aiPick, rows[2].aiPick], ['No', null, null]);
+  // Above the list: Use all, and the suggestion without a row.
+  assert.deepEqual([holder.said.useAll.label, [...holder.said.orphans].map((o) => [o.label, o.card.kind])], ['Use all 3 AI answers', [['No row', 'suggest']]]);
+  // Use this answer puts it in as accepted (applyAi checks the page first), then says it again.
+  await use();
+  assert.deepEqual(applied, [[['k1'], 'accepted']]);
+  assert.equal(state.rowsDrawn, 10, 'said again after it went in');
+  // Use all: every sure pick not yet in.
+  await holder.said.useAll.put();
+  assert.deepEqual(applied.at(-1), [['k1', 'k2', 'k6'], 'accepted']);
+  // While a fill runs nothing is put in: it says so, and the button isn't shown as busy (null).
+  state.filling = true;
+  assert.equal(rows[0].aiCard.use(), null);
+  assert.equal(rows[0].aiAccept(), null);
+  assert.deepEqual([applied.length, announced], [2, ['Wait for the fill to finish, then try again.', 'Wait for the fill to finish, then try again.']]);
+  state.filling = false;
+  // No thanks: dismissed, logged, and its card gone from the row.
+  rows[0].aiCard.noThanks();
+  assert.deepEqual([sure.dismissed, logged.map((e) => [e.type, e.decision]), rows[0].aiCard], [true, [['ai_decision', 'dismissed']], null]);
 });
 
 async function awaitDeferredAction(harness, mutate) {
-  const action = harness.button().props.onclick();
+  const action = harness.button()();
   await harness.snapshotStartedPromise;
   mutate(harness);
   harness.release();
@@ -1665,7 +1699,7 @@ test('renderAi confirmation ignores a deferred snapshot after intake, cache, tab
 test('renderAi approval and confirmation allow an active-driver change when intake/page/cache remain current', async () => {
   for (const via of ['row', 'dock']) {
   const approved = makeAiActionHarness({ via });
-  const approval = approved.button().props.onclick();
+  const approval = approved.button()();
   await approved.snapshotStartedPromise;
   approved.state.active = { drivers: 1, vehicles: 0 };
   approved.release();
@@ -1674,7 +1708,7 @@ test('renderAi approval and confirmation allow an active-driver change when inta
   assert.equal(approved.fillCalls(), 1, 'current approval still continues the fill');
 
   const confirmed = makeAiActionHarness({ rejected: true, via });
-  const confirmation = confirmed.button().props.onclick();
+  const confirmation = confirmed.button()();
   await confirmed.snapshotStartedPromise;
   confirmed.state.active = { drivers: 1, vehicles: 0 };
   confirmed.release();
@@ -2366,14 +2400,20 @@ test('a page without form fields still shows what needs the agent', () => {
 });
 
 function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
-  const logged = [], rendered = [], applied = [];
-  const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat(), isConnected: true,
-    replaceChildren(...next) { this.children = next; }, remove() { this.isConnected = false; }, before() {} });
+  const logged = [], rendered = [], applied = [], holders = [];
+  // The report's holders above the list (aiHolder in ai-view.jsx): each placed by its node, saying
+  // what it was told last (`said`).
+  const aiHolder = () => {
+    const node = { isConnected: false, remove() { this.isConnected = false; } };
+    const made = { node, said: null, get isConnected() { return node.isConnected; }, say(said) { this.said = said; }, remove() { node.remove(); } };
+    holders.push(made);
+    return made;
+  };
   const report = { append(child) { child.isConnected = true; this.children = [...(this.children ?? []), child]; }, querySelector: () => null };
   const state = { intake: { record }, active: { drivers: 0, vehicles: 0 }, tab: { id: 1, url: 'https://rater.test/Default.aspx?pageName=CoveragesRates' },
     aiRun: 0, aiCache: new Map(), aiSettingsRun: 0, aiAsking: new Map(), agentKeys: new Map(), filling: false };
   const context = {
-    state, assistContextKey, pageOf: (url) => new URL(url).searchParams.get('pageName'), h: node, $: () => report,
+    state, assistContextKey, pageOf: (url) => new URL(url).searchParams.get('pageName'), aiHolder, $: () => report,
     aiSettings: async () => ({ on: true, apiKey: 'synthetic', ready: true, model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
     PROVIDERS: { luna: { name: 'Luna', policy: 'synthetic-policy' } },
     collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
@@ -2385,7 +2425,7 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
   };
   vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
-  return { state, context, ctx, report, logged, rendered, applied, holder: () => report.children.at(-1) };
+  return { state, context, ctx, report, logged, rendered, applied, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
 }
 
 // 2026-10-05 FL run: Luna answered in 17 s, but the page had changed meanwhile; the panel kept
@@ -2397,7 +2437,7 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
     return answer;
   } });
   await t.context.runAssist([{}], t.ctx);
-  const text = JSON.stringify(t.holder().children);
+  const text = JSON.stringify(t.holder().said);
   assert.match(text, /Luna: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
   assert.doesNotMatch(text, /Asking/);
   assert.equal(t.rendered.length, 0, 'stale suggestions are never shown as current');
@@ -2410,6 +2450,38 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   await fresh.context.runAssist([{}], fresh.ctx);
   assert.equal(fresh.rendered.length, 1);
   assert.equal(fresh.logged[0].error, undefined);
+});
+
+// What runAssist says above the list (the holder, ai-view.jsx): no key yet, with Add the key; a
+// failure; nothing at all for a page with nothing to ask and no pick waiting.
+test('Luna without a key says so above the list, and a failed review says it failed', async () => {
+  const keyless = assistHarness({ suggest: async () => { throw new Error('never asked'); }, cfg: { ready: false } });
+  keyless.context.PROVIDERS.luna.keyLabel = 'OpenAI API key';
+  const opened = [];
+  keyless.context.openSettings = (id) => opened.push(id);
+  await keyless.context.runAssist([{}], keyless.ctx);
+  const { needsKey } = keyless.holder().said;
+  assert.equal(needsKey.text, 'Luna needs an OpenAI API key. ');
+  needsKey.add();
+  assert.deepEqual([opened, keyless.logged], [['ai-openai-key'], []], 'Add the key opens its field; nothing is asked');
+  const failed = assistHarness({ suggest: async () => { throw new failed.context.AssistError('Luna is rate-limited. Try again shortly.'); } });
+  await failed.context.runAssist([{}], failed.ctx);
+  assert.deepEqual({ ...failed.holder().said }, { bad: 'AI assistant: Luna is rate-limited. Try again shortly.' });
+  assert.equal(failed.rendered.length, 0);
+  const none = assistHarness({ suggest: async () => { throw new Error('never asked'); } });
+  none.context.collectItems = () => ({ items: [], blocked: [] });
+  await none.context.runAssist([{}], none.ctx);
+  assert.deepEqual([none.report.children, none.rendered.length], [undefined, 0], 'no holder placed');
+  // Nothing to ask, but a pick waiting for approval: its card is drawn from that pick, so once it
+  // is approved the card drawn again says it went in (CodeRabbit on #253: with an empty list the
+  // approved row kept its Approve card until the next fill).
+  const waiting = assistHarness({ suggest: async () => { throw new Error('never asked'); } });
+  const pick = { key: 'k1', label: 'Q1', done: 'auto' };
+  waiting.context.collectItems = () => ({ items: [], blocked: [] });
+  waiting.context.pendingAi = () => [pick];
+  await waiting.context.runAssist([{}], waiting.ctx);
+  assert.equal(waiting.rendered.length, 1);
+  assert.deepEqual([...waiting.rendered[0][1]], [pick], 'the waiting pick is what renderAi draws again');
 });
 
 // 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions
@@ -2458,7 +2530,7 @@ test('a Luna answer that comes after a fill of the same page redrew it is kept, 
   await settle();
   assert.equal(luna.calls.length, 1, 'the same questions are not asked twice while the first request answers them');
   assert.equal(luna.calls[0].opts.isStale(), false, 'Luna is not stopped between its calls for a newer request of the same page');
-  assert.match(JSON.stringify(t.holder().children), /Asking Luna about 1 question left for you/);
+  assert.match(JSON.stringify(t.holder().said), /Asking Luna about 1 question left for you/);
   luna.calls[0].resolve();
   await Promise.all([first, second]);
   assert.equal(t.logged.length, 1);
@@ -7558,7 +7630,7 @@ function agentAnswerHarness({ carrier = { id: 'progressive', stopSteps: { 'Payme
   const context = {
     state, crypto, neverReason, knownStep, pageOf: (u) => u,
     usage: { currentSession: () => ({ intakeId: 'intake-1', keySalt: 'salt' }), log: (e) => t.logged.push(e) },
-    tellRecorder: async () => {}, scheduleLayout() {}, scheduleAutoFill: (p) => t.scheduled.push(p), aiSlotOf: () => null,
+    tellRecorder: async () => {}, scheduleLayout() {}, scheduleAutoFill: (p) => t.scheduled.push(p),
     agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => t.stored ?? [], set: async (v) => { t.stored = JSON.parse(JSON.stringify(v)); } },
     redactor: () => (s) => s, redactionTerms: () => [], viewOf: () => 't1', fieldChangeEvent: (c) => ({ type: 'field_change', ...c }),
     settleNeed: (item, how, undo, shown) => t.settled.push([how, shown]),
@@ -7666,11 +7738,12 @@ test('the agent\'s pick from one row of a field settles the AI\'s word on its ot
       persistAiPending() {}, syncAiBanner: () => { synced++; } } });
     const sugg = { key: 'k1', label: 'Hauls hazardous materials', choice: 'Yes', ...(done ? { done } : {}) };
     t.state.aiCache.set('s', sugg);
-    const first = { type: 'need', key: 'k1', field: 'Hauls hazardous materials', x: { key: 'k1', label: 'Hauls hazardous materials' }, ai: sugg, aiPick: 'Yes', aiAccept: () => {} };
+    const first = { type: 'need', key: 'k1', field: 'Hauls hazardous materials', x: { key: 'k1', label: 'Hauls hazardous materials' }, ai: sugg,
+      aiCard: { kind: done ? 'picked' : 'suggest' }, aiPick: 'Yes', aiAccept: () => {} };
     t.item.x = { key: 'k1', label: 'Hauls hazardous materials' };
     t.state.reportFor = { list: [first, t.item] };
     await t.pick('No');
-    assert.deepEqual([first.aiPick, first.aiAccept], [null, null], `${done ?? 'suggested'}: the AI's word off its row`);
+    assert.deepEqual([first.aiCard, first.aiPick, first.aiAccept], [null, null, null], `${done ?? 'suggested'}: the AI's word off its row, its card too`);
     assert.deepEqual(t.settled.map((s) => s[0]), ['picked', 'picked'], 'both rows settled');
     if (done) assert.deepEqual([sugg.manual, sugg.dismissed, synced, decisions], [true, undefined, 1, []], 'a pick waiting for approval: the agent\'s now');
     else assert.deepEqual([sugg.dismissed, decisions], [true, ['dismissed']], 'a suggestion: dismissed, and logged');
@@ -8135,6 +8208,114 @@ test('the PDF opens at the panel\'s width, a marked item at 200%, and drags or z
   assert.match(pan, /scroll\.scrollLeft = drag\.left - \(e\.clientX - drag\.x\);/);
   assert.match(pan, /addEventListener\('wheel', \(e\) => \{\s+if \(!\(e\.ctrlKey \|\| e\.metaKey\) \|\| !state\.pdf\) return;\s+e\.preventDefault\(\);/);
   assert.match(extractFunction('wire'), /pdfPan\(\$\('pdf-scroll'\)\);/);
+});
+
+// The PDF sheet is drawn by pdf-sheet-view.jsx (React PR, 2026-11-01) from what openPdf and drawPdf
+// say (state.pdfSheet); the page itself is still drawn by drawPdf on the sheet's canvas. What the
+// sheet draws from that, and what each button asks: test/panel/pdf-sheet-view.test.jsx. Here, the
+// real functions: what they say for a marked item, a PDF no longer kept or one that can't be read,
+// the page copied onto the sheet's canvas, the marks drawn before the view moves to them, and the
+// view's page and zoom assigned anew (so the sheet redraws), never reopened by a draw after Back.
+test('the PDF sheet: what openPdf and drawPdf say, the page copied onto the sheet\'s canvas, and its buttons wired as before', async () => {
+  const calls = [];
+  const el = (id, more = {}) => ({ id, focus: () => calls.push(['focus', id]), ...more });
+  const copies = [];
+  const shownCanvas = el('pdf-canvas', { width: 0, height: 0, style: {}, getContext: () => ({ drawImage: (c, x, y) => copies.push([c.width, c.height, x, y]) }) });
+  const scroll = el('pdf-scroll', { clientWidth: 628, clientHeight: 400, scrollLeft: 0, scrollTop: 0, scrollWidth: 1228, scrollHeight: 1628,
+    scrollTo: (x, y) => calls.push(['scrollTo', x, y]), getBoundingClientRect: () => ({ top: 0, left: 0 }) });
+  const nodes = { 'pdf-canvas': shownCanvas, 'pdf-scroll': scroll, 'pdf-back': el('pdf-back'), 'step-check': el('step-check'),
+    'pdf-marks': { get children() { calls.push(['marks read']); return []; } } };
+  const page = { getViewport: ({ scale }) => ({ width: 600 * scale, height: 800 * scale, convertToViewportRectangle: (r) => r.map((v) => v * scale) }),
+    render: () => ({ promise: Promise.resolve(), cancel() {} }) };
+  let doc = { numPages: 1, getPage: async () => page };
+  const opener = { isConnected: true, focus: () => calls.push(['focus', 'opener']) };
+  const state = { intake: { fileName: 'acme.pdf', places: { pages: [{}] }, agentEdited: [] }, pdf: null, pdfSheet: null, pdfDraw: 0, pdfTask: null, view: 'check' };
+  const context = {
+    state, $: (id) => nodes[id], render: () => calls.push(['render']), sourcePlace: (paths) => (paths.includes('garaging.state') ? { page: 0, rect: [10, 10, 50, 20] } : null),
+    intakePdfDocument: async () => (typeof doc === 'function' ? doc() : doc), flushSync: (fn) => { calls.push(['flush']); fn(); },
+    document: { activeElement: opener, createElement: () => ({ width: 0, height: 0, getContext: () => ({}) }) }, window: { devicePixelRatio: 1 },
+    pdfjs: { AnnotationMode: { ENABLE: 2 } }, PDF_ZOOMS: [1, 1.5, 2, 3, 4], PDF_OPEN_ZOOM: 1, PDF_FOCUS_ZOOM: 2, Promise, Math, Error,
+  };
+  vm.runInNewContext(['openPdf', 'drawPdf', 'pdfControls', 'pdfPageSaid', 'focusPdfMark', 'closePdf', 'pdfZoom', 'pdfPage'].map(extractFunction).join('\n'), context);
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+
+  // A check item marked on a one-page intake: at 200%, its label the title, the sheet loading and
+  // drawn (render shows it) before Back takes focus, then the page and its mark, then the view
+  // moves to the mark.
+  await context.openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' });
+  assert.deepEqual(plain(calls.slice(0, 4)), [['flush'], ['render'], ['scrollTo', 0, 0], ['focus', 'pdf-back']]);
+  assert.deepEqual(plain(calls.slice(4)), [['flush'], ['marks read']], 'the marks are drawn before the view moves to them');
+  assert.deepEqual([state.pdf.page, state.pdf.zoom, state.pdf.pages, state.pdf.mark.kind], [0, 2, 1, 'check']);
+  assert.equal(state.pdfReturn, opener);
+  assert.deepEqual(plain(state.pdfSheet), {
+    title: 'Garaging state', name: 'Intake · marked', shown: 'page', error: null,
+    hint: { kind: 'check', label: 'Garaging state', where: '', several: false },
+    controls: { pages: '1 / 1', prev: false, next: false, zoomOut: true, zoomIn: true, fit: true, tab: true, focus: true, zoom: 200 },
+    marks: [{ filled: false, left: 18, top: 18, width: 84, height: 24 }],
+  });
+  // The page, drawn off screen at the panel's width times the zoom, copied onto the sheet's canvas.
+  assert.deepEqual([shownCanvas.width, shownCanvas.height, shownCanvas.style.width, shownCanvas.style.height], [1200, 1600, '1200px', '1600px']);
+  assert.deepEqual(copies, [[1200, 1600, 0, 0]]);
+
+  // Zoom and page are assigned anew, so the sheet hears them; a step past the last page does nothing.
+  let before = state.pdf;
+  context.pdfZoom(3);
+  assert.notEqual(state.pdf, before);
+  assert.deepEqual([before.zoom, state.pdf.zoom, state.pdfSheet.controls.zoom], [2, 3, 300]);
+  before = state.pdf;
+  context.pdfPage(1);
+  assert.equal(state.pdf, before, 'no page after the last');
+
+  // The whole PDF on an intake of three pages: its name, at the page's width, no hint; Next to page 2.
+  doc = { numPages: 3, getPage: async () => page };
+  state.intake.places.pages = [{}, {}, {}];
+  await context.openPdf();
+  assert.deepEqual([state.pdfSheet.title, state.pdfSheet.name, state.pdfSheet.hint, state.pdfSheet.marks.length], ['Intake PDF', 'acme.pdf', null, 0]);
+  assert.deepEqual(plain(state.pdfSheet.controls), { pages: '1 / 3', prev: false, next: true, zoomOut: false, zoomIn: true, fit: true, tab: true, focus: true, zoom: 100 });
+  before = state.pdf;
+  context.pdfPage(1);
+  assert.notEqual(state.pdf, before);
+  assert.equal(state.pdf.page, 1);
+  await new Promise((r) => setTimeout(r));
+  assert.deepEqual(plain(state.pdfSheet.controls).pages, '2 / 3');
+  assert.deepEqual([state.pdfSheet.controls.prev, state.pdfSheet.controls.next], [true, true]);
+
+  // A filled answer the agent corrected, worked out from two fields: its hint by its kind.
+  state.intake.agentEdited = ['garaging.state'];
+  context.sourcePlace = () => ({ page: 1, rects: [[0, 0, 10, 10], [20, 20, 30, 30]] });
+  await context.openPdf({ path: 'x', from: ['garaging.state', 'garaging.zip'], label: 'Garaging', kind: 'filled' });
+  assert.deepEqual(plain(state.pdfSheet.hint), { kind: 'edited', label: 'Garaging', where: ' on page 2', several: true });
+  assert.equal(state.pdfSheet.name, 'Intake, page 2 · marked');
+  assert.deepEqual(state.pdfSheet.marks.map((m) => m.filled), [true, true]);
+
+  // A PDF no longer kept: said, nothing to page, zoom or mark, and no tab. One that can't be read:
+  // said, and the tab can still try.
+  doc = null;
+  await context.openPdf();
+  assert.deepEqual([state.pdfSheet.shown, state.pdfSheet.error, state.pdfSheet.hint], ['error', 'This PDF is no longer kept. Load the same file again (Change file); your work stays.', null]);
+  assert.deepEqual(['prev', 'next', 'zoomOut', 'fit', 'zoomIn', 'focus', 'tab'].map((k) => state.pdfSheet.controls[k]), Array(7).fill(false));
+  doc = () => { throw new Error('bad'); };
+  await context.openPdf();
+  assert.deepEqual([state.pdfSheet.shown, state.pdfSheet.error, state.pdfSheet.controls.tab, state.pdfSheet.controls.next], ['error', 'Couldn’t show this PDF here. Open it in a new tab instead.', true, false]);
+
+  // Back while the PDF is still opening: the draw that finishes after it doesn't open it again.
+  let release;
+  doc = () => new Promise((r) => { release = () => r({ numPages: 5, getPage: async () => page }); });
+  const opening = context.openPdf();
+  await new Promise((r) => setTimeout(r));
+  context.closePdf();
+  release();
+  await opening;
+  assert.equal(state.pdf, null, 'closed stays closed');
+  assert.deepEqual(plain(calls.at(-1)), ['focus', 'opener'], 'Back gives focus back where it was');
+
+  // Its buttons, wired as before: Back, Close and the scrim close it; Open full PDF; Zoom to it; the
+  // pages and the zoom steps.
+  const wire = extractFunction('wire');
+  assert.match(wire, /mountPdf\(\$\('pdf-view'\), \{\s+close: \(\) => closePdf\(\),\s+tab: \(\) => openPdfInTab\(\),\s+focus: \(\) => pdfZoom\(Math\.max\(state\.pdf\?\.zoom \?\? 1, PDF_FOCUS_ZOOM\), \{ focus: true \}\),\s+page: \(step\) => pdfPage\(step\),\s+zoomIn: \(\) => pdfZoom\(PDF_ZOOMS\.find\(\(z\) => z > state\.pdf\?\.zoom\)\),\s+zoomOut: \(\) => pdfZoom\(PDF_ZOOMS\.findLast\(\(z\) => z < state\.pdf\?\.zoom\)\),\s+fit: \(\) => pdfZoom\(1\),\s+\}\);\s+pdfPan\(\$\('pdf-scroll'\)\);/);
+  // The sheet keeps focus and Escape closes it, as before: #pdf-view stays the page's host.
+  assert.match(wire, /if \(e\.key === 'Escape' && state\.pdf && !\$\('pdf-view'\)\.hidden\) \{ e\.preventDefault\(\); closePdf\(\); return; \}/);
+  assert.match(wire, /const modal = state\.pdf && !\$\('pdf-view'\)\.hidden \? \$\('pdf-view'\)/);
 });
 
 // The client strip (the maintainer, 2026-10-23): Change file and Clear were behind a ⋯ menu (three
