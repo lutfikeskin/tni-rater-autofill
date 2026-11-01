@@ -9,11 +9,11 @@ import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../.
 import * as usage from '../usage-log.js';
 import { isStandard } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
-import { $, aiSnapshotFieldMatches, h, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state } from './core.js';
+import { $, aiSnapshotFieldMatches, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
-import { announce, dropReports, fillContext, fillOptions, fillProblem, issueCard, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
+import { announce, dropReports, fillContext, fillOptions, fillProblem, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
 import { aiDecisionEvent, remarkAi, runAssist, syncAiBanner } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep } from './scope.js';
@@ -22,6 +22,7 @@ import { liveOf } from './live.js';
 import { agentPickable, answerSources, choiceSaid, choicesOf, currentReportKey, finishLeftOk, groupRows, itemsLeft, looseText, reportKey, stopNoteFor } from './report-model.js';
 import { answerRecord, needId, needRecord, reopenRow, setHead, settleRow, showLive } from './report-rows.js';
 import { mountRows } from './report-view.jsx';
+import { mountReportHead } from './notes-view.jsx';
 import { flushSync } from 'react-dom';
 /** @import { CarrierConfig, FillReport } from '../../types.js' */
 
@@ -910,26 +911,30 @@ function renderReport(frames, ctx = {}) {
   // read them; the panel changes them and drawRow draws them.
   entry.list = ordered.map((e) => (e.x ? needRecord(e.x, carrier, page, e === first) : answerOf(e.row)));
   const halted = frames.find((f) => f.halted);
-  const nodes = [
+  // What the report says above its list, in this order (drawn by notes-view.jsx: headHost).
+  const head = [
     // An agent page's note: a yellow box on a page that needs more attention (`warnPages`:
     // Progressive's NoHit, W44-14), a line of text on the others.
-    agentPage ? (carrier?.warnPages?.[page] ? issueCard({ tone: 'warn', title: carrier.warnPages[page], text: agentPage })
-      : h('p', { class: 'note-line agent-page' }, agentPage)) : null,
+    agentPage ? (carrier?.warnPages?.[page] ? { card: issueSaid({ tone: 'warn', title: carrier.warnPages[page], text: agentPage }) }
+      : { line: 'agent-page', text: agentPage }) : null,
     // An answer picked in place of one the page doesn't offer (pagekit `orMost`: GEICO's pay plan
     // with no 11 Payments, W43-32): named here; nothing is left for the agent by it.
-    ...filled.filter((x) => x.said).map((x) => h('p', { class: 'note-line said' }, x.said)),
+    ...filled.filter((x) => x.said).map((x) => ({ line: 'said', text: x.said })),
     // Not clicked through what is open over them (Continue, a helper), which the agent closes.
     !advanced && covered.length
-      ? issueCard({ tone: 'warn', title: `${covered.length > 1 ? `${covered.slice(0, -1).join(', ')} and ${covered.at(-1)} weren’t` : `${covered[0]} wasn’t`} clicked`,
-        text: `Close what is open over ${covered.length > 1 ? 'them' : 'it'}, then fill again.` }) : null,
-    halted ? (stopped
-      ? issueCard({ tone: 'quiet', title: 'You stopped the fill', text: 'Nothing more was filled or clicked. What went in stays.' })
-      : issueCard({ title: 'Filling stopped', text: `${halted.reason ?? ''} Check the page, then fill again.`.trim(), role: 'alert' })) : null,
-    pageChanged ? issueCard({ title: 'This page seems to have changed', text: pageChanged, role: 'alert' }) : null,
-    advanced ? h('div', { class: 'done-card' }, h('span', { class: 'tick', 'aria-hidden': 'true' }, '✓'), h('b', {}, 'This page is done'),
-      h('span', {}, `${count} answer${count === 1 ? '' : 's'} in. Clicked “${advanced}” for you.`)) : null,
-    // The AI's messages, and what it suggests without a row, go here, above the list (runAssist).
-    h('div', { class: 'needs-head', hidden: true }),
+      ? { card: issueSaid({ tone: 'warn', title: `${covered.length > 1 ? `${covered.slice(0, -1).join(', ')} and ${covered.at(-1)} weren’t` : `${covered[0]} wasn’t`} clicked`,
+        text: `Close what is open over ${covered.length > 1 ? 'them' : 'it'}, then fill again.` }) } : null,
+    halted ? { card: stopped
+      ? issueSaid({ tone: 'quiet', title: 'You stopped the fill', text: 'Nothing more was filled or clicked. What went in stays.' })
+      : issueSaid({ title: 'Filling stopped', text: `${halted.reason ?? ''} Check the page, then fill again.`.trim(), role: 'alert' }) } : null,
+    pageChanged ? { card: issueSaid({ title: 'This page seems to have changed', text: pageChanged, role: 'alert' }) } : null,
+    advanced ? { done: `${count} answer${count === 1 ? '' : 's'} in. Clicked “${advanced}” for you.` } : null,
+  ].filter(Boolean);
+  const nodes = [
+    head.length ? headHost(entry, head) : null,
+    // The AI's messages, and what it suggests without a row, go here, above the list (runAssist):
+    // the AI's own place, which no React view draws.
+    reportNode('needs-head', true),
     // Buttons waiting on others (Progressive's bill plan before Recalculate) aren't listed: the fill
     // clicks them in turn, and a question one waits on is a row. The fill log keeps them (blockerList).
     entry.list.length ? rowsHost(entry, rctx) : null,
@@ -992,9 +997,23 @@ function answerSource(rec) {
 // The report's list of answers and items (renderReport), drawn by React from the report's records
 // (report-view.jsx), its buttons doing what rowActs says, on the report's own tab and page (`ctx`).
 function rowsHost(entry, ctx) {
-  const host = h('div', { class: 'rows' });
+  const host = reportNode('rows');
   entry.unmountRows = mountRows(host, entry, ctx, rowActs);
   return host;
+}
+
+// What the report says above its list (renderReport's `head`), drawn by React (notes-view.jsx) into
+// a node of its own, which the panel keeps and moves with the report's others (showReport): drawn
+// once, as a report is made, and shown again as it was.
+function headHost(entry, items) {
+  const host = reportNode('report-head');
+  entry.unmountHead = mountReportHead(host, items);
+  return host;
+}
+
+// One of a report's nodes, empty: for React to draw into, or the AI's place (`needs-head`).
+function reportNode(className, hidden = false) {
+  return Object.assign(document.createElement('div'), { className, hidden });
 }
 
 // Follow-up answers on the report shown (autoFill), at the end of its list, marked new: a list
@@ -1318,7 +1337,7 @@ async function capturePage() {
       scenario, quote, n, note, page: top?.page ?? page, step: (carrier.layoutSteps && top?.step) || null, view: view ?? null, context, frames };
     const slug = (s, max) => String(s ?? '').replace(/^https?:\/\/[^/]+/, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, max) || 'page';
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    h('a', { href: url, download: `capture-${carrier.id}-${slug(scenario, 30)}${quote ? `-${quote.slice(0, 4)}` : ''}-${String(n).padStart(3, '0')}-${slug(data.page, 30)}.json` }).click();
+    Object.assign(document.createElement('a'), { href: url, download: `capture-${carrier.id}-${slug(scenario, 30)}${quote ? `-${quote.slice(0, 4)}` : ''}-${String(n).padStart(3, '0')}-${slug(data.page, 30)}.json` }).click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
     // Only the note this capture took: one being typed for the next step stays.
     if ($('capture-note').value === typedNote) $('capture-note').value = '';

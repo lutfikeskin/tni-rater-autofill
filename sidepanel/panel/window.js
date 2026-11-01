@@ -3,7 +3,7 @@
 import * as usage from '../usage-log.js';
 import { inExtension, panelCopy, popped } from './env.js';
 import { $, state } from './core.js';
-import { issueCard, renderSite, stopFill } from './coordinator.js';
+import { issueSaid, renderSite, stopFill } from './coordinator.js';
 import { stopRecording } from './dev-recording.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -47,7 +47,7 @@ function dock() {
 // A Pop out or Dock that didn't work, said at the top of the panel (and to screen readers); the
 // next try clears it.
 function windowProblem(text) {
-  $('window-note').replaceChildren(...(text ? [issueCard({ tone: 'warn', role: 'alert', title: text })] : []));
+  state.notes = { ...state.notes, window: text ? issueSaid({ tone: 'warn', role: 'alert', title: text }) : null };
   $('window-note').hidden = !text;
 }
 
