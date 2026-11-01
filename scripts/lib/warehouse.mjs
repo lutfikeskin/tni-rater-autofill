@@ -53,6 +53,8 @@ const PROFILE_COLUMNS = [
   ['reefer_breakdown', 'coverage', 'reeferBreakdown', 'BOOLEAN', null],
   ['ntl', 'coverage', 'ntl', 'BOOLEAN', 'Non-trucking liability'],
 ];
+// The profile's match codes (server/index.mjs matchCodes) as quote columns: [column, kind].
+const MATCH_COLUMNS = [['match_email', 'email'], ['match_phone', 'phone']];
 const UNIT_COLUMNS = [['type', 'VARCHAR'], ['year', 'INTEGER'], ['make', 'VARCHAR'], ['model', 'VARCHAR'], ['value', 'INTEGER', 'Dollars']];
 
 // Every table: its comment, columns ([name, type, comment]) and primary key. A yes/no column is
@@ -83,7 +85,8 @@ export const TABLES = {
       ['vehicle_types', 'VARCHAR[]', 'Distinct vehicle types: the profile, else the summary logged on load'],
       ['drivers', 'INTEGER'], ['vehicles', 'INTEGER'], ['trailers', 'INTEGER'],
       ['requested', 'VARCHAR[]', 'Coverages the intake answers Yes, as logged on load (intake_loaded.coverages)'],
-      ['profile', 'JSON', 'The whole profile as logged'],
+      ['profile', 'JSON', 'The whole profile as logged, without its match codes'],
+      ...MATCH_COLUMNS.map(([c, kind]) => [c, 'VARCHAR', `Keyed code (HMAC-SHA256 with MATCH_KEY) of the intake's ${kind} as normalizeContact in server/index.mjs reads it, for joining to the CRM; null: none usable on the intake, or the server had no key`]),
     ],
     key: ['session'],
   },
@@ -247,6 +250,7 @@ export function warehouseRows(events, { testIntakes = [] } = {}) {
       requested: strs(l.coverages),
       has_claims: p ? bool(p.hasClaims) : null,
       profile: p ? Object.fromEntries(PROFILE_GROUPS.filter((g) => Object.hasOwn(p, g)).map((g) => [g, p[g]])) : null,
+      ...Object.fromEntries(MATCH_COLUMNS.map(([c, kind]) => [c, str(group(p?.match)?.[kind])])),
     });
     for (const kind of ['vehicle', 'trailer']) {
       list(p?.[`${kind}s`]).forEach((u, i) => rows.quote_vehicles.push({ session, kind, n: i + 1, type: str(u.type), year: int(u.year), make: str(u.make), model: str(u.model), value: int(u.value) }));

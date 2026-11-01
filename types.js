@@ -682,7 +682,7 @@
  */
 
 /**
- * @typedef {object} IntakeProfileEvent  intakeProfile: the business without names or numbers
+ * @typedef {object} IntakeProfileEvent  intakeProfile: the business without names or numbers, and the contact the server turns into match codes
  * @property {'intake_profile'} type
  * @property {object} business
  * @property {object} operations
@@ -693,6 +693,7 @@
  * @property {object} coverage
  * @property {object[]} priorInsurance
  * @property {boolean | null} hasClaims
+ * @property {{ email: string | null, phone: string | null }} contact  as written on the intake; the usage server turns it into match codes (server/index.mjs matchCodes) and stores only those
  */
 
 /**

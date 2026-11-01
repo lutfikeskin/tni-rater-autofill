@@ -34,6 +34,9 @@ function profile(over = {}) {
 const INTAKE = { client: 'c1'.repeat(32), marked: 'a2'.repeat(32), listed: 'b3'.repeat(32), pdfonly: 'd4'.repeat(32), testpage: 'e5'.repeat(32) };
 const LISTED = 'b3b3b3b3';
 
+// Match codes as the usage server stores them (server/index.mjs matchCodes): no phone on the intake.
+const MATCH = { email: 'a'.repeat(64), phone: null };
+
 function history() {
   const events = [];
   let t = Date.parse('2026-11-02T14:00:00Z');
@@ -47,7 +50,7 @@ function history() {
   e('client', { type: 'field_change', carrier: 'progressive', page: 'BusinessOwnerInfo', q: '1A', key: 'ref:Policy.PriorCarrier', label: 'Prior carrier?', kind: 'select', by: 'agent', autofilled: true, vsAutofill: 'different', from: 'No', to: 'Yes' });
   e('client', { type: 'fill_run', carrier: 'progressive', page: 'BusinessOwnerInfo', blockers: 0, blockerList: [] });
   // The agent fixed the USDOT number in the panel: the last profile is the quote's.
-  e('client', { type: 'intake_profile', ...profile({ business: { ...profile().business, dot: 'given', dotWithin60Days: false }, coverage: undefined, dropped: ['coverage'] }) });
+  e('client', { type: 'intake_profile', ...profile({ business: { ...profile().business, dot: 'given', dotWithin60Days: false }, coverage: undefined, dropped: ['coverage'] }), match: MATCH });
   e('client', { type: 'page_view', carrier: 'progressive', page: 'Quote', from: 'BusinessOwnerInfo' });
   e('client', { type: 'fill_run', carrier: 'progressive', page: 'Quote', blockers: 0, blockerList: [] });
   // Rated, then rated again after a coverage change: the last is the quote's.
@@ -95,7 +98,8 @@ test('warehouseRows counts quotes as the reviews do, with the last profile and t
   assert.deepEqual(c.vehicle_types, ['Semi Truck', 'Pickup Truck']);
   assert.deepEqual([c.drivers, c.vehicles, c.trailers], [1, 2, 1]);
   assert.equal(c.has_claims, false);
-  assert.ok(!('dropped' in c.profile) && !('id' in c.profile), 'the profile column holds the profile only');
+  assert.ok(!('dropped' in c.profile) && !('id' in c.profile) && !('match' in c.profile), 'the profile column holds the profile only');
+  assert.deepEqual([c.match_email, c.match_phone], [MATCH.email, null], 'the codes for joining to the CRM');
 
   // A quote without a profile keeps the summary logged on load, and nulls for the rest.
   const m = quotes.marked;
@@ -103,6 +107,7 @@ test('warehouseRows counts quotes as the reviews do, with the last profile and t
   assert.equal(m.state, 'FL');
   assert.equal(m.business_class, 'Towing');
   assert.equal(m.dot, null);
+  assert.equal(m.match_email, null);
   assert.equal(m.hazmat, null);
   assert.deepEqual(m.vehicle_types, ['Tow Truck']);
   assert.deepEqual([m.drivers, m.vehicles, m.trailers], [2, 1, 0]);
