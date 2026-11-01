@@ -189,37 +189,9 @@
     </section>
   </main>
 
-  <!-- The intake PDF in a sheet over the panel, with what a check item or an answer refers to marked -->
-  <div id="pdf-view" class="sheet" hidden>
-    <div id="pdf-scrim" class="sheet-scrim"></div>
-    <section class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="pdf-title" aria-describedby="pdf-name">
-      <div class="sheet-head">
-        <div class="grow"><h2 id="pdf-title">Intake PDF</h2><p id="pdf-name" class="sheet-sub"></p></div>
-        <button type="button" id="pdf-close" class="icon-btn" aria-label="Close"><svg aria-hidden="true"><use href="#close"/></svg></button>
-      </div>
-      <div id="pdf-hint" class="pdf-hint" hidden><span id="pdf-hint-text" class="grow"></span><button type="button" id="pdf-focus" class="link small">Zoom to it</button></div>
-      <div id="pdf-scroll" class="pdf-scroll">
-        <p id="pdf-loading" class="small muted center">Opening the PDF…</p>
-        <div id="pdf-sheet" class="pdf-sheet" hidden><canvas id="pdf-canvas"></canvas><div id="pdf-marks"></div></div>
-        <p id="pdf-error" class="issue bad" hidden></p>
-      </div>
-      <div class="pdf-controls">
-        <button type="button" id="pdf-prev" class="ghost pdf-nav" aria-label="Previous page">‹</button>
-        <span id="pdf-pages" class="small muted"></span>
-        <button type="button" id="pdf-next" class="ghost pdf-nav" aria-label="Next page">›</button>
-        <span class="grow"></span>
-        <div class="zoom">
-          <button type="button" id="pdf-zoom-out" aria-label="Zoom out">−</button>
-          <button type="button" id="pdf-zoom-fit" title="Fit page"></button>
-          <button type="button" id="pdf-zoom-in" aria-label="Zoom in">+</button>
-        </div>
-      </div>
-      <div class="sheet-foot">
-        <button type="button" id="pdf-tab" class="ghost small-btn">Open full PDF</button>
-        <button type="button" id="pdf-back" class="primary small-btn">Back</button>
-      </div>
-    </section>
-  </div>
+  <!-- The intake PDF in a sheet over the panel, with what a check item or an answer refers to marked.
+       Drawn by pdf-sheet-view.jsx (mountPdf). -->
+  <div id="pdf-view" class="sheet" hidden></div>
 
   <!-- Every answer on the intake, to read or correct, in a drawer from the right over the panel.
        Drawn by details-view.jsx (mountDetails). -->

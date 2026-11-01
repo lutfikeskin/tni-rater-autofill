@@ -395,6 +395,10 @@ const state = storeState({
   pdfDraw: 0,
   pdfTask: null,
   pdf: null,
+  // What the PDF sheet says, as pdf-sheet-view.jsx draws it (openPdf, drawPdf): its title and
+  // name, what shows ('loading' | 'page' | 'error') and the error, the hint for a marked item, the
+  // marks on the page and the controls (pdfControls); null until the PDF first opens.
+  pdfSheet: null,
   // Each fill's report (steps 2 and 3) per tab, page and step (reportKey): { key, tabId, page,
   // fields, filled, left, waiting, advanced, error, at, … }. One kept while another tab or step is
   // in front holds its nodes, and is shown again when that page is back (showReport); `reportFor`

@@ -948,10 +948,8 @@ function renderReport(frames, ctx = {}) {
 }
 
 // The node React drew for each row (report-view.jsx), for the focus and scrolling that follow a
-// change, and the slot on an item's row where the AI's card goes: drawn by the AI (renderAi), not
-// by React.
+// change. The AI's card on an item's row is on its record (`aiCard`, renderAi), drawn with the row.
 const rowNodes = new WeakMap();
-const aiSlots = new WeakMap();
 
 // An answer's row (answerRecord) with where it came from, as the row says it (answerSource).
 function answerOf(row) {
@@ -1037,9 +1035,6 @@ function drawRow(rec) {
 // drawRow, drawn before it returns: for the focus or scrolling that follows.
 function drawRowNow(rec) { flushSync(() => drawRow(rec)); }
 
-// The slot on an item's row where the AI's suggestion goes (renderAi), while the row is drawn.
-function aiSlotOf(rec) { return aiSlots.get(rec) ?? null; }
-
 // What a row's buttons do (report-view.jsx). Mark done: an item's field, or a helper's reminder by
 // its helper's id (`action`: one the carrier marks markable, Progressive's Rates on an NTL quote with
 // cargo); an item with neither has no Mark done. A pick on the AI's own choice accepts its
@@ -1058,7 +1053,6 @@ function seeRow(rec) { return openPdf({ path: rec.path, from: rec.from, label: r
 const rowActs = {
   toggleRow: (rec) => toggleRow(rec), markRow, showRow, pickRow, changeRow: (rec, ctx) => changeAnswer(rec, ctx), seeRow,
   node: (rec, el) => { if (el) rowNodes.set(rec, el); else rowNodes.delete(rec); },
-  slot: (rec, el) => { if (el) aiSlots.set(rec, el); else aiSlots.delete(rec); },
 };
 
 // Opens a row of the page's list in place (closing the one open before), or closes it.
@@ -1226,7 +1220,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
   // Its rows say the agent's answer only: the AI's card goes, and its pick is no longer marked
   // among the choices or taken as accepting it (review of #245).
   for (const row of rows) {
-    aiSlotOf(row)?.replaceChildren();
+    row.aiCard = null;
     row.aiPick = null;
     row.aiAccept = null;
   }
@@ -1353,4 +1347,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, aiSlotOf, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };
+export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };
