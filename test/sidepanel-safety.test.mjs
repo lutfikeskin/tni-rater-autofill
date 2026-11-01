@@ -2472,6 +2472,16 @@ test('Luna without a key says so above the list, and a failed review says it fai
   none.context.collectItems = () => ({ items: [], blocked: [] });
   await none.context.runAssist([{}], none.ctx);
   assert.deepEqual([none.report.children, none.rendered.length], [undefined, 0], 'no holder placed');
+  // Nothing to ask, but a pick waiting for approval: its card is drawn from that pick, so once it
+  // is approved the card drawn again says it went in (CodeRabbit on #253: with an empty list the
+  // approved row kept its Approve card until the next fill).
+  const waiting = assistHarness({ suggest: async () => { throw new Error('never asked'); } });
+  const pick = { key: 'k1', label: 'Q1', done: 'auto' };
+  waiting.context.collectItems = () => ({ items: [], blocked: [] });
+  waiting.context.pendingAi = () => [pick];
+  await waiting.context.runAssist([{}], waiting.ctx);
+  assert.equal(waiting.rendered.length, 1);
+  assert.deepEqual([...waiting.rendered[0][1]], [pick], 'the waiting pick is what renderAi draws again');
 });
 
 // 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions

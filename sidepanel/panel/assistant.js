@@ -313,7 +313,9 @@ async function runAssist(frames, ctx) {
   };
   if (!items.length) {
     // Nothing new to ask, but AI picks still waiting for approval keep their card.
-    if (pendingAi(ctx.tabId, ctx.page).length) renderAi(placed(), [], ctx);
+    // They are what it draws (and draws again once decided), so an approved one says it went in.
+    const pending = pendingAi(ctx.tabId, ctx.page);
+    if (pending.length) renderAi(placed(), pending, ctx);
     return;
   }
   const holder = placed();
