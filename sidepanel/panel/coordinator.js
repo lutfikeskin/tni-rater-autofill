@@ -1027,7 +1027,8 @@ function renderSteps() {
   $('pop-out').disabled = $('dock-back').disabled = !!state.filling;
   if (!state.intake) { renderDock(); return; }
   // New quote with this intake: not while answers go in (the fill's report would be dropped under it).
-  $('new-quote').disabled = !!state.filling;
+  // (client-view.jsx: `state.filling` itself is no store value a view can subscribe to.)
+  state.newQuoteOff = !!state.filling;
   // The unit pickers follow the page or step in front (unitListsHere).
   renderPickers();
   const { warnings, done } = state.intake;

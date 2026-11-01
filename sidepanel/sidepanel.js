@@ -22,6 +22,8 @@ import { mountDock, mountSteps } from './panel/steps-view.jsx';
 import { mountFeed } from './panel/feed-view.jsx';
 import { mountCards } from './panel/cards-view.jsx';
 import { mountChecks, mountPickers } from './panel/checks-view.jsx';
+import { mountClient } from './panel/client-view.jsx';
+import { mountDetails } from './panel/details-view.jsx';
 
 // ---------------------------------------------------------------------------------------------
 // Wiring
@@ -39,13 +41,39 @@ function wire() {
     fill: () => setView('page'),
     confirm: () => { setView('page'); refreshAnswers(); checkItems(); },
   });
-  $('open-pdf').addEventListener('click', () => openPdf());
-  $('client-card').addEventListener('click', () => (state.detailsOpen ? closeDetails() : openDetails()));
+  // The client's name opens or closes client details; the intake PDF; the file tools. Change file:
+  // straight to the file picker, unless the agent has corrected or checked this intake (a different
+  // file starts over). Clear, and New quote: always asked first.
+  mountClient($('client-root'), {
+    details: () => (state.detailsOpen ? closeDetails() : openDetails()),
+    pdf: () => openPdf(),
+    replace: () => {
+      const work = workSaid(state.intake?.agentEdited?.length ?? 0, state.intake?.done?.length ?? 0);
+      if (!work) { $('file').click(); return; }
+      askFile('replace', `You ${work}. A different file starts over; the same file keeps it.`, 'Choose a file');
+    },
+    newQuote: () => {
+      if (state.filling) return;
+      askFile('new-quote', 'Start another quote with this intake? This quote’s fills, marks and clicks are forgotten; the intake, your corrections and checks stay. The carrier’s site isn’t changed.', 'New quote');
+    },
+    clear: () => {
+      const name = state.intake?.record.applicant.name || state.intake?.record.applicant.owner1 || 'this client';
+      askFile('clear', `Clear ${name}? Your corrections, checks and reports go. The carrier's site isn't changed.`, 'Clear this client');
+    },
+    cancel: () => { state.fileConfirm = null; render(); $(state.fileConfirmFrom ?? 'replace')?.focus(); },
+    yes: () => {
+      const what = state.fileConfirm;
+      state.fileConfirm = null;
+      render();
+      if (what === 'replace') $('file').click();
+      if (what === 'clear') clearClient();
+      if (what === 'new-quote') newQuote();
+    },
+  });
   // Step 1's checks and their All client details row.
   mountChecks($('check-view'), { openDetails: () => openDetails() });
-  $('details-close').addEventListener('click', closeDetails);
-  $('details-empty').addEventListener('click', () => showEmpty());
-  $('details-scrim').addEventListener('click', closeDetails);
+  // Client details: Close, the scrim, and the empty fields shown or hidden.
+  mountDetails($('details-view'), { close: () => closeDetails(), showEmpty: () => showEmpty() });
   // The page's answers: their filters, an earlier page's answers on this tab (read-only) and back to
   // this page's, what the tags mean, and Clear the marks.
   mountCards($('cards-root'));
@@ -98,30 +126,6 @@ function wire() {
     t.addEventListener('dragover', () => { if (!state.intake) $('load-error').hidden = true; });
   }
   $('test-run').addEventListener('change', () => markTestRun($('test-run').checked));
-  // Change file: straight to the file picker, unless the agent has corrected or checked this
-  // intake (a different file starts over). Clear, and New quote: always asked first.
-  $('replace').addEventListener('click', () => {
-    const work = workSaid(state.intake?.agentEdited?.length ?? 0, state.intake?.done?.length ?? 0);
-    if (!work) { $('file').click(); return; }
-    askFile('replace', `You ${work}. A different file starts over; the same file keeps it.`, 'Choose a file');
-  });
-  $('clear-client').addEventListener('click', () => {
-    const name = state.intake?.record.applicant.name || state.intake?.record.applicant.owner1 || 'this client';
-    askFile('clear', `Clear ${name}? Your corrections, checks and reports go. The carrier's site isn't changed.`, 'Clear this client');
-  });
-  $('new-quote').addEventListener('click', () => {
-    if (state.filling) return;
-    askFile('new-quote', 'Start another quote with this intake? This quote’s fills, marks and clicks are forgotten; the intake, your corrections and checks stay. The carrier’s site isn’t changed.', 'New quote');
-  });
-  $('file-confirm-no').addEventListener('click', () => { state.fileConfirm = null; render(); $(state.fileConfirmFrom ?? 'replace')?.focus(); });
-  $('file-confirm-yes').addEventListener('click', () => {
-    const what = state.fileConfirm;
-    state.fileConfirm = null;
-    render();
-    if (what === 'replace') $('file').click();
-    if (what === 'clear') clearClient();
-    if (what === 'new-quote') newQuote();
-  });
   // The dock: its one button and its alternative.
   mountDock($('dock-root'), {
     fill: (go) => fillPage({ continuing: go === 'continue' }),

@@ -55,27 +55,9 @@
   <!-- The client: their name (a button to every answer on the intake), the intake PDF, the file tools
        always in view (no menu to open first), and the three steps as a strip -->
   <section id="quote" class="client" hidden>
-    <div class="client-head">
-      <button type="button" id="client-card" class="client-title" aria-controls="details-view" aria-expanded="false" title="Client details: every answer on the intake, to read or correct">
-        <span id="client-name" class="client-name"></span>
-        <span id="client-meta" class="client-meta"></span>
-      </button>
-      <div class="client-tools">
-        <button type="button" id="open-pdf" class="ghost intake-btn" title="Show the intake PDF"><span class="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
-        <button type="button" id="replace" class="ghost tool-btn" aria-label="Change file" title="Change file: load another intake PDF"><svg aria-hidden="true"><use href="#file-in"/></svg></button>
-        <button type="button" id="new-quote" class="ghost tool-btn" aria-label="New quote with this intake" title="New quote with this intake: forgets this quote’s fills, marks and clicks; keeps the intake, your corrections and checks"><svg aria-hidden="true"><use href="#restart"/></svg></button>
-        <button type="button" id="clear-client" class="ghost tool-btn danger" aria-label="Clear this client" title="Clear this client"><svg aria-hidden="true"><use href="#trash"/></svg></button>
-      </div>
-    </div>
-    <!-- Asked before work the agent did on this intake would go (askFile). -->
-    <div id="file-confirm" class="file-confirm" role="group" aria-labelledby="file-confirm-text" hidden>
-      <p id="file-confirm-text" class="small"></p>
-      <div class="actions">
-        <button type="button" id="file-confirm-yes" class="ghost danger"></button>
-        <button type="button" id="file-confirm-no" class="ghost">Cancel</button>
-      </div>
-    </div>
-    <p id="client-note" class="client-note small" role="status" hidden></p>
+    <!-- The name, the tools, the file tools' question and the note on the file just loaded: drawn by
+         client-view.jsx (mountClient). -->
+    <div id="client-root"></div>
     <!-- The intake, then the page in front: filled, then reviewed. Each page has its own 2 and 3;
          the header's "Step n of m" is the quote's place. Drawn by steps-view.jsx (mountSteps). -->
     <nav id="steps" class="steps" aria-label="Steps"></nav>
@@ -239,19 +221,9 @@
     </section>
   </div>
 
-  <!-- Every answer on the intake, to read or correct, in a drawer from the right over the panel -->
-  <div id="details-view" class="drawer" hidden>
-    <div id="details-scrim" class="drawer-scrim"></div>
-    <section class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="details-title" aria-describedby="details-sub">
-      <div class="sheet-head">
-        <div class="grow"><h2 id="details-title">Client details</h2><p id="details-sub" class="sheet-sub">Your edits are what gets filled.</p></div>
-        <!-- Fields the intake leaves blank are hidden unless flagged, to keep the list short (showEmpty). -->
-        <button type="button" id="details-empty" class="link small subtle" aria-pressed="false"></button>
-        <button type="button" id="details-close" class="icon-btn" aria-label="Close client details"><svg aria-hidden="true"><use href="#close"/></svg></button>
-      </div>
-      <div id="sections" class="drawer-body"></div>
-    </section>
-  </div>
+  <!-- Every answer on the intake, to read or correct, in a drawer from the right over the panel.
+       Drawn by details-view.jsx (mountDetails). -->
+  <div id="details-view" class="drawer" hidden></div>
 
   <!-- What to do next, always in the same place, and the panel's own links -->
   <footer class="foot">
