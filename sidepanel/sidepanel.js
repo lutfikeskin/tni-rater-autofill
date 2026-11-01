@@ -24,6 +24,7 @@ import { mountCards } from './panel/cards-view.jsx';
 import { mountChecks, mountPickers } from './panel/checks-view.jsx';
 import { mountClient } from './panel/client-view.jsx';
 import { mountDetails } from './panel/details-view.jsx';
+import { mountPdf } from './panel/pdf-sheet-view.jsx';
 
 // ---------------------------------------------------------------------------------------------
 // Wiring
@@ -84,16 +85,17 @@ function wire() {
     toggleKey: () => { state.keyOpen = !state.keyOpen; renderSteps(); },
     clearMarks: () => clearMarks(),
   });
-  $('pdf-back').addEventListener('click', closePdf);
-  $('pdf-close').addEventListener('click', closePdf);
-  $('pdf-scrim').addEventListener('click', closePdf);
-  $('pdf-tab').addEventListener('click', openPdfInTab);
-  $('pdf-focus').addEventListener('click', () => pdfZoom(Math.max(state.pdf?.zoom ?? 1, PDF_FOCUS_ZOOM), { focus: true }));
-  $('pdf-prev').addEventListener('click', () => pdfPage(-1));
-  $('pdf-next').addEventListener('click', () => pdfPage(1));
-  $('pdf-zoom-in').addEventListener('click', () => pdfZoom(PDF_ZOOMS.find((z) => z > state.pdf?.zoom)));
-  $('pdf-zoom-out').addEventListener('click', () => pdfZoom(PDF_ZOOMS.findLast((z) => z < state.pdf?.zoom)));
-  $('pdf-zoom-fit').addEventListener('click', () => pdfZoom(1));
+  // The intake PDF's sheet: Back, Close and the scrim; the full PDF in a tab; Zoom to it; the pages
+  // and the zoom. Its page area (drawn by now) drags and zooms with Ctrl + wheel.
+  mountPdf($('pdf-view'), {
+    close: () => closePdf(),
+    tab: () => openPdfInTab(),
+    focus: () => pdfZoom(Math.max(state.pdf?.zoom ?? 1, PDF_FOCUS_ZOOM), { focus: true }),
+    page: (step) => pdfPage(step),
+    zoomIn: () => pdfZoom(PDF_ZOOMS.find((z) => z > state.pdf?.zoom)),
+    zoomOut: () => pdfZoom(PDF_ZOOMS.findLast((z) => z < state.pdf?.zoom)),
+    fit: () => pdfZoom(1),
+  });
   pdfPan($('pdf-scroll'));
   // The page is drawn for the panel's width: again when it changes (the panel resized).
   let width = 0;
