@@ -8,12 +8,13 @@ import * as usage from '../usage-log.js';
 import { collectItems, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
 import { claimsTruncated, firstNameOf } from '../../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../../src/ai/providers.js';
-import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, h, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state } from './core.js';
+import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state } from './core.js';
 import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
 import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout } from './coordinator.js';
-import { aiSlotOf, drawRow, fillPage, runKit } from './fill.js';
+import { drawRow, fillPage, runKit } from './fill.js';
+import { aiHolder } from './ai-view.jsx';
 import { needId, setHead } from './report-rows.js';
 import { renderUsage } from './usage-panel.js';
 import { agentEdited, editScope, tabStep } from './scope.js';
@@ -302,21 +303,22 @@ async function runAssist(frames, ctx) {
   const collected = collectItems(frames);
   const items = collected.items.filter(x => !agentEdited(ctx.page, x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
   const blocked = collected.blocked;
-  // Messages, the approval card and suggestions without a list item go above "Needs you".
-  const holder = h('div', { class: 'ai-holder' });
+  // Messages, the approval card and suggestions without a list item go above "Needs you", in the
+  // report's holder (aiHolder in ai-view.jsx), which draws what it is told (`say`).
   const head = $('report').querySelector('.needs-head');
+  const placed = () => {
+    const made = aiHolder();
+    if (head) head.before(made.node); else $('report').append(made.node);
+    return made;
+  };
   if (!items.length) {
     // Nothing new to ask, but AI picks still waiting for approval keep their card.
-    if (pendingAi(ctx.tabId, ctx.page).length) {
-      if (head) head.before(holder); else $('report').append(holder);
-      renderAi(holder, [], ctx);
-    }
+    if (pendingAi(ctx.tabId, ctx.page).length) renderAi(placed(), [], ctx);
     return;
   }
-  if (head) head.before(holder); else $('report').append(holder);
+  const holder = placed();
   if (!cfg.ready) {
-    holder.append(h('p', { class: 'note-line' }, `${provider.name} needs an ${provider.keyLabel}. `,
-      h('button', { type: 'button', class: 'link small', onclick: () => openSettings('ai-openai-key') }, 'Add the key')));
+    holder.say({ needsKey: { text: `${provider.name} needs an ${provider.keyLabel}. `, add: () => openSettings('ai-openai-key') } });
     return;
   }
   const run = ++state.aiRun;
@@ -341,7 +343,7 @@ async function runAssist(frames, ctx) {
   // Also in a report kept while another tab or step is in front: it says so when that one is back.
   const dropped = (what, next = 'Click Fill this page to ask again.') => {
     if (run !== state.aiRun) { holder.remove(); return; }
-    holder.replaceChildren(h('p', { class: 'card bad small' }, `${provider.name}: ${what}. ${next}`));
+    holder.say({ bad: `${provider.name}: ${what}. ${next}` });
   };
   // Reuse an answer for the same question (as the page shows it now) in the same intake and
   // driver/vehicle, model and policy. Not keyed on the rest of the page: every automatic
@@ -349,7 +351,7 @@ async function runAssist(frames, ctx) {
   // checks the page snapshot (applyAi), and approving checks it again.
   const contextHash = aiFingerprint(ctx.contextKey);
   const sigOf = x => aiCacheSignature({ tabId: ctx.tabId, page: ctx.page, model: cfg.model, policy: provider.policy, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl) });
-  const asking = (n) => holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking ${provider.name} about ${n} question${n === 1 ? '' : 's'} left for you…`));
+  const asking = (n) => holder.say({ wait: `Asking ${provider.name} about ${n} question${n === 1 ? '' : 's'} left for you…` });
   // Questions an earlier request is still asking (same signature: this page as it shows them now)
   // are waited for, not asked again: its answer is cached when it comes.
   const earlier = [...new Set(items.map((x) => state.aiAsking.get(sigOf(x))).filter(Boolean))];
@@ -388,7 +390,7 @@ async function runAssist(frames, ctx) {
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : 'The assistant could not review this page. Nothing was applied.';
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: redactor(redactionTerms(record))(msg).slice(0, 200) });
-      if (!stale()) holder.replaceChildren(h('p', { class: 'card bad small' }, `AI assistant: ${msg}`));
+      if (!stale()) holder.say({ bad: `AI assistant: ${msg}` });
       else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;
     } finally {
@@ -648,14 +650,15 @@ function aiDecisionEvent(x, ctx, decision) {
 // Each suggestion goes on its question's row (AI suggests …, Use this answer / No thanks; its pick
 // marked among the row's own choices), and each pick the AI put in itself says so there, purple,
 // with Approve and Reject; the dock approves them all. Above the list: Use all, and any suggestion
-// whose question has no row.
+// whose question has no row. Said as data (ai-view.jsx draws it): a row's card on its record
+// (`aiCard`, drawn with the row), the rest to the report's holder (`holder.say`).
 function renderAi(holder, suggestions, ctx) {
   const rerender = () => { if (holder.isConnected) renderAi(holder, suggestions, ctx); };
-  const act = async (list, decision, button) => {
-    if (state.filling) { announce('Wait for the fill to finish, then try again.'); return; }
-    if (button) { button.disabled = true; button.textContent = 'Putting it in…'; }
-    await applyAi(list, ctx, decision);
-    rerender();
+  // Puts the AI's answers in; null when it can't start (a fill is running), else what it does, which
+  // the button that asked shows as going in until it ends (PutButton).
+  const act = (list, decision) => {
+    if (state.filling) { announce('Wait for the fill to finish, then try again.'); return null; }
+    return applyAi(list, ctx, decision).then(() => rerender());
   };
   const sure = suggestions.filter((x) => x.autoOk && !x.done && !x.dismissed);
   // Every pick on this page still waiting for approval, also from before an intake or
@@ -749,53 +752,42 @@ function renderAi(holder, suggestions, ctx) {
   // Said of a pick waiting for approval that came from before a change, or a retired assistant.
   const notes = (x) => [x.retired ? 'From a retired assistant: review the page answer.' : null,
     (x.contextKey ? x.contextKey !== current : x.contextHash !== currentHash) ? 'Picked before the intake or unit changed.' : null].filter(Boolean);
-  // What goes on a row: the suggestion and its buttons, or what happened to it.
+  // What goes on a row (its card, AiCard in ai-view.jsx): the suggestion and its buttons, or what
+  // happened to it; null for none.
   const box = (x) => {
     // The agent's own answer is protected: no fill or AI answer replaces it (agentKeys).
-    if (x.manual) return h('div', { class: 'ai-done mine' }, h('b', {}, '✓'), h('span', { class: 'grow' }, 'You changed this answer on the page.'), h('span', { class: 'note' }, 'Won’t be refilled'));
+    if (x.manual) return { kind: 'mine' };
     if (x.rejected) {
-      return h('div', { class: 'ai-done bad' }, h('span', { class: 'grow' }, x.confirmError ?? (x.retired ? 'From a retired assistant: review the page answer.' : 'AI answer rejected: answer it on the page.')),
-        rejectedPending.includes(x) ? h('button', { type: 'button', class: 'link small ai-reject', onclick: () => confirmRejected([x]) }, 'Confirm the current page answer') : null);
+      return { kind: 'rejected', text: x.confirmError ?? (x.retired ? 'From a retired assistant: review the page answer.' : 'AI answer rejected: answer it on the page.'),
+        confirm: rejectedPending.includes(x) ? () => confirmRejected([x]) : null };
     }
-    if (x.error) return h('div', { class: 'ai-done bad' }, `The page didn't take the AI answer (${x.error}). Answer it on the page.`);
+    if (x.error) return { kind: 'error', text: `The page didn't take the AI answer (${x.error}). Answer it on the page.` };
     if (x.done === 'auto' && !x.approved) {
-      return h('div', { class: 'ai-box' },
-        h('div', { class: 'ai-says' }, 'Picked by the AI: ', h('b', {}, x.choice)),
-        x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null,
-        ...notes(x).map((n) => h('div', { class: 'ai-tip' }, n)),
-        h('div', { class: 'ai-why' }, 'Continue waits for your answer.'),
-        h('div', { class: 'ai-actions' },
-          h('button', { type: 'button', class: 'primary accept', onclick: () => decide([x], 'approved') }, 'Approve'),
-          h('button', { type: 'button', class: 'ghost ai-reject', onclick: () => decide([x], 'rejected') }, 'Reject')));
+      return { kind: 'picked', choice: x.choice, tip: x.tip || null, notes: notes(x),
+        approve: () => decide([x], 'approved'), reject: () => decide([x], 'rejected') };
     }
-    if (x.done) return h('div', { class: 'ai-done' }, h('b', {}, '✓'), h('span', { class: 'grow' }, `Put in ${answer(x)} (purple on the page).`));
+    if (x.done) return { kind: 'done', text: `Put in ${answer(x)} (purple on the page).` };
     if (x.dismissed) return null;
     if (x.leave || !x.applyable) {
       // Its recommendation (luna.js nextStep): what to confirm or check, never an answer.
-      return h('div', { class: 'ai-box' }, h('div', { class: 'ai-says' }, x.leave ? 'AI: this one is yours to decide.' : 'AI tip'), x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null,
-        x.leave && x.nextStep ? h('div', { class: 'ai-tip ai-next' }, h('b', {}, 'Luna recommends: '), x.nextStep) : null);
+      return { kind: 'tip', says: x.leave ? 'AI: this one is yours to decide.' : 'AI tip', tip: x.tip || null, next: x.leave && x.nextStep ? x.nextStep : null };
     }
-    return h('div', { class: 'ai-box' },
-      h('div', { class: 'ai-says' }, 'AI suggests ', h('b', {}, x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice)),
-      x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null,
-      h('div', { class: 'ai-why' }, why(x)),
-      ...x.checks.map((c) => h('div', { class: 'ai-check' }, `Checked by the extension: ${c}`)),
-      h('div', { class: 'ai-actions' },
-        h('button', { type: 'button', class: 'primary accept', onclick: (e) => act([x], 'accepted', e.target) }, 'Use this answer'),
-        h('button', { type: 'button', class: 'ghost', onclick: () => { x.dismissed = true; if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } }, 'No thanks')));
+    return { kind: 'suggest', choice: x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice, tip: x.tip || null, why: why(x), checks: [...x.checks],
+      use: () => act([x], 'accepted'),
+      noThanks: () => { x.dismissed = true; if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } };
   };
   // The rows of the report shown (report-rows.js): the AI's word goes on its question's.
   const rows = (state.reportFor?.list ?? []).filter((r) => r.type === 'need');
   const orphans = [];
   for (const x of new Set([...suggestions, ...pending])) {
     const item = rows.find((r) => needId(r) === `${x.key}|${x.label}`);
-    const content = box(x);
+    const card = box(x);
     if (!item) {
-      if (content) orphans.push(h('div', { class: 'ai-orphan' }, h('b', {}, x.label), content));
+      if (card) orphans.push({ id: orphans.length, label: x.label, card });
       continue;
     }
     item.ai = x;
-    aiSlotOf(item)?.replaceChildren(...(content ? [content] : []));
+    item.aiCard = card;
     // The AI's choice among the row's own (marked there): picking it there is accepting it (applyAi).
     const offered = !x.done && !x.dismissed && !x.leave && x.applyable && x.controlKind !== 'text' ? x.choice : null;
     item.aiAccept = offered ? () => act([x], 'accepted') : null;
@@ -817,10 +809,7 @@ function renderAi(holder, suggestions, ctx) {
     }
     drawRow(item);
   }
-  holder.replaceChildren(...[
-    sure.length > 1 ? h('div', { class: 'ai-actions' }, h('button', { type: 'button', class: 'ghost', onclick: (e) => act(sure, 'accepted', e.target) }, `Use all ${sure.length} AI answers`)) : null,
-    ...orphans,
-  ].filter(Boolean));
+  holder.say({ useAll: sure.length > 1 ? { label: `Use all ${sure.length} AI answers`, put: () => act(sure, 'accepted') } : null, orphans });
   // The dock's Approve (dockFor): every pick waiting on this page, or the rejected ones confirmed.
   if (pending.length) state.aiDocks.set(`${ctx.tabId}|${ctx.page}`, { canContinue, go: () => (awaiting.length ? decide(awaiting, 'approved') : confirmRejected(rejectedPending)) });
   else state.aiDocks.delete(`${ctx.tabId}|${ctx.page}`);
