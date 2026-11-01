@@ -1065,15 +1065,15 @@ function renderSteps() {
     current: state.view === 'page' && filled,
   });
   state.steps = steps;
-  // The page view: a rater to open, what's wrong about the last fill, the answers.
-  $('fill-waiting').hidden = onRater;
-  $('fill-waiting-text').textContent = !inExtension ? 'Filling works only in the Chrome extension.'
-    : state.tab && !state.tab.url ? 'The extension can’t read this page. Allow it on this site (toolbar icon or site access), then reload.'
-      : 'Open the client’s quote on one of these raters.';
-  const problem = $('fill-error');
-  problem.hidden = !error && !notice;
-  problem.replaceChildren(...(error ? [issueCard({ title: 'Filling didn’t finish', text: error, role: 'alert' })]
-    : notice ? [issueCard({ tone: 'quiet', title: notice })] : []));
+  // The page view: a rater to open, what's wrong about the last fill (state.cards, drawn by
+  // cards-view.jsx), the answers.
+  state.cards = {
+    ...state.cards,
+    waiting: onRater ? null : !inExtension ? 'Filling works only in the Chrome extension.'
+      : state.tab && !state.tab.url ? 'The extension can’t read this page. Allow it on this site (toolbar icon or site access), then reload.'
+        : 'Open the client’s quote on one of these raters.',
+    fill: error ? issueSaid({ title: 'Filling didn’t finish', text: error, role: 'alert' }) : notice ? issueSaid({ tone: 'quiet', title: notice }) : null,
+  };
   // Pages filled earlier on this tab (the page menu), and the one picked, shown read-only in place
   // of this page's: never while a fill runs on the tab.
   const earlier = onRater && !filling ? earlierReports() : [];
@@ -1326,43 +1326,45 @@ function renderDock() {
 // auto or GL-only policy). The intake check screen says it too, on this carrier's site only
 // (prior.carrier-is-quoted, checkShown).
 function showCarrierNote() {
-  const box = $('carrier-note');
   const carrier = state.tab?.carrier;
   const p = state.intake?.record?.priorInsurance?.[0];
   const on = !!carrier && quotedCarrierPolicy(p, carrier.id);
-  box.hidden = !on;
-  if (!on) { box.replaceChildren(); return; }
+  if (!on) { state.cards = { ...state.cards, carrier: null }; return; }
   const policy = [p.carrier, p.type, p.expiration ? `expires ${p.expiration}` : null].filter(Boolean).join(' · ');
-  box.replaceChildren(issueCard({ role: 'alert', title: `The client's current insurance is with ${carrier.name}`,
+  state.cards = { ...state.cards, carrier: issueSaid({ role: 'alert', title: `The client's current insurance is with ${carrier.name}`,
     text: `${carrier.name} may decline or route this quote. Check with the client before going on.`,
-    compare: [['Intake’s current insurance', policy]], notes: ['Filling goes on as usual.'] }));
+    compare: [['Intake’s current insurance', policy]], notes: ['Filling goes on as usual.'] }) };
 }
 
 // Review mode (plan.js supportedClass): the intake's business class isn't one this carrier's rules
 // were written for, so every standard answer is filled as a check item (Continue waits on every
 // page) and the agent is told why, above the page's answers.
 function showReviewMode() {
-  const box = $('review-note');
   const carrier = state.tab?.carrier;
   const record = state.intake?.record;
   const on = !!carrier && !!record && !supportedClass(record, carrier);
-  box.hidden = !on;
-  if (!on) { box.replaceChildren(); return; }
+  if (!on) { state.cards = { ...state.cards, review: null }; return; }
   const cls = String(record.operations?.businessClass ?? '').trim();
-  box.replaceChildren(issueCard({ tone: 'warn', title: `Review mode: ${cls ? `"${cls}"` : 'no business class'} on the intake`,
-    text: `${carrier.name}'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.` }));
+  state.cards = { ...state.cards, review: issueSaid({ tone: 'warn', title: `Review mode: ${cls ? `"${cls}"` : 'no business class'} on the intake`,
+    text: `${carrier.name}'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.` }) };
 }
 
 // A card above the page's answers (or in them): what's wrong or different, in the panel's own
 // words, never the page's. `tone`: '' (red: the carrier stopped the quote, a fill failed, the
-// quote's state differs), 'warn', 'info' or 'quiet' (a step that is the agent's).
-function issueCard({ tone = '', title, text = null, notes = [], compare = [], actions = [], role = 'status' }) {
+// quote's state differs), 'warn', 'info' or 'quiet' (a step that is the agent's). `actions`: its
+// buttons, { label, className, onClick } (issueCard's: elements). The cards above the answers are
+// drawn from it by cards-view.jsx; issueCard draws the others.
+function issueSaid({ tone = '', title, text = null, notes = [], compare = [], actions = [], role = 'status' }) {
+  return { tone, title, text, notes, compare, actions: actions.filter(Boolean), role };
+}
+function issueCard(card) {
+  const { tone, title, text, notes, compare, actions, role } = issueSaid(card);
   return h('div', { class: `issue${tone ? ` ${tone}` : ''}`, role },
     h('div', { class: 'issue-head' }, h('span', { class: 'bang', 'aria-hidden': 'true' }, tone === 'info' ? 'i' : '!'),
       h('div', { class: 'issue-text' }, h('span', { class: 'issue-title' }, title), text ? h('span', {}, text) : null,
         ...notes.map((note) => h('span', { class: 'small-note' }, note)))),
     compare.length ? h('div', { class: 'compare' }, compare.map(([k, v]) => h('span', {}, h('span', { class: 'k' }, `${k}:`), ` ${v}`))) : null,
-    actions.filter(Boolean).length ? h('div', { class: 'issue-actions' }, actions.filter(Boolean)) : null);
+    actions.length ? h('div', { class: 'issue-actions' }, actions) : null);
 }
 
 // Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client
@@ -1380,12 +1382,11 @@ function showStopPage() {
   const page = pageOf(state.tab?.url);
   const step = tabStep(carrier);
   const note = state.intake ? stopNoteFor(carrier, page, step) : null;
-  const box = $('stop-note');
+  const say = (card) => { state.cards = { ...state.cards, stop: card ? issueSaid(card) : null }; };
   // A step the fill still answers, with what the carrier says there (GEICO: stop at Quote & Coverages).
   const stepNote = !note && state.intake && step ? carrier?.stepNotes?.[step] ?? null : null;
-  box.hidden = !note && !stepNote;
-  if (stepNote) { box.replaceChildren(issueCard({ tone: 'info', title: step, text: stepNote })); return; }
-  if (!note) { box.replaceChildren(); return; }
+  if (stepNote) { say({ tone: 'info', title: step, text: stepNote }); return; }
+  if (!note) { say(null); return; }
   clearTimeout(state.autoTimer);
   state.autoDrawn = null;
   state.autoPending = false;
@@ -1396,17 +1397,16 @@ function showStopPage() {
     // The carrier's own stop on a screen (`stopped`: GEICO's referral, W44-04): in red, as a stop
     // page's. A screen is noted only from this intake's layouts (noteStopScreen), so it is this client's.
     if (carrier.stopButtons?.[screen]?.stopped) {
-      box.replaceChildren(issueCard({ role: 'alert', title: `${carrier.name} stopped this quote`, text: note, notes: ['Nothing on this page is filled or clicked.'] }));
+      say({ role: 'alert', title: `${carrier.name} stopped this quote`, text: note, notes: ['Nothing on this page is filled or clicked.'] });
       return;
     }
-    box.replaceChildren(issueCard({ tone: 'quiet', title: `${screen ?? step}: yours`, text: note,
-      notes: [`Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.`] }));
+    say({ tone: 'quiet', title: `${screen ?? step}: yours`, text: note, notes: [`Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.`] });
     return;
   }
   const ours = stopPageIsOurs();
-  box.replaceChildren(issueCard({ role: 'alert', title: ours ? `${carrier.name} stopped this quote` : `${carrier.name} stop page`,
+  say({ role: 'alert', title: ours ? `${carrier.name} stopped this quote` : `${carrier.name} stop page`,
     text: ours ? note : 'This tab was on the stop page before this client was loaded; it may be another client\'s quote. Open this client\'s quote.',
-    notes: ['Nothing on this page is filled or clicked.'] }));
+    notes: ['Nothing on this page is filled or clicked.'] });
 }
 
 // The tab's quote is for another state than the intake's garaging state (src/quote-state.js): said
@@ -1461,10 +1461,8 @@ function inheritQuoteState(tab) {
 // page's answers, with the pick and the intake's address side by side, "<state> is right" and
 // where the address is on the intake. Filling waits meanwhile (dockFor, fillPage, autoFill).
 function showStateNote() {
-  const box = $('state-note');
   const issue = stateIssue();
-  box.hidden = !issue;
-  if (!issue) { box.replaceChildren(); return; }
+  if (!issue) { state.cards = { ...state.cards, state: null }; return; }
   const { picked, intake, pick } = issue;
   const name = state.tab.carrier.name;
   const before = pick.session !== (usage.currentSession()?.id ?? null);
@@ -1472,13 +1470,13 @@ function showStateNote() {
   const address = [g.street, g.city, [g.state, g.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const place = sourcePlace('garaging.state', state.intake);
   const pdf = place && pdfAvailable();
-  box.replaceChildren(issueCard({ role: 'alert', title: `This ${name} quote is for ${picked}. The intake says ${intake}.`,
+  state.cards = { ...state.cards, state: issueSaid({ role: 'alert', title: `This ${name} quote is for ${picked}. The intake says ${intake}.`,
     text: `${before ? `Quote started in ${picked} before this intake was loaded. ` : ''}Start the quote in ${intake}, or check the intake.`,
     compare: [['Rater', picked], [`Intake${place ? pdfPageSaid(place.page, ' page ') : ''}`, address || intake]],
     actions: [
-      h('button', { type: 'button', class: 'tinted', onclick: dismissState }, `${picked} is right`),
-      pdf ? h('button', { type: 'button', class: 'ghost', onclick: () => openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' }) }, `See intake${pdfPageSaid(place.page, ' · p')}`) : null,
-    ] }));
+      { label: `${picked} is right`, className: 'tinted', onClick: dismissState },
+      pdf ? { label: `See intake${pdfPageSaid(place.page, ' · p')}`, className: 'ghost', onClick: () => openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' }) } : null,
+    ] }) };
 }
 
 // The tab's quote is for another state than the intake's garaging state (src/quote-state.js), until

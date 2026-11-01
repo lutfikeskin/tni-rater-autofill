@@ -115,22 +115,9 @@
 
     <!-- Steps 2 and 3: the page's answers, one list -->
     <section id="page-view" hidden>
-      <div id="fill-waiting" class="pane waiting" hidden>
-        <p id="fill-waiting-text" class="muted">Open the client’s quote on one of these raters.</p>
-        <div class="rater-logos">
-          <img src="assets/raters/progressive.svg" alt="Progressive">
-          <img src="assets/raters/geico.gif" alt="GEICO">
-          <img src="assets/raters/amwins.svg" alt="AmWINS">
-        </div>
-      </div>
-      <!-- What's wrong or different about this tab's quote, above its answers. -->
-      <div id="issues" class="issues">
-        <div id="carrier-note" hidden></div>
-        <div id="state-note" hidden></div>
-        <div id="stop-note" hidden></div>
-        <div id="review-note" hidden></div>
-        <div id="fill-error" hidden></div>
-      </div>
+      <!-- A rater to open, and what's wrong or different about this tab's quote, above its answers
+           (#fill-waiting, #issues): drawn by cards-view.jsx (mountCards). -->
+      <div id="cards-root"></div>
       <div id="pickers" class="pickers"></div>
       <!-- The page's answers (#feed), drawn by feed-view.jsx (mountFeed). -->
       <div id="feed-root"></div>

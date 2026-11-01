@@ -111,7 +111,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as they are (issueCard), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'issueSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -3581,7 +3581,8 @@ test('the page menu lists the other pages filled on this tab, by name, and shows
 // React PR 6 (2026-11-01): what the page's list says around its answers (state.feed, drawn by
 // feed-view.jsx; its drawing: test/panel/feed-view.test.jsx), as renderSteps wrote it on the page:
 // the title, the page menu and the earlier page shown in place of this one, the filters and their
-// counts, what an empty list says, the key, Clear the marks and a kept report's age.
+// counts, what an empty list says, the key, Clear the marks and a kept report's age. React PR 7: the
+// cards above it it says (state.cards, cards-view.jsx): the rater to open, and the last fill's error.
 test('the page\'s list says what it shows: this page\'s report, an earlier one read-only, or the fill going in', () => {
   const list = [{ type: 'answer' }, { type: 'answer' }, { type: 'need' }, { type: 'need', settled: 'marked' }];
   const report = { key: '1|Quote||', tabId: 1, fields: 4, filled: 3, list, at: Date.UTC(2026, 10, 1, 15, 5) };
@@ -3630,9 +3631,25 @@ test('the page\'s list says what it shows: this page\'s report, an earlier one r
   context.showReport = () => null;
   context.renderSteps();
   assert.deepEqual([state.feed.shown, state.feed.empty, state.feed.report, state.feed.unmark], [false, 'This page isn’t filled yet.', false, false]);
+  // A fill that didn't finish, or found no questions: its card above the answers (cards-view.jsx).
+  context.showReport = () => ({ ...report, error: 'The page stopped answering.' });
+  context.renderSteps();
+  assert.deepEqual([state.cards.waiting, state.cards.fill.title, state.cards.fill.text, state.cards.fill.role, state.cards.fill.tone],
+    [null, 'Filling didn’t finish', 'The page stopped answering.', 'alert', '']);
+  context.showReport = () => ({ fields: 0, notice: 'No questions found on this page.' });
+  context.renderSteps();
+  assert.deepEqual([state.cards.fill.title, state.cards.fill.tone, state.cards.fill.role], ['No questions found on this page.', 'quiet', 'status']);
+  context.showReport = () => null;
+  context.renderSteps();
+  assert.equal(state.cards.fill, null);
   state.tab.carrier = null;
   context.renderSteps();
   assert.equal(state.feed.shown, false);
+  // Off a rater: which to open, or why the page can't be read.
+  assert.equal(state.cards.waiting, 'Open the client’s quote on one of these raters.');
+  state.tab.url = '';
+  context.renderSteps();
+  assert.equal(state.cards.waiting, 'The extension can’t read this page. Allow it on this site (toolbar icon or site access), then reload.');
   // Wired: the filters, the page menu and the way back, the key and Clear the marks (feed-view.jsx asks).
   assert.match(SIDEPANEL, /mountFeed\(\$\('feed-root'\), \{\s+setFilter: \(filter\) => setFilter\(filter\),\s+showPast: \(key\) => showPast\(key\),\s+toggleKey: \(\) => \{ state\.keyOpen = !state\.keyOpen; renderSteps\(\); \},\s+clearMarks: \(\) => clearMarks\(\),\s+\}\);/);
 });
@@ -3919,7 +3936,7 @@ test('a page whose last question goes away logs its empty layout, so the questio
 function stopHarness(page = 'DeclinationNotice') {
   const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
   const box = () => ({ hidden: false, className: '', children: [], replaceChildren(...next) { this.children = next; } });
-  const ui = { report: box(), 'stop-note': box(), 'auto-followups': { checked: true }, 'auto-pages': { checked: true }, 'auto-advance': { checked: true } };
+  const ui = { report: box(), 'auto-followups': { checked: true }, 'auto-pages': { checked: true }, 'auto-advance': { checked: true } };
   const carrier = { id: 'progressive', name: 'Progressive', stopPages: { DeclinationNotice: 'Progressive says this client already has a commercial auto policy with Progressive.' } };
   const record = { applicant: { name: 'Synthetic Client LLC' } };
   const url = (p) => `https://clpolicy.foragentsonly.com/Express/Default.aspx?pageName=${p}`;
@@ -3944,7 +3961,8 @@ function stopHarness(page = 'DeclinationNotice') {
     state.tab = { ...state.tab, url: url(to) };
     context.onRecorderMessage({ ra: 'usage', event: 'page_view', page: to, from, fields: 0 }, { tab: { id: 4 }, frameId: 0 });
   };
-  return { state, context, ui, logged, kits, timers, carrier, arrive, stops: () => logged.filter((e) => e.type === 'fill_run') };
+  // The stop card above the answers (showStopPage), or null.
+  return { state, context, ui, logged, kits, timers, carrier, arrive, stops: () => logged.filter((e) => e.type === 'fill_run'), note: () => state.cards?.stop ?? null };
 }
 
 test('on a carrier stop page nothing is filled, clicked or scheduled, manual or automatic, and Luna is not asked', async () => {
@@ -3966,14 +3984,14 @@ test('on a carrier stop page nothing is filled, clicked or scheduled, manual or 
   const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: 'DeclinationNotice' };
   assert.equal(t.context.aiActionCurrent(ctx, []), false);
   // The panel says why, prominently, outside the fill report (Clear marks empties that).
-  const note = t.ui['stop-note'];
-  assert.equal(note.hidden, false);
-  const text = JSON.stringify(note.children);
+  const note = t.note();
+  assert.equal(!!note, true);
+  const text = JSON.stringify(note);
   assert.match(text, /Progressive stopped this quote/);
   assert.match(text, /already has a commercial auto policy with Progressive/);
   assert.match(text, /"role":"alert"/);
   t.ui.report.replaceChildren();
-  assert.match(JSON.stringify(note.children), /already has a commercial auto policy/);
+  assert.match(JSON.stringify(t.note()), /already has a commercial auto policy/);
 });
 
 test('each arrival at a stop page, reloads included, is logged as a fill_run blocker without client data', () => {
@@ -3991,8 +4009,7 @@ test('each arrival at a stop page, reloads included, is logged as a fill_run blo
   // The agent goes back: the note goes.
   t.arrive('BusinessOwnerInfo', 'DeclinationNotice');
   t.context.showStopPage();
-  assert.equal(t.ui['stop-note'].hidden, true);
-  assert.deepEqual(t.ui['stop-note'].children, []);
+  assert.equal(t.note(), null);
   // Practice pages are never logged.
   const practice = stopHarness('BusinessOwnerInfo');
   practice.carrier.practice = true;
@@ -4005,7 +4022,7 @@ test('a stop page the tab showed before this client was loaded is not said of th
   t.state.layoutHold = true;
   t.arrive('DeclinationNotice');
   assert.deepEqual(t.stops(), []);
-  const text = JSON.stringify(t.ui['stop-note'].children);
+  const text = JSON.stringify(t.note());
   assert.doesNotMatch(text, /already has a commercial auto policy/);
   assert.match(text, /may be another client's quote/);
   assert.match(text, /Nothing on this page is filled or clicked/);
@@ -4013,7 +4030,7 @@ test('a stop page the tab showed before this client was loaded is not said of th
   t.arrive('BusinessOwnerInfo', 'DeclinationNotice');
   t.arrive('DeclinationNotice', 'BusinessOwnerInfo');
   assert.equal(t.stops().length, 1);
-  assert.match(JSON.stringify(t.ui['stop-note'].children), /already has a commercial auto policy with Progressive/);
+  assert.match(JSON.stringify(t.note()), /already has a commercial auto policy with Progressive/);
 });
 
 test('pages that are not stop pages are still filled and followed up', async () => {
@@ -4023,7 +4040,7 @@ test('pages that are not stop pages are still filled and followed up', async () 
   const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: 'BusinessOwnerInfo' };
   assert.equal(t.context.aiActionCurrent(ctx, []), true);
   t.context.showStopPage();
-  assert.equal(t.ui['stop-note'].hidden, true);
+  assert.equal(t.note(), null);
   assert.deepEqual(t.stops(), []);
 });
 
@@ -4183,8 +4200,7 @@ async function stateNoteHarness() {
   const { progressive } = await import('../src/carriers/progressive.js');
   const { amwins } = await import('../src/carriers/amwins.js');
   const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
-  const box = () => ({ hidden: true, children: [], replaceChildren(...next) { this.children = next; } });
-  const ui = { 'state-note': box(), 'auto-followups': { checked: false }, 'auto-pages': { checked: false }, 'auto-advance': { checked: false } };
+  const ui = { 'auto-followups': { checked: false }, 'auto-pages': { checked: false }, 'auto-advance': { checked: false } };
   const session = { current: { id: 's1', intakeId: 'fl-intake' } };
   const record = (st) => ({ applicant: { name: 'Synthetic Client LLC' }, garaging: { state: st } });
   const state = {
@@ -4213,45 +4229,46 @@ async function stateNoteHarness() {
     context.onRecorderMessage({ ra: 'usage', event: 'page_view', page: at, from, fields: 6 }, { tab: { id: tabId }, frameId: 0 });
     await new Promise((resolve) => setImmediate(resolve));
   };
-  const note = () => ui['state-note'];
+  // The quote-state card above the answers (showStateNote), or null.
+  const note = () => state.cards?.state ?? null;
   return {
     context, state, ui, logged, page, session, record, progressive, amwins, pick, arrive, note,
-    text: () => JSON.stringify(note().children),
+    text: () => JSON.stringify(note()),
     // The card's "<state> is right" (dismissState).
-    button: () => nodesIn(note().children).find((c) => c.tag === 'button' && / is right$/.test(c.children[0])),
+    button: () => note()?.actions.find((a) => / is right$/.test(a.label)),
   };
 }
 
 test('the panel warns when the quote state picked on the carrier page is not the intake\'s, across a reload', async () => {
   const t = await stateNoteHarness();
   t.pick('Utah');
-  assert.equal(t.note().hidden, false);
+  assert.equal(!!t.note(), true);
   assert.match(t.text(), /This Progressive quote is for Utah\. The intake says Florida\./);
   assert.match(t.text(), /Start the quote in Florida, or check the intake\./);
-  assert.equal(t.button().children[0], 'Utah is right');
+  assert.equal(t.button().label, 'Utah is right');
   assert.match(t.text(), /"role":"alert"/);
   assert.doesNotMatch(t.text(), /Synthetic Client/);
   // Cleared, then the same intake loaded again: the tab's quote is still Utah's.
   t.state.intake = null;
   t.context.showStateNote();
-  assert.equal(t.note().hidden, true);
+  assert.equal(t.note(), null);
   t.state.intake = { record: t.record('FL') };
   t.session.current = { id: 's2', intakeId: 'fl-intake' };
   t.context.showStateNote();
-  assert.equal(t.note().hidden, false);
+  assert.equal(!!t.note(), true);
   assert.match(t.text(), /started in Utah before this intake was loaded/);
   // "Utah is right": hidden for this intake, also when loaded again; another intake hears it.
-  t.button().props.onclick();
-  assert.equal(t.note().hidden, true);
+  t.button().onClick();
+  assert.equal(t.note(), null);
   t.session.current = { id: 's3', intakeId: 'fl-intake' };
   t.context.showStateNote();
-  assert.equal(t.note().hidden, true);
+  assert.equal(t.note(), null);
   t.session.current = { id: 's4', intakeId: 'other-fl-intake' };
   t.context.showStateNote();
-  assert.equal(t.note().hidden, false);
+  assert.equal(!!t.note(), true);
   // The intake's state picked: no note; back to the placeholder: forgotten.
   t.pick('Florida');
-  assert.equal(t.note().hidden, true);
+  assert.equal(t.note(), null);
   assert.equal(t.state.quoteStates.get(7).code, 'FL');
   t.pick('');
   assert.equal(t.state.quoteStates.has(7), false);
@@ -4259,14 +4276,14 @@ test('the panel warns when the quote state picked on the carrier page is not the
   t.pick('Utah');
   t.state.intake = { record: t.record(null) };
   t.context.showStateNote();
-  assert.equal(t.note().hidden, true);
+  assert.equal(t.note(), null);
   // AmWINS' risk state, changed by the agent; a tab that moves to another carrier forgets.
   t.state.intake = { record: t.record('FL') };
   t.state.tab = { id: 7, url: 'https://myagency.amwinsadmittedplacement.com/commerciallines', carrier: t.amwins };
   t.context.showStateNote();
   assert.equal(t.state.quoteStates.has(7), false, 'the tab moved to another carrier');
   t.pick('Florida', 'riskState', '/commerciallines');
-  assert.equal(t.note().hidden, true);
+  assert.equal(t.note(), null);
   t.pick('Virginia', 'riskState', '/commerciallines');
   assert.match(t.text(), /This AmWINS quote is for Virginia. The intake says Florida./);
   assert.equal(t.logged.filter((e) => e.type === 'field_change').length, 6, 'every change is still logged');
@@ -4279,7 +4296,7 @@ test('the quote state comes from the page as it is, the fill, the tab the quote 
   t.page.shown = 'Utah';
   await t.arrive('/home/');
   assert.equal(t.state.quoteStates.get(7)?.code, 'UT');
-  assert.equal(t.note().hidden, false);
+  assert.equal(!!t.note(), true);
   // Another page of the same tab isn't read; the home page with no state forgets it.
   t.page.shown = 'Florida';
   await t.arrive('BusinessOwnerInfo', '/home/');
@@ -4294,7 +4311,7 @@ test('the quote state comes from the page as it is, the fill, the tab the quote 
   t.context.inheritQuoteState({ id: 9, openerTabId: 99 });
   t.state.tab = { id: 8, url: 'https://clpolicy.foragentsonly.com/Express/Default.aspx?pageName=BusinessOwnerInfo', carrier: t.progressive };
   t.context.showStateNote();
-  assert.equal(t.note().hidden, false, 'the quote tab says it too');
+  assert.equal(!!t.note(), true, 'the quote tab says it too');
   assert.equal(t.state.quoteStates.has(9), false, 'a tab opened from elsewhere inherits nothing');
   // Codex on PR #60 (ed1e23e): with no intake the home page isn't watched, so its pick may be stale.
   const loaded = t.state.intake;
@@ -4305,10 +4322,10 @@ test('the quote state comes from the page as it is, the fill, the tab the quote 
   // The intake's garaging state edited to Utah: the note goes at once; back to Florida: it comes back.
   t.state.intake.record.garaging.state = 'UT';
   t.context.intakeEdited();
-  assert.equal(t.note().hidden, true);
+  assert.equal(t.note(), null);
   t.state.intake.record.garaging.state = 'FL';
   t.context.intakeEdited();
-  assert.equal(t.note().hidden, false);
+  assert.equal(!!t.note(), true);
   t.page.shown = '';
   t.state.tab = { id: 7, url: 'https://www.foragentsonly.com/home/', carrier: t.progressive };
   await t.arrive('/home/');
@@ -6207,12 +6224,12 @@ test('on a stop step nothing is filled, clicked or scheduled, manual or automati
     assert.equal(t.context.aiActionCurrent(ctx, []), false, step);
     // Said as the step's own, about no client (no "GEICO stopped this quote"), in a quiet card: the
     // step is the agent's, nothing went wrong.
-    const note = t.ui['stop-note'];
-    assert.equal(note.hidden, false);
-    const text = JSON.stringify(note.children);
+    const note = t.note();
+    assert.equal(!!note, true);
+    const text = JSON.stringify(note);
     assert.ok(text.includes(`${step}: yours`) && text.includes(geico.stopSteps[step]), step);
     assert.match(text, /Nothing on this step is filled or clicked/);
-    assert.match(text, /"class":"issue quiet","role":"status"/);
+    assert.match(text, /^{"tone":"quiet",.*"role":"status"}$/);
     assert.doesNotMatch(text, /stopped this quote|another client/);
   }
   // The step before them is filled as before, with its own note: the quote stops there.
@@ -6226,9 +6243,9 @@ test('on a stop step nothing is filled, clicked or scheduled, manual or automati
 
 // GEICO's Quote & Coverages note (carrier stepNotes): said, not a stop.
 function assertStepNote(t, step) {
-  const note = t.ui['stop-note'];
-  assert.equal(note.hidden, false, step);
-  const text = JSON.stringify(note.children);
+  const note = t.note();
+  assert.equal(!!note, true, step);
+  const text = JSON.stringify(note);
   assert.ok(text.includes(geico.stepNotes[step]), step);
   assert.match(text, /"role":"status"/);
   assert.doesNotMatch(text, /: yours|Nothing on this step is filled/);
@@ -6253,7 +6270,7 @@ test('each arrival at a stop step is logged once as a fill_run blocker, with the
   ]);
   for (const k of ['filled', 'failed', 'noData', 'kept', 'leftRequired', 'unknown', 'ms', 'fields']) assert.equal(stops[0][k], 0, k);
   assert.doesNotMatch(JSON.stringify(t.logged), /Synthetic Client/);
-  assert.equal(t.ui['stop-note'].hidden, false);
+  assert.equal(!!t.note(), true);
   // Back on a step that is not the agent's: nothing logged, the note goes. A heading that is no
   // step name changes nothing.
   t.show('Quote & Coverages');
@@ -6270,7 +6287,7 @@ test('each arrival at a stop step is logged once as a fill_run blocker, with the
   before.state.layoutHold = true;
   before.show('Payment Information');
   assert.deepEqual(before.stops(), []);
-  assert.equal(before.ui['stop-note'].hidden, false);
+  assert.equal(!!before.note(), true);
 });
 
 // W43-27 (TNI, 2026-10-21): after Business & Owner Info GEICO showed a screen with only Add USDOT
@@ -6337,13 +6354,13 @@ test('GEICO\'s referral page: read from its layout\'s buttons, logged once, said
   assert.equal(t.context.aiActionCurrent({ intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: '/quote' }, []), false);
   // Above the answers: red, with role alert, as a stop page's.
   t.context.showStopPage();
-  const text = JSON.stringify(t.ui['stop-note'].children);
-  assert.equal(t.ui['stop-note'].hidden, false);
-  assert.match(text, /"class":"issue","role":"alert"/);
+  const text = JSON.stringify(t.note());
+  assert.equal(!!t.note(), true);
+  assert.match(text, /^{"tone":"",.*"role":"alert"}$/);
   assert.match(text, /GEICO stopped this quote/);
   assert.match(text, /GEICO won't quote this online/);
   assert.match(text, /Nothing on this page is filled or clicked/);
-  assert.doesNotMatch(text, /issue quiet|GEICO referral: yours|Additional Business Info: yours/);
+  assert.doesNotMatch(text, /"tone":"quiet"|GEICO referral: yours|Additional Business Info: yours/);
   // The dock: GEICO's stop, no fill offered.
   const dock = dockHarness({ carrier: geico, url: '/quote', step: 'Additional Business Info', extra: {} });
   dock.state.stopScreens = new Map([[7, { name: 'GEICO referral', page: '/quote' }]]);
@@ -6381,14 +6398,14 @@ test('on GEICO\'s Add USDOT Number screen the panel says so, and nothing is fill
   const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: '/quote' };
   assert.equal(t.context.aiActionCurrent(ctx, []), false);
   t.context.showStopPage();
-  let text = JSON.stringify(t.ui['stop-note'].children);
-  assert.equal(t.ui['stop-note'].hidden, false);
+  let text = JSON.stringify(t.note());
+  assert.equal(!!t.note(), true);
   assert.match(text, /USDOT Number: yours/);
   assert.match(text, /GEICO asks for a USDOT number, and the intake has none\. Add USDOT Number or Skip is yours\./);
   assert.match(text, /Nothing on this screen is filled or clicked/);
   // v5: the agent's screen, said in the quiet card a stop step has (only the carrier's stop page and
   // a quote state that differs are red).
-  assert.match(text, /"class":"issue quiet","role":"status"/);
+  assert.match(text, /^{"tone":"quiet",.*"role":"status"}$/);
   assert.doesNotMatch(text, /Business & Owner Info: yours/);
   // The dock offers no fill there, and names the screen.
   const screenDock = dockHarness({ carrier: geico, url: '/quote', step: 'Business & Owner Info', extra: {} });
@@ -6398,13 +6415,13 @@ test('on GEICO\'s Add USDOT Number screen the panel says so, and nothing is fill
   // An intake with a USDOT number: the note names it.
   t.state.intake = { record: { applicant: { name: 'Synthetic Client LLC', dot: '1234567' } } };
   t.context.showStopPage();
-  assert.match(JSON.stringify(t.ui['stop-note'].children), /the intake's is \\"1234567\\"/);
+  assert.match(JSON.stringify(t.note()), /the intake's is \\"1234567\\"/);
   // Another page of the tab (the gateway): not that screen.
   assert.equal(t.context.stopNoteFor(geico, '/'), null);
   // Skip led to Vehicles: over, and the step is filled again.
   t.show('Vehicles');
   assert.equal(t.state.stopScreens.has(4), false);
-  text = JSON.stringify(t.ui['stop-note'].children);
+  text = JSON.stringify(t.note());
   assert.doesNotMatch(text, /USDOT/);
   t.context.scheduleAutoFill('/quote');
   assert.equal(t.timers.length, 1);
@@ -6472,17 +6489,15 @@ test('on a stop step the panel offers no fill; on the other steps it names the s
 // fills, clicks or asks the AI reads it.
 test('a red card says the client\'s current insurance is with the carrier the tab is on, and stops nothing', async () => {
   const { sameCarrier, noPriorInsurance, quotedCarrierPolicy } = await import('../src/util.js');
-  const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
-  const box = { hidden: true, children: [], replaceChildren(...next) { this.children = next; } };
   const state = { tab: { id: 4, url: 'https://sales.geico.com/quote', carrier: geico }, intake: null };
-  const context = { state, h: node, $: (id) => (id === 'carrier-note' ? box : null), sameCarrier, noPriorInsurance, quotedCarrierPolicy };
+  const context = { state, sameCarrier, noPriorInsurance, quotedCarrierPolicy };
   vm.runInNewContext(extractFunction('showCarrierNote'), context);
   // `prior`: the intake's current-insurance row; null: a blank section; undefined: no intake.
   const show = (carrier, prior) => {
     state.tab = carrier ? { id: 4, url: 'https://example.test/quote', carrier } : null;
     state.intake = prior === undefined ? null : { record: { priorInsurance: prior ? [prior] : [] } };
     context.showCarrierNote();
-    return box.hidden ? null : JSON.stringify(box.children);
+    return state.cards?.carrier ? JSON.stringify(state.cards.carrier) : null;
   };
   const policy = (carrier, more = {}) => ({ type: 'Commercial Auto', carrier, limit: '$1M CSL', expiration: '12/31/2026', ...more });
   for (const name of ['GEICO', 'Gieco', 'GICO', 'Geico Commercial']) {
@@ -6491,7 +6506,7 @@ test('a red card says the client\'s current insurance is with the carrier the ta
     assert.match(card, /The client's current insurance is with GEICO/);
     assert.match(card, /GEICO may decline or route this quote\. Check with the client before going on\./);
     assert.match(card, /"role":"alert"/);
-    assert.match(card, /"class":"issue"/, 'red: a card with no tone');
+    assert.match(card, /^{"tone":"",/, 'red: a card with no tone');
     assert.match(card, /Filling goes on as usual/, 'it says it is no stop');
   }
   assert.match(show(progressive, policy('Progresive')), /The client's current insurance is with Progressive/);
@@ -6516,8 +6531,11 @@ test('a red card says the client\'s current insurance is with the carrier the ta
   // Shown on arrival with the other cards (renderSite runs as the tab reaches a carrier page and as
   // the intake loads or changes), first among them.
   assert.match(extractFunction('renderSite').split('\nfunction ')[0], /showCarrierNote\(\);[\s\S]{0,400}?renderWarnings\(\); \}\s*showStopPage\(\);/);
+  // First among the cards above the answers (#carrier-note first in #issues): test/panel/cards-view.test.jsx.
+  // The cards are drawn above the page's answers (review of #249: the markup the old check read held both).
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
-  assert.match(html, /<div id="issues" class="issues">\s*<div id="carrier-note" hidden><\/div>/);
+  const pageView = html.slice(html.indexOf('<section id="page-view"'), html.indexOf('</section>', html.indexOf('<section id="page-view"')));
+  assert.ok(pageView.includes('<div id="cards-root"></div>') && pageView.indexOf('id="cards-root"') < pageView.indexOf('id="feed-root"'), 'the cards above the answers');
   // No stop: the fill, follow-ups, the dock, the stop checks and the AI never read it, and
   // Progressive's DeclinationNotice stays its stop page.
   for (const fn of ['fillPage', 'scheduleAutoFill', 'dockFor', 'stopNoteFor', 'showStopPage', 'aiActionCurrent', 'stateIssue']) {

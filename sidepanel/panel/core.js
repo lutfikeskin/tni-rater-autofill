@@ -348,6 +348,10 @@ const state = storeState({
   // What the page's list of answers says around them (renderSteps), as feed-view.jsx draws it: null
   // until the panel first says it.
   feed: null,
+  // The cards at the top of the page view, as cards-view.jsx draws them: `waiting` (no rater in
+  // front: why), and the carrier, state, stop, review and fill cards (issueSaid), each null while
+  // it says nothing.
+  cards: {},
   // The file tools' question before the agent's work would go: 'replace' | 'clear' | 'new-quote',
   // and the button that asked, for focus on Cancel.
   fileConfirm: null,
