@@ -3578,6 +3578,65 @@ test('the page menu lists the other pages filled on this tab, by name, and shows
   assert.match(rule, /\{ display: none; \}$/);
 });
 
+// React PR 6 (2026-11-01): what the page's list says around its answers (state.feed, drawn by
+// feed-view.jsx; its drawing: test/panel/feed-view.test.jsx), as renderSteps wrote it on the page:
+// the title, the page menu and the earlier page shown in place of this one, the filters and their
+// counts, what an empty list says, the key, Clear the marks and a kept report's age.
+test('the page\'s list says what it shows: this page\'s report, an earlier one read-only, or the fill going in', () => {
+  const list = [{ type: 'answer' }, { type: 'answer' }, { type: 'need' }, { type: 'need', settled: 'marked' }];
+  const report = { key: '1|Quote||', tabId: 1, fields: 4, filled: 3, list, at: Date.UTC(2026, 10, 1, 15, 5) };
+  const earlier = { key: '1|AddDriver|d1|', tabId: 1, fields: 2, at: Date.UTC(2026, 10, 1, 14, 50), nodes: ['row'] };
+  const past = [];
+  const state = { intake: { warnings: [], done: [] }, tab: { id: 1, url: 'Quote', carrier: { id: 'progressive' } }, view: 'page', filter: 'all',
+    filling: false, fillingFor: null, keyOpen: false, pastKey: null, pastNodes: null };
+  const el = () => ({ dataset: {}, replaceChildren() {} });
+  const ui = { past: { replaceChildren: (...nodes) => past.splice(0, past.length, ...nodes) } };
+  let reports = [];
+  const context = { state, inExtension: true, popped: false, Date, $: (id) => (ui[id] ??= el()), renderDock() {}, renderPickers() {}, checkShown: () => true,
+    pageOf: (u) => u, stopNoteFor: () => null, showReport: () => report, earlierReports: () => reports, quoteFinished: () => false, pendingAi: () => [],
+    issueCard: () => ({}), listCounts: (l = []) => ({ all: l.length, needs: l.filter((r) => r.type === 'need' && !r.settled).length, done: l.filter((r) => r.type !== 'need' || r.settled).length }) };
+  vm.runInNewContext(['renderSteps', 'reportTitle'].map(extractFunction).join('\n'), context);
+  const at = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  context.renderSteps();
+  assert.deepEqual({ ...state.feed, pages: [...state.feed.pages], counts: { ...state.feed.counts } }, {
+    shown: true, title: 'Answers on this page', pages: [], pastKey: null, pastWhen: '', report: true, filter: 'all',
+    counts: { all: 4, needs: 1, done: 3 }, empty: null, keyOpen: false, unmark: true, age: null });
+  // The Need you filter with nothing left: the list says so. The key opened.
+  Object.assign(state, { filter: 'needs', keyOpen: true });
+  report.list = [{ type: 'answer' }];
+  context.renderSteps();
+  assert.deepEqual([state.feed.filter, state.feed.empty, state.feed.keyOpen], ['needs', 'Nothing needs you on this page.', true]);
+  // Kept while another page was in front: its age. Another page filled earlier: the menu, titled.
+  Object.assign(state, { filter: 'all', keyOpen: false });
+  report.restored = true;
+  reports = [earlier];
+  context.renderSteps();
+  assert.deepEqual([state.feed.title, JSON.parse(JSON.stringify(state.feed.pages)), state.feed.age],
+    ['Answers', [{ key: '1|AddDriver|d1|', title: 'Add Driver · Driver 2' }], `From the fill at ${at(report.at)}. Fill again if the page changed.`]);
+  // That page picked: shown read-only in place of this one, with no filters, Clear the marks or age.
+  state.pastKey = earlier.key;
+  context.renderSteps();
+  assert.deepEqual([state.feed.pastKey, state.feed.pastWhen, state.feed.report, state.feed.counts, state.feed.unmark, state.feed.age, state.feed.empty, state.feed.keyOpen],
+    ['1|AddDriver|d1|', `Add Driver · Driver 2 · filled ${at(earlier.at)} · view only`, false, null, false, null, null, false]);
+  assert.deepEqual(past, ['row'], 'its rows moved into #past');
+  // A fill going in on the tab: its answers in place of all that, no menu, no key.
+  Object.assign(state, { filling: true, fillingFor: { tabId: 1, filled: 2, rows: [{}] } });
+  context.renderSteps();
+  assert.deepEqual([state.feed.shown, state.feed.title, state.feed.pages.length, state.feed.pastKey, state.feed.empty, state.feed.keyOpen], [true, 'Filling now', 0, null, null, null]);
+  assert.deepEqual(past, [], 'the earlier page put away');
+  // Not filled yet, nothing earlier: hidden; off a rater: hidden.
+  Object.assign(state, { filling: false, fillingFor: null });
+  reports = [];
+  context.showReport = () => null;
+  context.renderSteps();
+  assert.deepEqual([state.feed.shown, state.feed.empty, state.feed.report, state.feed.unmark], [false, 'This page isn’t filled yet.', false, false]);
+  state.tab.carrier = null;
+  context.renderSteps();
+  assert.equal(state.feed.shown, false);
+  // Wired: the filters, the page menu and the way back, the key and Clear the marks (feed-view.jsx asks).
+  assert.match(SIDEPANEL, /mountFeed\(\$\('feed-root'\), \{\s+setFilter: \(filter\) => setFilter\(filter\),\s+showPast: \(key\) => showPast\(key\),\s+toggleKey: \(\) => \{ state\.keyOpen = !state\.keyOpen; renderSteps\(\); \},\s+clearMarks: \(\) => clearMarks\(\),\s+\}\);/);
+});
+
 // All client details opens in a drawer from the right (TNI, 2026-10-21: the collapsed list was hard
 // to read): focus goes into it, Escape or Close closes it, and focus goes back where it was.
 test('client details open in a drawer that takes focus and gives it back', () => {

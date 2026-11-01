@@ -19,6 +19,7 @@ import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, closeDetails, closePdf
 import { announceCopy, dock, keepPlace, onPanelMessage, popOut } from './panel/window.js';
 import { mountLive } from './panel/live-view.jsx';
 import { mountDock, mountSteps } from './panel/steps-view.jsx';
+import { mountFeed } from './panel/feed-view.jsx';
 
 // ---------------------------------------------------------------------------------------------
 // Wiring
@@ -36,17 +37,20 @@ function wire() {
     fill: () => setView('page'),
     confirm: () => { setView('page'); refreshAnswers(); checkItems(); },
   });
-  for (const b of $('filters').querySelectorAll('button')) b.addEventListener('click', () => setFilter(b.dataset.filter));
   $('open-pdf').addEventListener('click', () => openPdf());
   $('client-card').addEventListener('click', () => (state.detailsOpen ? closeDetails() : openDetails()));
   $('details-row').addEventListener('click', () => openDetails());
   $('details-close').addEventListener('click', closeDetails);
   $('details-empty').addEventListener('click', () => showEmpty());
   $('details-scrim').addEventListener('click', closeDetails);
-  // An earlier page's answers on this tab (read-only), and back to this page's.
-  $('page-menu').addEventListener('change', (e) => showPast(e.target.value || null));
-  $('past-back').addEventListener('click', () => { showPast(null); $('page-menu').focus(); });
-  $('key-btn').addEventListener('click', () => { state.keyOpen = !state.keyOpen; renderSteps(); });
+  // The page's answers: their filters, an earlier page's answers on this tab (read-only) and back to
+  // this page's, what the tags mean, and Clear the marks.
+  mountFeed($('feed-root'), {
+    setFilter: (filter) => setFilter(filter),
+    showPast: (key) => showPast(key),
+    toggleKey: () => { state.keyOpen = !state.keyOpen; renderSteps(); },
+    clearMarks: () => clearMarks(),
+  });
   $('pdf-back').addEventListener('click', closePdf);
   $('pdf-close').addEventListener('click', closePdf);
   $('pdf-scrim').addEventListener('click', closePdf);
@@ -125,7 +129,6 @@ function wire() {
       fillPage();
     },
   });
-  $('unmark').addEventListener('click', clearMarks);
   $('capture').addEventListener('click', capturePage);
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
   if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') captureFromShortcut(); });
