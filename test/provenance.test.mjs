@@ -25,7 +25,7 @@ const expediter = () => ({
   vehicles: [{ type: 'Van', year: 2022, make: 'FORD', model: 'Transit', vin: '1FTBR3X87MKA12345', value: 45000 }],
   trailers: [{ type: 'Dry Van', year: 2015, make: 'GREAT DANE', model: null, vin: '1GRAA0621FB700000', value: 25000 }],
   trailerInfo: { ownership: 'Owned', equipTrailer: null },
-  priorInsurance: [{ type: 'Commercial Auto', carrier: 'Other', limit: '$500k CSL', expiration: '10/31/2026' }],
+  priorInsurance: [{ type: 'Commercial Auto', carrier: 'Other', limit: '$500k CSL', expiration: '10/31/2099' }],
   coverage: { autoLiabLimit: '$1M CSL', cargo: true, cargoLimit: 100000, cargoDeductible: 1000, gl: false, glLimit: null, reeferBreakdown: null, ntl: null },
   claims: { hasClaims: false, text: 'No', notes: null },
 });

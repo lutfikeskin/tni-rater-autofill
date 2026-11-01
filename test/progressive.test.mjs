@@ -21,7 +21,7 @@ const baseRecord = () => ({
   drivers: [{ first: 'Amina', middle: null, last: 'Kone', dob: '01/02/1980', licenseNumber: 'MD1234567', licenseState: 'MD' }],
   vehicles: [{ type: 'Van', year: 2022, make: 'FORD', model: 'Transit', vin: '1FTBR3X87MKA12345', value: 45000 }],
   trailers: [],
-  priorInsurance: [{ type: 'Commercial Auto', carrier: 'Other', limit: '$500k CSL', expiration: '10/31/2026' }],
+  priorInsurance: [{ type: 'Commercial Auto', carrier: 'Other', limit: '$500k CSL', expiration: '10/31/2099' }],
   coverage: {
     autoLiabLimit: '$1M CSL', cargo: true, cargoLimit: 100000, cargoDeductible: 1000,
     gl: false, glLimit: null, comprehensiveDeductible: null, collisionDeductible: null,
@@ -153,7 +153,7 @@ test('an insurance type without limit or expiry is currently insured, the limit 
     assert.match(byQ(plan, q).note, /has no (limit|expiration date)/);
   }
   record.priorInsurance[0].limit = '$500k CSL';
-  record.priorInsurance[0].expiration = '10/31/2026';
+  record.priorInsurance[0].expiration = '10/31/2099';
   assert.deepEqual([byQ(buildPlan(record, progressive), '81').value, byQ(buildPlan(record, progressive), '81').source], [true, 'derived']);
   assert.equal(byQ(buildPlan(record, progressive), '83').value, true);
   // Nothing on the intake: not currently insured, as before.
