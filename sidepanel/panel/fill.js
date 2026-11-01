@@ -20,7 +20,9 @@ import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep } from 
 import { fillCurrent, fillErrorMessage, staleFill } from './fill-checks.js';
 import { liveOf } from './live.js';
 import { agentPickable, answerSources, choiceSaid, choicesOf, currentReportKey, finishLeftOk, groupRows, itemsLeft, looseText, reportKey, stopNoteFor } from './report-model.js';
-import { answerRecord, needId, needRecord, reopenRow, rowClass, rowHead, setHead, settleRow, showLive } from './report-rows.js';
+import { answerRecord, needId, needRecord, reopenRow, setHead, settleRow, showLive } from './report-rows.js';
+import { mountRows } from './report-view.jsx';
+import { flushSync } from 'react-dom';
 /** @import { CarrierConfig, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -543,8 +545,8 @@ async function undoMarkDone(rec, key, tabId, page, scope = editScope(page)) {
   await persistAgentKeys();
   // Open again: its row says what it waits on, and the note is empty.
   reopenRow(rec);
-  drawRow(rec);
-  rowNodes.get(rec)?.node.querySelector('.mark-done')?.focus();
+  drawRowNow(rec);
+  rowNodes.get(rec)?.querySelector('.mark-done')?.focus();
   recount();
 }
 
@@ -646,7 +648,7 @@ async function checkItems() {
   const here = () => !state.filling && state.reportFor === entry && entry.tabId === state.tab?.id && pageOf(state.tab?.url) === entry.page;
   if (!entry?.fields || !here()) return;
   const rows = (entry.list ?? []).filter((r) => r.type === 'need' && r.key && !r.settled);
-  // The answers listed (answerRow), with the rule that answered each.
+  // The answers listed, with the rule that answered each.
   const answers = (entry.list ?? []).filter((r) => r.type === 'answer' && r.key);
   if (!rows.length && !answers.length) return;
   const asked = [...rows.map((r) => ({ key: r.key, label: r.field || null })),
@@ -703,10 +705,10 @@ function noteLiveItems(msg, sender) {
 // An item left for the agent that is settled now (settleRow): answered on the page ('answered'), put
 // in from its row ('picked', with what the page shows), or marked done ('marked', with `undo`).
 function settleNeed(rec, how, undo = null, value = null) {
-  const node = rowNodes.get(rec)?.node;
+  const node = rowNodes.get(rec);
   const focused = !!node?.contains(document.activeElement);
   settleRow(rec, how, undo, value);
-  drawRow(rec);
+  drawRowNow(rec);
   // Keyboard focus stays on the item: on its Undo, or on its row.
   if (focused) (node.querySelector('.need-note button') ?? node.querySelector('.row-head') ?? node).focus();
   recount();
@@ -906,7 +908,7 @@ function renderReport(frames, ctx = {}) {
   const rctx = { tabId, page, carrier };
   // Each row as data (report-rows.js), the first item open: what is left, the filters and the dock
   // read them; the panel changes them and drawRow draws them.
-  entry.list = ordered.map((e) => (e.x ? needRecord(e.x, carrier, page, e === first) : answerRecord(e.row)));
+  entry.list = ordered.map((e) => (e.x ? needRecord(e.x, carrier, page, e === first) : answerOf(e.row)));
   const halted = frames.find((f) => f.halted);
   const nodes = [
     // An agent page's note: a yellow box on a page that needs more attention (`warnPages`:
@@ -930,7 +932,7 @@ function renderReport(frames, ctx = {}) {
     h('div', { class: 'needs-head', hidden: true }),
     // Buttons waiting on others (Progressive's bill plan before Recalculate) aren't listed: the fill
     // clicks them in turn, and a question one waits on is a row. The fill log keeps them (blockerList).
-    entry.list.length ? h('div', { class: 'rows' }, entry.list.map((rec) => (rec.type === 'need' ? needRow(rec, rctx) : answerRow(rec, rctx)))) : null,
+    entry.list.length ? rowsHost(entry, rctx) : null,
   ].filter((node) => node != null && node !== false);
   if (key === currentReportKey()) state.filter = 'all';
   putReport(entry, nodes);
@@ -940,21 +942,26 @@ function renderReport(frames, ctx = {}) {
   if (held) refreshAnswers();
 }
 
-// The node drawn for each row (answerRow, needRow) with what it shows now, so drawRow draws again
-// only what changed: `ctx` the report's tab, page and carrier, `tag` an answer's source tag.
+// The node React drew for each row (report-view.jsx), for the focus and scrolling that follow a
+// change, and the slot on an item's row where the AI's card goes: drawn by the AI (renderAi), not
+// by React.
 const rowNodes = new WeakMap();
+const aiSlots = new WeakMap();
 
-// A source tag on a row's head.
-function tagNode(tag) { return h('span', { class: `tag ${tag.kind}`, title: tag.title ?? '' }, tag.text); }
+// An answer's row (answerRecord) with where it came from, as the row says it (answerSource).
+function answerOf(row) {
+  const rec = answerRecord(row);
+  rec.source = answerSource(rec);
+  return rec;
+}
 
-// One answer in the page's list (renderReport): what went in and where it came from, opening to its
-// source with Change answer and See in intake. `rec`: its row (answerRecord): `kind` 'clicked',
-// 'page' (left as the page had it) or 'yours' (the agent's own answer, not filled); otherwise an
-// answer, by its source.
-function answerRow(rec, { tabId, page, carrier }) {
+// Where an answer came from, as its row says it, worked out as the row is made: its source tag
+// (none for one from the intake, the usual source, said to screen readers only: `quiet`, so the
+// others stand out), the title and quote its row opens to, and its place on the intake PDF (See in
+// intake): the field an answer came from, or those a derived one was worked out from. A TNI
+// standard is no intake fact; no place while the PDF isn't kept.
+function answerSource(rec) {
   const { kind } = rec;
-  // Where it is on the intake PDF: the field an answer came from, or those a derived one was worked
-  // out from. A TNI standard is no intake fact; no link while the PDF isn't kept.
   const pdfHere = pdfAvailable();
   const paths = [].concat(rec.from ?? rec.path ?? []);
   const place = ['intake', 'derived', 'edited'].includes(kind) && pdfHere && state.intake && paths.length ? sourcePlace(paths, state.intake) : null;
@@ -980,176 +987,60 @@ function answerRow(rec, { tabId, page, carrier }) {
     yours: ['Your answer', 'You changed it on the page, so no fill puts it back.'],
     changed: ['Changed on the page', 'The page shows this now, not the answer the fill put in. Check it.'],
   }[kind];
-  // From the intake is the usual source: no tag to read past (said to screen readers), so the
-  // others stand out.
-  const head = rowHead(rec, kind === 'intake' ? null : tag);
-  const item = h('div', { class: rowClass(rec),
-    dataset: rec.key ? { key: rec.key, field: rec.field ?? '', value: rec.value, step: rec.stepId ?? '', offpage: rec.offPage ? '1' : '' } : {} },
-  h('button', { type: 'button', class: 'row-head', 'aria-expanded': String(rec.open), onclick: () => toggleRow(rec) },
-    h('span', { class: 'row-icon', 'aria-hidden': 'true' }, head.icon),
-    h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, rec.label), h('span', { class: 'row-value' }, head.value),
-      rec.key ? h('span', { class: 'kv-now', hidden: !rec.changed }, rec.changed) : null),
-    kind === 'intake' ? h('span', { class: 'sr-only' }, tag.title) : null,
-    head.tag ? tagNode(head.tag) : null),
-  h('div', { class: 'row-body', hidden: !rec.open },
-    h('div', { class: 'src-box' }, h('span', { class: 'src-title' }, title), quote ? h('span', { class: 'src-quote' }, quote) : null),
-    h('div', { class: 'change-slot' }),
-    rec.answer && rec.key || place ? h('div', { class: 'row-actions' },
-      rec.answer && rec.key ? h('button', { type: 'button', class: 'ghost change', 'aria-label': `Change answer: ${rec.label}`, onclick: () => changeAnswer(rec, { tabId, page, carrier }) }, 'Change answer') : null,
-      place ? h('button', { type: 'button', class: 'ghost src',
-        title: kind === 'edited' ? 'Show what the intake said before your edit' : kind === 'derived' ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake',
-        onclick: () => openPdf({ path: rec.path, from: rec.from, label: rec.label, kind: 'filled' }) }, 'See in intake') : null) : null,
-    rec.key ? h('span', { class: 'need-where', hidden: true }) : null,
-    h('p', { class: 'need-note', hidden: true })));
-  rowNodes.set(rec, { node: item, ctx: { tabId, page, carrier }, tag: kind === 'intake' ? null : tag, shown: { tag: head.tag, note: null, change: null } });
-  return item;
+  return { tag: kind === 'intake' ? null : tag, quiet: kind === 'intake' ? tag.title : null, title, quote, place,
+    seeTitle: kind === 'edited' ? 'Show what the intake said before your edit' : kind === 'derived' ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake' };
 }
 
-// What an item's row says the page shows now, and the options of a failed choice the panel can't
-// put in.
-function nowSaid(current) { return current ? ` On the page now: ${choiceSaid(current)}.` : ''; }
-function optionsSaid(list) { return list?.length ? `Options: ${list.slice(0, 25).join(' · ')}${list.length > 25 ? ' · …' : ''}` : ''; }
-
-// One item left for the agent (renderReport): why, and its choices where the panel may put the
-// agent's pick in (agentPickable; the AI's suggestion joins them, renderAi), with Show on page and
-// Mark done. `rec`: its row (needRecord); the first one starts open.
-function needRow(rec, { tabId, page, carrier }) {
-  const { x, label } = rec;
-  const ctx = { tabId, page, carrier };
-  const head = rowHead(rec);
-  // A pick on the AI's own choice accepts its suggestion (applyAi).
-  const onPick = (choice, button) => (rec.aiAccept && choice === rec.aiPick ? rec.aiAccept(button) : agentAnswer(rec, x, choice, ctx, button));
-  const choices = rec.pickable ? choiceList(rec.options, { current: rec.pressed, aiPick: rec.aiPick, onPick })
-    : h('p', { class: 'row-say' }, x.key || x.action ? 'Answer it on the page, then mark it done.' : 'Do it on the rater page.');
-  // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
-  const show = x.key ? h('button', { class: 'ghost show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
-    'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(rec, x, tabId, page, carrier) }, 'Show on page') : null;
-  // A helper's reminder has no field. One the carrier marks `markable` (Progressive's Rates on an NTL
-  // quote with cargo) carries the helper's own id (`action`), and its Mark done marks the helper done
-  // (markActionDone); the others (NTL still on the quote, a vehicle tile) are settled on the page.
-  const actionId = x.key ? null : x.action ?? null;
-  const done = x.key ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page',
-    'aria-label': `Mark done: ${label}`, onclick: () => markDone(rec, x.key, tabId, page, x) }, 'Mark done')
-    : actionId ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You did it on the page: the panel stops waiting on it for this quote',
-      'aria-label': `Mark done: ${label}`, onclick: () => markActionDone(rec, actionId, tabId, page, x) }, 'Mark done') : null;
-  // `field` and `offpage`: the label the kit tells rows of one question apart by, and an item the
-  // fill knew is off screen for now (checkItems keeps it).
-  const item = h('div', { class: rowClass(rec), tabindex: '-1',
-    dataset: { need: needId(rec), key: rec.key, field: rec.field, offpage: rec.offPage ? '1' : '', icon: rec.icon, wait: rec.wait, finish: rec.finish ? '1' : '' } },
-    h('button', { type: 'button', class: 'row-head', 'aria-expanded': String(rec.open), onclick: () => toggleRow(rec) },
-      h('span', { class: 'row-icon', 'aria-hidden': 'true' }, head.icon),
-      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, label), h('span', { class: 'row-value' }, head.value))),
-    h('div', { class: 'row-body', hidden: !rec.open },
-      h('p', { class: 'why' }, x.why, h('span', { class: 'page-now' }, nowSaid(rec.now))),
-      h('div', { class: 'ai-slot' }),
-      choices,
-      rec.offered ? h('div', { class: 'options', hidden: !rec.offered.length }, optionsSaid(rec.offered)) : null,
-      h('div', { class: 'row-actions' }, show, done),
-      show ? h('span', { class: 'need-where', hidden: true }) : null,
-      // Empty while the item is open: what settled it, once it is (settleNeed), or why the page
-      // didn't take a pick (agentAnswer).
-      h('p', { class: 'need-note', hidden: true })));
-  rowNodes.set(rec, { node: item, ctx, tag: null, shown: { tag: head.tag, note: null, options: rec.options, pressed: rec.pressed, aiPick: rec.aiPick, onPick } });
-  return item;
+// The report's list of answers and items (renderReport), drawn by React from the report's records
+// (report-view.jsx), its buttons doing what rowActs says, on the report's own tab and page (`ctx`).
+function rowsHost(entry, ctx) {
+  const host = h('div', { class: 'rows' });
+  entry.unmountRows = mountRows(host, entry, ctx, rowActs);
+  return host;
 }
 
-// Draws a row again from its record, in place: its classes, head, note and what Show on page said;
-// an item's page answer, options and choices (the pressed one, the AI's pick); an answer's word on
-// what the page shows now and Change answer's choices. A part that didn't change isn't drawn again,
-// so the button the agent is on keeps its focus. The AI's slot is the AI's (renderAi).
+// Follow-up answers on the report shown (autoFill), at the end of its list, marked new: a list
+// begun for them where the report had none.
+function appendRows(rows, ctx) {
+  const entry = state.reportFor;
+  const recs = rows.map((row) => answerOf({ ...row, fresh: true }));
+  entry.list = [...(entry.list ?? []), ...recs];
+  if (entry.unmountRows) state.rowsDrawn = (state.rowsDrawn ?? 0) + 1;
+  else $('report').append(rowsHost(entry, ctx));
+  return recs;
+}
+
+// A row's record changed: the report's list draws it again (report-view.jsx), that row only.
 function drawRow(rec) {
-  const drawn = rowNodes.get(rec);
-  if (!drawn) return;
-  const { node: item, ctx, shown } = drawn;
-  item.className = rowClass(rec);
-  item.hidden = !!rec.gone;
-  const head = rowHead(rec, drawn.tag);
-  const top = item.querySelector('.row-head');
-  top.setAttribute('aria-expanded', String(!!rec.open));
-  top.querySelector('.row-icon').textContent = head.icon;
-  top.querySelector('.row-value').textContent = head.value;
-  if (head.tag !== shown.tag) {
-    top.querySelector('.tag')?.remove();
-    if (head.tag) top.append(tagNode(head.tag));
-    shown.tag = head.tag;
-  }
-  item.querySelector('.row-body').hidden = !rec.open;
-  if (rec.note !== shown.note) {
-    const note = item.querySelector('.need-note');
-    note.hidden = !rec.note;
-    note.classList.toggle('bad', !!rec.note?.bad);
-    note.replaceChildren(...(rec.note ? [rec.note.text, rec.note.undo ? h('button', { type: 'button', class: 'link small', onclick: rec.note.undo }, 'Undo') : null].filter(Boolean) : []));
-    shown.note = rec.note;
-  }
-  const where = item.querySelector('.need-where');
-  if (where) {
-    where.hidden = !rec.where;
-    where.textContent = rec.where ?? '';
-  }
-  if (rec.type === 'answer') {
-    const now = item.querySelector('.kv-now');
-    if (now) {
-      now.hidden = !rec.changed;
-      now.textContent = rec.changed ?? '';
-    }
-    if (rec.change !== shown.change) {
-      const { change } = rec;
-      item.querySelector('.change-slot').replaceChildren(...(change ? [h('p', { class: 'why' }, 'Pick the answer to put in instead:'),
-        choiceList(change.options, { current: change.current, onPick: (choice, button) => agentAnswer(rec, change.x, choice, ctx, button) })] : []));
-      shown.change = change;
-    }
-    return;
-  }
-  // Settled by the agent (answered, put in, marked done): nothing left to mark.
-  const done = item.querySelector('.mark-done');
-  if (done) done.hidden = ['answered', 'picked', 'marked'].includes(rec.settled);
-  item.querySelector('.page-now').textContent = nowSaid(rec.now);
-  const offered = item.querySelector('.options');
-  if (offered && rec.offered) {
-    offered.textContent = optionsSaid(rec.offered);
-    offered.hidden = !rec.offered.length;
-  }
-  if (!rec.pickable) return;
-  // Other choices: drawn again. The same: only which one is pressed, and the AI's pick.
-  if (rec.options !== shown.options) {
-    item.querySelector('.opts, .opt-select').replaceWith(choiceList(rec.options, { current: rec.pressed, aiPick: rec.aiPick, onPick: shown.onPick }));
-    Object.assign(shown, { options: rec.options, pressed: rec.pressed, aiPick: rec.aiPick });
-    return;
-  }
-  if (rec.pressed !== shown.pressed) {
-    for (const b of item.querySelectorAll('.opt-btn')) b.setAttribute('aria-pressed', String(b.dataset.choice === rec.pressed));
-    const select = item.querySelector('.opt-select select');
-    if (select) select.value = rec.pressed != null && rec.options.includes(rec.pressed) ? rec.pressed : '';
-    shown.pressed = rec.pressed;
-  }
-  if (rec.aiPick !== shown.aiPick) {
-    for (const b of item.querySelectorAll('.opt-btn')) {
-      const pick = b.dataset.choice === rec.aiPick;
-      b.classList.toggle('ai-pick', pick);
-      b.querySelector('.ai-badge')?.remove();
-      if (pick) b.append(h('span', { class: 'ai-badge' }, 'AI pick'));
-    }
-    for (const o of item.querySelectorAll('.opt-select option')) if (o.value) o.textContent = `${choiceSaid(o.value)}${o.value === rec.aiPick ? ' (AI pick)' : ''}`;
-    shown.aiPick = rec.aiPick;
-  }
+  rec.v = (rec.v ?? 0) + 1;
+  state.rowsDrawn = (state.rowsDrawn ?? 0) + 1;
 }
+// drawRow, drawn before it returns: for the focus or scrolling that follows.
+function drawRowNow(rec) { flushSync(() => drawRow(rec)); }
 
 // The slot on an item's row where the AI's suggestion goes (renderAi), while the row is drawn.
-function aiSlotOf(rec) { return rowNodes.get(rec)?.node.querySelector('.ai-slot') ?? null; }
+function aiSlotOf(rec) { return aiSlots.get(rec) ?? null; }
 
-// The choices the panel may put in for the agent: buttons, or a list past six; the page's answer now
-// pressed, and the AI's pick marked. `onPick(choice, button)`.
-function choiceList(options, { current = null, aiPick = null, onPick }) {
-  if (options.length <= 6) {
-    return h('div', { class: 'opts', role: 'group', 'aria-label': 'Answers' }, options.map((o) => h('button', { type: 'button', class: o === aiPick ? 'opt-btn ai-pick' : 'opt-btn',
-      'aria-pressed': String(o === current), dataset: { choice: o }, onclick: (e) => onPick(o, e.currentTarget) }, h('span', {}, choiceSaid(o)),
-    o === aiPick ? h('span', { class: 'ai-badge' }, 'AI pick') : null)));
-  }
-  const select = h('select', { 'aria-label': 'Answer' }, h('option', { value: '' }, 'Choose…'),
-    options.map((o) => h('option', { value: o, selected: o === current }, `${choiceSaid(o)}${o === aiPick ? ' (AI pick)' : ''}`)));
-  return h('div', { class: 'opt-select' }, select,
-    h('button', { type: 'button', class: 'ghost', onclick: (e) => { if (select.value) onPick(select.value, e.currentTarget); } }, 'Put it in'));
+// What a row's buttons do (report-view.jsx). Mark done: an item's field, or a helper's reminder by
+// its helper's id (`action`: one the carrier marks markable, Progressive's Rates on an NTL quote with
+// cargo); an item with neither has no Mark done. A pick on the AI's own choice accepts its
+// suggestion (applyAi); Change answer's pick goes in as the agent's.
+function markRow(rec, { tabId, page }) {
+  const { x } = rec;
+  if (x.key) return markDone(rec, x.key, tabId, page, x);
+  if (x.action) return markActionDone(rec, x.action, tabId, page, x);
 }
+function showRow(rec, { tabId, page, carrier }) { return showOnPage(rec, rec.x, tabId, page, carrier); }
+function pickRow(rec, choice, ctx, button = null) {
+  if (rec.type === 'answer') return rec.change ? agentAnswer(rec, rec.change.x, choice, ctx, button) : undefined;
+  return rec.aiAccept && choice === rec.aiPick ? rec.aiAccept(button) : agentAnswer(rec, rec.x, choice, ctx, button);
+}
+function seeRow(rec) { return openPdf({ path: rec.path, from: rec.from, label: rec.label, kind: 'filled' }); }
+const rowActs = {
+  toggleRow: (rec) => toggleRow(rec), markRow, showRow, pickRow, changeRow: (rec, ctx) => changeAnswer(rec, ctx), seeRow,
+  node: (rec, el) => { if (el) rowNodes.set(rec, el); else rowNodes.delete(rec); },
+  slot: (rec, el) => { if (el) aiSlots.set(rec, el); else aiSlots.delete(rec); },
+};
 
 // Opens a row of the page's list in place (closing the one open before), or closes it.
 function toggleRow(rec, open = !rec.open) {
@@ -1180,8 +1071,8 @@ function showNextNeed() {
   if (!open.length) return;
   const now = list.find((r) => r.open);
   const next = (now && open.find((n) => n !== now && list.indexOf(n) > list.indexOf(now))) || open.find((n) => n !== now) || open[0];
-  toggleRow(next, true);
-  const node = rowNodes.get(next)?.node;
+  flushSync(() => toggleRow(next, true));
+  const node = rowNodes.get(next);
   node?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
   node?.querySelector('.row-head')?.focus({ preventScroll: true });
 }
@@ -1206,8 +1097,8 @@ async function changeAnswer(rec, { tabId, page, carrier }) {
     return;
   }
   rec.change = { x, options: x.options, current: x.current };
-  drawRow(rec);
-  rowNodes.get(rec)?.node.querySelector('.change-slot')?.querySelector('button, select')?.focus();
+  drawRowNow(rec);
+  rowNodes.get(rec)?.querySelector('.change-slot')?.querySelector('button, select')?.focus();
 }
 
 // The agent's pick for a question, from its row (an item left for them, or Change answer): put in
@@ -1443,4 +1334,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, aiSlotOf, answerRow, answeredOnPage, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, needRow, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };
+export { afterFill, aiSlotOf, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };

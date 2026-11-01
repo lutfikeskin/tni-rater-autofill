@@ -1,17 +1,21 @@
 // The side panel's page list as data: each row of a page's report (an answer that went in, or an
 // item left for the agent) is a record in its report's `list`, holding what the row shows and what
 // happened to it since the fill (settled, changed on the page, gone, opened). The panel changes the
-// records and the report draws them (fill.js drawRow); what is left, the filters' counts and the
-// dock read them, not the drawing. No DOM.
+// records, drawRow (fill.js) has the report's React list draw them (report-view.jsx); what is left,
+// the filters' counts and the dock read them, not the drawing. No DOM.
 // One part of the panel; sidepanel.js wires the parts together.
-import { agentPickable, choicesOf, finishLeftOk } from './report-model.js';
+import { agentPickable, choiceSaid, choicesOf, finishLeftOk } from './report-model.js';
+
+// Each row's key in its list, for as long as the panel is open.
+let rowIds = 0;
 
 // An answer in the page's list (groupRows' row): `kind` is its source ('intake', 'derived',
 // 'standard', 'edited'), or what it is when it's no answer of ours ('clicked', 'page', 'yours',
 // 'changed'). `changed`: what the page shows now where that isn't the fill's answer (checkAnswers);
-// `change`: the choices Change answer offers ({ x, options, current }).
+// `change`: the choices Change answer offers ({ x, options, current }); `source`: where it came
+// from, as the row says it (answerSource).
 function answerRecord(row) {
-  return { ...row, type: 'answer', kind: row.kind ?? (row.edited ? 'edited' : row.standard ? 'standard' : row.from ? 'derived' : 'intake'),
+  return { ...row, id: ++rowIds, type: 'answer', kind: row.kind ?? (row.edited ? 'edited' : row.standard ? 'standard' : row.from ? 'derived' : 'intake'),
     open: false, gone: false, changed: null, change: null, head: null, note: null, where: null };
 }
 
@@ -25,7 +29,7 @@ function needRecord(x, carrier, page, open = false) {
   const pickable = agentPickable(x, carrier, page);
   const kind = x.mark === 'failed' ? 'failed' : pickable ? 'need' : 'yours';
   const now = x.controlKind !== 'text' && x.current && !x.offPage ? x.current : null;
-  return { type: 'need', x, label: x.label || x.name, key: x.key ?? '', field: x.label ?? '', offPage: !!x.offPage, kind, pickable,
+  return { id: ++rowIds, type: 'need', x, label: x.label || x.name, key: x.key ?? '', field: x.label ?? '', offPage: !!x.offPage, kind, pickable,
     icon: { failed: '!', need: '?', yours: '•' }[kind], wait: { failed: 'Couldn’t fill', need: 'Needs your answer', yours: 'Left for you' }[kind],
     finish: finishLeftOk(carrier, x), options: [...new Set(choicesOf(x.controlKind, x.options))], offered: !pickable && x.mark === 'failed' ? x.options ?? [] : null,
     now, pressed: now, open, gone: false, settled: null, pending: false, head: null, note: null, where: null, ai: null, aiPick: null, aiAccept: null };
@@ -90,6 +94,15 @@ function showLive(rec, live) {
   rec.pressed = current;
 }
 
+// What an item's row says the page shows now, and the options of a failed choice the panel can't
+// put in.
+function nowSaid(current) { return current ? ` On the page now: ${choiceSaid(current)}.` : ''; }
+function optionsSaid(list) { return list?.length ? `Options: ${list.slice(0, 25).join(' · ')}${list.length > 25 ? ' · …' : ''}` : ''; }
+
+// Where an item the panel can't answer is answered: on the page, then marked done here where it can
+// be (a field, or a helper's reminder that names its helper); else on the rater page only.
+function needSay(rec) { return rec.x.key || rec.x.action ? 'Answer it on the page, then mark it done.' : 'Do it on the rater page.'; }
+
 // What is left for the agent in a list: its items not settled since, a question gone from the page
 // not counted (it holds nothing); `otherLeft`, those the quote can't finish without.
 function leftOf(list = []) {
@@ -103,4 +116,4 @@ function listCounts(list = []) {
   return { all: list.length, needs, done: list.length - needs };
 }
 
-export { answerRecord, leftOf, listCounts, needId, needRecord, reopenRow, rowClass, rowHead, setHead, settleRow, showLive };
+export { answerRecord, leftOf, listCounts, needId, needRecord, needSay, nowSaid, optionsSaid, reopenRow, rowClass, rowHead, setHead, settleRow, showLive };

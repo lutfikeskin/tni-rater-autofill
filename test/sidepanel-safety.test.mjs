@@ -109,9 +109,9 @@ function extractFunction(name) {
         // step with the stops it may carry (tabStep, stopNoteFor: GEICO's stop steps), and the agent's
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
-        // panel's cards come along as they are (issueCard), and the report's rows as data with their
-        // drawing (report-rows.js, drawRow: nothing is drawn for a row the test didn't draw).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'tagNode', 'nowSaid', 'optionsSaid', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
+        // panel's cards come along as they are (issueCard), and the report's rows as data (report-rows.js,
+        // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -121,8 +121,12 @@ function extractFunction(name) {
         // elsewhere nothing is kept, unless the harness gives a store. So has the agent's change
         // after the quote's finishing action (noteChangedAfterDone): elsewhere nothing is marked. And
         // the chime when the quote is done (noteQuoteDone): elsewhere nothing sounds.
-        // The rows drawn (rowNodes) and Show on page's timers: the harness's, or none.
-        for (const map of ['rowNodes', 'whereTimers']) {
+        // The rows drawn (rowNodes), their AI slots (aiSlots) and Show on page's timers: the
+        // harness's, or none. A row's key (rowIds) counts on across the helpers that make rows, and
+        // a draw before the focus that follows (flushSync) is the draw itself.
+        if (/\browIds\b/.test(source) && !/let rowIds =/.test(source)) source += '\nvar rowIds = globalThis.rowIds ?? 0;';
+        if (/\bflushSync\(/.test(source)) source += '\nvar flushSync = globalThis.flushSync ?? ((fn) => fn());';
+        for (const map of ['rowNodes', 'aiSlots', 'whereTimers']) {
           if (new RegExp(`\\b${map}\\b`).test(source) && !new RegExp(`const ${map} =`).test(source)) source += `\nvar ${map} = globalThis.${map} ?? new WeakMap();`;
         }
         for (const kept of ['keepReport', 'forgetKeptReports', 'noteChangedAfterDone', 'noteQuoteDone']) {
@@ -391,7 +395,9 @@ test('the fill hands the kit the named-form check and what this tab\'s fills gav
 
 
 // renderReport's sandbox: the page's list (its box), putReport keeping the report for its page (here:
-// showing it), and the rows built as the panel builds them (answerRow, needRow, agentPickable).
+// showing it), and the report's list as React gets it (rowsHost): its records, made as the panel
+// makes them (answerOf, needRecord, agentPickable). Their drawing is report-view.jsx's
+// (test/panel/report-rows.test.jsx).
 function reportHarness(state, extra = {}) {
   const box = { className: '', children: [], replaceChildren(...children) { this.children = children; } };
   const context = {
@@ -400,9 +406,12 @@ function reportHarness(state, extra = {}) {
     h: (tag, props, ...children) => ({ tag, props, children }),
     reportKey: (tabId, page) => `${tabId}|${page}`,
     putReport(entry, nodes) { box.replaceChildren(...nodes); state.reportFor = entry; },
+    rowsHost: (entry, ctx) => ({ tag: 'div', props: { class: 'rows' }, children: [], entry, ctx }),
     ...extra,
   };
-  vm.runInNewContext(['renderReport', 'answerRow', 'needRow', 'agentPickable', 'choiceSaid', 'choiceList', 'pdfPageSaid'].map(extractFunction).join('\n'), context);
+  // What a row says (nowSaid, needSay) and what its buttons do (markRow, showRow, seeRow), as
+  // report-view.jsx has them.
+  vm.runInNewContext(['renderReport', 'agentPickable', 'choiceSaid', 'pdfPageSaid', 'nowSaid', 'needSay', 'markRow', 'showRow', 'seeRow'].map(extractFunction).join('\n'), context);
   return { context, box };
 }
 // Every node under `node` (children and arrays of them), for finding buttons and text.
@@ -412,17 +421,22 @@ const nodesIn = (node, out = []) => {
   return out;
 };
 // What an opened row says its source is ("Intake, page 2").
-const srcTitle = (row) => nodesIn(row).find((n) => n.props?.class === 'src-title')?.children[0] ?? null;
-// The report's list of answers and items, in order.
-const rowsOf = (box) => nodesIn(box.children.find((n) => n?.props?.class === 'rows')?.children ?? []).filter((n) => /^row(\s|$)/.test(n.props?.class ?? ''));
+const srcTitle = (rec) => rec.source?.title ?? null;
+// The report's list of answers and items, in order: the records its rows are drawn from.
+const rowsOf = (box) => [...box.children.find((n) => n?.props?.class === 'rows')?.entry.list ?? []];
+// The report's tab, page and carrier, as its rows' buttons get them.
+const rowsCtx = (box) => box.children.find((n) => n?.props?.class === 'rows')?.ctx;
+// A row's head as report-view.jsx draws it (rowHead).
+const rowHeadOf = (() => {
+  const context = {};
+  vm.runInNewContext(`${extractFunction('rowHead')}\nglobalThis.rowHead = rowHead;`, context);
+  return context.rowHead;
+})();
 // A row as the agent reads it: its label, what it says, its source tag (none for an intake answer,
 // whose source is said only to screen readers: `quiet`), and whether it needs them.
-const rowSaid = (row) => {
-  const head = row.children.find((n) => n?.props?.class === 'row-head');
-  const text = head.children.find((n) => n?.props?.class === 'row-text');
-  const tag = head.children.find((n) => /^tag\b/.test(n?.props?.class ?? ''));
-  const quiet = head.children.find((n) => n?.props?.class === 'sr-only');
-  return { label: text.children[0].children[0], value: text.children[1].children[0], tag: tag ? tag.children[0] : null, quiet: quiet ? quiet.children[0] : null, need: /\bneed\b/.test(row.props.class) };
+const rowSaid = (rec) => {
+  const head = rowHeadOf(rec, rec.source?.tag ?? null);
+  return { label: rec.label, value: head.value, tag: head.tag?.text ?? null, quiet: rec.source?.quiet ?? null, need: rec.type === 'need' };
 };
 
 test('fill report omits absent sections without rendering null text', () => {
@@ -503,7 +517,7 @@ test('fill report lists every answer and item in the page order of their fields,
   assert.deepEqual(rows.map(rowSaid).filter((r) => !r.need && !r.tag).map((r) => r.quiet), Array(9).fill('From the intake'),
     'an intake answer has no tag to read past, and says where it came from to screen readers');
   assert.equal(context.state.reportFor.filled, 9);
-  assert.deepEqual(rows.filter((r) => /\bopen\b/.test(r.props.class)).map((r) => rowSaid(r).label), ['Unfamiliar'], 'the first item starts open');
+  assert.deepEqual(rows.filter((r) => r.open).map((r) => rowSaid(r).label), ['Unfamiliar'], 'the first item starts open');
 });
 
 // Live run 2026-10-09: AmWINS' auto symbol showed as nine rows ("1 standard unchecked", …). One
@@ -580,11 +594,12 @@ test('fill report links each answer to its source on the intake PDF', () => {
     { stepId: 1, label: 'Company', path: 'applicant.name', shown: 'X' },
     { stepId: 2, label: 'Waiver', path: 'amwins.q9', shown: 'NONE', standard: true }] };
   context.renderReport([frame], { plan: [{ id: 0, from: ['applicant.dot'] }] });
-  const links = () => rowsOf(box).map((row) => nodesIn(row).find((n) => /\bsrc\b/.test(n.props?.class ?? '') && n.tag === 'button') ?? null);
-  assert.equal(links()[0].children[0], 'See in intake');
+  // A row with a place on the PDF has See in intake (report-view.jsx), which opens it there (seeRow).
+  const links = () => rowsOf(box).map((rec) => (rec.source?.place ? rec : null));
+  assert.ok(links()[0]);
   assert.deepEqual(rowsOf(box).map(rowSaid).map((r) => r.tag), ['Worked out', null, 'TNI standard'], 'an intake answer: no tag');
   assert.equal(srcTitle(rowsOf(box)[1]), 'Intake', 'a one-page intake: no page number');
-  links()[0].props.onclick();
+  context.seeRow(links()[0]);
   assert.deepEqual(JSON.parse(JSON.stringify(opened)), [{ path: 'amwins.q4', from: ['applicant.dot'], label: 'DOT number', kind: 'filled' }]);
   assert.equal(links()[1], null, 'a path the PDF has no field for: no link');
   assert.equal(links()[2], null, 'a standard: tagged, no link');
@@ -657,7 +672,7 @@ test('Undo after Mark done gives the field back only while the agent hasn\'t ans
   const item = { type: 'need', kind: 'need', icon: '?', wait: 'Needs your answer', settled: 'answered', ...answered };
   let counted = 0;
   const context = { state, persistAgentKeys: async () => {}, pageOf: (url) => url, recount: () => { counted++; } };
-  vm.runInNewContext(extractFunction('undoMarkDone'), context);
+  vm.runInNewContext(['undoMarkDone', 'rowClass', 'rowHead'].map(extractFunction).join('\n'), context);
   await context.undoMarkDone(item, '200F', 1, 'Rates');
   assert.deepEqual([...state.agentKeys.get('Rates')], ['200F'], 'answered on the page since: the agent\'s edit stays protected');
   assert.deepEqual([item.settled, item.note, counted], ['answered', answered.note, 0]);
@@ -693,18 +708,11 @@ test('each item left for the agent has a labelled Mark done bound to its field a
   const clicks = [];
   const { context, box } = reportHarness({ tab: { id: 7, url: 'Rates' } }, { markDone: (item, ...args) => clicks.push(args) });
   context.renderReport([{ fields: 3, halted: true, unknown: [{ key: '200F', label: 'Vehicle field' }], failed: [{ key: 'failed', label: 'Rejected', reason: 'invalid' }], noData: [{ key: 'missing', label: 'Missing' }] }]);
-  const buttons = [];
-  const visit = (node) => {
-    if (Array.isArray(node)) return node.forEach(visit);
-    if (!node || typeof node !== 'object') return;
-    if (node.tag === 'button' && /\bmark-done\b/.test(node.props.class)) buttons.push(node);
-    visit(node.children);
-  };
-  visit(box.children);
-  assert.equal(buttons.length, 3);
-  assert.deepEqual(buttons.map((b) => b.props['aria-label']), ['Mark done: Vehicle field', 'Mark done: Rejected', 'Mark done: Missing']);
-  assert.ok(buttons.every((b) => b.children[0] === 'Mark done'));
-  buttons.forEach((button) => button.props.onclick());
+  // Each has a field, so its row has a Mark done labelled with it (report-view.jsx, test/panel),
+  // which marks it on the report's tab and page (markRow).
+  const needs = rowsOf(box).filter((r) => r.type === 'need');
+  assert.deepEqual(needs.map((r) => [r.label, r.x.key]), [['Vehicle field', '200F'], ['Rejected', 'failed'], ['Missing', 'missing']]);
+  needs.forEach((rec) => context.markRow(rec, rowsCtx(box)));
   assert.deepEqual(clicks.map((c) => c.slice(0, 3)), [['200F', 7, 'Rates'], ['failed', 7, 'Rates'], ['missing', 7, 'Rates']]);
   assert.deepEqual(clicks.map((c) => c[3].key), ['200F', 'failed', 'missing'], 'and the row, for the log of what was dismissed');
 });
@@ -730,17 +738,16 @@ test('the page list keeps items in the page order of their fields, the first ope
   assert.deepEqual(rows.map((r) => rowSaid(r).label), ['Kept', 'Check', 'Failed', 'Differs', 'Missing', 'Required', 'Unfamiliar', 'Other frame', 'No place', 'Helper']);
   const needs = rows.filter((r) => rowSaid(r).need);
   assert.deepEqual(needs.map((r) => rowSaid(r).label), ['Check', 'Failed', 'Differs', 'Missing', 'Required', 'Unfamiliar', 'Other frame', 'No place', 'Helper']);
-  assert.deepEqual(needs.map((r) => /\bopen\b/.test(r.props.class)), [true, ...Array(8).fill(false)], 'only the first item starts open');
-  assert.deepEqual(needs.map((r) => r.children[1].props.hidden), [false, ...Array(8).fill(true)]);
+  assert.deepEqual(needs.map((r) => r.open), [true, ...Array(8).fill(false)], 'only the first item starts open');
   assert.equal(box.children.some((c) => /\bneeds-say\b/.test(c?.props?.class ?? '')), false, 'no line above the list');
   // An item with a field, or a helper's reminder, can be marked done here; one with neither (a
   // helper the fill couldn't click) has no Mark done, so its row says only where to do it (the
   // maintainer, 2026-10-26: a row said "mark it done here" with no button to press).
-  const say = (r) => nodesIn(r).find((n) => n.props?.class === 'row-say')?.children[0];
+  const say = (r) => (r.pickable ? undefined : context.needSay(r));
   assert.deepEqual(needs.map(say), [...Array(8).fill('Answer it on the page, then mark it done.'), 'Do it on the rater page.'],
     'an item the panel can not answer says where to answer it');
-  const notes = needs.map((r) => r.children[1].children.at(-1));
-  assert.ok(notes.every((note) => note.props.class === 'need-note' && note.props.hidden === true && !note.children.length), 'each note empty and hidden while open');
+  // Its note empty, so hidden (report-view.jsx), while it is open.
+  assert.ok(needs.every((r) => r.note === null), 'each note empty while open');
   assert.equal(context.state.reportFor.left, 9);
 });
 
@@ -775,16 +782,11 @@ test('each item with a field has a labelled Show on page bound to its field, tab
   const carrier = { id: 'progressive', world: 'MAIN' };
   const { context, box } = reportHarness({ tab: { id: 7, url: 'Rates', carrier } }, { showOnPage: (item, x, ...rest) => calls.push([x.key, x.label, ...rest]) });
   context.renderReport([{ fields: 2, unknown: [{ key: '200F', label: 'Vehicle field', order: 0 }], noData: [{ key: null, label: 'Helper', note: 'Click it yourself.' }] }]);
-  const buttons = [];
-  const visit = (node) => {
-    if (Array.isArray(node)) return node.forEach(visit);
-    if (!node || typeof node !== 'object') return;
-    if (node.tag === 'button' && /\bshow-on-page\b/.test(node.props.class)) buttons.push(node);
-    visit(node.children);
-  };
-  visit(box.children);
-  assert.deepEqual(buttons.map((b) => [b.props['aria-label'], b.children[0]]), [['Show on page: Vehicle field', 'Show on page']], 'none for an item without a field');
-  buttons[0].props.onclick();
+  // An item with a field has Show on page, labelled with it (report-view.jsx, test/panel); one
+  // without has none. It shows the field on the report's tab and page (showRow).
+  const shown = rowsOf(box).filter((r) => r.type === 'need' && r.x.key);
+  assert.deepEqual(shown.map((r) => r.label), ['Vehicle field'], 'none for an item without a field');
+  context.showRow(shown[0], rowsCtx(box));
   assert.deepEqual(calls, [['200F', 'Vehicle field', 7, 'Rates', carrier]]);
 });
 
@@ -1073,13 +1075,13 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
   const state = { tab: { id: 1, url: '/quote', carrier: { id: 'geico' } }, intake: { record: {} }, active: { vehicles: 0 }, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set(),
     reports: new Map([['v0', {}]]), reportFor: {} };
   let next = 1;
-  // The page's list on the report shown, where a follow-up's answers join it.
-  const appended = [];
-  const list = { append: (...rows) => appended.push(...rows) };
+  // The page's list on the report shown, where a follow-up's answers join it (appendRows): one begun
+  // for them, the report having none.
+  const hosts = [];
   const context = { watchFill: () => () => {},
-    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {}, querySelector: (sel) => (sel === ':scope > .rows' ? list : null) }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
+    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {} }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
-    renderReport: (result) => rendered.push(result), recordLayout: () => {}, renderSteps: () => {}, announce: () => {}, h: () => ({}), answerRow: (row) => row,
+    renderReport: (result) => rendered.push(result), recordLayout: () => {}, renderSteps: () => {}, announce: () => {}, rowsHost: (entry) => { hosts.push(entry); return {}; },
     fillEvents: () => [], isStandard, knownStep, fillSkip: () => [], fillSkipBy: () => null, tabMaps: () => ({ agentKeys: new Map() }), showFinish: () => {},
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
     runAssist: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {}, fillProblem() {}, reportShown: () => true,
@@ -1088,13 +1090,14 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
     reportKey: (tabId, page, carrier, active = state.active) => `v${active.vehicles}`,
   };
   context.renderSteps ??= () => {};
-  vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
+  vm.runInNewContext([extractFunction('assistAfterFill'), extractFunction('autoFill'), extractFunction('appendRows')].join('\n'), context);
   await context.autoFill('/quote');
   assert.equal(rendered.length, 1, 'vehicle 2 has no report yet: shown');
   state.reports.set('v1', {});
   await context.autoFill('/quote');
   assert.equal(rendered.length, 1, 'a follow-up on vehicle 2: a line on its report');
-  assert.deepEqual(appended.map((row) => [row.label, row.fresh]), [['VIN', true]], 'its answer joins the list, marked new');
+  assert.deepEqual(plain(state.reportFor.list.map((row) => [row.label, row.fresh, row.type])), [['VIN', true, 'answer']], 'its answer joins the list, marked new');
+  assert.deepEqual(hosts, [state.reportFor], 'in a list begun for it');
   assert.equal(state.reportFor.filled, 1, 'and is counted');
   next = 2;
   await context.autoFill('/quote');
@@ -2188,13 +2191,13 @@ test('a kept report is made again as the page is now: a question gone is not lis
   const needs = rowsOf(box).filter((r) => rowSaid(r).need);
   assert.deepEqual(needs.map((r) => rowSaid(r).label), ['Uninsured Motorist Bodily Injury (includes Underinsured)']);
   assert.deepEqual([panel.state.reportFor.left, panel.state.reportFor.otherLeft], [1, 1]);
-  const why = nodesIn(needs[0]).find((n) => n.props?.class === 'why');
-  assert.deepEqual(why.children.flat().map((n) => (typeof n === 'string' ? n : n.children.join(''))), ['Couldn\'t fill: no option matches "$100,000/$300,000"', ' On the page now: $300,000 Combined Single Limit.']);
+  // Its why, then what the page shows now (report-view.jsx).
+  assert.deepEqual([needs[0].x.why, panel.nowSaid(needs[0].now)], ['Couldn\'t fill: no option matches "$100,000/$300,000"', ' On the page now: $300,000 Combined Single Limit.']);
   // The other step's rows say nothing of their page until it is in front and read.
   const { context: later, box: laterBox } = reportHarness({ tab: { id: 7, url: '/quote', carrier: { id: 'geico' } } });
   later.renderReport(other.frames, { tabId: 7, page: '/quote', restoredAt: 50 });
   const pd = rowsOf(laterBox).find((r) => rowSaid(r).label === 'Property Damage Liability (PD)');
-  assert.deepEqual(nodesIn(pd).find((n) => n.props?.class === 'page-now').children, ['']);
+  assert.equal(later.nowSaid(pd.now), '');
 });
 
 // The answers listed hold to it too: one whose question a later answer took off the page has no row
@@ -5167,8 +5170,9 @@ test('a follow-up fill lists its answers with their sources and groups, as the r
   const rows = context.groupRows([{ label: 'Name', answer: true }, { label: '1', group: 'Symbols', stepId: 'g1', answer: true, standard: true }, { label: '2', group: 'Symbols', stepId: 'g2', answer: false, standard: true }], ticks);
   assert.deepEqual(JSON.parse(JSON.stringify(rows)), [{ label: 'Name', answer: true },
     { label: 'Symbols', grouped: 'Symbols', ticked: ['1'], standard: true, answer: true, value: '1' }]);
-  // Each a row of the report shown (answerRecord), drawn at the end of its list, marked new.
-  assert.match(extractFunction('autoFill'), /answerSources\(plan\)[\s\S]{0,600}groupRows\(added\.map[\s\S]{0,600}answerRecord\(\{ \.\.\.row, fresh: true \}\)[\s\S]{0,300}state\.reportFor\.list = \[\.\.\.\(state\.reportFor\.list \?\? \[\]\), \.\.\.recs\];[\s\S]{0,200}list\.append\(\.\.\.recs\.map\(\(rec\) => answerRow\(rec, rctx\)\)\);/);
+  // Each a row of the report shown (answerOf), drawn at the end of its list, marked new (appendRows).
+  assert.match(extractFunction('autoFill'), /answerSources\(plan\)[\s\S]{0,600}groupRows\(added\.map[\s\S]{0,600}appendRows\(\[\.\.\.answers, /);
+  assert.match(extractFunction('appendRows'), /const recs = rows\.map\(\(row\) => answerOf\(\{ \.\.\.row, fresh: true \}\)\);\s+entry\.list = \[\.\.\.\(entry\.list \?\? \[\]\), \.\.\.recs\];/);
   assert.match(extractFunction('renderReport'), /answerSources\(ctx\.plan\)[\s\S]{0,40}const doneRows = groupRows\(\[/);
 });
 
@@ -7407,10 +7411,11 @@ test('the panel offers to put in the agent\'s pick only for a choice it may answ
   const { context: report, box } = reportHarness({ tab: { id: 1, url: 'Quote', carrier } }, { neverReason });
   report.renderReport([{ fields: 2, filled: [], kept: [], failed: [], leftRequired: [], actions: [],
     noData: [{ ...radio, order: 0 }, { ...radio, key: 'p', label: 'Payment plan', order: 1 }] }]);
+  // A pickable row's choices are drawn as buttons, another's says where to answer it (report-view.jsx).
   const [pickable, payment] = rowsOf(box);
-  assert.deepEqual(nodesIn(pickable).filter((n) => n.props?.class === 'opt-btn').map((n) => n.props.dataset.choice), ['Yes', 'No']);
-  assert.equal(nodesIn(payment).some((n) => n.props?.class === 'opt-btn'), false);
-  assert.ok(nodesIn(payment).some((n) => n.props?.class === 'row-say'));
+  assert.deepEqual(plain([pickable.pickable, pickable.options]), [true, ['Yes', 'No']]);
+  assert.equal(payment.pickable, false);
+  assert.equal(report.needSay(payment), 'Answer it on the page, then mark it done.');
 });
 
 // The agent's pick from a row goes in through the same guarded path as an AI answer: only while
@@ -8800,12 +8805,16 @@ test('an edit of auto liability or NTL keeps the intake\'s NTL items in step', (
 // liability" item asking to be marked done, with no Mark done (a helper's reminder has no field). Its
 // Mark done marks the helper done for the tab, as a click of the fill's would, and can be undone.
 test('a helper\'s reminder has a Mark done that marks the helper done for the tab', async () => {
-  const src = extractFunction('needRow');
   // The review of PR #176: only a reminder the fill marks as markable (`action`, the helper's own
-  // scoped id), never one parsed from its path (ntlStillAdded's hold, a vehicle tile's `:0`).
-  assert.match(src, /const actionId = x\.key \? null : x\.action \?\? null;/);
-  assert.doesNotMatch(src, /x\.path\.slice\('action\.'/);
-  assert.match(src, /onclick: \(\) => markActionDone\(rec, actionId, tabId, page, x\) \}, 'Mark done'\)/);
+  // scoped id), never one parsed from its path (ntlStillAdded's hold, a vehicle tile's `:0`). Its
+  // row's Mark done (report-view.jsx: one for a field or an `action`) marks the helper (markRow).
+  const marks = [];
+  const row = { state: {}, markDone: (...a) => marks.push(['field', a[1]]), markActionDone: (...a) => marks.push(['action', a[1]]) };
+  vm.runInNewContext(extractFunction('markRow'), row);
+  const ctx = { tabId: 4, page: 'CoveragesRates' };
+  for (const x of [{ key: 'k', action: 'ignored' }, { key: null, action: 'ntlRates' }, { key: null, path: 'action.ntlRates' }]) row.markRow({ x }, ctx);
+  assert.deepEqual(marks, [['field', 'k'], ['action', 'ntlRates']], 'a field first; a reminder by its action; none from a path');
+  assert.doesNotMatch(extractFunction('markRow'), /x\.path\.slice\('action\.'/);
   const state = { tab: { id: 4, url: 'CoveragesRates' }, filling: false, doneActions: new Set(), intake: null };
   const persisted = [];
   let settled = null;

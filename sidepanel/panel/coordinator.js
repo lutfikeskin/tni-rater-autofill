@@ -16,14 +16,14 @@ import { $, forgetKeptReports, h, persistAgentKeys, persistDoneActions, persistU
 import { firstUnits, save } from './intake.js';
 import { checkShown, renderPickers, renderWarnings, showScreen } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
-import { afterFill, answerRow, assistAfterFill, fillPage, noteMissingUnit, pickListItem, renderReport, runKit, worldFor } from './fill.js';
+import { afterFill, appendRows, assistAfterFill, fillPage, noteMissingUnit, pickListItem, renderReport, runKit, worldFor } from './fill.js';
 import { pendingAi } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNameFor, unitScope } from './scope.js';
 import { fillCurrent, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded } from './fill-checks.js';
 import { DOCK_PHASES, phaseSaid } from './live.js';
 import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
-import { answerRecord, leftOf, listCounts } from './report-rows.js';
+import { leftOf, listCounts } from './report-rows.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -392,12 +392,7 @@ async function autoFill(page) {
         const rctx = { tabId, page, carrier };
         const { fromOf, groupOf, ticks, editedBy } = answerSources(plan);
         const answers = groupRows(added.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: isStandard(x, 'filled'), path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null })), ticks);
-        const recs = [...answers.map((row) => answerRecord({ ...row, fresh: true })),
-          ...frames.flatMap((f) => f.actions ?? []).map((a) => answerRecord({ label: 'Clicked', value: a.text || a.id, kind: 'clicked', fresh: true }))];
-        state.reportFor.list = [...(state.reportFor.list ?? []), ...recs];
-        let list = $('report').querySelector(':scope > .rows');
-        if (!list) { list = h('div', { class: 'rows' }); $('report').append(list); }
-        list.append(...recs.map((rec) => answerRow(rec, rctx)));
+        appendRows([...answers, ...frames.flatMap((f) => f.actions ?? []).map((a) => ({ label: 'Clicked', value: a.text || a.id, kind: 'clicked' }))], rctx);
         state.reportFor.filled = (state.reportFor.filled ?? 0) + answers.filter((row) => row.answer).length;
         renderSteps();
         announce(`Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically.`);
@@ -958,6 +953,9 @@ function reportShown() { return !!showReport(); }
 // A fill's report for its page: shown when that page is in front, else kept until it is.
 function putReport(entry, nodes) {
   showReport();
+  // The report it replaces: its list taken down (report-view.jsx).
+  const old = state.reports.get(entry.key);
+  if (old && old !== entry) old.unmountRows?.();
   state.reports.set(entry.key, entry);
   if (entry.key === currentReportKey()) {
     $('report').replaceChildren(...nodes);
@@ -969,7 +967,11 @@ function putReport(entry, nodes) {
 
 // Forgets the reports `drop` picks (all: a new or cleared client; a closed tab's; one page's).
 function dropReports(drop = () => true) {
-  for (const [key, entry] of state.reports) if (drop(entry)) state.reports.delete(key);
+  for (const [key, entry] of state.reports) {
+    if (!drop(entry)) continue;
+    state.reports.delete(key);
+    entry.unmountRows?.();
+  }
   forgetKeptReports(drop);
   if (state.reportFor && state.reports.get(state.reportFor.key) !== state.reportFor) {
     state.reportFor = null;
