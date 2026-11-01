@@ -352,6 +352,11 @@ const state = storeState({
   // front: why), and the carrier, state, stop, review and fill cards (issueSaid), each null while
   // it says nothing.
   cards: {},
+  // Step 1's checks (renderWarnings: the title, the cards, the cleanup notes), as checks-view.jsx
+  // draws them: null until an intake is checked. And the unit pickers above the page's answers
+  // (renderPickers), none until a page is about one of several.
+  checks: null,
+  pickers: [],
   // The file tools' question before the agent's work would go: 'replace' | 'clear' | 'new-quote',
   // and the button that asked, for focus on Cancel.
   fileConfirm: null,

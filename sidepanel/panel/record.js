@@ -13,6 +13,7 @@ import { refreshAnswers } from './fill.js';
 import { applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, ntlPrimaryEdited, renderAiSettings, reviewClaimsBox, reviewDriverGender } from './assistant.js';
 import { openDetails, openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { tabStep } from './scope.js';
+import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
 // Rendering the client record
@@ -33,7 +34,6 @@ function render() {
   $('client-meta').textContent = [st ? STATES[st] ?? st : null, n('drivers', 'driver'), n('vehicles', 'vehicle'),
     record.trailers.length ? n('trailers', 'trailer') : null].filter(Boolean).join(' · ');
   $('test-run').checked = !!state.intake.test;
-  $('details-count').textContent = `${stats.filled} answers`;
   $('open-pdf').hidden = !pdfAvailable();
   $('file-confirm').hidden = !state.fileConfirm;
   renderWarnings();
@@ -51,7 +51,8 @@ function showScreen() {
   $('settings').hidden = !settings;
   $('pdf-view').hidden = !(has && !settings && state.pdf);
   $('details-view').hidden = !(has && !settings && state.detailsOpen && !state.pdf);
-  for (const id of ['client-card', 'details-row']) $(id).setAttribute('aria-expanded', String(!!state.detailsOpen));
+  // (The checks' All client details row says it too: checks-view.jsx.)
+  $('client-card').setAttribute('aria-expanded', String(!!state.detailsOpen));
   $('home').hidden = settings || has;
   $('quote').hidden = settings || !has;
   $('check-view').hidden = settings || !has || state.view !== 'check';
@@ -117,6 +118,7 @@ function setFilter(filter) {
 
 // Step 1, Intake: one card per thing that looked wrong or missing, with its field to fix,
 // Looks right now and where it is on the PDF; then the cleanup notes, and All client details below.
+// Said as data (state.checks); checks-view.jsx draws it.
 function renderWarnings() {
   const { warnings, done } = state.intake;
   // An `alert` check first, in red: the current commercial auto policy is with the carrier whose
@@ -125,49 +127,38 @@ function renderWarnings() {
   const checks = warnings.map((w, i) => [w, i]).filter(([w]) => checkShown(w)).sort(([a], [b]) => Number(!!b.alert) - Number(!!a.alert));
   const infos = warnings.filter((w) => w.level === 'info');
   const open = checks.filter(([, i]) => !done.includes(i)).length;
-  $('check-title').textContent = open ? `${open} to check on the intake` : 'Intake checked';
-  $('check-sub').textContent = open
-    ? 'Fix or confirm each one, before or after filling.'
-    : 'Nothing else looked wrong.';
   const editable = (path) => path && /\.|\]$/.test(path) && fieldInfo(path).label !== path;
   // "See intake" only where the PDF shows the item (an answer only the agent gives: none).
   const pdfLink = (w, label) => {
     const place = sourcePlace(w.path, state.intake);
     return place && pdfAvailable()
-      ? h('button', { type: 'button', class: 'ghost', onclick: () => openPdf({ path: w.path, label, kind: 'check' }) }, `See intake${pdfPageSaid(place.page, ' · p')}`)
+      ? { label: `See intake${pdfPageSaid(place.page, ' · p')}`, onClick: () => openPdf({ path: w.path, label, kind: 'check' }) }
       : null;
   };
-  const head = (info, w) => h('div', { class: 'issue-head' }, h('span', { class: 'bang', 'aria-hidden': 'true' }, '!'),
-    h('div', { class: 'check-text' }, info ? h('b', {}, info.label) : null, h('span', {}, w.msg)));
+  // A card: the item's number on the intake (`i`), its field's name (`title`, or null) and what it says;
+  // a checked one is a row with Undo.
   const cards = checks.map(([w, i]) => {
     const info = editable(w.path) ? fieldInfo(w.path) : null;
     const label = info?.label ?? fieldInfo(w.path ?? '').label;
-    if (done.includes(i)) {
-      return h('div', { class: 'checked-row', dataset: { check: String(i) } }, h('span', { class: 'tick', 'aria-hidden': 'true' }, '✓'),
-        h('span', { class: 'grow' }, info ? `${info.label} checked` : 'Checked'),
-        h('button', { type: 'button', class: 'link small', onclick: () => toggleDone(i, false) }, 'Undo'));
-    }
+    const card = { i, title: info?.label ?? null, msg: w.msg };
+    if (done.includes(i)) return { ...card, done: true, said: info ? `${info.label} checked` : 'Checked', undo: () => toggleDone(i, false) };
     // Luna's GL and driver-gender items: their own buttons set the field (the agent's edit) or
     // dismiss the item, in place of the field and Looks right now.
-    if (w.choices?.length) {
-      return h('div', { class: 'check', dataset: { check: String(i) } }, head(info, w),
-        h('div', { class: 'check-body' }, h('div', { class: 'check-actions' },
-          h('div', { class: 'check-choices' }, ...w.choices.map((c) => h('button', { type: 'button', class: 'ghost', onclick: () => applyCheckChoice(i, c) }, c.label))),
-          pdfLink(w, label))));
-    }
-    return h('div', { class: w.alert ? 'check alert' : 'check', ...(w.alert ? { role: 'alert' } : {}), dataset: { check: String(i) } }, head(info, w),
-      h('div', { class: 'check-body' },
-        info ? fieldRow(w.path, info.label, info.kind, true, 'input') : null,
-        h('div', { class: 'check-actions' },
-          h('button', { type: 'button', class: 'tinted', onclick: () => toggleDone(i, true) }, 'Looks right'),
-          pdfLink(w, label) ?? (w.path && !info ? h('button', { type: 'button', class: 'ghost', onclick: () => jumpTo(w.path) }, 'Show details') : null))));
+    if (w.choices?.length) return { ...card, choices: w.choices.map((c) => ({ label: c.label, onClick: () => applyCheckChoice(i, c) })), pdf: pdfLink(w, label) };
+    const pdf = pdfLink(w, label);
+    return { ...card, alert: !!w.alert,
+      // The field to fix, named by the card above it; an edit there is the agent's, as in client details.
+      field: info ? { ...fieldSaid(w.path, info.kind), path: w.path, label: info.label, edit: (value) => { agentEdit(w.path, parseEdit(info.kind, value), info.kind); renderSections(); } } : null,
+      lookRight: () => toggleDone(i, true),
+      pdf, details: !pdf && w.path && !info ? () => jumpTo(w.path) : null };
   });
-  $('warnings').replaceChildren(...cards,
+  state.checks = {
+    title: open ? `${open} to check on the intake` : 'Intake checked',
+    sub: open ? 'Fix or confirm each one, before or after filling.' : 'Nothing else looked wrong.',
+    cards,
     // A row like All client details below it, opening its notes in a card joined under it.
-    ...(infos.length ? [h('details', { class: 'fold cleanup' },
-      h('summary', { class: 'list-row' }, h('span', { class: 'grow' }, 'Cleanup notes'),
-        h('span', { class: 'small muted' }, `${infos.length} change${infos.length === 1 ? '' : 's'}`), h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')),
-      h('div', { class: 'card' }, infos.map((w) => h('p', {}, w.msg))))] : []));
+    cleanup: infos.map((w) => w.msg),
+  };
   renderSteps();
 }
 
@@ -178,7 +169,7 @@ async function toggleDone(i, isDone) {
   if (isDone) done.add(i); else done.delete(i);
   state.intake.done = [...done];
   await save();
-  renderWarnings();
+  flushSync(renderWarnings);
   renderSections();
   // Keyboard focus stays where the agent was: on the row's Undo, or the card's Looks right now.
   const row = document.querySelector(`#warnings [data-check="${i}"]`);
@@ -247,41 +238,42 @@ function showEmpty(on = !state.showEmpty) {
   $('details-empty').focus();
 }
 
-function fieldRow(path, label, kind, flagged, layout = 'row') {
+// An intake field's box as data: its `id` in client details, the `control` ('select', 'textarea' or
+// 'input'), the `value` it shows, a select's `options` ([value, text]), and whether the intake leaves
+// it `blank`. fieldRow draws it in client details; checks-view.jsx on a check card.
+function fieldSaid(path, kind) {
   const value = get(state.intake.record, path);
-  const id = `f-${path.replace(/[^\w]/g, '_')}`;
-  let input;
-  if (kind === 'bool') {
-    input = h('select', { id },
-      h('option', { value: '' }, '—'),
-      h('option', { value: 'true', selected: value === true }, 'Yes'),
-      h('option', { value: 'false', selected: value === false }, 'No'));
-  } else if (kind === 'textarea') {
-    input = h('textarea', { id, rows: 4 });
-    input.value = value ?? '';
-  } else if (kind === 'state' || fieldInfo(path).options) {
+  const said = { id: `f-${path.replace(/[^\w]/g, '_')}`, value: value == null ? '' : String(value), blank: value == null };
+  if (kind === 'bool') return { ...said, control: 'select', options: [['', '—'], ['true', 'Yes'], ['false', 'No']] };
+  if (kind === 'textarea') return { ...said, control: 'textarea' };
+  if (kind === 'state' || fieldInfo(path).options) {
     // The intake form's dropdown, its options in client details too. Its boxes also take typed
     // text, so a value off the list stays, as written, among the options.
     const options = kind === 'state' ? Object.keys(STATES) : fieldInfo(path).options;
     const shown = value == null ? null : String(value);
-    input = h('select', { id },
-      h('option', { value: '' }, '—'),
-      ...(shown != null && !options.includes(shown) ? [h('option', { value: shown, selected: true }, shown)] : []),
-      ...options.map((o) => h('option', { value: o, selected: o === shown }, o)));
+    return { ...said, control: 'select', options: [['', '—'],
+      ...(shown != null && !options.includes(shown) ? [[shown, shown]] : []),
+      ...options.map((o) => [o, o])] };
+  }
+  return { ...said, control: 'input', maxLength: kind === 'state' ? 2 : 200 };
+}
+
+// A field's row in client details.
+function fieldRow(path, label, kind, flagged) {
+  const said = fieldSaid(path, kind);
+  const { id } = said;
+  let input;
+  if (said.control === 'select') {
+    input = h('select', { id }, ...said.options.map(([value, text]) => h('option', { value, selected: value !== '' && value === said.value }, text)));
+  } else if (said.control === 'textarea') {
+    input = h('textarea', { id, rows: 4 });
+    input.value = said.value;
   } else {
-    input = h('input', { id, type: 'text', placeholder: 'not on form', maxLength: kind === 'state' ? 2 : 200 });
-    input.value = value ?? '';
+    input = h('input', { id, type: 'text', placeholder: 'not on form', maxLength: said.maxLength });
+    input.value = said.value;
   }
   input.addEventListener('change', () => agentEdit(path, parseEdit(kind, input.value), kind));
-  if (layout === 'stack' || layout === 'input') {
-    // On a check card the same field may also be open in the client details: keep one id.
-    input.removeAttribute('id');
-    input.addEventListener('change', () => renderSections());
-    // 'input': the card names the field above it.
-    if (layout === 'input') { input.setAttribute('aria-label', label); return input; }
-    return h('label', { class: 'field-stack' }, label, input);
-  }
-  const empty = value == null && !state.intake.agentEdited?.includes(path);
+  const empty = said.blank && !state.intake.agentEdited?.includes(path);
   return h('div', { class: `field${flagged ? ' flagged' : ''}${empty ? ' empty' : ''}`, dataset: { path } },
     h('label', { for: id }, label), input);
 }
@@ -362,6 +354,8 @@ function unitListsHere(carrier = state.tab?.carrier, page = pageOf(state.tab?.ur
 
 // Which driver / vehicle / trailer the page is about (only when the intake has several, and only
 // on a page about one of them: unitListsHere), as a compact choice each at the top of the page view.
+// Said as data (state.pickers: the list, what it is, each one's name, the one picked); checks-view.jsx
+// draws them.
 function renderPickers() {
   if (!state.intake) return;
   const { record } = state.intake;
@@ -371,30 +365,22 @@ function renderPickers() {
     ['vehicles', 'Vehicle', (v) => [v.year, v.make, v.model].filter(Boolean).join(' ')],
     ['trailers', 'Trailer', (t) => [t.year, t.make, t.type].filter(Boolean).join(' ')],
   ].filter(([list]) => here.includes(list) && (record[list] ?? []).length > 1)
-    .map(([list, what, describe]) => ({ list, what, names: record[list].map((it, i) => `${i + 1}. ${describe(it) || what}`) }));
-  // Drawn again only when what it shows changes (a list open stays open).
-  const drawn = JSON.stringify(pickers.map((p) => [p.list, p.names, state.active[p.list]]));
-  if ($('pickers').dataset.drawn === drawn) return;
-  $('pickers').dataset.drawn = drawn;
-  const focused = document.activeElement?.closest?.('#pickers') ? document.activeElement.id : null;
-  $('pickers').replaceChildren(...pickers.map(({ list, what, names }) => {
-    const id = `pick-${list}`;
-    return h('div', { class: 'picker' },
-      h('label', { for: id }, what),
-      h('select', { id, onchange: async (e) => {
-        const i = Number(e.target.value);
-        // The agent says the form on the page is this one's: the form it was filled on before
-        // (unitForms) no longer holds this form back.
-        releaseUnitForms(list, i);
-        state.active[list] = i;
-        await save();
-        renderPickers();
-        // The page is now about this vehicle or driver: its own layout (a capture waiting for
-        // the previous one is dropped).
-        scheduleLayout(pageOf(state.tab?.url), 'picked');
-      } }, names.map((name, i) => h('option', { value: String(i), selected: state.active[list] === i }, name))));
-  }));
-  if (focused) $(focused)?.focus();
+    .map(([list, what, describe]) => ({ list, what, names: record[list].map((it, i) => `${i + 1}. ${describe(it) || what}`), active: state.active[list] ?? null }));
+  // Said again only when what it shows changes.
+  if (JSON.stringify(pickers) !== JSON.stringify(state.pickers ?? [])) state.pickers = pickers;
+}
+
+// The agent picks driver (vehicle, trailer) `i` for the page in front.
+async function pickUnit(list, i) {
+  // The agent says the form on the page is this one's: the form it was filled on before
+  // (unitForms) no longer holds this form back.
+  releaseUnitForms(list, i);
+  state.active[list] = i;
+  renderPickers();
+  await save();
+  // The page is now about this vehicle or driver: its own layout (a capture waiting for
+  // the previous one is dropped).
+  scheduleLayout(pageOf(state.tab?.url), 'picked');
 }
 
 // The unit forms on screen as the agent discarded their changes (GEICO's "Yes, Discard Changes"; the
@@ -427,4 +413,4 @@ function releaseUnitForms(list, index) {
   if (gone.length) persistUnitForms(state.tab?.id, state.unitForms);
 }
 
-export { agentEdit, checkShown, firstView, openKeyForm, openSettings, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setFilter, setView, showEmpty, showScreen, toggleDone };
+export { agentEdit, checkShown, firstView, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setFilter, setView, showEmpty, showScreen, toggleDone };

@@ -7,7 +7,7 @@ import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
 import { $, migrateStoredData, restoreAiPending, state, store } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
-import { firstView, openSettings, render, setFilter, setView, showEmpty, showScreen } from './panel/record.js';
+import { firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty, showScreen } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
@@ -21,6 +21,7 @@ import { mountLive } from './panel/live-view.jsx';
 import { mountDock, mountSteps } from './panel/steps-view.jsx';
 import { mountFeed } from './panel/feed-view.jsx';
 import { mountCards } from './panel/cards-view.jsx';
+import { mountChecks, mountPickers } from './panel/checks-view.jsx';
 
 // ---------------------------------------------------------------------------------------------
 // Wiring
@@ -40,13 +41,15 @@ function wire() {
   });
   $('open-pdf').addEventListener('click', () => openPdf());
   $('client-card').addEventListener('click', () => (state.detailsOpen ? closeDetails() : openDetails()));
-  $('details-row').addEventListener('click', () => openDetails());
+  // Step 1's checks and their All client details row.
+  mountChecks($('check-view'), { openDetails: () => openDetails() });
   $('details-close').addEventListener('click', closeDetails);
   $('details-empty').addEventListener('click', () => showEmpty());
   $('details-scrim').addEventListener('click', closeDetails);
   // The page's answers: their filters, an earlier page's answers on this tab (read-only) and back to
   // this page's, what the tags mean, and Clear the marks.
   mountCards($('cards-root'));
+  mountPickers($('pickers'), { pick: (list, i) => pickUnit(list, i) });
   mountFeed($('feed-root'), {
     setFilter: (filter) => setFilter(filter),
     showPast: (key) => showPast(key),

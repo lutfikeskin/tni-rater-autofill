@@ -109,9 +109,9 @@ function extractFunction(name) {
         // step with the stops it may carry (tabStep, stopNoteFor: GEICO's stop steps), and the agent's
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
-        // panel's cards come along as they are (issueCard), and the report's rows as data (report-rows.js,
+        // panel's cards come along as they are (issueCard), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'issueSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -6061,7 +6061,6 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   const { get, set } = await import('../src/util.js');
   const { rederive } = await import('../src/normalize.js');
   const { GL_CHOICES, genderChoices } = await import('../src/ai/luna.js');
-  const el = (tag, props = {}, ...children) => ({ tag, props, children: children.flat().filter((c) => c != null && c !== false) });
   const nodes = {};
   const $ = (id) => (nodes[id] ??= { id, hidden: false, textContent: '', replaceChildren(...kids) { this.kids = kids; }, focus() {} });
   const record = { coverage: { gl: null, hasGl: null }, drivers: [{ first: 'Maria' }, { first: 'John' }] };
@@ -6073,9 +6072,9 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   ] };
   const calls = [];
   const sandbox = {
-    state: { intake, view: 'check' }, h: el, $, get, set, rederive, fieldInfo: (p) => ({ label: p }), sourcePlace: () => null, pdfPageSaid: () => '',
+    state: { intake, view: 'check' }, $, get, set, rederive, fieldInfo: (p) => ({ label: p }), sourcePlace: () => null, pdfPageSaid: () => '',
     document: { getElementById: () => null, querySelector: () => null },
-    renderSteps() {}, renderSections: () => calls.push(['renderSections', get(record, 'drivers[0].gender') ?? null]), fieldRow() {}, jumpTo() {}, openPdf() {},
+    renderSteps() {}, renderSections: () => calls.push(['renderSections', get(record, 'drivers[0].gender') ?? null]), jumpTo() {}, openPdf() {},
     intakeEdited: () => calls.push(['intakeEdited']), usage: { log: (e) => calls.push(['log', e.type, e.path, e.code ?? null]) },
     save: async () => calls.push(['save']), claimsTextEdited() {}, reviewClaimsBox: () => calls.push(['reviewClaimsBox']), reviewDriverGender: () => calls.push(['reviewDriverGender']),
     profileLater() {},
@@ -6083,15 +6082,17 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   vm.createContext(sandbox);
   vm.runInContext(['checkShown', 'renderWarnings', 'toggleDone', 'agentEdit', 'applyCheckChoice'].map(extractFunction).join('\n') + `\nconst CHOICE_FIELDS = ${SIDEPANEL.match(/const CHOICE_FIELDS = (.*);/)[1]};`, sandbox);
   sandbox.renderWarnings();
-  assert.equal(nodes['check-title'].textContent, '4 to check on the intake');
-  // The open items' cards (a checked one is a row with Undo), and their buttons.
-  const cards = () => nodes.warnings.kids.filter((c) => c.props?.class === 'check');
-  const buttons = (card) => nodesIn(card).filter((c) => c.tag === 'button');
-  assert.deepEqual(buttons(cards()[0]).map((b) => b.children[0]), ['Looks right', 'Show details'], 'other cards unchanged');
-  assert.deepEqual(buttons(cards()[1]).map((b) => b.children[0]), ['Client has GL', 'Not GL']);
-  assert.deepEqual(buttons(cards()[2]).map((b) => b.children[0]), ['Use Female', 'Keep Male']);
+  assert.equal(sandbox.state.checks.title, '4 to check on the intake');
+  // The open items' cards (a checked one is a row with Undo), and their buttons in order, as
+  // checks-view.jsx draws them (test/panel/checks-view.test.jsx).
+  const cards = () => sandbox.state.checks.cards.filter((c) => !c.done);
+  const buttons = (card) => [...(card.choices ?? []), ...(card.lookRight ? [{ label: 'Looks right', onClick: card.lookRight }] : []),
+    ...(card.pdf ? [card.pdf] : []), ...(card.details ? [{ label: 'Show details', onClick: card.details }] : [])];
+  assert.deepEqual(buttons(cards()[0]).map((b) => b.label), ['Looks right', 'Show details'], 'other cards unchanged');
+  assert.deepEqual(buttons(cards()[1]).map((b) => b.label), ['Client has GL', 'Not GL']);
+  assert.deepEqual(buttons(cards()[2]).map((b) => b.label), ['Use Female', 'Keep Male']);
 
-  await buttons(cards()[2])[0].props.onclick();
+  await buttons(cards()[2])[0].onClick();
   assert.equal(record.drivers[0].gender, 'FEMALE');
   assert.deepEqual([...intake.agentEdited], ['drivers[0].gender'], 'the agent\'s edit, kept with the intake');
   assert.deepEqual([...intake.done], [2], 'the item is checked');
@@ -6100,12 +6101,12 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   assert.ok(!calls.some((c) => c[0] === 'reviewClaimsBox' || c[0] === 'reviewDriverGender'), 'setting a gender reads nothing again');
 
   sandbox.renderWarnings();
-  await buttons(cards()[2])[1].props.onclick();
+  await buttons(cards()[2])[1].onClick();
   assert.equal(record.drivers[1].gender, 'MALE', 'Keep Male sets it too: the agent decided');
 
   calls.length = 0;
   sandbox.renderWarnings();
-  await buttons(cards()[1])[1].props.onclick();
+  await buttons(cards()[1])[1].onClick();
   assert.equal(record.coverage.hasGl, null, 'Not GL leaves the record alone');
   assert.deepEqual([...intake.done].sort(), [1, 2, 3]);
   intake.done = intake.done.filter((d) => d !== 1);
@@ -6131,30 +6132,32 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
 // is said in red on the intake check screen, before any carrier page, first among the checks. It is
 // a check like the others (its field, Looks right), no stop (question 19).
 test('an alert intake check is red and first on the check screen, with its field and Looks right', () => {
-  const el = (tag, props = {}, ...children) => ({ tag, props, children: children.flat().filter((c) => c != null && c !== false) });
-  const nodes = {};
-  const $ = (id) => (nodes[id] ??= { id, hidden: false, textContent: '', replaceChildren(...kids) { this.kids = kids; } });
   const intake = { record: { priorInsurance: [{ type: 'Commercial Auto', carrier: 'GEICO' }] }, agentEdited: [], done: [], warnings: [
     { code: 'other', level: 'check', path: 'applicant.name', msg: 'other' },
     { code: 'prior.carrier-is-quoted', level: 'check', path: 'priorInsurance[0].carrier', alert: true, msg: 'Current insurance is with GEICO: a GEICO quote may be declined or routed.' },
   ] };
-  const rows = [];
-  const sandbox = { state: { intake, view: 'check', tab: { carrier: geico } }, h: el, $, fieldInfo: (p) => ({ label: `Field ${p}`, kind: 'text' }), sourcePlace: () => null, pdfPageSaid: () => '',
-    renderSteps() {}, fieldRow: (path) => { rows.push(path); return el('input', { path }); }, jumpTo() {}, openPdf() {}, quotedCarrierPolicy };
+  const get = (o, p) => p.split(/[.[\]]+/).filter(Boolean).reduce((v, k) => v?.[k], o);
+  const sandbox = { state: { intake, view: 'check', tab: { carrier: geico } }, get, fieldInfo: (p) => ({ label: `Field ${p}`, kind: 'text' }), sourcePlace: () => null, pdfPageSaid: () => '',
+    renderSteps() {}, jumpTo() {}, openPdf() {}, quotedCarrierPolicy };
   vm.createContext(sandbox);
   vm.runInContext(extractFunction('checkShown'), sandbox);
   vm.runInContext(extractFunction('renderWarnings'), sandbox);
+  // The cards as renderWarnings says them (state.checks); checks-view.jsx draws an alert one red
+  // ('check alert') and said at once (role alert): test/panel/checks-view.test.jsx.
+  const cards = () => sandbox.state.checks.cards;
+  const rows = () => cards().map((c) => c.field?.path ?? null);
   sandbox.renderWarnings();
-  assert.equal(nodes['check-title'].textContent, '2 to check on the intake');
-  const [first, second] = nodes.warnings.kids;
-  assert.deepEqual([first.props.class, first.props.role, first.props.dataset.check], ['check alert', 'alert', '1'], 'red, said at once, first');
-  assert.deepEqual([second.props.class, second.props.role ?? null], ['check', null], 'the others as before');
-  assert.ok(JSON.stringify(first).includes('Looks right'));
-  assert.deepEqual(rows, ['priorInsurance[0].carrier', 'applicant.name']);
+  assert.equal(sandbox.state.checks.title, '2 to check on the intake');
+  const [first, second] = cards();
+  assert.deepEqual([first.alert, first.i], [true, 1], 'red, said at once, first');
+  assert.deepEqual([second.alert, second.i], [false, 0], 'the others as before');
+  assert.equal(typeof first.lookRight, 'function', 'Looks right');
+  assert.deepEqual(rows(), ['priorInsurance[0].carrier', 'applicant.name']);
+  assert.equal(first.field.value, 'GEICO', 'its field shows the intake\'s answer');
   // Checked, it is a row like any other.
   intake.done = [1];
   sandbox.renderWarnings();
-  assert.equal(nodes.warnings.kids[0].props.class, 'checked-row');
+  assert.equal(cards()[0].done, true);
   const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
   assert.match(css, /\.check\.alert\s*\{[^}]*border-color:\s*var\(--signal-line\)/);
   // Only on that carrier's site (TNI, 2026-10-27): on another carrier's, or before any carrier page,
@@ -6162,10 +6165,9 @@ test('an alert intake check is red and first on the check screen, with its field
   intake.done = [];
   for (const tab of [{ carrier: progressive }, null]) {
     sandbox.state.tab = tab;
-    rows.length = 0;
     sandbox.renderWarnings();
-    assert.equal(nodes['check-title'].textContent, '1 to check on the intake', tab?.carrier.id ?? 'no carrier');
-    assert.deepEqual(rows, ['applicant.name']);
+    assert.equal(sandbox.state.checks.title, '1 to check on the intake', tab?.carrier.id ?? 'no carrier');
+    assert.deepEqual(rows(), ['applicant.name']);
   }
 });
 
@@ -6927,7 +6929,7 @@ test('picking a unit in the panel lets go of the forms bound to it, and only tho
   assert.deepEqual(JSON.parse(JSON.stringify(state.unitForms.vehicles)), { A: 0 });
   assert.doesNotMatch(extractFunction('releaseUnitForms'), /unitShown/);
   // The picker does it before the unit changes, before anything waits.
-  assert.match(extractFunction('renderPickers'), /releaseUnitForms\(list, i\);\s+state\.active\[list\] = i;\s+await save\(\);/);
+  assert.match(extractFunction('pickUnit'), /releaseUnitForms\(list, i\);\s+state\.active\[list\] = i;\s+renderPickers\(\);\s+await save\(\);/);
 });
 
 test('unit forms are kept like helper records: across a panel reload, per intake and tab, gone with Clear or a new browser session', async () => {
@@ -8100,7 +8102,10 @@ test('the client strip: the name opens client details, and Change file, New quot
   for (const id of ['open-pdf', 'replace', 'new-quote', 'clear-client']) assert.match(tools, new RegExp(`id="${id}"`), id);
   assert.doesNotMatch(html, /file-menu-btn|details-btn|⋯/);
   assert.match(extractFunction('wire'), /\$\('client-card'\)\.addEventListener\('click', \(\) => \(state\.detailsOpen \? closeDetails\(\) : openDetails\(\)\)\);/);
-  assert.match(extractFunction('showScreen'), /\['client-card', 'details-row'\]/);
+  // Both openers say whether client details are open: the name here, the checks' All client details
+  // row from the same state (test/panel/checks-view.test.jsx).
+  assert.match(extractFunction('showScreen'), /\$\('client-card'\)\.setAttribute\('aria-expanded', String\(!!state\.detailsOpen\)\);/);
+  assert.match(extractFunction('wire'), /mountChecks\(\$\('check-view'\), \{ openDetails: \(\) => openDetails\(\) \}\);/, 'the checks\' row opens client details');
   assert.match(extractFunction('askFile'), /state\.fileConfirmFrom = from;/, 'Cancel gives focus back to the button that asked');
   assert.match(extractFunction('renderSteps'), /\$\('new-quote'\)\.disabled = !!state\.filling;/);
   // The three steps under the strip: drawn by steps-view.jsx (their labels and order:
