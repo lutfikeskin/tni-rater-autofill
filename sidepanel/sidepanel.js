@@ -18,6 +18,7 @@ import { renderUsage, uploadNow, wireUsage } from './panel/usage-panel.js';
 import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, closeDetails, closePdf, drawPdf, newQuote, noteStep, openDetails, openPdf, openPdfInTab, pdfPage, pdfPan, pdfZoom, workSaid } from './panel/pdf-view.js';
 import { announceCopy, dock, keepPlace, onPanelMessage, popOut } from './panel/window.js';
 import { mountLive } from './panel/live-view.jsx';
+import { mountDock, mountSteps } from './panel/steps-view.jsx';
 
 // ---------------------------------------------------------------------------------------------
 // Wiring
@@ -30,9 +31,11 @@ function wire() {
   $('pop-out').addEventListener('click', popOut);
   $('dock-back').addEventListener('click', dock);
   $('settings-done').addEventListener('click', () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); });
-  $('step-check').addEventListener('click', () => setView('check'));
-  $('step-fill').addEventListener('click', () => setView('page'));
-  $('step-confirm').addEventListener('click', () => { setView('page'); refreshAnswers(); checkItems(); });
+  mountSteps($('steps'), {
+    check: () => setView('check'),
+    fill: () => setView('page'),
+    confirm: () => { setView('page'); refreshAnswers(); checkItems(); },
+  });
   for (const b of $('filters').querySelectorAll('button')) b.addEventListener('click', () => setFilter(b.dataset.filter));
   $('open-pdf').addEventListener('click', () => openPdf());
   $('client-card').addEventListener('click', () => (state.detailsOpen ? closeDetails() : openDetails()));
@@ -111,14 +114,16 @@ function wire() {
     if (what === 'new-quote') newQuote();
   });
   // The dock: its one button and its alternative.
-  $('fill').addEventListener('click', () => fillPage({ continuing: $('fill').dataset.go === 'continue' }));
-  $('fill-stop').addEventListener('click', stopFill);
-  $('dock-next').addEventListener('click', showNextNeed);
-  $('look-right').addEventListener('click', function () { this.disabled = true; lookRight(state.tab?.id, pageOf(state.tab?.url), state.tab?.carrier, this); });
-  $('ai-approve').addEventListener('click', () => state.aiDocks.get(`${state.tab?.id}|${pageOf(state.tab?.url)}`)?.go());
-  $('dock-alt').addEventListener('click', () => {
-    if ($('dock-alt').dataset.go === 'fill-anyway') dismissState();
-    fillPage();
+  mountDock($('dock-root'), {
+    fill: (go) => fillPage({ continuing: go === 'continue' }),
+    stop: () => stopFill(),
+    next: () => showNextNeed(),
+    lookRight: (button) => { button.disabled = true; lookRight(state.tab?.id, pageOf(state.tab?.url), state.tab?.carrier, button); },
+    approve: () => state.aiDocks.get(`${state.tab?.id}|${pageOf(state.tab?.url)}`)?.go(),
+    alt: (go) => {
+      if (go === 'fill-anyway') dismissState();
+      fillPage();
+    },
   });
   $('unmark').addEventListener('click', clearMarks);
   $('capture').addEventListener('click', capturePage);

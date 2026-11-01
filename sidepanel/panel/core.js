@@ -341,6 +341,10 @@ const state = storeState({
   settingsOpen: false,
   view: 'check',
   filter: 'all',
+  // What the three steps and the dock say now (renderSteps, renderDock), as steps-view.jsx draws
+  // them: null until the panel first says it.
+  steps: null,
+  dock: null,
   // The file tools' question before the agent's work would go: 'replace' | 'clear' | 'new-quote',
   // and the button that asked, for focus on Cancel.
   fileConfirm: null,

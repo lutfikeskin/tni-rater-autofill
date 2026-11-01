@@ -594,7 +594,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .problem textarea { color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 8px; resize: vertical; font-size: 12.5px; }
 .problem-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .foot-row { padding: 4px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--border-faint); }
-.dock[hidden] + .problem[hidden] + .foot-row, .dock[hidden] + .problem + .foot-row { border-top: 0; }
+.dock-root:has(> .dock[hidden]) + .problem + .foot-row { border-top: 0; }
 .recording, .foot-version { font: 500 11px/1 var(--font-sans); color: var(--ink-muted); white-space: nowrap; }
 .rec-dot { color: var(--signal); }
 
