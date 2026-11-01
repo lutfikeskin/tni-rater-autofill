@@ -179,6 +179,27 @@ test('past six choices an item offers a list: the page’s answer chosen, the AI
   expect(calls).toEqual([['pickRow', rec, 'F', ctx, put]]);
 });
 
+// Review of #246 (CodeRabbit): the page may list a choice twice; Change answer's choices aren't
+// deduplicated as an item's are (needRecord), and React keys them by the choice.
+test('a choice the page lists twice is offered once', () => {
+  const errors = [];
+  const error = console.error;
+  console.error = (...args) => { errors.push(args.join(' ')); };
+  try {
+    const rec = answerRecord({ label: 'Hauls hazardous materials', value: 'Yes', answer: true, key: 'k1' });
+    rec.source = { tag: null, quiet: 'From the intake', title: 'Intake', quote: 'Answer: Yes', place: null };
+    rec.change = { x: radio, options: ['Yes', 'No', 'Yes'], current: 'No' };
+    const { node } = draw([rec]);
+    expect([...node(rec).querySelectorAll('.change-slot .opt-btn')].map((b) => b.dataset.choice)).toEqual(['Yes', 'No']);
+    rec.change = { x: radio, options: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'A'], current: 'B' };
+    redraw(rec);
+    expect([...node(rec).querySelectorAll('.change-slot option')].map((o) => o.value)).toEqual(['', 'A', 'B', 'C', 'D', 'E', 'F', 'G']);
+  } finally {
+    console.error = error;
+  }
+  expect(errors.filter((e) => /same key/.test(e))).toEqual([]);
+});
+
 test('an answer’s source, See in intake and Change answer: drawn from its record, asking the panel', () => {
   const rec = answerRecord({ label: 'DOT number', value: '1234567', answer: true, key: 'dot', path: 'amwins.q4' });
   rec.source = { tag: null, quiet: 'From the intake', title: 'Intake, page 2', quote: 'DOT number: 1234567', place: { page: 1 }, seeTitle: 'Show where this came from in the intake' };

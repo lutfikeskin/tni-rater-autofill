@@ -3,7 +3,7 @@
 // that row again; a row that didn't change isn't drawn again, so the button the agent is on keeps its
 // focus. What a row's buttons do is the panel's (`act`, rowActs in fill.js).
 // One part of the panel; renderReport mounts it in a report (rowsHost).
-import { memo, useLayoutEffect, useRef } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
@@ -27,8 +27,11 @@ function Note({ note }) {
 }
 
 // The choices the panel may put in for the agent: buttons, or a list past six; the page's answer now
-// pressed, and the AI's pick marked. `onPick(choice, button)`.
-function Choices({ options, pressed = null, aiPick = null, onPick }) {
+// pressed, and the AI's pick marked. `onPick(choice, button)`. A choice the page lists twice is
+// offered once (Change answer's come as the page has them; an item's are deduplicated already,
+// needRecord), keyed by itself.
+function Choices({ options: all, pressed = null, aiPick = null, onPick }) {
+  const options = useMemo(() => [...new Set(all)], [all]);
   const select = useRef(null);
   const listed = options.length > 6;
   // The list shows the pressed answer as it changes, not only the one it was drawn with.
