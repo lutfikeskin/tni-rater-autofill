@@ -1019,7 +1019,7 @@ function announce(text) {
 
 // The three steps under the client's name: what each says about the intake and the page in front,
 // and which one's view is shown (state.steps, drawn by steps-view.jsx); then the page view (the answers going in, or the last fill's, with
-// their filters) and the dock. Steps 2 and 3 show the last fill of the page in front.
+// their filters: state.feed, drawn by feed-view.jsx) and the dock. Steps 2 and 3 show the last fill of the page in front.
 function renderSteps() {
   // Pop out or Dock: never while a fill runs.
   $('pop-out').hidden = !inExtension || popped;
@@ -1083,41 +1083,27 @@ function renderSteps() {
   else if (state.pastNodes !== past.nodes) $('past').replaceChildren(...past.nodes);
   state.pastNodes = past?.nodes ?? null;
   const at = (entry) => new Date(entry.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  $('feed').hidden = !onRater || (!filling && !filled && !earlier.length);
-  $('feed-title').textContent = filling ? 'Filling now' : earlier.length ? 'Answers' : 'Answers on this page';
-  const menu = $('page-menu');
-  menu.hidden = !earlier.length;
-  if (earlier.length) {
-    const keys = JSON.stringify(earlier.map((e) => e.key));
-    if (menu.dataset.keys !== keys) {
-      menu.replaceChildren(h('option', { value: '' }, 'This page'), ...earlier.map((e) => h('option', { value: e.key }, reportTitle(e))));
-      menu.dataset.keys = keys;
-    }
-    menu.value = past?.key ?? '';
-  }
-  $('past').hidden = !past;
-  $('past-head').hidden = !past;
-  $('past-when').textContent = past ? `${reportTitle(past)} · filled ${at(past)} · view only` : '';
-  $('report').hidden = !filled || !!past;
-  $('report').dataset.filter = state.filter;
   const counts = listCounts(filled ? report.list : []);
-  $('filters').hidden = !filled || !counts.all || !!past;
-  for (const b of $('filters').querySelectorAll('button')) {
-    b.setAttribute('aria-pressed', String(b.dataset.filter === state.filter));
-    b.querySelector('span').textContent = String(counts[b.dataset.filter] ?? 0);
-  }
-  $('feed-empty').hidden = !!past || filling || (filled && (counts[state.filter] ?? 0) > 0);
-  $('feed-empty').textContent = !filled ? 'This page isn’t filled yet.' : state.filter === 'needs' ? 'Nothing needs you on this page.' : 'Nothing here.';
+  const emptyShown = !past && !filling && !(filled && (counts[state.filter] ?? 0) > 0);
   // What the tags and the rater page's marks mean: behind the i in the title.
   const keyHere = !filling && (filled || !!past);
-  $('key-btn').hidden = !keyHere;
-  $('key-btn').setAttribute('aria-expanded', String(keyHere && state.keyOpen));
-  $('answer-key').hidden = !(keyHere && state.keyOpen);
-  $('unmark').hidden = !filled || !!past;
   // A report kept while another page was in front may be out of date.
   const age = filled && !past && report.restored && report.at ? at(report) : null;
-  $('report-age').hidden = !age;
-  $('report-age').textContent = age ? `From the fill at ${age}. Fill again if the page changed.` : '';
+  // The list around the answers (state.feed, drawn by feed-view.jsx).
+  state.feed = {
+    shown: onRater && (filling || filled || !!earlier.length),
+    title: filling ? 'Filling now' : earlier.length ? 'Answers' : 'Answers on this page',
+    pages: earlier.map((e) => ({ key: e.key, title: reportTitle(e) })),
+    pastKey: past?.key ?? null,
+    pastWhen: past ? `${reportTitle(past)} · filled ${at(past)} · view only` : '',
+    report: filled && !past,
+    filter: state.filter,
+    counts: filled && counts.all && !past ? counts : null,
+    empty: !emptyShown ? null : !filled ? 'This page isn’t filled yet.' : state.filter === 'needs' ? 'Nothing needs you on this page.' : 'Nothing here.',
+    keyOpen: keyHere ? !!state.keyOpen : null,
+    unmark: filled && !past,
+    age: age ? `From the fill at ${age}. Fill again if the page changed.` : null,
+  };
   renderDock();
 }
 

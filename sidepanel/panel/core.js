@@ -345,6 +345,9 @@ const state = storeState({
   // them: null until the panel first says it.
   steps: null,
   dock: null,
+  // What the page's list of answers says around them (renderSteps), as feed-view.jsx draws it: null
+  // until the panel first says it.
+  feed: null,
   // The file tools' question before the agent's work would go: 'replace' | 'clear' | 'new-quote',
   // and the button that asked, for focus on Cancel.
   fileConfirm: null,

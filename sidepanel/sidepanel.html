@@ -132,55 +132,8 @@
         <div id="fill-error" hidden></div>
       </div>
       <div id="pickers" class="pickers"></div>
-      <div id="feed" class="feed">
-        <div class="feed-head">
-          <div class="feed-title">
-            <span id="feed-title" class="eyebrow">Answers on this page</span>
-            <!-- The answers of a page filled earlier on this tab, read-only (renderSteps). -->
-            <select id="page-menu" class="page-menu" aria-label="Show the answers of" hidden></select>
-            <button type="button" id="key-btn" class="key-btn" aria-label="What the tags and marks mean" title="What the tags and marks mean" aria-expanded="false" aria-controls="answer-key" hidden>i</button>
-          </div>
-          <div id="filters" class="filters" role="group" aria-label="Show answers" hidden>
-            <button type="button" data-filter="all" aria-pressed="true">All <span></span></button>
-            <button type="button" data-filter="needs" aria-pressed="false">Need you <span></span></button>
-            <button type="button" data-filter="done" aria-pressed="false">Filled <span></span></button>
-          </div>
-        </div>
-        <!-- What the row tags and the rater page's marks mean, behind the i in the list's title. -->
-        <div id="answer-key" class="answer-key" hidden>
-          <div class="key-line">
-            <span class="key-title">Tags:</span>
-            <span class="key-plain">none = from the intake</span>
-            <span class="tag derived">Worked out</span>
-            <span class="tag standard">TNI standard</span>
-            <span class="tag ai">AI</span>
-            <span class="tag you">You</span>
-            <span class="tag page">On the page</span>
-          </div>
-          <!-- The marks on the rater page (pagekit.js COLORS, the same colors: --mark-*). -->
-          <div class="key-line legend">
-            <span class="key-title">Marks on the rater page:</span>
-            <span><span class="mark filled"></span>Filled</span>
-            <span><span class="mark standard"></span>TNI standard</span>
-            <span><span class="mark needs"></span>Needs you</span>
-            <span><span class="mark failed"></span>Couldn’t fill</span>
-            <span><span class="mark ai"></span>AI answer</span>
-            <span><span class="mark agent"></span>Your pick</span>
-          </div>
-        </div>
-        <!-- An earlier page's answers (the page menu): which, when, and the way back. -->
-        <div id="past-head" class="past-head" hidden>
-          <button type="button" id="past-back" class="link small">‹ This page</button>
-          <span id="past-when" class="small muted"></span>
-        </div>
-        <p id="report-age" class="report-age" hidden></p>
-        <!-- The live list while a fill runs (live-view.jsx draws #live in it). -->
-        <div id="live-root"></div>
-        <div id="report" class="report" data-filter="all"></div>
-        <div id="past" class="report past" hidden></div>
-        <p id="feed-empty" class="feed-empty" hidden></p>
-        <button type="button" id="unmark" class="link small subtle unmark" hidden>Clear the marks on the page</button>
-      </div>
+      <!-- The page's answers (#feed), drawn by feed-view.jsx (mountFeed). -->
+      <div id="feed-root"></div>
     </section>
 
     <!-- Settings, over everything but the header -->
