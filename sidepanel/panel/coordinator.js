@@ -1018,7 +1018,7 @@ function announce(text) {
 }
 
 // The three steps under the client's name: what each says about the intake and the page in front,
-// and which one's view is shown; then the page view (the answers going in, or the last fill's, with
+// and which one's view is shown (state.steps, drawn by steps-view.jsx); then the page view (the answers going in, or the last fill's, with
 // their filters) and the dock. Steps 2 and 3 show the last fill of the page in front.
 function renderSteps() {
   // Pop out or Dock: never while a fill runs.
@@ -1045,17 +1045,12 @@ function renderSteps() {
   const error = filling ? null : report?.error ?? null;
   const notice = filling || error ? null : report?.notice ?? null;
   const left = filled ? report.left ?? 0 : 0;
-  const step = (id, prefix, number, { tone = '', note, current }) => {
-    const button = $(`step-${id}`);
-    button.dataset.state = tone;
-    if (current) button.setAttribute('aria-current', 'step'); else button.removeAttribute('aria-current');
-    $(`${prefix}-num`).textContent = tone === 'done' ? '✓' : number;
-    $(`${prefix}-summary`).textContent = note;
-  };
+  const steps = {};
+  const step = (id, { tone = '', note, current }) => { steps[id] = { tone, note, current: !!current }; };
   // 1. Intake.
-  step('check', 'check', '1', { tone: open ? 'warn' : 'done', note: open ? `${open} to check` : 'All checked', current: state.view === 'check' });
+  step('check', { tone: open ? 'warn' : 'done', note: open ? `${open} to check` : 'All checked', current: state.view === 'check' });
   // 2. Fill page: the page in front's.
-  step('fill', 'fill', '2', {
+  step('fill', {
     tone: !onRater ? '' : error || (stopped && !filled) ? 'bad' : filled ? 'done' : 'active',
     note: !onRater ? 'Open a rater' : filling ? `Filling… ${state.fillingFor.filled ?? 0} in` : error ? 'Didn’t finish'
       : filled ? `${report.filled} filled${report.auto ? ' automatically' : ''}` : stopped ? 'Stopped' : 'Ready to fill',
@@ -1064,11 +1059,12 @@ function renderSteps() {
   // 3. Review page: what's left for the agent on it, and Continue; "Quote done" where the quote
   // ends (quoteFinished).
   const finished = filled && quoteFinished(carrier, report, page) && !pendingAi(state.tab.id, page).length;
-  step('confirm', 'finish', '3', {
+  step('confirm', {
     tone: !filled ? '' : finished || report.advanced ? 'done' : 'active',
     note: !filled ? 'After the fill' : finished ? 'Quote done' : report.advanced ? 'Continued' : left ? `${left} need${left === 1 ? 's' : ''} you` : 'All answered',
     current: state.view === 'page' && filled,
   });
+  state.steps = steps;
   // The page view: a rater to open, what's wrong about the last fill, the answers.
   $('fill-waiting').hidden = onRater;
   $('fill-waiting-text').textContent = !inExtension ? 'Filling works only in the Chrome extension.'
@@ -1322,30 +1318,12 @@ function dockFor() {
   return { phase: 'ready', eyebrow: 'Next', title: progress ? `Fill the ${progress.name} page` : 'Fill this page', sub: checksSaid ?? hint, ...fill };
 }
 
+// What the dock says now (state.dock, drawn by steps-view.jsx): dockFor's word, hidden while Settings
+// is open, with the fill it is about (`report`: none while one runs) and whether a fill runs, which
+// holds its Fill (`busy`).
 function renderDock() {
-  const dock = $('dock');
   const d = dockFor();
-  dock.hidden = state.settingsOpen;
-  dock.dataset.phase = d.phase;
-  dock.dataset.report = state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '';
-  $('fill-progress').hidden = !d.progress;
-  $('dock-eyebrow').textContent = d.eyebrow ?? '';
-  $('dock-eyebrow').dataset.tone = d.tone ?? '';
-  $('dock-title').textContent = d.title;
-  $('dock-sub').textContent = d.sub ?? '';
-  $('dock-sub').hidden = !d.sub;
-  // The dock's Continue is a fill that replaces nothing (`go`: fillPage `continuing`).
-  $('fill').dataset.go = d.go ?? '';
-  for (const id of ['fill', 'fill-stop', 'dock-next', 'look-right', 'ai-approve']) {
-    const button = $(id);
-    button.hidden = d.button !== id;
-    if (d.button !== id) continue;
-    button.textContent = d.label;
-    button.disabled = !!d.disabled || (id === 'fill' && !!state.filling);
-  }
-  $('dock-alt').hidden = !d.alt;
-  $('dock-alt').dataset.go = d.alt ?? '';
-  $('dock-alt').textContent = d.altLabel ?? '';
+  state.dock = { ...d, hidden: state.settingsOpen, report: state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '', busy: !!state.filling };
 }
 
 // The intake's current insurance is with the carrier the tab is on (util.js sameCarrier: GEICO or

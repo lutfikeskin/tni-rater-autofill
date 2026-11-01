@@ -7606,7 +7606,8 @@ test('no fill, follow-up or scheduled fill while the quote state differs from th
   // The dock holds Fill this page, and offers Fill anyway, which says the state is right first.
   const held = dockHarness({ carrier: { id: 'progressive', name: 'Progressive' }, issue }).dock();
   assert.deepEqual([held.phase, held.button, held.disabled, held.alt, held.altLabel], ['hold', 'fill', true, 'fill-anyway', 'Fill anyway']);
-  assert.match(SIDEPANEL, /\$\('dock-alt'\)\.addEventListener\('click', \(\) => \{\s+if \(\$\('dock-alt'\)\.dataset\.go === 'fill-anyway'\) dismissState\(\);\s+fillPage\(\);\s+\}\);/);
+  // The dock's alternative asks with what it offers (its data-go: test/panel/steps-view.test.jsx).
+  assert.match(SIDEPANEL, /alt: \(go\) => \{\s+if \(go === 'fill-anyway'\) dismissState\(\);\s+fillPage\(\);\s+\},/);
 });
 
 test('"<state> is right" lets the quote state stand for this intake only, and for this pick', async () => {
@@ -7670,9 +7671,21 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   const dock = extractFunction('dockFor');
   assert.match(dock, /if \(report\?\.empty\) return continueSaid\(\{ \.\.\.report, tabId: state\.tab\.id \}, carrier\);/);
   assert.ok(dock.indexOf('report?.empty') < dock.indexOf('if (report?.fields)'), 'before the page-with-questions word');
-  assert.match(SIDEPANEL, /\$\('fill'\)\.addEventListener\('click', \(\) => fillPage\(\{ continuing: \$\('fill'\)\.dataset\.go === 'continue' \}\)\);/);
+  // The dock's Fill asks with its `go` (test/panel/steps-view.test.jsx), and a Continue fills nothing over.
+  assert.match(SIDEPANEL, /fill: \(go\) => fillPage\(\{ continuing: go === 'continue' \}\),/);
   assert.match(extractFunction('fillPage'), /const overwrite = auto \|\| confirmed \|\| continuing \? false : \$\('overwrite'\)\.checked;/);
-  assert.match(extractFunction('renderDock'), /\$\('fill'\)\.dataset\.go = d\.go \?\? '';/);
+  // What the dock says keeps dockFor's word, its `go` included.
+  const state = { settingsOpen: false, filling: false, reportFor: { at: 1700 } };
+  const word = { phase: 'ready-continue', title: 'Ready for Continue', button: 'fill', label: 'Continue', go: 'continue', alt: 'fill-again' };
+  const context = { state, dockFor: () => word };
+  vm.runInNewContext(extractFunction('renderDock'), context);
+  context.renderDock();
+  assert.deepEqual({ ...state.dock }, { ...word, hidden: false, report: '1700', busy: false });
+  // While a fill runs it is about no report and holds Fill; Settings open hides it.
+  Object.assign(state, { filling: true, settingsOpen: true });
+  context.dockFor = () => ({ phase: 'filling', title: 'Reading the page…', button: 'fill-stop', label: 'Stop' });
+  context.renderDock();
+  assert.deepEqual([state.dock.report, state.dock.busy, state.dock.hidden], ['', true, true]);
 });
 
 // W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
@@ -8013,7 +8026,10 @@ test('the client strip: the name opens client details, and Change file, New quot
   assert.match(extractFunction('showScreen'), /\['client-card', 'details-row'\]/);
   assert.match(extractFunction('askFile'), /state\.fileConfirmFrom = from;/, 'Cancel gives focus back to the button that asked');
   assert.match(extractFunction('renderSteps'), /\$\('new-quote'\)\.disabled = !!state\.filling;/);
-  assert.match(html, /<span class="step-label">Intake<\/span>[\s\S]*<span class="step-label">Fill page<\/span>[\s\S]*<span class="step-label">Review page<\/span>/);
+  // The three steps under the strip: drawn by steps-view.jsx (their labels and order:
+  // test/panel/steps-view.test.jsx).
+  assert.match(html, /<nav id="steps" class="steps" aria-label="Steps"><\/nav>\s+<\/section>/);
+  assert.match(SIDEPANEL, /mountSteps\(\$\('steps'\), \{\s+check: \(\) => setView\('check'\),\s+fill: \(\) => setView\('page'\),\s+confirm: \(\) => \{ setView\('page'\); refreshAnswers\(\); checkItems\(\); \},\s+\}\);/);
 });
 
 // New quote with this intake: the agent quotes the same client on the next carrier, or again, and

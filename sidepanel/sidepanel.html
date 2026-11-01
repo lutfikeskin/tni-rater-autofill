@@ -77,24 +77,8 @@
     </div>
     <p id="client-note" class="client-note small" role="status" hidden></p>
     <!-- The intake, then the page in front: filled, then reviewed. Each page has its own 2 and 3;
-         the header's "Step n of m" is the quote's place. -->
-    <nav class="steps" aria-label="Steps">
-      <button type="button" id="step-check" class="step" aria-controls="check-view">
-        <span class="step-bar"></span>
-        <span class="step-line"><span id="check-num" class="step-num">1</span><span class="step-label">Intake</span></span>
-        <span id="check-summary" class="step-note"></span>
-      </button>
-      <button type="button" id="step-fill" class="step" aria-controls="page-view">
-        <span class="step-bar"></span>
-        <span class="step-line"><span id="fill-num" class="step-num">2</span><span class="step-label">Fill page</span></span>
-        <span id="fill-summary" class="step-note"></span>
-      </button>
-      <button type="button" id="step-confirm" class="step" aria-controls="page-view">
-        <span class="step-bar"></span>
-        <span class="step-line"><span id="finish-num" class="step-num">3</span><span class="step-label">Review page</span></span>
-        <span id="finish-summary" class="step-note"></span>
-      </button>
-    </nav>
+         the header's "Step n of m" is the quote's place. Drawn by steps-view.jsx (mountSteps). -->
+    <nav id="steps" class="steps" aria-label="Steps"></nav>
   </section>
 
   <main id="view" class="view">
@@ -338,22 +322,8 @@
 
   <!-- What to do next, always in the same place, and the panel's own links -->
   <footer class="foot">
-    <div id="dock" class="dock" hidden>
-      <div id="fill-progress" class="progress" hidden><span></span></div>
-      <div class="dock-body">
-        <div class="dock-text">
-          <span id="dock-eyebrow" class="dock-eyebrow"></span>
-          <span id="dock-title" class="dock-title"></span>
-          <span id="dock-sub" class="dock-sub" hidden></span>
-        </div>
-        <button type="button" id="fill" class="primary big">Fill this page</button>
-        <button type="button" id="fill-stop" class="stop big" hidden>Stop</button>
-        <button type="button" id="dock-next" class="primary big" hidden>Show the next one</button>
-        <button type="button" id="look-right" class="primary big" hidden>Looks right, continue</button>
-        <button type="button" id="ai-approve" class="primary big ai" hidden></button>
-        <button type="button" id="dock-alt" class="link small dock-alt" hidden></button>
-      </div>
-    </div>
+    <!-- The dock (#dock), drawn by steps-view.jsx (mountDock). -->
+    <div id="dock-root" class="dock-root"></div>
     <div id="problem-form" class="problem" hidden>
       <textarea id="problem-text" rows="3" placeholder="What went wrong? No client names, numbers or addresses." aria-label="What went wrong"></textarea>
       <div class="problem-actions">
