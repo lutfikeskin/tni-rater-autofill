@@ -12,7 +12,7 @@ import { notePremium, premiumHere } from '../../src/premium.js';
 import { isStandard } from '../../src/resolution.js';
 import * as usage from '../usage-log.js';
 import { inExtension, popped } from './env.js';
-import { $, forgetKeptReports, h, persistAgentKeys, persistDoneActions, persistUnitForms, retireAiOrigins, state, store } from './core.js';
+import { $, forgetKeptReports, persistAgentKeys, persistDoneActions, persistUnitForms, retireAiOrigins, state, store } from './core.js';
 import { firstUnits, save } from './intake.js';
 import { checkShown, renderPickers, renderWarnings, showScreen } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
@@ -867,9 +867,10 @@ function renderSite() {
   $('site-count').textContent = progress ? `Step ${progress.index + 1} of ${progress.count}` : '';
   const filledHere = reportShown() && !!state.reportFor.fields;
   $('site-track').hidden = !progress;
-  $('site-track').replaceChildren(...(progress ? (carrier.quoteSteps ?? []).map((step, i) => h('span', {
-    title: step.name, class: i < progress.index ? 'done' : i === progress.index ? `here${filledHere ? ' filled' : ''}` : null,
-  })) : []));
+  // Its marks, drawn by site-view.jsx.
+  state.siteTrack = progress ? (carrier.quoteSteps ?? []).map((step, i) => ({
+    name: step.name, at: i < progress.index ? 'done' : i === progress.index ? `here${filledHere ? ' filled' : ''}` : null,
+  })) : [];
   caption.textContent = [
     carrier ? (carrier.practice ? 'Practice page' : progress ? null : 'Commercial auto') : null,
     carrier && state.tab?.background ? 'In background' : null,
@@ -953,9 +954,9 @@ function reportShown() { return !!showReport(); }
 // A fill's report for its page: shown when that page is in front, else kept until it is.
 function putReport(entry, nodes) {
   showReport();
-  // The report it replaces: its list taken down (report-view.jsx).
+  // The report it replaces: its list and its head taken down (report-view.jsx, notes-view.jsx).
   const old = state.reports.get(entry.key);
-  if (old && old !== entry) old.unmountRows?.();
+  if (old && old !== entry) { old.unmountRows?.(); old.unmountHead?.(); }
   state.reports.set(entry.key, entry);
   if (entry.key === currentReportKey()) {
     $('report').replaceChildren(...nodes);
@@ -971,6 +972,7 @@ function dropReports(drop = () => true) {
     if (!drop(entry)) continue;
     state.reports.delete(key);
     entry.unmountRows?.();
+    entry.unmountHead?.();
   }
   forgetKeptReports(drop);
   if (state.reportFor && state.reports.get(state.reportFor.key) !== state.reportFor) {
@@ -1353,19 +1355,10 @@ function showReviewMode() {
 // A card above the page's answers (or in them): what's wrong or different, in the panel's own
 // words, never the page's. `tone`: '' (red: the carrier stopped the quote, a fill failed, the
 // quote's state differs), 'warn', 'info' or 'quiet' (a step that is the agent's). `actions`: its
-// buttons, { label, className, onClick } (issueCard's: elements). The cards above the answers are
-// drawn from it by cards-view.jsx; issueCard draws the others.
+// buttons, { label, className, onClick }. Drawn by IssueCard (cards-view.jsx): the cards above the
+// answers there, the panel's other notes and a report's cards by notes-view.jsx.
 function issueSaid({ tone = '', title, text = null, notes = [], compare = [], actions = [], role = 'status' }) {
   return { tone, title, text, notes, compare, actions: actions.filter(Boolean), role };
-}
-function issueCard(card) {
-  const { tone, title, text, notes, compare, actions, role } = issueSaid(card);
-  return h('div', { class: `issue${tone ? ` ${tone}` : ''}`, role },
-    h('div', { class: 'issue-head' }, h('span', { class: 'bang', 'aria-hidden': 'true' }, tone === 'info' ? 'i' : '!'),
-      h('div', { class: 'issue-text' }, h('span', { class: 'issue-title' }, title), text ? h('span', {}, text) : null,
-        ...notes.map((note) => h('span', { class: 'small-note' }, note)))),
-    compare.length ? h('div', { class: 'compare' }, compare.map(([k, v]) => h('span', {}, h('span', { class: 'k' }, `${k}:`), ` ${v}`))) : null,
-    actions.length ? h('div', { class: 'issue-actions' }, actions) : null);
 }
 
 // Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client
@@ -1511,4 +1504,4 @@ function stopPageIsOurs() {
   return !state.layoutHold || state.layoutReadyTabs.has(state.tab?.id);
 }
 
-export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueCard, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showPast, showStateNote, showStopPage, stateIssue, stopFill, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };
+export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };

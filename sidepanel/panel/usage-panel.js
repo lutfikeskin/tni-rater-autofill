@@ -8,7 +8,7 @@ import { inExtension } from './env.js';
 import { $, state } from './core.js';
 import { logSettings, problemContext } from './intake.js';
 import { pageOf } from './usage.js';
-import { announce, issueCard, renderSite, renderSteps, unlockAudio } from './coordinator.js';
+import { announce, issueSaid, renderSite, renderSteps, unlockAudio } from './coordinator.js';
 import { aiSettings, renderAiSettings } from './assistant.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -63,8 +63,8 @@ async function renderHealth({ up }) {
   $('settings-dot').hidden = !setup.length;
   // Events that can't even be saved here are lost: that is said where the agent works.
   const saved = usage.lastSave();
-  $('notices').replaceChildren(...(saved.state === 'error' ? [issueCard({ tone: 'warn', role: 'alert', title: "Usage log can't be saved on this computer",
-    text: `Nothing is recorded now (${saved.message}). Export the log (Settings, Advanced) and tell TNI.` })] : []));
+  state.notes = { ...state.notes, usage: saved.state === 'error' ? issueSaid({ tone: 'warn', role: 'alert', title: "Usage log can't be saved on this computer",
+    text: `Nothing is recorded now (${saved.message}). Export the log (Settings, Advanced) and tell TNI.` }) : null };
 }
 
 // "a", "a and b", "a, b and c".

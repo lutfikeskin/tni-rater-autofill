@@ -338,7 +338,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .filters button[aria-pressed="true"] { color: var(--ink-strong); background: var(--surface); box-shadow: 0 1px 2px rgba(17, 24, 39, 0.15); }
 .report-age { padding: 6px 12px 0; font-size: 12px; color: var(--ink-muted); }
 .report { display: grid; }
-.report > .issue, .report > .ai-holder, .report > .note-line { margin: 10px 12px 0; }
+/* What a report says above its list (notes-view.jsx) is laid out as the report's own. */
+.report-head { display: contents; }
+.report > .issue, .report > .ai-holder, .report > .note-line, .report-head > .issue, .report-head > .note-line { margin: 10px 12px 0; }
 .report > .rows { margin-top: 10px; }
 .report > .rows:first-child { margin-top: 0; }
 /* The feed's filters (setFilter): what needs the agent, or what is in. */

@@ -6,7 +6,7 @@ import { normalizeIntake } from '../../src/normalize.js';
 import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { $, discardAiSuggestions, doneRestored, h, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, testIntakes } from './core.js';
+import { $, discardAiSuggestions, doneRestored, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, testIntakes } from './core.js';
 import { firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, viewOf } from './coordinator.js';
@@ -182,8 +182,9 @@ function keepWork(intake, was) {
     notesReview: was.notesReview ?? null, namesReview: was.namesReview ?? null, ntlAdded: !!was.ntlAdded });
 }
 
+// Why the PDF couldn't be read, under the drop zone (drawn by notes-view.jsx).
 function showLoadError(msg, name = '') {
-  $('load-error').replaceChildren(h('b', {}, name ? `Couldn't read ${name}` : 'Couldn\'t read that file'), h('span', { class: 'small' }, msg));
+  state.loadError = { title: name ? `Couldn't read ${name}` : 'Couldn\'t read that file', text: msg };
   $('load-error').hidden = false;
 }
 

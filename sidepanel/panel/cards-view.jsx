@@ -14,7 +14,7 @@ import geicoLogo from '../assets/raters/geico.gif';
 import amwinsLogo from '../assets/raters/amwins.svg';
 
 // A card: its tone ('' red, 'warn', 'info', 'quiet'), title, what it says, its notes, what it
-// compares side by side, and its buttons. As issueCard (coordinator.js) draws the others.
+// compares side by side, and its buttons. The panel's other cards are drawn with it too (notes-view.jsx).
 function IssueCard({ tone, title, text, notes, compare, actions, role }) {
   return (
     <div className={`issue${tone ? ` ${tone}` : ''}`} role={role}>
