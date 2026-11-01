@@ -10,6 +10,7 @@ import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { choiceSaid } from './report-model.js';
 import { needId, needSay, nowSaid, optionsSaid, rowClass, rowHead } from './report-rows.js';
+import { AiCard } from './ai-view.jsx';
 
 // A source tag on a row's head.
 function Tag({ tag }) {
@@ -112,8 +113,9 @@ const AnswerRow = memo(function AnswerRow({ rec, ctx, act }) {
 });
 
 // One item left for the agent: why, and its choices where the panel may put the agent's pick in
-// (rec.pickable; the AI's pick marked), with Show on page and Mark done. The AI's card goes in its
-// slot (renderAi), which React leaves alone.
+// (rec.pickable; the AI's pick marked), with Show on page and Mark done. The AI's card in its slot
+// is the record's (`aiCard`, renderAi says it; ai-view.jsx), drawn with the row, so a row drawn
+// again keeps it and the agent's focus on its buttons.
 const NeedRow = memo(function NeedRow({ rec, ctx, act }) {
   const { x, label } = rec;
   const head = rowHead(rec);
@@ -129,7 +131,7 @@ const NeedRow = memo(function NeedRow({ rec, ctx, act }) {
       </Head>
       <div className="row-body" hidden={!rec.open}>
         <p className="why">{x.why}<span className="page-now">{nowSaid(rec.now)}</span></p>
-        <div className="ai-slot" ref={(el) => { act.slot(rec, el); }} />
+        <div className="ai-slot">{rec.aiCard ? <AiCard card={rec.aiCard} /> : null}</div>
         {rec.pickable ? <Choices options={rec.options} pressed={rec.pressed} aiPick={rec.aiPick} onPick={(choice, button) => act.pickRow(rec, choice, ctx, button)} />
           : <p className="row-say">{needSay(rec)}</p>}
         {rec.offered ? <div className="options" hidden={!rec.offered.length}>{optionsSaid(rec.offered)}</div> : null}

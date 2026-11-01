@@ -16,14 +16,13 @@ afterEach(cleanup);
 
 const ctx = { tabId: 1, page: 'Quote', carrier: { id: 'progressive' } };
 const radio = { key: 'k1', label: 'Hauls hazardous materials', controlKind: 'radio', options: ['Yes', 'No'], current: 'Yes', why: 'Not on the intake.' };
-// What the panel's buttons were asked to do, and the nodes and AI slots the rows gave it.
+// What the panel's buttons were asked to do, and the nodes the rows gave it.
 const acts = () => {
   const calls = [];
   const nodes = new Map();
-  const slots = new Map();
   const call = (name) => (...args) => { calls.push([name, ...args]); };
-  return { calls, nodes, slots, act: { toggleRow: call('toggleRow'), markRow: call('markRow'), showRow: call('showRow'), pickRow: call('pickRow'), changeRow: call('changeRow'), seeRow: call('seeRow'),
-    node: (rec, el) => { if (el) nodes.set(rec, el); else nodes.delete(rec); }, slot: (rec, el) => { if (el) slots.set(rec, el); else slots.delete(rec); } } };
+  return { calls, nodes, act: { toggleRow: call('toggleRow'), markRow: call('markRow'), showRow: call('showRow'), pickRow: call('pickRow'), changeRow: call('changeRow'), seeRow: call('seeRow'),
+    node: (rec, el) => { if (el) nodes.set(rec, el); else nodes.delete(rec); } } };
 };
 const draw = (list) => {
   const t = acts();
@@ -219,24 +218,39 @@ test('an answer’s source, See in intake and Change answer: drawn from its reco
   expect([said(node(clicked)), node(clicked).querySelector('.row-actions'), node(clicked).querySelector('.kv-now')]).toEqual([['row clicked', '✓', 'Rates', 'Clicked'], null, null]);
 });
 
-test('the AI’s slot is the AI’s: a row drawn again leaves its card; only the row that changed is drawn', () => {
+// The AI's card is the row's record's (`aiCard`, renderAi): drawn in its slot with the row, and kept,
+// with the agent's focus on its buttons, when the row is drawn again (ai-view.test.jsx checks each card).
+test('the AI’s card is drawn in its row’s slot and kept when the row is drawn again; only the row that changed is drawn', () => {
   const a = needRecord(radio, ctx.carrier, ctx.page, true);
   const b = needRecord({ ...radio, key: 'k2', label: 'Other' }, ctx.carrier, ctx.page, false);
-  const { slots, node, entry } = draw([a, b]);
-  const card = document.createElement('div');
-  card.className = 'ai-card';
-  slots.get(a).append(card);
+  const { node, entry } = draw([a, b]);
+  const slot = () => node(a).querySelector('.ai-slot');
+  expect(slot().childElementCount).toBe(0);
+  let approved = 0;
+  a.aiCard = { kind: 'picked', choice: 'No', tip: null, notes: [], approve: () => { approved++; }, reject: () => {} };
+  redraw(a);
+  const card = slot().firstChild;
+  expect([card.className, card.querySelector('.ai-says').textContent]).toEqual(['ai-box', 'Picked by the AI: No']);
+  const approve = card.querySelector('.accept');
+  approve.focus();
   const head = node(b).querySelector('.row-value');
   a.note = { text: 'Put in.', bad: false, undo: null };
+  a.aiCard = { ...a.aiCard, approve: () => { approved += 10; } };
   redraw(a);
-  expect(slots.get(a).firstChild).toBe(card);
+  expect([slot().firstChild, document.activeElement]).toEqual([card, approve]);
+  approve.click();
+  expect(approved).toBe(10);
   expect(node(b).querySelector('.row-value')).toBe(head);
   // A follow-up's answer at the end of the list: drawn with the rest, which stay.
   const added = answerRecord({ label: 'VIN', value: 'X', answer: true, fresh: true });
   added.source = { tag: null, quiet: 'From the intake', title: 'Intake', quote: 'Answer: X', place: null };
   entry.list = [...entry.list, added];
   redraw(added);
-  expect([node(added).className, slots.get(a).firstChild]).toEqual(['row fresh', card]);
+  expect([node(added).className, slot().firstChild]).toEqual(['row fresh', card]);
+  // The agent answered it themselves (agentAnswer): the card goes.
+  a.aiCard = null;
+  redraw(a);
+  expect(slot().childElementCount).toBe(0);
 });
 
 test('mountRows draws a report’s list before it returns, and takes it down', () => {
