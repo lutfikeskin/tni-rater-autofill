@@ -6532,6 +6532,10 @@ test('a red card says the client\'s current insurance is with the carrier the ta
   // the intake loads or changes), first among them.
   assert.match(extractFunction('renderSite').split('\nfunction ')[0], /showCarrierNote\(\);[\s\S]{0,400}?renderWarnings\(\); \}\s*showStopPage\(\);/);
   // First among the cards above the answers (#carrier-note first in #issues): test/panel/cards-view.test.jsx.
+  // The cards are drawn above the page's answers (review of #249: the markup the old check read held both).
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  const pageView = html.slice(html.indexOf('<section id="page-view"'), html.indexOf('</section>', html.indexOf('<section id="page-view"')));
+  assert.ok(pageView.includes('<div id="cards-root"></div>') && pageView.indexOf('id="cards-root"') < pageView.indexOf('id="feed-root"'), 'the cards above the answers');
   // No stop: the fill, follow-ups, the dock, the stop checks and the AI never read it, and
   // Progressive's DeclinationNotice stays its stop page.
   for (const fn of ['fillPage', 'scheduleAutoFill', 'dockFor', 'stopNoteFor', 'showStopPage', 'aiActionCurrent', 'stateIssue']) {
