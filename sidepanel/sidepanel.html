@@ -101,23 +101,16 @@
       <div id="load-error" class="issue bad" role="alert" hidden></div>
     </section>
 
-    <!-- Step 1: what looked wrong or missing on the intake, then every answer on it -->
-    <section id="check-view" class="pane" hidden>
-      <div class="pane-head">
-        <h2 id="check-title"></h2>
-        <p id="check-sub" class="pane-sub"></p>
-      </div>
-      <div id="warnings" class="checks"></div>
-      <button type="button" id="details-row" class="list-row" aria-controls="details-view" aria-expanded="false">
-        <span class="grow">All client details</span><span id="details-count" class="small muted"></span><span class="chev" aria-hidden="true">›</span>
-      </button>
-    </section>
+    <!-- Step 1: what looked wrong or missing on the intake (#warnings), then every answer on it
+         (#details-row): drawn by checks-view.jsx (mountChecks). -->
+    <section id="check-view" class="pane" hidden></section>
 
     <!-- Steps 2 and 3: the page's answers, one list -->
     <section id="page-view" hidden>
       <!-- A rater to open, and what's wrong or different about this tab's quote, above its answers
            (#fill-waiting, #issues): drawn by cards-view.jsx (mountCards). -->
       <div id="cards-root"></div>
+      <!-- Which driver, vehicle or trailer the page is about: drawn by checks-view.jsx (mountPickers). -->
       <div id="pickers" class="pickers"></div>
       <!-- The page's answers (#feed), drawn by feed-view.jsx (mountFeed). -->
       <div id="feed-root"></div>
