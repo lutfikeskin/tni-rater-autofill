@@ -1267,10 +1267,10 @@ async function captureFromShortcut() {
   capturePage();
 }
 
-// What a capture did, under its button in Settings (never over a fill report).
+// What a capture did, under its button in Settings (never over a fill report): state.captureStatus,
+// which settings-view.jsx draws.
 function captureSaid(text) {
-  $('capture-status').hidden = false;
-  $('capture-status').textContent = text;
+  state.captureStatus = text;
 }
 
 async function capturePage() {

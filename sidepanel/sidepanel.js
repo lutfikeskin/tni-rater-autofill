@@ -13,8 +13,8 @@ import { onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
 import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, showNextNeed } from './panel/fill.js';
 import { noteRecording, onTraceMessage, recoverRecording, renderUnfinished, startRecording, stopRecording } from './panel/dev-recording.js';
-import { renderAiSettings, reviewIntake, wireAi } from './panel/assistant.js';
-import { renderUsage, uploadNow, wireUsage } from './panel/usage-panel.js';
+import { aiActs, renderAiSettings, reviewIntake } from './panel/assistant.js';
+import { renderUsage, settingsActs, uploadNow, wireUsage } from './panel/usage-panel.js';
 import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, closeDetails, closePdf, drawPdf, newQuote, noteStep, openDetails, openPdf, openPdfInTab, pdfPage, pdfPan, pdfZoom, workSaid } from './panel/pdf-view.js';
 import { announceCopy, dock, keepPlace, onPanelMessage, popOut } from './panel/window.js';
 import { mountLive } from './panel/live-view.jsx';
@@ -24,6 +24,8 @@ import { mountCards } from './panel/cards-view.jsx';
 import { mountChecks, mountPickers } from './panel/checks-view.jsx';
 import { mountClient } from './panel/client-view.jsx';
 import { mountDetails } from './panel/details-view.jsx';
+import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
+import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
 // Wiring
@@ -35,7 +37,19 @@ function wire() {
   $('settings-btn').addEventListener('click', () => { if (state.settingsOpen) { state.settingsOpen = false; showScreen(); } else openSettings(); });
   $('pop-out').addEventListener('click', popOut);
   $('dock-back').addEventListener('click', dock);
-  $('settings-done').addEventListener('click', () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); });
+  // Settings: Done, the switches and boxes (settingsActs), the AI's (aiActs), the test-run mark,
+  // Capture page layout, and the developer recording's buttons, offered in unpacked builds only
+  // (canRecord), never in the store's. Then the footer's Recording usage line.
+  const recordable = inExtension && canRecord(usage.build().channel);
+  mountSettings($('settings'), {
+    done: () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); },
+    ...settingsActs(),
+    ...aiActs(),
+    testRun: (on) => { state.testRun = on; markTestRun(on); },
+    capture: () => capturePage(),
+    devrec: recordable ? { start: () => startRecording(), note: () => noteRecording(), stop: () => stopRecording(), recover: () => recoverRecording() } : null,
+  });
+  mountRecordingLine($('recording-root'));
   mountSteps($('steps'), {
     check: () => setView('check'),
     fill: () => setView('page'),
@@ -125,7 +139,6 @@ function wire() {
     t.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
     t.addEventListener('dragover', () => { if (!state.intake) $('load-error').hidden = true; });
   }
-  $('test-run').addEventListener('change', () => markTestRun($('test-run').checked));
   // The dock: its one button and its alternative.
   mountDock($('dock-root'), {
     fill: (go) => fillPage({ continuing: go === 'continue' }),
@@ -138,21 +151,14 @@ function wire() {
       fillPage();
     },
   });
-  $('capture').addEventListener('click', capturePage);
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
   if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') captureFromShortcut(); });
-  // Developer recording: shown in unpacked builds only (canRecord), never in the store's.
-  $('devrec').hidden = !inExtension || !canRecord(usage.build().channel);
-  if (!$('devrec').hidden) {
-    $('devrec-start').addEventListener('click', startRecording);
-    $('devrec-note').addEventListener('click', noteRecording);
-    $('devrec-stop').addEventListener('click', () => stopRecording());
-    $('devrec-recover').addEventListener('click', recoverRecording);
+  // Developer recording (its card in Settings, above): unpacked builds only.
+  if (recordable) {
     chrome.runtime.onMessage.addListener(onTraceMessage);
     renderUnfinished();
   }
   wireUsage();
-  wireAi();
   if (inExtension) {
     // The step first: a field change or new question is scoped by the step it came with.
     chrome.runtime.onMessage.addListener(noteStep);
@@ -190,15 +196,15 @@ async function init() {
   announceCopy();
   await restoreAiPending();
   const saved = await usage.settings();
-  $('auto-followups').checked = saved.autoFollowUps ?? true;
-  $('auto-pages').checked = saved.autoPages ?? true;
-  $('auto-advance').checked = saved.autoAdvance ?? true;
+  // The Filling switches as saved, in their boxes before anything reads them (settings-view.jsx).
+  flushSync(() => {
+    state.switches = { ...state.switches, autoFollowUps: saved.autoFollowUps ?? true, autoPages: saved.autoPages ?? true, autoAdvance: saved.autoAdvance ?? true,
+      checkBeforeContinue: saved.checkBeforeContinue ?? true, finishSound: saved.finishSound ?? true };
+  });
   // The panel opened on a saved intake: the settings in force for the rest of its quote.
   if (state.intake && usage.currentSession()) logSettings('opened');
   // A correction's profile the panel closed before logging (or an intake loaded by an earlier version).
   if (logProfile()) save();
-  $('check-continue').checked = saved.checkBeforeContinue ?? true;
-  $('finish-sound').checked = saved.finishSound ?? true;
   uploadNow();
   render();
   renderUsage();

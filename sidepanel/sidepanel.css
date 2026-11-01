@@ -596,6 +596,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .foot-row { padding: 4px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--border-faint); }
 .dock-root:has(> .dock[hidden]) + .problem + .foot-row { border-top: 0; }
 .recording, .foot-version { font: 500 11px/1 var(--font-sans); color: var(--ink-muted); white-space: nowrap; }
+/* The host React draws #recording into (settings-view.jsx): no box of its own, so the footer row lays it out as before. */
+.recording-root { display: contents; }
 .rec-dot { color: var(--signal); }
 
 @keyframes rise { from { transform: translateY(16px); opacity: 0.6; } to { transform: translateY(0); opacity: 1; } }

@@ -4746,7 +4746,8 @@ test('a Continue on a carrier without the retry is never clicked again: waited f
 // Audit 2026-10-08, finding 11: a problem report waited for the next minute's upload, which the
 // panel was often closed before.
 test('a problem report is uploaded as soon as it is logged', () => {
-  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,400}\$\('usage-note'\)\.textContent = 'Thanks — saved with the usage log\.';\s+\/\/[^\n]*\n\s+uploadNow\(\);/);
+  // The line under the usage card is said as data (state.usageNote; settings-view.jsx draws it).
+  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,400}state\.usageNote = 'Thanks — saved with the usage log\.';\s+\/\/[^\n]*\n\s+uploadNow\(\);/);
 });
 
 // Contract 1 (audit 2026-10-08): a field change on a one-address application names its step.
@@ -5410,10 +5411,58 @@ test('the fill hint says Continue is clicked for the agent only while that setti
   assert.equal(sub({ carrier: prog, background: true }), 'Fills the quote tab in the background. Go back to it to review.');
   const ready = dockHarness({ carrier: prog }).dock();
   assert.deepEqual([ready.phase, ready.button, ready.label], ['ready', 'fill', 'Fill this page']);
-  // The hint follows the switch: renderSite redraws the steps, and with them the dock.
-  assert.match(extractFunction('wireUsage'), /\$\('auto-advance'\)\.addEventListener\('change', async \(e\) => \{ const saving = usage\.saveSettings\(\{ autoAdvance: e\.target\.checked \}\); renderSite\(\); await saving; logSettings\('changed', 'autoAdvance'\); \}\);/, 'the hint follows the switch');
-  assert.match(extractFunction('renderSite').split('\nfunction ')[0], /renderSteps\(\);\s*\}$/);
-  assert.match(extractFunction('renderSteps').split('\nfunction ')[0], /renderDock\(\);\s*\}$/);
+  // The hint follows the switch: renderSite redraws the steps, and with them the dock, before the
+  // switch is saved (settingsActs, which Settings' switch asks: settings-view.jsx).
+  const t = settingsActsHarness();
+  let saved;
+  t.context.usage.saveSettings = (patch) => { t.calls.push(['save', { ...patch }]); return new Promise((resolve) => { saved = resolve; }); };
+  const switching = t.acts.switch('autoAdvance', false);
+  assert.equal(t.state.switches.autoAdvance, false, 'what Settings draws follows it at once');
+  assert.deepEqual(t.calls, [['save', { autoAdvance: false }], ['renderSite']], 'the hint follows the switch');
+  saved();
+  return switching.then(() => {
+    assert.deepEqual(t.calls.at(-1), ['logSettings', 'changed', 'autoAdvance']);
+    assert.match(extractFunction('renderSite').split('\nfunction ')[0], /renderSteps\(\);\s*\}$/);
+    assert.match(extractFunction('renderSteps').split('\nfunction ')[0], /renderDock\(\);\s*\}$/);
+  });
+});
+
+// What Settings' switches, boxes and usage buttons ask the panel to do (settingsActs), in a vm with
+// the calls recorded.
+function settingsActsHarness() {
+  const calls = [];
+  const state = { switches: { autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true }, usageNote: '' };
+  const record = (name) => (...args) => { calls.push([name, ...args]); };
+  const context = { state, calls, confirm: () => true,
+    usage: { saveSettings: async (patch) => { calls.push(['save', { ...patch }]); }, settings: async () => ({}), count: async () => 3, exportLog: async () => 3, clearLog: async () => { calls.push(['clearLog']); } },
+    logSettings: record('logSettings'), renderSite: record('renderSite'), renderSteps: record('renderSteps'), uploadNow: record('uploadNow'), renderAiSettings: record('renderAiSettings'), renderUsage: record('renderUsage') };
+  vm.runInNewContext(`${extractFunction('settingsActs')}\nvar acts = settingsActs();`, context);
+  return { acts: context.acts, calls, state, context };
+}
+
+test('Settings\' usage boxes and buttons: a server that isn\'t a URL is refused, the initials are kept short, Clear log asks first', async () => {
+  const t = settingsActsHarness();
+  await t.acts.serverUrl(' ftp://x ');
+  assert.deepEqual([t.calls, t.state.usageNote], [[], 'Server must look like http://host:port']);
+  await t.acts.serverUrl(' https://usage.example ');
+  assert.deepEqual(t.calls, [['save', { serverUrl: 'https://usage.example' }], ['uploadNow'], ['renderAiSettings']], 'saved, uploaded, and whose key Luna uses said again');
+  t.calls.length = 0;
+  await t.acts.serverUrl('');
+  assert.deepEqual(t.calls[0], ['save', { serverUrl: '' }], 'blank: no server');
+  t.calls.length = 0;
+  await t.acts.serverToken(' tok ');
+  await t.acts.agent(' jkabcdefg ');
+  assert.deepEqual(t.calls, [['save', { serverToken: 'tok' }], ['uploadNow'], ['renderAiSettings'], ['save', { agent: 'JKABCD' }], ['renderUsage']]);
+  await t.acts.exportLog();
+  assert.equal(t.state.usageNote, 'Exported 3 events to your Downloads.');
+  let asked = null;
+  t.context.confirm = (msg) => { asked = msg; return false; };
+  await t.acts.clearLog();
+  assert.equal(asked, '3 events aren\'t uploaded or exported. Delete them anyway?');
+  assert.ok(!t.calls.some(([c]) => c === 'clearLog'), 'not cleared without a yes');
+  t.context.confirm = () => true;
+  await t.acts.clearLog();
+  assert.deepEqual([t.calls.at(-2), t.calls.at(-1), t.state.usageNote], [['clearLog'], ['renderUsage'], 'Usage log cleared.']);
 });
 
 test('Looks right sends the top frame\'s receipt with a fill, only for the page in front', async () => {
@@ -5840,13 +5889,19 @@ test('marking a test run remembers the PDF on this computer and logs it once per
   assert.match(SIDEPANEL, /usage\.log\(\{ type: 'intake_loaded', \.\.\.summary, \.\.\.\(test \? \{ test: true \} : \{\}\), platform: platformOf\(\) \}\);/);
 });
 
-test('the agent\'s settings are logged whole: on load, on opening, and on each change', () => {
+test('the agent\'s settings are logged whole: on load, on opening, and on each change', async () => {
   assert.match(extractFunction('loadFile'), /usage\.log\(\{ type: 'intake_loaded'[^\n]*\n\s+await logSettings\('intake'\);/);
-  const wiring = extractFunction('wireUsage');
+  // Each Filling switch in Settings (settings-view.jsx) asks settingsActs for its own name, which
+  // logs the change.
+  const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
   for (const [id, name] of [['auto-followups', 'autoFollowUps'], ['auto-pages', 'autoPages'], ['auto-advance', 'autoAdvance'], ['overwrite', 'overwrite']]) {
-    assert.match(wiring, new RegExp(`\\$\\('${id}'\\)\\.addEventListener\\('change'[^\\n]*logSettings\\('changed', '${name}'\\)`), `${id} logs its change`);
+    assert.match(view, new RegExp(`<SwitchRow id="${id}" [^\\n]*onChange=\\{flip\\('${name}'\\)\\} />`), `${id} asks for ${name}`);
+    const t = settingsActsHarness();
+    await t.acts.switch(name, true);
+    assert.equal(t.state.switches[name], true);
+    assert.deepEqual(t.calls.at(-1), ['logSettings', 'changed', name], `${id} logs its change`);
   }
-  assert.match(extractFunction('wireAi'), /await usage\.saveSettings\(patch\);\s+logSettings\('changed'/);
+  assert.match(extractFunction('aiActs'), /await usage\.saveSettings\(patch\);\s+logSettings\('changed'/);
   assert.match(SIDEPANEL, /if \(state\.intake && usage\.currentSession\(\)\) logSettings\('opened'\);/);
 });
 
@@ -7924,9 +7979,15 @@ test('the panel keeps only the recorded tab\'s trace events, redacted with their
   ]);
   assert.deepEqual(JSON.parse(JSON.stringify(steps.filter(([, s]) => s))), [['progressive', 'About Sam']], 'steps go through the carrier\'s step names');
   assert.deepEqual(JSON.parse(JSON.stringify(replies)), [{ ok: true }], 'only the batch it kept is answered');
-  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
-  assert.match(html, /<div id="devrec" class="devrec" hidden>/, 'hidden until the panel sees a build that may record');
-  assert.match(SIDEPANEL, /\$\('devrec'\)\.hidden = !inExtension \|\| !canRecord\(usage\.build\(\)\.channel\);/);
+  // Settings draws its card only when wire gives it the recording's buttons (settings-view.jsx; Vitest
+  // checks it hidden without them), which it does only where the build may record.
+  const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
+  assert.match(view, /<div id="devrec" className="devrec" hidden=\{!act\}>/, 'hidden unless the panel sees a build that may record');
+  assert.match(view, /<DevRecording act=\{act\.devrec\} \/>/);
+  const wire = extractFunction('wire');
+  assert.match(wire, /const recordable = inExtension && canRecord\(usage\.build\(\)\.channel\);/);
+  assert.match(wire, /\n    devrec: recordable \? \{ start: \(\) => startRecording\(\),[^\n]*\} : null,\n/);
+  assert.match(wire, /if \(recordable\) \{\s+chrome\.runtime\.onMessage\.addListener\(onTraceMessage\);/, 'its trace is taken there only');
 });
 
 // Review of PR #166: the developer recording ends with its client and its panel, and starts clean.
@@ -8665,13 +8726,18 @@ test('Progressive\'s quote is done at Print, Email, Fax, and the dock says so in
   assert.equal(g.dock().title, 'The quote proposal is printed', 'GEICO as before');
 });
 
-test('Sound when the quote is done is a Filling switch, on by default, kept on this computer and never logged', () => {
-  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
-  assert.match(html, /<label class="opt"><span class="opt-text"><b>Sound when the quote is done<\/b><\/span><input type="checkbox" role="switch" class="switch" id="finish-sound" checked><\/label>/);
-  assert.match(extractFunction('wireUsage'), /\$\('finish-sound'\)\.addEventListener\('change', \(e\) => \{ usage\.saveSettings\(\{ finishSound: e\.target\.checked \}\); \}\);/);
+test('Sound when the quote is done is a Filling switch, on by default, kept on this computer and never logged', async () => {
+  // Settings draws it among the Filling switches (settings-view.jsx; Vitest checks its row), on until
+  // the saved settings say otherwise.
+  const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
+  assert.match(view, /<SwitchRow id="finish-sound" name="Sound when the quote is done" checked=\{switches\.finishSound !== false\} said=\{switches\} onChange=\{flip\('finishSound'\)\} \/>/);
+  assert.match(SIDEPANEL, /switches: \{ autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true \},/, 'on by default');
+  const t = settingsActsHarness();
+  await t.acts.switch('finishSound', false);
+  assert.deepEqual(t.calls, [['save', { finishSound: false }]], 'saved, not in the usage log');
+  assert.equal(t.state.switches.finishSound, false);
   assert.match(extractFunction('wireUsage'), /document\.addEventListener\('pointerdown', unlockAudio, \{ once: true, capture: true \}\);/, 'the audio is unlocked by the agent\'s first click in the panel');
-  assert.match(extractFunction('init'), /\$\('finish-sound'\)\.checked = saved\.finishSound \?\? true;/);
-  assert.doesNotMatch(extractFunction('wireUsage'), /logSettings\('changed', 'finishSound'\)/, 'not in the usage log');
+  assert.match(extractFunction('init'), /flushSync\(\(\) => \{\s+state\.switches = \{ \.\.\.state\.switches, [^\n]*\n\s+checkBeforeContinue: saved\.checkBeforeContinue \?\? true, finishSound: saved\.finishSound \?\? true \};/);
 });
 
 // Review of PR #171 (Claude, Cursor): the chime kept a record of its own (`chimed`, by tab and the
@@ -8958,7 +9024,8 @@ test('an unfinished recording already gone is said so, and the button is drawn a
   const said = [];
   let redrawn = 0;
   const gone = Object.assign(new Error('A requested file or directory could not be found at the time an operation was processed.'), { name: 'NotFoundError' });
-  const context = { $: () => ({ dataset: { id: 'geico-x' } }), devrecSaid: (s) => said.push(s), renderUnfinished: async () => { redrawn++; },
+  // The button's recording: the newest one renderUnfinished said (state.devrec; settings-view.jsx draws it).
+  const context = { state: { devrec: { unfinished: { id: 'geico-x', label: 'Save the unfinished recording' } } }, devrecSaid: (s) => said.push(s), renderUnfinished: async () => { redrawn++; },
     saveRecording: async () => {}, RecordingStore: { reopen: async () => { throw gone; } } };
   vm.runInNewContext(extractFunction('recoverRecording'), context);
   await context.recoverRecording();
@@ -8966,6 +9033,15 @@ test('an unfinished recording already gone is said so, and the button is drawn a
   context.RecordingStore.reopen = async () => { throw new Error('disk full'); };
   await context.recoverRecording();
   assert.deepEqual([said[1], redrawn], ['Couldn\'t open it: disk full', 2]);
+  // The button is said from what is left: the newest first, not the one recording now; none, no button.
+  const left = { state: { devrec: { on: true, status: 'Recording 0:05 · 3 events.', unfinished: null }, recording: { store: { manifest: { id: 'now' } } } },
+    RecordingStore: { unfinished: async () => [{ id: 'geico-new' }, { id: 'now' }, { id: 'geico-old' }] } };
+  vm.runInNewContext(extractFunction('renderUnfinished'), left);
+  await left.renderUnfinished();
+  assert.deepEqual(JSON.parse(JSON.stringify(left.state.devrec)), { on: true, status: 'Recording 0:05 · 3 events.', unfinished: { id: 'geico-new', label: 'Save 2 unfinished recordings, one by one' } });
+  left.RecordingStore.unfinished = async () => [{ id: 'now' }];
+  await left.renderUnfinished();
+  assert.equal(left.state.devrec.unfinished, null);
 });
 
 // Review of PR 179: with no key of the agent's own, Assistant credited TNI's server whatever the
@@ -8973,28 +9049,74 @@ test('an unfinished recording already gone is said so, and the button is drawn a
 // is sent is gone (the maintainer, 2026-10-29); the privacy policy says it (server/privacy.html).
 test('Assistant names whose key Luna uses: the agent\'s, TNI\'s server, or another server', async () => {
   const central = 'https://central.example';
+  // The AI's card is said as data (state.ai; settings-view.jsx draws it).
   const said = async (cfg) => {
-    const els = new Map();
-    const el = (id) => {
-      if (!els.has(id)) els.set(id, { id, hidden: id === 'key-form', checked: false, disabled: false, textContent: '', className: '', title: '', dataset: {}, classList: { toggle() {} } });
-      return els.get(id);
-    };
-    const context = { $: el, URL, usage: { DEFAULT_SERVER: central }, renderUsage() {},
+    const context = { state: { ai: null }, URL, usage: { DEFAULT_SERVER: central }, renderUsage() {},
       PROVIDERS: { luna: { name: 'Luna', company: 'OpenAI', keyLabel: 'OpenAI API key', automatic: true } },
       aiSettings: async () => ({ provider: 'luna', on: true, auto: false, model: 'gpt-6-luna', apiKey: '', proxy: null, ready: false, ...cfg }) };
     vm.createContext(context);
     vm.runInContext(extractFunction('renderAiSettings'), context);
     await context.renderAiSettings();
-    return { key: el('key-status').textContent };
+    return { key: context.state.ai.keyStatus, ai: context.state.ai };
   };
   const own = await said({ apiKey: 'sk-own', ready: true });
   assert.equal(own.key, 'Saved on this computer');
+  assert.doesNotMatch(JSON.stringify(own.ai), /sk-own/, 'the key itself is never in the panel\'s state');
+  assert.deepEqual([own.ai.keyEdit, own.ai.keyTone, own.ai.warn, own.ai.note, own.ai.noteTone], ['Change', 'ok', false, 'On. Suggests answers.', 'on']);
   const tni = await said({ proxy: { url: `${central}/v1/luna`, token: 'upload' }, ready: true });
   assert.match(tni.key, /TNI's server provides it/);
   const other = await said({ proxy: { url: 'http://localhost:8787/v1/luna', token: '' }, ready: true });
   assert.doesNotMatch(other.key, /TNI's/);
   const none = await said({});
   assert.equal(none.key, 'Not added yet');
+  // On without a key: it says so, and its fold opens (warn). The picks switch is disabled only while
+  // AI is off (or with a provider that can't pick).
+  assert.deepEqual([none.ai.keyEdit, none.ai.keyTone, none.ai.warn, none.ai.note, none.ai.noteTone, none.ai.autoOff], ['Add key', 'warn', true, 'Needs a key', 'warn', false]);
+  const off = await said({ on: false });
+  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown], [false, 'Off', 'off', true, true]);
+});
+
+// The AI key (CLAUDE.md: credentials stay out of logs): Add key opens its box with the saved key in
+// it, put there by the panel and read from there on Save; the panel's state only says whether the box
+// is open. Escape closes it without saving, and not Settings with it.
+test('the AI key is put in its box and read from it, never into the panel\'s state; Save, Enter and Escape', async () => {
+  const els = new Map();
+  const el = (id) => {
+    if (!els.has(id)) els.set(id, { id, value: '', focus() { focused.push(id); } });
+    return els.get(id);
+  };
+  const focused = [];
+  const calls = [];
+  const settings = { lunaKey: 'sk-saved' };
+  const state = { keyFormOpen: false, aiSettingsRun: 0, aiRun: 0, aiAsking: new Map(), aiCache: new Map([['a', { done: false }], ['b', { done: true }]]) };
+  const context = { state, $: el, flushSync: (fn) => { calls.push('flush'); fn(); },
+    usage: { settings: async () => settings, saveSettings: async (patch) => { calls.push(['save', { ...patch }]); Object.assign(settings, patch); } },
+    logSettings: (...args) => calls.push(['logSettings', ...args]), renderAiSettings: async () => calls.push('renderAiSettings'), reviewIntake: () => calls.push('reviewIntake') };
+  vm.runInNewContext(`${extractFunction('openKeyForm')}\n${extractFunction('aiActs')}\nvar acts = aiActs();`, context);
+  // Add key: the box is drawn open first, then the saved key put in it and focused.
+  await context.acts.keyEdit();
+  assert.equal(state.keyFormOpen, true);
+  assert.deepEqual([calls[0], el('ai-openai-key').value, focused], ['flush', 'sk-saved', ['ai-openai-key']]);
+  // Enter saves what the box holds, trimmed; the box is emptied and closed, and focus goes back.
+  el('ai-openai-key').value = ' sk-new ';
+  let prevented = 0;
+  context.acts.keyKey({ key: 'Enter', preventDefault: () => { prevented++; }, stopPropagation: () => { throw new Error('Enter is not stopped'); } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls.filter((c) => c[0] === 'save'), [['save', { lunaKey: 'sk-new' }]]);
+  assert.deepEqual(calls.find((c) => c[0] === 'logSettings'), ['logSettings', 'changed', 'aiKey']);
+  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, focused.at(-1), prevented], ['', false, 'key-edit', 1]);
+  assert.deepEqual([...state.aiCache.keys()], ['b'], 'answers asked with the old key are dropped');
+  // Escape: emptied and closed without saving; stopped, so Settings stays open.
+  await context.acts.keyEdit();
+  el('ai-openai-key').value = 'typed';
+  let stopped = 0;
+  context.acts.keyKey({ key: 'Escape', preventDefault() {}, stopPropagation: () => { stopped++; } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 1]);
+  assert.doesNotMatch(JSON.stringify([...Object.entries(state)]), /sk-/, 'no key in the panel\'s state');
+  // The box and its button in Settings (settings-view.jsx): a password box, never given a value by React.
+  const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
+  assert.match(view, /<input id="ai-openai-key" type="password" placeholder="Paste the key from your manager" autoComplete="off" aria-labelledby="key-label" onKeyDown=\{\(e\) => act\.keyKey\(e\)\} \/>/);
 });
 
 // A frame that swaps its document between the panel's injection of the kit and its snapshot read (a

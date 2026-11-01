@@ -331,7 +331,7 @@ const state = storeState({
   // per page and set of questions, so a refill doesn't ask again.
   aiRun: 0,
   aiCache: new Map(),
-  // The request whose settings change discarded every earlier request's answer (wireAi), and the
+  // The request whose settings change discarded every earlier request's answer (aiActs), and the
   // questions being asked now (cache signature -> promise settled when the answer is in).
   aiSettingsRun: 0,
   aiAsking: new Map(),
@@ -341,6 +341,26 @@ const state = storeState({
   settingsOpen: false,
   view: 'check',
   filter: 'all',
+  // Settings, as settings-view.jsx draws it. The Filling switches (`switches`: set from the saved
+  // settings by init, and by the agent; the panel reads each from its box by id); the AI's card
+  // (renderAiSettings: `ai`, null until first said; `keyFormOpen` while the key's box is open: the key
+  // is only ever in that box); the usage card (renderUsage: `usageCard`; `usageNote`, the line under
+  // it); the version, what is left to set up and the initials' box marked (renderHealth: `health`);
+  // the test-run mark (render: `testRun`, null with no intake); Capture page layout off (renderSite:
+  // `captureOff`) and what it did (captureSaid: `captureStatus`); and the developer recording's card
+  // (dev-recording.js: `devrec`, whether one runs, its line and the unfinished one to save). And the
+  // footer's Recording usage (render, renderSite, renderUsage: `recordingLine`).
+  switches: { autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true },
+  ai: null,
+  keyFormOpen: false,
+  usageCard: null,
+  usageNote: '',
+  health: null,
+  testRun: null,
+  captureOff: false,
+  captureStatus: null,
+  devrec: { on: false, status: null, unfinished: null },
+  recordingLine: false,
   // What the three steps and the dock say now (renderSteps, renderDock), as steps-view.jsx draws
   // them: null until the panel first says it.
   steps: null,

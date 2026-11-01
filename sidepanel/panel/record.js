@@ -23,9 +23,9 @@ import { flushSync } from 'react-dom';
 function render() {
   const has = !!state.intake;
   showScreen();
-  $('recording').hidden = !has;
-  // Marking a test run (Settings → Advanced) needs an intake to mark.
-  $('test-run-row').hidden = !has;
+  state.recordingLine = has;
+  // Marking a test run (Settings → Advanced) needs an intake to mark: null hides it (settings-view.jsx).
+  state.testRun = has ? !!state.intake.test : null;
   if (!has) { state.client = null; return; }
   const { record, stats, fileName } = state.intake;
   const n = (k, one) => `${record[k].length} ${one}${record[k].length === 1 ? '' : 's'}`;
@@ -39,7 +39,6 @@ function render() {
     pdf: pdfAvailable(),
     ask: state.fileConfirm ? state.fileQuestion : null,
   };
-  $('test-run').checked = !!state.intake.test;
   renderWarnings();
   renderSections();
   renderPickers();
@@ -77,12 +76,11 @@ function openSettings(focusId = null) {
 }
 
 // The assistant's key in Settings: Add key (or Change) opens the box with the saved key in it, as
-// dots, so clearing it and saving removes it; Save or Cancel closes it.
+// dots, so clearing it and saving removes it; Save or Cancel closes it. The box is drawn open (its
+// button says Cancel: settings-view.jsx) before the key is put in it; the key is only ever in the box.
 async function openKeyForm(open) {
-  $('key-form').hidden = !open;
-  $('key-edit').setAttribute('aria-expanded', String(open));
+  flushSync(() => { state.keyFormOpen = open; });
   if (!open) { await renderAiSettings(); return; }
-  $('key-edit').textContent = 'Cancel';
   $('ai-openai-key').value = (await usage.settings()).lunaKey || '';
   $('ai-openai-key').focus();
 }
