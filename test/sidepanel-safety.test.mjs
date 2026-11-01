@@ -8076,6 +8076,114 @@ test('the PDF opens at the panel\'s width, a marked item at 200%, and drags or z
   assert.match(extractFunction('wire'), /pdfPan\(\$\('pdf-scroll'\)\);/);
 });
 
+// The PDF sheet is drawn by pdf-sheet-view.jsx (React PR, 2026-11-01) from what openPdf and drawPdf
+// say (state.pdfSheet); the page itself is still drawn by drawPdf on the sheet's canvas. What the
+// sheet draws from that, and what each button asks: test/panel/pdf-sheet-view.test.jsx. Here, the
+// real functions: what they say for a marked item, a PDF no longer kept or one that can't be read,
+// the page copied onto the sheet's canvas, the marks drawn before the view moves to them, and the
+// view's page and zoom assigned anew (so the sheet redraws), never reopened by a draw after Back.
+test('the PDF sheet: what openPdf and drawPdf say, the page copied onto the sheet\'s canvas, and its buttons wired as before', async () => {
+  const calls = [];
+  const el = (id, more = {}) => ({ id, focus: () => calls.push(['focus', id]), ...more });
+  const copies = [];
+  const shownCanvas = el('pdf-canvas', { width: 0, height: 0, style: {}, getContext: () => ({ drawImage: (c, x, y) => copies.push([c.width, c.height, x, y]) }) });
+  const scroll = el('pdf-scroll', { clientWidth: 628, clientHeight: 400, scrollLeft: 0, scrollTop: 0, scrollWidth: 1228, scrollHeight: 1628,
+    scrollTo: (x, y) => calls.push(['scrollTo', x, y]), getBoundingClientRect: () => ({ top: 0, left: 0 }) });
+  const nodes = { 'pdf-canvas': shownCanvas, 'pdf-scroll': scroll, 'pdf-back': el('pdf-back'), 'step-check': el('step-check'),
+    'pdf-marks': { get children() { calls.push(['marks read']); return []; } } };
+  const page = { getViewport: ({ scale }) => ({ width: 600 * scale, height: 800 * scale, convertToViewportRectangle: (r) => r.map((v) => v * scale) }),
+    render: () => ({ promise: Promise.resolve(), cancel() {} }) };
+  let doc = { numPages: 1, getPage: async () => page };
+  const opener = { isConnected: true, focus: () => calls.push(['focus', 'opener']) };
+  const state = { intake: { fileName: 'acme.pdf', places: { pages: [{}] }, agentEdited: [] }, pdf: null, pdfSheet: null, pdfDraw: 0, pdfTask: null, view: 'check' };
+  const context = {
+    state, $: (id) => nodes[id], render: () => calls.push(['render']), sourcePlace: (paths) => (paths.includes('garaging.state') ? { page: 0, rect: [10, 10, 50, 20] } : null),
+    intakePdfDocument: async () => (typeof doc === 'function' ? doc() : doc), flushSync: (fn) => { calls.push(['flush']); fn(); },
+    document: { activeElement: opener, createElement: () => ({ width: 0, height: 0, getContext: () => ({}) }) }, window: { devicePixelRatio: 1 },
+    pdfjs: { AnnotationMode: { ENABLE: 2 } }, PDF_ZOOMS: [1, 1.5, 2, 3, 4], PDF_OPEN_ZOOM: 1, PDF_FOCUS_ZOOM: 2, Promise, Math, Error,
+  };
+  vm.runInNewContext(['openPdf', 'drawPdf', 'pdfControls', 'pdfPageSaid', 'focusPdfMark', 'closePdf', 'pdfZoom', 'pdfPage'].map(extractFunction).join('\n'), context);
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+
+  // A check item marked on a one-page intake: at 200%, its label the title, the sheet loading and
+  // drawn (render shows it) before Back takes focus, then the page and its mark, then the view
+  // moves to the mark.
+  await context.openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' });
+  assert.deepEqual(plain(calls.slice(0, 4)), [['flush'], ['render'], ['scrollTo', 0, 0], ['focus', 'pdf-back']]);
+  assert.deepEqual(plain(calls.slice(4)), [['flush'], ['marks read']], 'the marks are drawn before the view moves to them');
+  assert.deepEqual([state.pdf.page, state.pdf.zoom, state.pdf.pages, state.pdf.mark.kind], [0, 2, 1, 'check']);
+  assert.equal(state.pdfReturn, opener);
+  assert.deepEqual(plain(state.pdfSheet), {
+    title: 'Garaging state', name: 'Intake · marked', shown: 'page', error: null,
+    hint: { kind: 'check', label: 'Garaging state', where: '', several: false },
+    controls: { pages: '1 / 1', prev: false, next: false, zoomOut: true, zoomIn: true, fit: true, tab: true, focus: true, zoom: 200 },
+    marks: [{ filled: false, left: 18, top: 18, width: 84, height: 24 }],
+  });
+  // The page, drawn off screen at the panel's width times the zoom, copied onto the sheet's canvas.
+  assert.deepEqual([shownCanvas.width, shownCanvas.height, shownCanvas.style.width, shownCanvas.style.height], [1200, 1600, '1200px', '1600px']);
+  assert.deepEqual(copies, [[1200, 1600, 0, 0]]);
+
+  // Zoom and page are assigned anew, so the sheet hears them; a step past the last page does nothing.
+  let before = state.pdf;
+  context.pdfZoom(3);
+  assert.notEqual(state.pdf, before);
+  assert.deepEqual([before.zoom, state.pdf.zoom, state.pdfSheet.controls.zoom], [2, 3, 300]);
+  before = state.pdf;
+  context.pdfPage(1);
+  assert.equal(state.pdf, before, 'no page after the last');
+
+  // The whole PDF on an intake of three pages: its name, at the page's width, no hint; Next to page 2.
+  doc = { numPages: 3, getPage: async () => page };
+  state.intake.places.pages = [{}, {}, {}];
+  await context.openPdf();
+  assert.deepEqual([state.pdfSheet.title, state.pdfSheet.name, state.pdfSheet.hint, state.pdfSheet.marks.length], ['Intake PDF', 'acme.pdf', null, 0]);
+  assert.deepEqual(plain(state.pdfSheet.controls), { pages: '1 / 3', prev: false, next: true, zoomOut: false, zoomIn: true, fit: true, tab: true, focus: true, zoom: 100 });
+  before = state.pdf;
+  context.pdfPage(1);
+  assert.notEqual(state.pdf, before);
+  assert.equal(state.pdf.page, 1);
+  await new Promise((r) => setTimeout(r));
+  assert.deepEqual(plain(state.pdfSheet.controls).pages, '2 / 3');
+  assert.deepEqual([state.pdfSheet.controls.prev, state.pdfSheet.controls.next], [true, true]);
+
+  // A filled answer the agent corrected, worked out from two fields: its hint by its kind.
+  state.intake.agentEdited = ['garaging.state'];
+  context.sourcePlace = () => ({ page: 1, rects: [[0, 0, 10, 10], [20, 20, 30, 30]] });
+  await context.openPdf({ path: 'x', from: ['garaging.state', 'garaging.zip'], label: 'Garaging', kind: 'filled' });
+  assert.deepEqual(plain(state.pdfSheet.hint), { kind: 'edited', label: 'Garaging', where: ' on page 2', several: true });
+  assert.equal(state.pdfSheet.name, 'Intake, page 2 · marked');
+  assert.deepEqual(state.pdfSheet.marks.map((m) => m.filled), [true, true]);
+
+  // A PDF no longer kept: said, nothing to page, zoom or mark, and no tab. One that can't be read:
+  // said, and the tab can still try.
+  doc = null;
+  await context.openPdf();
+  assert.deepEqual([state.pdfSheet.shown, state.pdfSheet.error, state.pdfSheet.hint], ['error', 'This PDF is no longer kept. Load the same file again (Change file); your work stays.', null]);
+  assert.deepEqual(['prev', 'next', 'zoomOut', 'fit', 'zoomIn', 'focus', 'tab'].map((k) => state.pdfSheet.controls[k]), Array(7).fill(false));
+  doc = () => { throw new Error('bad'); };
+  await context.openPdf();
+  assert.deepEqual([state.pdfSheet.shown, state.pdfSheet.error, state.pdfSheet.controls.tab, state.pdfSheet.controls.next], ['error', 'Couldn’t show this PDF here. Open it in a new tab instead.', true, false]);
+
+  // Back while the PDF is still opening: the draw that finishes after it doesn't open it again.
+  let release;
+  doc = () => new Promise((r) => { release = () => r({ numPages: 5, getPage: async () => page }); });
+  const opening = context.openPdf();
+  await new Promise((r) => setTimeout(r));
+  context.closePdf();
+  release();
+  await opening;
+  assert.equal(state.pdf, null, 'closed stays closed');
+  assert.deepEqual(plain(calls.at(-1)), ['focus', 'opener'], 'Back gives focus back where it was');
+
+  // Its buttons, wired as before: Back, Close and the scrim close it; Open full PDF; Zoom to it; the
+  // pages and the zoom steps.
+  const wire = extractFunction('wire');
+  assert.match(wire, /mountPdf\(\$\('pdf-view'\), \{\s+close: \(\) => closePdf\(\),\s+tab: \(\) => openPdfInTab\(\),\s+focus: \(\) => pdfZoom\(Math\.max\(state\.pdf\?\.zoom \?\? 1, PDF_FOCUS_ZOOM\), \{ focus: true \}\),\s+page: \(step\) => pdfPage\(step\),\s+zoomIn: \(\) => pdfZoom\(PDF_ZOOMS\.find\(\(z\) => z > state\.pdf\?\.zoom\)\),\s+zoomOut: \(\) => pdfZoom\(PDF_ZOOMS\.findLast\(\(z\) => z < state\.pdf\?\.zoom\)\),\s+fit: \(\) => pdfZoom\(1\),\s+\}\);\s+pdfPan\(\$\('pdf-scroll'\)\);/);
+  // The sheet keeps focus and Escape closes it, as before: #pdf-view stays the page's host.
+  assert.match(wire, /if \(e\.key === 'Escape' && state\.pdf && !\$\('pdf-view'\)\.hidden\) \{ e\.preventDefault\(\); closePdf\(\); return; \}/);
+  assert.match(wire, /const modal = state\.pdf && !\$\('pdf-view'\)\.hidden \? \$\('pdf-view'\)/);
+});
+
 // The client strip (the maintainer, 2026-10-23): Change file and Clear were behind a ⋯ menu (three
 // clicks to start the next client); the name card opens the client details, and the file tools are
 // buttons in view, with New quote with this intake beside them. The steps name the intake, then the

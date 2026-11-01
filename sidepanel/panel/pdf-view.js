@@ -5,7 +5,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { fillEvents, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { $, clearAgentKeys, h, persistAiPending, state, store } from './core.js';
+import { $, clearAgentKeys, persistAiPending, state, store } from './core.js';
 import { loadFile, logProfile, profileTimer } from './intake.js';
 import { render, showScreen } from './record.js';
 import { pageOf, samePage } from './usage.js';
@@ -86,8 +86,8 @@ async function intakePdfDocument() {
 
 // `target`: { path, from, label, kind: 'check' | 'filled' }, the record path to mark, or for a
 // derived answer the paths it was worked out from (`from`, plan.js; intake-source.js); none for
-// the whole PDF from its first page. Shown in a sheet over the panel; Back (or Escape) returns to
-// where the agent was.
+// the whole PDF from its first page. Shown in a sheet over the panel, which pdf-sheet-view.jsx draws
+// from what this and drawPdf say (state.pdfSheet); Back (or Escape) returns to where the agent was.
 async function openPdf(target = null) {
   const paths = [].concat(target?.from ?? target?.path ?? []);
   const place = target ? sourcePlace(paths, state.intake) : null;
@@ -96,13 +96,14 @@ async function openPdf(target = null) {
     : target?.kind === 'filled' && target.from ? 'derived' : target?.kind;
   if (!state.pdf) state.pdfReturn = document.activeElement;
   state.pdf = { page: place?.page ?? 0, zoom: place ? PDF_FOCUS_ZOOM : PDF_OPEN_ZOOM, pages: state.pdf?.pages ?? null, mark: place ? { ...target, kind, place } : null };
-  render();
-  $('pdf-title').textContent = place ? target.label : 'Intake PDF';
-  $('pdf-name').textContent = place ? `Intake${pdfPageSaid(place.page, ', page ')} · marked` : state.intake?.fileName ?? 'Intake PDF';
   // The last PDF drawn stays hidden until this one is.
-  $('pdf-sheet').hidden = true;
-  $('pdf-error').hidden = true;
-  $('pdf-loading').hidden = false;
+  state.pdfSheet = {
+    ...state.pdfSheet,
+    title: place ? target.label : 'Intake PDF',
+    name: place ? `Intake${pdfPageSaid(place.page, ', page ')} · marked` : state.intake?.fileName ?? 'Intake PDF',
+    shown: 'loading',
+  };
+  flushSync(render);
   $('pdf-scroll').scrollTo(0, 0);
   $('pdf-back').focus();
   await drawPdf({ focus: !!place });
@@ -140,68 +141,65 @@ async function drawPdf({ focus = false } = {}) {
   if (!view) return;
   const draw = ++state.pdfDraw;
   const mark = view.mark?.place.page === view.page ? view.mark : null;
-  $('pdf-hint').hidden = !mark;
-  $('pdf-hint').classList.toggle('filled', ['filled', 'derived', 'edited'].includes(mark?.kind));
-  if (mark) {
-    const where = pdfPageSaid(mark.place.page, ' on page ');
-    $('pdf-hint-text').replaceChildren(...{
-      check: ['Showing ', h('b', {}, mark.label), where],
-      filled: ['Filled from ', h('b', {}, mark.label), where],
-      derived: [h('b', {}, mark.label), ` was worked out from the marked answer${mark.place.rects?.length > 1 ? 's' : ''}${where}`],
-      edited: ['You corrected ', h('b', {}, mark.label), ` in the panel. The intake as the client wrote it${where}`],
-    }[mark.kind ?? 'check']);
-  }
-  renderPdfControls();
+  // The hint over the page for an item marked on it (pdf-sheet-view.jsx says it by its kind).
+  const hint = mark ? { kind: mark.kind ?? 'check', label: mark.label, where: pdfPageSaid(mark.place.page, ' on page '), several: mark.place.rects?.length > 1 } : null;
+  state.pdfSheet = { ...state.pdfSheet, hint, controls: pdfControls(view) };
   let page;
   try {
     const doc = await intakePdfDocument();
     if (!doc) throw new Error('missing');
-    view.pages = doc.numPages;
+    // A new view, so the page count is drawn; not for a draw a newer one or Back replaced.
+    if (draw === state.pdfDraw && state.pdf && state.pdf.pages !== doc.numPages) state.pdf = { ...state.pdf, pages: doc.numPages };
     page = await doc.getPage(view.page + 1);
   } catch (e) {
     if (draw !== state.pdfDraw) return;
-    $('pdf-sheet').hidden = true;
-    $('pdf-loading').hidden = true;
-    $('pdf-error').hidden = false;
-    $('pdf-error').textContent = e?.message === 'missing'
-      ? 'This PDF is no longer kept. Load the same file again (Change file); your work stays.'
-      : 'Couldn’t show this PDF here. Open it in a new tab instead.';
-    // Nothing to page, zoom or mark; a PDF that isn't kept can't open in a tab either.
-    for (const id of ['pdf-prev', 'pdf-next', 'pdf-zoom-out', 'pdf-zoom-fit', 'pdf-zoom-in', 'pdf-focus']) $(id).disabled = true;
-    $('pdf-tab').disabled = e?.message === 'missing';
-    $('pdf-hint').hidden = true;
+    const missing = e?.message === 'missing';
+    state.pdfSheet = {
+      ...state.pdfSheet,
+      shown: 'error',
+      error: missing
+        ? 'This PDF is no longer kept. Load the same file again (Change file); your work stays.'
+        : 'Couldn’t show this PDF here. Open it in a new tab instead.',
+      hint: null,
+      // Nothing to page, zoom or mark; a PDF that isn't kept can't open in a tab either.
+      controls: { ...state.pdfSheet.controls, prev: false, next: false, zoomOut: false, fit: false, zoomIn: false, focus: false, tab: !missing },
+    };
     return;
   }
   if (draw !== state.pdfDraw || !state.pdf) return;
-  renderPdfControls();
+  state.pdfSheet = { ...state.pdfSheet, controls: pdfControls(state.pdf) };
   // Fit the page to the panel's width, then zoom; drawn sharp on high-density screens.
   const scroll = $('pdf-scroll');
   const fit = Math.max(scroll.clientWidth - 28, 120) / page.getViewport({ scale: 1 }).width;
   const viewport = page.getViewport({ scale: fit * view.zoom });
   const ratio = window.devicePixelRatio || 1;
   const canvas = document.createElement('canvas');
-  canvas.id = 'pdf-canvas';
   canvas.width = Math.floor(viewport.width * ratio);
   canvas.height = Math.floor(viewport.height * ratio);
-  canvas.style.width = `${Math.floor(viewport.width)}px`;
-  canvas.style.height = `${Math.floor(viewport.height)}px`;
   state.pdfTask?.cancel();
   // The form's answers are drawn from its fields (their appearance), as a PDF viewer shows them.
   const task = page.render({ canvasContext: canvas.getContext('2d'), viewport, transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0], annotationMode: pdfjs.AnnotationMode.ENABLE });
   state.pdfTask = task;
   try { await task.promise; } catch { return; /* cancelled by a newer draw */ }
   if (draw !== state.pdfDraw || !state.pdf) return;
-  $('pdf-canvas').replaceWith(canvas);
-  $('pdf-error').hidden = true;
-  $('pdf-loading').hidden = true;
-  $('pdf-sheet').hidden = false;
-  // One mark per field the answer came from (a derived answer may have read several).
-  $('pdf-marks').replaceChildren(...(mark ? (mark.place.rects ?? [mark.place.rect]) : []).map((rect) => {
+  // The page is drawn off screen, then copied onto the sheet's canvas in one go, so the last page
+  // stays in view until this one is ready. pdf-sheet-view.jsx draws that canvas once and never sets
+  // its size or contents: only this does, so a redraw of the sheet never wipes the page.
+  const shown = $('pdf-canvas');
+  shown.width = canvas.width;
+  shown.height = canvas.height;
+  shown.style.width = `${Math.floor(viewport.width)}px`;
+  shown.style.height = `${Math.floor(viewport.height)}px`;
+  shown.getContext('2d').drawImage(canvas, 0, 0);
+  // The copy off screen is let go now, not when it is collected (a page at 400% is a large one).
+  canvas.width = canvas.height = 0;
+  // One mark per field the answer came from (a derived answer may have read several), drawn before
+  // the view moves to them.
+  const marks = (mark ? (mark.place.rects ?? [mark.place.rect]) : []).map((rect) => {
     const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(rect);
-    const box = h('div', { class: `pdf-mark${mark.kind === 'check' ? '' : ' filled'}` });
-    Object.assign(box.style, { left: `${Math.min(x1, x2) - 2}px`, top: `${Math.min(y1, y2) - 2}px`, width: `${Math.abs(x2 - x1) + 4}px`, height: `${Math.abs(y2 - y1) + 4}px` });
-    return box;
-  }));
+    return { filled: mark.kind !== 'check', left: Math.min(x1, x2) - 2, top: Math.min(y1, y2) - 2, width: Math.abs(x2 - x1) + 4, height: Math.abs(y2 - y1) + 4 };
+  });
+  flushSync(() => { state.pdfSheet = { ...state.pdfSheet, shown: 'page', error: null, marks }; });
   if (mark && focus) focusPdfMark();
 }
 
@@ -224,21 +222,21 @@ function focusPdfMark() {
   scroll.scrollLeft += left - sr.left - lead;
 }
 
-function renderPdfControls() {
-  const view = state.pdf;
-  if (!view) return;
-  $('pdf-pages').textContent = view.pages ? `${view.page + 1} / ${view.pages}` : '';
-  $('pdf-prev').disabled = view.page <= 0;
-  $('pdf-next').disabled = !view.pages || view.page >= view.pages - 1;
-  $('pdf-zoom-out').disabled = view.zoom <= PDF_ZOOMS[0];
-  $('pdf-zoom-in').disabled = view.zoom >= PDF_ZOOMS.at(-1);
-  $('pdf-zoom-fit').disabled = false;
-  $('pdf-tab').disabled = false;
-  $('pdf-focus').disabled = false;
-  const pct = Math.round(view.zoom * 100);
-  $('pdf-zoom-fit').textContent = `${pct}%`;
-  // It shows the zoom, and sets it back to the page's width.
-  $('pdf-zoom-fit').setAttribute('aria-label', `Zoom ${pct}%. Fit the page to the panel`);
+// What the page and zoom controls say for a view (pdf-sheet-view.jsx draws them): the page of how
+// many, which buttons can be used (true: enabled), and the zoom in percent, which the zoom's middle
+// button shows and sets back to the page's width.
+function pdfControls(view) {
+  return {
+    pages: view.pages ? `${view.page + 1} / ${view.pages}` : '',
+    prev: view.page > 0,
+    next: !!view.pages && view.page < view.pages - 1,
+    zoomOut: view.zoom > PDF_ZOOMS[0],
+    zoomIn: view.zoom < PDF_ZOOMS.at(-1),
+    fit: true,
+    tab: true,
+    focus: true,
+    zoom: Math.round(view.zoom * 100),
+  };
 }
 
 function pdfZoom(zoom, { focus = false } = {}) {
@@ -246,7 +244,7 @@ function pdfZoom(zoom, { focus = false } = {}) {
   // Zooming keeps the middle of the view in the middle.
   const scroll = $('pdf-scroll');
   const keep = [(scroll.scrollLeft + scroll.clientWidth / 2) / scroll.scrollWidth, (scroll.scrollTop + scroll.clientHeight / 2) / scroll.scrollHeight];
-  state.pdf.zoom = zoom;
+  state.pdf = { ...state.pdf, zoom };
   drawPdf({ focus }).then(() => {
     if (focus || !state.pdf) return;
     scroll.scrollLeft = keep[0] * scroll.scrollWidth - scroll.clientWidth / 2;
@@ -296,7 +294,7 @@ function pdfPage(step) {
   if (!view?.pages) return;
   const next = Math.min(Math.max(view.page + step, 0), view.pages - 1);
   if (next === view.page) return;
-  view.page = next;
+  state.pdf = { ...view, page: next };
   $('pdf-scroll').scrollTo(0, 0);
   drawPdf();
 }
