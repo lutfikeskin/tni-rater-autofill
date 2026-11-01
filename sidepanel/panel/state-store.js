@@ -1,5 +1,5 @@
 // The side panel: its state in a Zustand store, so a React view can subscribe to what it draws while
-// the older views keep reading and writing `state` (core.js) as a plain object.
+// the panel's code keeps reading and writing `state` (core.js) as a plain object.
 // One part of the panel; sidepanel.js wires the parts together.
 import { createStore } from 'zustand/vanilla';
 
@@ -7,7 +7,7 @@ import { createStore } from 'zustand/vanilla';
 // and redraws when that changes.
 const panelStore = createStore(() => ({}));
 
-// `state` as the older code uses it: reading a field reads the store's, and assigning one sets it in
+// `state` as the panel's code uses it: reading a field reads the store's, and assigning one sets it in
 // the store, which tells the views subscribed (assigning the value it already has tells no one).
 // A change made in place, such as a Map's set, a push to an array or a field of `state.fillingFor`,
 // is not an assignment to `state` and tells no one: a view that draws it needs that change made as

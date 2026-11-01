@@ -121,12 +121,11 @@ function extractFunction(name) {
         // elsewhere nothing is kept, unless the harness gives a store. So has the agent's change
         // after the quote's finishing action (noteChangedAfterDone): elsewhere nothing is marked. And
         // the chime when the quote is done (noteQuoteDone): elsewhere nothing sounds.
-        // The rows drawn (rowNodes), their AI slots (aiSlots) and Show on page's timers: the
-        // harness's, or none. A row's key (rowIds) counts on across the helpers that make rows, and
+        // The rows drawn (rowNodes) and Show on page's timers: the harness's, or none. A row's key (rowIds) counts on across the helpers that make rows, and
         // a draw before the focus that follows (flushSync) is the draw itself.
         if (/\browIds\b/.test(source) && !/let rowIds =/.test(source)) source += '\nvar rowIds = globalThis.rowIds ?? 0;';
         if (/\bflushSync\(/.test(source)) source += '\nvar flushSync = globalThis.flushSync ?? ((fn) => fn());';
-        for (const map of ['rowNodes', 'aiSlots', 'whereTimers']) {
+        for (const map of ['rowNodes', 'whereTimers']) {
           if (new RegExp(`\\b${map}\\b`).test(source) && !new RegExp(`const ${map} =`).test(source)) source += `\nvar ${map} = globalThis.${map} ?? new WeakMap();`;
         }
         for (const kept of ['keepReport', 'forgetKeptReports', 'noteChangedAfterDone', 'noteQuoteDone']) {
@@ -3596,7 +3595,7 @@ test('an automatic fill readies its tab for layouts only when it went through', 
       runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
       redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: () => {}, pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
-      $: () => ({ checked: false, append() {} }), h: () => ({}), viewOf: () => 't1', fillProblem() {}, reportShown: () => true,
+      $: () => ({ checked: false, append() {} }), viewOf: () => 't1', fillProblem() {}, reportShown: () => true,
     };
     context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
   context.renderSteps ??= () => {};
@@ -4056,7 +4055,6 @@ test('a page whose last question goes away logs its empty layout, so the questio
 // has a commercial auto policy with Progressive). The quote stops there: nothing filled, nothing
 // clicked, Luna not asked, and the agent is told why.
 function stopHarness(page = 'DeclinationNotice') {
-  const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
   const box = () => ({ hidden: false, className: '', children: [], replaceChildren(...next) { this.children = next; } });
   const ui = { report: box(), 'auto-followups': { checked: true }, 'auto-pages': { checked: true }, 'auto-advance': { checked: true } };
   const carrier = { id: 'progressive', name: 'Progressive', stopPages: { DeclinationNotice: 'Progressive says this client already has a commercial auto policy with Progressive.' } };
@@ -4070,7 +4068,7 @@ function stopHarness(page = 'DeclinationNotice') {
   };
   const logged = [], kits = [], timers = [];
   const context = {
-    state, URL, h: node, $: (id) => ui[id], onQuotePage: () => true, fillEvents, isStandard, resolutionOf,
+    state, URL, $: (id) => ui[id], onQuotePage: () => true, fillEvents, isStandard, resolutionOf,
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
     usage: { log: (...events) => logged.push(...events), currentSession: () => ({ id: 'quote-1' }) },
     runKit: async (...args) => { kits.push(args); return []; }, tellRecorder: async () => {}, ensureRecorder: async () => {},
@@ -4321,7 +4319,6 @@ async function stateNoteHarness() {
   const { quoteStatePick, stateCode, stateMismatch } = await import('../src/quote-state.js');
   const { progressive } = await import('../src/carriers/progressive.js');
   const { amwins } = await import('../src/carriers/amwins.js');
-  const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
   const ui = { 'auto-followups': { checked: false }, 'auto-pages': { checked: false }, 'auto-advance': { checked: false } };
   const session = { current: { id: 's1', intakeId: 'fl-intake' } };
   const record = (st) => ({ applicant: { name: 'Synthetic Client LLC' }, garaging: { state: st } });
@@ -4334,7 +4331,7 @@ async function stateNoteHarness() {
   const logged = [];
   const page = { shown: null };
   const context = {
-    state, URL, h: node, $: (id) => ui[id], quoteStatePick, stateCode, stateMismatch, inExtension: false,
+    state, URL, $: (id) => ui[id], quoteStatePick, stateCode, stateMismatch, inExtension: false,
     usage: { log: (...e) => logged.push(...e), currentSession: () => session.current },
     fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), knownStep, redactor: () => (x) => x, redactionTerms: () => [],
     scheduleLayout: () => {}, persistAgentKeys: () => {}, persistDoneActions: () => {}, save: () => {}, settleRejectedAi: async () => false,
@@ -4525,7 +4522,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
     reportKey: (tabId) => `${tabId}|report`, watchFill: () => () => {}, showFinish() {}, reportShown: () => true,
     fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text }); },
     viewOf: () => 't1', usage: { currentSession: () => ({ id: `session-${state.intake.id}`, intakeId: state.intake.id, keySalt: 'salt' }), log: (...events) => seen.logged.push(...events) },
-    h: (tag, props, text) => ({ tag, text }), save: async () => {},
+    save: async () => {},
     persistAgentKeys: (tabId, keys) => { seen.persistedKeys.push([tabId, keys]); }, persistDoneActions: (tabId, ids) => { seen.persistedActions.push([tabId, ids]); },
     stateCode: () => null, noteQuoteState() {},
   };
