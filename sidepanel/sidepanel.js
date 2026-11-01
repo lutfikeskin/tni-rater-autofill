@@ -20,6 +20,7 @@ import { announceCopy, dock, keepPlace, onPanelMessage, popOut } from './panel/w
 import { mountLive } from './panel/live-view.jsx';
 import { mountDock, mountSteps } from './panel/steps-view.jsx';
 import { mountFeed } from './panel/feed-view.jsx';
+import { mountCards } from './panel/cards-view.jsx';
 
 // ---------------------------------------------------------------------------------------------
 // Wiring
@@ -45,6 +46,7 @@ function wire() {
   $('details-scrim').addEventListener('click', closeDetails);
   // The page's answers: their filters, an earlier page's answers on this tab (read-only) and back to
   // this page's, what the tags mean, and Clear the marks.
+  mountCards($('cards-root'));
   mountFeed($('feed-root'), {
     setFilter: (filter) => setFilter(filter),
     showPast: (key) => showPast(key),
