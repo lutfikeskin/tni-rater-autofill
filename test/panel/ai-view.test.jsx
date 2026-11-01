@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 import { AiCard, AiHolder, aiHolder } from '../../sidepanel/panel/ai-view.jsx';
 
-// Luna's cards in React (React PR 10, 2026-11-01): what renderAi and runAssist said with h(), drawn
+// Luna's cards in React (2026-11-01): what renderAi and runAssist said with h(), drawn
 // from what they say now (a row's `aiCard`, the holder's `say`). Which card a suggestion gets, its
 // wording and what each button then does are checked by the safety tests (renderAi, runAssist, the
 // approval and confirmation runs); here, that each card is drawn as before (classes, wording, the
