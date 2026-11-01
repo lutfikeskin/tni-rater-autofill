@@ -352,6 +352,14 @@ const state = storeState({
   // front: why), and the carrier, state, stop, review and fill cards (issueSaid), each null while
   // it says nothing.
   cards: {},
+  // The panel's other notes, as notes-view.jsx draws them: `usage`, a usage log that can't be saved
+  // (renderHealth, in #notices), and `window`, a Pop out or Dock that didn't work (windowProblem, in
+  // #window-note), each a card as issueSaid puts it or null; and why the PDF couldn't be read
+  // (showLoadError: { title, text }, in #load-error), null until then. And the quote's steps in the
+  // header's strip (renderSite: { name, at } each), as site-view.jsx draws them: none off a quote.
+  notes: { usage: null, window: null },
+  loadError: null,
+  siteTrack: [],
   // Step 1's checks (renderWarnings: the title, the cards, the cleanup notes), as checks-view.jsx
   // draws them: null until an intake is checked. And the unit pickers above the page's answers
   // (renderPickers), none until a page is about one of several.

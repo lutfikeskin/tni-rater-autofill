@@ -24,6 +24,8 @@ import { mountCards } from './panel/cards-view.jsx';
 import { mountChecks, mountPickers } from './panel/checks-view.jsx';
 import { mountClient } from './panel/client-view.jsx';
 import { mountDetails } from './panel/details-view.jsx';
+import { mountLoadError, mountNote } from './panel/notes-view.jsx';
+import { mountSiteTrack } from './panel/site-view.jsx';
 
 // ---------------------------------------------------------------------------------------------
 // Wiring
@@ -36,6 +38,12 @@ function wire() {
   $('pop-out').addEventListener('click', popOut);
   $('dock-back').addEventListener('click', dock);
   $('settings-done').addEventListener('click', () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); });
+  // The header's strip of the quote's steps; the usage log that can't be saved, a Pop out or Dock
+  // that didn't work, and a PDF that couldn't be read.
+  mountSiteTrack($('site-track'));
+  mountNote($('notices'), 'usage');
+  mountNote($('window-note'), 'window');
+  mountLoadError($('load-error'));
   mountSteps($('steps'), {
     check: () => setView('check'),
     fill: () => setView('page'),
