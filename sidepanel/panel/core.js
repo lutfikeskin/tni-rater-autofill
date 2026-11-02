@@ -501,20 +501,6 @@ function logCrash(err) {
 globalThis.addEventListener?.('error', (e) => logCrash(e.error ?? e.message));
 globalThis.addEventListener?.('unhandledrejection', (e) => logCrash(e.reason));
 
-function h(tag, props = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (v == null || v === false) continue;
-    if (k === 'class') el.className = v;
-    else if (k === 'dataset') Object.assign(el.dataset, v);
-    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-    else if (k in el && typeof v !== 'string') el[k] = v;
-    else el.setAttribute(k, v === true ? '' : v);
-  }
-  for (const c of children.flat()) if (c != null && c !== false) el.append(c instanceof Node ? c : String(c));
-  return el;
-}
-
 function aiSafeText(value) {
   if (value == null) return value;
   const redact = state.intake ? redactor(redactionTerms(state.intake.record)) : (x) => x;
@@ -918,4 +904,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, h, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, testIntakes };
+export { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, testIntakes };
