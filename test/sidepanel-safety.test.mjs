@@ -5135,6 +5135,25 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
   assert.equal(t.seen.logged.find((e) => e.type === 'fill_run').settings.autoAdvance, true, 'telemetry records the switch; approval still gates continuation');
 });
 
+// The developer recording (docs/developer-recording.md): the kit says what it waits for and does
+// only while a recording runs on the tab in front, and never once it is stopping; the switch is
+// never logged.
+test('a fill asks the kit to trace only while a recording runs on its tab, and never logs it', async () => {
+  for (const [recording, traced] of [[{ tabId: 7, stopping: false }, true], [{ tabId: 8, stopping: false }, false], [{ tabId: 7, stopping: true }, false], [null, false]]) {
+    const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
+    const start = SIDEPANEL.indexOf('const fillOptions =');
+    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+    t.context.state.recording = recording;
+    const run = t.context.fillPage();
+    await t.started;
+    assert.equal(t.seen.options.trace === true, traced, JSON.stringify(recording));
+    if (!traced) assert.ok(!('trace' in t.seen.options));
+    t.release(t.results);
+    await run;
+    assert.ok(!JSON.stringify(t.seen.logged).includes('"trace"'), 'not in the usage log');
+  }
+});
+
 // Check answers before Continue: the switch reaches the kit as `hold`, Looks right's receipt as
 // `confirmed` (with nothing replaced), and the switch is never in the usage log (the server takes
 // exactly the four filling switches).

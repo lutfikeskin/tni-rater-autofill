@@ -61,10 +61,15 @@ function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.examp
     addEventListener: on('document'),
     removeEventListener: off('document'),
   };
+  // The page's own changes and requests, handed to the trace by the test (mutate, resource).
+  const observers = { mutation: null, resource: null };
   const context = {
     document,
-    location: { href, pathname, search: '' },
+    location: { href, pathname, search: '', origin: 'https://synthetic.example' },
+    URL,
     URLSearchParams,
+    MutationObserver: class { constructor(fn) { this.fn = fn; observers.mutation = this; } observe() {} disconnect() { observers.mutation = null; } },
+    PerformanceObserver: class { constructor(fn) { this.fn = fn; observers.resource = this; } observe() {} disconnect() { observers.resource = null; } },
     NodeFilter: { SHOW_TEXT: 4 },
     getComputedStyle: () => ({ visibility: 'visible' }),
     performance: { timeOrigin: ORIGIN, now: () => now },
@@ -106,6 +111,9 @@ function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.examp
       for (const fn of [...(listeners.get(`document:${type}`) ?? [])]) fn(event);
     },
     message(message) { for (const fn of [...messageListeners]) fn(message); },
+    observers,
+    mutate(records) { observers.mutation?.fn(records); },
+    resource(entries) { observers.resource?.fn({ getEntries: () => entries }); },
     // Runs every timer due within `ms`, in order, letting promises settle after each.
     async advance(ms) {
       const end = now + ms;
@@ -214,6 +222,69 @@ test('stop sends what is held and ends the trace; a button is named by its words
   h.emit('click', new Button('Next'));
   await h.advance(1000);
   assert.equal(h.trace().length, before, 'nothing after stop');
+});
+
+// What the page does on its own and what the extension's fill says, in the same timeline
+// (docs/developer-recording.md), so a recording shows where a quote's time went.
+const node = (inside, { matches = false, type = '', connected = true } = {}) => ({ nodeType: 1, type, isConnected: connected, matches: () => matches, querySelectorAll: () => inside });
+
+test('the page\'s changes are one burst once quiet for 100 ms: the questions it drew by name, those it took away counted', async () => {
+  const h = harness();
+  const team = new Control('select', { name: 'team', label: 'Team driving?', options: [{ text: 'No', value: 'N' }] });
+  const secret = new Control('input', { name: 'pin', type: 'password' });
+  const hidden = new Control('input', { name: 'token', type: 'hidden' });
+  h.now = 1000;
+  h.mutate([{ addedNodes: [node([team, secret, hidden])], removedNodes: [] }]);
+  h.now = 1060;
+  h.mutate([{ addedNodes: [node([])], removedNodes: [node([], { matches: true, type: 'text' })] }]);
+  await h.advance(99);
+  assert.ok(!h.events().some((e) => e.kind === 'burst'), 'not before the page is quiet');
+  await h.advance(400);
+  const burst = h.events().find((e) => e.kind === 'burst');
+  assert.deepEqual([burst.t, burst.end, burst.records, burst.drawnCount, burst.removed], [ORIGIN + 1000, ORIGIN + 1060, 2, 1, 1]);
+  assert.deepEqual(burst.drawn, [{ key: 'field:team', kind: 'select', label: 'Team driving?' }], 'never a password or hidden box');
+  // Only changes: no questions, nothing named.
+  h.mutate([{ addedNodes: [node([])], removedNodes: [] }]);
+  await h.advance(400);
+  const plain = h.events().filter((e) => e.kind === 'burst')[1];
+  assert.deepEqual([plain.records, 'drawn' in plain, 'removed' in plain], [1, false, false]);
+});
+
+test('the page\'s requests to its own origin, as each finishes: the path without query or ids, when it began and ended', async () => {
+  const h = harness();
+  h.resource([
+    { initiatorType: 'fetch', name: 'https://synthetic.example/api/quote/123456/rate?premium=1', startTime: 2000, responseEnd: 2300 },
+    { initiatorType: 'xmlhttprequest', name: 'https://cdn.other.example/x.js', startTime: 2000, responseEnd: 2100 },
+    { initiatorType: 'img', name: 'https://synthetic.example/logo.png', startTime: 2000, responseEnd: 2050 },
+  ]);
+  await h.advance(400);
+  const requests = h.events().filter((e) => e.kind === 'request');
+  assert.deepEqual(requests.map((e) => [e.path, e.t, e.end, e.ms, e.via]), [['/api/quote/:id/rate', ORIGIN + 2000, ORIGIN + 2300, 300, 'fetch']]);
+});
+
+test('what the extension\'s fill says is kept by its own time; anything else on that event is left out', async () => {
+  const h = harness();
+  const say = (detail) => h.emit('rater-trace', h.context.document, { detail });
+  say(JSON.stringify({ what: 'wait', t: ORIGIN + 3000.5, why: 'answer', ms: 120, ended: 'quiet', kind: 'click', seq: 99, frame: 4, filling: false }));
+  say(JSON.stringify({ what: 'press', t: ORIGIN + 3200, button: { text: 'Continue' }, how: 'page' }));
+  say({ what: 'wait', t: ORIGIN + 3300 });
+  say(JSON.stringify({ what: 'navigate', t: ORIGIN + 3400 }));
+  say(JSON.stringify({ what: 'wait', t: ORIGIN + 3500, pad: 'x'.repeat(5000) }));
+  say('{not json');
+  await h.advance(400);
+  const kit = h.events().filter((e) => e.kind === 'kit');
+  assert.deepEqual(kit.map((e) => [e.what, e.t]), [['wait', ORIGIN + 3000.5], ['press', ORIGIN + 3200]]);
+  assert.deepEqual([kit[0].ms, kit[0].why, kit[0].kind, kit[0].seq !== 99, 'frame' in kit[0], 'filling' in kit[0]], [120, 'answer', 'kit', true, false, false]);
+  assert.deepEqual(kit[1].button, { text: 'Continue' });
+});
+
+test('stop sends a burst still open, then watches the page no more', async () => {
+  const h = harness();
+  h.mutate([{ addedNodes: [node([])], removedNodes: [] }]);
+  h.message({ ra: 'trace', cmd: 'stop' });
+  await h.advance(10);
+  assert.equal(h.events().filter((e) => e.kind === 'burst').length, 1);
+  assert.deepEqual([h.observers.mutation, h.observers.resource], [null, null]);
 });
 
 // Live recording, 2026-10-23 (Progressive's agents' site): its Select Product(s) and Add Products to

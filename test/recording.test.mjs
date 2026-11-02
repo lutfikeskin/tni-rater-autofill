@@ -196,6 +196,63 @@ test('the report tells the flow and each step\'s actions: whose each is, typing 
   assert.ok(!/scrolled to y=400/.test(report), 'a scroll run is one line, where it ended');
 });
 
+// The page's own changes and requests and the extension's account (docs/developer-recording.md):
+// what may name the client is redacted as a field's label is.
+test('the questions a page drew, a request\'s path and what the fill answered are redacted as a field is', () => {
+  const redact = (s) => s.replace(/Sam Smith/g, '[client]');
+  const [burst, request, answer, press] = stampEvents([
+    { kind: 'burst', t: 1, end: 2, records: 3, drawn: [{ key: 'ref:Lic', kind: 'text', label: 'Sam Smith\'s license' }], drawnCount: 1 },
+    { kind: 'request', t: 1, end: 5, ms: 4, path: '/drivers/Sam Smith/save', via: 'xhr' },
+    { kind: 'kit', t: 3, what: 'answer', field: { key: 'ref:Lic', label: 'Sam Smith\'s license' }, stepKind: 'text', ok: true, start: 2, applyMs: 1 },
+    { kind: 'kit', t: 4, what: 'press', button: { text: 'Save Sam Smith' }, how: 'page' },
+  ], { redact });
+  assert.deepEqual([burst.drawn[0].label, burst.drawn[0].key, request.path, answer.field.label, press.button.text],
+    ['[client]\'s license', 'ref:Lic', '/drivers/[client]/save', '[client]\'s license', 'Save [client]']);
+});
+
+test('the report tells what the fill answered and waited for, what the page drew and when, and where each step\'s time went', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const at = (ms) => t0 + ms;
+  const events = [
+    { kind: 'page', t: at(100), seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: at(1000), frame: 0, on: true },
+    { kind: 'kit', t: at(1000), seq: 2, frame: 0, what: 'run', on: true, steps: 2 },
+    { kind: 'kit', t: at(1700), seq: 3, frame: 0, what: 'answer', field: { key: 'ref:Year', label: 'Vehicle year' }, stepKind: 'choice', ok: true, start: at(1100), applyMs: 400,
+      timing: { ms: 600, settleMs: 200, ajax: 1, revealed: 2, removed: 0, changed: 0 } },
+    { kind: 'kit', t: at(1700), seq: 4, frame: 0, what: 'wait', why: 'answer', quietMs: 150, maxMs: 3000, requests: false, start: at(1500), ms: 200, ended: 'quiet' },
+    { kind: 'request', t: at(1550), seq: 5, frame: 0, path: '/api/vin', end: at(1650), ms: 100, via: 'xhr' },
+    { kind: 'burst', t: at(1600), seq: 6, frame: 0, end: at(1640), records: 9, drawn: [{ key: 'ref:Make', kind: 'select', label: 'Make' }, { key: 'ref:Model', kind: 'select', label: 'Model' }], drawnCount: 3 },
+    { kind: 'kit', t: at(4000), seq: 7, frame: 0, what: 'wait', why: 'continue', quietMs: 500, maxMs: 6000, requests: false, start: at(2000), ms: 2000, ended: 'quiet' },
+    { kind: 'kit', t: at(4100), seq: 8, frame: 0, what: 'press', button: { text: 'Continue' }, how: 'page' },
+    { kind: 'kit', t: at(10200), seq: 9, frame: 0, what: 'wait', why: 'rated', quietMs: 250, maxMs: 6000, requests: true, start: at(4200), ms: 6000, ended: 'limit', settled: false, held: { busy: true, changing: false, requests: false } },
+    { kind: 'burst', t: at(4300), seq: 10, frame: 0, end: at(4310), records: 1 },
+    { kind: 'kit', t: at(10300), seq: 11, frame: 0, what: 'run', on: false, filled: 1, halted: false },
+    { kind: 'fill', t: at(10300), frame: 0, on: false },
+    { kind: 'step', t: at(12000), seq: 12, frame: 0, step: 'Drivers', from: 'Vehicles' },
+    { kind: 'click', t: at(13000), seq: 13, frame: 0, trusted: true, button: { text: 'Next', rect: null } },
+  ];
+  const files = recordingFiles({ ...manifestFor(), ended: '2026-10-23T14:12:14.000Z' }, events);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recording-'));
+  for (const [n, t] of Object.entries(files)) fs.writeFileSync(path.join(dir, n), t);
+  const report = recordingReport(readRecording(dir));
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  assert.match(report, /0:01\.1 \(\+0\.1 s\) the extension answered "Vehicle year" in 0\.4 s, then waited 0\.2 s for the page, 1 request, it drew 2\n/, 'by when it began, its own wait folded in');
+  assert.ok(!/waited 0\.2 s after an answer/.test(report), 'an answer\'s wait is on its answer\'s line');
+  assert.match(report, /the page drew 3 questions \("Make", "Model", …\), 0\.5 s after the last action/);
+  assert.equal(report.match(/the page (drew|took away)/g).length, 1, 'a burst that drew no question is no line');
+  assert.match(report, /0:02\.0 \(\+0\.4 s\) the extension waited 2\.0 s after Continue \(quiet 500 ms\): the page was quiet; the page did nothing during it\n/, 'nothing changed during it: all slack');
+  assert.match(report, /the extension pressed the "Continue" button/);
+  assert.match(report, /the extension waited 6\.0 s for the premium \(quiet 250 ms and its requests\): at its limit of 6\.0 s, the page still busy; 5\.9 s after the page's last change/);
+  assert.match(report, /## Where the time went/);
+  assert.match(report, /\| 1 \| \/quote · Vehicles \| 11\.9 s \| 9\.3 s \| 1 \| 8\.2 s \| 7\.9 s \| 1 \(0\.1 s\) \| 2\.6 s \|/);
+  assert.match(report, /\| 2 \| \/quote · Drivers \| 2\.0 s \| 0\.0 s \| 0 \| 0\.0 s \| 0\.0 s \| 0 \(0\.0 s\) \| 2\.0 s \|/);
+  assert.match(report, /\| \| All \| 13\.9 s \| 9\.3 s \| 1 \| 8\.2 s \| 7\.9 s \| 1 \(0\.1 s\) \| 4\.6 s \|/);
+  // A recording without the extension's account has no such table.
+  const older = recordingReport({ manifest: manifestFor(), events: events.filter((e) => e.kind !== 'kit') });
+  assert.ok(!/Where the time went/.test(older));
+});
+
 // Review of PR #166: the store ZIP ships lib/, and MIT asks that a copy keep its notice.
 test('the vendored fflate keeps its MIT copyright and permission notice', () => {
   const vendored = fs.readFileSync(new URL('../lib/fflate.mjs', import.meta.url), 'utf8');
