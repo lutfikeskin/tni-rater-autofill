@@ -910,12 +910,12 @@ function renderSite() {
     site.hidden = false;
   }
   // Practice pages aren't recorded: don't say they are.
-  $('recording').hidden = !state.intake || !!carrier?.practice;
+  state.recordingLine = !!state.intake && !carrier?.practice;
   site.title = title;
   site.classList.toggle('on', !!carrier);
-  $('capture').disabled = !(inExtension && carrier);
-  // "Let me look before Continue" is about the panel's Continue: off with it.
-  $('check-continue').disabled = !$('auto-advance').checked;
+  // Settings' Capture page layout (settings-view.jsx; "Let me look first" is off with Continue when
+  // the page is done there too).
+  state.captureOff = !(inExtension && carrier);
   showCarrierNote();
   // Another carrier's site shows or hides the current-carrier check (checkShown); only then, so a
   // page change doesn't redraw a check the agent is typing in.

@@ -5,7 +5,7 @@ import { redactor, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { recordingId, stampEvents, newManifest } from '../../src/recording.js';
 import { RecordingStore } from '../recording.js';
-import { $, h, state } from './core.js';
+import { $, state } from './core.js';
 import { ensureRecorder } from './usage.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -13,19 +13,17 @@ import { ensureRecorder } from './usage.js';
 // (src/content/trace.js) goes into the recorded tab with the recorder, and its events are stamped,
 // redacted (labels, button words, choices, titles) and kept (sidepanel/recording.js) until Stop and
 // save writes one zip to Downloads. Nothing of it is uploaded or logged.
+// Its card in Settings is said as data (state.devrec; settings-view.jsx draws it): whether one runs,
+// its line, and the unfinished recording to save.
 
 function devrecSaid(text) {
-  $('devrec-status').hidden = !text;
-  $('devrec-status').textContent = text ?? '';
+  state.devrec = { ...state.devrec, status: text || null };
 }
 
 function renderDevrec() {
   const rec = state.recording;
-  $('devrec-start').hidden = !!rec;
-  $('devrec-note').hidden = !rec;
-  $('devrec-stop').hidden = !rec;
-  // Seen with Advanced folded too.
-  $('advanced').querySelector('summary').textContent = rec ? 'Advanced, for setup only · Recording' : 'Advanced, for setup only';
+  // Its buttons follow it, and Advanced's title says it, seen with Advanced folded too.
+  state.devrec = { ...state.devrec, on: !!rec };
   if (!rec || rec.stopping) return;
   const s = Math.floor((Date.now() - rec.started) / 1000);
   devrecSaid(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} · ${rec.store.count} events${rec.store.durable ? '' : '. Kept in memory only: closing the panel loses it'}.`);
@@ -92,7 +90,9 @@ async function saveRecording(store, why = '') {
   try {
     const { blob, events } = await store.zip();
     const url = URL.createObjectURL(blob);
-    h('a', { href: url, download: `recording-${store.manifest.id}.zip` }).click();
+    const link = document.createElement('a');
+    Object.assign(link, { href: url, download: `recording-${store.manifest.id}.zip` });
+    link.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
     await store.discard();
     devrecSaid(`${why ? `${why} ` : ''}Saved recording-${store.manifest.id}.zip (${events} events) to Downloads. It shows the client as the page did: keep it in layouts/recordings/, never in git.`);
@@ -105,13 +105,14 @@ async function saveRecording(store, why = '') {
 // A recording a closed or reloaded panel left unsaved: saved from here, newest first.
 async function renderUnfinished() {
   const left = (await RecordingStore.unfinished().catch(() => [])).filter((m) => m.id !== state.recording?.store.manifest.id);
-  $('devrec-recover').hidden = !left.length;
-  $('devrec-recover').dataset.id = left[0]?.id ?? '';
-  $('devrec-recover').textContent = left.length > 1 ? `Save ${left.length} unfinished recordings, one by one` : 'Save the unfinished recording';
+  // Its button: the newest one's id, and how many are left (null: none).
+  state.devrec = { ...state.devrec, unfinished: left.length
+    ? { id: left[0].id, label: left.length > 1 ? `Save ${left.length} unfinished recordings, one by one` : 'Save the unfinished recording' }
+    : null };
 }
 
 async function recoverRecording() {
-  const id = $('devrec-recover').dataset.id;
+  const id = state.devrec?.unfinished?.id;
   if (!id) return;
   try { await saveRecording(await RecordingStore.reopen(id), 'From a panel closed while recording:'); } catch (e) {
     // Gone from the browser since the button was drawn: another panel (the side panel and its

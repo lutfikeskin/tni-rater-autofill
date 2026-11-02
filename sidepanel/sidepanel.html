@@ -98,95 +98,8 @@
       <div id="feed-root"></div>
     </section>
 
-    <!-- Settings, over everything but the header -->
-    <section id="settings" class="pane settings" hidden>
-      <div class="settings-head">
-        <h2>Settings</h2>
-        <button type="button" id="settings-done" class="primary small-btn">Done</button>
-      </div>
-      <div id="setup-note" class="setup-note" role="status" hidden><span class="bang" aria-hidden="true">!</span><span id="setup-text"></span></div>
-
-      <div class="group">
-        <div class="eyebrow">You</div>
-        <div class="card">
-          <label class="opt" title="So your quotes count as yours"><span class="opt-text"><b>Your initials</b></span><input id="agent" type="text" maxlength="6" autocomplete="off" placeholder="e.g. JK"></label>
-        </div>
-      </div>
-
-      <div class="group">
-        <div class="eyebrow">Filling</div>
-        <div class="card">
-          <label class="opt" title="You won’t need to press Fill this page"><span class="opt-text"><b>Fill pages when they open</b></span><input type="checkbox" role="switch" class="switch" id="auto-pages" checked></label>
-          <label class="opt" title="Some answers open more questions"><span class="opt-text"><b>Fill follow-up questions</b></span><input type="checkbox" role="switch" class="switch" id="auto-followups" checked></label>
-          <label class="opt" title="Only when nothing is left for you"><span class="opt-text"><b>Continue when the page is done</b></span><input type="checkbox" role="switch" class="switch" id="auto-advance" checked></label>
-          <label id="check-continue-row" class="opt sub" title="Waits for you to press Looks right, continue"><span class="opt-text"><b>Let me look first</b></span><input type="checkbox" role="switch" class="switch" id="check-continue" checked></label>
-          <label class="opt" title="Off keeps what the rater filled itself, like a DOT lookup"><span class="opt-text"><b>Replace prefilled answers</b></span><input type="checkbox" role="switch" class="switch" id="overwrite"></label>
-          <label class="opt"><span class="opt-text"><b>Sound when the quote is done</b></span><input type="checkbox" role="switch" class="switch" id="finish-sound" checked></label>
-        </div>
-        <p class="fine">Never Binds or Submits.</p>
-      </div>
-
-      <!-- A button row that opens the settings under it; the row says whether AI is on (renderAiSettings). -->
-      <details id="assistant" class="group fold">
-        <summary class="list-row"><svg class="fold-icon" aria-hidden="true"><use href="#brain"/></svg><span class="fold-name">AI</span><span id="ai-note"></span><span class="chev" aria-hidden="true">›</span></summary>
-        <div id="agent-card" class="card">
-          <label class="opt" title="For questions the intake doesn’t answer"><span class="opt-text"><b>Suggest answers</b></span><input id="ai-on" type="checkbox" role="switch" class="switch"></label>
-          <label id="ai-auto-option" class="opt" title="Shown in purple. You still approve them before Continue."><span class="opt-text"><b>Put checked picks in</b></span><input id="ai-auto" type="checkbox" role="switch" class="switch"></label>
-          <div class="key-row">
-            <div class="opt">
-              <span class="opt-text"><b id="key-label">OpenAI key</b><span id="key-status"></span></span>
-              <button type="button" id="key-edit" class="ghost small-btn" aria-controls="key-form" aria-expanded="false">Add key</button>
-            </div>
-            <div id="key-form" class="key-form" hidden>
-              <input id="ai-openai-key" type="password" placeholder="Paste the key from your manager" autocomplete="off" aria-labelledby="key-label">
-              <button type="button" id="key-save" class="primary small-btn">Save</button>
-            </div>
-          </div>
-        </div>
-      </details>
-
-      <div class="group">
-        <div class="eyebrow">Usage log</div>
-        <div id="usage" class="card padded">
-          <p id="upload-status" class="status-line"></p>
-          <p class="fine">How the panel is used, and each client's business profile. No names, numbers or addresses.</p>
-          <p id="usage-count" class="fine"></p>
-          <p id="usage-note" class="fine" aria-live="polite"></p>
-        </div>
-      </div>
-
-      <details id="advanced" class="advanced">
-        <summary class="eyebrow">Advanced, for setup only</summary>
-        <div class="advanced-body">
-          <!-- For the maintainer's practice quotes; agents don't see it unless they open Advanced. -->
-          <label id="test-run-row" class="test-run" title="A practice or test quote, not a client's: the weekly review leaves it out of its numbers." hidden><input type="checkbox" id="test-run"> This intake is a test run, not a client</label>
-          <label class="field-stack">Server<input id="server-url" type="url" placeholder="https://usage-server-production.up.railway.app" autocomplete="off"></label>
-          <label class="field-stack">Token<input id="server-token" type="password" placeholder="if the server needs one" autocomplete="off"></label>
-          <label class="field-stack">Scenario<input id="capture-scenario" type="text" placeholder="e.g. FL van, hazmat yes/no" autocomplete="off" maxlength="60"></label>
-          <label class="field-stack">Note<input id="capture-note" type="text" placeholder="what you changed (kept here)" autocomplete="off" maxlength="200"></label>
-          <div class="actions wrap">
-            <button type="button" id="capture" class="ghost small-btn" title="Alt+Shift+C while the panel is open">Capture page layout</button>
-            <button type="button" id="upload-usage" class="ghost small-btn">Upload now</button>
-            <button type="button" id="export-usage" class="ghost small-btn">Export log</button>
-            <button type="button" id="clear-usage" class="ghost small-btn danger">Clear log</button>
-          </div>
-          <p id="capture-status" class="fine" role="status" hidden></p>
-          <!-- Developer recording (docs/developer-recording.md): unpacked builds only. -->
-          <div id="devrec" class="devrec" hidden>
-            <p class="eyebrow">Developer recording</p>
-            <p class="fine">Records this quote's clicks, keys, scrolling and page changes with their times, as one zip in Downloads. Nothing is uploaded. It records only the tab it starts on: start it on the quoting page itself. It uses the Scenario above; Note adds the Note box to the timeline.</p>
-            <div class="actions wrap">
-              <button type="button" id="devrec-start" class="ghost small-btn">Record this quote</button>
-              <button type="button" id="devrec-note" class="ghost small-btn" hidden>Note</button>
-              <button type="button" id="devrec-stop" class="ghost small-btn" hidden>Stop and save</button>
-              <button type="button" id="devrec-recover" class="ghost small-btn" hidden>Save the unfinished recording</button>
-            </div>
-            <p id="devrec-status" class="fine" role="status" hidden></p>
-          </div>
-        </div>
-      </details>
-      <p id="version" class="eyebrow"></p>
-    </section>
+    <!-- Settings, over everything but the header: drawn by settings-view.jsx (mountSettings). -->
+    <section id="settings" class="pane settings" hidden></section>
   </main>
 
   <!-- The intake PDF in a sheet over the panel, with what a check item or an answer refers to marked.
@@ -210,7 +123,8 @@
     </div>
     <div class="foot-row">
       <button type="button" id="report-problem" class="link small" aria-expanded="false" aria-controls="problem-form">Report a problem</button>
-      <span id="recording" class="recording" title="Usage is recorded, never client information. See Settings." hidden><span class="rec-dot">●</span> Recording usage</span>
+      <!-- "Recording usage" (#recording), drawn by settings-view.jsx (mountRecordingLine). -->
+      <span id="recording-root" class="recording-root"></span>
       <span id="foot-version" class="foot-version"></span>
     </div>
   </footer>

@@ -819,7 +819,9 @@ function renderAi(holder, suggestions, ctx) {
   renderSteps();
 }
 
-function wireAi() {
+// What the AI's controls in Settings do (settings-view.jsx asks for them: sidepanel.js passes these
+// in its `act`): the two switches, the key's button, Save, and a key pressed in the key's box.
+function aiActs() {
   const save = async patch => {
     // Answers to requests made before are discarded, never kept for a later one (runAssist).
     state.aiSettingsRun = ++state.aiRun;
@@ -834,45 +836,53 @@ function wireAi() {
     // Luna just turned on or got a key: read the open intake's claims box and driver names if not done yet.
     reviewIntake({ retry: true });
   };
-  $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
-  $('ai-auto').addEventListener('change', (e) => save({ lunaAuto: e.target.checked }));
-  // The key is saved with Save (or Enter), never while it is typed.
+  // The key is saved with Save (or Enter), never while it is typed. It is read from its box and the
+  // box emptied, as before: it never goes into the panel's state.
   const saveKey = async () => {
     await save({ lunaKey: $('ai-openai-key').value.trim() });
     $('ai-openai-key').value = '';
     await openKeyForm(false);
     $('key-edit').focus();
   };
-  $('key-edit').addEventListener('click', () => openKeyForm($('key-form').hidden));
-  $('key-save').addEventListener('click', saveKey);
-  $('ai-openai-key').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); saveKey(); }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); $('ai-openai-key').value = ''; openKeyForm(false).then(() => $('key-edit').focus()); }
-  });
+  return {
+    aiOn: (on) => save({ aiOn: on }),
+    aiAuto: (on) => save({ lunaAuto: on }),
+    keyEdit: () => openKeyForm(!state.keyFormOpen),
+    keySave: saveKey,
+    // Escape closes the box without saving, and not Settings with it (stopPropagation).
+    keyKey: (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); saveKey(); }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); $('ai-openai-key').value = ''; openKeyForm(false).then(() => $('key-edit').focus()); }
+    },
+  };
 }
 
+// The AI's card in Settings, said as data (state.ai; settings-view.jsx draws it): its switches, whose
+// key Luna uses, the key's button, and the row's note. Never the key itself.
 async function renderAiSettings() {
   const cfg = await aiSettings();
   const provider = PROVIDERS[cfg.provider];
-  $('ai-on').checked = cfg.on;
-  $('ai-auto').checked = cfg.auto;
-  $('ai-auto').disabled = !cfg.on || !provider.automatic;
-  $('ai-auto-option').hidden = !provider.automatic;
   // No key of the agent's own: the usage server in use lends its key (settingsFrom), so none is
   // needed. TNI's unless a test server is set under Advanced.
   const central = !!cfg.proxy && new URL(cfg.proxy.url).origin === new URL(usage.DEFAULT_SERVER).origin;
   const lender = central ? "TNI's server" : 'the usage server';
-  $('key-status').textContent = cfg.apiKey ? 'Saved on this computer' : cfg.proxy ? `Not needed: ${lender} provides it` : 'Not added yet';
-  $('key-status').className = cfg.ready ? 'ok' : 'warn';
-  if ($('key-form').hidden) $('key-edit').textContent = cfg.apiKey ? 'Change' : cfg.proxy ? 'Use my own key' : 'Add key';
-  // On without a key: it can't help yet, said on its card and with a dot on the Settings button.
-  $('agent-card').classList.toggle('warn', cfg.on && !cfg.ready);
-  // Folded otherwise; opened so that warning isn't hidden.
-  if (cfg.on && !cfg.ready) $('assistant').open = true;
-  $('ai-note').textContent = !cfg.on ? 'Off' : !cfg.ready ? 'Needs a key'
-    : cfg.auto ? 'On. Picks answers you approve.' : 'On. Suggests answers.';
-  $('ai-note').className = !cfg.on ? 'off' : !cfg.ready ? 'warn' : 'on';
+  state.ai = {
+    on: cfg.on,
+    auto: cfg.auto,
+    autoOff: !cfg.on || !provider.automatic,
+    autoShown: !!provider.automatic,
+    keyStatus: cfg.apiKey ? 'Saved on this computer' : cfg.proxy ? `Not needed: ${lender} provides it` : 'Not added yet',
+    keyTone: cfg.ready ? 'ok' : 'warn',
+    // The key's button while its box is closed (open, it says Cancel).
+    keyEdit: cfg.apiKey ? 'Change' : cfg.proxy ? 'Use my own key' : 'Add key',
+    // On without a key: it can't help yet, said on its card and with a dot on the Settings button.
+    // Folded otherwise; opened so that warning isn't hidden.
+    warn: cfg.on && !cfg.ready,
+    note: !cfg.on ? 'Off' : !cfg.ready ? 'Needs a key'
+      : cfg.auto ? 'On. Picks answers you approve.' : 'On. Suggests answers.',
+    noteTone: !cfg.on ? 'off' : !cfg.ready ? 'warn' : 'on',
+  };
   renderUsage();
 }
 
-export { aiDecisionEvent, aiSettings, applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, ntlPrimaryEdited, pendingAi, remarkAi, renderAiSettings, reviewClaimsBox, reviewDriverGender, reviewIntake, runAssist, syncAiBanner, wireAi };
+export { aiActs, aiDecisionEvent, aiSettings, applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, ntlPrimaryEdited, pendingAi, remarkAi, renderAiSettings, reviewClaimsBox, reviewDriverGender, reviewIntake, runAssist, syncAiBanner };
