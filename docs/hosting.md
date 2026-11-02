@@ -132,7 +132,8 @@ server already stored; it changes nothing the extension sends or the server keep
 
 - Totals for the last 24 hours, 7 days and 30 days: quotes started, pages filled, answers filled,
   autofilled answers the agent changed (another value or cleared), reformatted, answered by hand
-  (where autofill gave none), problem reports and unfamiliar questions.
+  (where autofill gave none), problem reports and unfamiliar questions, each with a line saying
+  what it means; and a chart of quotes started per day over 30 days (hover a bar for its day).
 - Per agent (initials), per carrier and per version and channel, for the period picked at the top
   (24h, 7d or 30d; 7d by default).
 - The latest quotes, fills, fill errors and problem reports, newest first; then the problem reports

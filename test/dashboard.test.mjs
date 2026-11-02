@@ -112,6 +112,8 @@ test('the page escapes what the events hold', () => {
   assert.ok(!html.includes('<script'), 'no script on the page');
   assert.match(html, /http-equiv="refresh" content="60"/);
   assert.match(html, /Include test runs/);
+  assert.match(html, /filled 2 answers on <b>Progressive › Vehicles<\/b>/, 'a fill in plain words');
+  assert.match(html, /<span class="col on" title="2026-11-02: 1 quote">/, 'the bar for today, in the period');
 });
 
 test('the same quotes, test runs and corrections as the review scripts', () => {
@@ -171,8 +173,8 @@ test('the dashboard needs its token, and is off without one', async () => {
     assert.equal(ok.headers.get('cache-control'), 'no-store');
     assert.match(ok.headers.get('content-security-policy'), /default-src 'none'/);
     const html = await ok.text();
-    assert.match(html, /Rater Autofill usage/);
-    assert.match(html, /<td>Quotes started<\/td><td>1<\/td>/);
+    assert.match(html, /Rater Autofill · live usage/);
+    assert.match(html, /<div class="label">Quotes started<\/div><div class="value">1<\/div>/);
     assert.equal((await get({ authorization: `Bearer ${TOKEN}` }, '?window=30d&tests=1')).status, 200);
     assert.equal((await get({ authorization: `Bearer ${TOKEN}` }, '?window=1y')).status, 400);
     assert.equal((await fetch(`${base}/dashboard`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } })).status, 405);
