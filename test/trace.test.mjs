@@ -300,6 +300,9 @@ test('an event the page dispatches as the fill\'s keeps only the documented fiel
   say({ what: 'answer', t: ORIGIN + 1250, start: ORIGIN + 1200, field: { key: 'ref:Zip', label: 'ZIP' }, stepKind: 'address-suggest' });
   // Lowercase and hyphenated, shaped like a kind but none of the plan's (review of PR #258).
   say({ what: 'answer', t: ORIGIN + 1260, start: ORIGIN + 1255, field: { key: 'ref:Own', label: 'Owner' }, stepKind: 'sam-smith' });
+  // An answer with no field, or no time it began, says nothing it must: left out.
+  say({ what: 'answer', t: ORIGIN + 1270, start: ORIGIN + 1265, stepKind: 'choice' });
+  say({ what: 'answer', t: ORIGIN + 1280, start: null, field: { key: 'ref:Bad', label: 'Bad' }, stepKind: 'choice' });
   say({ what: 'press', t: ORIGIN + 1300, button: { text: 'Continue', extra: 'Sam Smith' }, how: 'Sam Smith' });
   say({ what: 'run', t: ORIGIN + 1400, on: false, filled: 3, halted: 'no', who: 'Sam Smith' });
   await h.advance(400);
