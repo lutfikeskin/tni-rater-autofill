@@ -281,16 +281,17 @@
 
   // The page's own requests (fetch or XHR to its origin), each as it finishes: its path without the
   // query or ids, when it started (the event's time) and ended. One still running isn't seen.
+  const recordRequests = (entries) => {
+    for (const r of entries) {
+      if (!/^(fetch|xmlhttprequest)$/.test(r.initiatorType) || !String(r.name).startsWith(`${location.origin}/`)) continue;
+      let p = '';
+      try { p = new URL(r.name).pathname; } catch { continue; }
+      push('request', { path: idless(p), end: round(performance.timeOrigin + r.responseEnd), ms: round(r.responseEnd - r.startTime), via: r.initiatorType === 'fetch' ? 'fetch' : 'xhr' }, { timeStamp: r.startTime });
+    }
+  };
   let requests = null;
   try {
-    requests = new PerformanceObserver((list) => {
-      for (const r of list.getEntries()) {
-        if (!/^(fetch|xmlhttprequest)$/.test(r.initiatorType) || !String(r.name).startsWith(`${location.origin}/`)) continue;
-        let p = '';
-        try { p = new URL(r.name).pathname; } catch { continue; }
-        push('request', { path: idless(p), end: round(performance.timeOrigin + r.responseEnd), ms: round(r.responseEnd - r.startTime), via: r.initiatorType === 'fetch' ? 'fetch' : 'xhr' }, { timeStamp: r.startTime });
-      }
-    });
+    requests = new PerformanceObserver((list) => recordRequests(list.getEntries()));
     requests.observe({ type: 'resource' });
   } catch { requests = null; }
 
@@ -308,10 +309,12 @@
     push('kit', rest, { timeStamp: t - performance.timeOrigin });
   });
 
-  // Stop: what is buffered goes, then nothing more.
+  // Stop: what is buffered goes, then nothing more. Requests the browser finished but hasn't
+  // handed the observer yet are taken first: disconnecting drops them (review of PR #257).
   const onMessage = (msg) => {
     if (msg?.ra !== 'trace' || msg.cmd !== 'stop') return;
     endBurst();
+    try { recordRequests(requests?.takeRecords?.() ?? []); } catch { /* none to take */ }
     flush();
     dispose();
   };

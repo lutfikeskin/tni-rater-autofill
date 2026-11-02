@@ -69,7 +69,8 @@ function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.examp
     URL,
     URLSearchParams,
     MutationObserver: class { constructor(fn) { this.fn = fn; observers.mutation = this; } observe() {} disconnect() { observers.mutation = null; } },
-    PerformanceObserver: class { constructor(fn) { this.fn = fn; observers.resource = this; } observe() {} disconnect() { observers.resource = null; } },
+    // `queued`: entries the browser finished but hasn't handed the callback yet (takeRecords).
+    PerformanceObserver: class { constructor(fn) { this.fn = fn; this.queued = []; observers.resource = this; } observe() {} takeRecords() { const q = this.queued; this.queued = []; return q; } disconnect() { this.queued = []; observers.resource = null; } },
     NodeFilter: { SHOW_TEXT: 4 },
     getComputedStyle: () => ({ visibility: 'visible' }),
     performance: { timeOrigin: ORIGIN, now: () => now },
@@ -284,12 +285,15 @@ test('what the extension\'s fill says is kept by its own time; anything else on 
   assert.deepEqual(kit[1].button, { text: 'Continue' });
 });
 
-test('stop sends a burst still open, then watches the page no more', async () => {
+test('stop sends a burst still open and a request the browser hadn\'t handed over yet, then watches the page no more', async () => {
   const h = harness();
   h.mutate([{ addedNodes: [node([])], removedNodes: [] }]);
+  // Finished just before Stop, still queued: disconnecting would drop it (review of PR #257).
+  h.observers.resource.queued.push({ initiatorType: 'fetch', name: 'https://synthetic.example/api/last', startTime: 500, responseEnd: 600 });
   h.message({ ra: 'trace', cmd: 'stop' });
   await h.advance(10);
   assert.equal(h.events().filter((e) => e.kind === 'burst').length, 1);
+  assert.deepEqual(h.events().filter((e) => e.kind === 'request').map((e) => e.path), ['/api/last']);
   assert.deepEqual([h.observers.mutation, h.observers.resource], [null, null]);
 });
 
