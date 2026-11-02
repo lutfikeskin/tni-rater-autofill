@@ -9,6 +9,7 @@
 // GET  /v1/days      (admin token)                      -> { days: [{ day, bytes }] }
 // GET  /v1/export?since=YYYY-MM-DD[&until=YYYY-MM-DD] (admin token) -> the days' JSONL, in order
 // POST /v1/luna     (upload token) a Luna request (src/ai/luna.js)  -> OpenAI's response
+// GET  /dashboard   (dashboard token, HTTP Basic) the maintainer's live usage page (server/dashboard.mjs)
 //
 // Events are appended to DATA_DIR/events/YYYY-MM-DD.jsonl (by day received), one JSON object
 // per line; the review scripts (scripts/*.mjs) read that folder directly. Each event carries an
@@ -32,20 +33,27 @@
 // server's variables and is added here. Only a request shaped like the panel's (lunaRequestError)
 // goes on, at most RATER_LUNA_DAILY_LIMIT a day (UTC); neither the request nor OpenAI's answer is
 // stored or logged. Without OPENAI_API_KEY it answers 501 and the panel says Luna isn't set up.
+//
+// /dashboard is for the maintainer only: RATER_DASHBOARD_TOKEN (at least 16 characters) is its
+// password, with any user name; unset or shorter, the page is off (404). RATER_TEST_INTAKES
+// (optional, intake fingerprints) names test runs the panel didn't mark, as reviews/test-intakes.txt.
 
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { MIN_DASHBOARD_TOKEN, WINDOWS, eventReader, renderDashboard, summarize, testIntakesFrom } from './dashboard.mjs';
 
 const MAX_BODY = 4 * 1024 * 1024;
 const MAX_EVENTS_PER_REQUEST = 2000;
 const MAX_EVENT_BYTES = 32 * 1024;
 // A page's layout lists every question and its choices (up to 250 per question).
 const MAX_LAYOUT_BYTES = 128 * 1024;
-// Which version of this file is running: the daily review compares it with the repository's.
-export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url))).digest('hex').slice(0, 12);
+// Which version of the server is running (this file and the dashboard's): the daily review
+// compares it with the repository's.
+export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url)))
+  .update(fs.readFileSync(new URL('./dashboard.mjs', import.meta.url))).digest('hex').slice(0, 12);
 // Names of dropped fields kept on an event: field-like names only, at most this many.
 const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
 const MAX_DROPPED = 20;
@@ -238,7 +246,7 @@ function keepShape(v, spec) {
 }
 
 export function createServer({ dataDir, token = '', adminToken = '', openaiKey = '', openaiUrl = 'https://api.openai.com/v1/responses',
-  lunaDailyLimit = LUNA_DAILY_LIMIT, fetchImpl = globalThis.fetch } = {}) {
+  lunaDailyLimit = LUNA_DAILY_LIMIT, fetchImpl = globalThis.fetch, dashboardToken = '', testIntakes = [] } = {}) {
   const eventsDir = path.join(dataDir, 'events');
   fs.mkdirSync(eventsDir, { recursive: true });
 
@@ -260,6 +268,19 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
   // a caller of createServer (tests, the e2e harness) binds 127.0.0.1 itself.
   const authorized = (req) => !token || matches(req, token);
   const isAdmin = (req) => !!adminToken && matches(req, adminToken);
+  // The dashboard's password (HTTP Basic, so a browser asks for it; any user name), or the token
+  // as a Bearer for scripts. Too short a token keeps the page off rather than easy to guess.
+  const dashboardOn = dashboardToken.length >= MIN_DASHBOARD_TOKEN;
+  const dashboardAuthorized = (req) => {
+    if (!dashboardOn) return false;
+    const header = String(req.headers.authorization ?? '');
+    const basic = header.match(/^Basic\s+([A-Za-z0-9+/=]+)$/i);
+    const given = basic ? Buffer.from(basic[1], 'base64').toString('utf8').replace(/^[^:]*:/, '') : header.replace(/^Bearer\s+/i, '');
+    const a = crypto.createHash('sha256').update(given).digest();
+    const b = crypto.createHash('sha256').update(dashboardToken).digest();
+    return crypto.timingSafeEqual(a, b);
+  };
+  const readRecent = eventReader(eventsDir);
   const dayFiles = () => fs.readdirSync(eventsDir).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort();
 
   function clean(e, agent) {
@@ -450,6 +471,27 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (req.method === 'GET' && url.pathname === '/v1/health') {
       return done(200, { ok: true, server: SERVER_HASH, ...(isAdmin(req) ? { events: seen.size } : {}) });
     }
+    // The maintainer's usage page: 404 when it is off, so the server says nothing of it.
+    if (url.pathname === '/dashboard') {
+      if (!dashboardOn) return done(404, { error: 'not found' });
+      if (req.method !== 'GET') return done(405, { error: 'use GET' });
+      if (!dashboardAuthorized(req)) {
+        res.setHeader('www-authenticate', 'Basic realm="Rater usage", charset="UTF-8"');
+        return done(401, { error: 'dashboard password required' });
+      }
+      const window = url.searchParams.get('window') ?? '7d';
+      if (!Object.hasOwn(WINDOWS, window)) return done(400, { error: `window must be ${Object.keys(WINDOWS).join(', ')}` });
+      const now = Date.now();
+      const summary = summarize(readRecent(Math.max(...Object.values(WINDOWS)) + 1, now), { now, window, includeTests: url.searchParams.get('tests') === '1', testIntakes });
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex',
+        'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      });
+      res.end(renderDashboard(summary));
+      console.log(`${new Date().toISOString()} GET dashboard ${window}${summary.includeTests ? ' tests' : ''} 200 ${Date.now() - started}ms`);
+      return;
+    }
     if (req.method === 'GET' && (url.pathname === '/v1/days' || url.pathname === '/v1/export')) {
       if (!isAdmin(req)) return done(401, { error: 'admin token required' });
       if (url.pathname === '/v1/days') {
@@ -520,9 +562,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
   const dataDir = path.resolve(process.env.DATA_DIR || 'server-data');
   const lunaDailyLimit = lunaDailyLimitFrom(process.env.RATER_LUNA_DAILY_LIMIT);
-  const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '', openaiKey: process.env.OPENAI_API_KEY || '', lunaDailyLimit });
+  const dashboardToken = process.env.RATER_DASHBOARD_TOKEN || '';
+  if (dashboardToken && dashboardToken.length < MIN_DASHBOARD_TOKEN) console.error(`RATER_DASHBOARD_TOKEN is shorter than ${MIN_DASHBOARD_TOKEN} characters: the dashboard stays off.`);
+  const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '', openaiKey: process.env.OPENAI_API_KEY || '', lunaDailyLimit,
+    dashboardToken, testIntakes: testIntakesFrom(process.env.RATER_TEST_INTAKES) });
   server.listen(port, host, () => {
-    console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit}/day)` : ''}`);
+    console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit}/day)` : ''}${dashboardToken.length >= MIN_DASHBOARD_TOKEN ? '  (dashboard on: /dashboard)' : ''}`);
   });
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => server.close(() => process.exit(0)));
 }

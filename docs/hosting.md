@@ -29,7 +29,7 @@ within hours of approval.
 | Service | `usage-server`, built from `server/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`) |
 | URL | https://usage-server-production.up.railway.app (`/v1/health`) |
 | Storage | volume `usage-data` mounted at `/data` (one JSONL file per day received) |
-| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `OPENAI_API_KEY` (TNI's key for Luna, below; without it `/v1/luna` answers 501), optional `RATER_LUNA_DAILY_LIMIT` (default 5000), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
+| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `OPENAI_API_KEY` (TNI's key for Luna, below; without it `/v1/luna` answers 501), optional `RATER_LUNA_DAILY_LIMIT` (default 5000), `RATER_DASHBOARD_TOKEN` (the [live usage page](#live-usage-page)'s password; without it the page is off), optional `RATER_TEST_INTAKES` (intake fingerprints the page counts as test runs), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
 
 The extension sends to this server by default (`sidepanel/usage-log.js`, `DEFAULT_SERVER` /
 `DEFAULT_TOKEN`); an agent's own Server setting (a local test server) overrides it, and a blank
@@ -102,7 +102,7 @@ That server also refuses an event whose run id, rules hash, settings object or s
 commit, optionally `+dirty`) only in those shapes. It refuses events from the local test page (`carrier: 'test'`, localhost), which are
 no quote; the review scripts also skip the ones stored before. The server names what it dropped on
 the stored event (`dropped`: field names only, at most 20, `droppedMore` counts the rest), and
-`/v1/health` names its version (`server`, a hash of its `server/index.mjs`). `node scripts/server-check.mjs` compares that with this checkout, without
+`/v1/health` names its version (`server`, a hash of its `server/index.mjs` and `server/dashboard.mjs`). `node scripts/server-check.mjs` compares that with this checkout, without
 sending any event: after a deploy it should say `same`.
 
 The server accepts `intake_profile`, a profile of the client's business (`PROFILE` in
@@ -122,6 +122,48 @@ and its group named in `dropped`; a group that isn't the right kind of object or
 whole. Accepting the event collects nothing until an extension sends it, so this server can be
 deployed whenever; the extension that sends the profile is released only after the privacy policy
 names it.
+
+## Live usage page
+
+`/dashboard` on the usage server (https://usage-server-production.up.railway.app/dashboard) shows
+how agents are using the extension, for the maintainer only. It is one server-rendered page
+(`server/dashboard.mjs`, no script) that reloads itself every minute and reads the events the
+server already stored; it changes nothing the extension sends or the server keeps.
+
+- Totals for the last 24 hours, 7 days and 30 days: quotes started, pages filled, answers filled,
+  autofilled answers the agent changed (another value or cleared), reformatted, answered by hand
+  (where autofill gave none), problem reports and unfamiliar questions.
+- Per agent (initials), per carrier and per version and channel, for the period picked at the top
+  (24h, 7d or 30d; 7d by default).
+- The latest quotes, fills, fill errors and problem reports, newest first; then the problem reports
+  with what held Continue, and the questions no rule knew (once per carrier, page and label).
+
+The numbers use the review's definitions (`npm run review`, `scripts/lib/signals.mjs`), copied into
+the server because its image has no `scripts/`; `test/dashboard.test.mjs` keeps the two in step. A
+period is when the server received the events. A quote is an intake loaded in a session that went
+to a carrier's page; a page or answer filled again in the same quote counts once. Test runs are
+left out by default (**Include test runs** at the top adds them, marked): intakes the agent marked
+as a test, and the fingerprints in `RATER_TEST_INTAKES` (commas, spaces or new lines between them,
+each at least 8 hex characters, as in the local `reviews/test-intakes.txt`; anything else is
+ignored). Without that variable the maintainer's own unmarked test quotes count as agents' work,
+as in a review with no test-run list. The page shows only what the events already hold: initials,
+state, business class, unit counts, redacted labels and report texts.
+
+**Its password.** Set `RATER_DASHBOARD_TOKEN` in the `usage-server` service's Variables (a random
+value of at least 16 characters, for example from `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`),
+keep it in your password manager, and redeploy (`railway up --service usage-server`). Unset, or
+shorter than 16 characters, the page is off and `/dashboard` answers 404 (a short one also prints a
+warning at startup); the startup line says `(dashboard on: /dashboard)` when it is on. The browser
+asks for a user name and password: any user name, the token as the password (HTTP Basic, over
+Railway's HTTPS). A script may send it as `Authorization: Bearer <token>` instead. It is its own
+secret, not the upload or admin token: neither opens the page, and the token never opens the export.
+The server logs `GET dashboard <period>` with the status, never the token. Rotating it is a
+variable change and a redeploy. The page is sent with `no-store`, `noindex` and a policy that
+allows no script, frame or form.
+
+Locally: `RATER_DASHBOARD_TOKEN=<16+ characters> npm run server` (PowerShell: set
+`$env:RATER_DASHBOARD_TOKEN` first), then http://127.0.0.1:8787/dashboard, on whatever is in
+`server-data/events/` (`npm run pull` fills it).
 
 ## Logs on your computer
 

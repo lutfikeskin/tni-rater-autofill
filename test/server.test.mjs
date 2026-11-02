@@ -215,8 +215,10 @@ test('dropped fields are named on the event (names only, bounded), and health na
   await withServer({ dataDir }, async ({ post, base }) => {
     await post({ events: [ev({ seq: -1, ...many, 'Jordan Sample': 'x' })] });
     const health = await (await fetch(`${base}/v1/health`)).json();
-    const file = fs.readFileSync(new URL('../server/index.mjs', import.meta.url));
-    assert.equal(health.server, crypto.createHash('sha256').update(file).digest('hex').slice(0, 12));
+    // The server's own files, as the image copies them (server/Dockerfile): index.mjs, then the dashboard's.
+    const hash = crypto.createHash('sha256');
+    for (const f of ['index.mjs', 'dashboard.mjs']) hash.update(fs.readFileSync(new URL(`../server/${f}`, import.meta.url)));
+    assert.equal(health.server, hash.digest('hex').slice(0, 12));
     assert.equal(health.server, SERVER_HASH);
   });
   const [row] = stored(dataDir);
