@@ -20,6 +20,14 @@ const FILTERS = [
   { filter: 'done', label: 'Filled' },
 ];
 
+// Puts the filters' thumb under the filter picked; a hidden rail is left as it is.
+function placeThumb(rail) {
+  const on = rail?.querySelector('button[aria-pressed="true"]');
+  if (!on || !on.offsetWidth) return;
+  rail.style.setProperty('--thumb-x', `${on.offsetLeft}px`);
+  rail.style.setProperty('--thumb-w', `${on.offsetWidth}px`);
+}
+
 // What the row tags and the rater page's marks (pagekit.js COLORS, the same colors: --mark-*) mean.
 function AnswerKey({ open }) {
   return (
@@ -55,8 +63,18 @@ function AnswerKey({ open }) {
 function Feed({ act }) {
   const f = useStore(panelStore, (s) => s.feed) ?? { shown: true, title: 'Answers on this page', pages: [], filter: 'all' };
   const menu = useRef(null);
+  const rail = useRef(null);
   // The menu shows the page shown as it changes, as the panel set it on each draw.
   useLayoutEffect(() => { if (menu.current) menu.current.value = f.pastKey ?? ''; });
+  // The thumb slides under the filter picked; counts change the buttons' widths, so it is measured on each
+  // draw, and again when the rail resizes (shown after being hidden, or the panel's width changes).
+  useLayoutEffect(() => placeThumb(rail.current));
+  useLayoutEffect(() => {
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const ro = new ResizeObserver(() => placeThumb(rail.current));
+    ro.observe(rail.current);
+    return () => ro.disconnect();
+  }, []);
   const past = !!f.pastKey;
   return (
     <div id="feed" className="feed" hidden={!f.shown}>
@@ -71,7 +89,8 @@ function Feed({ act }) {
           <button type="button" id="key-btn" className="key-btn" aria-label="What the tags and marks mean" title="What the tags and marks mean"
             aria-expanded={String(!!f.keyOpen)} aria-controls="answer-key" hidden={f.keyOpen == null} onClick={() => act.toggleKey()}>i</button>
         </div>
-        <div id="filters" className="filters" role="group" aria-label="Show answers" hidden={!f.counts}>
+        <div id="filters" ref={rail} className="filters" data-filter={f.filter} role="group" aria-label="Show answers" hidden={!f.counts}>
+          <span className="filters-thumb" aria-hidden="true" />
           {FILTERS.map(({ filter, label }) => (
             <button key={filter} type="button" data-filter={filter} aria-pressed={String(filter === f.filter)} onClick={() => act.setFilter(filter)}>
               {label} <span>{f.counts ? String(f.counts[filter] ?? 0) : ''}</span>
