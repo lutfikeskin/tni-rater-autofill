@@ -208,6 +208,13 @@ test('the questions a page drew, a request\'s path and what the fill answered ar
   ], { redact });
   assert.deepEqual([burst.drawn[0].label, burst.drawn[0].key, request.path, answer.field.label, press.button.text],
     ['[client]\'s license', 'ref:Lic', '/drivers/[client]/save', '[client]\'s license', 'Save [client]']);
+  // A key that is no data-model name, built from a control's name or id, is redacted too (review of
+  // PR #257); a data-model name is kept as it is, as above.
+  const [change, drew] = stampEvents([
+    { kind: 'change', t: 5, field: { key: 'name:Sam Smith-dob', label: 'Date of birth', rect: null }, value: '' },
+    { kind: 'burst', t: 6, end: 7, records: 1, drawn: [{ key: 'id:Sam Smith_license', kind: 'text', label: 'License' }], drawnCount: 1 },
+  ], { redact });
+  assert.deepEqual([change.field.key, drew.drawn[0].key], ['name:[client]-dob', 'id:[client]_license']);
 });
 
 test('the report tells what the fill answered and waited for, what the page drew and when, and where each step\'s time went', () => {
@@ -270,6 +277,10 @@ test('a wait that crosses into the next step counts on each step by the part of 
   assert.match(report, /\| 1 \| \/quote · Vehicles \| 2\.0 s \| 1\.9 s \| 1 \| 1\.0 s \| 1\.0 s \| 0 \(0\.0 s\) \| 0\.1 s \|/);
   assert.match(report, /\| 2 \| \/quote · Drivers \| 1\.0 s \| 0\.6 s \| 0 \| 0\.5 s \| 0\.5 s \| 0 \(0\.0 s\) \| 0\.4 s \|/);
   assert.match(report, /\| \| All \| 3\.0 s \| 2\.5 s \| 1 \| 1\.5 s \| 1\.5 s \| 0 \(0\.0 s\) \| 0\.5 s \|/);
+  // The same wait in another frame at the same time (the fill runs in every frame): counted once.
+  const framed = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:03.000Z' },
+    events: [...events, { ...events[4], seq: 1, frame: 2, start: t0 + 1200, ms: 1000 }] });
+  assert.match(framed, /\| \| All \| 3\.0 s \| 2\.5 s \| 1 \| 1\.5 s \| 1\.5 s \| 0 \(0\.0 s\) \| 0\.5 s \|/);
 });
 
 // Review of PR #166: the store ZIP ships lib/, and MIT asks that a copy keep its notice.

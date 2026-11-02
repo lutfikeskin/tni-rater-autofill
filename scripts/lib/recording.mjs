@@ -182,9 +182,18 @@ function timeTable(ordered, told, end) {
   const overlap = (from, to, a, b) => Math.max(0, Math.min(b, to) - Math.max(a, from));
   const filling = (a, b) => spans.reduce((sum, f) => sum + overlap(f.start, f.end, a, b), 0);
   // A wait (and its slack, its last part) counts in each step by the part of it on that step: one
-  // begun on a step and ended on the next is split (review of PR #257). An answer and a request
-  // count on the step where they began.
-  const waits = ordered.filter((e) => e.kind === 'kit' && e.what === 'wait' && typeof e.start === 'number' && typeof e.ms === 'number');
+  // begun on a step and ended on the next is split. Waits at the same time count once: the fill runs
+  // in every frame, each waiting on its own (review of PR #257). An answer and a request count on
+  // the step where they began.
+  const union = (spans) => spans.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]).reduce((out, [a, b]) => {
+    const last = out.at(-1);
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b); else out.push([a, b]);
+    return out;
+  }, []);
+  const waited = ordered.filter((e) => e.kind === 'kit' && e.what === 'wait' && typeof e.start === 'number' && typeof e.ms === 'number');
+  const waits = union(waited.map((e) => [e.start, e.start + e.ms]));
+  const slacks = union(waited.map((e) => [e.start + e.ms - (e.slack ?? 0), e.start + e.ms]));
+  const within = (list, a, b) => list.reduce((m, [from, to]) => m + overlap(from, to, a, b), 0);
   const answers = ordered.filter((e) => e.kind === 'kit' && e.what === 'answer').map((e) => e.start ?? e.t);
   const requests = ordered.filter((e) => e.kind === 'request');
   const out = ['## Where the time went', '',
@@ -196,8 +205,7 @@ function timeTable(ordered, told, end) {
     const on = (t) => t >= s.start && t < next;
     const theirs = requests.filter((e) => on(e.t));
     const row = { screen: next - s.start, filling: filling(s.start, next), answers: answers.filter(on).length,
-      waiting: waits.reduce((m, e) => m + overlap(e.start, e.start + e.ms, s.start, next), 0),
-      slack: waits.reduce((m, e) => m + overlap(e.start + e.ms - (e.slack ?? 0), e.start + e.ms, s.start, next), 0),
+      waiting: within(waits, s.start, next), slack: within(slacks, s.start, next),
       requests: theirs.length, requestMs: theirs.reduce((m, e) => m + (e.ms ?? 0), 0) };
     for (const k of Object.keys(all)) all[k] += row[k];
     out.push(`| ${n} | ${s.page}${s.step ? ` · ${s.step}` : ''} | ${cells(row)} |`);
