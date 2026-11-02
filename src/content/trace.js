@@ -296,17 +296,47 @@
   } catch { requests = null; }
 
   // What the extension's fill says (pagekit.js `kitTrace`), by its own time: a JSON string from
-  // whichever world the kit runs in. Only what it says: the page could dispatch the same event, so
-  // a long or unknown one is left out.
-  const KIT_SAYS = new Set(['run', 'wait', 'answer', 'press']);
+  // whichever world the kit runs in. The page could dispatch the same event, so each is built
+  // afresh from its documented fields: a number or a yes/no only as one, a fixed word only as one
+  // of its words, a step's kind only as one of the plan's (the carriers' rules and the kit's; a
+  // kind not listed here is shown as none, never kept as text: a shape let `sam-smith` through,
+  // review of PR #258). Nothing the page gave is passed on as it is; a long one, or one missing
+  // what it must say, is left out (review of PR #257).
+  const WAITS_FOR = new Set(['answer', 'round', 'load', 'before-load', 'rated', 'continue', 'drawn', 'start']);
+  const STEP_KINDS = new Set(['action', 'address-suggest', 'bool', 'choice', 'date', 'first-option', 'int', 'money', 'phone', 'pick-not', 'radio',
+    'search-select', 'selected-option', 'state', 'text']);
+  const TIMING = ['ms', 'settleMs', 'ajax', 'revealed', 'removed', 'changed'];
+  const isNum = (n) => typeof n === 'number' && Number.isFinite(n);
+  const words = (s, max) => (typeof s === 'string' ? s.slice(0, max) : null);
+  function kitSaid(said) {
+    const nums = (from, keys) => Object.fromEntries(keys.filter((k) => isNum(from[k])).map((k) => [k, from[k]]));
+    const yesNo = (from, keys) => Object.fromEntries(keys.filter((k) => typeof from[k] === 'boolean').map((k) => [k, from[k]]));
+    const has = (x) => !!x && typeof x === 'object';
+    if (said.what === 'run') return { what: 'run', ...yesNo(said, ['on', 'halted']), ...nums(said, ['steps', 'filled']) };
+    if (said.what === 'press') return { what: 'press', button: { text: words(said.button?.text, 60) ?? '' }, ...(said.how === 'page' || said.how === 'kit' ? { how: said.how } : {}) };
+    if (said.what === 'wait') {
+      if (!isNum(said.start) || !isNum(said.ms) || (said.ended !== 'quiet' && said.ended !== 'limit')) return null;
+      const held = has(said.held) ? { held: { busy: said.held.busy === true, changing: said.held.changing === true, requests: said.held.requests === true } } : {};
+      return { what: 'wait', why: WAITS_FOR.has(said.why) ? said.why : null, start: said.start, ms: said.ms, ended: said.ended,
+        ...nums(said, ['quietMs', 'maxMs']), ...yesNo(said, ['requests', 'settled']), ...held };
+    }
+    if (said.what === 'answer') {
+      if (!has(said.field) || !isNum(said.start)) return null;
+      const timing = has(said.timing) ? { timing: { ...nums(said.timing, TIMING), ...yesNo(said.timing, ['batch']) } } : {};
+      return { what: 'answer', field: { key: words(said.field.key, 200), label: words(said.field.label, 200) ?? '' },
+        stepKind: STEP_KINDS.has(said.stepKind) ? said.stepKind : null, start: said.start,
+        ...yesNo(said, ['ok']), ...nums(said, ['applyMs']), ...timing };
+    }
+    return null;
+  }
   listen(document, 'rater-trace', (e) => {
     const text = typeof e.detail === 'string' ? e.detail : '';
     if (!text || text.length > 4000) return;
     let said;
     try { said = JSON.parse(text); } catch { return; }
-    if (!said || !KIT_SAYS.has(said.what) || typeof said.t !== 'number') return;
-    const { t, kind, seq, frame, filling, ...rest } = said;
-    push('kit', rest, { timeStamp: t - performance.timeOrigin });
+    if (!said || typeof said !== 'object' || !isNum(said.t)) return;
+    const fields = kitSaid(said);
+    if (fields) push('kit', fields, { timeStamp: said.t - performance.timeOrigin });
   });
 
   // Stop: what is buffered goes, then nothing more. Requests the browser finished but hasn't
