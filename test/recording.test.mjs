@@ -253,6 +253,25 @@ test('the report tells what the fill answered and waited for, what the page drew
   assert.ok(!/Where the time went/.test(older));
 });
 
+// Review of PR #257: a wait begun on one step and ended on the next counted whole on the next, which
+// could then show more waiting than time on screen.
+test('a wait that crosses into the next step counts on each step by the part of it there', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: t0 + 100, frame: 0, on: true },
+    { kind: 'kit', t: t0 + 200, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Year', label: 'Year' }, ok: true, start: t0 + 150, applyMs: 50 },
+    { kind: 'step', t: t0 + 2000, seq: 3, frame: 0, step: 'Drivers', from: 'Vehicles' },
+    { kind: 'kit', t: t0 + 2500, seq: 4, frame: 0, what: 'wait', why: 'continue', quietMs: 500, maxMs: 6000, start: t0 + 1000, ms: 1500, ended: 'quiet' },
+    { kind: 'fill', t: t0 + 2600, frame: 0, on: false },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:03.000Z' }, events });
+  // Nothing of the page during the wait: all of it slack, 1.0 s on Vehicles and 0.5 s on Drivers.
+  assert.match(report, /\| 1 \| \/quote · Vehicles \| 2\.0 s \| 1\.9 s \| 1 \| 1\.0 s \| 1\.0 s \| 0 \(0\.0 s\) \| 0\.1 s \|/);
+  assert.match(report, /\| 2 \| \/quote · Drivers \| 1\.0 s \| 0\.6 s \| 0 \| 0\.5 s \| 0\.5 s \| 0 \(0\.0 s\) \| 0\.4 s \|/);
+  assert.match(report, /\| \| All \| 3\.0 s \| 2\.5 s \| 1 \| 1\.5 s \| 1\.5 s \| 0 \(0\.0 s\) \| 0\.5 s \|/);
+});
+
 // Review of PR #166: the store ZIP ships lib/, and MIT asks that a copy keep its notice.
 test('the vendored fflate keeps its MIT copyright and permission notice', () => {
   const vendored = fs.readFileSync(new URL('../lib/fflate.mjs', import.meta.url), 'utf8');

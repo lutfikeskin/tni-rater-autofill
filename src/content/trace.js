@@ -200,8 +200,10 @@
   // The page and, in the top frame, the step on screen (GEICO's progress bar, AmWINS' headings; null
   // while they can't be read, as mid-redraw), looked at twice a second.
   const stepNow = () => { try { return isTop ? read.stepKey() ?? null : null; } catch { return null; } };
-  // The path without its ids, as the page key has none (an application's number).
-  const idless = (p) => String(p ?? '').replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id');
+  // The path without its ids, as the page key has none (an application's number), each part decoded:
+  // the panel redacts a client's name as words, which `Sam%20Smith` isn't (review of PR #257).
+  const decoded = (p) => String(p ?? '').split('/').map((part) => { try { return decodeURIComponent(part); } catch { return part; } }).join('/');
+  const idless = (p) => decoded(p).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id');
   const pathOf = () => idless(location.pathname);
   let page = read.pageKey();
   let step = stepNow();

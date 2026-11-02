@@ -179,18 +179,26 @@ function timeTable(ordered, told, end) {
     if (e.on) spans.push({ start: e.t, end });
     else if (spans.at(-1)) spans.at(-1).end = e.t;
   }
-  const filling = (a, b) => spans.reduce((sum, f) => sum + Math.max(0, Math.min(b, f.end) - Math.max(a, f.start)), 0);
+  const overlap = (from, to, a, b) => Math.max(0, Math.min(b, to) - Math.max(a, from));
+  const filling = (a, b) => spans.reduce((sum, f) => sum + overlap(f.start, f.end, a, b), 0);
+  // A wait (and its slack, its last part) counts in each step by the part of it on that step: one
+  // begun on a step and ended on the next is split (review of PR #257). An answer and a request
+  // count on the step where they began.
+  const waits = ordered.filter((e) => e.kind === 'kit' && e.what === 'wait' && typeof e.start === 'number' && typeof e.ms === 'number');
+  const answers = ordered.filter((e) => e.kind === 'kit' && e.what === 'answer').map((e) => e.start ?? e.t);
+  const requests = ordered.filter((e) => e.kind === 'request');
   const out = ['## Where the time went', '',
     "Filling: while a fill ran. Waiting: the fill waiting for the page, after its answers too; slack: the part after the page's last change or request. Without a fill: the person's time, or nobody's.", '',
     '| # | Page · step | On screen | Filling | Answers | Waiting | Slack | Page requests | Without a fill |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- |'];
   const all = { screen: 0, filling: 0, answers: 0, waiting: 0, slack: 0, requests: 0, requestMs: 0 };
   const cells = (r) => `${secs(r.screen)} | ${secs(r.filling)} | ${r.answers} | ${secs(r.waiting)} | ${secs(r.slack)} | ${r.requests} (${secs(r.requestMs)}) | ${secs(r.screen - r.filling)}`;
   for (const { s, next, n } of told) {
-    const waits = s.events.filter((e) => e.kind === 'kit' && e.what === 'wait');
-    const requests = s.events.filter((e) => e.kind === 'request');
-    const row = { screen: next - s.start, filling: filling(s.start, next), answers: s.events.filter((e) => e.kind === 'kit' && e.what === 'answer').length,
-      waiting: waits.reduce((m, e) => m + (e.ms ?? 0), 0), slack: waits.reduce((m, e) => m + (e.slack ?? 0), 0),
-      requests: requests.length, requestMs: requests.reduce((m, e) => m + (e.ms ?? 0), 0) };
+    const on = (t) => t >= s.start && t < next;
+    const theirs = requests.filter((e) => on(e.t));
+    const row = { screen: next - s.start, filling: filling(s.start, next), answers: answers.filter(on).length,
+      waiting: waits.reduce((m, e) => m + overlap(e.start, e.start + e.ms, s.start, next), 0),
+      slack: waits.reduce((m, e) => m + overlap(e.start + e.ms - (e.slack ?? 0), e.start + e.ms, s.start, next), 0),
+      requests: theirs.length, requestMs: theirs.reduce((m, e) => m + (e.ms ?? 0), 0) };
     for (const k of Object.keys(all)) all[k] += row[k];
     out.push(`| ${n} | ${s.page}${s.step ? ` · ${s.step}` : ''} | ${cells(row)} |`);
   }

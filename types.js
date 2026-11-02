@@ -853,7 +853,8 @@
  * @property {true} [filling]  a fill was under way when it happened (by its own time, from the fills the panel notes)
  * @property {boolean} [trusted]  the browser's isTrusted: a person's action, not a script's
  * @property {number | null} [gestureMs]  ms since the last trusted gesture on that control (input, change)
- * @property {{ key: string | null, q: string | null, kind: string | null, label: string, rect: object | null }} [field]  the question, as the recorder names it (label redacted)
+ * @property {{ key: string | null, q?: string | null, kind?: string | null, label: string, rect?: object | null }} [field]  the question, as the recorder names it (label
+ *   redacted); a kit answer's has its key and label only
  * @property {{ text: string, rect: object | null }} [button]  the button, by its words (redacted)
  * @property {string | null} [value]  a choice's words after the change (redacted)
  * @property {number} [len]  a text box's length after the change; its text is never kept
@@ -891,6 +892,23 @@
  * @property {'run' | 'wait' | 'answer' | 'press'} [what]  kit: what the fill said. run: it started (`on`, its `steps`) or ended (`filled`, `halted`); wait: a
  *   settle (`quietMs`, `maxMs`, `requests`, `start`, `ms`, `ended` quiet or limit, at the limit `settled` and what `held` it); answer: one answer
  *   (`field`, `stepKind`, `ok`, `start`, `applyMs`, the usage log's `timing`); press: a button it pressed (`button`, `how`: from the page's world or the kit's)
+ * @property {number} [steps]  kit run, as it starts: the plan's steps
+ * @property {number} [filled]  kit run, as it ends: how many answers it filled
+ * @property {boolean} [halted]  kit run, as it ends: whether it halted
+ * @property {number} [start]  kit wait, answer: wall-clock ms when it began (`t` is when it was said, at its end)
+ * @property {number} [quietMs]  kit wait: the quiet it waited for
+ * @property {number} [maxMs]  kit wait: its limit
+ * @property {boolean} [requests]  kit wait: whether it waited for the page's requests too
+ * @property {'quiet' | 'limit'} [ended]  kit wait: the page was quiet, or the limit came first
+ * @property {boolean} [settled]  kit wait at its limit: the page itself was settled (only components undefined held it)
+ * @property {{ busy: boolean, changing: boolean, requests: boolean }} [held]  kit wait at its limit: what still held it
+ * @property {string | null} [stepKind]  kit answer: the plan step's kind
+ * @property {boolean} [ok]  kit answer: the page kept it
+ * @property {number} [applyMs]  kit answer: ms to give it, a list's wait for its options included
+ * @property {{ ms: number, settleMs: number, ajax: number, revealed: number, removed: number, changed: number, batch?: boolean }} [timing]  kit answer: the usage log's fill_field timing
+ * @property {'page' | 'kit'} [how]  kit press: clicked from the page's own world, or by the kit
+ * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
+ * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
  */
 
 /**

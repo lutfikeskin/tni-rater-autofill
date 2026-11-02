@@ -2949,7 +2949,7 @@
               ...(settled && !fresh ? { vanished: true } : {}) };
           }
         }
-        if (tracing) kitTrace('answer', { field: { key: fieldKey(c), label: c.label ?? '' }, stepKind: step.kind ?? null, ok: !!result.ok, start: t0, applyMs: tApplied - t0, ...(item.timing ? { timing: item.timing } : {}) });
+        if (tracing) kitTrace('answer', { field: { key: item.key, label: c.label ?? '' }, stepKind: step.kind ?? null, ok: !!result.ok, start: t0, applyMs: tApplied - t0, ...(item.timing ? { timing: item.timing } : {}) });
         if (result.ok) {
           // The helpers an answer here makes due again (the adapter's `rearm`: on Progressive's
           // Rates, Recalculate and Print, and the Done of the coverage answered).

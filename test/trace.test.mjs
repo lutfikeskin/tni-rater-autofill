@@ -157,6 +157,10 @@ test('a page path keeps no ids, as its name does not', async () => {
   await h.advance(400);
   const page = h.events().find((e) => e.kind === 'page');
   assert.deepEqual([page.page, page.path], ['/applications/:id/vehicles', '/applications/:id/vehicles']);
+  // Decoded, so a name in it is redacted as words; a part that isn't valid encoding stays as it is.
+  const named = harness({ pathname: '/drivers/Sam%20Smith/%E0%A4%A' });
+  await named.advance(400);
+  assert.equal(named.events().find((e) => e.kind === 'page').path, '/drivers/Sam Smith/%E0%A4%A');
 });
 
 test('typed text is never kept: keys by name or as printable, a text box by its length, a password box not at all', async () => {
@@ -256,10 +260,12 @@ test('the page\'s requests to its own origin, as each finishes: the path without
     { initiatorType: 'fetch', name: 'https://synthetic.example/api/quote/123456/rate?premium=1', startTime: 2000, responseEnd: 2300 },
     { initiatorType: 'xmlhttprequest', name: 'https://cdn.other.example/x.js', startTime: 2000, responseEnd: 2100 },
     { initiatorType: 'img', name: 'https://synthetic.example/logo.png', startTime: 2000, responseEnd: 2050 },
+    // A name in a path is kept decoded, so the panel's redactor finds it as words (review of PR #257).
+    { initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/drivers/Sam%20Smith/save', startTime: 2400, responseEnd: 2500 },
   ]);
   await h.advance(400);
   const requests = h.events().filter((e) => e.kind === 'request');
-  assert.deepEqual(requests.map((e) => [e.path, e.t, e.end, e.ms, e.via]), [['/api/quote/:id/rate', ORIGIN + 2000, ORIGIN + 2300, 300, 'fetch']]);
+  assert.deepEqual(requests.map((e) => [e.path, e.t, e.end, e.ms, e.via]), [['/api/quote/:id/rate', ORIGIN + 2000, ORIGIN + 2300, 300, 'fetch'], ['/drivers/Sam Smith/save', ORIGIN + 2400, ORIGIN + 2500, 100, 'xhr']]);
 });
 
 test('what the extension\'s fill says is kept by its own time; anything else on that event is left out', async () => {
