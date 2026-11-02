@@ -214,7 +214,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
    the absolutely placed screen-reader text in its rows (.sr-only) stays inside it: otherwise each
    sits below the panel, the document grows taller than the window, and a fill's scrollIntoView
    scrolled the header and client strip out of view (AmWINS' declaration, W44-10). */
-.view { position: relative; flex: 1; min-height: 96px; overflow: auto; display: grid; align-content: start; grid-auto-rows: max-content; }
+/* The scrollbar's room is kept when nothing scrolls, so a short list (a filter that hides most rows) doesn't widen the view. */
+.view { position: relative; flex: 1; min-height: 96px; overflow: auto; scrollbar-gutter: stable; display: grid; align-content: start; grid-auto-rows: max-content; }
 .pane { padding: 8px 12px 12px; display: grid; gap: 8px; align-content: start; }
 .pane-head { display: grid; gap: 2px; }
 .pane-head h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); }
@@ -333,9 +334,17 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 /* An earlier page's answers are read-only: their sources and See in intake stay. */
 .past .change, .past .mark-done, .past .show-on-page, .past .opts, .past .opt-select, .past .change-slot, .past .row-say,
 .past .ai-slot, .past .ai-holder, .past .ai-orphan, .past .needs-head, .past .need-where, .past .need-note button { display: none; }
-.filters { display: flex; gap: 2px; padding: 2px; background: var(--border-soft); border-radius: var(--radius-md); }
-.filters button { min-height: 22px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); font-size: 11.5px; font-weight: 600; color: var(--ink-secondary); background: transparent; white-space: nowrap; }
-.filters button[aria-pressed="true"] { color: var(--ink-strong); background: var(--surface); box-shadow: 0 1px 2px rgba(17, 24, 39, 0.15); }
+/* One rail; the thumb (feed-view.jsx measures it) slides under the filter picked. */
+.filters { position: relative; display: flex; padding: 2px; background: var(--border-soft); border-radius: var(--radius-md); }
+.filters-thumb { position: absolute; top: 2px; bottom: 2px; left: 0; width: var(--thumb-w, 0); transform: translateX(var(--thumb-x, 0)); border-radius: var(--radius-sm); background: var(--surface); box-shadow: 0 1px 2px rgba(17, 24, 39, 0.15); transition: transform 0.2s ease, width 0.2s ease, background-color 0.2s ease; }
+.filters button { position: relative; min-height: 22px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); font-size: 11.5px; font-weight: 600; color: var(--ink-secondary); background: transparent; white-space: nowrap; }
+.filters button[aria-pressed="true"] { color: var(--ink-strong); }
+/* Need you and Filled take the yellow and green their answers carry. */
+.filters button[data-filter="needs"] { color: var(--warning-ink); }
+.filters button[data-filter="done"] { color: var(--success-ink); }
+.filters[data-filter="needs"] .filters-thumb { background: var(--warning-soft); }
+.filters[data-filter="done"] .filters-thumb { background: var(--success-soft); }
+@media (prefers-reduced-motion: reduce) { .filters-thumb { transition: none; } }
 .report-age { padding: 6px 12px 0; font-size: 12px; color: var(--ink-muted); }
 .report { display: grid; }
 /* What a report says above its list (notes-view.jsx) is laid out as the report's own. */
