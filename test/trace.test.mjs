@@ -272,7 +272,7 @@ test('the page\'s requests to its own origin, as each finishes: the path without
 test('what the extension\'s fill says is kept by its own time; anything else on that event is left out', async () => {
   const h = harness();
   const say = (detail) => h.emit('rater-trace', h.context.document, { detail });
-  say(JSON.stringify({ what: 'wait', t: ORIGIN + 3000.5, why: 'answer', ms: 120, ended: 'quiet', kind: 'click', seq: 99, frame: 4, filling: false }));
+  say(JSON.stringify({ what: 'wait', t: ORIGIN + 3000.5, why: 'answer', start: ORIGIN + 2880.5, ms: 120, ended: 'quiet', kind: 'click', seq: 99, frame: 4, filling: false }));
   say(JSON.stringify({ what: 'press', t: ORIGIN + 3200, button: { text: 'Continue' }, how: 'page' }));
   say({ what: 'wait', t: ORIGIN + 3300 });
   say(JSON.stringify({ what: 'navigate', t: ORIGIN + 3400 }));
@@ -283,6 +283,33 @@ test('what the extension\'s fill says is kept by its own time; anything else on 
   assert.deepEqual(kit.map((e) => [e.what, e.t]), [['wait', ORIGIN + 3000.5], ['press', ORIGIN + 3200]]);
   assert.deepEqual([kit[0].ms, kit[0].why, kit[0].kind, kit[0].seq !== 99, 'frame' in kit[0], 'filling' in kit[0]], [120, 'answer', 'kit', true, false, false]);
   assert.deepEqual(kit[1].button, { text: 'Continue' });
+});
+
+// Review of PR #257: the page can dispatch the same event, so what it holds is built afresh from
+// the documented fields; free text where a fixed word or a number belongs never reaches the
+// recording, where only labels, keys and button words are redacted.
+test('an event the page dispatches as the fill\'s keeps only the documented fields, each of its type', async () => {
+  const h = harness();
+  const say = (detail) => h.emit('rater-trace', h.context.document, { detail: JSON.stringify(detail) });
+  say({ what: 'wait', t: ORIGIN + 1000, start: ORIGIN + 900, ms: 100, ended: 'quiet', why: 'Sam Smith', quietMs: '150', requests: 'yes',
+    held: { busy: 'Sam Smith', changing: true }, note: 'Sam Smith' });
+  say({ what: 'wait', t: ORIGIN + 1100, start: ORIGIN + 1000, ms: 100, ended: 'Sam Smith' });
+  say({ what: 'wait', t: ORIGIN + 1150, ms: 50, ended: 'quiet' });
+  say({ what: 'answer', t: ORIGIN + 1200, start: ORIGIN + 1150, applyMs: 20, ok: 'yes', field: { key: 'ref:Lic', label: 'License', extra: 'Sam Smith' },
+    stepKind: 'Sam Smith', timing: { ms: 50, settleMs: 'Sam Smith', ajax: 1, batch: true, who: 'Sam Smith' } });
+  say({ what: 'answer', t: ORIGIN + 1250, start: ORIGIN + 1200, field: { key: 'ref:Zip', label: 'ZIP' }, stepKind: 'address-suggest' });
+  say({ what: 'press', t: ORIGIN + 1300, button: { text: 'Continue', extra: 'Sam Smith' }, how: 'Sam Smith' });
+  say({ what: 'run', t: ORIGIN + 1400, on: false, filled: 3, halted: 'no', who: 'Sam Smith' });
+  await h.advance(400);
+  const kit = h.events().filter((e) => e.kind === 'kit');
+  assert.ok(!JSON.stringify(kit).includes('Sam Smith'), 'none of the page\'s free text');
+  assert.deepEqual(kit.map((e) => e.what), ['wait', 'answer', 'answer', 'press', 'run'], 'a wait with no start or an unknown end is left out');
+  const [wait, answer, zip, press, run] = kit;
+  assert.deepEqual([wait.why, 'quietMs' in wait, 'requests' in wait, wait.held, 'note' in wait], [null, false, false, { busy: false, changing: true, requests: false }, false]);
+  assert.deepEqual([answer.field, answer.stepKind, 'ok' in answer, answer.applyMs, answer.timing], [{ key: 'ref:Lic', label: 'License' }, null, false, 20, { ms: 50, ajax: 1, batch: true }]);
+  assert.equal(zip.stepKind, 'address-suggest', 'a plan step\'s kind is kept');
+  assert.deepEqual([press.button, 'how' in press], [{ text: 'Continue' }, false]);
+  assert.deepEqual([run.on, run.filled, 'halted' in run, 'who' in run], [false, 3, false, false]);
 });
 
 test('stop sends a burst still open and a request the browser hadn\'t handed over yet, then watches the page no more', async () => {
