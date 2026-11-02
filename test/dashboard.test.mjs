@@ -238,3 +238,14 @@ test('a page that fails to build answers 500 and the server keeps serving', asyn
     assert.ok(logs.every((l) => !l.includes(TOKEN)));
   });
 });
+
+// Review of #261: the chart says what the data says, and lights the days the period reaches.
+test('the chart: no busiest day without quotes, and every day the period reaches is lit', () => {
+  assert.match(renderDashboard(summarize([], { now: NOW })), /busiest day: 0 quotes/);
+  // NOW is 12:00 UTC: the last 24 hours reach into yesterday, the last 7 days into the 8th day back.
+  const lit = (window) => [...renderDashboard(summarize(sample(), { now: NOW, window })).matchAll(/<span class="col on" title="(\d{4}-\d{2}-\d{2})/g)].map((m) => m[1]);
+  assert.deepEqual(lit('24h'), ['2026-11-01', '2026-11-02']);
+  assert.equal(lit('7d')[0], '2026-10-26');
+  assert.equal(lit('7d').length, 8);
+  assert.equal(lit('30d').length, 30);
+});

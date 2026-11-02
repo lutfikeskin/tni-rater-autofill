@@ -228,15 +228,17 @@ const TILES = [
 ];
 
 function renderChart(s) {
-  const days = WINDOWS[s.window];
-  const max = Math.max(1, ...s.daily.map((d) => d.quotes));
-  const bars = s.daily.map((d, i) => {
-    const inPeriod = i >= s.daily.length - days;
+  // Lit: every day the rolling period reaches (the last 24 hours reach into yesterday).
+  const firstDay = new Date(Date.parse(s.now) - WINDOWS[s.window] * DAY).toISOString().slice(0, 10);
+  const busiest = Math.max(0, ...s.daily.map((d) => d.quotes));
+  const max = Math.max(1, busiest);
+  const bars = s.daily.map((d) => {
+    const inPeriod = d.day >= firstDay;
     return `<span class="col${inPeriod ? ' on' : ''}" title="${esc(d.day)}: ${plural(d.quotes, 'quote')}"><span style="height:${d.quotes ? Math.max(4, Math.round((d.quotes / max) * 100)) : 0}%"></span></span>`;
   }).join('');
-  return `<div class="chart"><div class="chart-head"><span>Quotes started per day, last 30 days</span><span class="muted">busiest day: ${plural(max, 'quote')}</span></div>
+  return `<div class="chart"><div class="chart-head"><span>Quotes started per day, last 30 days</span><span class="muted">busiest day: ${plural(busiest, 'quote')}</span></div>
 <div class="cols" role="img" aria-label="Quotes started per day over the last 30 days">${bars}</div>
-<div class="chart-foot"><span>${esc(s.daily[0]?.day ?? '')}</span><span>highlighted: ${PERIOD_NAMES[s.window].toLowerCase()}</span><span>today</span></div></div>`;
+<div class="chart-foot"><span>${esc(s.daily[0]?.day ?? '')}</span><span>highlighted: days in the ${PERIOD_NAMES[s.window].toLowerCase()}</span><span>today</span></div></div>`;
 }
 
 function renderPeople(rows, now) {
