@@ -84,8 +84,10 @@ function counts(live, quotes) {
 function breakdown(live, quotes, keyOf) {
   const groups = new Map();
   for (const e of live) {
-    const k = keyOf(e);
-    if (k == null) continue;
+    // As text: a stored agent or carrier may be any JSON (the upload token is public).
+    const raw = keyOf(e);
+    if (raw == null) continue;
+    const k = String(raw);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(e);
   }

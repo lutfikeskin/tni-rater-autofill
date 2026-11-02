@@ -128,7 +128,10 @@ names it.
 `/dashboard` on the usage server (https://usage-server-production.up.railway.app/dashboard) shows
 how agents are using the extension, for the maintainer only. It is one server-rendered page
 (`server/dashboard.mjs`, no script) that reloads itself every minute and reads the events the
-server already stored; it changes nothing the extension sends or the server keeps.
+server already stored; it changes nothing the extension sends or the server keeps. Building it
+reads and sums 31 days of events on the process that takes uploads, so one page serves every
+request for its period for 30 seconds (the log marks those `cached`); a page that can't be built
+answers 500 and the server keeps running.
 
 - Totals for the last 24 hours, 7 days and 30 days: quotes started, pages filled, answers filled,
   autofilled answers the agent changed (another value or cleared), reformatted, answered by hand

@@ -50,6 +50,9 @@ const MAX_EVENTS_PER_REQUEST = 2000;
 const MAX_EVENT_BYTES = 32 * 1024;
 // A page's layout lists every question and its choices (up to 250 per question).
 const MAX_LAYOUT_BYTES = 128 * 1024;
+// How long one dashboard page serves every request for its period: building it reads and sums 31
+// days of events on the process that takes uploads, and each open tab reloads it every minute.
+const DASHBOARD_CACHE_MS = 30_000;
 // Which version of the server is running (this file and the dashboard's): the daily review
 // compares it with the repository's.
 export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url)))
@@ -246,7 +249,7 @@ function keepShape(v, spec) {
 }
 
 export function createServer({ dataDir, token = '', adminToken = '', openaiKey = '', openaiUrl = 'https://api.openai.com/v1/responses',
-  lunaDailyLimit = LUNA_DAILY_LIMIT, fetchImpl = globalThis.fetch, dashboardToken = '', testIntakes = [] } = {}) {
+  lunaDailyLimit = LUNA_DAILY_LIMIT, fetchImpl = globalThis.fetch, dashboardToken = '', testIntakes = [], dashboardCacheMs = DASHBOARD_CACHE_MS, clock = Date.now } = {}) {
   const eventsDir = path.join(dataDir, 'events');
   fs.mkdirSync(eventsDir, { recursive: true });
 
@@ -281,6 +284,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     return crypto.timingSafeEqual(a, b);
   };
   const readRecent = eventReader(eventsDir);
+  const dashboardPages = new Map();
   const dayFiles = () => fs.readdirSync(eventsDir).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort();
 
   function clean(e, agent) {
@@ -481,15 +485,26 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       }
       const window = url.searchParams.get('window') ?? '7d';
       if (!Object.hasOwn(WINDOWS, window)) return done(400, { error: `window must be ${Object.keys(WINDOWS).join(', ')}` });
-      const now = Date.now();
-      const summary = summarize(readRecent(Math.max(...Object.values(WINDOWS)) + 1, now), { now, window, includeTests: url.searchParams.get('tests') === '1', testIntakes });
+      const includeTests = url.searchParams.get('tests') === '1';
+      const now = clock();
+      const key = `${window}|${includeTests}`;
+      let page = dashboardPages.get(key);
+      if (!page || now - page.at >= dashboardCacheMs) {
+        // A page that can't be built is a 500, never an exception that stops the server.
+        try {
+          page = { at: now, html: renderDashboard(summarize(readRecent(Math.max(...Object.values(WINDOWS)) + 1, now), { now, window, includeTests, testIntakes })) };
+        } catch (e) {
+          return done(500, { error: 'could not build the dashboard' }, `dashboard ${e?.name ?? 'error'}`);
+        }
+        dashboardPages.set(key, page);
+      }
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex',
         'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
         'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
       });
-      res.end(renderDashboard(summary));
-      console.log(`${new Date().toISOString()} GET dashboard ${window}${summary.includeTests ? ' tests' : ''} 200 ${Date.now() - started}ms`);
+      res.end(page.html);
+      console.log(`${new Date().toISOString()} GET dashboard ${window}${includeTests ? ' tests' : ''} 200 ${Date.now() - started}ms${page.at === now ? '' : ' cached'}`);
       return;
     }
     if (req.method === 'GET' && (url.pathname === '/v1/days' || url.pathname === '/v1/export')) {

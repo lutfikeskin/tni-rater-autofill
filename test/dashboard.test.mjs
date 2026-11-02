@@ -189,3 +189,52 @@ test('the deployed image has every file the server imports', () => {
   assert.ok(local.includes('dashboard.mjs'));
   for (const f of local) assert.match(docker, new RegExp(`COPY [^\\n]*server/${f.replace('.', '\\.')}`), f);
 });
+
+// Review of #261: the upload token ships in the extension, so a stored event may carry any JSON as
+// its agent or carrier. The page must still render, not throw (which would stop the server).
+test('agents and carriers that are not text still group and sort', () => {
+  const odd = [
+    ev(1, { agent: 7, session: 's-n1', type: 'intake_loaded' }), ev(1, { agent: 7, session: 's-n1', type: 'fill_run', carrier: 5, page: 'P', filled: 1 }),
+    ev(1, { agent: { x: 1 }, session: 's-n2', type: 'intake_loaded' }), ev(1, { agent: { x: 1 }, session: 's-n2', type: 'fill_run', carrier: ['a'], page: 'P', filled: 1 }),
+    ev(1, { agent: 'AB', session: 's-n3', type: 'intake_loaded' }), ev(1, { agent: 'AB', session: 's-n3', type: 'fill_run', carrier: 'progressive', page: 'P', filled: 1 }),
+  ];
+  const s = summarize(odd, { now: NOW });
+  assert.deepEqual(s.agents.map((r) => r.key).sort(), ['7', 'AB', '[object Object]']);
+  assert.ok(s.carriers.every((r) => typeof r.key === 'string'));
+  assert.match(renderDashboard(s), /Rater Autofill · live usage/);
+});
+
+// Review of #261: the page runs on the process that takes uploads, and every open tab reloads it
+// each minute; one summary serves every request for a short while.
+test('requests within the cache time reuse one summary', async () => {
+  const dataDir = tmp();
+  const dir = path.join(dataDir, 'events');
+  fs.mkdirSync(dir, { recursive: true });
+  const today = new Date().toISOString();
+  const file = path.join(dir, `${today.slice(0, 10)}.jsonl`);
+  const line = (id, session) => `${JSON.stringify({ id, t: today, receivedAt: today, agent: 'AB', session, type: 'intake_loaded' })}\n${JSON.stringify({ id: `${id}-f`, t: today, receivedAt: today, agent: 'AB', session, type: 'fill_run', carrier: 'progressive', page: 'V', filled: 1 })}\n`;
+  fs.writeFileSync(file, line('ev-cache-0001', 's1'));
+  const quotes = (html) => html.match(/<div class="label">Quotes started<\/div><div class="value">(\d+)<\/div>/)[1];
+  let clock = Date.now();
+  await withServer({ dataDir, dashboardToken: TOKEN, dashboardCacheMs: 30_000, clock: () => clock }, async ({ base }) => {
+    const get = (q = '') => fetch(`${base}/dashboard${q}`, { headers: { authorization: `Bearer ${TOKEN}` } }).then((r) => r.text());
+    assert.equal(quotes(await get()), '1');
+    fs.appendFileSync(file, line('ev-cache-0002', 's2'));
+    assert.equal(quotes(await get()), '1', 'the same summary within 30 seconds');
+    assert.equal(quotes(await get('?window=30d')), '2', 'another period is its own summary');
+    clock += 31_000;
+    assert.equal(quotes(await get()), '2', 'a new one after it');
+  });
+});
+
+test('a page that fails to build answers 500 and the server keeps serving', async () => {
+  const dataDir = tmp();
+  fs.mkdirSync(path.join(dataDir, 'events'), { recursive: true });
+  await withServer({ dataDir, dashboardToken: TOKEN }, async ({ base, logs }) => {
+    // A day file the reader can't read (a folder by that name), made after the server started.
+    fs.mkdirSync(path.join(dataDir, 'events', `${new Date().toISOString().slice(0, 10)}.jsonl`));
+    assert.equal((await fetch(`${base}/dashboard`, { headers: { authorization: `Bearer ${TOKEN}` } })).status, 500);
+    assert.equal((await fetch(`${base}/v1/health`)).status, 200);
+    assert.ok(logs.every((l) => !l.includes(TOKEN)));
+  });
+});
