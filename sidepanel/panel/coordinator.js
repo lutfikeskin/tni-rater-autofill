@@ -115,6 +115,9 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
   pager: carrier.unitPager ?? null,
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
   skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
+  // A developer recording runs on this tab: the kit says what it waits for and does (its `trace`,
+  // docs/developer-recording.md). A fill is only ever on the tab in front.
+  ...(state.recording && !state.recording.stopping && state.recording.tabId === state.tab?.id ? { trace: true } : {}),
   ...extra,
 });
 

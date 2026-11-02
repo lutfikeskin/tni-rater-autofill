@@ -6025,6 +6025,52 @@ test('Continue is pressed from the page\'s own world where it takes the press (W
   }
 });
 
+// The developer recording (docs/developer-recording.md): a fill asked with `trace` says what it
+// does as `rater-trace` events, a JSON string each, for the trace to keep; one without says nothing,
+// and fills the same.
+test('a fill asked with trace says its run, answers, waits and presses; without it, nothing (developer recording)', async () => {
+  const run = async (trace) => {
+    const h = harness();
+    h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail, cancelable: !!init.cancelable }); } };
+    // The fake document hands a document's own event to its listeners twice: each kept once.
+    const events = new Set();
+    h.document.addEventListener('rater-trace', (e) => events.add(e));
+    const years = new SelectNode([{ text: '', value: '' }, { text: '3', value: '3' }], { id: 'yrsInBusiness', ariaLabel: 'Years in Business' });
+    h.document.body.append(years);
+    const next = addButton(h, 'Continue');
+    let continued = 0;
+    next.addEventListener('click', () => { continued++; });
+    const plan = [{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: '3', name: 'Years in business' }];
+    const report = await h.kit.fill(plan, { maxRounds: 4, advance: { text: '^Continue$' }, ...(trace ? { trace: true } : {}) });
+    return { report, said: [...events].map((e) => JSON.parse(e.detail)), value: years.value, continued };
+  };
+  const traced = await run(true);
+  const quiet = await run(false);
+  assert.deepEqual(quiet.said, [], 'no recording: nothing dispatched');
+  assert.deepEqual([traced.value, traced.continued, traced.report.advanced, traced.report.filled.length], [quiet.value, quiet.continued, quiet.report.advanced, quiet.report.filled.length], 'the same fill either way');
+  assert.deepEqual([traced.value, traced.continued], ['3', 1]);
+  const what = traced.said.map((x) => x.what);
+  assert.deepEqual([what[0], what.at(-1)], ['run', 'run']);
+  assert.deepEqual([traced.said[0].on, traced.said[0].steps, traced.said.at(-1).on, traced.said.at(-1).filled], [true, 1, false, 1]);
+  const answer = traced.said.find((x) => x.what === 'answer');
+  assert.deepEqual([answer.field.label, answer.stepKind, answer.ok, typeof answer.applyMs, typeof answer.timing?.settleMs], ['Years in Business', 'choice', true, 'number', 'number']);
+  assert.ok(!('kind' in answer), 'never the trace event\'s own kind');
+  const wait = traced.said.find((x) => x.what === 'wait' && x.why === 'answer');
+  assert.deepEqual([wait.quietMs, wait.maxMs, wait.ended, typeof wait.ms, typeof wait.start], [150, 3000, 'quiet', 'number', 'number']);
+  assert.deepEqual(traced.said.filter((x) => x.what === 'press').map((x) => [x.button.text, x.how]), [['Continue', 'kit']]);
+  assert.ok(traced.said.every((x) => typeof x.t === 'number'));
+  // The next fill without `trace` says nothing, though the last one traced.
+  const h = harness();
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const after = new Set();
+  h.document.addEventListener('rater-trace', (e) => after.add(e));
+  await h.kit.fill([], { maxRounds: 2, trace: true });
+  const before = after.size;
+  await h.kit.fill([], { maxRounds: 2 });
+  assert.ok(before > 0);
+  assert.equal(after.size, before);
+});
+
 // GEICO's Print Quote Proposal (2026-10-23): pressed from the page's own world, it opened nothing on
 // four runs (one left 12 minutes); a kit's click opened the proposal on all 11 runs before that press.
 // It is clicked by the kit (`kitClick`), while the page's world presses the step's other buttons.
@@ -8198,7 +8244,7 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.equal(seen[0].phase, null, 'answering');
   assert.equal(h.kit.progress(), null, 'the fill is over');
   // Each long wait names itself before it begins.
-  assert.match(PAGEKIT, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000 \}\);\s+phase\(null\);/);
+  assert.match(PAGEKIT, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
   assert.match(PAGEKIT, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
   assert.match(PAGEKIT, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
   assert.match(PAGEKIT, /if \(helperClicked\) phase\('helper', pendingAction\?\.label \?\? report\.actions\.at\(-1\)\?\.text \?\? null\);/);

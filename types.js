@@ -539,6 +539,8 @@
  *   a form that names its unit (carrier `unitNames`): each intake unit's name words, and the plan's unit
  * @property {{ [key: string]: any }} [givenBefore]
  * @property {UnitPager | null} [pager]  the carrier's `unitPager`
+ * @property {boolean} [trace]  a developer recording runs on the tab: the kit says what it waits
+ *   for, answers and presses as `rater-trace` events (pagekit `kitTrace`, docs/developer-recording.md)
  */
 
 /**
@@ -842,7 +844,8 @@
  * One event of a recording's timeline: what src/content/trace.js saw in a frame, as the panel keeps
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
- * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the panel's: fill, note, gap
+ * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
+ *   burst, request; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
  * @property {number} t  wall-clock ms when it happened, on the page's own clock (a fraction kept)
  * @property {number} [seq]  the frame's counter: the order of two events in one millisecond
@@ -850,7 +853,8 @@
  * @property {true} [filling]  a fill was under way when it happened (by its own time, from the fills the panel notes)
  * @property {boolean} [trusted]  the browser's isTrusted: a person's action, not a script's
  * @property {number | null} [gestureMs]  ms since the last trusted gesture on that control (input, change)
- * @property {{ key: string | null, q: string | null, kind: string | null, label: string, rect: object | null }} [field]  the question, as the recorder names it (label redacted)
+ * @property {{ key: string | null, q?: string | null, kind?: string | null, label: string, rect?: object | null }} [field]  the question, as the recorder names it (label
+ *   redacted); a kit answer's has its key and label only
  * @property {{ text: string, rect: object | null }} [button]  the button, by its words (redacted)
  * @property {string | null} [value]  a choice's words after the change (redacted)
  * @property {number} [len]  a text box's length after the change; its text is never kept
@@ -865,7 +869,7 @@
  * @property {number | null} [y]  as x
  * @property {string[]} [mods]  key: the modifiers held (ctrl, alt, meta, shift)
  * @property {{ tag: string | null }} [other]  what a pointer, click or key was on when it was no question or button
- * @property {string} [path]  page: the URL's path, its ids as `:id` (as `page`)
+ * @property {string} [path]  page, request: the URL's path, its ids as `:id` (as `page`), redacted
  * @property {boolean | number | null} [top]  page: from the top frame (true); scroll of an element: its offset
  * @property {string | null} [from]  page, step: the one before
  * @property {{ w: number | null, h: number | null, dpr: number | null }} [viewport]  page: the viewport (resize: as w, h, dpr)
@@ -877,8 +881,34 @@
  * @property {number | null} [h]  resize: the viewport's height
  * @property {number | null} [dpr]  resize: devicePixelRatio
  * @property {string} [state]  visible: the document's visibilityState
- * @property {string} [why]  visible: pageshow or pagehide, when it came from one
- * @property {number} [ms]  fill, in the report only: how long the fill ran (on its end)
+ * @property {string | null} [why]  visible: pageshow or pagehide, when it came from one; kit wait: what for (answer, round, load, rated, continue, drawn, start, before-load; null: another)
+ * @property {number} [ms]  request: how long it took; kit wait: how long it waited; fill, in the report only: how long the fill ran (on its end)
+ * @property {number} [end]  burst, request: wall-clock ms when it ended (`t` is when it began)
+ * @property {number} [records]  burst: how many DOM mutation records it was
+ * @property {{ key: string | null, kind: string | null, label: string }[]} [drawn]  burst: the questions it drew, at most 12 (labels redacted)
+ * @property {number} [drawnCount]  burst: how many questions it drew in all
+ * @property {number} [removed]  burst: how many questions it took away
+ * @property {'fetch' | 'xhr'} [via]  request: how the page sent it
+ * @property {'run' | 'wait' | 'answer' | 'press'} [what]  kit: what the fill said. run: it started (`on`, its `steps`) or ended (`filled`, `halted`); wait: a
+ *   settle (`quietMs`, `maxMs`, `requests`, `start`, `ms`, `ended` quiet or limit, at the limit `settled` and what `held` it); answer: one answer
+ *   (`field`, `stepKind`, `ok`, `start`, `applyMs`, the usage log's `timing`); press: a button it pressed (`button`, `how`: from the page's world or the kit's)
+ * @property {number} [steps]  kit run, as it starts: the plan's steps
+ * @property {number} [filled]  kit run, as it ends: how many answers it filled
+ * @property {boolean} [halted]  kit run, as it ends: whether it halted
+ * @property {number} [start]  kit wait, answer: wall-clock ms when it began (`t` is when it was said, at its end)
+ * @property {number} [quietMs]  kit wait: the quiet it waited for
+ * @property {number} [maxMs]  kit wait: its limit
+ * @property {boolean} [requests]  kit wait: whether it waited for the page's requests too
+ * @property {'quiet' | 'limit'} [ended]  kit wait: the page was quiet, or the limit came first
+ * @property {boolean} [settled]  kit wait at its limit: the page itself was settled (only components undefined held it)
+ * @property {{ busy: boolean, changing: boolean, requests: boolean }} [held]  kit wait at its limit: what still held it
+ * @property {string | null} [stepKind]  kit answer: the plan step's kind
+ * @property {boolean} [ok]  kit answer: the page kept it
+ * @property {number} [applyMs]  kit answer: ms to give it, a list's wait for its options included
+ * @property {{ ms: number, settleMs: number, ajax: number, revealed: number, removed: number, changed: number, batch?: boolean }} [timing]  kit answer: the usage log's fill_field timing
+ * @property {'page' | 'kit'} [how]  kit press: clicked from the page's own world, or by the kit
+ * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
+ * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
  */
 
 /**

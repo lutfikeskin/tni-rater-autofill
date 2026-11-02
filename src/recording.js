@@ -36,8 +36,9 @@ export function recordingId(carrier, scenario, date = new Date(), random = Math.
 /**
  * A batch of the trace's events as the recording keeps them: the frame it came from, whether a
  * fill was under way when it happened (`fillingAt`, by its own time), and the words that may hold a
- * client's name or number redacted (labels,
- * button words, a choice's words, the title). Keys are the data-model names the usage log keeps.
+ * client's name or number redacted (labels and keys, those of the questions a page drew too,
+ * button words, a choice's words, the title, a path). Keys are the data-model names the usage log keeps,
+ * where the page has them.
  * A step is kept only as one of the carrier's step names (`stepName`: the usage log's knownStep),
  * redacted too: the trace reads a page's headings, which on Progressive are no steps and name the
  * drivers ("A few more questions about …", live recording, 2026-10-23). A step event that names no
@@ -52,9 +53,13 @@ export function stampEvents(events, { frame = 0, fillingAt = () => false, redact
   return (Array.isArray(events) ? events : []).filter((e) => e && typeof e.kind === 'string' && typeof e.t === 'number').map((e) => {
     const out = { ...e, frame };
     if (fillingAt(e.t)) out.filling = true;
-    if (out.field) out.field = { ...out.field, label: words(out.field.label ?? '') };
+    // A key is redacted too: one that is no data-model name may be built from a control's name or
+    // id, which a carrier could make of a client's name (review of PR #257).
+    if (out.field) out.field = { ...out.field, key: words(out.field.key ?? null), label: words(out.field.label ?? '') };
     if (out.button) out.button = { ...out.button, text: words(out.button.text ?? '') };
-    for (const k of ['value', 'title', 'text']) if (typeof out[k] === 'string') out[k] = words(out[k]);
+    // The questions a page's burst drew (src/content/trace.js), named as a field is.
+    if (Array.isArray(out.drawn)) out.drawn = out.drawn.map((d) => ({ ...d, key: words(d?.key ?? null), label: words(d?.label ?? '') }));
+    for (const k of ['value', 'title', 'text', 'path']) if (typeof out[k] === 'string') out[k] = words(out[k]);
     if ('step' in out) out.step = step(out.step);
     if (out.kind === 'step') out.from = step(out.from);
     return out;

@@ -16,7 +16,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 92 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 93 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -46,6 +46,17 @@
   };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // The developer recording (docs/developer-recording.md): while a fill asked with `trace` runs
+  // (the panel asks while a recording runs on the tab), the kit says what it waited for, answered
+  // and pressed as `rater-trace` events on its document, the trace (src/content/trace.js) keeping
+  // them. Each detail is a JSON string: the kit may run in the page's world and the trace in the
+  // isolated one. Without `trace` nothing is dispatched and nothing else changes.
+  let tracing = false;
+  function kitTrace(what, detail) {
+    if (!tracing) return;
+    try { document.dispatchEvent(new CustomEvent('rater-trace', { detail: JSON.stringify({ what, t: Date.now(), ...detail }) })); } catch { /* no CustomEvent */ }
+  }
 
   // ---------------------------------------------------------------------------------------------
   // Text helpers
@@ -421,7 +432,8 @@
   // The wait wakes when its quiet time would be over (60 ms apart while something else holds it:
   // the page busy, a component undefined, a request), not every 60 ms: a 150 ms wait took 195 ms on
   // average in the GEICO mock, a 400 ms one 444 ms.
-  async function settle({ quietMs = 250, maxMs = 15000, requests = null } = {}) {
+  // `why`: what the wait is for, said only to the recording (kitTrace).
+  async function settle({ quietMs = 250, maxMs = 15000, requests = null, why = null } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
     // A pick on a design-system radio redraws nothing: its host's `checked` changes, and what the
@@ -429,16 +441,20 @@
     // page's own animations don't keep the wait going.
     mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', ...adapter().changeAttributes] });
     const start = Date.now();
+    // For the recording: how long the wait took, and at its limit what still held it.
+    const told = (ended, more = {}) => { if (tracing) kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms: Date.now() - start, ended, ...more }); };
     try {
       const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
       for (let now = Date.now(); now - start < maxMs; now = Date.now()) {
         if (mo.takeRecords?.().length) last = now;
         const quietFor = now - last;
-        if (quietFor >= quietMs && !pageBusy() && !partsUndefined() && !requested()) return true;
+        if (quietFor >= quietMs && !pageBusy() && !partsUndefined() && !requested()) { told('quiet'); return true; }
         await sleep(Math.max(1, Math.min(quietFor < quietMs ? quietMs - quietFor : 60, maxMs - (now - start))));
       }
       // Only components still not defined at the limit: the page itself is settled.
-      return !pageBusy() && Date.now() - last >= quietMs;
+      const settled = !pageBusy() && Date.now() - last >= quietMs;
+      if (tracing) told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
+      return settled;
     } finally {
       mo.disconnect();
     }
@@ -1711,6 +1727,7 @@
     if (!kit) {
       try { taken = !el.dispatchEvent(new CustomEvent('rater-press', { bubbles: true, composed: true, cancelable: true })); } catch { /* no CustomEvent */ }
     }
+    if (tracing) kitTrace('press', { button: { text: buttonText(el).slice(0, 60) }, how: taken ? 'page' : 'kit' });
     if (!taken) {
       el.click();
       return 'kit';
@@ -2370,7 +2387,7 @@
     // Stopped by the agent before it began (the panel was still preparing): nothing is done.
     if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
     phase('reading');
-    const settled = await settle({ quietMs: 400, maxMs: 15000 });
+    const settled = await settle({ quietMs: 400, maxMs: 15000, why: 'start' });
     phase(null);
     // Stopped while the page settled: nothing was done.
     if (!settled || report.halted) {
@@ -2775,7 +2792,7 @@
             cursor();
             waitOver.add(step.id);
             phase('waiting');
-            await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS });
+            await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS, why: 'drawn' });
             retry = true;
             waited = true;
             break;
@@ -2912,7 +2929,7 @@
           else if (c.el.isConnected === false) result = { ok: false, reason: 'the page did not keep the answer; check it' };
           else if (invalidControl(c) || !agreesWith(step, c)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
         } else if (result.ok) {
-          const settled = await settle(serverBacked ? {} : { quietMs: 150, maxMs: 3000 });
+          const settled = await settle(serverBacked ? { why: 'answer' } : { quietMs: 150, maxMs: 3000, why: 'answer' });
           const currentControls = collectControls();
           const after = snap(currentControls);
           const mine = `${fieldKey(c)}|${c.label}`;
@@ -2932,6 +2949,7 @@
               ...(settled && !fresh ? { vanished: true } : {}) };
           }
         }
+        if (tracing) kitTrace('answer', { field: { key: item.key, label: c.label ?? '' }, stepKind: step.kind ?? null, ok: !!result.ok, start: t0, applyMs: tApplied - t0, ...(item.timing ? { timing: item.timing } : {}) });
         if (result.ok) {
           // The helpers an answer here makes due again (the adapter's `rearm`: on Progressive's
           // Rates, Recalculate and Print, and the Done of the coverage answered).
@@ -3079,7 +3097,7 @@
           const before = signature();
           const due = actions.find((x) => x.action === loadDue);
           phase('waiting');
-          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !report.halted : null })) { halt(LOAD_HALT); break; }
+          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !report.halted : null, why: 'before-load' })) { halt(LOAD_HALT); break; }
           quiet = !agentPressed && signature() === before ? { action: loadDue, sig: before } : null;
           continue;
         }
@@ -3093,7 +3111,7 @@
         if (!lastLook && waitShown && report.filled.length && window === window.top) {
           lastLook = true;
           phase('waiting');
-          await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS });
+          await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS, why: 'drawn' });
           continue;
         }
         // GEICO draws some questions a moment after the answer that asks them, once that answer's
@@ -3133,7 +3151,7 @@
       const loads = helperClicked && !!pendingAction?.loads;
       const rates = helperClicked && pendingAction?.verify === 'premium';
       if (helperClicked) phase('helper', pendingAction?.label ?? report.actions.at(-1)?.text ?? null);
-      if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads || rates ? LOAD_MS : 3000 })) {
+      if ((helperClicked || batch) && !await settle(serverBacked ? { why: 'round' } : { quietMs: batch ? 150 : 250, maxMs: loads || rates ? LOAD_MS : 3000, why: 'round' })) {
         traceEnd(pendingAction);
         halt(loads ? LOAD_HALT : 'The page did not settle after the helper.');
         break;
@@ -3155,7 +3173,7 @@
         } finally {
           mo.disconnect();
         }
-        if (!await settle({ quietMs: 250, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
+        if (!await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'load' })) { halt(LOAD_HALT); break; }
       }
       // One that rates the quote on a page that isn't ExtJS (GEICO's Recalculate) shows nothing
       // busy at first: GEICO's loader shows only 3 s into a load. GEICO rated the fill's click 13 to
@@ -3172,7 +3190,7 @@
         if (pendingAction?.trace && rated(pendingAction)) { pendingAction.trace.premiumMs = Math.round(perfNow() - pendingAction.trace.at); traceRead(pendingAction); }
         // Stopped, or the agent edited, while it rated: nothing more is done here.
         if (report.halted) { traceEnd(pendingAction); break; }
-        if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted })) { traceEnd(pendingAction); halt(LOAD_HALT); break; }
+        if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted, why: 'rated' })) { traceEnd(pendingAction); halt(LOAD_HALT); break; }
         traceRead(pendingAction);
       }
       if (!await verifyAction()) break;
@@ -4052,8 +4070,8 @@
       // check with nothing approved yet (`hold`), Continue isn't clicked: the wait is the page's, not
       // Continue's (the panel's dock read "Clicking Continue…" there: the review of PR #170).
       phase(hold && confirmed == null ? 'waiting' : 'continue');
-      if (serverBacked) await settle({ quietMs: 500, maxMs: 6000 });
-      else if (advance.quietMs && quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000 });
+      if (serverBacked) await settle({ quietMs: 500, maxMs: 6000, why: 'continue' });
+      else if (advance.quietMs && quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'continue' });
       // The report as the page is after that wait, from one read (reconcile), halted or not.
       const now = collectControls();
       const nowPairs = assign(now, plan);
@@ -4604,5 +4622,18 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 92, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, present, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  // A fill asked with `trace` (the developer recording) says what it does while it runs (kitTrace).
+  async function tracedFill(plan, options = {}) {
+    tracing = !!options?.trace;
+    kitTrace('run', { on: true, steps: plan?.length ?? 0 });
+    try {
+      const report = await fill(plan, options);
+      kitTrace('run', { on: false, filled: report?.filled?.length ?? 0, halted: !!report?.halted });
+      return report;
+    } finally {
+      tracing = false;
+    }
+  }
+
+  globalThis.__raterKit = { version: 93, build: BUILD, fill: tracedFill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, present, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

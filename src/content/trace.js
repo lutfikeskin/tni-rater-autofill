@@ -8,9 +8,13 @@
 // so a recording's keys and labels are the usage log's. Typed characters are never kept: a text
 // box's change keeps its length, a key its name (Enter, Tab…) or only that it was a printable one;
 // nothing at all is kept for a password box.
+//
+// Alongside what the person does: what the page did (its DOM changes as bursts, the questions they
+// drew or took away, its own requests) and what the extension's fill said it did (pagekit.js
+// `kitTrace`: its waits, answers and presses), so a recording shows where a quote's time went.
 
 (() => {
-  const VERSION = 1;
+  const VERSION = 2;
   const previous = globalThis.__raterTrace;
   if (previous?.version === VERSION && previous.alive?.()) return;
   previous?.dispose?.();
@@ -196,8 +200,11 @@
   // The page and, in the top frame, the step on screen (GEICO's progress bar, AmWINS' headings; null
   // while they can't be read, as mid-redraw), looked at twice a second.
   const stepNow = () => { try { return isTop ? read.stepKey() ?? null : null; } catch { return null; } };
-  // The path without its ids, as the page key has none (an application's number).
-  const pathOf = () => String(location.pathname ?? '').replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id');
+  // The path without its ids, as the page key has none (an application's number), each part decoded:
+  // the panel redacts a client's name as words, which `Sam%20Smith` isn't (review of PR #257).
+  const decoded = (p) => String(p ?? '').split('/').map((part) => { try { return decodeURIComponent(part); } catch { return part; } }).join('/');
+  const idless = (p) => decoded(p).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id');
+  const pathOf = () => idless(location.pathname);
   let page = read.pageKey();
   let step = stepNow();
   push('page', { page, path: pathOf(), title: document.title, step, top: isTop, viewport: viewport(), scroll: scroll() });
@@ -215,9 +222,99 @@
     }
   }, 500);
 
-  // Stop: what is buffered goes, then nothing more.
+  // What the page does on its own. A run of DOM changes ends BURST_QUIET_MS after the last one, as
+  // one `burst` (stamped when it began): its end, how many records, and the questions it drew
+  // (named as the recorder names them, at most MAX_DRAWN) or took away (counted). Only the light
+  // DOM: a component's shadow root (GEICO's gds-*) redraws unseen, its host's own changes aside.
+  const BURST_QUIET_MS = 100;
+  const MAX_DRAWN = 12;
+  const MAX_NODES = 500;
+  const CONTROLS = 'input, select, textarea';
+  let burst = null;
+  let burstTimer = null;
+  const controlsIn = (node) => {
+    if (node?.nodeType !== 1) return [];
+    let inside = [];
+    try { inside = [...(node.querySelectorAll?.(CONTROLS) ?? [])]; } catch { /* not queryable */ }
+    return node.matches?.(CONTROLS) ? [node, ...inside] : inside;
+  };
+  const asQuestion = (el) => !isPassword(el) && !/^(hidden|button|submit|reset|image)$/i.test(String(el.type ?? ''));
+  function endBurst() {
+    clearTimeout(burstTimer);
+    burstTimer = null;
+    const b = burst;
+    burst = null;
+    if (!b) return;
+    const drawn = [];
+    let drawnCount = 0;
+    const seen = new Set();
+    for (const node of b.added) {
+      if (node.isConnected === false) continue;
+      for (const el of controlsIn(node)) {
+        if (seen.has(el) || !asQuestion(el)) continue;
+        seen.add(el);
+        drawnCount++;
+        if (drawn.length >= MAX_DRAWN) continue;
+        try { const f = read.describe(el); drawn.push({ key: f.key, kind: f.kind, label: f.label }); } catch { /* unreadable */ }
+      }
+    }
+    let removed = 0;
+    for (const node of b.removed) removed += controlsIn(node).filter(asQuestion).length;
+    push('burst', { end: b.end, records: b.records, ...(drawnCount ? { drawn, drawnCount } : {}), ...(removed ? { removed } : {}) }, { timeStamp: b.start });
+  }
+  let mutations = null;
+  if (typeof MutationObserver === 'function') {
+    mutations = new MutationObserver((records) => {
+      const now = performance.now();
+      burst ??= { start: now, records: 0, added: new Set(), removed: new Set() };
+      burst.end = round(performance.timeOrigin + now);
+      burst.records += records.length;
+      for (const r of records) {
+        for (const n of r.addedNodes ?? []) if (burst.added.size < MAX_NODES) burst.added.add(n);
+        for (const n of r.removedNodes ?? []) if (burst.removed.size < MAX_NODES) burst.removed.add(n);
+      }
+      clearTimeout(burstTimer);
+      burstTimer = setTimeout(endBurst, BURST_QUIET_MS);
+    });
+    try { mutations.observe(document.documentElement ?? document, { childList: true, subtree: true }); } catch { mutations = null; }
+  }
+
+  // The page's own requests (fetch or XHR to its origin), each as it finishes: its path without the
+  // query or ids, when it started (the event's time) and ended. One still running isn't seen.
+  const recordRequests = (entries) => {
+    for (const r of entries) {
+      if (!/^(fetch|xmlhttprequest)$/.test(r.initiatorType) || !String(r.name).startsWith(`${location.origin}/`)) continue;
+      let p = '';
+      try { p = new URL(r.name).pathname; } catch { continue; }
+      push('request', { path: idless(p), end: round(performance.timeOrigin + r.responseEnd), ms: round(r.responseEnd - r.startTime), via: r.initiatorType === 'fetch' ? 'fetch' : 'xhr' }, { timeStamp: r.startTime });
+    }
+  };
+  let requests = null;
+  try {
+    requests = new PerformanceObserver((list) => recordRequests(list.getEntries()));
+    requests.observe({ type: 'resource' });
+  } catch { requests = null; }
+
+  // What the extension's fill says (pagekit.js `kitTrace`), by its own time: a JSON string from
+  // whichever world the kit runs in. Only what it says: the page could dispatch the same event, so
+  // a long or unknown one is left out.
+  const KIT_SAYS = new Set(['run', 'wait', 'answer', 'press']);
+  listen(document, 'rater-trace', (e) => {
+    const text = typeof e.detail === 'string' ? e.detail : '';
+    if (!text || text.length > 4000) return;
+    let said;
+    try { said = JSON.parse(text); } catch { return; }
+    if (!said || !KIT_SAYS.has(said.what) || typeof said.t !== 'number') return;
+    const { t, kind, seq, frame, filling, ...rest } = said;
+    push('kit', rest, { timeStamp: t - performance.timeOrigin });
+  });
+
+  // Stop: what is buffered goes, then nothing more. Requests the browser finished but hasn't
+  // handed the observer yet are taken first: disconnecting drops them (review of PR #257).
   const onMessage = (msg) => {
     if (msg?.ra !== 'trace' || msg.cmd !== 'stop') return;
+    endBurst();
+    try { recordRequests(requests?.takeRecords?.() ?? []); } catch { /* none to take */ }
     flush();
     dispose();
   };
@@ -229,6 +326,9 @@
     clearInterval(watch);
     clearTimeout(timer);
     clearTimeout(resizing);
+    clearTimeout(burstTimer);
+    mutations?.disconnect();
+    requests?.disconnect();
     for (const t of scrolling.values()) clearTimeout(t);
     for (const [target, type, fn] of listeners) target.removeEventListener(type, fn, true);
     chrome.runtime.onMessage.removeListener?.(onMessage);
