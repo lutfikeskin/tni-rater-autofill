@@ -298,10 +298,13 @@
   // What the extension's fill says (pagekit.js `kitTrace`), by its own time: a JSON string from
   // whichever world the kit runs in. The page could dispatch the same event, so each is built
   // afresh from its documented fields: a number or a yes/no only as one, a fixed word only as one
-  // of its words, a step's kind only shaped as one (a plan step's: `choice`, `address-suggest`).
-  // Nothing the page gave is passed on as it is; a long one, or one missing what it must say, is
-  // left out (review of PR #257).
+  // of its words, a step's kind only as one of the plan's (the carriers' rules and the kit's; a
+  // kind not listed here is shown as none, never kept as text: a shape let `sam-smith` through,
+  // review of PR #258). Nothing the page gave is passed on as it is; a long one, or one missing
+  // what it must say, is left out (review of PR #257).
   const WAITS_FOR = new Set(['answer', 'round', 'load', 'before-load', 'rated', 'continue', 'drawn', 'start']);
+  const STEP_KINDS = new Set(['action', 'address-suggest', 'bool', 'choice', 'date', 'first-option', 'int', 'money', 'phone', 'pick-not', 'radio',
+    'search-select', 'selected-option', 'state', 'text']);
   const TIMING = ['ms', 'settleMs', 'ajax', 'revealed', 'removed', 'changed'];
   const isNum = (n) => typeof n === 'number' && Number.isFinite(n);
   const words = (s, max) => (typeof s === 'string' ? s.slice(0, max) : null);
@@ -321,7 +324,7 @@
       if (!has(said.field) || !isNum(said.start)) return null;
       const timing = has(said.timing) ? { timing: { ...nums(said.timing, TIMING), ...yesNo(said.timing, ['batch']) } } : {};
       return { what: 'answer', field: { key: words(said.field.key, 200), label: words(said.field.label, 200) ?? '' },
-        stepKind: /^[a-z][a-z-]{0,23}$/.test(String(said.stepKind ?? '')) ? said.stepKind : null, start: said.start,
+        stepKind: STEP_KINDS.has(said.stepKind) ? said.stepKind : null, start: said.start,
         ...yesNo(said, ['ok']), ...nums(said, ['applyMs']), ...timing };
     }
     return null;

@@ -298,16 +298,19 @@ test('an event the page dispatches as the fill\'s keeps only the documented fiel
   say({ what: 'answer', t: ORIGIN + 1200, start: ORIGIN + 1150, applyMs: 20, ok: 'yes', field: { key: 'ref:Lic', label: 'License', extra: 'Sam Smith' },
     stepKind: 'Sam Smith', timing: { ms: 50, settleMs: 'Sam Smith', ajax: 1, batch: true, who: 'Sam Smith' } });
   say({ what: 'answer', t: ORIGIN + 1250, start: ORIGIN + 1200, field: { key: 'ref:Zip', label: 'ZIP' }, stepKind: 'address-suggest' });
+  // Lowercase and hyphenated, shaped like a kind but none of the plan's (review of PR #258).
+  say({ what: 'answer', t: ORIGIN + 1260, start: ORIGIN + 1255, field: { key: 'ref:Own', label: 'Owner' }, stepKind: 'sam-smith' });
   say({ what: 'press', t: ORIGIN + 1300, button: { text: 'Continue', extra: 'Sam Smith' }, how: 'Sam Smith' });
   say({ what: 'run', t: ORIGIN + 1400, on: false, filled: 3, halted: 'no', who: 'Sam Smith' });
   await h.advance(400);
   const kit = h.events().filter((e) => e.kind === 'kit');
   assert.ok(!JSON.stringify(kit).includes('Sam Smith'), 'none of the page\'s free text');
-  assert.deepEqual(kit.map((e) => e.what), ['wait', 'answer', 'answer', 'press', 'run'], 'a wait with no start or an unknown end is left out');
-  const [wait, answer, zip, press, run] = kit;
+  assert.deepEqual(kit.map((e) => e.what), ['wait', 'answer', 'answer', 'answer', 'press', 'run'], 'a wait with no start or an unknown end is left out');
+  const [wait, answer, zip, owner, press, run] = kit;
   assert.deepEqual([wait.why, 'quietMs' in wait, 'requests' in wait, wait.held, 'note' in wait], [null, false, false, { busy: false, changing: true, requests: false }, false]);
   assert.deepEqual([answer.field, answer.stepKind, 'ok' in answer, answer.applyMs, answer.timing], [{ key: 'ref:Lic', label: 'License' }, null, false, 20, { ms: 50, ajax: 1, batch: true }]);
-  assert.equal(zip.stepKind, 'address-suggest', 'a plan step\'s kind is kept');
+  assert.deepEqual([zip.stepKind, owner.stepKind], ['address-suggest', null], 'a plan step\'s kind is kept, nothing else shaped like one');
+  assert.ok(!JSON.stringify(kit).includes('sam-smith'));
   assert.deepEqual([press.button, 'how' in press], [{ text: 'Continue' }, false]);
   assert.deepEqual([run.on, run.filled, 'halted' in run, 'who' in run], [false, 3, false, false]);
 });
