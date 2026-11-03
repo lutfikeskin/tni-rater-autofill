@@ -40,7 +40,7 @@ import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreig
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingNamed } from '../answers/state.js';
 import { recentModel, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
-import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorBoxValue, priorBoxIgnored, priorBoxNote } from '../answers/insurance.js';
+import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
 
 // TNI's standard coverages (src/standards.js), as Progressive's options write them.
 const UM_CSL = `${usdK(STANDARDS.umCsl)} CSL`;
@@ -442,8 +442,8 @@ const SAFE_LABEL_RULES = [
   { path: 'operations.hazPlacard', label: 'placard', kind: 'bool', source: hazPlacardSource, tni: 'general.hazmat-placard', value: hazPlacard, note: hazPlacardNote },
   { path: 'operations.personalUse', label: 'personal use' },
   { path: 'coverage.autoLiabLimit', label: '(auto |bodily injury |combined single |csl )?liability limit|^bi limit|combined single limit', not: 'general|cargo' },
-  { path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', clientFact: true, source: 'intake', value: priorBoxValue('limit'), ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
-  { path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration', clientFact: true, source: 'intake', value: priorBoxValue('expiration'), ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'expiration') },
+  { path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'), ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
+  { path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration', clientFact: true, source: priorBoxSource, value: priorBoxValue('expiration'), ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'expiration') },
   { tni: 'progressive.fire-theft', name: 'Fire / theft additional coverage (standard: Not selected)', label: 'fire\\s*/?\\s*theft', kind: 'choice', source: 'standard', value: () => 'Not selected' },
 ];
 
@@ -858,9 +858,9 @@ export const progressive = {
         value: (r) => (currentlyInsured(r) ? true : null),
         note: (r) => (currentlyInsured(r) ? null : onlyNotAuto(r) ? `The intake's current insurance is ${notAutoType(r)}, not an auto policy, so whether the customer has had continuous coverage is yours to answer.`
           : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
-      { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true, source: 'intake', value: priorBoxValue('limit'),
+      { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'),
         ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
-      { q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', clientFact: true, source: 'intake', value: priorBoxValue('expiration'),
+      { q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', clientFact: true, source: priorBoxSource, value: priorBoxValue('expiration'),
         ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'expiration') },
       // Other business coverages: TNI's standard None (2026-10-10; the agent's from 2026-10-09),
       // unless the notes say the customer has general liability (hasGl): then all of them are the

@@ -37,6 +37,8 @@ export const priorLimit = (r) => {
 // `key` is the intake's box: 'limit' or 'expiration'.
 export const priorBoxValue = (key) => (r) => (onlyNotAuto(r) ? null : key === 'limit' ? priorLimit(r) : r.priorInsurance?.[0]?.expiration ?? null);
 export const priorBoxIgnored = (r) => !currentlyInsured(r) && !onlyNotAuto(r);
+// A non-auto policy's limit and date aren't the auto policy's: the box is the agent's (a fact), not the intake's.
+export const priorBoxSource = (r) => (onlyNotAuto(r) ? 'fact' : 'intake');
 export const priorBoxNote = (r, key) => (onlyNotAuto(r) ? `The intake's current insurance is ${notAutoType(r)}, not an auto policy: if the customer has auto insurance, enter its ${key === 'limit' ? 'limit' : 'expiration date'} yourself.`
   : !currentlyInsured(r) ? null
   : key === 'limit' && OTHER_LIMIT.test(String(r.priorInsurance?.[0]?.limit ?? '').trim()) ? 'The intake\'s current insurance limit is "Other", with no amount: answer it yourself.'

@@ -178,7 +178,7 @@ test('a General Liability, Cargo or Other policy alone is not current auto insur
     assert.match(byQ(plan, '83').note, new RegExp(`${type}, not an auto policy`), type);
     // Shown once the agent answers Yes: the agent's, never the non-auto policy's limit or date.
     for (const q of ['95', '9D']) {
-      assert.deepEqual([byQ(plan, q).ignore, byQ(plan, q).value], [false, null], `${type} ${q}`);
+      assert.deepEqual([byQ(plan, q).ignore, byQ(plan, q).value, byQ(plan, q).source], [false, null, 'fact'], `${type} ${q}`);
       assert.match(byQ(plan, q).note, /not an auto policy: if the customer has auto insurance, enter its/, `${type} ${q}`);
     }
   }
@@ -186,6 +186,7 @@ test('a General Liability, Cargo or Other policy alone is not current auto insur
   for (const type of ['Commercial Auto', 'Personal Auto', null]) {
     record.priorInsurance = [{ type, carrier: 'Sample Mutual', limit: '$1M CSL', expiration: '10/31/2099' }];
     assert.deepEqual([byQ(buildPlan(record, progressive), '81').value, byQ(buildPlan(record, progressive), '81').source], [true, 'derived'], String(type));
+    assert.deepEqual(['95', '9D'].map((q) => byQ(buildPlan(record, progressive), q).source), ['intake', 'intake'], String(type));
   }
 });
 
