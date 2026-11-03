@@ -15,7 +15,7 @@ export const geico = {
       { id: 'geico.product', kind: 'standard', text: 'On the gateway\'s Search Products window, the product is Commercial Auto/Trucking: its box is ticked, and no other product is touched.' },
     ] },
     { heading: 'Business Class & USDOT', rules: [
-      { id: 'geico.business-description', kind: 'standard', text: 'An expediter or a general freight hauler (the business class: "Expediter", "Freight Hauler", "General Freight Hauler", "General Freight Hauling") is For Hire Trucking, and the more detailed description Other For-Hire Trucking (TNI standard); any other class is the agent\'s pick.' },
+      { id: 'geico.business-description', kind: 'standard', text: 'An expediter or a general freight hauler (the business class: "Expediter", "Freight Hauler", "General Freight Hauler", "General Freight Hauling") is For Hire Trucking, and the more detailed description Other For-Hire Trucking (TNI standard); where GEICO doesn\'t offer Other For-Hire Trucking, an expediter\'s more detailed description is Expediters, else General Freight, else the agent\'s, and a freight hauler\'s is the agent\'s; any other class is the agent\'s pick.' },
       { id: 'geico.team-driving', kind: 'standard', text: 'Team driving or slip seating: the intake\'s answer; blank is No (TNI standard), unless a line of the intake\'s notes mentions a team, slip seating or co-drivers: then the agent\'s.' },
       { id: 'geico.usdot-record', kind: 'agent', text: 'Whether GEICO\'s USDOT record is the client\'s business: Yes only when the record shows the intake\'s house number, every word of its street name and ZIP (code checks it); otherwise the agent\'s.' },
     ] },
