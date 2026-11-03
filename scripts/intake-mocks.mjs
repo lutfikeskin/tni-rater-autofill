@@ -4,12 +4,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { kitCode } from './lib/kit.mjs';
+import { createReplayServer } from './lib/replay-server.mjs';
 import { normalizeIntake } from '../src/normalize.js';
 import { buildPlan } from '../src/plan.js';
 import { amwins } from '../src/carriers/amwins.js';
@@ -31,16 +31,8 @@ fs.mkdirSync(out, { recursive: true });
 // The engine is built from src/kit/ (scripts/lib/kit.mjs), as the package does it.
 const KIT = await kitCode();
 const kitFor = (carrier) => [...['field-key.js', `carriers/${carrier}.js`].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')), KIT].join('\n');
-const mime = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.css': 'text/css' };
-const server = http.createServer((req, res) => {
-  const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-  let file = path.resolve(root, '.' + pathname);
-  if (!file.startsWith(root + path.sep)) return res.writeHead(403).end();
-  if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
-  if (!fs.existsSync(file)) return res.writeHead(404).end();
-  res.writeHead(200, { 'content-type': mime[path.extname(file)] ?? 'application/octet-stream' });
-  fs.createReadStream(file).pipe(res);
-});
+// The repository over http, the fill engine built from src/kit/ (scripts/lib/replay-server.mjs).
+const server = createReplayServer(root);
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({ headless: !process.argv.includes('--headed') });
