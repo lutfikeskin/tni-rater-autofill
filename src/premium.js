@@ -5,16 +5,16 @@
 //
 // Removable as one piece: this file, its import and the one call in sidepanel.js (captureLayout),
 // `quote_premium` in server/index.mjs (EVENT_FIELDS and its check), and `quote_premiums` in
-// scripts/lib/warehouse.mjs. Nothing else reads the event.
+// scripts/lib/warehouse.mjs. Nothing else reads the event. src/rates.js stays: the fill engine reads
+// it too.
+
+// Rates the page itself says are out of date: no premium.
+import { RATES_STALE as STALE } from './rates.js';
 
 export const PREMIUM_EVENT = 'quote_premium';
 
 const AMOUNT = String.raw`\$\s*([1-9][\d,]*(?:\.\d{2})?)`;
 const money = (s) => (s == null ? null : Math.round(Number(String(s).replace(/,/g, '')) * 100) / 100);
-
-// Rates the page itself says are out of date: no premium. A copy of pagekit.js ratesStale (kept
-// apart so this file can go alone): change both together.
-const STALE = /\*{4}|\$\s*--\.--|(?:must|please|need to)\W+recalculate|recalculate to see|premium.*(?:out of date|not current)|chang\w*.*recalculate/i;
 
 // GEICO: "12 Month Total Premium: $101,287.00 Due Today $16,908.71 10 Additional Payments of
 // $8,437.83". Progressive: "Total premium amount $12,815.00 per year including Electronic Funds

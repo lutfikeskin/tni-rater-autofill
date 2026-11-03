@@ -296,7 +296,8 @@ test('fill events carry their run, the rules fingerprint, the settings in force 
     if (reached.has(file)) return;
     reached.add(file);
     const text = fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
-    for (const [, spec] of text.matchAll(/^import\s[^;]*?from\s+'(\.{1,2}\/[^']+)'/gm)) visit(path.posix.normalize(path.posix.join(path.posix.dirname(file), spec)));
+    // An import, or a re-export (`export { STATES } from './states.js'`).
+    for (const [, spec] of text.matchAll(/^(?:import|export)\s[^;]*?from\s+'(\.{1,2}\/[^']+)'/gm)) visit(path.posix.normalize(path.posix.join(path.posix.dirname(file), spec)));
   };
   ['src/plan.js', 'src/normalize.js', 'src/carriers.js'].forEach(visit);
   assert.deepEqual([...reached].sort(), [...RULE_FILES].sort());

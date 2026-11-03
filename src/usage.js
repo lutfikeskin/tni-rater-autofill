@@ -11,6 +11,7 @@
 import { toMoney, toDate } from './normalize.js';
 import { noPriorInsurance } from './util.js';
 import { isStandard, resolutionOf } from './resolution.js';
+import { redactionPattern } from './redaction.js';
 
 /** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, IntakeProfileEvent, IntakeResult, IntakeSummary, UsageEvent } from '../types.js' */
 
@@ -202,15 +203,6 @@ export function matchIntake(record, typed) {
   return hits.slice(0, 5);
 }
 
-// One word (a name word such as "Ann", or a city) is replaced only as a whole word, so "Ann" leaves
-// "Annual" and "Car" leaves "Cargo" alone; any other term (a full name, date of birth, phone, VIN,
-// street) is replaced wherever it appears exactly as written. src/kit/pagekit.js `capture`
-// builds the same patterns.
-const ONE_WORD = /^[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*$/u;
-function redactionPattern(term) {
-  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return ONE_WORD.test(term) ? new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`, 'giu') : new RegExp(escaped, 'gi');
-}
 
 export function redactor(terms) {
   const valid = terms.filter((t) => t && t.length >= 3);
@@ -393,7 +385,7 @@ const stepOf = (step, redact) => (step ? { step: redact(String(step)).slice(0, S
 // several copies (audit 2026-10-08, finding 7). The panel fetches them from its own package. Every
 // module the plan, the record's normalization and the carriers import is here (test/usage.test.mjs
 // checks the import graph), since each one changes the answers a fill puts on the page.
-export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js', 'src/resolution.js', 'src/answers/classes.js', 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/quote-state.js'];
+export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js', 'src/resolution.js', 'src/answers/classes.js', 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/quote-state.js', 'src/states.js'];
 export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }

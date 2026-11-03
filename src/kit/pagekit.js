@@ -1,5 +1,6 @@
 // Injected into rater pages (every frame) by the side panel, as one classic script with no imports:
-// scripts/lib/kit.mjs builds it from this source (the package writes it to src/content/pagekit.js).
+// scripts/lib/kit.mjs builds it from this source and the shared modules it imports (the package
+// writes it to src/content/pagekit.js).
 // Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, readBack, present, receipt, aiBanner, capture, clear, … }.
 //
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
@@ -12,6 +13,11 @@
 // Not type-checked yet; the plan it takes, the fill's options and the report it returns are typed
 // in types.js, at the repository's root.
 /** @import { FillOptions, FillReport, PlanStep } from '../../types.js' */
+// Shared with the extension's own modules, built in by scripts/lib/kit.mjs: each has no imports.
+import { itemResolution, LIST_STATUS } from '../resolution.js';
+import { RATES_STALE } from '../rates.js';
+import { redactionPattern } from '../redaction.js';
+import { STATES } from '../states.js';
 
 (() => {
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
@@ -35,16 +41,7 @@
   // (sidepanel.css --mark-*).
   const COLORS = { filled: '#16a34a', standard: '#2f6fd6', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed', agent: '#475569' };
   const SOLID_MARKS = new Set(['filled', 'standard', 'ai', 'agent']);
-  const STATE_NAMES = {
-    AL: 'alabama', AK: 'alaska', AZ: 'arizona', AR: 'arkansas', CA: 'california', CO: 'colorado', CT: 'connecticut',
-    DE: 'delaware', DC: 'district of columbia', FL: 'florida', GA: 'georgia', HI: 'hawaii', ID: 'idaho', IL: 'illinois',
-    IN: 'indiana', IA: 'iowa', KS: 'kansas', KY: 'kentucky', LA: 'louisiana', ME: 'maine', MD: 'maryland',
-    MA: 'massachusetts', MI: 'michigan', MN: 'minnesota', MS: 'mississippi', MO: 'missouri', MT: 'montana',
-    NE: 'nebraska', NV: 'nevada', NH: 'new hampshire', NJ: 'new jersey', NM: 'new mexico', NY: 'new york',
-    NC: 'north carolina', ND: 'north dakota', OH: 'ohio', OK: 'oklahoma', OR: 'oregon', PA: 'pennsylvania',
-    RI: 'rhode island', SC: 'south carolina', SD: 'south dakota', TN: 'tennessee', TX: 'texas', UT: 'utah',
-    VT: 'vermont', VA: 'virginia', WA: 'washington', WV: 'west virginia', WI: 'wisconsin', WY: 'wyoming',
-  };
+  const STATE_NAMES = Object.fromEntries(Object.entries(STATES).map(([code, name]) => [code, name.toLowerCase()]));
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1639,13 +1636,9 @@
   const pageAt = (loc) => (adapter().page(loc) || (loc.pathname + ((loc.hash ?? '').startsWith('#/') ? loc.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
   const currentPage = () => pageAt(location);
 
-  // src/premium.js keeps a copy of this test (STALE): change both together.
+  // The page says its rates are out of date (src/rates.js, which the quoting history reads too).
   function ratesStale() {
-    const text = document.body.innerText ?? '';
-    // "The coverages have changed, please "recalculate" to see your rate." / "Recalculate to see
-    // coverage cost" (Progressive), or a premium of ****. GEICO: "Please Recalculate Due To Coverage
-    // Change", and "$ --.--" in place of the amounts.
-    return /\*{4}|\$\s*--\.--|(?:must|please|need to)\W+recalculate|recalculate to see|premium.*(?:out of date|not current)|chang\w*.*recalculate/i.test(text);
+    return RATES_STALE.test(document.body.innerText ?? '');
   }
 
   function premiumReady() {
@@ -2077,18 +2070,12 @@
   }
 
   // Each report item's resolution, as the fill returns: the answer, how it was decided, why, and
-  // what it needs, from its list and its own fields (src/resolution.js itemResolution says the same;
-  // this classic script can't import it, and test/resolution.test.mjs holds both to the old fields).
-  // The panel and the AI read it.
-  const LIST_STATUS = { filled: 'answered', kept: 'kept', noData: 'open', leftRequired: 'open', failed: 'failed', unknown: 'unknown' };
+  // what it needs, from its list and its own fields (src/resolution.js itemResolution). The panel
+  // and the AI read it.
   function resolveItems(report, plan) {
     const values = new Map(plan.filter((s) => s.kind !== 'action').map((s) => [s.id, s.value]));
     for (const list of [...Object.keys(LIST_STATUS), 'checks']) {
-      for (const x of report[list] ?? []) {
-        const status = x.manualOnly ? 'agent' : list === 'checks' ? (x.review ? 'review' : 'confirm') : LIST_STATUS[list];
-        const answer = status === 'agent' || status === 'open' || status === 'unknown' ? null : values.get(x.stepId) ?? null;
-        x.resolution = { answer, method: x.source ?? null, explanation: x.note ?? x.reason ?? null, status };
-      }
+      for (const x of report[list] ?? []) x.resolution = itemResolution(x, list, values.get(x.stepId));
     }
   }
 
@@ -4440,13 +4427,9 @@
   // which dropdown/radio choice is picked); any text matching `redact` (client names, numbers)
   // is replaced with [client].
   function capture(plan, redact = []) {
-    // As src/usage.js `redactor`: one word (a name word) only as a whole word, so "Ann" leaves
-    // "Annual mileage" alone; anything else wherever it appears as written.
-    const patterns = redact.filter((t) => t && t.length >= 3).map((t) => {
-      const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return /^[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*$/u.test(t)
-        ? new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`, 'giu') : new RegExp(escaped, 'gi');
-    });
+    // As the usage log's `redactor` (src/redaction.js): one word (a name word) only as a whole
+    // word, so "Ann" leaves "Annual mileage" alone; anything else wherever it appears as written.
+    const patterns = redact.filter((t) => t && t.length >= 3).map(redactionPattern);
     // Registered addresses offered by the carrier aren't in the intake, so redact them by shape.
     const r = (s) => patterns.reduce((acc, re) => acc.replace(re, '[client]'), oneLine(s)).replace(/^.+?(?=\((?:USDOT|Primary Business|Mailing|Garaging) Address\))/i, '[client] ');
     const controls = collectControls();
