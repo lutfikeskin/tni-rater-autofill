@@ -192,6 +192,8 @@ const READ_INDIRECTLY = {
     'trailerInfo.interchange': 'util.interchangeRequested (trailer interchange added and answered: TNI\'s answers on every carrier)',
     'trailerInfo.interchangeLimit': 'util.interchangeLimitPick (the intake\'s trailer interchange limit, or the next one up)',
     'drivers[].suffix': 'util.owner (the owner\'s name parts, from their driver row)',
+    'operations.vehicleOwnership': 'answers/vehicles.vehicleFinancing (the vehicle loan / lease)',
+    'trailerInfo.ownership': 'answers/vehicles.trailerFinancing (the trailer loan / lease)',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag; how long with the current carrier, round 3, T6)',
