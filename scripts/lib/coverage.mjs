@@ -1,6 +1,6 @@
 // Rule coverage of the questions agents actually met: every field of a recorded layout (built from
 // page_layout events, or a committed fixture) is matched against the current carrier rules the way
-// the fill engine pairs them (pagekit assign: data-model name, then the question's text on its page,
+// the fill engine pairs them (src/kit/locator.js assign: data-model name, then the question's text on its page,
 // then option, selector / data-id, then label regex; never a question id), without a browser. A question no rule claims is one the extension leaves to the agent as
 // "unfamiliar": either a TNI rule is missing, or the carrier changed its page.
 
@@ -40,7 +40,7 @@ const onPage = (rule, page) => (!rule.page || page == null || [].concat(rule.pag
 // pagekit: a trailer's questions carry the vehicle's names).
 const nameHere = (rule, page) => (rule.pageOnly ? onPage(rule, page) : !(page != null && rule.notPages?.includes(page)));
 
-// The field kinds pagekit's assign() checks a known question against: a layout's combo is a
+// The field kinds the locator's assign() (src/kit/locator.js) checks a known question against: a layout's combo is a
 // select and its date box a text box. A choice is never a text box, a date or address never a
 // choice, and `control` names the kind when two kinds share a question's text.
 const KIND = { combo: 'select', date: 'text' };
@@ -52,7 +52,7 @@ const kindFits = (rule, f) => {
   return (!rule.control || kind === rule.control) && !(CHOICE.has(rule.kind) && kind === 'text') && !(TYPED.has(rule.kind) && kind !== 'text');
 };
 
-// Like pagekit's assign(). A data-model name (`field`) claims its field on any page; a layout
+// Like the locator's assign() (src/kit/locator.js). A data-model name (`field`) claims its field on any page; a layout
 // recorded before names were kept (0.9.9) is judged by the rule's expected wording instead, as the
 // live page always carries the name ('unnamed' when other fields of the page have names). A question's text (`ask`, or `label` on its page) claims a
 // field no rule knows by name. A question id never claims anything (Progressive renumbers them).
