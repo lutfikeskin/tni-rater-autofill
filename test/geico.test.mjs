@@ -10,6 +10,7 @@ import { progressive } from '../src/carriers/progressive.js';
 import { CARRIERS, carrierForUrl, quoteProgress } from '../src/carriers.js';
 import { knownStep } from '../src/usage.js';
 import { advanceFor } from '../src/units.js';
+import { parseEdit } from '../src/normalize.js';
 
 const STEPS = ['Business Class & USDOT', 'Business & Owner Info', 'Vehicles', 'Drivers & Incidents',
   'Additional Business Info', 'Quote & Coverages', 'Final Quote Details', 'MVR & CLUE', 'Payment Information'];
@@ -1568,6 +1569,14 @@ test('Medical Payments $5,000 wherever GEICO offers it, PIP declined beside it a
     assert.deepEqual([s.ignore, s.value, s.source, s.note, s.onlyIf], [true, null, null, null, null], name);
     assert.match(s.emptyNote, /left .* empty/);
   }
+});
+
+// TNI, 2026-11-03 (Karar 2): a garaging state the agent types as a name in the panel is saved as
+// its code (parseEdit), so GEICO's Florida rules, which read only the code, apply to it.
+test('a garaging state typed as "Florida" in the panel gets GEICO\'s Florida rules', () => {
+  const fl = plan(with_({ 'garaging.state': parseEdit('state', 'Florida') }));
+  assert.equal(one(fl, BASIC_PIP).ignore, true, 'Florida keeps its PIP as GEICO has it');
+  assert.equal(one(plan(with_({ 'garaging.state': 'TX' })), BASIC_PIP).ignore, false);
 });
 
 test('cargo: the intake\'s limit and deductible as one pair; never a default deductible', () => {

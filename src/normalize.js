@@ -5,6 +5,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
+import { stateCode } from './quote-state.js';
 import { STATES, noPriorInsurance, ownerRow, ownerRowNameDiffers, set, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyNotAuto } from './util.js';
 
 /** @import { IntakeResult } from '../types.js' */
@@ -1325,7 +1326,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   return { record, warnings, stats: { fields: Object.keys(raw).length, filled }, rows, readFrom };
 }
 
-// Parses a value typed into the review panel, according to the field's kind.
+// Parses a value typed into the review panel, according to the field's kind. A state is saved as
+// its code ("Florida" → "FL"; TNI, 2026-11-03: the carriers' state rules read only the code); text
+// that isn't a state stays, upper-cased, like an unreadable date or amount.
 export function parseEdit(kind, text) {
   const s = String(text ?? '').trim();
   if (s === '') return null;
@@ -1334,7 +1337,7 @@ export function parseEdit(kind, text) {
     case 'int': return toInt(s) ?? s;
     case 'money': return toMoney(s) ?? s;
     case 'date': return toDate(s) ?? s;
-    case 'state': return s.toUpperCase();
+    case 'state': return stateCode(s) ?? s.toUpperCase();
     default: return s;
   }
 }
