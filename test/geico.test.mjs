@@ -1139,6 +1139,10 @@ test('business class: For Hire Trucking for an expediter or freight hauler (TNI)
     const p = plan(with_({ 'operations.businessClass': businessClass }));
     assert.deepEqual(DESCRIPTIONS.map((name) => [one(p, name, BCU).value, one(p, name, BCU).source, one(p, name, BCU).kind, one(p, name, BCU).note]),
       [['For Hire Trucking', 'standard', 'choice', null], ['Other For-Hire Trucking', 'standard', 'choice', null]], businessClass);
+    // TNI, 2026-11-03 (W45-04): an expediter's fallbacks when GEICO doesn't offer Other For-Hire
+    // Trucking; a freight hauler has none.
+    assert.deepEqual(one(p, DESCRIPTIONS[1], BCU).choiceAliases, businessClass === 'Expediter' ? ['Expediters', 'General Freight'] : [], businessClass);
+    assert.deepEqual(one(p, DESCRIPTIONS[0], BCU).choiceAliases, [], businessClass);
   }
   // Any other class (or none): the agent's picks, the intake's words quoted; the AI assistant may suggest them.
   for (const businessClass of ['Household Goods Mover', 'Dump Truck', 'Freight Forwarder', null]) {

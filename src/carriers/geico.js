@@ -186,6 +186,10 @@ const describeNote = (what) => (r) => `${what} is yours to pick${HAULED(r) ? ` (
 const FOR_HIRE_CLASSES = [/expedit/i, /^(?:general\s+)?freight\s+haul(?:er|ing)$/i];
 const forHire = (r) => FOR_HIRE_CLASSES.some((re) => re.test(String(r.operations.businessClass ?? '').trim()));
 const describeSource = (r) => (forHire(r) ? 'standard' : 'derived');
+// TNI, 2026-11-03 (W45-04; an IN agent's quote ended on Expediters): where GEICO doesn't offer Other
+// For-Hire Trucking, an expediter's more detailed description is Expediters, else General Freight
+// (`choiceAliases`, in order), else the agent's. A freight hauler's has no fallback.
+const expediterDescriptions = (r) => (/expedit/i.test(String(r.operations.businessClass ?? '')) ? ['Expediters', 'General Freight'] : []);
 
 // The first line of the intake's notes (the claims box's other lines, the Additional Notes box)
 // these words are in, cut short: what makes a TNI standard below the agent's, quoted.
@@ -1196,7 +1200,7 @@ export const geico = {
       { field: 'GivePrimaryBusinessDescription', ask: 'Please choose what best describes the customer\'s business.', tni: 'geico.business-description', name: 'Business description (For Hire Trucking for an expediter or freight hauler)',
         kind: 'choice', source: describeSource, value: (r) => (forHire(r) ? 'For Hire Trucking' : null), note: (r) => (forHire(r) ? null : describeNote('What best describes the business')(r)) },
       { field: 'GiveSecondaryBusinessDescription', ask: 'Please give us a little more information about what the customer\'s business does.', tni: 'geico.business-description', name: 'More about the business (Other For-Hire Trucking for an expediter or freight hauler)',
-        kind: 'choice', source: describeSource, value: (r) => (forHire(r) ? 'Other For-Hire Trucking' : null), note: (r) => (forHire(r) ? null : describeNote('The more detailed description')(r)) },
+        kind: 'choice', source: describeSource, value: (r) => (forHire(r) ? 'Other For-Hire Trucking' : null), choiceAliases: expediterDescriptions, note: (r) => (forHire(r) ? null : describeNote('The more detailed description')(r)) },
       // GEICO is the first carrier mapped to ask it. Intakes from before the question are null:
       // unanswered, which is TNI's No unless the notes mention a team (W43-34).
       { field: 'TeamDrivingOrSlipSeatingYesNo', ask: 'Do any of your customer\'s vehicles require team driving or slip seating to keep the vehicle continuously moving?', path: 'operations.teamDriving', tni: 'geico.team-driving', name: 'Team driving or slip seating (TNI: No unless the intake says otherwise)',
