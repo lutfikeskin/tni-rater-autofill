@@ -349,7 +349,15 @@ const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.exp
 const insuredSource = (r) => (currentlyInsured(r) && !r.priorInsurance?.some((p) => p.limit && PRIOR_DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p)) ? 'standard' : 'derived');
 // The current policy's limit and expiration date, asked once currently insured: a blank box (or a
 // remark in the date box) is the agent's, named, never typed.
+// The intake's current limit, unless it is the form's "Other" (a limit it doesn't list): that names
+// no amount, so the limit is the agent's (W45-06: the fill looked for a Progressive option "Other").
+const OTHER_LIMIT = /^other$/i;
+const priorLimit = (r) => {
+  const limit = String(r.priorInsurance?.[0]?.limit ?? '').trim();
+  return limit && !OTHER_LIMIT.test(limit) ? limit : null;
+};
 const priorBoxNote = (r, key) => (!currentlyInsured(r) ? null
+  : key === 'limit' && OTHER_LIMIT.test(String(r.priorInsurance?.[0]?.limit ?? '').trim()) ? 'The intake\'s current insurance limit is "Other", with no amount: answer it yourself.'
   : key === 'limit' && !r.priorInsurance?.[0]?.limit ? 'The intake\'s current insurance has no limit: answer it yourself.'
     : key === 'expiration' && !PRIOR_DATE.test(r.priorInsurance?.[0]?.expiration ?? '') ? 'The intake\'s current insurance has no expiration date: enter it yourself.' : null);
 // Other business coverages (MoreAboutBusiness): TNI's standard is none (2026-10-10), unless the
@@ -468,7 +476,7 @@ const SAFE_LABEL_RULES = [
   { path: 'operations.hazPlacard', label: 'placard', kind: 'bool', source: hazPlacardSource, tni: 'general.hazmat-placard', value: hazPlacard, note: hazPlacardNote },
   { path: 'operations.personalUse', label: 'personal use' },
   { path: 'coverage.autoLiabLimit', label: '(auto |bodily injury |combined single |csl )?liability limit|^bi limit|combined single limit', not: 'general|cargo' },
-  { path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', clientFact: true, ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'limit') },
+  { path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', clientFact: true, source: 'intake', value: priorLimit, ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'limit') },
   { path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration', clientFact: true, ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'expiration') },
   { tni: 'progressive.fire-theft', name: 'Fire / theft additional coverage (standard: Not selected)', label: 'fire\\s*/?\\s*theft', kind: 'choice', source: 'standard', value: () => 'Not selected' },
 ];
@@ -883,7 +891,7 @@ export const progressive = {
       { q: '83', tni: 'progressive.continuous-coverage', source: (r) => (currentlyInsured(r) ? 'standard' : 'attestation'), field: 'MoreBusinessInput.HasContinuousCoverage', ask: 'Has the customer had continuous coverage?', name: 'Continuous coverage (Yes when currently insured)', kind: 'bool',
         value: (r) => (currentlyInsured(r) ? true : null),
         note: (r) => (currentlyInsured(r) ? null : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
-      { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true,
+      { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true, source: 'intake', value: priorLimit,
         ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'limit') },
       { q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', clientFact: true,
         ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'expiration') },
