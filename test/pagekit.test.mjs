@@ -6478,6 +6478,28 @@ test('GEICO\'s vehicle type for an intake box truck: Box Truck where offered, el
   }
 });
 
+// TNI, 2026-11-03 (W45-04): an expediter's more detailed description is Other For-Hire Trucking,
+// else Expediters, else General Freight, else the agent's. A freight hauler's has no fallback.
+test('GEICO\'s more detailed description for an expediter: Other For-Hire Trucking, else Expediters, else General Freight (W45-04)', async () => {
+  const LIST = ['Please Select', 'Auto Hauler', 'Expediters', 'General Freight', 'Other For-Hire Trucking'];
+  const without = (...names) => LIST.filter((o) => !names.includes(o));
+  const fillWith = async (businessClass, options) => {
+    const record = { ...geicoRecord(), operations: { businessClass } };
+    const step = buildPlan(record, geico).find((s) => s.field === 'GiveSecondaryBusinessDescription');
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    const list = geicoList('GiveSecondaryBusinessDescription', 7, 'Please give us a little more information about what the customer\'s business does.', options, { required: true });
+    h.document.body.append(list);
+    await h.kit.fill([{ ...step, steps: null, whenShown: null, waitFor: null }], { maxRounds: 2, replaceChoices: true });
+    return list.value;
+  };
+  for (const [options, picked] of [[LIST, 'Other For-Hire Trucking'], [without('Other For-Hire Trucking'), 'Expediters'],
+    [without('Other For-Hire Trucking', 'Expediters'), 'General Freight'], [without('Other For-Hire Trucking', 'Expediters', 'General Freight'), '']]) {
+    assert.equal(await fillWith('Expediter', options), picked, options.join(', '));
+  }
+  // A general freight hauler is never offered GEICO's Expediters.
+  assert.equal(await fillWith('Freight Hauler', without('Other For-Hire Trucking')), '');
+});
+
 test('GEICO\'s step is its progress bar\'s part under way while the title names it too; pages without a bar read their headings', async () => {
   const h = harness({ adapter: 'geico', pathname: '/quote' });
   // GEICO's headings read "Dashboard" on every step: never the step.
