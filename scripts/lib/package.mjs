@@ -6,14 +6,16 @@ import { execFileSync } from 'node:child_process';
 // The scripts injected into the carrier page's own JavaScript world stay there across an extension
 // reload or update; each names its build, and one from another build is replaced, not reused.
 // The build is the scripts' content hash, stamped into the packaged copies ('source' when the
-// repository's files run as they are: tests, the replay pages).
-export const STAMPED = ['src/content/field-key.js', 'src/content/pagekit.js'];
-const PLACEHOLDER = "const BUILD = 'source';";
+// repository's files run as they are: tests, the replay pages). STAMPED are copied as they are;
+// the fill engine is built (scripts/lib/kit.mjs) and stamped as built, where the build printed the
+// placeholder in double quotes.
+export const STAMPED = ['src/content/field-key.js'];
+const PLACEHOLDER = /const BUILD = (['"])source\1;/g;
 
 export const buildId = (texts) => crypto.createHash('sha256').update(texts.join('\0')).digest('hex').slice(0, 12);
 
 export function stampBuild(text, build) {
-  if (text.split(PLACEHOLDER).length !== 2) throw new Error(`expected one ${PLACEHOLDER}`);
+  if ((text.match(PLACEHOLDER) ?? []).length !== 1) throw new Error("expected one const BUILD = 'source';");
   return text.replace(PLACEHOLDER, `const BUILD = '${build}';`);
 }
 
@@ -71,6 +73,10 @@ export function provenancePlugin(stamp) {
 // Panel files the build bundles (sidepanel/*.js, .html, .css): left out of the copy, which gets the
 // build's instead. Its sounds and images stay, since the panel names some of them at run time.
 export const bundledPanelFile = (rel) => /^sidepanel\/.*\.(js|html|css)$/.test(rel.replaceAll('\\', '/'));
+
+// The fill engine's source (src/kit/): left out of the copy, which gets the built kit instead
+// (scripts/lib/kit.mjs) at src/content/pagekit.js.
+export const kitSourceFile = (rel) => /^src\/kit(\/|$)/.test(rel.replaceAll('\\', '/'));
 
 // The unpacked copy (Load unpacked) gets a fixed extension ID through this public key, so its
 // settings (the agent's OpenAI key among them) survive removing and loading it again, from any

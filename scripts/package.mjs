@@ -5,8 +5,9 @@
 //   npm run package        -> dist/tni-rater-autofill-<version>.zip, and the same files unpacked
 //                             in dist/tni-rater-autofill/ (for Load unpacked)
 //
-// Both carry the side panel built by Vite (vite.config.js) in place of its source files, and the
-// page scripts stamped with their build (scripts/lib/package.mjs). The unpacked copy also gets a
+// Both carry the side panel built by Vite (vite.config.js) in place of its source files, the fill
+// engine built from src/kit/ (scripts/lib/kit.mjs) at src/content/pagekit.js, and the page scripts
+// stamped with their build (scripts/lib/package.mjs). The unpacked copy also gets a
 // fixed extension ID, so its settings survive removing and loading it again.
 
 import fs from 'node:fs';
@@ -14,7 +15,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as buildPanel } from 'vite';
 import { zipDirectory } from './lib/zip.mjs';
-import { STAMPED, buildId, stampBuild, devManifest, bundledPanelFile, PACKAGED } from './lib/package.mjs';
+import { STAMPED, buildId, stampBuild, devManifest, bundledPanelFile, kitSourceFile, PACKAGED } from './lib/package.mjs';
+import { buildKit, KIT_OUTPUT } from './lib/kit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
@@ -27,12 +29,17 @@ for (const f of named) {
   if (!INCLUDE.some((p) => f === p || f.startsWith(`${p}/`))) throw new Error(`manifest names ${f}, which isn't packaged`);
 }
 
+// The fill engine, built from src/kit/ once for both copies (scripts/lib/kit.mjs).
+const kit = await buildKit();
+
 const copy = async (to, channel) => {
   fs.rmSync(to, { recursive: true, force: true });
-  const keep = (src) => !src.endsWith('.DS_Store') && !bundledPanelFile(path.relative(root, src));
+  const keep = (src) => !src.endsWith('.DS_Store') && !bundledPanelFile(path.relative(root, src)) && !kitSourceFile(path.relative(root, src));
   for (const p of INCLUDE) fs.cpSync(path.join(root, p), path.join(to, p), { recursive: true, filter: keep });
-  const build = buildId(STAMPED.map((f) => fs.readFileSync(path.join(root, f), 'utf8')));
+  const build = buildId([...STAMPED.map((f) => fs.readFileSync(path.join(root, f), 'utf8')), kit.code]);
   for (const f of STAMPED) fs.writeFileSync(path.join(to, f), stampBuild(fs.readFileSync(path.join(to, f), 'utf8'), build));
+  fs.writeFileSync(path.join(to, KIT_OUTPUT), stampBuild(kit.code, build));
+  fs.writeFileSync(path.join(to, `${KIT_OUTPUT}.map`), kit.map);
   // The panel, bundled (vite.config.js), stamped with which copy logs the usage events (the build's
   // mode), from which commit.
   await buildPanel({

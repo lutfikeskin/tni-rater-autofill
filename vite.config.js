@@ -1,6 +1,7 @@
 // The side panel's build: sidepanel/sidepanel.html and everything it imports (the panel, src/, the
-// vendored PDF.js) bundled into one page for the extension. Only the panel is built; the manifest,
-// background.js and the scripts injected into carrier pages are packaged as they are.
+// vendored PDF.js) bundled into one page for the extension. The fill engine injected into carrier
+// pages is built too, from src/kit/ (scripts/lib/kit.mjs); the manifest, background.js and the other
+// scripts injected into carrier pages are packaged as they are.
 //
 //   npm run package       -> builds the panel into each packaged copy (scripts/package.mjs)
 //   npm run panel         -> rebuilds the panel in dist/tni-rater-autofill (after one npm run package)
@@ -17,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { packagedCommit, provenancePlugin } from './scripts/lib/package.mjs';
+import { buildKit, KIT_OUTPUT } from './scripts/lib/kit.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,6 +40,15 @@ const previewShim = {
       // The preview page and the practice carrier pages as they are, without Vite's client: after
       // an edit only the panel reloads, and the preview keeps what the panel stored. Only files
       // under test/ (review of #241: an encoded `..` reached outside the repository).
+      // The fill engine the panel injects has no file in the repository: built from src/kit/ on
+      // each request (scripts/lib/kit.mjs), as the package builds it.
+      if (pathname === `/${KIT_OUTPUT}` || pathname === `/${KIT_OUTPUT}.map`) {
+        buildKit().then(({ code, map }) => {
+          res.setHeader('Content-Type', pathname.endsWith('.map') ? 'application/json' : 'text/javascript; charset=utf-8');
+          res.end(pathname.endsWith('.map') ? map : code);
+        }, next);
+        return;
+      }
       const file = pathname === '/preview/' ? path.join(here, 'preview/index.html')
         : /^\/test\/.+\.html$/.test(pathname) ? path.resolve(here, pathname.slice(1)) : null;
       if (!file || !(file.startsWith(path.join(here, 'test') + path.sep) || pathname === '/preview/')) return next();

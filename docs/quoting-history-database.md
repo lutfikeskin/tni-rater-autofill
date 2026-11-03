@@ -428,4 +428,4 @@ The profile goes first: the warehouse can load all history whenever it arrives, 
 - [usage.js](../src/usage.js): `intakeSummary`, `fillEvents`, `fieldChangeEvent`, `redactor`; `intakeProfile` and `ID_LIKE` (#149).
 - [schema.js](../src/schema.js), [normalize.js](../src/normalize.js): the client record the profile reads.
 - [events.mjs](../scripts/lib/events.mjs), [signals.mjs](../scripts/lib/signals.mjs), [learn.mjs](../scripts/lib/learn.mjs): quotes, test runs, outcomes and final answers.
-- [pagekit.js](../src/content/pagekit.js): `premiumReady`, `ratesStale`.
+- [pagekit.js](../src/kit/pagekit.js): `premiumReady`, `ratesStale`.

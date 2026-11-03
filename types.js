@@ -515,7 +515,7 @@
 /** @typedef {FieldStep | ActionStep} PlanStep */
 
 // ---------------------------------------------------------------------------------------------
-// The fill (src/content/pagekit.js `fill`)
+// The fill (src/kit/pagekit.js `fill`)
 
 /**
  * What the side panel passes the page kit's fill (sidepanel fillOptions; pagekit fill says what
