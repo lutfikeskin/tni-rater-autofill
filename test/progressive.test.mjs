@@ -163,6 +163,33 @@ test('an insurance type without limit or expiry is currently insured, the limit 
   assert.match(byQ(buildPlan(record, progressive), '83').note, /continuous coverage/i);
 });
 
+// A General Liability, Cargo or Other policy is not auto insurance (TNI, 2026-10-26: not proof of
+// prior insurance). With a limit and a date not passed it still made Progressive's "currently
+// insured" Yes and filled its limit as the current auto BI limit (PR #269 review). Now, as on
+// GEICO, whether the customer is currently insured is the agent's, named in a note.
+test('a General Liability, Cargo or Other policy alone is not current auto insurance: the agent\'s', () => {
+  const record = baseRecord();
+  for (const type of ['General Liability', 'Cargo', 'Other']) {
+    record.priorInsurance = [{ type, carrier: 'Sample Mutual', limit: '$1M CSL', expiration: '10/31/2099' }];
+    const plan = buildPlan(record, progressive);
+    assert.deepEqual([byQ(plan, '81').value, byQ(plan, '81').source, byQ(plan, '81').manualOnly], [null, 'fact', true], type);
+    assert.match(byQ(plan, '81').note, new RegExp(`${type}.*not an auto policy`), type);
+    assert.equal(byQ(plan, '83').value, null, type);
+    assert.match(byQ(plan, '83').note, new RegExp(`${type}, not an auto policy`), type);
+    // Shown once the agent answers Yes: the agent's, never the non-auto policy's limit or date.
+    for (const q of ['95', '9D']) {
+      assert.deepEqual([byQ(plan, q).ignore, byQ(plan, q).value, byQ(plan, q).source], [false, null, 'fact'], `${type} ${q}`);
+      assert.match(byQ(plan, q).note, /not an auto policy: if the customer has auto insurance, enter its/, `${type} ${q}`);
+    }
+  }
+  // An auto or untyped policy with a limit and a date is still Yes.
+  for (const type of ['Commercial Auto', 'Personal Auto', null]) {
+    record.priorInsurance = [{ type, carrier: 'Sample Mutual', limit: '$1M CSL', expiration: '10/31/2099' }];
+    assert.deepEqual([byQ(buildPlan(record, progressive), '81').value, byQ(buildPlan(record, progressive), '81').source], [true, 'derived'], String(type));
+    assert.deepEqual(['95', '9D'].map((q) => byQ(buildPlan(record, progressive), q).source), ['intake', 'intake'], String(type));
+  }
+});
+
 // W45-06 (an agent's IN quote on 0.9.26, 2026-11-02): the intake's current limit box was "Other",
 // the form's choice for a limit it doesn't list. The fill looked for a Progressive option "Other",
 // failed twice, and the agent picked the limit. "Other" names no amount: the agent's, with a note.
