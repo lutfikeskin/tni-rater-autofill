@@ -161,6 +161,9 @@ const defensiveMention = (r) => String(otherNotes(r) ?? '').match(/[^\n.]*defens
 // said to be military doesn't change its No (TNI, 2026-10-26: answer to PR question); one that is
 // stays the agent's.
 const ARMED_FORCES_COURSE = { field: 'DriverInput.DefensiveDriverDiscount', label: 'armed forces' };
+// Progressive's telematics field asks about telematics devices or about dashcams (W45-01).
+const TELEMATICS_DEVICES = { field: 'TelematicsInput.MandatoryExistingDevices', label: 'telematics' };
+const DASHCAMS = { field: 'TelematicsInput.MandatoryExistingDevices', label: 'dashcam' };
 const militaryCourse = (r) => (/\b(military|armed forces|army|navy|naval|air force|marines?|coast guard|national guard)\b/i.test(defensiveMention(r) ?? '') ? defensiveMention(r) : null);
 
 // A driver's accidents, claims or violations: the claims box's Yes or No. TNI (2026-10-19, after a
@@ -908,6 +911,19 @@ export const progressive = {
       { q: 'C1', tni: 'general.additional-insured', source: 'standard', field: 'AccountInput.BlanketWOSQuestion', ask: 'Is a Blanket Waiver of Subrogation endorsement needed by contract?', name: 'Blanket waiver of subrogation (standard: No)', kind: 'bool', value: () => false },
       { q: 'CA', tni: 'progressive.filings-required', source: held(filingsSource), field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank)', kind: 'bool', value: filingsAsked, note: holdOr(filingsNote) },
       { q: 'D1', source: 'derived', field: 'PolicyInput.ELDHoursOfServiceRecords', ask: 'Is an Electronic Logging Device (ELD) required to record hours of service?', name: 'Electronic logging', kind: 'bool', value: usesEld, note: eldNote },
+      // Snapshot Pro / Smart Haul (TNI, 2026-11-03, W45-01; agents' quotes held Continue on these,
+      // unknown to any rule). Enrolling is the client's choice: the agent's. The telematics question
+      // is the intake's ELD answer; the same field asking about dashcams is the agent's (an ELD isn't
+      // a dashcam). Each wording is its own rule, told by the question's text. The Smart Haul email
+      // is the agent's own address, where Progressive says when the savings apply: never the client's.
+      { q: '115', source: 'fact', field: 'TelematicsInput.EnrollInSnapshotProInd', ask: 'Does the customer want to save 15% by participating in Snapshot Pro?', name: 'Snapshot Pro enrolment (the agent\'s)', kind: 'bool',
+        note: 'Whether the client enrolls in Snapshot Pro is their choice: ask them and answer it yourself.' },
+      { q: '117', source: 'derived', clientFact: true, field: 'TelematicsInput.MandatoryExistingDevices', whenShown: TELEMATICS_DEVICES, ask: 'Does the customer have telematics device(s) in their vehicle(s)?', name: 'Telematics devices (from the ELD box)', kind: 'bool', value: usesEld,
+        note: (r) => (usesEld(r) == null ? 'The intake does not say whether the vehicles have an ELD: answer the telematics question yourself.' : null) },
+      { q: '13B', source: 'fact', field: 'TelematicsInput.MandatoryExistingDevices', whenShown: DASHCAMS, ask: 'Does the customer have dashcam(s) in their vehicle(s)?', name: 'Dashcams (the agent\'s)', kind: 'bool',
+        note: 'Whether the vehicles have dashcams isn\'t on the intake (an ELD isn\'t a dashcam): answer it yourself.' },
+      { q: '135', source: 'fact', field: 'PolicyInput.SmartHaulEmail', ask: 'Email address provided:', name: 'Smart Haul email (the agent\'s own)', kind: 'text',
+        note: 'Smart Haul asks for your own email address (Progressive tells you there when the savings apply), not the client\'s: type it yourself.' },
     ]),
 
     // --- Filings (pageName=Filings; only reached when filings are required) --------------------

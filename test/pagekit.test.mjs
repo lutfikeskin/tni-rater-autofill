@@ -3895,6 +3895,36 @@ test('a question whose wording carries a date is not flagged as reworded when th
   assert.equal(report.unknown.length, 0);
 });
 
+// Agents' quotes on 0.9.26, 2026-11-02 (W45-01): Snapshot Pro and the telematics question were
+// unfamiliar and held Continue. Now Snapshot Pro is a named agent's question, telematics the
+// intake's ELD answer, and the same field asking about dashcams is never answered from the ELD.
+// The Smart Haul email box is the agent's own address: with Progressive's whole plan and a client
+// email on the record, no rule types the client's email into it.
+test('More About Business: telematics from the ELD box, Snapshot Pro, dashcams and the Smart Haul email the agent\'s, none unfamiliar (W45-01)', async () => {
+  const record = { applicant: { email: 'client@example.test' }, garaging: {}, operations: { businessClass: 'Expediter', usesEld: true }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+  const plan = buildPlan(record, progressive);
+  for (const [device, picked] of [['telematics device(s)', 'Yes'], ['dashcam(s)', null]]) {
+    const h = harness({ progressive: true, search: '?pageName=MoreAboutBusiness' });
+    const yesNo = (ref, question) => {
+      const radios = ['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } }));
+      h.document.body.append(radioGroup(question, ...radios));
+      return radios;
+    };
+    const snapshot = yesNo('TelematicsInput.EnrollInSnapshotProInd', 'Does the customer want to save 15% by participating in Snapshot Pro?');
+    const devices = yesNo('TelematicsInput.MandatoryExistingDevices', `Does the customer have ${device} in their vehicle(s)?`);
+    const email = makeInput({ name: 'smartHaulEmail', type: 'text', ariaLabel: 'Email address provided:', attrs: { fieldref: 'PolicyInput.SmartHaulEmail' } });
+    h.document.body.append(email);
+    const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+    assert.equal(devices.find((r) => r.checked)?.value ?? null, picked, device);
+    assert.equal(snapshot.find((r) => r.checked)?.value ?? null, null, 'Snapshot Pro: the agent\'s');
+    assert.equal(email.value, '', 'the Smart Haul email: never the client\'s');
+    assert.equal(report.unknown.length, 0, device);
+    const notes = [...report.noData, ...report.checks].map((x) => x.note).join(' ');
+    assert.match(notes, /Snapshot Pro/, device);
+    assert.match(notes, /your own email/, device);
+  }
+});
+
 // KY live run, 2026-10-26 (W44-32): Progressive asked the defensive driver discount about an Armed
 // Forces course, with No pre-selected; the fill kept it but held Continue on a reworded check, and the
 // agent confirmed No. That wording is now one of the rule's: TNI's No, no check.
