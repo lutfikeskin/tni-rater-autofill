@@ -54,6 +54,13 @@
 /** @typedef {'vehicles' | 'drivers' | 'trailers'} UnitList */
 
 /**
+ * A vehicle's or trailer's loan / lease from the intake's ownership answer (src/answers/vehicles.js
+ * financing): financed, leased, or owned outright (no loan / lease). A carrier writes it in its own
+ * options; no answer, or one that is none of these, is null, the agent's.
+ * @typedef {'loan' | 'lease' | 'owned'} Financing
+ */
+
+/**
  * Which vehicle, driver and trailer a page is about (by index into the record's lists), and the
  * unit the panel is adding (sidepanel pickUnitToAdd: GEICO's chooser). Other record lists a path
  * names with `[]` are indexed the same way.

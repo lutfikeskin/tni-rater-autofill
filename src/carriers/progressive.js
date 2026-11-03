@@ -30,13 +30,17 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity, carPartsMixedNote } from '../util.js';
+import { companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity, carPartsMixedNote } from '../util.js';
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded } from '../util.js';
 import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitRaised,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
 import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 import { owner, ownerDobNote, HAZ_HAUL } from '../util.js';
+import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreightHauler } from '../answers/classes.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
+import { garagingNamed } from '../answers/state.js';
+import { recentModel, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
+import { currentlyInsured, currentlyInsuredSource, priorLimit, priorBoxNote } from '../answers/insurance.js';
 
 // TNI's standard coverages (src/standards.js), as Progressive's options write them.
 const UM_CSL = `${usdK(STANDARDS.umCsl)} CSL`;
@@ -97,32 +101,16 @@ const vehicleValueNote = (r, a) => {
 };
 
 // "Had the vehicle less than one year": TNI's standard No (2026-10-19), except for a vehicle of this
-// model year or later, likely bought within the year: that one is the agent's to ask the client.
-const recentModel = (r, a) => {
-  const v = r.vehicles?.[a.vehicles ?? 0];
-  return Number(v?.year) >= new Date().getFullYear() ? v : null;
-};
+// model year or later (src/answers/vehicles.js recentModel): that one is the agent's to ask the client.
 const ownedUnderYearSource = (r, a) => (recentModel(r, a) ? 'fact' : 'standard');
 const ownedUnderYearNote = (r, a) => (recentModel(r, a)
   ? `This vehicle is a ${recentModel(r, a).year} model, so it may have been bought less than a year ago: ask the client and answer it yourself.`
   : null);
 
-// Loan / lease from the intake's ownership answer (also read from the claims-box notes). No answer
-// is not No: a missing ownership, or one that is none of owned / financed / leased (Rented), is
-// the agent's (2026-10-09; until then a blank was filled as No).
-const loanLeaseFor = (own) => {
-  const o = String(own ?? '').trim();
-  return /financ|loan/i.test(o) ? 'Yes - Loan' : /leas/i.test(o) ? 'Yes - Lease' : /^owned?$/i.test(o) ? 'No' : null;
-};
-const loanLeaseNoteFor = (own, what) => (loanLeaseFor(own) != null ? null
-  : own ? `The intake's ${what} ownership "${own}" isn't owned, financed or leased: answer the loan / lease question yourself.`
-    : `The intake has no ${what} ownership answer: answer the loan / lease question yourself.`);
-const loanLease = (r) => loanLeaseFor(r.operations?.vehicleOwnership);
-const loanLeaseNote = (r) => loanLeaseNoteFor(r.operations?.vehicleOwnership, 'vehicle');
-// Trailers: the intake's trailer ownership (one answer for all of them). TNI's 2026-10-07 reading
-// of a blank as owned was reversed on 2026-10-09: a blank is the agent's.
-const trailerLoanLease = (r) => loanLeaseFor(r.trailerInfo?.ownership);
-const trailerOwnershipNote = (r) => loanLeaseNoteFor(r.trailerInfo?.ownership, 'trailer');
+// Loan / lease (src/answers/vehicles.js), as Progressive's options write it; null is the agent's.
+const LOAN_LEASE = { loan: 'Yes - Loan', lease: 'Yes - Lease', owned: 'No' };
+const loanLease = (r) => LOAN_LEASE[vehicleFinancing(r)] ?? null;
+const trailerLoanLease = (r) => LOAN_LEASE[trailerFinancing(r)] ?? null;
 const trailerValueNote = (r, a) => {
   const v = r.trailers?.[a.trailers ?? 0]?.value;
   return v != null && typeof v !== 'number' ? `The intake's trailer value "${v}" isn't a dollar amount: enter it yourself.` : null;
@@ -135,10 +123,10 @@ const TRAILER_PAGES = ['MostCommonTrailers', 'AddTrailer'];
 const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
-const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').trim());
-const isArkansas = (r) => /^(ar|arkansas)$/i.test(String(r.garaging?.state ?? '').trim());
-const isTexas = (r) => /^(tx|texas)$/i.test(String(r.garaging?.state ?? '').trim());
-const isMaryland = (r) => /^(md|maryland)$/i.test(String(r.garaging?.state ?? '').trim());
+const isFlorida = (r) => garagingNamed(r, 'FL');
+const isArkansas = (r) => garagingNamed(r, 'AR');
+const isTexas = (r) => garagingNamed(r, 'TX');
+const isMaryland = (r) => garagingNamed(r, 'MD');
 
 // A trailer's attached equipment: the intake's amount when it gives one (not "N/A" or 0), else
 // none (TNI standard: "Trailer has no equipment").
@@ -319,15 +307,10 @@ const interchangeLimitWarn = (r) => [interchangeLimitRaised(r, INTERCHANGE_LIMIT
 
 // Progressive's business type (and, for trucking, the type of trucker) for what the intake
 // calls the business. Expediters are "For Hire Trucking" / "Other For-Hire Trucking".
-// The classes the for-hire and business-type answers are written for; the same patterns gate
-// review mode (supportedClasses), so any other class gets both their notes and the review.
-const EXPEDITER = /expedit/i;
-const FREIGHT_HAULER = /^(?:general\s+)?freight\s+haul(?:er|ing)$/i;
-const isExpediter = (r) => EXPEDITER.test(r.operations.businessClass ?? '');
-const isFreightHauler = (r) => FREIGHT_HAULER.test((r.operations.businessClass ?? '').trim());
-const isGeneralFreight = (r) => isFreightHauler(r) && /general\s+freight/i.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
+// The classes the for-hire and business-type answers are written for (answers/classes.js); the
+// same patterns gate review mode (supportedClasses), so any other class gets both their notes and the review.
 const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHauler(r) ? 'General Freight Hauler' : (r.operations.businessClass ?? null);
-const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
+const businessAliases = (r) => isGeneralFreightHauler(r) ? ['General Freight Trucking'] : [];
 // Search-style business type (TNI, 2026-10-28: KY's Business Type Selection popup and LA's New
 // Customer search): for an expediter or a general freight hauler, General Freight Trucking first, For
 // Hire Trucking where the list has no General Freight Trucking; neither listed is the agent's, and
@@ -343,26 +326,6 @@ const BECA_POPUP = '.becaPopupPage';
 const BECA_POPUP_BOX = `${BECA_POPUP} [fieldref="BECAInput.BusinessTypeTextBox"]`;
 // The popup's result list: shown at once in IN and OH, only after a search in KY.
 const BECA_RESULTS = { field: 'BECAInput.BusinessTypeLabel' };
-// "Is the customer currently insured?" Yes for a policy on the intake with a limit and an
-// expiration not passed (derived), and, TNI's assumption, whenever any box of an auto or untyped
-// policy is filled (TNI, 2026-10-26, W44-29: proof of prior insurance, 1-3 years; the Intake step
-// names the blank boxes). Nothing filled, no prior insurance or an expired policy: No, as before.
-const PRIOR_DATE = /^\d{2}\/\d{2}\/\d{4}$/;
-const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration && !priorPolicyExpired(r, p)) || priorInsuranceAssumed(r);
-const insuredSource = (r) => (currentlyInsured(r) && !r.priorInsurance?.some((p) => p.limit && PRIOR_DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p)) ? 'standard' : 'derived');
-// The current policy's limit and expiration date, asked once currently insured: a blank box (or a
-// remark in the date box) is the agent's, named, never typed.
-// The intake's current limit, unless it is the form's "Other" (a limit it doesn't list): that names
-// no amount, so the limit is the agent's (W45-06: the fill looked for a Progressive option "Other").
-const OTHER_LIMIT = /^other$/i;
-const priorLimit = (r) => {
-  const limit = String(r.priorInsurance?.[0]?.limit ?? '').trim();
-  return limit && !OTHER_LIMIT.test(limit) ? limit : null;
-};
-const priorBoxNote = (r, key) => (!currentlyInsured(r) ? null
-  : key === 'limit' && OTHER_LIMIT.test(String(r.priorInsurance?.[0]?.limit ?? '').trim()) ? 'The intake\'s current insurance limit is "Other", with no amount: answer it yourself.'
-  : key === 'limit' && !r.priorInsurance?.[0]?.limit ? 'The intake\'s current insurance has no limit: answer it yourself.'
-    : key === 'expiration' && !PRIOR_DATE.test(r.priorInsurance?.[0]?.expiration ?? '') ? 'The intake\'s current insurance has no expiration date: enter it yourself.' : null);
 // Other business coverages (MoreAboutBusiness): TNI's standard is none (2026-10-10), unless the
 // notes say the customer has general liability: the agent marked that they have it
 // (coverage.hasGl, from Luna's claims-box card). Then every one of them is the agent's. GL asked
@@ -887,7 +850,7 @@ export const progressive = {
       { q: '58', tni: 'progressive.home-address', source: 'standard', field: 'PrimaryBusinessAddressInputNonShredded.AddressOptions', ask: 'Primary Business Address', name: 'Primary business address (first option)', kind: 'first-option', value: () => 'first option',
         firstNot: '^enter a different', unofferedNote: 'Progressive offers no business address to pick here: choose the Primary Business Address and enter it yourself, then click Verify Address.' },
       { q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
-      { tni: 'progressive.currently-insured', q: '81', source: insuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
+      { tni: 'progressive.currently-insured', q: '81', source: currentlyInsuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
       // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer
       // currently insured ("more than a year is always Yes"); otherwise the agent's. Yes reveals the
       // current BI limit (95; live run 2026-10-10: left blank until the agent answered this).
@@ -976,7 +939,7 @@ export const progressive = {
       { q: '2C1A', source: 'derived', field: 'BCBTUVehQuestions.V03GoodsHaulIndicator', ask: 'Is this vehicle used to haul goods on a For-Hire basis?', name: 'Hauls for hire (expediters and freight haulers)', kind: 'bool', value: forHire, note: forHireNote },
       // Loan / lease: from the intake's vehicle ownership (also read from the claims-box notes);
       // none given is the agent's.
-      { q: '2CA7', source: 'derived', clientFact: true, field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this vehicle?', name: 'Loan / lease (from the vehicle ownership)', kind: 'choice', value: loanLease, note: loanLeaseNote },
+      { q: '2CA7', source: 'derived', clientFact: true, field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this vehicle?', name: 'Loan / lease (from the vehicle ownership)', kind: 'choice', value: loanLease, note: vehicleFinancingNote },
       // NJ: who the vehicle is registered to. Not on the intake: the agent's (2026-10-09).
       { q: '2C97', source: 'fact', ask: 'Vehicle Registrant?', name: 'Vehicle registrant', kind: 'choice', note: 'Who the vehicle is registered to isn\'t on the intake: answer it yourself.' },
       // NJ safety equipment boxes: the VIN lookup ticks what the vehicle has; left as Progressive set them.
@@ -1008,7 +971,7 @@ export const progressive = {
       { q: '2A2B', field: 'RiskInput.MakeCode', ask: 'Make', path: 'trailers[].make', kind: 'choice' },
       { q: '2A61', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', name: 'Trailer ZIP', ignore: noIntakeZip, emptyNote: vehicleZipNote },
       { q: '2A65', source: 'derived', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this trailer travels for work', name: 'Trailer farthest one-way distance (as the vehicle)', kind: 'int', value: radiusMiles },
-      { q: '2AD0', source: 'derived', clientFact: true, field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from the trailer ownership)', kind: 'choice', value: trailerLoanLease, note: trailerOwnershipNote },
+      { q: '2AD0', source: 'derived', clientFact: true, field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from the trailer ownership)', kind: 'choice', value: trailerLoanLease, note: trailerFinancingNote },
       { q: '2AEE', tni: 'progressive.trailers', source: 'standard', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this trailer in an accident or loss?', name: 'Trailer comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
       { q: '2AFF', tni: 'progressive.trailers', source: trailerEquipmentSource, field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard when the intake gives no value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: '2AFC', source: 'derived', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },
