@@ -18,6 +18,9 @@ import { itemResolution, LIST_STATUS } from '../resolution.js';
 import { RATES_STALE } from '../rates.js';
 import { redactionPattern } from '../redaction.js';
 import { STATES } from '../states.js';
+// The widget drivers (apply, agreesWith).
+import { createAddressDriver } from './drivers/address.js';
+import { createSelect2Drivers } from './drivers/select2.js';
 
 (() => {
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
@@ -1249,244 +1252,31 @@ import { STATES } from '../states.js';
     options: options.filter((o) => !isPlaceholderOption(o.text)).map((o) => o.text).slice(0, 25),
   });
 
-  // Address boxes with the carrier's own address suggestions: type the whole one-line address,
-  // wait for the suggestion list, pick its first entry for that address (which fills street, city
-  // and ZIP): one with its house number and, when both show one, its ZIP. No such suggestion means
-  // the address needs the agent; the ZIP/city rules then check the rest. GEICO's are
-  // <gds-dropdown-list-item type="address">, in its address wrapper's shadow root, read as list items
-  // (its script; FL live run 3, 2026-10-21).
   // What the agent may click to move a page on (`notePress` in fill): a button or an add icon, also
   // the carrier's own (its adapter's `buttons` and `agentPress`: ExtJS's .x-btn, Progressive's
   // Continue, whose press during a fill went unseen, live recording, 2026-10-23). A toggle
   // (aria-expanded: GEICO's section headings, a menu) or a link moves nothing.
   const agentPress = () => withAdapter(withAdapter('button, input[type=submit], input[type=button], [data-testid=addIcon]', 'agentPress'), 'buttons');
-  // A list's items (the adapter's `options`) and the carrier's own suggestions (its `suggestions`).
-  const suggestionSelector = () => withAdapter(withAdapter('[role=option], .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li', 'options'), 'suggestions');
-  // An address's house number (its leading number) and ZIP (after a state's two letters).
-  const houseNumberOf = (text) => String(text ?? '').match(/^\s*(\d+)\b/)?.[1] ?? null;
-  const zipOf = (text) => String(text ?? '').match(/\b[A-Z]{2}\s+(\d{5})(?:-\d{4})?\b/i)?.[1] ?? null;
-  const shownSuggestions = () => deepQueryAll(document, suggestionSelector()).filter((el) => el.getClientRects().length && oneLine(el.textContent));
-  async function applyAddress(step, c) {
-    const text = String(step.value);
-    const { el, widget } = c;
-    const before = new Set(shownSuggestions());
-    // Google's address autocomplete (Progressive uses it): its list (.pac-item) is only shown
-    // while the box has focus, which it doesn't while the agent works in the side panel. The
-    // suggestions are still there, hidden; they're picked the way the keyboard does (↓, Enter).
-    const pacBefore = new Map(deepQueryAll(document, '.pac-item').map((x) => [x, x.textContent]));
-    const houseNumber = text.match(/^\s*(\d+)/)?.[1] ?? null;
-    const freshPac = () => deepQueryAll(document, '.pac-item').find((x) => pacBefore.get(x) !== x.textContent && oneLine(x.textContent) && (!houseNumber || x.textContent.includes(houseNumber))) ?? null;
-    el.focus?.({ preventScroll: true });
-    el.dispatchEvent(new Event('focus'));
-    if (widget) adapter().setText(widget, text);
-    else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, text);
-    // Suggestion lists listen for typing: send the events typing would.
-    for (const type of ['input', 'keydown', 'keyup']) el.dispatchEvent(new Event(type, { bubbles: true }));
-    if (widget) adapter().changed(widget, text);
-    // What the page adds while it thinks: when no known list shows up, the reason names the new
-    // elements (tag.class), so the carrier's suggestion list can be recognised next time.
-    const added = [];
-    const mo = typeof MutationObserver === 'function' ? new MutationObserver((records) => {
-      for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1 && added.length < 40) added.push(n);
-    }) : null;
-    mo?.observe(document.body, { subtree: true, childList: true });
-    // A suggestion for this address: the same house number, and the same ZIP when both show one
-    // (another town's same street is not it).
-    const wantZip = zipOf(text);
-    const fits = (x) => {
-      const shown = oneLine(x.textContent);
-      return (!houseNumber || houseNumberOf(shown) === houseNumber) && (!wantZip || !zipOf(shown) || zipOf(shown) === wantZip);
-    };
-    let first = null;
-    let offered = false;
-    try {
-      for (const start = Date.now(); !first && Date.now() - start < 4000;) {
-        await sleep(200);
-        const fresh = shownSuggestions().filter((x) => !before.has(x));
-        offered ||= fresh.length > 0;
-        first = freshPac() ?? fresh.find(fits) ?? null;
-      }
-    } finally {
-      mo?.disconnect();
-    }
-    if (!first) {
-      // A box with its own city/ZIP boxes gets back just the street.
-      if (step.fallback) {
-        if (widget) adapter().setText(widget, step.fallback);
-        else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, step.fallback);
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      el.blur?.();
-      if (step.checkNumber) unpicked.set(el, el.value);
-      if (offered) return { ok: false, reason: `none of the page's address suggestions has the intake's house number${wantZip ? ' and ZIP' : ''}: pick the address yourself` };
-      const seen = [...new Set(added.filter((n) => n.getClientRects?.().length).map((n) => `${n.tagName.toLowerCase()}${n.id ? `#${String(n.id).replace(/\d{3,}/g, '#')}` : ''}${typeof n.className === 'string' && n.className.trim() ? `.${n.className.trim().split(/\s+/).slice(0, 3).join('.')}` : ''}${n.getAttribute?.('role') ? `[role=${n.getAttribute('role')}]` : ''}`))].slice(0, 8);
-      return { ok: false, reason: `the page offered no address suggestion; check the address, city and ZIP${seen.length ? ` (new on the page: ${seen.join(', ')})` : ''}` };
-    }
-    const shown = oneLine(first.textContent).slice(0, 120);
-    if (first.classList?.contains('pac-item') || / pac-item /.test(` ${first.className} `)) {
-      for (const [key, code] of [['ArrowDown', 40], ['Enter', 13]]) el.dispatchEvent(keyEvent('keydown', key, code));
-      await settle({ quietMs: 300, maxMs: 5000 });
-      // Still the typed text: Google didn't take the keys; click the suggestion instead.
-      if (el.value !== text) return { ok: true, shown };
-    }
-    for (const type of ['mousedown', 'mouseup']) first.dispatchEvent(new Event(type, { bubbles: true }));
-    first.click?.();
-    await settle({ quietMs: 300, maxMs: 5000 });
-    return { ok: true, shown };
-  }
 
-  // A key press as page scripts read it (Google's autocomplete looks at keyCode).
-  function keyEvent(type, key, code) {
-    const e = typeof KeyboardEvent === 'function' ? new KeyboardEvent(type, { key, bubbles: true, cancelable: true }) : new Event(type, { bubbles: true });
-    for (const prop of ['keyCode', 'which']) { try { Object.defineProperty(e, prop, { get: () => code }); } catch { /* read-only */ } }
-    if (!('key' in e)) e.key = key;
-    return e;
-  }
-
-  // Type-ahead dropdowns (select2: a hidden <select> with the box select2 draws after it, and a
-  // search box that lists what matches the typed text). select2 opens on a left-button mousedown
-  // (it checks the event's button), so a plain Event isn't enough.
-  const Mouse = () => (typeof MouseEvent === 'function' ? MouseEvent : Event);
-  const press = (el) => { for (const type of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new (Mouse())(type, { bubbles: true, cancelable: true, button: 0 })); };
-  const select2Box = (select) => [select.nextElementSibling, ...(select.parentElement?.children ?? [])]
-    .find((n) => n && n !== select && /\bselect2\b/.test(String(n.className))) ?? null;
-  // A list select2 draws (its own <select> hidden by select2), not one it only searches for.
-  const isSelect2 = (c) => c.kind === 'select' && !c.widget && !!c.el.classList?.contains('select2-hidden-accessible') && !!select2Box(c.el);
-
-  // Opens a select2 list and types `text` in its search box: { box, results } as the list then
-  // shows them, or { reason } when it can't. A list taking several choices types in its own box,
-  // drawn in the list's box; another in the box its open dropdown draws (none on a short list:
-  // its results are read as listed). The results are the list's own (select2 names them after the
-  // <select>: select2-<id>-results), else those on screen.
-  async function select2Search(select, text) {
-    const container = select2Box(select);
-    const opener = container?.querySelectorAll?.('.select2-selection')?.[0] ?? container;
-    if (!opener) return { reason: 'the search box for this list was not found; pick it yourself' };
-    if (!/\bselect2-container--open\b/.test(String(container.className))) press(opener);
-    const inline = () => (select.multiple ? container.querySelectorAll?.('.select2-search__field')?.[0] ?? null : null);
-    // Never another list's own box (a list taking several choices always shows its box).
-    const dropdownBox = () => deepQueryAll(document, '.select2-search__field').find((n) => n.getClientRects().length && !n.closest?.('.select2-selection')) ?? null;
-    const own = () => (select.id ? document.getElementById?.(`select2-${select.id}-results`) : null);
-    const listed = () => (own() ? [...own().querySelectorAll('.select2-results__option')] : deepQueryAll(document, '.select2-results__option'))
-      .filter((n) => n.getClientRects().length && !/loading|message/.test(String(n.className)));
-    let box = null;
-    for (const start = Date.now(); !box && Date.now() - start < 3000;) {
-      await sleep(100);
-      box = inline() ?? dropdownBox();
-      if (!box && !select.multiple && own() && listed().length && Date.now() - start >= 1000) break;
-    }
-    if (!box && !(own() && listed().length)) return { reason: "the list's search box didn't open; pick it yourself" };
-    if (box) {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, String(text));
-      for (const type of ['input', 'keyup']) box.dispatchEvent(new Event(type, { bubbles: true }));
-    }
-    let results = [];
-    for (const start = Date.now(); Date.now() - start < 6000;) {
-      await sleep(200);
-      results = listed();
-      if (results.length) break;
-    }
-    return { box, results };
-  }
-
-  // Closes an open select2 list without a pick (its box takes a key, the page a click elsewhere).
-  function closeSelect2(box) {
-    box?.dispatchEvent(new Event('keydown', { bubbles: true }));
-    document.body.dispatchEvent(new (Mouse())('mousedown', { bubbles: true, button: 0 }));
-  }
-
-  // Type-ahead dropdowns the page fills from its server (AmWINS' classification): type
-  // `step.search`, and pick the one result containing `step.value`; no such result (or several)
-  // means no confident match, and the agent picks.
-  async function applySearchSelect(step, c) {
-    const found = await select2Search(c.el, step.search ?? step.value);
-    if (found.reason) return { ok: false, reason: found.reason };
-    const want = squash(step.value);
-    // The result that is exactly the wanted text wins over others that only contain it.
-    const exact = found.results.filter((n) => squash(n.textContent) === want);
-    const hits = exact.length ? exact : found.results.filter((n) => squash(n.textContent).includes(want));
-    if (hits.length !== 1) {
-      closeSelect2(found.box);
-      return { ok: false, reason: hits.length ? `${hits.length} results match "${step.value}"; pick the right one` : `no confident match for "${step.value}"; pick it yourself` };
-    }
-    press(hits[0]);
-    await settle({ quietMs: 250, maxMs: 4000 });
-    return squash(selectedText(c) ?? '').includes(want) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
-  }
-
-  // One option of a select2 list picked as the agent picks it: its text typed in the list's search
-  // box, and the one result reading exactly that clicked (one not picked yet, on a list taking
-  // several: clicking a picked one takes it off).
-  async function pickSelect2(select, text) {
-    const found = await select2Search(select, text);
-    if (found.reason) return { ok: false, reason: found.reason };
-    const want = oneLine(text).toLowerCase();
-    const hits = found.results.filter((n) => oneLine(n.textContent).toLowerCase() === want && n.getAttribute?.('aria-selected') !== 'true');
-    if (hits.length !== 1) {
-      closeSelect2(found.box);
-      return { ok: false, reason: hits.length ? `the list showed "${text}" ${hits.length} times; pick it yourself` : `the list didn't show "${text}" when it was typed; pick it yourself` };
-    }
-    press(hits[0]);
-    await settle({ quietMs: 250, maxMs: 4000 });
-    return { ok: true };
-  }
-
-  // A pick taken off a select2 list taking several choices: its own × in the list's box.
-  async function unpickSelect2(select, text) {
-    const want = oneLine(text).toLowerCase();
-    const chip = [...(select2Box(select)?.querySelectorAll?.('.select2-selection__choice') ?? [])]
-      .find((n) => oneLine(n.getAttribute?.('title') ?? n.textContent.replace(/^×/, '')).toLowerCase() === want);
-    const remove = chip?.querySelectorAll?.('.select2-selection__choice__remove')?.[0] ?? null;
-    if (!remove) return { ok: false, reason: `"${text}" is picked but has no × to take it off; take it off yourself` };
-    press(remove);
-    await settle({ quietMs: 250, maxMs: 4000 });
-    return { ok: true };
-  }
-
-  // GEICO's select2 lists (business description, cargo commodities, a driver's suffix, a vehicle's
-  // year, make and model) take a pick only from select2 itself: the page reads its select2:select
-  // and select2:unselect, never a change of the hidden <select> (FL live run 6, 2026-10-21: the
-  // commodity set on the <select> showed, but GEICO took none and never asked for the cargo limit;
-  // the business description set so was refused at Next). Each pick is made in the list (typed,
-  // then clicked: pickSelect2), and on a list taking several a pick the answer doesn't name is
-  // taken off first (GEICO takes at most four).
-  async function applySelect2(step, c) {
-    let options = optionsOf(c);
-    if (c.el.multiple) {
-      const wanted = multiValue(step.value, options);
-      const picks = wanted.map((w) => options.find((o) => !o.el.disabled && o.text.toLowerCase() === w.toLowerCase()));
-      if (!wanted.length || picks.some((o) => !o)) return noMatch({ ...step, value: wanted.filter((w, i) => !picks[i]).join('; ') || step.value }, options);
-      for (const o of options.filter((x) => x.el.selected && !picks.includes(x))) {
-        const off = await unpickSelect2(c.el, o.text);
-        if (!off.ok) return off;
-      }
-      for (const o of picks.filter((x) => !x.el.selected)) {
-        const on = await pickSelect2(c.el, o.text);
-        if (!on.ok) return on;
-      }
-      if (!options.every((o) => !!o.el.selected === picks.includes(o))) return { ok: false, reason: 'the page did not keep these picks' };
-      return { ok: true, shown: picks.map((o) => o.text).join('; ') };
-    }
-    let opt = matchOption(options, step);
-    for (const start = Date.now(); !opt && new Set(options.map((o) => oneLine(o.text)).filter(Boolean)).size <= 1 && Date.now() - start < 6000;) {
-      await sleep(250);
-      options = optionsOf(c);
-      opt = matchOption(options, step);
-    }
-    if (!opt) return noMatch(step, options);
-    const on = await pickSelect2(c.el, opt.text);
-    if (!on.ok) return on;
-    return selectedText(c) === opt.text ? { ok: true, shown: opt.text } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
-  }
+  // The widgets that write their own way, in the order apply asks them: each says whether it
+  // `writes` a step to a control, and `write`s it ({ ok, shown } or { ok: false, reason }). The
+  // address and select2 drivers are modules (src/kit/drivers/) taking the engine's helpers; the
+  // carrier's page adapter and a read-only field are asked between them, as before.
+  const driverKit = { adapter, withAdapter, deepQueryAll, oneLine, squash, sleep, settle, hasValue, unpicked, optionsOf, matchOption, noMatch, selectedText, multiValue };
+  const { select2, searchSelect } = createSelect2Drivers(driverKit);
+  const drivers = [
+    createAddressDriver(driverKit),
+    searchSelect,
+    // The carrier's own widgets (its page adapter, src/content/carriers/).
+    { name: 'adapter', writes: (step, c) => !!(c.widget || c.options?.some((o) => o.widget)), write: (step, c) => adapter().apply(step, c) },
+    { name: 'read-only', writes: (step, c) => !!c.el.readOnly, write: () => ({ ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' }) },
+    select2,
+  ];
 
   // Returns { ok: true, shown } or { ok: false, reason, options? }.
   async function apply(step, c) {
-    if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
-    if (step.kind === 'search-select') return applySearchSelect(step, c);
-    if (c.widget || c.options?.some((o) => o.widget)) return adapter().apply(step, c);
-    if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
-    if (isSelect2(c)) return applySelect2(step, c);
+    const driver = drivers.find((d) => d.writes(step, c));
+    if (driver) return driver.write(step, c);
     // A list taking several choices (GEICO's commodities: W43-23): exactly the answer's options,
     // named by their texts joined by "; " (as selectedText reads them back), each of them offered.
     if (c.kind === 'select' && c.el.multiple) {
@@ -1586,11 +1376,11 @@ import { STATES } from '../states.js';
 
   // Does the field already hold the answer we'd give?
   function agreesWith(step, c) {
-    // The chosen suggestion rewrites the typed address in the page's own format. `checkNumber`: an
-    // address the page put there itself (GEICO's, from its USDOT record) agrees only with the
-    // intake's house number.
-    if (step.kind === 'address-suggest') return c.kind === 'text' && hasValue(c) && (!step.checkNumber || houseNumberOf(c.el.value) === houseNumberOf(step.value));
-    if (step.kind === 'search-select') return squash(selectedText(c) ?? '').includes(squash(step.value));
+    // A driver's own say first (the address and search-select steps); undefined: not its step.
+    for (const d of drivers) {
+      const agrees = d.agrees?.(step, c);
+      if (agrees !== undefined) return agrees;
+    }
     if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.widget ? !!adapter().value(c.widget, c.el) : c.el.checked) === step.value;
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
