@@ -408,11 +408,14 @@ test('garaging address shapes: commas anywhere, a state written out, a ZIP glued
     ['9 Pine Ave, Raleigh, North Carolina 27601', { street: '9 Pine Ave', unit: null, city: 'Raleigh', state: 'NC', zip: '27601' }],
     ['12 Elm St Covington 41011 KY', { street: '12 Elm St', unit: null, city: 'Covington', state: 'KY', zip: '41011' }],
     ['12 Elm St, Covington, KY', { street: '12 Elm St', unit: null, city: 'Covington', state: 'KY', zip: null }],
+    // NE after a comma is Nebraska; without one it stays a direction (below).
+    ['12 Elm St, Omaha, NE', { street: '12 Elm St', unit: null, city: 'Omaha', state: 'NE', zip: null }],
     ['12 Elm St Covington Kentucky', { street: '12 Elm St', unit: null, city: 'Covington', state: 'KY', zip: null }],
   ]) {
     assert.deepEqual(split(a), want, a);
     assert.equal(parseAddress(a).confident, false, a);
   }
+  assert.equal(parseAddress('12 Elm St Omaha NE').state, null);
   // Street types the split didn't know, a numbered route or county road, and two suffixes in a row.
   for (const [a, street, city] of [
     ['4500 Oak Ridge Henrico VA 23228', '4500 Oak Ridge', 'Henrico'],
