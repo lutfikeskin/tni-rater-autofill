@@ -2,8 +2,8 @@
 // Is the quote for state X: the quote's state is the garaging state (as the quote on Progressive's
 // home page is started). normalize writes it as a two-letter code, and the panel saves an agent's
 // edit as one (parseEdit; TNI, 2026-11-03), so every carrier reads only the code.
-import { STATES } from '../util.js';
 /** @import { ClientRecord } from '../../types.js' */
+/** @import { STATES } from '../util.js' */
 
 /** @typedef {keyof typeof STATES} StateCode */
 
