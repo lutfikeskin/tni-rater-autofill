@@ -183,13 +183,15 @@ const describeNote = (what) => (r) => `${what} is yours to pick${HAULED(r) ? ` (
 // classes TNI's GEICO standards were set for (supportedClasses), and For Hire Trucking, then Other
 // For-Hire Trucking, on Business Class & USDOT (TNI, 2026-10-21: "that's the equivalent of
 // Expediter and General Freight Hauler").
-const FOR_HIRE_CLASSES = [/expedit/i, /^(?:general\s+)?freight\s+haul(?:er|ing)$/i];
+const EXPEDITER_CLASS = /expedit/i;
+const FOR_HIRE_CLASSES = [EXPEDITER_CLASS, /^(?:general\s+)?freight\s+haul(?:er|ing)$/i];
 const forHire = (r) => FOR_HIRE_CLASSES.some((re) => re.test(String(r.operations.businessClass ?? '').trim()));
 const describeSource = (r) => (forHire(r) ? 'standard' : 'derived');
 // TNI, 2026-11-03 (W45-04; an IN agent's quote ended on Expediters): where GEICO doesn't offer Other
 // For-Hire Trucking, an expediter's more detailed description is Expediters, else General Freight
 // (`choiceAliases`, in order), else the agent's. A freight hauler's has no fallback.
-const expediterDescriptions = (r) => (/expedit/i.test(String(r.operations.businessClass ?? '')) ? ['Expediters', 'General Freight'] : []);
+// The same expediter test as forHire's, so the fallback never reaches a class the rule doesn't answer.
+const expediterDescriptions = (r) => (EXPEDITER_CLASS.test(String(r.operations.businessClass ?? '').trim()) ? ['Expediters', 'General Freight'] : []);
 
 // The first line of the intake's notes (the claims box's other lines, the Additional Notes box)
 // these words are in, cut short: what makes a TNI standard below the agent's, quoted.
