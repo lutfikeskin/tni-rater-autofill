@@ -7,7 +7,7 @@ description: Take named TNI Rater Autofill pull requests to ready-to-merge - rev
 
 The outcome is each named PR with its real findings fixed and proven, every job of the PR's GitHub Checks green on what was pushed, a review comment on the PR saying what was verified, and a checklist for the maintainer. Then stop: **merging waits for the maintainer's confirmation in chat**, given for that PR after the checklist. A request like "fix and merge" still stops at the checklist the first time; the maintainer confirms after reading it.
 
-Read `CLAUDE.md` (identical to `AGENTS.md`) first and follow it: scope, client data, the documents to update, and the restrictions on binding, purchasing, submitting, ordering reports and signing. Approved weekly-review items (`W42-03`) go through the apply-review-fixes skill instead; this skill is for PRs.
+Read `AGENTS.md` (`CLAUDE.md` imports it) first and follow it: scope, client data, the documents to update, and the restrictions on binding, purchasing, submitting, ordering reports and signing. Approved weekly-review items (`W42-03`) go through the apply-review-fixes skill instead; this skill is for PRs.
 
 ## 0. Scope
 
@@ -34,7 +34,7 @@ git status --short          # no tracked changes before you start
   - an exact mapping or calculation handed to the model, or provider request validation, manual review or safe failure removed;
   - a carrier option, plan step, report or event field not declared in `types.js`;
   - POSIX-only code (Windows is the main platform);
-  - documents left stale, or `AGENTS.md` and `CLAUDE.md` no longer identical;
+  - documents left stale;
   - a test loosened, skipped or rewritten to mirror the change, or a baseline accepted (`npm run e2e -- --update`) without the changed pages explained;
   - lint turned off instead of fixed: a new `oxlint-disable` comment without `-- <why>` or with a reason that doesn't hold, or `.oxlintrc.json` rules weakened or files added to its `ignorePatterns`.
 

@@ -4,7 +4,7 @@ A Chrome extension that reads a client's **TNI Commercial Insurance Quote Applic
 
 The extension fills supported fields, reports unresolved questions, and preserves agent corrections. It can use carrier-specific Continue or Save & Continue actions when enabled and no review blockers remain; it never binds, buys, or submits the application. Some carrier defaults replace prefilled choices, so review the result.
 
-For development, [AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md) contain the same short guidance. Use their task-specific links only when changing the corresponding system. The [architecture guide](docs/architecture.md) distinguishes implemented behavior from the project's remaining goals.
+For development, [AGENTS.md](AGENTS.md) holds the short project guidance ([CLAUDE.md](CLAUDE.md) imports it). Use their task-specific links only when changing the corresponding system. The [architecture guide](docs/architecture.md) distinguishes implemented behavior from the project's remaining goals.
 
 Starting on a new Windows computer: follow [Windows development](docs/windows-development.md).
 The [development handoff](docs/handoff-2026-10-09.md) records the merged audit work and remaining limitations.

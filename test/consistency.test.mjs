@@ -194,9 +194,9 @@ test('no file under layouts/ is tracked in git', (t) => {
   assert.deepEqual(report, [], `tracked under layouts/, which .gitignore reserves for raw captures: run git rm --cached on these:\n${report.join('\n')}`);
 });
 
-test('commands named in CLAUDE.md and the README exist', () => {
+test('commands named in AGENTS.md and the README exist', () => {
   const scripts = JSON.parse(read('package.json')).scripts;
-  for (const doc of ['CLAUDE.md', 'README.md', 'docs/hosting.md']) {
+  for (const doc of ['AGENTS.md', 'README.md', 'docs/hosting.md']) {
     if (!fs.existsSync(path.join(root, doc))) continue;
     for (const [, name] of read(doc).matchAll(/npm run ([a-z][\w:-]*)/g)) assert.ok(scripts[name], `${doc} names "npm run ${name}", which package.json doesn't have`);
   }

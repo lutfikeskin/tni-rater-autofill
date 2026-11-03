@@ -7,7 +7,7 @@ description: Review a GitHub pull request of TNI Rater Autofill - read the PR an
 
 The outcome is one report per PR: a verdict, the blocking findings first, then what should be fixed, the questions only the maintainer can answer, the checks run with their results, and what remains unverified. Every finding in it was checked against the code; a claim from either review that didn't hold up is dropped and listed as dropped. The thread running this skill (Opus 5.5 in Claude Code) is the main agent and owns the verdict; a Cursor child is a second opinion.
 
-Read `CLAUDE.md` (identical to `AGENTS.md`) first: its working rules are what a PR here is judged against.
+Read `AGENTS.md` (`CLAUDE.md` imports it) first: its working rules are what a PR here is judged against.
 
 ## 1. Pin down the PR
 
@@ -50,7 +50,7 @@ This workspace is checked out at the PR head (<headRefOid>); the changes to revi
 
 If /thermos doesn't run as a command here, follow `<THERMOS>\thermos\SKILL.md` yourself. It runs two passes, each with its own rubric beside it: `<THERMOS>\thermo-nuclear-review\SKILL.md` (bugs, breakage, security) and `<THERMOS>\thermo-nuclear-code-quality-review\SKILL.md` (maintainability). Run both passes, with these files as the rubrics and no other copy; if you can't start subagents, run them one after the other.
 
-The project's rules are in CLAUDE.md (identical to AGENTS.md) at the repository root. Read them before judging a finding: an answer the intake doesn't support is invented unless it is a TNI standard rule, and agent corrections, review blockers and the restrictions on submitting, binding and signing must hold.
+The project's rules are in AGENTS.md at the repository root (CLAUDE.md imports it). Read them before judging a finding: an answer the intake doesn't support is invented unless it is a TNI standard rule, and agent corrections, review blockers and the restrictions on submitting, binding and signing must hold.
 
 This is a review only. Don't edit files, commit, push, switch branches, or comment on GitHub. You may run a single test file (`node --test test/<file>`) to confirm a finding; don't run `npm run package`, `e2e`, `mock:*` or `ci`: your parent runs those in this same checkout. Your parent is reviewing the same PR and will verify and merge both reviews.
 
