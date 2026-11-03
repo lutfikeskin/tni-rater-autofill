@@ -143,10 +143,13 @@ export function vinProblem(vin) {
   return vin[8] === check ? null : 'fails the check-digit test (likely a typo)';
 }
 
+// Street types that also start place names ("Glen Allen", "Bend", "Point Pleasant"): one only ends the
+// street when no stronger type follows it.
+const PLACE_SUFFIX = new Set(['ridge', 'rdg', 'point', 'pt', 'crossing', 'bend', 'pass', 'path', 'walk', 'crescent', 'cres', 'hollow', 'holw',
+  'landing', 'lndg', 'trace', 'trce', 'hill', 'hills', 'glen', 'park']);
 const STREET_SUFFIX = new Set(['st', 'street', 'ave', 'av', 'avenue', 'rd', 'road', 'dr', 'drive', 'ln', 'lane', 'ct', 'court', 'cir', 'ci', 'circle', 'blvd', 'boulevard', 'way', 'pl', 'place', 'ter', 'terrace', 'pkwy', 'parkway', 'hwy', 'highway', 'trl', 'trail', 'loop', 'sq', 'pike', 'tpke', 'cv', 'cove', 'xing', 'plz', 'aly', 'row', 'run',
   // W45-03 (an agent's VA address lost its city): street types the split didn't know.
-  'ridge', 'rdg', 'point', 'pt', 'crossing', 'bend', 'pass', 'path', 'walk', 'crescent', 'cres', 'hollow', 'holw', 'landing', 'lndg', 'trace', 'trce',
-  'hill', 'hills', 'glen', 'park', 'ext', 'route', 'rte', 'rt']);
+  ...PLACE_SUFFIX, 'ext', 'route', 'rte', 'rt']);
 const DIRECTIONAL = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw', 'north', 'south', 'east', 'west']);
 const UNIT_WORD = /^(apt|apartment|unit|ste|suite|lot|bldg|building|rm|room|trlr|#)\.?$/i;
 // The states written out ("North Carolina"), longest first, as one alternation. Built on first use:
@@ -220,15 +223,18 @@ export function parseAddress(raw) {
     out.confident = parts.length > 0;
   } else {
     const t = rest.split(/\s+/);
-    const suffix = (i) => STREET_SUFFIX.has(String(t[i] ?? '').toLowerCase().replace(/\.$/, ''));
+    const word = (i) => String(t[i] ?? '').toLowerCase().replace(/\.$/, '');
+    const suffix = (i) => STREET_SUFFIX.has(word(i));
+    const place = (i) => PLACE_SUFFIX.has(word(i));
     const saint = (i) => /^ste?\.?$/i.test(t[i] ?? '');
     let cut = -1;
     for (let i = 1; i < t.length - 1; i++) {
       if (UNIT_WORD.test(t[i])) { cut = i + 1; break; }
       if (/^#\w+/.test(t[i])) { cut = i; break; }
       // The street's type, unless another follows it ("Court St", "Oak Ridge Rd"); "Main St St
-      // Louis" ends at the first St.
-      if (cut < 0 && suffix(i) && !(suffix(i + 1) && !(saint(i) && saint(i + 1)))) {
+      // Louis" ends at the first St, and "Main St Glen Allen" at St, as a place word can't outrank it.
+      const outranked = suffix(i + 1) && (place(i) || !place(i + 1)) && !(saint(i) && saint(i + 1));
+      if (cut < 0 && suffix(i) && !outranked) {
         let end = i;
         // A numbered route or county road: "Hwy 60", "County Rd 12".
         if (/^\d+[A-Za-z]?$/.test(t[end + 1] ?? '')) end++;

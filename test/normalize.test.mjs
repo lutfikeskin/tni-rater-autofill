@@ -423,6 +423,10 @@ test('garaging address shapes: commas anywhere, a state written out, a ZIP glued
     ['31 Route 9 Freehold NJ 07728', '31 Route 9', 'Freehold'],
     ['123 Court St Springfield OH 45501', '123 Court St', 'Springfield'],
     ['100 Main St St Louis MO 63101', '100 Main St', 'St Louis'],
+    // A city that starts with a street type stays whole.
+    ['123 Main St Glen Allen VA 23060', '123 Main St', 'Glen Allen'],
+    ['123 Main St Bend OR 97701', '123 Main St', 'Bend'],
+    ['8 Park Ave Point Pleasant NJ 08742', '8 Park Ave', 'Point Pleasant'],
   ]) {
     assert.deepEqual([split(a).street, split(a).city], [street, city], a);
   }
