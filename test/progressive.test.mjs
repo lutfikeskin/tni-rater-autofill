@@ -175,7 +175,12 @@ test('a General Liability, Cargo or Other policy alone is not current auto insur
     assert.deepEqual([byQ(plan, '81').value, byQ(plan, '81').source, byQ(plan, '81').manualOnly], [null, 'fact', true], type);
     assert.match(byQ(plan, '81').note, new RegExp(`${type}.*not an auto policy`), type);
     assert.equal(byQ(plan, '83').value, null, type);
-    for (const q of ['95', '9D']) assert.equal(byQ(plan, q).ignore, true, `${type} ${q}`);
+    assert.match(byQ(plan, '83').note, new RegExp(`${type}, not an auto policy`), type);
+    // Shown once the agent answers Yes: the agent's, never the non-auto policy's limit or date.
+    for (const q of ['95', '9D']) {
+      assert.deepEqual([byQ(plan, q).ignore, byQ(plan, q).value], [false, null], `${type} ${q}`);
+      assert.match(byQ(plan, q).note, /not an auto policy: if the customer has auto insurance, enter its/, `${type} ${q}`);
+    }
   }
   // An auto or untyped policy with a limit and a date is still Yes.
   for (const type of ['Commercial Auto', 'Personal Auto', null]) {
