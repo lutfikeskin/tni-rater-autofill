@@ -22,7 +22,7 @@ git switch main && git pull --ff-only && git status --short   # clean tree; in a
 npm ci                                                        # when package-lock.json changed
 ```
 
-One branch and PR per root cause or layer: two items with one cause share a PR; unrelated items don't. Branch names: `codex/<topic>` for Codex, `claude/<topic>` for Claude, as `CLAUDE.md` says.
+One branch and PR per root cause or layer: two items with one cause share a PR; unrelated items don't. Branch names: `codex/<topic>` for Codex, `claude/<topic>` for Claude, as `AGENTS.md` says.
 
 Before changing anything, record where `main` stands:
 
@@ -40,7 +40,7 @@ A check that already fails on `main` is reported as such, not fixed silently ins
 
 ## 2. Fix each item
 
-Follow `docs/corrections.md` for every item, and read the document for its layer from the table in `CLAUDE.md` (intake and rules, browser filling, AI assistance, learning, hosting).
+Follow `docs/corrections.md` for every item, and read the document for its layer from the table in `AGENTS.md` (intake and rules, browser filling, AI assistance, learning, hosting).
 
 1. **Restate it** as expected versus actual for its scenario: carrier, page, state or product, entity (which vehicle, driver or trailer), and the build it was seen on. Separate a one-client correction from a reusable rule.
 2. **Reproduce it first** with the smallest test that fails for the right reason: a unit test in the matching file (`test/progressive.test.mjs`, `test/geico.test.mjs`, `test/normalize.test.mjs`, `test/pagekit.test.mjs`, `test/learn.test.mjs`, …), a scrubbed fixture (`test/fixtures/`; GEICO's `quote.html` is rebuilt by `node scripts/geico-fixture.mjs`, which reads the raw pages from `layouts/geico`, the main checkout's from a worktree, and writes nothing on a privacy finding), or a synthetic intake. Never commit a raw carrier page, a client PDF or a client value; raw evidence stays in ignored `layouts/`.

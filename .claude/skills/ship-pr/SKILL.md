@@ -46,7 +46,7 @@ Watch for scope creep, and don't be afraid to push back. Reviewers, especially s
 
 ## 3. Fix the real findings
 
-Follow `docs/corrections.md` and the document for the layer (the table in `CLAUDE.md`).
+Follow `docs/corrections.md` and the document for the layer (the table in `AGENTS.md`).
 
 1. **Test first.** Write the smallest test that reproduces the finding. Run it on the PR's code before the fix and see it **fail for the right reason**; keep that output for the report. A finding with no possible test (wording, documentation) says so.
 2. **Fix the layer that owns the cause**, not the symptom, and add the nearby counterexample when a rule's reach changes.
