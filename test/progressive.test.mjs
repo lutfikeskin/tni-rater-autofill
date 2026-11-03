@@ -163,6 +163,23 @@ test('an insurance type without limit or expiry is currently insured, the limit 
   assert.match(byQ(buildPlan(record, progressive), '83').note, /continuous coverage/i);
 });
 
+// W45-06 (an agent's IN quote on 0.9.26, 2026-11-02): the intake's current limit box was "Other",
+// the form's choice for a limit it doesn't list. The fill looked for a Progressive option "Other",
+// failed twice, and the agent picked the limit. "Other" names no amount: the agent's, with a note.
+test('an intake current limit of "Other" is no amount: the current BI limit is the agent\'s, with a note (W45-06)', () => {
+  const record = baseRecord();
+  for (const limit of ['Other', ' other ']) {
+    record.priorInsurance[0].limit = limit;
+    const step = byQ(buildPlan(record, progressive), '95');
+    assert.deepEqual([step.ignore, step.value, step.manualOnly], [false, null, true], limit);
+    assert.match(step.note, /"Other".*no amount/, limit);
+  }
+  // A listed limit is still the intake's.
+  record.priorInsurance[0].limit = '$500K/$1M';
+  const listed = byQ(buildPlan(record, progressive), '95');
+  assert.deepEqual([listed.value, listed.note], ['$500K/$1M', null]);
+});
+
 test('sole owner-driver with duplicated first name uses owner surname and driver DOB', () => {
   const record = baseRecord();
   record.drivers[0].last = 'Amina';
