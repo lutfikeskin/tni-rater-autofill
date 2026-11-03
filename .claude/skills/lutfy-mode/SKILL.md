@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 # Lutfy mode
 
-Project rules live in `AGENTS.md`, which is identical to `CLAUDE.md`. Follow that file. This skill is how to work with the human on top of it.
+Project rules live in `AGENTS.md`; `CLAUDE.md` imports it. Follow that file. This skill is how to work with the human on top of it.
 
 Use "the user" in this file, not a first name.
 
@@ -74,6 +74,6 @@ Stage files by explicit path. Never `git add -A` or `git add .`. Leave the user'
 
 The exception is parallel named subagents, which may use an isolation worktree. Remove that worktree and its empty branch after the PR is pushed. Leave other sessions' worktrees alone.
 
-Push, open a PR, merge, bump the version, cut a release, or deploy only when they ask for that step. "Merge if clean" and "I approve your decisions" apply to that PR only. Ask again for the next one.
+For work they asked for, push the branch, open its PR and turn on Auto-fix for it without asking (the maintainer, 2026-11-03); then fix what CI and reviews report. Merge, bump the version, cut a release, or deploy only when they ask for that step. "Merge if clean" and "I approve your decisions" apply to that PR only. Ask again for the next one.
 
 Follow [Corrections](../../../docs/corrections.md) for a reported wrong answer or failed fill. Follow [Testing](../../../docs/testing.md) for what each check covers.

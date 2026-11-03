@@ -7,7 +7,7 @@ description: Review a period of TNI Rater Autofill agents' live runs (usage logs
 
 The outcome is a decision brief: what happened, which earlier fixes held, what to change (with evidence, layer, severity and size), and which insurance or workflow questions only the maintainer can answer. The maintainer decides; this skill never implements, releases or deploys.
 
-Read `CLAUDE.md` (identical to `AGENTS.md`) first. Its working rules apply throughout: do not invent client facts or insurance answers; missing information, an explicit No and not applicable are three different things; a filled field or an accepted carrier value does not prove an answer correct.
+Read `AGENTS.md` (`CLAUDE.md` imports it) first. Its working rules apply throughout: do not invent client facts or insurance answers; missing information, an explicit No and not applicable are three different things; a filled field or an accepted carrier value does not prove an answer correct.
 
 ## Rules for this review
 

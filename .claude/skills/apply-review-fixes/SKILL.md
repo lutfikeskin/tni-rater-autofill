@@ -7,7 +7,7 @@ description: Implement and verify the TNI Rater Autofill fixes a maintainer appr
 
 The outcome is one pull request per coherent change, each reproducing its problem in a test, fixing it in the layer that owns it, showing which answers changed and why, and naming the signature the next weekly review checks. Release to agents is a separate, explicit step.
 
-Read `CLAUDE.md` (identical to `AGENTS.md`) first and follow it: task branch, scope, documents to update, and the restrictions on binding, purchasing, submitting, ordering reports and signing.
+Read `AGENTS.md` (`CLAUDE.md` imports it) first and follow it: task branch, scope, documents to update, and the restrictions on binding, purchasing, submitting, ordering reports and signing.
 
 ## 0. Know exactly what was approved
 
@@ -22,7 +22,7 @@ git switch main && git pull --ff-only && git status --short   # clean tree; in a
 npm ci                                                        # when package-lock.json changed
 ```
 
-One branch and PR per root cause or layer: two items with one cause share a PR; unrelated items don't. Branch names: `codex/<topic>` for Codex, `claude/<topic>` for Claude, as `CLAUDE.md` says.
+One branch and PR per root cause or layer: two items with one cause share a PR; unrelated items don't. Branch names: `codex/<topic>` for Codex, `claude/<topic>` for Claude, as `AGENTS.md` says.
 
 Before changing anything, record where `main` stands:
 
@@ -40,7 +40,7 @@ A check that already fails on `main` is reported as such, not fixed silently ins
 
 ## 2. Fix each item
 
-Follow `docs/corrections.md` for every item, and read the document for its layer from the table in `CLAUDE.md` (intake and rules, browser filling, AI assistance, learning, hosting).
+Follow `docs/corrections.md` for every item, and read the document for its layer from the table in `AGENTS.md` (intake and rules, browser filling, AI assistance, learning, hosting).
 
 1. **Restate it** as expected versus actual for its scenario: carrier, page, state or product, entity (which vehicle, driver or trailer), and the build it was seen on. Separate a one-client correction from a reusable rule.
 2. **Reproduce it first** with the smallest test that fails for the right reason: a unit test in the matching file (`test/progressive.test.mjs`, `test/geico.test.mjs`, `test/normalize.test.mjs`, `test/pagekit.test.mjs`, `test/learn.test.mjs`, …), a scrubbed fixture (`test/fixtures/`; GEICO's `quote.html` is rebuilt by `node scripts/geico-fixture.mjs`, which reads the raw pages from `layouts/geico`, the main checkout's from a worktree, and writes nothing on a privacy finding), or a synthetic intake. Never commit a raw carrier page, a client PDF or a client value; raw evidence stays in ignored `layouts/`.
@@ -76,7 +76,7 @@ Re-read the diff against the item before opening the PR: does it fix the cause t
 
 ## 4. Documents, PR and ledger
 
-- Update every document that describes the changed behavior, command or data (`CLAUDE.md` rule), and keep `AGENTS.md` and `CLAUDE.md` identical if either changes.
+- Update every document that describes the changed behavior, command or data (`AGENTS.md` rule).
 - Open the PR against `main`, its title ending with the item IDs (`… (W42-03)`, `… (W42-06, W42-10)`): `npm run ledger` finds an item's PR by its title or by the `PR #<n>` on its ledger line, never by a mention in a body. Body: the item IDs and the ledger issue (`Refs #<n>`); expected versus actual for each item; the reproducing test; the checks run, with results; the e2e and benchmark changes, each explained; the documents changed (or why none); and **Watch next week**: each item's signature in the ledger's structured form (event type, page, field and value). No client data in the PR.
 - Update the ledger issue's body, in place: the body is the ledger, comments are history (`gh issue view <n> --json body --jq .body > <file>`, edit the item's line, `gh issue edit <n> --body-file <file>`). Each item's line gets `PR #<n>` and the status `PR open`; after the maintainer merges, `merged <commit>`; after a store release, `released in <version>`. Write its signature in the structured form the weekly-review skill describes (step 7: `symptom …` or `expect …`), so `npm run ledger` counts it on builds that contain the fix next week. An item found only in a comment moves into the body.
 - Don't merge, bump the version, package for the store, upload or deploy unless the maintainer asks; `docs/chrome-web-store.md` and `docs/hosting.md` cover those steps. Say plainly that merged to `main` is not yet with the agents.

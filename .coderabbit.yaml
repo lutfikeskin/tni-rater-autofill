@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-# CodeRabbit reviews pull requests (trial from 2026-10-30). It reads CLAUDE.md/AGENTS.md as the
+# CodeRabbit reviews pull requests (trial from 2026-10-30). It reads AGENTS.md (CLAUDE.md imports it) as the
 # project's guidelines; the instructions below only say what matters most here.
 language: en-US
 reviews:

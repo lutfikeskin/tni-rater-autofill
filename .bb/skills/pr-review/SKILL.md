@@ -7,7 +7,7 @@ description: Review a GitHub pull request of TNI Rater Autofill - read the PR an
 
 The outcome is one report per PR: a verdict, the blocking findings first, then what should be fixed, the questions only the maintainer can answer, the checks run with their results, and what remains unverified. Every finding in it was checked against the code; a claim from either review that didn't hold up is dropped and listed as dropped. The thread running this skill (Opus 5.5 in Claude Code) is the main agent and owns the verdict; a Cursor child is a second opinion.
 
-Read `CLAUDE.md` (identical to `AGENTS.md`) first: its working rules are what a PR here is judged against.
+Read `AGENTS.md` (`CLAUDE.md` imports it) first: its working rules are what a PR here is judged against.
 
 ## 1. Pin down the PR
 
@@ -50,7 +50,7 @@ This workspace is checked out at the PR head (<headRefOid>); the changes to revi
 
 If /thermos doesn't run as a command here, follow `<THERMOS>\thermos\SKILL.md` yourself. It runs two passes, each with its own rubric beside it: `<THERMOS>\thermo-nuclear-review\SKILL.md` (bugs, breakage, security) and `<THERMOS>\thermo-nuclear-code-quality-review\SKILL.md` (maintainability). Run both passes, with these files as the rubrics and no other copy; if you can't start subagents, run them one after the other.
 
-The project's rules are in CLAUDE.md (identical to AGENTS.md) at the repository root. Read them before judging a finding: an answer the intake doesn't support is invented unless it is a TNI standard rule, and agent corrections, review blockers and the restrictions on submitting, binding and signing must hold.
+The project's rules are in AGENTS.md at the repository root (CLAUDE.md imports it). Read them before judging a finding: an answer the intake doesn't support is invented unless it is a TNI standard rule, and agent corrections, review blockers and the restrictions on submitting, binding and signing must hold.
 
 This is a review only. Don't edit files, commit, push, switch branches, or comment on GitHub. You may run a single test file (`node --test test/<file>`) to confirm a finding; don't run `npm run package`, `e2e`, `mock:*` or `ci`: your parent runs those in this same checkout. Your parent is reviewing the same PR and will verify and merge both reviews.
 
@@ -93,7 +93,7 @@ Before calling a failure the PR's, check whether it fails without the PR: when t
 ## 6. Verify and merge the reviews
 
 - bb notifies you when the Cursor child finishes, but the notice can be cut short: read its whole answer with `bb thread output <child-id>`. If it isn't done when your own work is, `bb thread wait <child-id> --timeout 20m`; if it fails or times out, report without it and say so.
-- Verify every finding from every review as ship-pr's step 2 says: **real** (with the concrete input that goes wrong), **not real** (why the code is already right), or **needs the maintainer** (an insurance answer, client fact or product decision, asked as a question, never guessed). Open the line, trace the scenario, or run the test that would show it. A finding that isn't real is dropped, with why, in the comparison table. Check a suggested fix too: it must pass the checks and follow `CLAUDE.md` (no casts that add parentheses, for one); if it doesn't, keep the problem and drop the fix.
+- Verify every finding from every review as ship-pr's step 2 says: **real** (with the concrete input that goes wrong), **not real** (why the code is already right), or **needs the maintainer** (an insurance answer, client fact or product decision, asked as a question, never guessed). Open the line, trace the scenario, or run the test that would show it. A finding that isn't real is dropped, with why, in the comparison table. Check a suggested fix too: it must pass the checks and follow `AGENTS.md` (no casts that add parentheses, for one); if it doesn't, keep the problem and drop the fix.
 - Merge duplicates; a finding both reviews made carries more weight.
 - Classify the real ones:
   - **Blocking**: a check that fails because of the PR; a bug in changed code with a concrete failing scenario; a wrong or invented insurance answer; a weakened agent correction, review blocker or submit, bind or sign restriction; client data or credentials committed or logged; a security hole.
