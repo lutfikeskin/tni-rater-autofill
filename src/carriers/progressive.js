@@ -918,7 +918,7 @@ export const progressive = {
       // is the agent's own address, where Progressive says when the savings apply: never the client's.
       { q: '115', source: 'fact', field: 'TelematicsInput.EnrollInSnapshotProInd', ask: 'Does the customer want to save 15% by participating in Snapshot Pro?', name: 'Snapshot Pro enrolment (the agent\'s)', kind: 'bool',
         note: 'Whether the client enrolls in Snapshot Pro is their choice: ask them and answer it yourself.' },
-      { q: '117', source: 'derived', field: 'TelematicsInput.MandatoryExistingDevices', whenShown: TELEMATICS_DEVICES, ask: 'Does the customer have telematics device(s) in their vehicle(s)?', name: 'Telematics devices (from the ELD box)', kind: 'bool', value: usesEld,
+      { q: '117', source: 'derived', clientFact: true, field: 'TelematicsInput.MandatoryExistingDevices', whenShown: TELEMATICS_DEVICES, ask: 'Does the customer have telematics device(s) in their vehicle(s)?', name: 'Telematics devices (from the ELD box)', kind: 'bool', value: usesEld,
         note: (r) => (usesEld(r) == null ? 'The intake does not say whether the vehicles have an ELD: answer the telematics question yourself.' : null) },
       { q: '13B', source: 'fact', field: 'TelematicsInput.MandatoryExistingDevices', whenShown: DASHCAMS, ask: 'Does the customer have dashcam(s) in their vehicle(s)?', name: 'Dashcams (the agent\'s)', kind: 'bool',
         note: 'Whether the vehicles have dashcams isn\'t on the intake (an ELD isn\'t a dashcam): answer it yourself.' },

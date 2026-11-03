@@ -1582,6 +1582,8 @@ test('Progressive More About Business: Snapshot Pro and Smart Haul email the age
     const telematics = byQ(p, '117');
     assert.deepEqual([telematics.field, telematics.whenShown, telematics.source, telematics.value], ['TelematicsInput.MandatoryExistingDevices', TELEMATICS, 'derived', usesEld], String(usesEld));
     assert.equal(telematics.note === null, usesEld !== null, String(usesEld));
+    // Blank: the agent's alone, never the AI assistant's (a client fact).
+    assert.equal(telematics.manualOnly, usesEld === null, String(usesEld));
     const dashcam = byQ(p, '13B');
     assert.deepEqual([dashcam.field, dashcam.whenShown, dashcam.source, dashcam.value, dashcam.manualOnly], ['TelematicsInput.MandatoryExistingDevices', DASHCAM, 'fact', null, true], String(usesEld));
     assert.match(dashcam.note, /dashcam/i);
