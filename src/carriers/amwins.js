@@ -53,6 +53,7 @@ import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold, insurerTenu
 import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
 import { driverExcluded, ownerRowExcluded, owner, ownerDobNote, HAZ_HAUL } from '../util.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
+import { EXPEDITING_OR_GENERAL_FREIGHT, namesExpeditingOrGeneralFreight } from '../answers/classes.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -115,10 +116,9 @@ const establishedSource = (r) => (r.applicant.yearEstablished == null ? 'standar
 // Expediters and general freight haulers are 484122 (general freight trucking, long-distance,
 // LTL), nature of business TRANSPORTATION, usage FOR HIRE and the for-hire description. Any other
 // business class is the agent's for all four (2026-10-09; review mode covers its standards).
-// One pattern for these answers and the review-mode gate (supportedClasses): a class it doesn't
-// match fills in review mode, so a "Freight Hauler" of furniture gets both the notes and the review.
-const FREIGHT = /expedit|general\s*freight/i;
-const isFreight = (r) => FREIGHT.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
+// One pattern for these answers and the review-mode gate (supportedClasses, answers/classes.js): a
+// class it doesn't match fills in review mode, so a "Freight Hauler" of furniture gets both the notes and the review.
+const isFreight = namesExpeditingOrGeneralFreight;
 const freightNote = (what) => (r) => (isFreight(r) ? null : `${what} for a ${r.operations.businessClass || 'business of this class'} isn't known: answer it yourself.`);
 const classSearch = (r) => (isFreight(r) ? '484122' : null);
 // AmWINS lists several results for 484122: the one TNI picks, in full.
@@ -465,7 +465,7 @@ export const amwins = {
   // The business classes these rules were written and checked for (expediters and general freight
   // haulers), as isFreight reads them: the class or what they haul names expediting or general
   // freight (a missing class is still review mode).
-  supportedClasses: [{ re: FREIGHT, whatHaul: true }],
+  supportedClasses: [{ re: EXPEDITING_OR_GENERAL_FREIGHT, whatHaul: true }],
   // Import Data right after the VIN list is filled, before the vehicle boxes, which it fills.
   actions: [
     ...[1, 2, 3].map(/** @returns {CarrierAction} */ (index) => ({ id: `addDriver${index}`, text: '^add driver$',

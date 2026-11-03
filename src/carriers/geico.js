@@ -50,6 +50,7 @@
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from '../util.js';
 import { STANDARDS, usd } from '../standards.js';
+import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler } from '../answers/classes.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { ownerDrives, ownerDrivesSaid, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
@@ -183,15 +184,15 @@ const describeNote = (what) => (r) => `${what} is yours to pick${HAULED(r) ? ` (
 // classes TNI's GEICO standards were set for (supportedClasses), and For Hire Trucking, then Other
 // For-Hire Trucking, on Business Class & USDOT (TNI, 2026-10-21: "that's the equivalent of
 // Expediter and General Freight Hauler").
-const EXPEDITER_CLASS = /expedit/i;
-const FOR_HIRE_CLASSES = [EXPEDITER_CLASS, /^(?:general\s+)?freight\s+haul(?:er|ing)$/i];
-const forHire = (r) => FOR_HIRE_CLASSES.some((re) => re.test(String(r.operations.businessClass ?? '').trim()));
+// The patterns are answers/classes.js's.
+const FOR_HIRE_CLASSES = [EXPEDITER, FREIGHT_HAULER];
+const forHire = (r) => isExpediter(r) || isFreightHauler(r);
 const describeSource = (r) => (forHire(r) ? 'standard' : 'derived');
 // TNI, 2026-11-03 (W45-04; an IN agent's quote ended on Expediters): where GEICO doesn't offer Other
 // For-Hire Trucking, an expediter's more detailed description is Expediters, else General Freight
 // (`choiceAliases`, in order), else the agent's. A freight hauler's has no fallback.
 // The same expediter test as forHire's, so the fallback never reaches a class the rule doesn't answer.
-const expediterDescriptions = (r) => (EXPEDITER_CLASS.test(String(r.operations.businessClass ?? '').trim()) ? ['Expediters', 'General Freight'] : []);
+const expediterDescriptions = (r) => (isExpediter(r) ? ['Expediters', 'General Freight'] : []);
 
 // The first line of the intake's notes (the claims box's other lines, the Additional Notes box)
 // these words are in, cut short: what makes a TNI standard below the agent's, quoted.
