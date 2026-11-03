@@ -143,14 +143,59 @@ export function vinProblem(vin) {
   return vin[8] === check ? null : 'fails the check-digit test (likely a typo)';
 }
 
-const STREET_SUFFIX = new Set(['st', 'street', 'ave', 'av', 'avenue', 'rd', 'road', 'dr', 'drive', 'ln', 'lane', 'ct', 'court', 'cir', 'ci', 'circle', 'blvd', 'boulevard', 'way', 'pl', 'place', 'ter', 'terrace', 'pkwy', 'parkway', 'hwy', 'highway', 'trl', 'trail', 'loop', 'sq', 'pike', 'tpke', 'cv', 'cove', 'xing', 'plz', 'aly', 'row', 'run']);
+const STREET_SUFFIX = new Set(['st', 'street', 'ave', 'av', 'avenue', 'rd', 'road', 'dr', 'drive', 'ln', 'lane', 'ct', 'court', 'cir', 'ci', 'circle', 'blvd', 'boulevard', 'way', 'pl', 'place', 'ter', 'terrace', 'pkwy', 'parkway', 'hwy', 'highway', 'trl', 'trail', 'loop', 'sq', 'pike', 'tpke', 'cv', 'cove', 'xing', 'plz', 'aly', 'row', 'run',
+  // W45-03 (an agent's VA address lost its city): street types the split didn't know.
+  'ridge', 'rdg', 'point', 'pt', 'crossing', 'bend', 'pass', 'path', 'walk', 'crescent', 'cres', 'hollow', 'holw', 'landing', 'lndg', 'trace', 'trce',
+  'hill', 'hills', 'glen', 'park', 'ext', 'route', 'rte', 'rt']);
 const DIRECTIONAL = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw', 'north', 'south', 'east', 'west']);
 const UNIT_WORD = /^(apt|apartment|unit|ste|suite|lot|bldg|building|rm|room|trlr|#)\.?$/i;
+// The states written out ("North Carolina"), longest first, as one alternation. Built on first use:
+// util.js, which holds STATES, imports this module too, so neither reads the other at load.
+let stateNames = null;
+const statesWrittenOut = () => {
+  if (!stateNames) {
+    const names = Object.entries(STATES).map(([code, name]) => [name.toLowerCase(), code]);
+    stateNames = { names, re: names.map(([name]) => name).sort((a, b) => b.length - a.length).map((name) => name.replace(/\s+/g, '\\s+')).join('|') };
+  }
+  return stateNames;
+};
+const ZIP = String.raw`(\d{5})(?:-?(\d{4}))?(?![0-9])`;
+const zipOf = (five, four) => (four ? `${five}-${four}` : five);
+
+// Where the state and ZIP sit at the end of an address, tried in turn (W45-03): `rest` is what comes
+// before them, `sure` false for the shapes the agent should confirm, `junk` true when letters after
+// the ZIP were dropped (a county). A city run together with its state ("HENRICOVA 23228") is
+// `joined`: nothing is taken from it (TNI, 2026-11-03: the agent's to fix).
+function stateAndZip(body) {
+  const code = (c) => (STATES[c.toUpperCase()] ? c.toUpperCase() : null);
+  // "… KY 41011", "… KY, 41011", "… KY41011", and letters after the ZIP.
+  let m = body.match(new RegExp(String.raw`^(.*?)[,\s]+([A-Za-z]{2})\.?[,\s]*${ZIP}(\s*[A-Za-z].*)?$`));
+  if (m && code(m[2])) return { rest: m[1], state: code(m[2]), zip: zipOf(m[3], m[4]), sure: true, junk: !!m[5] };
+  // "… 41011 KY": the ZIP first.
+  m = body.match(new RegExp(String.raw`^(.*?)[,\s]+${ZIP}[,\s]+([A-Za-z]{2})\.?$`));
+  if (m && code(m[4])) return { rest: m[1], state: code(m[4]), zip: zipOf(m[2], m[3]), sure: false, junk: false };
+  // "… Kentucky 41011", "… North Carolina", with or without the ZIP.
+  const { names, re } = statesWrittenOut();
+  m = body.match(new RegExp(String.raw`^(.*?)[,\s]+(${re})\.?(?:[,\s]*${ZIP}(\s*[A-Za-z].*)?)?$`, 'i'));
+  if (m && m[1]) {
+    const name = m[2].toLowerCase().replace(/\s+/g, ' ');
+    return { rest: m[1], state: names.find(([n]) => n === name)[1], zip: m[3] ? zipOf(m[3], m[4]) : null, sure: false, junk: !!m[5] };
+  }
+  // "… Covington, KY": no ZIP. NE is a street's direction more often than Nebraska here.
+  m = body.match(/^(.*?)[,\s]+([A-Za-z]{2})\.?$/);
+  if (m && code(m[2]) && m[2].toUpperCase() !== 'NE') return { rest: m[1], state: code(m[2]), zip: null, sure: false, junk: false };
+  // "… HENRICOVA 23228": no state of its own, but the word before the ZIP ends in a state's code.
+  m = body.match(new RegExp(String.raw`^.*?[,\s]+[A-Za-z]{3,}([A-Za-z]{2})\.?[,\s]*${ZIP}`));
+  if (m && code(m[1])) return { joined: true };
+  return null;
+}
 
 // Splits a one-line US address. `confident` is false when there were no commas and the city had
-// to be inferred from where the street part seems to end, or when trailing ZIP junk was dropped.
-// A directional glued to the city ("SWCARTERSVILLE") stays in the city for the agent to confirm:
-// without a list of cities it can't be told from NEWARK or SEATTLE (TNI, 2026-10-27).
+// to be inferred from where the street part seems to end, when trailing ZIP junk was dropped, or
+// when the state was written out, came after the ZIP or had no ZIP (W45-03). A directional glued to
+// the city ("SWCARTERSVILLE") stays in the city for the agent to confirm: without a list of cities
+// it can't be told from NEWARK or SEATTLE (TNI, 2026-10-27). A city run together with its state
+// ("HENRICOVA") is `joined`, and nothing is split: the agent's (TNI, 2026-11-03).
 export function parseAddress(raw) {
   const s = clean(raw);
   if (s == null) return null;
@@ -158,29 +203,36 @@ export function parseAddress(raw) {
   // What follows the ZIP: a comma or period ("…, MN 55447,"), the country ("…, MN 55447, USA"), or
   // leftover text the form glued on (a county: "… 30120-5877BARTOW"; TNI, 2026-10-27).
   const body = s.replace(/[\s,.;]+(?:(?:USA|U\.S\.A\.?|US|U\.S\.?|United States(?: of America)?)[\s,.;]*)?$/i, '');
-  const m = body.match(/^(.*?)[,\s]+([A-Za-z]{2})\.?[,\s]+(\d{5})(?:-?(\d{4}))?(?![0-9])(?:\s*[A-Za-z].*)?$/);
-  if (!m || !STATES[m[2].toUpperCase()]) return out;
-  out.state = m[2].toUpperCase();
-  out.zip = m[4] ? `${m[3]}-${m[4]}` : m[3];
-  // Trailing letters after the ZIP were ignored (county / leftover).
-  const zipEnd = body.search(/\b\d{5}(?:-?\d{4})?(?![0-9])/);
-  const afterZip = zipEnd >= 0 ? body.slice(zipEnd).replace(/^\d{5}(?:-?\d{4})?/, '') : '';
-  const repaired = /[A-Za-z]/.test(afterZip);
-  const rest = m[1].replace(/,\s*$/, '');
+  const end = stateAndZip(body);
+  if (!end) return out;
+  if (end.joined) return { ...out, joined: true };
+  out.state = end.state;
+  out.zip = end.zip;
+  const repaired = end.junk || !end.sure;
+  const rest = end.rest.replace(/,\s*$/, '');
   let streetPart = rest;
   if (rest.includes(',')) {
     const parts = rest.split(',').map((p) => p.trim()).filter(Boolean);
+    // "4500, Oak Ridge Rd, …": a house number written apart from its street.
+    if (parts.length > 2 && /^\d+[A-Za-z]?$/.test(parts[0])) parts.splice(0, 2, `${parts[0]} ${parts[1]}`);
     out.city = parts.pop() ?? null;
     streetPart = parts.join(', ');
     out.confident = parts.length > 0;
   } else {
     const t = rest.split(/\s+/);
+    const suffix = (i) => STREET_SUFFIX.has(String(t[i] ?? '').toLowerCase().replace(/\.$/, ''));
+    const saint = (i) => /^ste?\.?$/i.test(t[i] ?? '');
     let cut = -1;
     for (let i = 1; i < t.length - 1; i++) {
       if (UNIT_WORD.test(t[i])) { cut = i + 1; break; }
       if (/^#\w+/.test(t[i])) { cut = i; break; }
-      if (cut < 0 && STREET_SUFFIX.has(t[i].toLowerCase().replace(/\.$/, ''))) {
-        cut = DIRECTIONAL.has(t[i + 1]?.toLowerCase()) ? i + 1 : i;
+      // The street's type, unless another follows it ("Court St", "Oak Ridge Rd"); "Main St St
+      // Louis" ends at the first St.
+      if (cut < 0 && suffix(i) && !(suffix(i + 1) && !(saint(i) && saint(i + 1)))) {
+        let end = i;
+        // A numbered route or county road: "Hwy 60", "County Rd 12".
+        if (/^\d+[A-Za-z]?$/.test(t[end + 1] ?? '')) end++;
+        cut = DIRECTIONAL.has(t[end + 1]?.toLowerCase()) ? end + 1 : end;
       }
     }
     if (cut >= 0 && cut < t.length - 1) {
@@ -949,11 +1001,21 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // --- Garaging address -----------------------------------------------------------------------
   const addr = parseAddress(raw.garaging_address);
   if (addr) {
-    const { confident, ...parts } = addr;
+    const { confident, joined, ...parts } = addr;
     record.garaging = parts;
-    if (!addr.state || !addr.zip) check('address.unparsed', 'garaging.street', `Couldn't split "${txt('garaging_address')}". Fill in street, city, state and ZIP.`);
-    else if (!addr.city) check('address.no-city', 'garaging.city', `Couldn't find the city in "${txt('garaging_address')}".`);
-    else if (!confident) check('address.no-commas', 'garaging.city', `Split an address with no commas: street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}". Confirm.`);
+    // A city run together with its state ("HENRICOVA 23228"): nothing split, the agent's (TNI, 2026-11-03).
+    if (joined) check('address.city-state-joined', 'garaging.city', `The city and state look run together in "${txt('garaging_address')}". Fill in street, city, state and ZIP.`);
+    else if (!addr.state) check('address.unparsed', 'garaging.street', `Couldn't split "${txt('garaging_address')}". Fill in street, city, state and ZIP.`);
+    else {
+      const asSplit = `street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}", state ${addr.state}`;
+      if (!addr.city) check('address.no-city', 'garaging.city', `Couldn't find the city in "${txt('garaging_address')}".`);
+      if (!addr.zip) check('address.no-zip', 'garaging.zip', `No ZIP in "${txt('garaging_address')}"${addr.city ? `, split as ${asSplit}` : ''}. Fill in the ZIP${addr.city ? ' and confirm the rest' : ''}.`);
+      else if (addr.city && !confident) {
+        check('address.no-commas', 'garaging.city', String(txt('garaging_address')).includes(',')
+          ? `Split "${txt('garaging_address')}" as ${asSplit}. Confirm.`
+          : `Split an address with no commas: street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}". Confirm.`);
+      }
+    }
   } else {
     record.garaging = { street: null, unit: null, city: null, state: null, zip: null };
     check('address.missing', 'garaging.street', 'No garaging address on the form.');

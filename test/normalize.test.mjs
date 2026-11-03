@@ -388,6 +388,67 @@ test('helpers', () => {
   assert.equal(parseAddress('100 Main St, Westminster, MD 21157').city, 'Westminster');
 });
 
+// W45-03 (agents' IN, OH, VA and SC intakes of 2026-11-02: 7 of 9 garaging addresses had no commas,
+// one wasn't split at all and one lost its city). Commas anywhere or nowhere, a state written out, a
+// ZIP glued to the state, missing, or before the state, and street types the split didn't know. A
+// city run together with its state ("HENRICOVA") is never pulled apart: the agent's (TNI, 2026-11-03).
+test('garaging address shapes: commas anywhere, a state written out, a ZIP glued, missing or first, more street types (W45-03)', () => {
+  const split = (a) => (({ street, unit, city, state, zip }) => ({ street, unit, city, state, zip }))(parseAddress(a));
+  const MAIN = { street: '4500 Oak Ridge Rd', unit: null, city: 'Henrico', state: 'VA', zip: '23228' };
+  for (const a of ['4500 Oak Ridge Rd, Henrico, VA 23228', '4500 Oak Ridge Rd Henrico VA 23228', '4500 Oak Ridge Rd, Henrico VA 23228',
+    '4500 Oak Ridge Rd Henrico, VA 23228', '4500 Oak Ridge Rd, Henrico, VA, 23228', '4500 Oak Ridge Rd,Henrico,VA 23228',
+    '4500, Oak Ridge Rd, Henrico, VA 23228', '4500 Oak Ridge Rd, , Henrico, VA 23228', '4500 Oak Ridge Rd Henrico VA23228',
+    '4500 Oak Ridge Rd Henrico, VA, 23228, USA']) {
+    assert.deepEqual(split(a), MAIN, a);
+  }
+  // The state written out, one word or two; the ZIP before the state; no ZIP. Each is a check to confirm.
+  for (const [a, want] of [
+    ['12 Elm St Covington Kentucky 41011', { street: '12 Elm St', unit: null, city: 'Covington', state: 'KY', zip: '41011' }],
+    ['12 Elm St, Covington, Kentucky, 41011', { street: '12 Elm St', unit: null, city: 'Covington', state: 'KY', zip: '41011' }],
+    ['9 Pine Ave, Raleigh, North Carolina 27601', { street: '9 Pine Ave', unit: null, city: 'Raleigh', state: 'NC', zip: '27601' }],
+    ['12 Elm St Covington 41011 KY', { street: '12 Elm St', unit: null, city: 'Covington', state: 'KY', zip: '41011' }],
+    ['12 Elm St, Covington, KY', { street: '12 Elm St', unit: null, city: 'Covington', state: 'KY', zip: null }],
+    ['12 Elm St Covington Kentucky', { street: '12 Elm St', unit: null, city: 'Covington', state: 'KY', zip: null }],
+  ]) {
+    assert.deepEqual(split(a), want, a);
+    assert.equal(parseAddress(a).confident, false, a);
+  }
+  // Street types the split didn't know, a numbered route or county road, and two suffixes in a row.
+  for (const [a, street, city] of [
+    ['4500 Oak Ridge Henrico VA 23228', '4500 Oak Ridge', 'Henrico'],
+    ['77 Harbor Point Annapolis MD 21401', '77 Harbor Point', 'Annapolis'],
+    ['5 Mill Crossing Dayton OH 45402', '5 Mill Crossing', 'Dayton'],
+    ['1234 Hwy 60 W Morehead KY 40351', '1234 Hwy 60 W', 'Morehead'],
+    ['880 County Rd 12 Lima OH 45801', '880 County Rd 12', 'Lima'],
+    ['31 Route 9 Freehold NJ 07728', '31 Route 9', 'Freehold'],
+    ['123 Court St Springfield OH 45501', '123 Court St', 'Springfield'],
+    ['100 Main St St Louis MO 63101', '100 Main St', 'St Louis'],
+  ]) {
+    assert.deepEqual([split(a).street, split(a).city], [street, city], a);
+  }
+  // Earlier shapes keep their split.
+  assert.deepEqual(split('9 Oak Ave N Fort Worth TX 76102'), { street: '9 Oak Ave N', unit: null, city: 'Fort Worth', state: 'TX', zip: '76102' });
+  assert.deepEqual(split('100 Main St Apt 4, Dover, DE 19901'), { street: '100 Main St', unit: 'Apt 4', city: 'Dover', state: 'DE', zip: '19901' });
+  // A city run together with its state: nothing is guessed, and the address is the agent's to fix.
+  for (const a of ['4500 Oak Ridge Rd HENRICOVA 23228', '4500 Oak Ridge Rd, HENRICOVA, 23228', '12 Elm St COVINGTONKY 41011']) {
+    const p = parseAddress(a);
+    assert.deepEqual([p.city, p.state, p.zip, p.joined], [null, null, null, true], a);
+  }
+});
+
+test('garaging address checks: a run-together city and state, no ZIP, a guessed split (W45-03)', () => {
+  const codes = (address) => normalizeIntake({ ...raw, garaging_address: address }, { today: new Date('2026-09-30') }).warnings
+    .filter((w) => w.code.startsWith('address.')).map((w) => w.code);
+  assert.deepEqual(codes('4500 Oak Ridge Rd, Henrico, VA 23228'), []);
+  assert.deepEqual(codes('4500 Oak Ridge Rd HENRICOVA 23228'), ['address.city-state-joined']);
+  assert.deepEqual(codes('12 Elm St, Covington, KY'), ['address.no-zip']);
+  assert.deepEqual(codes('12 Elm St Covington Kentucky 41011'), ['address.no-commas']);
+  assert.deepEqual(codes('PO Box 12 Somewhere'), ['address.unparsed']);
+  const joined = normalizeIntake({ ...raw, garaging_address: '4500 Oak Ridge Rd HENRICOVA 23228' }, { today: new Date('2026-09-30') });
+  assert.deepEqual([joined.record.garaging.city, joined.record.garaging.state, joined.record.garaging.zip], [null, null, null]);
+  assert.match(joined.warnings.find((w) => w.code === 'address.city-state-joined').msg, /run together/);
+});
+
 test('plan resolves the chosen driver and vehicle', () => {
   const plan = buildPlan(record, carrierForUrl('https://www.foragentsonly.com/quote'), { drivers: 1, vehicles: 1 });
   const step = (p) => plan.find((s) => s.path === p);
