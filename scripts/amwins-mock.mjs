@@ -17,11 +17,13 @@ import { chromium } from 'playwright';
 import { buildPlan } from '../src/plan.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { assertReportResolutions } from '../test/resolution-check.mjs';
+import { kitCode } from './lib/kit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
 // AmWINS' page adapter goes in before the engine, as the side panel injects it (`pageAdapter`).
-const PAGEKIT = ['field-key.js', 'carriers/amwins.js', 'pagekit.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')).join('\n');
+// The engine is built from src/kit/ (scripts/lib/kit.mjs), as the package does it.
+const PAGEKIT = [...['field-key.js', 'carriers/amwins.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')), await kitCode()].join('\n');
 
 // A synthetic client like the recorded quotes: an expediter with box trucks, no company name, and
 // (as on those intakes) no marital status, so the agent answers it here (AGENT_ANSWERS).

@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile } from '../scripts/lib/package.mjs';
+import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile } from '../scripts/lib/package.mjs';
+import { kitCode } from '../scripts/lib/kit.mjs';
 
 const read = (f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 
-test('the page scripts are stamped with a build that follows their content', () => {
-  const texts = STAMPED.map(read);
+test('the page scripts are stamped with a build that follows their content', async () => {
+  // field-key.js as it is, and the fill engine as built (scripts/lib/kit.mjs).
+  const texts = [...STAMPED.map(read), await kitCode()];
   const build = buildId(texts);
   assert.match(build, /^[0-9a-f]{12}$/);
   assert.equal(buildId(texts), build, 'the same files, the same build');
@@ -46,6 +48,11 @@ test('the panel build stamps usage-log.js, and fails if the build never read it'
 test('the package leaves out the panel files the build bundles, and keeps its sounds and images', () => {
   for (const f of ['sidepanel/sidepanel.html', 'sidepanel/sidepanel.css', 'sidepanel/usage-log.js', 'sidepanel/panel/core.js', 'sidepanel\\panel\\fill.js']) assert.ok(bundledPanelFile(f), f);
   for (const f of ['sidepanel/sounds/quote-done.mp3', 'sidepanel/assets/raters/geico.gif', 'sidepanel/logo.png', 'src/content/pagekit.js', 'background.js', 'lib/pdf.min.mjs']) assert.ok(!bundledPanelFile(f), f);
+});
+
+test('the package leaves out the fill engine\'s source, which it builds into src/content/pagekit.js', () => {
+  for (const f of ['src/kit', 'src/kit/pagekit.js', 'src\\kit\\pagekit.js']) assert.ok(kitSourceFile(f), f);
+  for (const f of ['src/content/pagekit.js', 'src/content/field-key.js', 'src/plan.js', 'src/kits.js']) assert.ok(!kitSourceFile(f), f);
 });
 
 test('the unpacked copy has a fixed extension ID; the store manifest stays without a key', () => {

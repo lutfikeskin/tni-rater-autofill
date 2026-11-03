@@ -13,10 +13,14 @@ import { fieldChangeEvent, redactor } from '../src/usage.js';
 import { assistContextKey } from '../src/ai/common.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
 import { assertReportResolutions } from './resolution-check.mjs';
+import { kitCode } from '../scripts/lib/kit.mjs';
 
 // This is a deliberately small DOM/ExtJS replay.  It exercises the injected MAIN-world
 // script itself, without a browser session, real quote data, or customer identifiers.
-const PAGEKIT = fs.readFileSync(new URL('../src/content/pagekit.js', import.meta.url), 'utf8');
+// The fill engine as the extension injects it: built from src/kit/ (scripts/lib/kit.mjs).
+const PAGEKIT = await kitCode();
+// Its source, for the few checks that read how it is written.
+const PAGEKIT_SOURCE = fs.readFileSync(new URL('../src/kit/pagekit.js', import.meta.url), 'utf8');
 const FIELD_KEY = fs.readFileSync(new URL('../src/content/field-key.js', import.meta.url), 'utf8');
 // A carrier's page adapter, loaded before the kit as the panel does it (harness `adapter`).
 const ADAPTERS = Object.fromEntries(['progressive', 'geico', 'amwins'].map((id) => [id, fs.readFileSync(new URL(`../src/content/carriers/${id}.js`, import.meta.url), 'utf8')]));
@@ -984,7 +988,7 @@ test('a TNI standard gets its own mark, an intake answer the filled green, and a
 
 test('the side panel key shows the page marks in the page kit colors', () => {
   const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
-  const colors = [...PAGEKIT.match(/const COLORS = \{([^}]*)\}/)[1].matchAll(/(\w+): '(#[0-9a-f]{6})'/gi)];
+  const colors = [...PAGEKIT_SOURCE.match(/const COLORS = \{([^}]*)\}/)[1].matchAll(/(\w+): '(#[0-9a-f]{6})'/gi)];
   assert.deepEqual(colors.map(([, status]) => status).sort(), ['agent', 'ai', 'failed', 'filled', 'needs', 'standard']);
   for (const [, status, hex] of colors) {
     assert.equal(css.match(new RegExp(`--mark-${status}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1].toLowerCase(), hex.toLowerCase(), status);
@@ -8296,12 +8300,12 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.equal(seen[0].phase, null, 'answering');
   assert.equal(h.kit.progress(), null, 'the fill is over');
   // Each long wait names itself before it begins.
-  assert.match(PAGEKIT, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
-  assert.match(PAGEKIT, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
-  assert.match(PAGEKIT, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
-  assert.match(PAGEKIT, /if \(helperClicked\) phase\('helper', pendingAction\?\.label \?\? report\.actions\.at\(-1\)\?\.text \?\? null\);/);
-  assert.match(PAGEKIT, /report\.rounds = round \+ 1;\s+phase\(null\);/, 'a new round answers again');
-  assert.match(PAGEKIT, /phase: running\.phase \?\? null, itemsAt:/);
+  assert.match(PAGEKIT_SOURCE, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
+  assert.match(PAGEKIT_SOURCE, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
+  assert.match(PAGEKIT_SOURCE, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
+  assert.match(PAGEKIT_SOURCE, /if \(helperClicked\) phase\('helper', pendingAction\?\.label \?\? report\.actions\.at\(-1\)\?\.text \?\? null\);/);
+  assert.match(PAGEKIT_SOURCE, /report\.rounds = round \+ 1;\s+phase\(null\);/, 'a new round answers again');
+  assert.match(PAGEKIT_SOURCE, /phase: running\.phase \?\? null, itemsAt:/);
 });
 
 // Review of PR #170: the phase test read the kit's source. Run: as the fill begins, progress() says

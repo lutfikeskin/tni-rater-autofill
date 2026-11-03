@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
+import { kitCode } from './lib/kit.mjs';
 import { normalizeIntake } from '../src/normalize.js';
 import { buildPlan } from '../src/plan.js';
 import { amwins } from '../src/carriers/amwins.js';
@@ -27,7 +28,9 @@ if (!selected.length || carriers.some(c => !['amwins', 'progressive'].includes(c
 const workers = Math.max(1, Math.min(8, Number(arg('workers', '4'))));
 fs.mkdirSync(out, { recursive: true });
 // The engine with a carrier's page adapter before it, as the side panel injects them (`pageAdapter`).
-const kitFor = (carrier) => ['field-key.js', `carriers/${carrier}.js`, 'pagekit.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')).join('\n');
+// The engine is built from src/kit/ (scripts/lib/kit.mjs), as the package does it.
+const KIT = await kitCode();
+const kitFor = (carrier) => [...['field-key.js', `carriers/${carrier}.js`].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')), KIT].join('\n');
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.css': 'text/css' };
 const server = http.createServer((req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);

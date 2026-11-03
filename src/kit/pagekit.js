@@ -1,4 +1,5 @@
-// Injected into rater pages (every frame) by the side panel. Classic script, no imports.
+// Injected into rater pages (every frame) by the side panel, as one classic script with no imports:
+// scripts/lib/kit.mjs builds it from this source (the package writes it to src/content/pagekit.js).
 // Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, readBack, present, receipt, aiBanner, capture, clear, … }.
 //
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the

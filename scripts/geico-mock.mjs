@@ -49,12 +49,14 @@ import { knownStep } from '../src/usage.js';
 import { advanceFor, unitListSpecs, unitToAdd } from '../src/units.js';
 import { stopScreen } from '../src/carriers.js';
 import { assertReportResolutions } from '../test/resolution-check.mjs';
+import { kitCode } from './lib/kit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
 const source = (file) => fs.readFileSync(path.join(root, 'src/content', file), 'utf8');
 // GEICO's page adapter goes in before the engine, as the side panel injects it (`pageAdapter`).
-const KIT = ['field-key.js', 'carriers/geico.js', 'pagekit.js'].map(source).join('\n');
+// The engine is built from src/kit/ (scripts/lib/kit.mjs), as the package does it.
+const KIT = [...['field-key.js', 'carriers/geico.js'].map(source), await kitCode()].join('\n');
 // In the page's own world, as the side panel injects it for GEICO (pressInPage): the buttons the kit
 // presses are clicked there (W43-44).
 const PRESS = source('page-press.js');

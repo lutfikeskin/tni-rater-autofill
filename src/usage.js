@@ -204,7 +204,7 @@ export function matchIntake(record, typed) {
 
 // One word (a name word such as "Ann", or a city) is replaced only as a whole word, so "Ann" leaves
 // "Annual" and "Car" leaves "Cargo" alone; any other term (a full name, date of birth, phone, VIN,
-// street) is replaced wherever it appears exactly as written. src/content/pagekit.js `capture`
+// street) is replaced wherever it appears exactly as written. src/kit/pagekit.js `capture`
 // builds the same patterns.
 const ONE_WORD = /^[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*$/u;
 function redactionPattern(term) {
