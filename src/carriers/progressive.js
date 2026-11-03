@@ -38,7 +38,7 @@ import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUnd
 import { owner, ownerDobNote, HAZ_HAUL } from '../util.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreightHauler } from '../answers/classes.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
-import { garagingNamed } from '../answers/state.js';
+import { garagingIs } from '../answers/state.js';
 import { recentModel, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
 import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
 
@@ -123,10 +123,10 @@ const TRAILER_PAGES = ['MostCommonTrailers', 'AddTrailer'];
 const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
-const isFlorida = (r) => garagingNamed(r, 'FL');
-const isArkansas = (r) => garagingNamed(r, 'AR');
-const isTexas = (r) => garagingNamed(r, 'TX');
-const isMaryland = (r) => garagingNamed(r, 'MD');
+const isFlorida = (r) => garagingIs(r, 'FL');
+const isArkansas = (r) => garagingIs(r, 'AR');
+const isTexas = (r) => garagingIs(r, 'TX');
+const isMaryland = (r) => garagingIs(r, 'MD');
 
 // A trailer's attached equipment: the intake's amount when it gives one (not "N/A" or 0), else
 // none (TNI standard: "Trailer has no equipment").

@@ -6,6 +6,7 @@ import { progressive } from '../src/carriers/progressive.js';
 import { owner } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
+import { parseEdit } from '../src/normalize.js';
 
 const baseRecord = () => ({
   applicant: {
@@ -1003,6 +1004,17 @@ test('AmWINS towing $75, rental $40 a day ($1,200), uninsured motorists Yes at $
     const s = plan.find(find);
     assert.deepEqual([s.value, s.source, s.standard], [value, 'standard', true], s.name);
   }
+});
+
+// TNI, 2026-11-03 (Karar 2): a garaging state typed as a name in the panel is saved as its code
+// (parseEdit); Progressive's state rules read only the code, as GEICO's do.
+test('Progressive: a garaging state typed as "Florida" in the panel gets the Florida rules; a name left in the record doesn\'t', () => {
+  const record = baseRecord();
+  record.garaging.state = parseEdit('state', 'Florida');
+  assert.equal(record.garaging.state, 'FL');
+  assert.equal(byQ(buildPlan(record, progressive, {}), '1E8D').value, '$10k w/ $0 Deductible');
+  record.garaging.state = 'Florida';
+  assert.equal(byQ(buildPlan(record, progressive, {}), '1E8D').ignore, true, 'the name is not the code');
 });
 
 test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN lookup, PD-only and PIP not selected', () => {

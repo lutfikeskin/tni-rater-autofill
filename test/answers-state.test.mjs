@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { garagingIs, garagingNamed } from '../src/answers/state.js';
+import { garagingIs } from '../src/answers/state.js';
+import { parseEdit } from '../src/normalize.js';
 
 const at = (state) => ({ garaging: { state } });
 
-test('garagingIs takes the state code in any case, never its written-out name (GEICO)', () => {
+test('garagingIs takes the state code in any case, never its written-out name', () => {
   for (const s of ['TX', 'tx', ' Tx ']) assert.equal(garagingIs(at(s), 'TX'), true, s);
   for (const s of ['FL', 'fl', ' fl ']) assert.equal(garagingIs(at(s), 'FL'), true, s);
   for (const s of ['Texas', 'TEXAS', 'Fla.', 'OK', '', '  ', null, undefined]) assert.equal(garagingIs(at(s), 'TX'), false, String(s));
@@ -12,11 +13,13 @@ test('garagingIs takes the state code in any case, never its written-out name (G
   assert.equal(garagingIs({}, 'FL'), false);
 });
 
-test('garagingNamed takes the code or the written-out name in any case, nothing else (Progressive)', () => {
-  for (const [code, yes] of [['FL', ['FL', 'fl', 'Florida', 'FLORIDA', ' florida ']], ['TX', ['TX', 'tx', 'Texas', 'texas']],
-    ['AR', ['AR', 'Arkansas']], ['MD', ['md', 'MARYLAND']]]) {
-    for (const s of yes) assert.equal(garagingNamed(at(s), code), true, `${code} ${s}`);
+// TNI, 2026-11-03 (Karar 2): a state the agent edits in the panel is saved as its code, so every
+// carrier's state rules, which read only the code, see a typed name too.
+test('a state typed in the panel is saved as its code; text that isn\'t a state stays as written', () => {
+  for (const [typed, code] of [['Florida', 'FL'], [' florida ', 'FL'], ['FLORIDA', 'FL'], ['fl', 'FL'], ['New  York', 'NY'], ['Washington DC', 'DC'], ['texas', 'TX']]) {
+    assert.equal(parseEdit('state', typed), code, typed);
+    assert.equal(garagingIs(at(parseEdit('state', typed)), code), true, typed);
   }
-  for (const s of ['Fla.', 'Fla', 'Florida.', 'FL - Florida', 'TX', '', '  ', null]) assert.equal(garagingNamed(at(s), 'FL'), false, String(s));
-  assert.equal(garagingNamed({}, 'TX'), false);
+  assert.equal(parseEdit('state', 'Fla'), 'FLA', 'not a state: kept, upper-cased');
+  assert.equal(parseEdit('state', '  '), null);
 });

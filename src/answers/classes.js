@@ -5,8 +5,11 @@
 // match gets both the carrier's notes and review mode. The carriers' own answers and wording for
 // these classes stay in their files.
 //
-// Progressive and GEICO read the same classes; AmWINS reads a broader pattern. Unifying them (and
-// util.js's misspelling-tolerant GENERAL_FREIGHT) is TNI decision "Karar 1" in the refactor plan.
+// Progressive and GEICO read the same classes; AmWINS reads a broader pattern, on purpose, and they
+// stay apart (TNI, 2026-11-03: "Karar 1"). Progressive and GEICO have these classes in their own
+// business-class search; AmWINS' search doesn't, so there the extension picks General Freight
+// Trucking (NAICS 484122) and writes the real business type into the description as "Other for
+// hire trucking".
 
 // An expediter, or a freight hauler class ("Freight Hauler", "General Freight Hauling"): the classes
 // Progressive's for-hire and business-type answers were written for; GEICO lists the same.
