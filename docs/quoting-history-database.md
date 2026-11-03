@@ -380,7 +380,7 @@ The wording read: GEICO's "12 Month Total Premium: $… Due Today $… 10 Additi
 
 The warehouse has every reading in `quote_premiums`, and the last per quote and carrier, test runs left out, in `v_quote_premium`. **It is a quoted premium, never a bound one:** the carrier's figure on screen, before underwriting (on GEICO before the MVR and CLUE reports). Compare it with the printed quote on a few real quotes per carrier before trusting it.
 
-The whole feature can be removed as one piece: `src/premium.js`, its import and one call in `sidepanel/panel/coordinator.js` (`captureLayout`), `quote_premium` in `server/index.mjs`, and `quote_premiums` with `v_quote_premium` in [warehouse.mjs](../scripts/lib/warehouse.mjs).
+The whole feature can be removed as one piece (`src/rates.js` stays: the fill engine reads it too): `src/premium.js`, its import and one call in `sidepanel/panel/coordinator.js` (`captureLayout`), `quote_premium` in `server/index.mjs`, and `quote_premiums` with `v_quote_premium` in [warehouse.mjs](../scripts/lib/warehouse.mjs).
 
 ## Limits
 
@@ -428,4 +428,4 @@ The profile goes first: the warehouse can load all history whenever it arrives, 
 - [usage.js](../src/usage.js): `intakeSummary`, `fillEvents`, `fieldChangeEvent`, `redactor`; `intakeProfile` and `ID_LIKE` (#149).
 - [schema.js](../src/schema.js), [normalize.js](../src/normalize.js): the client record the profile reads.
 - [events.mjs](../scripts/lib/events.mjs), [signals.mjs](../scripts/lib/signals.mjs), [learn.mjs](../scripts/lib/learn.mjs): quotes, test runs, outcomes and final answers.
-- [pagekit.js](../src/kit/pagekit.js): `premiumReady`, `ratesStale`.
+- [pagekit.js](../src/kit/pagekit.js): `premiumReady`, `ratesStale`; [rates.js](../src/rates.js): `RATES_STALE`, the stale-rates test premium.js and the kit share.

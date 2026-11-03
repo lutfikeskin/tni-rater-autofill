@@ -3,9 +3,9 @@
 // agent (docs/intake-and-rules.md, "Resolution"). Built only from the fields a plan step or a fill
 // report item already has (source, standard, manualOnly, reviewRequired / review, note, warn), so
 // it always agrees with them. The panel, the AI and the usage log read it (resolutionOf below).
-// The page kit builds an item's the same way
-// (pagekit.js resolveItems, a classic script that can't import this), and test/resolution.test.mjs
-// holds both to the old fields.
+// The page kit builds an item's with itemResolution (src/kit/pagekit.js resolveItems; its build
+// takes this module in, so it has no imports), and test/resolution.test.mjs holds both to the old
+// fields.
 
 /** @import { FieldStep, FillItem, Resolution } from '../types.js' */
 
