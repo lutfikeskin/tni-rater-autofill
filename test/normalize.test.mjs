@@ -415,7 +415,7 @@ test('garaging address shapes: commas anywhere, a state written out, a ZIP glued
     assert.deepEqual(split(a), want, a);
     assert.equal(parseAddress(a).confident, false, a);
   }
-  for (const a of ['12 Elm St Omaha NE', '12 Elm St, NE']) assert.equal(parseAddress(a).state, null, a);
+  for (const a of ['12 Elm St Omaha NE', '12 Elm St, NE', '4500, Oak Ridge Rd, NE']) assert.equal(parseAddress(a).state, null, a);
   // Street types the split didn't know, a numbered route or county road, and two suffixes in a row.
   for (const [a, street, city] of [
     ['4500 Oak Ridge Henrico VA 23228', '4500 Oak Ridge', 'Henrico'],

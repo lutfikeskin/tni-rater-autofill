@@ -187,7 +187,12 @@ function stateAndZip(body) {
   // "… Covington, KY": no ZIP. NE is a street's direction more often than Nebraska ("12 Elm St NE",
   // "12 Elm St, NE"); only a comma-separated street, city and NE ("…, Omaha, NE") is the state.
   m = body.match(/^(.*?)([,\s]+)([A-Za-z]{2})\.?$/);
-  const nebraska = (m2) => m2[2].includes(',') && m2[1].includes(',');
+  const nebraska = (m2) => {
+    const parts = m2[1].split(',').map((p) => p.trim()).filter(Boolean);
+    // "4500, Oak Ridge Rd, NE": a house number written apart is still the street, not a city.
+    if (/^\d+[A-Za-z]?$/.test(parts[0] ?? '')) parts.shift();
+    return m2[2].includes(',') && parts.length > 1;
+  };
   if (m && code(m[3]) && (m[3].toUpperCase() !== 'NE' || nebraska(m))) return { rest: m[1], state: code(m[3]), zip: null, sure: false, junk: false };
   // "… HENRICOVA 23228": no state of its own, but the word before the ZIP ends in a state's code.
   m = body.match(new RegExp(String.raw`^.*?[,\s]+[A-Za-z]{3,}([A-Za-z]{2})\.?[,\s]*${ZIP}`));
