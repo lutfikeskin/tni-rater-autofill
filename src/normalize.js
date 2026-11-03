@@ -188,7 +188,8 @@ function stateAndZip(body) {
   // "12 Elm St, NE"); only a comma-separated street, city and NE ("…, Omaha, NE") is the state.
   m = body.match(/^(.*?)([,\s]+)([A-Za-z]{2})\.?$/);
   const nebraska = (m2) => {
-    const parts = m2[1].split(',').map((p) => p.trim()).filter(Boolean);
+    // "12 Elm St, Apt 4, NE": a unit isn't a city.
+    const parts = m2[1].split(',').map((p) => p.trim()).filter((p) => p && !UNIT_WORD.test(p.split(/\s+/)[0]) && !p.startsWith('#'));
     // "4500, Oak Ridge Rd, NE": a house number written apart is still the street, not a city.
     if (/^\d+[A-Za-z]?$/.test(parts[0] ?? '')) parts.shift();
     return m2[2].includes(',') && parts.length > 1;
