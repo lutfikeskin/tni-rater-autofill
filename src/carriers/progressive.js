@@ -30,7 +30,7 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity, carPartsMixedNote } from '../util.js';
+import { priorPolicyExpired, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity, carPartsMixedNote } from '../util.js';
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded } from '../util.js';
 import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitRaised,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
@@ -347,9 +347,18 @@ const BECA_RESULTS = { field: 'BECAInput.BusinessTypeLabel' };
 // expiration not passed (derived), and, TNI's assumption, whenever any box of an auto or untyped
 // policy is filled (TNI, 2026-10-26, W44-29: proof of prior insurance, 1-3 years; the Intake step
 // names the blank boxes). Nothing filled, no prior insurance or an expired policy: No, as before.
+// A General Liability, Cargo or Other policy is not auto insurance (TNI, 2026-10-26: not proof of
+// prior insurance), whatever its limit and date: alone it leaves the question the agent's, as on
+// GEICO (until 2026-11-03 its limit and date made it Yes, and its limit the current auto BI limit).
 const PRIOR_DATE = /^\d{2}\/\d{2}\/\d{4}$/;
-const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration && !priorPolicyExpired(r, p)) || priorInsuranceAssumed(r);
-const insuredSource = (r) => (currentlyInsured(r) && !r.priorInsurance?.some((p) => p.limit && PRIOR_DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p)) ? 'standard' : 'derived');
+const datedPolicy = (r, p) => !priorPolicyNotAuto(p) && p.limit && p.expiration && !priorPolicyExpired(r, p);
+const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => datedPolicy(r, p)) || priorInsuranceAssumed(r);
+const onlyNotAuto = (r) => !currentlyInsured(r) && priorPolicyNotAuto(r.priorInsurance?.[0]);
+const currentlyInsuredAnswer = (r) => (onlyNotAuto(r) ? null : currentlyInsured(r));
+const insuredSource = (r) => (onlyNotAuto(r) ? 'fact'
+  : currentlyInsured(r) && !r.priorInsurance?.some((p) => datedPolicy(r, p) && PRIOR_DATE.test(p.expiration ?? '')) ? 'standard' : 'derived');
+const insuredNote = (r) => (onlyNotAuto(r)
+  ? `The intake's current insurance is ${String(r.priorInsurance[0].type).trim().slice(0, 30)}, not an auto policy: answer whether the customer is currently insured yourself.` : null);
 // The current policy's limit and expiration date, asked once currently insured: a blank box (or a
 // remark in the date box) is the agent's, named, never typed.
 // The intake's current limit, unless it is the form's "Other" (a limit it doesn't list): that names
@@ -887,7 +896,7 @@ export const progressive = {
       { q: '58', tni: 'progressive.home-address', source: 'standard', field: 'PrimaryBusinessAddressInputNonShredded.AddressOptions', ask: 'Primary Business Address', name: 'Primary business address (first option)', kind: 'first-option', value: () => 'first option',
         firstNot: '^enter a different', unofferedNote: 'Progressive offers no business address to pick here: choose the Primary Business Address and enter it yourself, then click Verify Address.' },
       { q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
-      { tni: 'progressive.currently-insured', q: '81', source: insuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
+      { tni: 'progressive.currently-insured', q: '81', source: insuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsuredAnswer, note: insuredNote },
       // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer
       // currently insured ("more than a year is always Yes"); otherwise the agent's. Yes reveals the
       // current BI limit (95; live run 2026-10-10: left blank until the agent answered this).
