@@ -45,7 +45,7 @@ Each layer knows only the one below it, and a carrier's knowledge lives in that 
 | Layer | Holds | Where |
 | --- | --- | --- |
 | Intake | The PDF's fillable fields read and normalized into the client record | [intake.js](../src/intake.js), [normalize.js](../src/normalize.js), [schema.js](../src/schema.js) |
-| TNI rules | TNI's decisions for every carrier: the standard coverage amounts ([standards.js](../src/standards.js)), and the shared helpers that compute answers (the owner and their driver row, owner drives, no prior insurance, GL and trailer interchange requested) | [standards.js](../src/standards.js), [util.js](../src/util.js), the rulebook's [general part](../src/ai/rulebook/general.js) |
+| TNI rules | TNI's decisions for every carrier: the standard coverage amounts ([standards.js](../src/standards.js)), and the shared helpers that compute answers (the owner and their driver row, owner drives, no prior insurance, GL and trailer interchange requested, whether the garaging state is a given state) | [standards.js](../src/standards.js), [util.js](../src/util.js), [answers/state.js](../src/answers/state.js), the rulebook's [general part](../src/ai/rulebook/general.js) |
 | Carrier mapping | Which of the carrier's questions holds which answer, in its wording and options; its steps, helpers and stop pages | `src/carriers/<carrier>.js`, the rulebook's carrier part |
 | Plan | The mapping resolved for one client: one step per answer, with its source | [plan.js](../src/plan.js) |
 | Fill engine | Finds fields, fills, waits, re-reads and reports, for any page | [pagekit.js](../src/content/pagekit.js) |

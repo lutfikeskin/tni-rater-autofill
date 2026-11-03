@@ -50,6 +50,7 @@
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from '../util.js';
 import { STANDARDS, usd } from '../standards.js';
+import { garagingIs } from '../answers/state.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { ownerDrives, ownerDrivesSaid, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
@@ -504,7 +505,7 @@ const DEDUCTIBLE = `${usd(STANDARDS.deductible)} deductible`;
 // Texas lists only split limits for uninsured motorist bodily injury: there TNI's is $100,000/$300,000
 // (W43-33, TNI, 2026-10-21).
 const UM_SPLIT = '$100,000/$300,000';
-const texas = (r) => String(r.garaging?.state ?? '').trim().toUpperCase() === 'TX';
+const texas = (r) => garagingIs(r, 'TX');
 const UM_LIMIT = `${usd(STANDARDS.umCsl)} Combined Single Limit`;
 const PAY_PLAN = '11 Payments';
 
@@ -768,7 +769,7 @@ const liabilityNote = (r) => ntlNote(r) ?? (liabilityType(r) ? null
 // lists are the agent's elsewhere.
 const MED_PAY = usd(STANDARDS.medPay);
 const MED_PATH = 'geico.qMedicalPayments';
-const florida = (r) => String(r.garaging?.state ?? '').trim().toUpperCase() === 'FL';
+const florida = (r) => garagingIs(r, 'FL');
 const pipKept = (name) => ({ ignore: florida, source: (r) => (florida(r) ? null : 'fact'),
   emptyNote: `GEICO left ${name} empty: pick it yourself.` });
 
