@@ -3898,6 +3898,29 @@ test('a question whose wording carries a date is not flagged as reworded when th
 // KY live run, 2026-10-26 (W44-32): Progressive asked the defensive driver discount about an Armed
 // Forces course, with No pre-selected; the fill kept it but held Continue on a reworded check, and the
 // agent confirmed No. That wording is now one of the rule's: TNI's No, no check.
+// Agents' quotes on 0.9.26, 2026-11-02 (W45-01): Snapshot Pro and the telematics question were
+// unfamiliar and held Continue. Now Snapshot Pro is a named agent's question, telematics the
+// intake's ELD answer, and the same field asking about dashcams is never answered from the ELD.
+test('More About Business: telematics from the ELD box, Snapshot Pro and dashcams the agent\'s, none unfamiliar (W45-01)', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter', usesEld: true }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+  const plan = buildPlan(record, progressive).filter((s) => ['115', '117', '13B'].includes(s.q));
+  for (const [device, picked] of [['telematics device(s)', 'Yes'], ['dashcam(s)', null]]) {
+    const h = harness({ progressive: true, search: '?pageName=MoreAboutBusiness' });
+    const yesNo = (ref, question) => {
+      const radios = ['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } }));
+      h.document.body.append(radioGroup(question, ...radios));
+      return radios;
+    };
+    const snapshot = yesNo('TelematicsInput.EnrollInSnapshotProInd', 'Does the customer want to save 15% by participating in Snapshot Pro?');
+    const devices = yesNo('TelematicsInput.MandatoryExistingDevices', `Does the customer have ${device} in their vehicle(s)?`);
+    const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+    assert.equal(devices.find((r) => r.checked)?.value ?? null, picked, device);
+    assert.equal(snapshot.find((r) => r.checked)?.value ?? null, null, 'Snapshot Pro: the agent\'s');
+    assert.equal(report.unknown.length, 0, device);
+    assert.match([...report.noData, ...report.checks].map((x) => x.note).join(' '), /Snapshot Pro/, device);
+  }
+});
+
 test('the defensive driver discount asked about an Armed Forces course is TNI\'s No, not a reworded check (W44-32)', async () => {
   const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
   const plan = buildPlan(record, progressive).filter((s) => s.q === '299D');

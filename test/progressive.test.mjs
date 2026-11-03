@@ -1566,6 +1566,32 @@ test('defensive driver discount asked about an Armed Forces course: TNI\'s No, a
   }
 });
 
+// TNI, 2026-11-03, W45-01 (agents' IN/OH quotes on 0.9.26, 2026-11-02: More About Business held
+// Continue on three questions no rule knew): Snapshot Pro stays the agent's; Progressive's telematics
+// question is the intake's ELD answer, but the same field asking about dashcams stays the agent's;
+// the Smart Haul email is the agent's own address, never the client's.
+test('Progressive More About Business: Snapshot Pro and Smart Haul email the agent\'s, telematics from the ELD box (W45-01)', () => {
+  const TELEMATICS = { field: 'TelematicsInput.MandatoryExistingDevices', label: 'telematics', unit: null };
+  const DASHCAM = { field: 'TelematicsInput.MandatoryExistingDevices', label: 'dashcam', unit: null };
+  const plan = (usesEld) => buildPlan({ ...baseRecord(), operations: { ...baseRecord().operations, usesEld } }, progressive, {});
+  for (const usesEld of [true, false, null]) {
+    const p = plan(usesEld);
+    const snapshot = byQ(p, '115');
+    assert.deepEqual([snapshot.field, snapshot.source, snapshot.value, snapshot.manualOnly], ['TelematicsInput.EnrollInSnapshotProInd', 'fact', null, true]);
+    assert.match(snapshot.note, /Snapshot Pro/);
+    const telematics = byQ(p, '117');
+    assert.deepEqual([telematics.field, telematics.whenShown, telematics.source, telematics.value], ['TelematicsInput.MandatoryExistingDevices', TELEMATICS, 'derived', usesEld], String(usesEld));
+    assert.equal(telematics.note === null, usesEld !== null, String(usesEld));
+    const dashcam = byQ(p, '13B');
+    assert.deepEqual([dashcam.field, dashcam.whenShown, dashcam.source, dashcam.value, dashcam.manualOnly], ['TelematicsInput.MandatoryExistingDevices', DASHCAM, 'fact', null, true], String(usesEld));
+    assert.match(dashcam.note, /dashcam/i);
+    const email = byQ(p, '135');
+    assert.deepEqual([email.field, email.source, email.value, email.manualOnly], ['PolicyInput.SmartHaulEmail', 'fact', null, true]);
+    assert.match(email.note, /your own email/);
+    assert.doesNotMatch(String(email.value), /client@example\.test/);
+  }
+});
+
 // TNI, 2026-10-26, W44-32 (KY live run: Progressive's anti-theft list was unfamiliar and required,
 // with nothing selected, and the agent picked None; the maintainer: "If not selected automatically,
 // no"): the anti-theft device is Progressive's own choice (the VIN lookup's) when it made one, and
