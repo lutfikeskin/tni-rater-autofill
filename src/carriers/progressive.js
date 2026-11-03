@@ -36,6 +36,7 @@ import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
 import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 import { owner, ownerDobNote, HAZ_HAUL } from '../util.js';
+import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreightHauler } from '../answers/classes.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingNamed } from '../answers/state.js';
 
@@ -320,15 +321,10 @@ const interchangeLimitWarn = (r) => [interchangeLimitRaised(r, INTERCHANGE_LIMIT
 
 // Progressive's business type (and, for trucking, the type of trucker) for what the intake
 // calls the business. Expediters are "For Hire Trucking" / "Other For-Hire Trucking".
-// The classes the for-hire and business-type answers are written for; the same patterns gate
-// review mode (supportedClasses), so any other class gets both their notes and the review.
-const EXPEDITER = /expedit/i;
-const FREIGHT_HAULER = /^(?:general\s+)?freight\s+haul(?:er|ing)$/i;
-const isExpediter = (r) => EXPEDITER.test(r.operations.businessClass ?? '');
-const isFreightHauler = (r) => FREIGHT_HAULER.test((r.operations.businessClass ?? '').trim());
-const isGeneralFreight = (r) => isFreightHauler(r) && /general\s+freight/i.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
+// The classes the for-hire and business-type answers are written for (answers/classes.js); the
+// same patterns gate review mode (supportedClasses), so any other class gets both their notes and the review.
 const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHauler(r) ? 'General Freight Hauler' : (r.operations.businessClass ?? null);
-const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
+const businessAliases = (r) => isGeneralFreightHauler(r) ? ['General Freight Trucking'] : [];
 // Search-style business type (TNI, 2026-10-28: KY's Business Type Selection popup and LA's New
 // Customer search): for an expediter or a general freight hauler, General Freight Trucking first, For
 // Hire Trucking where the list has no General Freight Trucking; neither listed is the agent's, and
