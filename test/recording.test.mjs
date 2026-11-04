@@ -248,7 +248,7 @@ test('the report tells what the fill answered and waited for, what the page drew
   assert.ok(!/waited 0\.2 s after an answer/.test(report), 'an answer\'s wait is on its answer\'s line');
   assert.match(report, /the page drew 3 questions \("Make", "Model", …\), 0\.5 s after the last action/);
   assert.equal(report.match(/the page (drew|took away)/g).length, 1, 'a burst that drew no question is no line');
-  assert.match(report, /0:02\.0 \(\+0\.4 s\) the extension waited 2\.0 s after Continue \(quiet 500 ms\): the page was quiet; the page did nothing during it\n/, 'nothing changed during it: all slack');
+  assert.match(report, /0:02\.0 \(\+0\.4 s\) the extension waited 2\.0 s before pressing Continue \(quiet 500 ms\): the page was quiet; the page did nothing during it\n/, 'nothing changed during it: all slack');
   assert.match(report, /the extension pressed the "Continue" button/);
   assert.match(report, /the extension waited 6\.0 s for the premium \(quiet 250 ms and its requests\): at its limit of 6\.0 s, the page still busy; 5\.9 s after the page's last change/);
   assert.match(report, /## Where the time went/);
