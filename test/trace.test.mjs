@@ -424,3 +424,23 @@ test('a question with no size is placed where its label is on screen', async () 
   assert.deepEqual([a.field.rect.w, a.field.rect.docY], [90, 470], 'the label\'s box plus the scroll');
   assert.deepEqual([b.field.rect.w, b.field.rect.h], [0, 0]);
 });
+
+// Recording of 2026-11-04 (1143-fdc8): two waits the fill engine had just been given names for were
+// traced unnamed, as the trace keeps only the names it knows. Every wait the engine names is known to
+// the trace and has words in the report.
+test('every wait the fill engine names is kept by the trace and said by the report', async () => {
+  const dir = new URL('../src/kit/', import.meta.url);
+  const named = new Set();
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith('.js')) continue;
+    for (const m of fs.readFileSync(new URL(f, dir), 'utf8').matchAll(/why: '([a-z-]+)'/g)) named.add(m[1]);
+  }
+  const kept = new Set([...TRACE.match(/WAITS_FOR = new Set\(\[([^\]]*)\]\)/)[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]));
+  const report = fs.readFileSync(new URL('../scripts/lib/recording.mjs', import.meta.url), 'utf8');
+  const said = new Set([...report.match(/const WAITS = \{([^}]*)\}/)[1].matchAll(/(?:'([a-z-]+)'|([a-z]+)): '/g)].map((m) => m[1] ?? m[2]));
+  assert.ok(named.size >= 8, [...named].join(', '));
+  for (const why of named) {
+    assert.ok(kept.has(why), `the trace keeps "${why}"`);
+    assert.ok(said.has(why), `the report says "${why}"`);
+  }
+});

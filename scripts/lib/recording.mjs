@@ -56,7 +56,8 @@ const whose = (e) => (e.filling ? ' (not you, during a fill)' : ' (the page)');
 const many = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 // A wait's own words: what it was for (pagekit.js settle's `why`).
 const WAITS = { answer: 'after an answer', round: 'after a round of answers', load: 'for a new view to load', 'before-load': 'before a button that loads a view',
-  rated: 'for the premium', continue: 'after Continue', drawn: 'for a late question', start: 'before the fill' };
+  rated: 'for the premium', continue: 'before pressing Continue', continued: 'after pressing Continue', drawn: 'for a late question', start: 'before the fill',
+  helper: 'for a lookup\'s answer' };
 // An action the page may answer: anyone's click, key or change, or the fill's answer or press.
 const isAction = (e) => ['click', 'key', 'change'].includes(e.kind) || (e.kind === 'kit' && (e.what === 'answer' || e.what === 'press'));
 

@@ -48,7 +48,7 @@ Read `reviews/recording-<id>.md` whole, then open a moment's screenshot or saved
 
 ## 3. Find the speed candidates
 
-Group the waits across the recordings by what they were for (the report's words, one per `why`: before the fill `start`, after an answer `answer`, after a round of answers `round`, for a new view to load `load`, before a button that loads a view `before-load`, for the premium `rated`, after Continue `continue`, for a late question `drawn`) and by carrier. For each group, give the count, the median and worst duration, how many ended quiet or at their limit, and the median slack. Find each wait's `settle(...)` call in `src/kit/` (`grep -n "why: '<why>'" src/kit/*.js`; a call with no `why`, such as the drivers' in `src/kit/drivers/`, by the `quietMs` the report names: `grep -n 'settle(' src/kit/*.js src/kit/drivers/*.js`) and note its file and line.
+Group the waits across the recordings by what they were for (the report's words, one per `why`: before the fill `start`, after an answer `answer`, after a round of answers `round`, for a new view to load `load`, before a button that loads a view `before-load`, for the premium `rated`, before pressing Continue `continue`, after pressing Continue `continued`, for a lookup's answer `helper`, for a late question `drawn`) and by carrier. For each group, give the count, the median and worst duration, how many ended quiet or at their limit, and the median slack. Find each wait's `settle(...)` call in `src/kit/` (`grep -n "why: '<why>'" src/kit/*.js`; a call with no `why`, such as the drivers' in `src/kit/drivers/`, by the `quietMs` the report names: `grep -n 'settle(' src/kit/*.js src/kit/drivers/*.js`) and note its file and line.
 
 A wait is a candidate only when all of these hold:
 

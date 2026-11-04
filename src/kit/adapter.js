@@ -162,6 +162,8 @@ export function partsUndefined() {
 let requestWatch = null;
 /** @type {Array<{ start: number, end: number, poll: boolean }>} */
 export const recentRequests = [];
+/** Whether this frame sees its requests (watchRequests started and the browser has PerformanceObserver). */
+export const watchingRequests = () => !!requestWatch;
 const lastRequestEnd = () => recentRequests.reduce((m, r) => (r.poll ? m : Math.max(m, r.end)), -Infinity);
 
 const POLL_SLACK_MS = 40;
@@ -189,7 +191,7 @@ export function isBeat(address, start) {
 export const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /**
- * Starts observing network requests in the top frame.
+ * Starts observing this frame's network requests.
  */
 export function watchRequests() {
   if (requestWatch !== null) return;

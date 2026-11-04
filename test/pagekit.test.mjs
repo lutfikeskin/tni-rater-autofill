@@ -1306,6 +1306,184 @@ test('a helper that opens the next page leaves that page\'s questions to its own
   assert.deepEqual(Array.from(report.blockers), []);
 });
 
+// Two Progressive recordings (2026-11-04): a helper that opened the next page left it quiet, and the
+// next fill's 400 ms wait saw nothing; an answer's redraw landed within 114 ms of its request; the
+// wait before Continue saw nothing after the last answer's. The next fill begins after 100 ms of
+// quiet when the page is as the helper's fill left it, else after 400 ms; answers wait 150 ms, and
+// Continue 250 ms.
+test('Progressive: the fill after a helper opened the page begins sooner; answers and Continue wait less', async () => {
+  const h = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  addButton(h, 'Cargo Van').onclick = () => {
+    h.context.location.search = '?pageName=AddVehicle';
+    addExtText(h, 'c', '2BA1');
+  };
+  const tile = { id: 'tile', kind: 'action', action: 'vehicleTile:0', text: '^Cargo Van$', unique: true, label: 'Vehicle type', missing: 'Pick the vehicle yourself.',
+    path: 'action.vehicleTile', name: 'Click vehicleTile', pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  const abs = { id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' };
+  const starts = () => said.filter((x) => x.what === 'wait' && x.why === 'start').map((x) => x.quietMs);
+  assert.equal((await h.kit.fill([tile], { maxRounds: 3, trace: true })).navigatedTo, 'AddVehicle');
+  const next = addButton(h, 'Continue');
+  let continued = 0;
+  next.addEventListener('click', () => { continued++; });
+  await h.kit.fill([abs], { maxRounds: 3, trace: true, advance: { text: '^Continue$' } });
+  assert.deepEqual(starts(), [400, 100], 'the page as the helper left it');
+  assert.equal(continued, 1);
+  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'answer').map((x) => [x.quietMs, x.requests]), [[150, true]], 'and after its last request');
+  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'continue').map((x) => x.quietMs), [250]);
+  // No helper opened this page: the full wait.
+  await h.kit.fill([abs], { maxRounds: 2, trace: true });
+  assert.deepEqual(starts(), [400, 100, 400]);
+});
+
+// Review of PR 284: the answer wait counts its quiet from the page's last request too, in a frame
+// inside the page as well as the top one. A request ending 160 ms after the answer is waited after.
+test('Progressive: in a frame inside the page, an answer waits 150 ms after the request it set off', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  h.context.top = {};
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  const t0 = clock.Date.now();
+  let observer = null;
+  h.context.performance = { now: () => clock.Date.now() - t0 };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+  // The answer's request: the page busy while it runs (Ext.Ajax), and seen ending 160 ms later.
+  let busyUntil = 0;
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  addExtText(h, 'c', '2BA1', { onSet: () => {
+    busyUntil = clock.Date.now() + 160;
+    setTimeout(() => observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: clock.Date.now() - t0 - 160, responseEnd: clock.Date.now() - t0 }] }), 160);
+  } });
+  await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }], { maxRounds: 2, trace: true });
+  const wait = said.find((x) => x.what === 'wait' && x.why === 'answer');
+  assert.ok(wait.ms >= 300, `${wait.ms} ms: past the request's end and 150 ms after it`);
+});
+
+test('Progressive: the page changed after the helper\'s fill, so the next one waits the full 400 ms', async () => {
+  const h = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  addButton(h, 'Cargo Van').onclick = () => {
+    h.context.location.search = '?pageName=AddVehicle';
+    addExtText(h, 'c', '2BA1');
+  };
+  const tile = { id: 'tile', kind: 'action', action: 'vehicleTile:0', text: '^Cargo Van$', unique: true, label: 'Vehicle type', missing: 'Pick the vehicle yourself.',
+    path: 'action.vehicleTile', name: 'Click vehicleTile', pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  await h.kit.fill([tile], { maxRounds: 3, trace: true });
+  addExtText(h, 'd', '2BA2');
+  await h.kit.fill([], { maxRounds: 2, trace: true });
+  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'start').map((x) => x.quietMs), [400, 400]);
+});
+
+// Progressive recording, 2026-11-04: the fill pressed Continue on More About Business and ended at
+// once; the agent clicked Continue 0.7 s later, during its request, and Progressive went to its error
+// page. The fill now lasts until the page is done with Continue, and an agent's Continue meanwhile
+// is not passed to the page (the maintainer, 2026-11-04); afterwards their clicks go through.
+test('Progressive: an agent\'s Continue during the fill\'s own Continue request is held, and the fill ends when the page is done', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  let busyUntil = 0;
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  addExtText(h, 'c', '2BA1');
+  const cont = addButton(h, 'Continue');
+  let pressed = 0;
+  let pressedAt = 0;
+  const agentClick = () => {
+    const event = { type: 'click', target: cont, isTrusted: true, composedPath: () => [cont], defaultPrevented: false, stopped: false,
+      preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() { this.stopped = true; } };
+    h.document._dispatch(event);
+    return event;
+  };
+  let during = null;
+  cont.onclick = () => {
+    pressed++;
+    pressedAt = clock.Date.now();
+    busyUntil = pressedAt + 1200;
+    setTimeout(() => { during = agentClick(); }, 700);
+  };
+  const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+    { maxRounds: 3, advance: { text: '^continue$' } });
+  const endedAfter = clock.Date.now() - pressedAt;
+  assert.equal(pressed, 1);
+  assert.equal(report.advanced, 'Continue');
+  assert.ok(endedAfter >= 1200, `the fill ended ${endedAfter} ms after its Continue, while the page was busy`);
+  assert.deepEqual([during?.defaultPrevented, during?.stopped, report.repeatsHeld], [true, true, 1]);
+  const after = agentClick();
+  assert.deepEqual([after.defaultPrevented, after.stopped], [false, false], 'after the fill, the agent\'s click is theirs');
+});
+
+// Progressive recording, 2026-11-04 (1143-fdc8): its own check refused the fill's Continue on More
+// About Business (Snapshot Pro blank): no request, the page stayed. Reported as continued, the panel
+// pressed it again 6 s later and then paused its automatic fills. A Continue the page refused without
+// asking its server is not reported as continued; one it sent on (a request) still is.
+test('Progressive: a Continue the page refuses in the browser is not reported as continued; one it sends on is', async () => {
+  const run = async (posts) => {
+    const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+    const t0 = clock.Date.now();
+    let observer = null;
+    h.context.performance = { now: () => clock.Date.now() - t0 };
+    h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+    addExtText(h, 'c', '2BA1');
+    const cont = addButton(h, 'Continue');
+    let pressed = 0;
+    cont.onclick = () => {
+      pressed++;
+      if (posts) observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: clock.Date.now() - t0, responseEnd: clock.Date.now() - t0 + 50 }] });
+    };
+    const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+      { maxRounds: 3, advance: { text: '^continue$' } });
+    return { pressed, advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) };
+  };
+  assert.deepEqual(await run(false), { pressed: 1, advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run(true), { pressed: 1, advanced: 'Continue', refused: null, said: false });
+});
+
+// Review of PR #284: a fill that returns before it waits (the panel asked for another page) uses up
+// the helper's settled page too, so the fill after it isn't taken for the helper's continuation.
+test('Progressive: a fill that returns early uses up the helper\'s settled page', async () => {
+  const h = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  addButton(h, 'Cargo Van').onclick = () => {
+    h.context.location.search = '?pageName=AddVehicle';
+    addExtText(h, 'c', '2BA1');
+  };
+  const tile = { id: 'tile', kind: 'action', action: 'vehicleTile:0', text: '^Cargo Van$', unique: true, label: 'Vehicle type', missing: 'Pick the vehicle yourself.',
+    path: 'action.vehicleTile', name: 'Click vehicleTile', pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  assert.equal((await h.kit.fill([tile], { maxRounds: 3, trace: true })).navigatedTo, 'AddVehicle');
+  assert.equal((await h.kit.fill([], { maxRounds: 2, trace: true, expectPage: 'MostCommonVehicles' })).pageMoved, 'AddVehicle');
+  await h.kit.fill([], { maxRounds: 2, trace: true });
+  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'start').map((x) => x.quietMs), [400, 400]);
+});
+
+// Review of PR #284: the short start is for the page the helper opened. Another page drawing the
+// same questions since is waited for in full.
+test('Progressive: another page with the same questions as the helper\'s gets the full start wait', async () => {
+  const h = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  addButton(h, 'Cargo Van').onclick = () => {
+    h.context.location.search = '?pageName=AddVehicle';
+    addExtText(h, 'c', '2BA1');
+  };
+  const tile = { id: 'tile', kind: 'action', action: 'vehicleTile:0', text: '^Cargo Van$', unique: true, label: 'Vehicle type', missing: 'Pick the vehicle yourself.',
+    path: 'action.vehicleTile', name: 'Click vehicleTile', pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  assert.equal((await h.kit.fill([tile], { maxRounds: 3, trace: true })).navigatedTo, 'AddVehicle');
+  h.context.location.search = '?pageName=AddVehicle2';
+  await h.kit.fill([], { maxRounds: 2, trace: true });
+  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'start').map((x) => x.quietMs), [400, 400]);
+});
+
 // 2026-10-07 FL run: the commodity list fills in only after its category is picked, and its
 // first try found it empty ("failed: " with no name, as the list has no caption).
 test('a list that loads after another answer is given time; an unlabeled field is named after its rule', async () => {
@@ -3295,7 +3473,7 @@ test('a DOT lookup listing the matching business name twice still counts as one 
 // drawn once the one before it is answered), which gives the page rounds after these. `address`:
 // the registered Business Address choice (q277) is on the page too.
 const BELONGS = 'Does this USDOT Number belong to the customer\'s business?';
-async function belongsPage({ applicant = { name: 'Sample Test LLC' }, registered = null, shown = 'first', already = '', invalid = false, address = false, later = null, options = {} } = {}) {
+async function belongsPage({ applicant = { name: 'Sample Test LLC' }, registered = null, shown = 'first', busy = false, already = '', invalid = false, address = false, later = null, options = {} } = {}) {
   const choices = (field, labels) => {
     const records = labels.map((label) => ({ get: () => label }));
     Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
@@ -3314,7 +3492,11 @@ async function belongsPage({ applicant = { name: 'Sample Test LLC' }, registered
   const onSet = (_, v) => {
     if (v !== 'Yes') return;
     if (shown === 'yes') showName();
-    else if (typeof shown === 'number') setTimeout(showName, shown);
+    else if (typeof shown === 'number') {
+      // `busy`: as on Progressive, the name comes with the server's answer, the page busy until then.
+      if (busy) { const until = clock.Date.now() + shown; h.context.Ext.Ajax.isLoading = () => clock.Date.now() < until; }
+      setTimeout(showName, shown);
+    }
   };
   const belongs = addExtText(h, 'd', '20F', { caption: BELONGS, required: true, value: already, onSet });
   choices(belongs, ['Yes', 'No']);
@@ -3393,8 +3575,16 @@ test('USDOT belongs: an invalid answer, a late registered name and an agent edit
     assert.equal(r.own(r.report.failed, label).length, 1, label);
   }
   // A registered name drawn while the fill waits before Continue: the Yes is the agent's to
-  // verify, and Continue isn't clicked.
-  r = await belongsPage({ registered: 'Another Carrier Inc', shown: 600, options: { advance: { text: '^continue$' } } });
+  // verify, and Continue isn't clicked. (300 ms after the Yes: past its answer's 150 ms wait,
+  // within the 250 ms before Continue.)
+  r = await belongsPage({ registered: 'Another Carrier Inc', shown: 300, options: { advance: { text: '^continue$' } } });
+  assert.equal(r.continued, false, r.report.blockers.join(' | '));
+  assert.equal(r.own(r.report.noData).filter(identity).length, 1);
+  assert.ok(r.held(/^needs you/), r.report.blockers.join(' | '));
+  // Drawn 600 ms after the Yes, with the server's answer: the page is busy until then, so the fill
+  // waits for it and the Yes is the agent's to verify (review of PR 284: the wait before Continue
+  // is shorter now).
+  r = await belongsPage({ registered: 'Another Carrier Inc', shown: 600, busy: true, options: { advance: { text: '^continue$' } } });
   assert.equal(r.continued, false, r.report.blockers.join(' | '));
   assert.equal(r.own(r.report.noData).filter(identity).length, 1);
   assert.ok(r.held(/^needs you/), r.report.blockers.join(' | '));
@@ -4690,7 +4880,8 @@ test('an answer the carrier rewrites during the wait before Continue fails, and 
     const button = addButton(h, 'Continue');
     let clicks = 0;
     button.onclick = () => { clicks++; };
-    // Every settle builds an observer; the last one is the wait before Continue.
+    // Every settle builds an observer; the wait before Continue is the one before the wait after it
+    // (on a page that waits on its server the fill waits for its Continue to be done).
     let settles = 0;
     h.context.MutationObserver = class {
       constructor() { if (++settles === rewriteAt) setTimeout(() => cmp.setValue('carrier value'), 10); }
@@ -4711,8 +4902,8 @@ test('an answer the carrier rewrites during the wait before Continue fails, and 
   assert.deepEqual(Array.from(control.report.filled, (x) => x.key), ['ref:Test.foo']);
   assert.equal(control.input.value, 'wanted');
   // The carrier rewrites it during that last wait.
-  const { report, clicks, settles, input } = await run(control.settles);
-  assert.equal(settles, control.settles);
+  const { report, clicks, settles, input } = await run(control.settles - 1);
+  assert.equal(settles, control.settles - 1, 'no Continue, so no wait after it');
   assert.equal(clicks, 0, 'no Continue over a changed answer');
   assert.equal(report.advanced, undefined);
   assert.equal(report.halted, false);
@@ -8348,7 +8539,7 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.equal(seen[0].phase, null, 'answering');
   assert.equal(h.kit.progress(), null, 'the fill is over');
   // Each long wait names itself before it begins.
-  assert.match(CURSOR_SOURCE, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
+  assert.match(CURSOR_SOURCE, /phase\('reading'\);[^]{0,300}const settled = await settle\(\{ quietMs: fresh \? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
   assert.match(CURSOR_SOURCE, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
   assert.match(CURSOR_SOURCE, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
   assert.match(CURSOR_SOURCE, /if \(thisRound\.helperClicked\) phase\('helper', state\.pendingAction\?\.label \?\? state\.report\.actions\.at\(-1\)\?\.text \?\? null\);/);

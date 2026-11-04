@@ -28,6 +28,8 @@ export const KEPT_WATCH_MS = 15000;
 export const ONCE_UNVERIFIED = 'it was clicked, but the page showed no current premium afterwards. Check the page and click Recalculate yourself: the fill clicks it once a quote.';
 export const NOTHING_LEFT = 'nothing left for you on the page';
 export const AGENT_PRESSED = 'you clicked a button during the fill: Continue is yours';
+// The page stayed after the fill's Continue, quiet: it refused it (its own message says why).
+export const CONTINUE_REFUSED = 'the page did not accept Continue: check its message';
 export const RESET_QUIET_MS = 1000;
 
 /**
