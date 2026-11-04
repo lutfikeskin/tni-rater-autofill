@@ -1332,7 +1332,7 @@ test('Progressive: the fill after a helper opened the page begins sooner; answer
   await h.kit.fill([abs], { maxRounds: 3, trace: true, advance: { text: '^Continue$' } });
   assert.deepEqual(starts(), [400, 100], 'the page as the helper left it');
   assert.equal(continued, 1);
-  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'answer').map((x) => x.quietMs), [150]);
+  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'answer').map((x) => [x.quietMs, x.requests]), [[150, true]], 'and after its last request');
   assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'continue').map((x) => x.quietMs), [250]);
   // No helper opened this page: the full wait.
   await h.kit.fill([abs], { maxRounds: 2, trace: true });
@@ -3346,7 +3346,7 @@ test('a DOT lookup listing the matching business name twice still counts as one 
 // drawn once the one before it is answered), which gives the page rounds after these. `address`:
 // the registered Business Address choice (q277) is on the page too.
 const BELONGS = 'Does this USDOT Number belong to the customer\'s business?';
-async function belongsPage({ applicant = { name: 'Sample Test LLC' }, registered = null, shown = 'first', already = '', invalid = false, address = false, later = null, options = {} } = {}) {
+async function belongsPage({ applicant = { name: 'Sample Test LLC' }, registered = null, shown = 'first', busy = false, already = '', invalid = false, address = false, later = null, options = {} } = {}) {
   const choices = (field, labels) => {
     const records = labels.map((label) => ({ get: () => label }));
     Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
@@ -3365,7 +3365,11 @@ async function belongsPage({ applicant = { name: 'Sample Test LLC' }, registered
   const onSet = (_, v) => {
     if (v !== 'Yes') return;
     if (shown === 'yes') showName();
-    else if (typeof shown === 'number') setTimeout(showName, shown);
+    else if (typeof shown === 'number') {
+      // `busy`: as on Progressive, the name comes with the server's answer, the page busy until then.
+      if (busy) { const until = clock.Date.now() + shown; h.context.Ext.Ajax.isLoading = () => clock.Date.now() < until; }
+      setTimeout(showName, shown);
+    }
   };
   const belongs = addExtText(h, 'd', '20F', { caption: BELONGS, required: true, value: already, onSet });
   choices(belongs, ['Yes', 'No']);
@@ -3447,6 +3451,13 @@ test('USDOT belongs: an invalid answer, a late registered name and an agent edit
   // verify, and Continue isn't clicked. (300 ms after the Yes: past its answer's 150 ms wait,
   // within the 250 ms before Continue.)
   r = await belongsPage({ registered: 'Another Carrier Inc', shown: 300, options: { advance: { text: '^continue$' } } });
+  assert.equal(r.continued, false, r.report.blockers.join(' | '));
+  assert.equal(r.own(r.report.noData).filter(identity).length, 1);
+  assert.ok(r.held(/^needs you/), r.report.blockers.join(' | '));
+  // Drawn 600 ms after the Yes, with the server's answer: the page is busy until then, so the fill
+  // waits for it and the Yes is the agent's to verify (review of PR 284: the wait before Continue
+  // is shorter now).
+  r = await belongsPage({ registered: 'Another Carrier Inc', shown: 600, busy: true, options: { advance: { text: '^continue$' } } });
   assert.equal(r.continued, false, r.report.blockers.join(' | '));
   assert.equal(r.own(r.report.noData).filter(identity).length, 1);
   assert.ok(r.held(/^needs you/), r.report.blockers.join(' | '));
