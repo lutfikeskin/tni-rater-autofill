@@ -1509,17 +1509,64 @@ import { createSelect2Drivers } from './drivers/select2.js';
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
   /**
+   * One fill's run state: what its rounds, waits and helpers change and read again later. `fill`
+   * creates it once (`state`, never reassigned) and sets each field where it was declared before;
+   * the comments there say what each one is. Values derived once from the options, and the helper
+   * functions, stay plain consts.
+   * @typedef {object} RunState
+   * @property {Set<string>} skipKeys the agent's edits that apply everywhere
+   * @property {Set<string>} scopedKeys the agent's edits that apply where the kit is now
+   * @property {Set<string>} clicked helper actions pressed
+   * @property {Set<string>} openersTried
+   * @property {Set<string>} nudged
+   * @property {Map<string, number>} retries
+   * @property {Set<string>} refill steps to answer again
+   * @property {Set<string>} exhausted
+   * @property {Map<string, any>} unoffered
+   * @property {Map<string, any>} substituted
+   * @property {Set<string>} keepWait
+   * @property {Set<string>} keepSettled
+   * @property {Map<string, any>} unitHeld
+   * @property {Map<string, string>} heldFor a held step's id → the step it waits for
+   * @property {Map<string, number>} waitingSince
+   * @property {Set<string>} waitOver
+   * @property {boolean} waitShown
+   * @property {boolean} lastLook
+   * @property {boolean} quietDue
+   * @property {any} quietSig
+   * @property {number} ajaxCount
+   * @property {Set<string>} visited pages this run has been on
+   * @property {Map<string, { status: string, note?: string | null }>} handled step id → its outcome
+   * @property {FillReport} report what the fill returns
+   * @property {string | null} topPage
+   * @property {any} pendingAction the helper action pressed and not yet verified
+   * @property {any} loadDue
+   * @property {any} quiet
+   * @property {boolean} progressed did the last round fill or click anything, or wait for what an answer draws?
+   * @property {any[]} roundControls
+   * @property {any} lastAnswered
+   * @property {number} judgedTo
+   * @property {number} provisionalLeft
+   * @property {Set<string>} filledKeys
+   * @property {boolean} resetWaited
+   * @property {string} stoppedAt
+   * @property {boolean} unreadStep
+   * @property {boolean} agentPressed
+   */
+  /**
    * @param {PlanStep[]} plan
    * @param {FillOptions} [options]
    * @returns {Promise<FillReport>}
    */
   async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null } = {}) {
+    /** @type {RunState} */
+    const state = /** @type {any} */ ({});
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
-    const skipKeys = new Set(skip);
-    const scopedKeys = new Set();
-    const skipped = (key) => skipKeys.has(key) || scopedKeys.has(key);
+    state.skipKeys = new Set(skip);
+    state.scopedKeys = new Set();
+    const skipped = (key) => state.skipKeys.has(key) || state.scopedKeys.has(key);
     // An agent edit protects its field. A plain name saved by an older build (field-key v2)
     // protects every row key made from it (name#<row>): it could have been any row's edit.
     const skippedKey = (key) => skipped(key) || skipped(globalThis.__raterFieldKey.rowKeyBase?.(key));
@@ -1543,11 +1590,11 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // unit's (the owner's own driver form asks Add Driver's license state, CDL and SR-22).
     const skipNames = skipBy ? [...Object.keys(skipBy.stepUnits ?? {}), ...Object.keys(skipBy.steps ?? {})] : [];
     const skipWhere = (units) => {
-      scopedKeys.clear();
+      state.scopedKeys.clear();
       const key = stepKey();
       const name = skipNames.find((n) => stepIs([n], key));
       if (!name) return;
-      const add = (keys) => { for (const k of [].concat(keys ?? [])) scopedKeys.add(k); };
+      const add = (keys) => { for (const k of [].concat(keys ?? [])) state.scopedKeys.add(k); };
       const list = Object.hasOwn(skipBy.stepUnits ?? {}, name) ? skipBy.stepUnits[name] : null;
       if (!list) return add(skipBy.steps?.[name]);
       if (!units?.length) {
@@ -1561,78 +1608,78 @@ import { createSelect2Drivers } from './drivers/select2.js';
     };
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');
-    const clicked = new Set(doneActions);
-    const openersTried = new Set();
-    const nudged = new Set();
+    state.clicked = new Set(doneActions);
+    state.openersTried = new Set();
+    state.nudged = new Set();
     // Answers the page changed or cleared after we gave them (a lookup redrawing its boxes, a
     // panel re-rendering), or didn't keep the first time: given again, at most twice each.
-    const retries = new Map();
-    const refill = new Set();
+    state.retries = new Map();
+    state.refill = new Set();
     // Helpers whose result never showed after their tries this fill: the agent's, not clicked again.
-    const exhausted = new Set();
+    state.exhausted = new Set();
     // A lookup box its helper has already used (the VIN list Import Data empties) isn't given again.
     const immediateAfter = new Set(actions.filter((a) => a.immediate).flatMap((a) => a.after));
     hiddenOk = plan.filter((s) => s.hidden && s.selector).map((s) => s.selector);
-    const consumedPaths = () => new Set(actions.filter((a) => clicked.has(a.action)).flatMap((a) => a.after));
+    const consumedPaths = () => new Set(actions.filter((a) => state.clicked.has(a.action)).flatMap((a) => a.after));
     // Choices whose option isn't offered yet (`whenOffered`), by step id.
-    const unoffered = new Map();
+    state.unoffered = new Map();
     // Options picked in place of one never offered (`orMost`), by step id: what the report says.
-    const substituted = new Map();
-    const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
+    state.substituted = new Map();
+    const retryOnce = (id) => { const n = state.retries.get(id) ?? 0; if (n >= 2) return false; state.retries.set(id, n + 1); return true; };
     // Answers the page didn't keep: each is given again only once the page, and its own requests,
     // have been quiet for RESET_QUIET_MS (GEICO live run, 2026-10-28: on a slow page the Sprinter's
     // comprehensive was reset while GEICO still answered the collision before it, and the tries at
     // once were reset too), by step id until given or left; `keepSettled`, those waited for since.
     // One still to give holds `whenClear` helpers (leftForAgent).
-    const keepWait = new Set();
-    const keepSettled = new Set();
+    state.keepWait = new Set();
+    state.keepSettled = new Set();
     // `needs` (a choice the page offers only once another on its unit holds: GEICO's collision,
     // rental and road service behind comprehensive): a prerequisite the page didn't keep, by step id,
     // with its unit's one item (`unitHeld`), and the steps held behind one (`heldFor`, by step id).
-    const unitHeld = new Map();
-    const heldFor = new Map();
+    state.unitHeld = new Map();
+    state.heldFor = new Map();
     // Steps waiting for the page (`waitFor`): since when, by step id.
-    const waitingSince = new Map();
+    state.waitingSince = new Map();
     const mayWait = (id) => {
-      if (!waitingSince.has(id)) waitingSince.set(id, Date.now());
-      return Date.now() - waitingSince.get(id) < WAIT_MS;
+      if (!state.waitingSince.has(id)) state.waitingSince.set(id, Date.now());
+      return Date.now() - state.waitingSince.get(id) < WAIT_MS;
     };
     // Steps done waiting this fill (what they waited for came in, or the wait ran out).
-    const waitOver = new Set();
+    state.waitOver = new Set();
     // A step that waits on the page (`waitFor`) was on it this fill, and the last look (see `waitFor`
     // above) once taken.
-    let waitShown = false;
-    let lastLook = false;
+    state.waitShown = false;
+    state.lastLook = false;
     // Where Continue waits for a quiet page (`advance.quietMs`: GEICO), a fill that gave answers waits
     // for it before it ends and answers what the page drew meanwhile (the end of a round): `quietDue`,
     // an answer was given since the last such wait; `quietSig`, the questions on screen once the page
     // was quiet then.
-    let quietDue = false;
-    let quietSig = null;
+    state.quietDue = false;
+    state.quietSig = null;
     // Server requests the page sends (as its adapter sees them), counted for the per-answer timing.
-    let ajaxCount = 0;
-    const countAjax = () => { ajaxCount++; };
+    state.ajaxCount = 0;
+    const countAjax = () => { state.ajaxCount++; };
     adapter().onRequest(countAjax);
-    const visited = new Set(visitedPages);
+    state.visited = new Set(visitedPages);
     const startPage = currentPage();
     // The plan has questions for this page (a field rule for it, not only helpers): while it shows no
     // field it is still drawing, and its helpers wait for one (W44-03), except a tile pick
     // (`onBlankPage`: Most Common Vehicles, which may draw only its tiles).
     const expectsQuestions = plan.some((s) => s.kind !== 'action' && s.pages?.includes(startPage));
-    const handled = new Map(); // step id -> { status, note }
+    state.handled = new Map(); // step id -> { status, note }
     /** @type {FillReport} */
-    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], reworded: [], renamed: [], halted: false, rounds: 0, unitForm: null, unitHeld: null, stepUnread: false };
+    state.report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], reworded: [], renamed: [], halted: false, rounds: 0, unitForm: null, unitHeld: null, stepUnread: false };
     // The page the panel asked to fill (`expectPage`, as it reads the tab's address): the top frame
     // shows another one now (the agent or the carrier moved on while the panel prepared), so nothing
     // is filled, marked or clicked here (`pageMoved`, the page found). A frame inside the page reads
     // the top's address when it may (the same origin); one that can't (another origin's: a chat
     // window) goes on, as the panel checked just before.
-    let topPage = null;
-    try { topPage = window === window.top ? startPage : pageAt(window.top.location); } catch { /* another origin */ }
-    if (expectPage != null && topPage != null && topPage !== expectPage) {
+    state.topPage = null;
+    try { state.topPage = window === window.top ? startPage : pageAt(window.top.location); } catch { /* another origin */ }
+    if (expectPage != null && state.topPage != null && state.topPage !== expectPage) {
       adapter().offRequest(countAjax);
-      report.pageMoved = topPage;
-      return report;
+      state.report.pageMoved = state.topPage;
+      return state.report;
     }
     componentPrefix = adapter().components;
     if (window === window.top) watchRequests();
@@ -1643,30 +1690,30 @@ import { createSelect2Drivers } from './drivers/select2.js';
     const markers = [...new Map(plan.filter((s) => s.whenShown?.unit).map((s) => [JSON.stringify(s.whenShown), s.whenShown])).values()];
     if (markers.length) knownUnitMarkers = markers;
     if (stopPages.includes(startPage)) {
-      report.halted = true;
-      report.reason = 'The carrier stopped this quote on this page: nothing is filled or clicked here.';
-      report.stepKey = stepKey();
-      return report;
+      state.report.halted = true;
+      state.report.reason = 'The carrier stopped this quote on this page: nothing is filled or clicked here.';
+      state.report.stepKey = stepKey();
+      return state.report;
     }
     // A step that is the agent's, as the fill starts (also at every round, below).
     const stopAt = stopStepOn(stopSteps);
     if (stopAt) {
-      report.halted = true;
-      report.reason = STOP_STEP_HALT;
-      report.stopStep = stopAt;
-      report.stepKey = stepKey();
-      return report;
+      state.report.halted = true;
+      state.report.reason = STOP_STEP_HALT;
+      state.report.stopStep = stopAt;
+      state.report.stepKey = stepKey();
+      return state.report;
     }
     const serverBacked = adapter().serverBacked();
-    let pendingAction = null;
+    state.pendingAction = null;
     // A helper that loads a view, due but not clicked until the page has been quiet (`loadDue`), and
     // the page it was quiet on (`quiet`: its action and signature).
-    let loadDue = null;
-    let quiet = null;
-    let progressed = false; // did the last round fill or click anything, or wait for what an answer draws?
+    state.loadDue = null;
+    state.quiet = null;
+    state.progressed = false; // did the last round fill or click anything, or wait for what an answer draws?
     // The questions the last round read (in document order): where the items are on the page
     // when a helper has opened the next page by the end of the fill.
-    let roundControls = [];
+    state.roundControls = [];
     // Judged at the cursor, top to bottom (docs/browser-filling.md, "Judged at the cursor"): the page
     // is answered top to bottom, and what is above decides what appears below (GEICO live run,
     // 2026-10-28: a CSL liability limit took Property Damage and UMPD off the page after a round had
@@ -1677,20 +1724,20 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // the page went quiet, so the next round judges nothing below it until it acts further down
     // (`lagBound`). `judgedTo`: how far down the last round judged (Infinity: all of it), and
     // `provisionalLeft`, how many questions it left below that, which hold `whenClear` helpers.
-    let lastAnswered = null;
-    let judgedTo = Infinity;
-    let provisionalLeft = 0;
-    const halt = (reason) => { report.halted = true; report.reason = reason; };
+    state.lastAnswered = null;
+    state.judgedTo = Infinity;
+    state.provisionalLeft = 0;
+    const halt = (reason) => { state.report.halted = true; state.report.reason = reason; };
     // Answers this fill gave that their field no longer shows (a later server response rewrote or
     // cleared them), each with its question as `pairs` read it. A field the agent edited, and a
     // lookup box its helper has used, don't count.
     // Field keys this tab's fills answered before (`filledBefore`), and whether this fill has waited
     // for a quiet page before giving one the page reset again.
-    const filledKeys = new Set(filledBefore);
-    let resetWaited = false;
+    state.filledKeys = new Set(filledBefore);
+    state.resetWaited = false;
     const changedSinceFilled = (pairs) => {
       const consumed = consumedPaths();
-      return report.filled.flatMap((previous) => {
+      return state.report.filled.flatMap((previous) => {
         const pair = pairs.find(({ step }) => step.id === previous.stepId);
         return !pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path) ? [] : [{ previous, pair }];
       });
@@ -1702,7 +1749,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // The answers on a step's unit still to give that need it: on the page, not the agent's, not
     // given or left yet, and not already showing their answer.
     const dependentsOf = (step, pairsNow) => (step.q == null ? [] : pairsNow.filter(({ step: s, control }) => s.id !== step.id && s.needs?.includes(step.q) && sameUnit(s, step)
-      && s.value != null && !s.note && !s.ignore && !handled.has(s.id) && !skippedField(control) && !agreesWith(s, control)));
+      && s.value != null && !s.note && !s.ignore && !state.handled.has(s.id) && !skippedField(control) && !agreesWith(s, control)));
     // A coverage's name without the rule's own words in brackets ("Rental reimbursement (TNI: …)").
     const coverageName = (s) => { const n = String(s.name ?? '').replace(/\s*\(.*\)\s*$/, '').trim(); return n.charAt(0).toLowerCase() + n.slice(1); };
     const wordList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
@@ -1712,13 +1759,13 @@ import { createSelect2Drivers } from './drivers/select2.js';
       return `${pre.charAt(0).toUpperCase()}${pre.slice(1)} ${why}. This vehicle's ${wordList([...new Set(deps.map(coverageName))])} depend${deps.length === 1 ? 's' : ''} on it, so the fill left ${deps.length === 1 ? 'it' : 'them'} too. Set its ${pre} yourself, then fill again.`;
     };
     const holdDependent = (s, root) => {
-      heldFor.set(s.id, root.step.id);
+      state.heldFor.set(s.id, root.step.id);
       if (!root.deps.some((d) => d.id === s.id)) {
         root.deps.push(s);
         root.item.note = unitHeldNote(root);
-        handled.set(root.step.id, { status: 'needs', note: root.item.note });
+        state.handled.set(root.step.id, { status: 'needs', note: root.item.note });
       }
-      handled.set(s.id, { status: 'needs', note: `Waits for ${coverageName(root.step)} on this vehicle, which the page didn't keep: see that item.` });
+      state.handled.set(s.id, { status: 'needs', note: `Waits for ${coverageName(root.step)} on this vehicle, which the page didn't keep: see that item.` });
     };
     // A prerequisite that didn't take, with answers on its unit that need it still to give: one
     // needs-you item for the unit (which holds `whenClear` helpers: Recalculate and after), and its
@@ -1726,19 +1773,19 @@ import { createSelect2Drivers } from './drivers/select2.js';
     const holdUnit = (step, c, item, reason, pairsNow) => {
       const deps = dependentsOf(step, pairsNow).map((p) => p.step);
       if (!deps.length) return false;
-      const root = { item: { ...item, ...describe(c) }, step, deps: [], tries: (retries.get(step.id) ?? 0) + 1, reason };
-      unitHeld.set(step.id, root);
+      const root = { item: { ...item, ...describe(c) }, step, deps: [], tries: (state.retries.get(step.id) ?? 0) + 1, reason };
+      state.unitHeld.set(step.id, root);
       for (const d of deps) holdDependent(d, root);
       root.item.note = unitHeldNote(root);
-      report.noData.push(root.item);
-      handled.set(step.id, { status: 'needs', note: root.item.note });
+      state.report.noData.push(root.item);
+      state.handled.set(step.id, { status: 'needs', note: root.item.note });
       return true;
     };
     // `phase`: what the fill is doing between answers, for the panel's live list and dock (progress):
     // null while it answers, else { name, what }: 'reading' the page as it begins, 'waiting' for the
     // page after an answer, a 'helper' it clicked (`what`: the button), the 'premium' it rates, or
     // 'continue'. Said so a fill waiting on GEICO's Recalculate doesn't read as stuck (2026-10-23).
-    const thisFill = { report, halt, run, phase: null };
+    const thisFill = { report: state.report, halt, run, phase: null };
     const phase = (name, what = null) => { thisFill.phase = name ? { name, what } : null; };
     running = thisFill;
     // Stopped by the agent before it began (the panel was still preparing): nothing is done.
@@ -1747,11 +1794,11 @@ import { createSelect2Drivers } from './drivers/select2.js';
     const settled = await settle({ quietMs: 400, maxMs: 15000, why: 'start' });
     phase(null);
     // Stopped while the page settled: nothing was done.
-    if (!settled || report.halted) {
+    if (!settled || state.report.halted) {
       if (!settled) halt('The page is still waiting on its server. Review and retry.');
-      report.stepKey = stepKey();
+      state.report.stepKey = stepKey();
       if (running === thisFill) running = null;
-      return report;
+      return state.report;
     }
     // The step on screen as the fill begins, on a page with a step progress bar (null elsewhere:
     // AmWINS' headings change with its dialogs). Read once the page has settled.
@@ -1759,26 +1806,26 @@ import { createSelect2Drivers } from './drivers/select2.js';
     const stepChanged = () => startStep !== null && stepKey() !== startStep;
     // A stop step the fill found on screen after it started: it does nothing more, and reads nothing
     // there for its report.
-    let stoppedAt = '';
+    state.stoppedAt = '';
     // A plan kept to steps on a page whose step bar can't be read (STEP_UNREAD_HALT): the same.
     const steppedPlan = plan.some((s) => s.steps?.length);
-    let unreadStep = false;
+    state.unreadStep = false;
     // A real user edit during a fill must survive even while the recorder is paused: its field is
     // protected (also from this fill's later rounds) and the fill stops. The guard stays on until
     // the fill returns, so an edit during the wait before Continue stops that too.
     const releaseEditGuard = guardEdits((key) => {
-      skipKeys.add(key);
-      if (!report.protectedKeys.includes(key)) report.protectedKeys.push(key);
+      state.skipKeys.add(key);
+      if (!state.report.protectedKeys.includes(key)) state.report.protectedKeys.push(key);
       halt(EDIT_HALT);
     });
     // A button the agent clicks during the fill (Next, "+", Looks Good) moves the page on their
     // click: this fill clicks no Continue and no helper after it (FL live run 4, 2026-10-21: the
     // agent's Next, then a fill's, while GEICO still worked on the first).
-    let agentPressed = false;
+    state.agentPressed = false;
     const notePress = (event) => {
       if (!event.isTrusted) return;
       const path = event.composedPath?.() ?? [event.target];
-      if (path.some((n) => n?.nodeType === 1 && safeMatches(n, agentPress()) && !n.hasAttribute('aria-expanded'))) agentPressed = true;
+      if (path.some((n) => n?.nodeType === 1 && safeMatches(n, agentPress()) && !n.hasAttribute('aria-expanded'))) state.agentPressed = true;
     };
     document.addEventListener('click', notePress, true);
     // Whether the registered names a USDOT lookup offers (Progressive's Business Name choice) are
@@ -1798,13 +1845,13 @@ import { createSelect2Drivers } from './drivers/select2.js';
     const identityAfterAnswer = (pairs, controls) => {
       const moved = [];
       for (const { step, control } of pairs) {
-        const previous = report.filled.find((x) => x.stepId === step.id);
+        const previous = state.report.filled.find((x) => x.stepId === step.id);
         if (!previous || step.registeredName || skippedField(control) || !identityDiffers(step, controls)) continue;
-        report.filled = report.filled.filter((x) => x !== previous);
-        report.checks = report.checks.filter((x) => x.stepId !== step.id);
+        state.report.filled = state.report.filled.filter((x) => x !== previous);
+        state.report.checks = state.report.checks.filter((x) => x.stepId !== step.id);
         const item = { ...previous, note: IDENTITY_NOTE, reviewOnly: true, ...describe(control) };
-        report.noData.push(item);
-        handled.set(step.id, { status: 'needs', note: IDENTITY_NOTE });
+        state.report.noData.push(item);
+        state.handled.set(step.id, { status: 'needs', note: IDENTITY_NOTE });
         moved.push({ item, control });
       }
       return moved;
@@ -1828,41 +1875,41 @@ import { createSelect2Drivers } from './drivers/select2.js';
     const redrawRetried = new Set();
 
     for (let round = 0; round < maxRounds; round++) {
-      report.rounds = round + 1;
+      state.report.rounds = round + 1;
       phase(null);
       // The agent's Next changes the step without a new address: on a step that is the agent's the
       // fill does nothing more, and another step is left to a fill of its own.
-      stoppedAt = stopStepOn(stopSteps);
-      if (stoppedAt) { report.stopStep = stoppedAt; if (!report.halted) halt(STOP_STEP_HALT); break; }
+      state.stoppedAt = stopStepOn(stopSteps);
+      if (state.stoppedAt) { state.report.stopStep = state.stoppedAt; if (!state.report.halted) halt(STOP_STEP_HALT); break; }
       if (stepChanged()) break;
       // The page moved on under the fill (the agent's Continue: Progressive draws the next page at
       // the same document): this fill's page is gone, and the next page gets a fill of its own. The
       // fill had read Rates as its next round and clicked Print, Email, Fax as the agent did (live
       // recording, 2026-10-23).
-      if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+      if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
       // The step can't be read, and the fill began there (a step it began on that turns unreadable
       // is the agent's Next mid-redraw: the step changed, above). Nothing is done or read here.
       if (steppedPlan && stepBars().length && stepKey() === '') {
-        unreadStep = true;
+        state.unreadStep = true;
         // Only this halt: the panel tries an automatic fill once more rather than pausing them all.
-        if (!report.halted) { halt(STEP_UNREAD_HALT); report.stepUnread = true; }
+        if (!state.report.halted) { halt(STEP_UNREAD_HALT); state.report.stepUnread = true; }
         break;
       }
       // A form that names its unit for another one than the plan's: nothing is filled (W43-37).
       if (formUnit) {
         const named = unitNamedNow();
-        if (named) report.unitNamed = { list: formUnit.list, index: named.index };
+        if (named) state.report.unitNamed = { list: formUnit.list, index: named.index };
         if (named && named.index !== formUnit.active) {
           halt(`This form is for ${named.name || 'someone else'}, not ${formUnit.label}: nothing was filled. ${named.index == null
             ? 'The intake has no driver by that name: fill the form yourself.' : `Pick ${named.name} in the panel, then fill again.`}`);
-          report.unitMismatch = true;
+          state.report.unitMismatch = true;
           break;
         }
       }
       const controls = collectControls();
-      roundControls = controls;
-      report.fields = Math.max(report.fields, controls.length);
-      if (report.halted) break;
+      state.roundControls = controls;
+      state.report.fields = Math.max(state.report.fields, controls.length);
+      if (state.report.halted) break;
       const allPairs = assign(controls, plan);
       // The agent's edits made where the kit is now, before anything asks whether a field is theirs.
       if (skipBy) skipWhere(allPairs.units);
@@ -1876,10 +1923,10 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // moment after the CSL limit). Not on ExtJS pages, whose wait covers the server's response, nor
       // for a batch, whose cursor is the end of what it fills.
       let lagBound = Infinity;
-      if (lastAnswered) {
-        const answeredNow = allPairs.find((p) => p.step.id === lastAnswered.stepId)?.control;
-        lagBound = (answeredNow ? place.get(answeredNow) : lastAnswered.at) + 1;
-        lastAnswered = null;
+      if (state.lastAnswered) {
+        const answeredNow = allPairs.find((p) => p.step.id === state.lastAnswered.stepId)?.control;
+        lagBound = (answeredNow ? place.get(answeredNow) : state.lastAnswered.at) + 1;
+        state.lastAnswered = null;
       }
       // Review items are flagged in yellow and the rest of the page still fills. Only a stuck
       // page or an agent edit stops the fill.
@@ -1893,9 +1940,9 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // without the check; with `skipBy` only an edit filed under that form counts, never one of the
       // active unit's.
       for (const u of allPairs.units) {
-        if (u.held) report.unitHeld = { list: u.list, id: u.id };
+        if (u.held) state.report.unitHeld = { list: u.list, id: u.id };
         else if (answeredLists.has(u.list)) {
-          report.unitForm = { list: u.list, id: u.id };
+          state.report.unitForm = { list: u.list, id: u.id };
           (fillUnits.bound[u.list] ??= {})[u.id] = u.active;
         }
       }
@@ -1909,12 +1956,12 @@ import { createSelect2Drivers } from './drivers/select2.js';
       for (const c of controls) {
         if (!mapped.has(c) || skippedField(c) || !hasValue(c) || !invalidControl(c)) continue;
         const own = allPairs.find((p) => p.control === c)?.step;
-        const ours = !!own && handled.get(own.id)?.note !== IDENTITY_NOTE
-          && (!(own.keepChoice || own.keepPreset) || refill.has(own.id) || report.filled.some((x) => x.stepId === own.id));
+        const ours = !!own && state.handled.get(own.id)?.note !== IDENTITY_NOTE
+          && (!(own.keepChoice || own.keepPreset) || state.refill.has(own.id) || state.report.filled.some((x) => x.stepId === own.id));
         if (ours && own.value != null && !own.ignore && !own.note && !own.verifyOnly && retryOnce(own.id)) {
-          report.failed = report.failed.filter((x) => x.key !== fieldKey(c));
-          handled.delete(own.id);
-          refill.add(own.id);
+          state.report.failed = state.report.failed.filter((x) => x.key !== fieldKey(c));
+          state.handled.delete(own.id);
+          state.refill.add(own.id);
           continue;
         }
         invalidLeft.push(c);
@@ -1922,11 +1969,11 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // A text box the page already has a different value in (e.g. from the USDOT lookup): kept and
       // shown, not replaced. Not what a fill gave for another unit (W43-38): that is replaced below.
       const keptDiffers = (step, control) => !skippedField(control) && hasValue(control) && !step.verifyOnly && !step.ignore && !step.note && !step.replace && !step.trustPage && step.value != null
-        && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id) && !givenForOtherUnit(step, control);
+        && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !state.handled.has(step.id) && !state.refill.has(step.id) && !givenForOtherUnit(step, control);
       const keepDiffering = (step, control) => {
-        flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, name: step.name, differs: true });
+        flag(state.report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, name: step.name, differs: true });
         mark(control, 'needs', `page says something different from the intake (${step.name})`);
-        handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
+        state.handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
       };
       // A batch is judged whole, as before the loop (its cursor is the end of what it fills); one
       // answer at a time, each such box when the loop reaches it, at its place.
@@ -1944,25 +1991,25 @@ import { createSelect2Drivers } from './drivers/select2.js';
         // Not one the page has taken away since the round read it (an answer's redraw).
         const here = (c) => { const at = place.get(c); return at !== undefined && at >= from && at < to && c.el?.isConnected !== false; };
         for (const u of allPairs.units) {
-          if (u.held && here(u.marker) && !skippedField(u.marker)) flag(report.checks, { label: u.marker.label, path: null, name: `${unitNoun(u.list)} ${Number(u.active) + 1}`, key: fieldKey(u.marker), q: null, controlKind: null, note: heldFormNote(u) });
+          if (u.held && here(u.marker) && !skippedField(u.marker)) flag(state.report.checks, { label: u.marker.label, path: null, name: `${unitNoun(u.list)} ${Number(u.active) + 1}`, key: fieldKey(u.marker), q: null, controlKind: null, note: heldFormNote(u) });
         }
         // Known questions whose wording changed (answered, and flagged when answered), and fields that
         // read like a known question whose data-model name isn't on the page (left for the agent).
-        for (const p of allPairs.filter((x) => x.reworded && here(x.control))) flag(report.reworded, { label: p.control.label, key: fieldKey(p.control), name: p.step.name, field: p.step.field });
-        for (const [c, step] of renamed) if (here(c)) flag(report.renamed, { label: c.label, key: fieldKey(c), name: step.name, field: step.field, now: c.ref ?? null });
+        for (const p of allPairs.filter((x) => x.reworded && here(x.control))) flag(state.report.reworded, { label: p.control.label, key: fieldKey(p.control), name: p.step.name, field: p.step.field });
+        for (const [c, step] of renamed) if (here(c)) flag(state.report.renamed, { label: c.label, key: fieldKey(c), name: step.name, field: step.field, now: c.ref ?? null });
         // A per-unit question's row naming a unit no step's unit matched (none of the intake's
         // vehicles or trailers, or two alike): a known question left to the agent, named by its row.
         for (const [c, step] of unmatched) {
           if (!here(c) || skippedField(c)) continue;
           const note = unmatchedRowNote(step);
-          flag(report.checks, { label: c.label, path: null, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, note, ...describe(c) });
+          flag(state.report.checks, { label: c.label, path: null, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, note, ...describe(c) });
           mark(c, 'needs', note);
         }
         for (const c of controls) {
           // A row a witness step chooses among is a known question (its unit is named instead), and
           // so is a held unit form's (the form is named instead), and a unit's row no unit matched.
           if (!here(c) || mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c) || allPairs.held.has(c) || unmatched.has(c)) continue;
-          flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, ref: c.ref ?? null, controlKind: c.kind, required: c.required, ...describe(c) });
+          flag(state.report.unknown, { label: c.label, key: fieldKey(c), q: c.q, ref: c.ref ?? null, controlKind: c.kind, required: c.required, ...describe(c) });
           mark(c, 'needs', renamed.has(c) ? `Looks like "${renamed.get(c).name}", but the carrier renamed this field: left for you.` : 'Unfamiliar question — left for you.');
         }
         // Said once for its field, also when this round's answer to it failed too (its own item).
@@ -1970,28 +2017,28 @@ import { createSelect2Drivers } from './drivers/select2.js';
           if (!here(c)) continue;
           const reason = 'The page marks this answer invalid.';
           const key = fieldKey(c);
-          if (!report.failed.some((x) => x.key === key && x.label === c.label && (x.reason === reason || !x.stepId))) report.failed.push({ label: c.label, key, q: c.q, controlKind: c.kind, reason, ...describe(c) });
+          if (!state.report.failed.some((x) => x.key === key && x.label === c.label && (x.reason === reason || !x.stepId))) state.report.failed.push({ label: c.label, key, q: c.q, controlKind: c.kind, reason, ...describe(c) });
           mark(c, 'failed', 'the page marks this answer invalid');
         }
         for (const { step, control } of allPairs) {
           if (!here(control) || skippedField(control) || !hasValue(control)) continue;
           if (step.verifyOnly && !agreesWith(step, control)) {
-            flag(report.failed, { label: control.label, key: fieldKey(control), q: control.q, reason: 'The looked-up value differs from the intake. Check the VIN.' });
+            flag(state.report.failed, { label: control.label, key: fieldKey(control), q: control.q, reason: 'The looked-up value differs from the intake. Check the VIN.' });
             mark(control, 'failed', 'lookup result differs from the intake');
           }
         }
       };
       for (const { previous, pair } of changedSinceFilled(allPairs)) {
         if (retryOnce(pair.step.id)) {
-          report.filled = report.filled.filter((x) => x !== previous);
-          handled.delete(pair.step.id);
-          refill.add(pair.step.id);
+          state.report.filled = state.report.filled.filter((x) => x !== previous);
+          state.handled.delete(pair.step.id);
+          state.refill.add(pair.step.id);
           continue;
         }
         if (hasValue(pair.control)) {
-          report.failed.push({ ...previous, reason: 'A later server response changed this answer; check it.' });
-          report.filled = report.filled.filter((x) => x !== previous);
-          handled.set(pair.step.id, { status: 'failed', note: 'a later server response changed this answer' });
+          state.report.failed.push({ ...previous, reason: 'A later server response changed this answer; check it.' });
+          state.report.filled = state.report.filled.filter((x) => x !== previous);
+          state.handled.set(pair.step.id, { status: 'failed', note: 'a later server response changed this answer' });
         }
       }
       identityAfterAnswer(allPairs, controls);
@@ -2002,24 +2049,24 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // those below it are left unjudged by the fill's end (`judgedTo`).
       const judged = (upTo, atCursor = false) => {
         judgeControls(upTo);
-        provisionalLeft = upTo >= controls.length ? 0 : controls.length - upTo;
-        judgedTo = provisionalLeft - (atCursor ? 1 : 0) > 0 ? upTo : Infinity;
+        state.provisionalLeft = upTo >= controls.length ? 0 : controls.length - upTo;
+        state.judgedTo = state.provisionalLeft - (atCursor ? 1 : 0) > 0 ? upTo : Infinity;
         streamItems(controls);
       };
-      if (report.halted) { judged(Math.min(lagBound, firstOpen(allPairs, place))); break; }
+      if (state.report.halted) { judged(Math.min(lagBound, firstOpen(allPairs, place))); break; }
       // Buttons that must come right after their field (Verify DOT, Lookup VIN) go first: the page
       // is judged down to the first question still to act on (the helper's own field is above it).
       if (window === window.top && clickNextAction(controls, true)) {
         judged(Math.min(lagBound, firstOpen(allPairs, place)));
         // A lookup (Import Data) may wait on its server without changing the page for a while.
-        phase('helper', pendingAction?.label ?? report.actions.at(-1)?.text ?? null);
+        phase('helper', state.pendingAction?.label ?? state.report.actions.at(-1)?.text ?? null);
         if (!await settle(serverBacked ? {} : { quietMs: 800, maxMs: 8000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
         if (!await verifyAction()) break;
-        if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+        if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
         if (stepChanged()) break;
         continue;
       }
-      const pairs = assign(controls, plan).filter(({ step, control }) => !handled.has(step.id) && !skippedField(control));
+      const pairs = assign(controls, plan).filter(({ step, control }) => !state.handled.has(step.id) && !skippedField(control));
       // Answers given one at a time go down the page, as the agent works it: what an answer draws
       // under its question comes before the questions further down. In rule order a fill went up and
       // down the page (GEICO mock, Business & Owner Info: the business name, 14th of 16, first, then
@@ -2084,17 +2131,17 @@ import { createSelect2Drivers } from './drivers/select2.js';
         if (leftAlone && reworded) {
           if (notYet()) continue;
           const note = `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check what the page has.`;
-          if (step.verifyOnly) report.kept.push(item);
-          report.checks.push({ ...item, note, ...describe(c) });
-          handled.set(step.id, { status: 'needs', note });
+          if (step.verifyOnly) state.report.kept.push(item);
+          state.report.checks.push({ ...item, note, ...describe(c) });
+          state.handled.set(step.id, { status: 'needs', note });
           continue;
         }
-        if (step.verifyOnly) { if (notYet()) continue; report.kept.push(item); handled.set(step.id, { status: null }); continue; }
-        if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { if (notYet()) continue; handled.set(step.id, { status: null }); continue; }
+        if (step.verifyOnly) { if (notYet()) continue; state.report.kept.push(item); state.handled.set(step.id, { status: null }); continue; }
+        if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { if (notYet()) continue; state.handled.set(step.id, { status: null }); continue; }
         if (identityDiffers(step, controls)) {
           if (notYet()) continue;
-          report.noData.push({ ...item, note: IDENTITY_NOTE, reviewOnly: true, ...describe(c) });
-          handled.set(step.id, { status: 'needs', note: IDENTITY_NOTE });
+          state.report.noData.push({ ...item, note: IDENTITY_NOTE, reviewOnly: true, ...describe(c) });
+          state.handled.set(step.id, { status: 'needs', note: IDENTITY_NOTE });
           continue;
         }
         // Answered only when the question's own text shows each of these intake words (`labelHas`:
@@ -2104,8 +2151,8 @@ import { createSelect2Drivers } from './drivers/select2.js';
           const text = ` ${squash(`${c.label ?? ''} ${c.text ?? ''} ${legendWords(c.radios)}`)} `;
           if (!step.labelHas.every((w) => squash(w) && text.includes(` ${squash(w)} `))) {
             if (notYet()) continue;
-            report.noData.push({ ...item, note: step.labelNote, ...describe(c) });
-            handled.set(step.id, { status: 'needs', note: step.labelNote });
+            state.report.noData.push({ ...item, note: step.labelNote, ...describe(c) });
+            state.handled.set(step.id, { status: 'needs', note: step.labelNote });
             continue;
           }
         }
@@ -2117,25 +2164,25 @@ import { createSelect2Drivers } from './drivers/select2.js';
         if (step.onlyIf && step.value != null && !step.note) {
           if (!holdingCondition(step, c, allPairs)) {
             if (notYet()) continue;
-            report.noData.push({ ...item, note: step.onlyNote, manualOnly: true, ...describe(c) });
-            handled.set(step.id, { status: 'needs', note: step.onlyNote });
+            state.report.noData.push({ ...item, note: step.onlyNote, manualOnly: true, ...describe(c) });
+            state.handled.set(step.id, { status: 'needs', note: step.onlyNote });
             continue;
           }
         }
         if (step.note || step.value == null) {
           if (notYet()) continue;
-          if (step.optional) { handled.set(step.id, { status: null }); continue; }
-          report.noData.push({ ...item, note: step.note, ...describe(c) });
-          handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
+          if (step.optional) { state.handled.set(step.id, { status: null }); continue; }
+          state.report.noData.push({ ...item, note: step.note, ...describe(c) });
+          state.handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
           continue;
         }
         // The question it waits for isn't drawn yet, or is on the page without an answer yet: the page
         // is still working. Once it is in, what it redraws comes a moment later: the page goes quiet
         // first, and the round reads it again.
-        if (step.waitFor) waitShown = true;
+        if (step.waitFor) state.waitShown = true;
         // Something to give or wait for in the second pass: the next round's.
-        if (judgeOnly && step.waitFor && !waitOver.has(step.id)) { retry = true; continue; }
-        if (step.waitFor && !waitOver.has(step.id)) {
+        if (judgeOnly && step.waitFor && !state.waitOver.has(step.id)) { retry = true; continue; }
+        if (step.waitFor && !state.waitOver.has(step.id)) {
           const pending = shownControl(controls, { field: step.waitFor });
           const anchor = (step.whenShown ? shownControl(controls, step.whenShown)?.el : null) ?? document.body;
           const undrawn = waitedOutUndrawn.get(anchor) ?? new Set();
@@ -2144,10 +2191,10 @@ import { createSelect2Drivers } from './drivers/select2.js';
             // The page is still working on what is above: the cursor stays here (a batch goes on).
             if (mayWait(step.id)) { retry = true; waited = true; cursor(); if (batch) continue; break; }
             if (pending) waitedOut.add(pending.el); else waitedOutUndrawn.set(anchor, undrawn.add(step.id));
-            waitOver.add(step.id);
-          } else if (waitingSince.has(step.id)) {
+            state.waitOver.add(step.id);
+          } else if (state.waitingSince.has(step.id)) {
             cursor();
-            waitOver.add(step.id);
+            state.waitOver.add(step.id);
             phase('waiting');
             await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS, why: 'drawn' });
             retry = true;
@@ -2162,9 +2209,9 @@ import { createSelect2Drivers } from './drivers/select2.js';
         // there is a person's: kept and flagged, not replaced.
         // An answer an earlier fill gave here that the page has since taken back (`takenBack`).
         const tookBack = isChoice && !overwrite && !!takenBack?.keys && Object.hasOwn(takenBack.keys, fieldKey(c)) && stepIs(takenBack.steps)
-          && !agreesWith(step, c) && !refill.has(step.id) && !report.filled.some((x) => x.stepId === step.id);
+          && !agreesWith(step, c) && !state.refill.has(step.id) && !state.report.filled.some((x) => x.stepId === step.id);
         const differs = isChoice && replaceChoices && !step.keepChoice && !step.keepPreset && !tookBack && !agreesWith(step, c);
-        const legacyHold = mayHoldLegacyEdit(c) && !refill.has(step.id);
+        const legacyHold = mayHoldLegacyEdit(c) && !state.refill.has(step.id);
         // An unticked box that should stay unticked already has its answer (live run 2026-10-09:
         // every unticked box was "filled" again on each pass).
         const answered = hasValue(c) || (c.kind === 'checkbox' && step.value === false && !c.el.checked);
@@ -2173,8 +2220,8 @@ import { createSelect2Drivers } from './drivers/select2.js';
         if (step.checkNumber && unpicked.has(c.el) && unpicked.get(c.el) === c.el.value) {
           if (notYet()) continue;
           const reason = 'no address suggestion was picked for it: pick the address yourself';
-          report.failed.push({ ...item, reason, ...describe(c) });
-          handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason}` });
+          state.report.failed.push({ ...item, reason, ...describe(c) });
+          state.handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason}` });
           continue;
         }
         // Replace existing answers replaces a different value; one that already is the answer is
@@ -2187,32 +2234,32 @@ import { createSelect2Drivers } from './drivers/select2.js';
         // else None: TNI, 2026-10-26, W44-32). The agent's own choice is in the fill's skip anyway.
         // One the carrier made after the fill's answer (a late VIN lookup) is kept too; the fill's
         // own answer, or an emptied list, is given again as any other.
-        const presetKept = !!step.keepPreset && isChoice && answered && (!refill.has(step.id) || !agreesWith(step, c));
+        const presetKept = !!step.keepPreset && isChoice && answered && (!state.refill.has(step.id) || !agreesWith(step, c));
         // What a fill gave here for another vehicle, driver or trailer, still as it gave it, is
         // replaced with this unit's answer (W43-38, Progressive Add Driver, 2026-10-22: another
         // driver's name and date of birth were kept as differing and left to the agent).
         const otherUnits = answered && !agreesWith(step, c) && givenForOtherUnit(step, c);
-        if (legacyHold || sameAnswer || presetKept || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+        if (legacyHold || sameAnswer || presetKept || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !state.refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           if (notYet()) continue;
-          report.kept.push(item);
+          state.report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
-            report.checks.push({ ...item, note, ...describe(c) });
-            handled.set(step.id, { status: 'needs', note });
+            state.report.checks.push({ ...item, note, ...describe(c) });
+            state.handled.set(step.id, { status: 'needs', note });
           } else if (tookBack) {
             const note = `The page changed this back after it was filled (${step.name}): left as it is. Check it.`;
-            report.checks.push({ ...item, note, ...describe(c) });
-            handled.set(step.id, { status: 'needs', note });
+            state.report.checks.push({ ...item, note, ...describe(c) });
+            state.handled.set(step.id, { status: 'needs', note });
           } else if (step.keepChoice && isChoice && !agreesWith(step, c)) {
             const note = `The page already has another answer here (${step.name}): left as it is. Check it.`;
-            report.checks.push({ ...item, note, ...describe(c) });
-            handled.set(step.id, { status: 'needs', note });
+            state.report.checks.push({ ...item, note, ...describe(c) });
+            state.handled.set(step.id, { status: 'needs', note });
           // Review mode confirms every retained standard, including a differing carrier choice.
           // Other defaults retain their existing confirmation behavior.
           } else if (step.warn && (step.reviewRequired || agreesWith(step, c))) {
-            report.checks.push({ ...item, note: step.warn, ...describe(c) });
-            handled.set(step.id, { status: 'needs', note: step.warn });
-          } else handled.set(step.id, { status: null });
+            state.report.checks.push({ ...item, note: step.warn, ...describe(c) });
+            state.handled.set(step.id, { status: 'needs', note: step.warn });
+          } else state.handled.set(step.id, { status: null });
           continue;
         }
         // A choice an earlier answer gave that the page has since reset (an earlier fill's, or this
@@ -2230,10 +2277,10 @@ import { createSelect2Drivers } from './drivers/select2.js';
         // offer the answer: their call, with no item of its own.
         const prereqs = needsOf(step);
         if (prereqs.length && !agreesWith(step, c)) {
-          const root = prereqs.map((p) => unitHeld.get(p.id) ?? unitHeld.get(heldFor.get(p.id))).find(Boolean);
+          const root = prereqs.map((p) => state.unitHeld.get(p.id) ?? state.unitHeld.get(state.heldFor.get(p.id))).find(Boolean);
           if (root) { if (notYet()) continue; holdDependent(step, root); continue; }
           // Its prerequisite, above it, is still to be given again: the cursor stays here.
-          if (prereqs.some((p) => !handled.has(p.id) && refill.has(p.id) && allPairs.some((x) => x.step.id === p.id && !skippedField(x.control)))) {
+          if (prereqs.some((p) => !state.handled.has(p.id) && state.refill.has(p.id) && allPairs.some((x) => x.step.id === p.id && !skippedField(x.control)))) {
             retry = true;
             if (judgeOnly) continue;
             cursor();
@@ -2243,7 +2290,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
           const theirs = prereqs.find((p) => allPairs.some((x) => x.step.id === p.id && skippedField(x.control) && !agreesWith(x.step, x.control)));
           if (theirs && isChoice && !matchOption(optionsOf(c), step)) {
             if (notYet()) continue;
-            handled.set(step.id, { status: 'needs', note: `Left as it is: it needs ${coverageName(theirs)} on this vehicle, which you have taken over.` });
+            state.handled.set(step.id, { status: 'needs', note: `Left as it is: it needs ${coverageName(theirs)} on this vehicle, which you have taken over.` });
             continue;
           }
         }
@@ -2251,17 +2298,17 @@ import { createSelect2Drivers } from './drivers/select2.js';
         if (judgeOnly) { retry = true; continue; }
         // An answer the page didn't keep is given again once the page and its own requests have been
         // quiet (`keepWait`), each time, and read again first.
-        if (keepWait.has(step.id) && !keepSettled.has(step.id) && !agreesWith(step, c)) {
+        if (state.keepWait.has(step.id) && !state.keepSettled.has(step.id) && !agreesWith(step, c)) {
           cursor();
-          keepSettled.add(step.id);
+          state.keepSettled.add(step.id);
           phase('waiting');
-          await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000, requests: () => !report.halted });
+          await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000, requests: () => !state.report.halted });
           retry = true;
           break;
         }
-        if (isChoice && !resetWaited && !keepWait.has(step.id) && !agreesWith(step, c) && (refill.has(step.id) || (!step.scope && filledKeys.has(fieldKey(c))))) {
+        if (isChoice && !state.resetWaited && !state.keepWait.has(step.id) && !agreesWith(step, c) && (state.refill.has(step.id) || (!step.scope && state.filledKeys.has(fieldKey(c))))) {
           cursor();
-          resetWaited = true;
+          state.resetWaited = true;
           phase('waiting');
           await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000 });
           retry = true;
@@ -2276,13 +2323,13 @@ import { createSelect2Drivers } from './drivers/select2.js';
         const snap = (list) => new Map(list.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
         const before = batch ? null : snap(controls);
         const t0 = Date.now();
-        const requests0 = ajaxCount;
+        const requests0 = state.ajaxCount;
         let result;
         try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
         const tApplied = Date.now();
         if (result.ok && batch) {
-          item.timing = { ms: Date.now() - t0, settleMs: 0, ajax: ajaxCount - requests0, revealed: 0, removed: 0, changed: 0, batch: true };
-          if (report.halted) result = { ok: false, reason: 'the agent interrupted filling' };
+          item.timing = { ms: Date.now() - t0, settleMs: 0, ajax: state.ajaxCount - requests0, revealed: 0, removed: 0, changed: 0, batch: true };
+          if (state.report.halted) result = { ok: false, reason: 'the agent interrupted filling' };
           else if (c.el.isConnected === false) result = { ok: false, reason: 'the page did not keep the answer; check it' };
           else if (invalidControl(c) || !agreesWith(step, c)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
         } else if (result.ok) {
@@ -2291,7 +2338,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
           const after = snap(currentControls);
           const mine = `${fieldKey(c)}|${c.label}`;
           item.timing = {
-            ms: Date.now() - t0, settleMs: Date.now() - tApplied, ajax: ajaxCount - requests0,
+            ms: Date.now() - t0, settleMs: Date.now() - tApplied, ajax: state.ajaxCount - requests0,
             revealed: [...after.keys()].filter((k) => !before.has(k)).length,
             removed: [...before.keys()].filter((k) => !after.has(k)).length,
             changed: [...before.keys()].filter((k) => k !== mine && after.has(k) && after.get(k) !== before.get(k)).length,
@@ -2299,8 +2346,8 @@ import { createSelect2Drivers } from './drivers/select2.js';
           const fresh = assign(currentControls, plan).find((p) => p.step.id === step.id)?.control;
           // An address box may collapse once a suggestion is picked; the ZIP/city rules check it.
           const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : step.kind === 'address-suggest' || summaryAccepted(step, currentControls);
-          if (!settled || !accepted || report.halted) {
-            result = { ok: false, reason: !settled ? 'the page did not settle after the answer' : !fresh ? 'the field disappeared after the answer; check the page' : report.halted ? 'the agent interrupted filling' : 'the page did not keep the answer; check it',
+          if (!settled || !accepted || state.report.halted) {
+            result = { ok: false, reason: !settled ? 'the page did not settle after the answer' : !fresh ? 'the field disappeared after the answer; check the page' : state.report.halted ? 'the agent interrupted filling' : 'the page did not keep the answer; check it',
               // The page took the question away on this answer (a summary in its place): the item is
               // about the fill's answer, kept with no field (reconcile's `offPage: 'answer'`).
               ...(settled && !fresh ? { vanished: true } : {}) };
@@ -2311,39 +2358,39 @@ import { createSelect2Drivers } from './drivers/select2.js';
           // The helpers an answer here makes due again (the adapter's `rearm`: on Progressive's
           // Rates, Recalculate and Print, and the Done of the coverage answered).
           for (const id of adapter().rearm(currentPage(), step)) {
-            clicked.delete(id);
-            report.actions = report.actions.filter((x) => x.id !== id);
-            if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
+            state.clicked.delete(id);
+            state.report.actions = state.report.actions.filter((x) => x.id !== id);
+            if (!state.report.invalidatedActions.includes(id)) state.report.invalidatedActions.push(id);
           }
           // A step-fenced recalculation is due again after any later answer on its step (the
           // premium showed "$ --.--" until it was clicked, and Next stayed hidden: GEICO mock run,
           // 2026-10-20). It still waits for ratesStale() and the required questions before it's
           // clicked. One clicked once a quote (`once`: GEICO's, W43-31) never is again.
           for (const a of actions.filter((x) => x.needsRecalculation && !x.once && x.steps?.length && actionHere(x))) {
-            clicked.delete(a.action);
-            report.actions = report.actions.filter((x) => x.id !== a.action);
-            if (!report.invalidatedActions.includes(a.action)) report.invalidatedActions.push(a.action);
+            state.clicked.delete(a.action);
+            state.report.actions = state.report.actions.filter((x) => x.id !== a.action);
+            if (!state.report.invalidatedActions.includes(a.action)) state.report.invalidatedActions.push(a.action);
           }
           // An option picked in place of one never offered (`orMost`) is named in the report.
-          const instead = substituted.get(step.id);
-          report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}) });
-          quietDue = true;
-          unoffered.delete(step.id);
-          keepWait.delete(step.id);
+          const instead = state.substituted.get(step.id);
+          state.report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}) });
+          state.quietDue = true;
+          state.unoffered.delete(step.id);
+          state.keepWait.delete(step.id);
           // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
-          handled.set(step.id, step.standard
+          state.handled.set(step.id, step.standard
             ? { status: 'standard', note: instead ?? `TNI standard answer, not from the intake: ${step.name}` }
             : { status: 'filled', note: instead ?? `filled from intake: ${step.name}` });
           if (step.warn) {
-            report.checks.push({ ...item, note: step.warn, ...describe(c) });
-            handled.set(step.id, { status: 'needs', note: step.warn });
+            state.report.checks.push({ ...item, note: step.warn, ...describe(c) });
+            state.handled.set(step.id, { status: 'needs', note: step.warn });
           }
           changed = true;
           // One at a time, the cursor is here, and on a page that isn't ExtJS the next round judges
           // nothing below this answer until it acts further down (lagBound).
           if (!batch) {
             cursor();
-            if (!serverBacked) lastAnswered = { stepId: step.id, at };
+            if (!serverBacked) state.lastAnswered = { stepId: step.id, at };
           }
           // Batch: carry on with the next answer, except before a helper button that waits on
           // this one (Import Data after the VIN list): it's clicked first thing next round.
@@ -2357,18 +2404,18 @@ import { createSelect2Drivers } from './drivers/select2.js';
         } else if (step.unofferedNote && /^no option matches/.test(result.reason ?? '')) {
           // A list without the answer, which no helper shows later (GEICO's Basic PIP without
           // $2,500): the agent's alone at once, so a `whenClear` helper (Print) waits for it.
-          report.noData.push({ ...item, note: step.unofferedNote, manualOnly: true, ...describe(c) });
-          handled.set(step.id, { status: 'needs', note: step.unofferedNote });
+          state.report.noData.push({ ...item, note: step.unofferedNote, manualOnly: true, ...describe(c) });
+          state.handled.set(step.id, { status: 'needs', note: step.unofferedNote });
         } else if (step.whenOffered && /^no option matches/.test(result.reason ?? '')) {
           // Not offered yet: a helper may show it (GEICO's 11 Payments, behind View More Payment
           // Plans). Tried again each round; never offered by the fill's end, it is the agent's.
-          unoffered.set(step.id, { item: { ...item, ...describe(c) }, control: c, step, options: result.options ?? [] });
-        } else if (/did not keep/.test(result.reason ?? '') && !report.halted && retryOnce(step.id)) {
+          state.unoffered.set(step.id, { item: { ...item, ...describe(c) }, control: c, step, options: result.options ?? [] });
+        } else if (/did not keep/.test(result.reason ?? '') && !state.report.halted && retryOnce(step.id)) {
           // Often a later redraw resets it (a coverage list reloading): a choice is tried again once
           // the page has settled (`keepWait`), a typed answer next round.
-          refill.add(step.id);
-          if (isChoice) keepWait.add(step.id);
-          keepSettled.delete(step.id);
+          state.refill.add(step.id);
+          if (isChoice) state.keepWait.add(step.id);
+          state.keepSettled.delete(step.id);
           retry = true;
           // Still to give: the cursor stays here, and nothing below is answered or judged before it
           // (a batch goes on).
@@ -2385,14 +2432,14 @@ import { createSelect2Drivers } from './drivers/select2.js';
           // on two steps, and the agent kept GEICO's): kept, with a check naming the answer. Its
           // OTHER is no answer to keep (review of #141): that still fails.
           const note = `The page's list has no "${step.value}" (${step.name}): its "${selectedText(c)}" is left as it is. Check it.`;
-          report.kept.push(item);
-          report.checks.push({ ...item, note, ...describe(c) });
-          handled.set(step.id, { status: 'needs', note });
+          state.report.kept.push(item);
+          state.report.checks.push({ ...item, note, ...describe(c) });
+          state.handled.set(step.id, { status: 'needs', note });
         } else {
-          report.failed.push({ ...item, reason: result.reason, ...describe(c), ...(result.vanished ? { vanished: true } : {}) });
-          handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
+          state.report.failed.push({ ...item, reason: result.reason, ...describe(c), ...(result.vanished ? { vanished: true } : {}) });
+          state.handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
           retry = true;
-          if (report.halted) { stopAt = Math.min(stopAt, at + 1); break; }
+          if (state.report.halted) { stopAt = Math.min(stopAt, at + 1); break; }
           // On pages that redraw after every answer, a failed answer may have redrawn it too: the
           // controls read this round may be gone, so read the page again before the next one. Judged
           // down to it.
@@ -2401,7 +2448,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
       }
       // Nothing left to act on in this round: what it left below the last answer is judged now,
       // from the same read (no round, read or wait of its own).
-      if (pass === 0 && (!acted || changed) && !batch && later.length && !report.halted && !stepMoved) {
+      if (pass === 0 && (!acted || changed) && !batch && later.length && !state.report.halted && !stepMoved) {
         todo = later.filter((p) => place.get(p.control) < stopAt && p.control.el?.isConnected !== false);
         bound = Infinity;
         judgeOnly = true;
@@ -2415,7 +2462,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // the round read it is no question: judgeControls passes over it).
       const judgeTo = batch || !acted ? Infinity : changed ? stopAt : Math.min(stopAt, lagBound);
       judged(judgeTo, judgeTo === pendingAt);
-      if (report.halted) break;
+      if (state.report.halted) break;
       // The next round's start ends the fill (or stops it on a step that is the agent's).
       if (stepMoved) continue;
       // A choice never offered once the helper that shows every option has been clicked (`orMost`:
@@ -2424,25 +2471,25 @@ import { createSelect2Drivers } from './drivers/select2.js';
       if (!changed && substitute()) continue;
       // Nothing left to type or pick: click the next button whose turn it is. Not on a page the agent
       // moved to while this round answered (its answer's field gone with the old page).
-      if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+      if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
       // Another group of units (`pager`), before any helper: Recalculate or the bill plan must not
       // go before every unit's rows were answered.
-      const turn = !changed && !retry && !waited && unitGroups.on && window === window.top && !agentPressed ? unitGroups.next() : null;
+      const turn = !changed && !retry && !waited && unitGroups.on && window === window.top && !state.agentPressed ? unitGroups.next() : null;
       if (turn) {
-        report.paged = unitGroups.paged;
+        state.report.paged = unitGroups.paged;
         phase('helper', turn.text);
         pressButton(turn.el);
-        progressed = true;
+        state.progressed = true;
         if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
         // Its rows drawn: the pressed group shown (where the page says which is), 10 s at most.
-        for (const until = Date.now() + 10000; !unitGroups.shows(turn.text) && Date.now() < until && !report.halted;) await sleep(200);
+        for (const until = Date.now() + 10000; !unitGroups.shows(turn.text) && Date.now() < until && !state.report.halted;) await sleep(200);
         if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
-        if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+        if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
         continue;
       }
       let helperClicked = false;
-      if (!changed && window === window.top && !agentPressed) {
-        loadDue = null;
+      if (!changed && window === window.top && !state.agentPressed) {
+        state.loadDue = null;
         changed = helperClicked = clickNextAction(controls);
         // A helper that loads a view (GEICO's "+", Add Driver) is clicked on a page quiet for a
         // second (FL live run 4, 2026-10-21: Add Driver 2 s after the list showed, and GEICO's
@@ -2450,23 +2497,23 @@ import { createSelect2Drivers } from './drivers/select2.js';
         // time (`quietMs`: GEICO's Recalculate, W43-31), its own requests included (REQUESTS_MS at
         // most): once it is due, the page is waited for, and clicked next round if nothing changed
         // meanwhile (a page that changed is read again).
-        if (loadDue) {
+        if (state.loadDue) {
           const before = signature();
-          const due = actions.find((x) => x.action === loadDue);
+          const due = actions.find((x) => x.action === state.loadDue);
           phase('waiting');
-          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !report.halted : null, why: 'before-load' })) { halt(LOAD_HALT); break; }
-          quiet = !agentPressed && signature() === before ? { action: loadDue, sig: before } : null;
+          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !state.report.halted : null, why: 'before-load' })) { halt(LOAD_HALT); break; }
+          state.quiet = !state.agentPressed && signature() === before ? { action: state.loadDue, sig: before } : null;
           continue;
         }
       }
-      progressed = changed;
+      state.progressed = changed;
       if (!changed && !retry) {
         // A fill with a step that waits on the page takes one more look once the page has gone quiet:
         // an answer the page cleared after the last round read it (GEICO fills its type list again a
         // moment after the decoded year: FL live run 3, the Cascadia's Tractor) is given again
         // (changedSinceFilled).
-        if (!lastLook && waitShown && report.filled.length && window === window.top) {
-          lastLook = true;
+        if (!state.lastLook && state.waitShown && state.report.filled.length && window === window.top) {
+          state.lastLook = true;
           phase('waiting');
           await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS, why: 'drawn' });
           continue;
@@ -2481,18 +2528,18 @@ import { createSelect2Drivers } from './drivers/select2.js';
         // Not after the agent's own Next: the step's move is theirs, and no Continue follows. The
         // wait counts as progress: a fill whose rounds run out on it, with what it drew unread, stops
         // at its round limit and doesn't continue.
-        if (quietDue && !agentPressed && advance?.quietMs && !serverBacked && window === window.top && currentPage() === startPage && !stepChanged()
+        if (state.quietDue && !state.agentPressed && advance?.quietMs && !serverBacked && window === window.top && currentPage() === startPage && !stepChanged()
           && (!advance.steps?.length || stepIs(advance.steps, stepKey()))) {
-          quietDue = false;
-          progressed = true;
+          state.quietDue = false;
+          state.progressed = true;
           phase('waiting');
           await settle({ quietMs: advance.quietMs, maxMs: 6000 });
-          quietSig = signature();
+          state.quietSig = signature();
           continue;
         }
         // Nothing left to do: a choice that failed against options the page has redrawn since is
         // tried once more against the ones it shows now (retryRedrawn), in the next round.
-        if (retryRedrawn(allPairs)) { progressed = true; continue; }
+        if (retryRedrawn(allPairs)) { state.progressed = true; continue; }
         break;
       }
       if (!changed) {
@@ -2505,25 +2552,25 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // A helper that draws a new view (`loads`: GEICO's add icons and the chooser's Next) is waited
       // for as long as a step's load, and so is one that rates the quote (GEICO's Recalculate, its
       // spinner up while it rates).
-      const loads = helperClicked && !!pendingAction?.loads;
-      const rates = helperClicked && pendingAction?.verify === 'premium';
-      if (helperClicked) phase('helper', pendingAction?.label ?? report.actions.at(-1)?.text ?? null);
+      const loads = helperClicked && !!state.pendingAction?.loads;
+      const rates = helperClicked && state.pendingAction?.verify === 'premium';
+      if (helperClicked) phase('helper', state.pendingAction?.label ?? state.report.actions.at(-1)?.text ?? null);
       if ((helperClicked || batch) && !await settle(serverBacked ? { why: 'round' } : { quietMs: batch ? 150 : 250, maxMs: loads || rates ? LOAD_MS : 3000, why: 'round' })) {
-        traceEnd(pendingAction);
+        traceEnd(state.pendingAction);
         halt(loads ? LOAD_HALT : 'The page did not settle after the helper.');
         break;
       }
       // Its view comes a moment after the page went quiet (GEICO's chooser after "+", with no
       // spinner: FL live run 4, 2026-10-21, "+" clicked three times in 1.4 s): waited for, once
       // the page is quiet again, before the click counts as lost.
-      if (loads && pendingAction?.verify === 'revealed') {
+      if (loads && state.pendingAction?.verify === 'revealed') {
         const until = Date.now() + loadResultMs;
         let dirty = true;
         const mo = new MutationObserver(() => { dirty = true; });
         mo.observe(document.body, { subtree: true, childList: true });
         try {
           for (let tick = 0; Date.now() < until; tick++) {
-            if ((dirty || tick % 5 === 0) && revealedNow(pendingAction)) break;
+            if ((dirty || tick % 5 === 0) && revealedNow(state.pendingAction)) break;
             dirty = false;
             await sleep(200);
           }
@@ -2543,21 +2590,21 @@ import { createSelect2Drivers } from './drivers/select2.js';
       if (rates && !serverBacked) {
         phase('premium');
         const until = Date.now() + LOAD_MS;
-        while (Date.now() < until && !rated(pendingAction) && !report.halted && currentPage() === startPage && !stepChanged()) { traceRead(pendingAction); await sleep(500); }
-        if (pendingAction?.trace && rated(pendingAction)) { pendingAction.trace.premiumMs = Math.round(perfNow() - pendingAction.trace.at); traceRead(pendingAction); }
+        while (Date.now() < until && !rated(state.pendingAction) && !state.report.halted && currentPage() === startPage && !stepChanged()) { traceRead(state.pendingAction); await sleep(500); }
+        if (state.pendingAction?.trace && rated(state.pendingAction)) { state.pendingAction.trace.premiumMs = Math.round(perfNow() - state.pendingAction.trace.at); traceRead(state.pendingAction); }
         // Stopped, or the agent edited, while it rated: nothing more is done here.
-        if (report.halted) { traceEnd(pendingAction); break; }
-        if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted, why: 'rated' })) { traceEnd(pendingAction); halt(LOAD_HALT); break; }
-        traceRead(pendingAction);
+        if (state.report.halted) { traceEnd(state.pendingAction); break; }
+        if (!await settle({ quietMs: state.pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'rated' })) { traceEnd(state.pendingAction); halt(LOAD_HALT); break; }
+        traceRead(state.pendingAction);
       }
       if (!await verifyAction()) break;
-      if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+      if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
       if (stepChanged()) break;
     }
     // The agent's step after the last round (Next clicked during its wait): stopped there too.
-    if (!stoppedAt) {
-      stoppedAt = stopStepOn(stopSteps);
-      if (stoppedAt) { report.stopStep = stoppedAt; if (!report.halted) halt(STOP_STEP_HALT); }
+    if (!state.stoppedAt) {
+      state.stoppedAt = stopStepOn(stopSteps);
+      if (state.stoppedAt) { state.report.stopStep = state.stoppedAt; if (!state.report.halted) halt(STOP_STEP_HALT); }
     }
 
     function revealedNow(a) {
@@ -2568,11 +2615,11 @@ import { createSelect2Drivers } from './drivers/select2.js';
     }
 
     async function verifyAction() {
-      const a = pendingAction;
-      pendingAction = null;
+      const a = state.pendingAction;
+      state.pendingAction = null;
       if (!a) return true;
       if (a.verify === 'download') {
-        report.documentPending = true;
+        state.report.documentPending = true;
         return true;
       }
       let accepted = true;
@@ -2580,7 +2627,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // Clicked once a quote (`once`: GEICO's Recalculate, W43-31): never again, also when its
       // result didn't show; from here it is the agent's, and they're told.
       if (!accepted && a.once) {
-        report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, reason: ONCE_UNVERIFIED });
+        state.report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, reason: ONCE_UNVERIFIED });
         traceEnd(a);
         return false;
       }
@@ -2603,25 +2650,25 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // `{ appears }`: more of these on the page than before the click (any, when there were none).
       if (a.verify?.appears) accepted = deepQueryAll(document, a.verify.appears).length > (a.before ?? 0);
       if (!accepted) {
-        clicked.delete(a.action);
-        report.invalidatedActions.push(a.action);
-        report.actions = report.actions.filter((x) => x.id !== a.action);
-        report.blocked.push({ id: a.action, why: 'result not verified yet' });
+        state.clicked.delete(a.action);
+        state.report.invalidatedActions.push(a.action);
+        state.report.actions = state.report.actions.filter((x) => x.id !== a.action);
+        state.report.blocked.push({ id: a.action, why: 'result not verified yet' });
         // A click whose result never showed is tried again, twice at most in one fill (the
         // button is due again, being unclicked); then it stays the agent's, and they're told.
         if (a.verify === 'revealed' || a.verify?.appears) {
           // A helper that loads a view is never clicked again: it was waited for (above).
           if (a.loads) {
-            exhausted.add(a.action);
-            report.noData.push({ label: a.label ?? a.baseAction ?? a.action, path: a.path, name: a.name, key: null, q: null, controlKind: null,
+            state.exhausted.add(a.action);
+            state.report.noData.push({ label: a.label ?? a.baseAction ?? a.action, path: a.path, name: a.name, key: null, q: null, controlKind: null,
               note: 'Clicked once, but the page never showed what it opens: check the page, do it yourself if it isn\'t there, then fill again.' });
             return true;
           }
           if (retryOnce(`action:${a.action}`)) return true;
           // Left to the agent for the rest of this fill (not clicked again), and the page's other
           // questions still fill around it.
-          exhausted.add(a.action);
-          report.noData.push({ label: a.label ?? a.baseAction ?? a.action, path: a.path, name: a.name, key: null, q: null, controlKind: null,
+          state.exhausted.add(a.action);
+          state.report.noData.push({ label: a.label ?? a.baseAction ?? a.action, path: a.path, name: a.name, key: null, q: null, controlKind: null,
             note: 'Clicked three times, but the page never showed its result: do it yourself, then fill again.' });
           return true;
         }
@@ -2635,7 +2682,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
     function resultShown(a, pairs) {
       const shown = a.shownBy;
       if (!shown || !a.after.length) return false;
-      if (report.filled.some((x) => a.after.includes(x.path))) return false;
+      if (state.report.filled.some((x) => a.after.includes(x.path))) return false;
       const agrees = (p) => pairs.some(({ step, control }) => step.path === p && step.value != null && !invalidControl(control) && agreesWith(step, control));
       const present = (p) => pairs.some(({ step, control }) => step.path === p && !invalidControl(control) && (!shown.answered || hasValue(control)));
       return a.after.every(agrees) && (shown.all.length ? shown.all.every(present) : shown.any.some(present));
@@ -2731,7 +2778,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
       if (!t) return;
       traceRead(a);
       const rel = (x) => Math.round(x - t.at);
-      report.recalcTrace = {
+      state.report.recalcTrace = {
         action: a.action,
         ms: rel(perfNow()),
         press: t.press,
@@ -2763,8 +2810,8 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // quiet again. A request still running can't be seen, and a value the page then draws back
       // by itself isn't a change (W43-41, FL, 2026-10-22: four answers marked as changed and put
       // back, which the agent saw right the whole time).
-      await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
-      if (report.halted) return false;
+      await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !state.report.halted });
+      if (state.report.halted) return false;
       const now = new Map(answerPlaces(collectControls()));
       traceRead(a, now);
       const changed = keptChanged(a, now);
@@ -2798,14 +2845,14 @@ import { createSelect2Drivers } from './drivers/select2.js';
           const i = step ? list.findIndex((x) => x.stepId === step.id && x.key === key && x.label === c.label) : -1;
           return i < 0 ? list : list.filter((_, j) => j !== i);
         };
-        report.filled = own(report.filled);
-        report.kept = own(report.kept);
-        report.failed.push({ stepId: step?.id ?? null, label: c.label, path: step?.path ?? null, name: step?.name ?? c.label, key, q: c.q ?? null, controlKind: c.kind, reason, ...describe(c) });
+        state.report.filled = own(state.report.filled);
+        state.report.kept = own(state.report.kept);
+        state.report.failed.push({ stepId: step?.id ?? null, label: c.label, path: step?.path ?? null, name: step?.name ?? c.label, key, q: c.q ?? null, controlKind: c.kind, reason, ...describe(c) });
         mark(c, 'failed', reason);
-        if (step) handled.set(step.id, { status: 'failed', note: reason });
+        if (step) state.handled.set(step.id, { status: 'failed', note: reason });
       }
       const n = changed.length;
-      report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null,
+      state.report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null,
         reason: `the page changed ${n === 1 ? 'an answer' : `${n} answers`} when it recalculated (marked above), so the premium may not be for the answers shown. Check them and click Recalculate yourself: the fill clicks it once a quote.` });
       return true;
     }
@@ -2814,12 +2861,12 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // again every half second until KEPT_WATCH_MS after the click, and a change is checked as above
     // once the page is quiet. An agent edit, another page or another step ends the watch.
     async function watchKept(a) {
-      while (Date.now() - a.clickedAt < KEPT_WATCH_MS && !report.halted && currentPage() === startPage && !stepChanged()) {
+      while (Date.now() - a.clickedAt < KEPT_WATCH_MS && !state.report.halted && currentPage() === startPage && !stepChanged()) {
         await sleep(500);
         const now = new Map(answerPlaces(collectControls()));
         traceRead(a, now);
         if (!keptChanged(a, now).length) continue;
-        await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
+        await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !state.report.halted });
         await answersKept(a);
         return;
       }
@@ -2834,14 +2881,14 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // fields already answered: still the agent's.
     function substitute() {
       const byPath = new Map();
-      for (const u of unoffered.values()) {
+      for (const u of state.unoffered.values()) {
         const m = u.step.orMost;
-        if (!m || !clicked.has(m.after)) continue;
+        if (!m || !state.clicked.has(m.after)) continue;
         byPath.set(u.step.path, [...(byPath.get(u.step.path) ?? []), u]);
       }
       let any = false;
       for (const [path, group] of byPath) {
-        if (report.filled.some((x) => x.path === path) || plan.some((s) => s.path === path && substituted.has(s.id))) continue;
+        if (state.report.filled.some((x) => x.path === path) || plan.some((s) => s.path === path && state.substituted.has(s.id))) continue;
         const { count, one, name } = group[0].step.orMost;
         const counted = (text) => (one && new RegExp(one, 'i').test(text) ? 1 : Number(new RegExp(count, 'i').exec(text)?.[1] ?? NaN));
         let best = null;
@@ -2852,12 +2899,12 @@ import { createSelect2Drivers } from './drivers/select2.js';
           }
         }
         if (!best) continue;
-        const fresh = report.actions.some((x) => x.id === group[0].step.orMost.after);
+        const fresh = state.report.actions.some((x) => x.id === group[0].step.orMost.after);
         if (!fresh && oneLine(selectedText(best.control) ?? '') !== best.text) continue;
         const step = plan.find((s) => s.id === best.id);
-        substituted.set(step.id, `The page doesn't offer "${step.value}" here: the fill picked "${best.text}", ${name}.`);
+        state.substituted.set(step.id, `The page doesn't offer "${step.value}" here: the fill picked "${best.text}", ${name}.`);
         step.value = best.text;
-        unoffered.delete(step.id);
+        state.unoffered.delete(step.id);
         any = true;
       }
       return any;
@@ -2872,7 +2919,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // A helper the agent must otherwise do by hand is open while the helpers it follows have run
     // and the page hasn't settled it (NTL added, then set back to No, and still on the quote).
     function holdOpen(a) {
-      return !!a.missing && a.afterActions.every((id) => clicked.has(id)) && !clicked.has(a.action)
+      return !!a.missing && a.afterActions.every((id) => state.clicked.has(id)) && !state.clicked.has(a.action)
         && actionHere(a) && !settledItem(a);
     }
 
@@ -2889,7 +2936,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // The row's limit steps, assigned among themselves (cargo's row and section read the same).
       const limitSteps = plan.filter((s) => s[tag] === 'limit' && (s.value != null || (section.anyLimit && !found)));
       const kept = ({ step, control }) => (found
-        ? !report.filled.some((x) => x.key === fieldKey(control))
+        ? !state.report.filled.some((x) => x.key === fieldKey(control))
           && (agreesWith(step, control) || (skippedField(control) && hasValue(control)))
         : (!section.anyLimit || hasValue(control)) && (step.value == null || agreesWith(step, control)));
       if (assign(controls, limitSteps).some(kept)) return true;
@@ -2901,7 +2948,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // Its button back on the page (`resolvedBy`: the Add NTL link, NTL removed), or a page the agent
     // has been to since (`settledByPages`).
     function settledItem(a) {
-      return !!(a.resolvedBy && findButton({ text: a.resolvedBy })) || !!a.settledByPages?.some((p) => visited.has(p));
+      return !!(a.resolvedBy && findButton({ text: a.resolvedBy })) || !!a.settledByPages?.some((p) => state.visited.has(p));
     }
 
     // A prerequisite holds when its field shows the intake's answer, or an answer the agent chose
@@ -2919,20 +2966,20 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // CSL, held Recalculate until the agent marked it done).
     function leftForAgent(controls) {
       const here = liveOn(controls);
-      return report.noData.filter(here).length + report.failed.filter(here).length + report.checks.filter(here).length + report.leftRequired.filter(here).length
+      return state.report.noData.filter(here).length + state.report.failed.filter(here).length + state.report.checks.filter(here).length + state.report.leftRequired.filter(here).length
         // An answer the page didn't keep, still to give again (`keepWait`): not done yet.
-        + [...keepWait].filter((id) => !handled.has(id)).length
-        + report.kept.filter((x) => x.differs && here(x)).length
-        + controls.filter((c) => !hasValue(c) && !skippedField(c) && report.unknown.some((x) => x.key === fieldKey(c))).length
+        + [...state.keepWait].filter((id) => !state.handled.has(id)).length
+        + state.report.kept.filter((x) => x.differs && here(x)).length
+        + controls.filter((c) => !hasValue(c) && !skippedField(c) && state.report.unknown.some((x) => x.key === fieldKey(c))).length
         // Questions below the round's cursor, not judged yet: what they hold isn't known.
-        + provisionalLeft;
+        + state.provisionalLeft;
     }
 
     // The place of the first question in `pairsNow` the fill hasn't settled (not answered, kept or
     // left yet, and not the agent's): at most where the round's cursor is (Infinity: none).
     function firstOpen(pairsNow, place) {
       let first = Infinity;
-      for (const { step, control } of pairsNow) if (!handled.has(step.id) && !skippedField(control)) first = Math.min(first, place.get(control) ?? Infinity);
+      for (const { step, control } of pairsNow) if (!state.handled.has(step.id) && !skippedField(control)) first = Math.min(first, place.get(control) ?? Infinity);
       return first;
     }
 
@@ -2947,7 +2994,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
         if (!at.has(key)) at.set(key, i);
       });
       const order = (x) => (x.key == null ? null : at.get(`${x.key}|${x.label}`) ?? at.get(x.key) ?? null);
-      const lists = [['unknown', report.unknown], ['failed', report.failed], ['noData', report.noData], ['leftRequired', report.leftRequired], ['differs', report.kept.filter((x) => x.differs)], ['checks', report.checks]];
+      const lists = [['unknown', state.report.unknown], ['failed', state.report.failed], ['noData', state.report.noData], ['leftRequired', state.report.leftRequired], ['differs', state.report.kept.filter((x) => x.differs)], ['checks', state.report.checks]];
       thisFill.places = order;
       // In page order; those with no field on the page (a helper, a unit without its row) last.
       const list = lists.flatMap(([kind, xs]) => xs.filter((x) => !x.otherStep).map((x) => ({ kind, key: x.key ?? null, label: x.label || x.name || '', order: order(x) })));
@@ -3051,22 +3098,22 @@ import { createSelect2Drivers } from './drivers/select2.js';
         if ('current' in x || 'options' in x) Object.assign(x, sure ? describe(c) : { current: null });
         return true;
       };
-      for (const k of REVIEW_LISTS) report[k] = report[k].filter(live);
-      report.kept = report.kept.filter((x) => !x.differs || live(x));
-      for (const x of report.filled) answer(x, true);
-      for (const x of report.kept) if (!x.differs) answer(x, false);
-      const was = report.reconcile;
-      report.reconcile = { ms: Math.round(((was?.ms ?? 0) + perfNow() - t0) * 100) / 100, reads: reads ?? was?.reads ?? 0, dropped: (was?.dropped ?? 0) + dropped, gone, retried: redrawRetried.size };
+      for (const k of REVIEW_LISTS) state.report[k] = state.report[k].filter(live);
+      state.report.kept = state.report.kept.filter((x) => !x.differs || live(x));
+      for (const x of state.report.filled) answer(x, true);
+      for (const x of state.report.kept) if (!x.differs) answer(x, false);
+      const was = state.report.reconcile;
+      state.report.reconcile = { ms: Math.round(((was?.ms ?? 0) + perfNow() - t0) * 100) / 100, reads: reads ?? was?.reads ?? 0, dropped: (was?.dropped ?? 0) + dropped, gone, retried: redrawRetried.size };
     }
     // A choice that failed against options the page has redrawn since (GEICO, 2026-10-28: UM was tried
     // against the split limits shown before the CSL liability limit redrew them as CSL) is given once
     // more, against the options on the page now: taken off the report, the next round answers it as
     // any other answer. Once a fill (redrawRetried); never after a halt or the agent's own button.
     function retryRedrawn(pairsNow) {
-      if (report.halted || agentPressed) return false;
+      if (state.report.halted || state.agentPressed) return false;
       const byStep = new Map(pairsNow.map((p) => [p.step.id, p]));
       let again = false;
-      for (const x of [...report.failed]) {
+      for (const x of [...state.report.failed]) {
         const pair = x.stepId == null || redrawRetried.has(x.stepId) ? null : byStep.get(x.stepId);
         if (!pair || !Array.isArray(x.options) || !['radio', 'select'].includes(pair.control.kind) || skippedField(pair.control)) continue;
         const { step, control } = pair;
@@ -3074,8 +3121,8 @@ import { createSelect2Drivers } from './drivers/select2.js';
         const options = describe(control).options;
         if (options.length === x.options.length && options.every((o, i) => o === x.options[i])) continue;
         redrawRetried.add(step.id);
-        report.failed = report.failed.filter((y) => y !== x);
-        handled.delete(step.id);
+        state.report.failed = state.report.failed.filter((y) => y !== x);
+        state.handled.delete(step.id);
         again = true;
       }
       return again;
@@ -3093,35 +3140,35 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // A helper's button with something open over it: waits, as one waiting for its prerequisites.
       const holdCovered = (a, el) => {
         blocked.push(a.action);
-        report.blocked.push({ id: a.action, why: COVERED_HELPER, waits: [{ say: 'what is open over it closed' }], text: buttonText(el).slice(0, 60) || (a.label ?? '') });
+        state.report.blocked.push({ id: a.action, why: COVERED_HELPER, waits: [{ say: 'what is open over it closed' }], text: buttonText(el).slice(0, 60) || (a.label ?? '') });
       };
       for (const a of actions.filter((x) => (!immediateOnly || x.immediate) && (!blank || x.onBlankPage))) {
         // A link verified by its going away that is back on its page (NTL removed by hand, then
         // asked for again) is due again.
-        if (clicked.has(a.action) && a.verify === 'gone' && actionHere(a) && findButton(a)) clicked.delete(a.action);
-        if (clicked.has(a.action) || exhausted.has(a.action) || !actionHere(a)) continue;
+        if (state.clicked.has(a.action) && a.verify === 'gone' && actionHere(a) && findButton(a)) state.clicked.delete(a.action);
+        if (state.clicked.has(a.action) || state.exhausted.has(a.action) || !actionHere(a)) continue;
         // A blank repeater row is already sufficient: do not add a duplicate merely because
         // its fields have not been filled yet (or the agent went back to this step).
-        if (a.unlessSelector && deepQueryAll(document, a.unlessSelector).length) { clicked.add(a.action); continue; }
+        if (a.unlessSelector && deepQueryAll(document, a.unlessSelector).length) { state.clicked.add(a.action); continue; }
         // A helper that answers many questions at once (AmWINS' Default all answers to No) would
         // reset an answer the agent gave on this page: not clicked while one is here (the rules
         // answer the other questions one by one), and not counted as clicked either.
         if (a.skipIfProtected && controls.some((c) => skippedField(c))) continue;
-        if (report.halted || pageBusy()) return false;
+        if (state.report.halted || pageBusy()) return false;
         if (a.action === 'printSend' && controls.some((c) => /^(email|e mail|fax)$/.test(c.text) && hasValue(c))) {
-          report.blocked.push({ id: a.action, why: 'Email or Fax is ticked; untick it to print' });
+          state.report.blocked.push({ id: a.action, why: 'Email or Fax is ticked; untick it to print' });
           continue;
         }
-        if (a.unless.some(has) || (a.unlessActions ?? []).some((id) => clicked.has(id))) { clicked.add(a.action); continue; }
+        if (a.unless.some(has) || (a.unlessActions ?? []).some((id) => state.clicked.has(id))) { state.clicked.add(a.action); continue; }
         // A coverage section already added and closed on the page, by the agent or an earlier fill:
         // its Done is done, unclicked, so what follows it runs (general liability's "+" after cargo:
         // the maintainer, 2026-10-28, after an FL run where the agent closed cargo and GL was never
         // added). Only as this fill found the page (after a click of its own, a "+", a section still
         // being drawn isn't closed), and with no Done with this coverage showing (a section is open).
-        if (CLOSED_SECTIONS[a.verify] && !report.actions.some((x) => !x.alreadyShown) && !findButton(a)
+        if (CLOSED_SECTIONS[a.verify] && !state.report.actions.some((x) => !x.alreadyShown) && !findButton(a)
           && sectionClosedOn(controls, CLOSED_SECTIONS[a.verify], { found: true })) {
-          clicked.add(a.action);
-          report.actions.push({ id: a.action, text: 'closed on the page', alreadyShown: true });
+          state.clicked.add(a.action);
+          state.report.actions.push({ id: a.action, text: 'closed on the page', alreadyShown: true });
           continue;
         }
         // Recalculate only when the rates are out of date; otherwise it isn't waited for.
@@ -3130,10 +3177,10 @@ import { createSelect2Drivers } from './drivers/select2.js';
         // `nudge`: a button that shows only once the page took an answer (Progressive's "Done with
         // this coverage" after the cargo commodity): with everything else ready and no button, that
         // answer is picked again, once (the agent's re-pick is what made it show).
-        if (!button && a.nudge && !nudged.has(a.action) && a.after.every(has) && a.afterActions.every((id) => clicked.has(id))) {
+        if (!button && a.nudge && !state.nudged.has(a.action) && a.after.every(has) && a.afterActions.every((id) => state.clicked.has(id))) {
           const pair = pairs.find(({ step }) => step.path === a.nudge && step.value != null);
           if (pair && agreesWith(pair.step, pair.control)) {
-            nudged.add(a.action);
+            state.nudged.add(a.action);
             // A widget is picked again its own way (the page adapter's reselect), a field set again.
             const { widget } = pair.control;
             if (widget) adapter().reselect(widget, pair.control.el);
@@ -3153,8 +3200,8 @@ import { createSelect2Drivers } from './drivers/select2.js';
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
           && a.after.every(has)
-          && a.afterActions.every((id) => clicked.has(id))
-          && (!a.afterPages.length || a.afterPages.some((p) => visited.has(p)))
+          && a.afterActions.every((id) => state.clicked.has(id))
+          && (!a.afterPages.length || a.afterPages.some((p) => state.visited.has(p)))
           && (!a.afterValue || pairs.some(({ step, control }) => step.path === a.afterValue[0] && new RegExp(a.afterValue[1], 'i').test(selectedText(control) ?? '')));
         if (!ready) {
           // Name what it waits for (field paths, buttons, pages: no client values), so the panel
@@ -3163,8 +3210,8 @@ import { createSelect2Drivers } from './drivers/select2.js';
           const waits = [
             ...a.after.filter((p) => !has(p)).map((path) => ({ path })),
             ...(a.afterAny?.length && !a.afterAny.some(has) ? [{ any: a.afterAny }] : []),
-            ...a.afterActions.filter((id) => !clicked.has(id)).map((action) => ({ action })),
-            ...(a.afterPages.length && !a.afterPages.some((p) => visited.has(p)) ? [{ pages: a.afterPages }] : []),
+            ...a.afterActions.filter((id) => !state.clicked.has(id)).map((action) => ({ action })),
+            ...(a.afterPages.length && !a.afterPages.some((p) => state.visited.has(p)) ? [{ pages: a.afterPages }] : []),
             ...(a.needsPremium && !premiumReady() ? [{ say: 'a current premium' }] : []),
             ...(a.afterValue ? [{ path: a.afterValue[0], set: true }] : []),
             ...holds.map((h) => ({ action: h.action, say: `${h.label ?? h.baseAction} resolved` })),
@@ -3174,37 +3221,37 @@ import { createSelect2Drivers } from './drivers/select2.js';
           const waitingFor = waits.map((w) => w.say ?? (w.any ? `one of ${w.any.join(' / ')}` : w.action ? `${w.action} clicked`
             : w.pages ? `${w.pages.join(' / ')} visited` : `${w.path}${w.set ? ' set' : ''}`));
           blocked.push(a.action);
-          report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites', waits });
+          state.report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites', waits });
           continue;
         }
         // Its result already shows (the agent ran the lookup before Fill): done, not clicked again.
         if (alreadyShown) {
-          clicked.add(a.action);
-          report.actions.push({ id: a.action, text: 'already shown on the page', alreadyShown: true });
+          state.clicked.add(a.action);
+          state.report.actions.push({ id: a.action, text: 'already shown on the page', alreadyShown: true });
           continue;
         }
         if (!button) {
-          const opener = !openersTried.has(a.action) && findButton({ text: a.opener });
+          const opener = !state.openersTried.has(a.action) && findButton({ text: a.opener });
           if (!opener) continue;
           // Something open over it (a dialog, a message): not clicked through it.
           if (coveredBy(opener)) { holdCovered(a, opener); continue; }
-          openersTried.add(a.action);
-          report.actions.push({ id: `${a.action}:menu`, text: buttonText(opener).slice(0, 60) });
+          state.openersTried.add(a.action);
+          state.report.actions.push({ id: `${a.action}:menu`, text: buttonText(opener).slice(0, 60) });
           pressButton(opener);
           return true;
         }
-        if ((a.loads || a.quietMs) && !(quiet?.action === a.action && quiet.sig === signature())) { loadDue = a.action; return false; }
+        if ((a.loads || a.quietMs) && !(state.quiet?.action === a.action && state.quiet.sig === signature())) { state.loadDue = a.action; return false; }
         // Something open over it (a dialog, a message): not clicked through it; clicked once it's gone.
         if (coveredBy(button)) { holdCovered(a, button); continue; }
-        quiet = null;
-        clicked.add(a.action);
-        report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
+        state.quiet = null;
+        state.clicked.add(a.action);
+        state.report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
         // What the page shows as the button is clicked (the round's controls are older: answers
         // have landed since): what a `revealed` / `appears` check compares with afterwards.
-        pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
+        state.pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
           : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length }
             : a.keepAnswers ? { ...a, kept: answersNow(), clickedAt: Date.now(), trace: traceStart() } : a;
-        const trace = pendingAction.trace;
+        const trace = state.pendingAction.trace;
         const how = pressButton(button, { late: trace ? () => { trace.press = 'late'; } : null, kit: a.kitClick });
         if (trace) trace.press = how;
         return true;
@@ -3216,7 +3263,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // to that page's own fill: none of them is reported or marked as this page's. So does the
     // agent's Next to another step of a one-address application, and a stop step or a step that
     // can't be read is not read at all.
-    const stillHere = !report.navigatedTo && currentPage() === startPage && !stepChanged() && !stoppedAt && !unreadStep;
+    const stillHere = !state.report.navigatedTo && currentPage() === startPage && !stepChanged() && !state.stoppedAt && !state.unreadStep;
     // Answers still waiting for another try when the fill ended are left for the agent, and so is
     // a field the page should have filled itself (emptyNote) but didn't.
     // The page's questions are read once here for the end of the fill: these checks, the marks, the
@@ -3231,48 +3278,48 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // answers stay the agent's, once per unit, naming it and not its VIN.
     for (const step of finalPairs.unwitnessed ?? []) {
       const unit = unitName(step.witness.path);
-      if (report.noData.some((x) => x.unit === unit)) continue;
+      if (state.report.noData.some((x) => x.unit === unit)) continue;
       const why = step.witness.value == null ? `the intake has no ${witnessName(step.witness)} for ${unit}` : `the row for ${unit} (its ${witnessName(step.witness)}) wasn't found`;
-      report.noData.push({ label: unit.replace(/^\w/, (ch) => ch.toUpperCase()), path: step.witness.path, name: unit, unit, key: null, q: null, controlKind: null, note: `${why}; check the rows and answer its questions yourself.` });
+      state.report.noData.push({ label: unit.replace(/^\w/, (ch) => ch.toUpperCase()), path: step.witness.path, name: unit, unit, key: null, q: null, controlKind: null, note: `${why}; check the rows and answer its questions yourself.` });
     }
     // A unit whose row no group of the page showed (`pager`): none of its questions was answered,
     // and it is the agent's, named, never taken for done.
-    if (stillHere) report.noData.push(...unitGroups.missing());
+    if (stillHere) state.report.noData.push(...unitGroups.missing());
     // A row showing a VIN no intake vehicle has: an unintended vehicle may be on the quote. Left
     // as it is (never removed or answered); Continue waits for the agent. Named by its place only.
     for (const { witness, position, key } of finalPairs.extraRows ?? []) {
       if (skippedKey(key)) continue;
       const kind = String(witness.path ?? '').match(/^(\w+?)s?\[/)?.[1] ?? 'unit';
       const label = `${kind.replace(/^\w/, (ch) => ch.toUpperCase())} row ${position || '?'} on the page`;
-      if (report.checks.some((x) => x.label === label)) continue;
-      report.checks.push({ label, path: null, name: label, key, q: null, controlKind: null,
+      if (state.report.checks.some((x) => x.label === label)) continue;
+      state.report.checks.push({ label, path: null, name: label, key, q: null, controlKind: null,
         note: `Its ${witnessName(witness)} matches no ${kind} on the intake. Remove it, or dismiss this check to confirm it belongs on this quote, before continuing.` });
     }
     for (const { step, control } of finalPairs) {
       if (step.emptyNote && !hasValue(control) && !skippedField(control)) {
-        report.noData.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, note: step.emptyNote, ...describe(control) });
-        handled.set(step.id, { status: 'needs', note: step.emptyNote });
+        state.report.noData.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, note: step.emptyNote, ...describe(control) });
+        state.handled.set(step.id, { status: 'needs', note: step.emptyNote });
         continue;
       }
-      if ((!refill.has(step.id) && !waitingSince.has(step.id)) || handled.has(step.id) || skippedField(control) || agreesWith(step, control)) continue;
+      if ((!state.refill.has(step.id) && !state.waitingSince.has(step.id)) || state.handled.has(step.id) || skippedField(control) || agreesWith(step, control)) continue;
       // One that waited for the page to the end (the fill stopped first) is as unanswered as one the page reset.
-      const reason = refill.has(step.id) ? 'the page did not keep the answer; check it' : 'the page was still working on this question; check it';
+      const reason = state.refill.has(step.id) ? 'the page did not keep the answer; check it' : 'the page was still working on this question; check it';
       const base = { stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind };
       // With answers on its unit waiting on it (`needs`): one item for the unit, as in a round.
-      if (refill.has(step.id) && holdUnit(step, control, base, reason, finalPairs)) continue;
-      report.failed.push({ ...base, reason, ...describe(control) });
-      handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason.replace(/; check it$/, '')}` });
+      if (state.refill.has(step.id) && holdUnit(step, control, base, reason, finalPairs)) continue;
+      state.report.failed.push({ ...base, reason, ...describe(control) });
+      state.handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason.replace(/; check it$/, '')}` });
     }
     // Out of rounds with questions still below the cursor, never judged (it waited on the page to the
     // end): the same, as nothing said of them may be taken for nothing left.
-    if ((progressed || judgedTo !== Infinity) && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
+    if ((state.progressed || state.judgedTo !== Infinity) && state.report.rounds === maxRounds && !state.report.halted) halt('Filling reached its round limit. Check the page before retrying.');
     // The page may have redrawn while filling, so mark the final fields: those just read, the page
     // unchanged since (only the report changed). Read again only when the fill left its page.
-    const controls = stoppedAt || unreadStep ? [] : stillHere ? finalControls : collectControls();
+    const controls = state.stoppedAt || state.unreadStep ? [] : stillHere ? finalControls : collectControls();
     const pairs = assign(controls, plan);
     if (skipBy && stillHere) skipWhere(pairs.units);
     for (const { step, control } of stillHere ? pairs : []) {
-      const h = handled.get(step.id);
+      const h = state.handled.get(step.id);
       if (h?.status) mark(control, h.status, h.note);
     }
     // A held unit form is marked on its first question, where its check says why.
@@ -3283,22 +3330,22 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
     if (stillHere) {
       const onPageNow = keyIndex(controls);
-      report.unknown = report.unknown.filter((x) => onPageNow.has(x.key) || unitGroups.readElsewhere(x.key));
+      state.report.unknown = state.report.unknown.filter((x) => onPageNow.has(x.key) || unitGroups.readElsewhere(x.key));
       // Likewise a field that looked renamed (Codex on PR #43): it no longer holds Continue.
-      report.renamed = report.renamed.filter((x) => onPageNow.has(x.key));
+      state.report.renamed = state.report.renamed.filter((x) => onPageNow.has(x.key));
     }
     // Question text for every field on the page, keyed like the usage recorder's changes.
-    report.labels = controls.map((c) => [fieldKey(c), c.label]);
+    state.report.labels = controls.map((c) => [fieldKey(c), c.label]);
     // Each widget list's loaded choices (an ExtJS combo's; never agency staff lists), so the usage
     // log can tell a pick from text typed into the box.
-    report.choices = controls.filter((c) => c.widget && c.kind === 'select' && c.options && !/agent|producer/i.test(c.label ?? ''))
+    state.report.choices = controls.filter((c) => c.widget && c.kind === 'select' && c.options && !/agent|producer/i.test(c.label ?? ''))
       .map((c) => [fieldKey(c), [...new Set(c.options.map((o) => o.text).filter(Boolean))]]);
-    report.skipped = controls.filter((c) => skippedField(c)).map((c) => ({ label: c.label, key: fieldKey(c) }));
+    state.report.skipped = controls.filter((c) => skippedField(c)).map((c) => ({ label: c.label, key: fieldKey(c) }));
     const matched = new Set(pairs.map((p) => p.control));
     for (const c of stillHere ? controls : []) {
-      if (!matched.has(c) && report.unknown.some((x) => x.key === fieldKey(c)) && !skippedField(c)) mark(c, 'needs', 'Unfamiliar question — left for you.');
+      if (!matched.has(c) && state.report.unknown.some((x) => x.key === fieldKey(c)) && !skippedField(c)) mark(c, 'needs', 'Unfamiliar question — left for you.');
       if (!matched.has(c) && c.required && !hasValue(c) && !skippedField(c) && !pairs.held.has(c)) {
-        report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
+        state.report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
         mark(c, 'needs', 'required, and not on the intake form');
       }
     }
@@ -3306,33 +3353,33 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // (GEICO's two pay plan groups, one of which lists 11 Payments), or a helper that may show it is
     // still waiting (View More Payment Plans, for the agent's answers, or for a Recalculate: GEICO hides
     // the link while the premium is out of date): the agent's, or the offered plan with the most (`orMost`).
-    const offerPending = report.blocked.some((x) => !clicked.has(x.id) && x.waits?.some((w) => w.say === NOTHING_LEFT))
-      || (unoffered.size > 0 && actions.some((a) => a.needsPremium && !clicked.has(a.action) && actionHere(a)) && !premiumReady());
-    for (const { item, control, step } of unoffered.values()) {
-      if (handled.has(step.id) || offerPending || report.filled.some((x) => x.path === step.path) || report.kept.some((x) => x.path === step.path)) continue;
+    const offerPending = state.report.blocked.some((x) => !state.clicked.has(x.id) && x.waits?.some((w) => w.say === NOTHING_LEFT))
+      || (state.unoffered.size > 0 && actions.some((a) => a.needsPremium && !state.clicked.has(a.action) && actionHere(a)) && !premiumReady());
+    for (const { item, control, step } of state.unoffered.values()) {
+      if (state.handled.has(step.id) || offerPending || state.report.filled.some((x) => x.path === step.path) || state.report.kept.some((x) => x.path === step.path)) continue;
       const note = `The page doesn't offer "${step.value}" here: pick it yourself.`;
-      report.noData.push({ ...item, note });
-      handled.set(step.id, { status: 'needs', note });
+      state.report.noData.push({ ...item, note });
+      state.handled.set(step.id, { status: 'needs', note });
       mark(control, 'needs', note);
     }
     // A helper the agent must otherwise do by hand (the vehicle tile) that couldn't be clicked here,
     // once the helpers it follows have run (an NTL still on the quote after the agent set it to No).
-    if (window === window.top && currentPage() === startPage && !stepChanged() && !stoppedAt && !unreadStep) {
+    if (window === window.top && currentPage() === startPage && !stepChanged() && !state.stoppedAt && !state.unreadStep) {
       for (const a of actions) {
-        if (!a.missing || clicked.has(a.action) || !actionHere(a) || findButton(a)
-          || !a.afterActions.every((id) => clicked.has(id)) || a.unlessActions?.some((id) => clicked.has(id))
+        if (!a.missing || state.clicked.has(a.action) || !actionHere(a) || findButton(a)
+          || !a.afterActions.every((id) => state.clicked.has(id)) || a.unlessActions?.some((id) => state.clicked.has(id))
           || settledItem(a)) continue;
         // A markable one carries its own id, scoped as `clicked` has it, for the panel's Mark done.
-        report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing, action: a.markable ? a.action : null });
+        state.report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing, action: a.markable ? a.action : null });
       }
       // Clicked earlier, but what it adds never got in (Add Trailer opened, the trailer page left
       // without filling it): the agent finishes it before Continue. A helper kept to a container
       // (`within`: GEICO's add row) says so only where its list is on screen, not on the unit's
       // own form, which one address draws in its place.
       for (const a of actions) {
-        if (!a.unfinished || !a.doneWhen?.length || !clicked.has(a.action) || a.doneWhen.some((id) => clicked.has(id))
+        if (!a.unfinished || !a.doneWhen?.length || !state.clicked.has(a.action) || a.doneWhen.some((id) => state.clicked.has(id))
           || !actionHere(a) || (a.within && !findButton(a, { disabledToo: true }))) continue;
-        report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.unfinished });
+        state.report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.unfinished });
       }
     }
     // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
@@ -3348,17 +3395,17 @@ import { createSelect2Drivers } from './drivers/select2.js';
       const a = actions.find((x) => x.action === b.id);
       return !!a && !a.opener && !a.missing && !findButton(a);
     };
-    for (const b of report.blocked) {
-      if (clicked.has(b.id) || !doneByPage(b)) continue;
-      clicked.add(b.id);
-      report.actions.push({ id: b.id, text: 'done by the page itself', alreadyShown: true });
+    for (const b of state.report.blocked) {
+      if (state.clicked.has(b.id) || !doneByPage(b)) continue;
+      state.clicked.add(b.id);
+      state.report.actions.push({ id: b.id, text: 'done by the page itself', alreadyShown: true });
     }
     // Each helper once, with what held it last (its prerequisites in one round, something open over
     // it in the next).
-    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findLastIndex((x) => x.id === b.id) === i);
+    state.report.blocked = state.report.blocked.filter((b, i, all) => !state.clicked.has(b.id) && all.findLastIndex((x) => x.id === b.id) === i);
     // Helpers still held by something open over them: the panel names them (`coveredHelpers`).
-    const coveredHelpers = report.blocked.filter((b) => b.why === COVERED_HELPER).map((b) => b.text);
-    if (coveredHelpers.length) report.coveredHelpers = coveredHelpers;
+    const coveredHelpers = state.report.blocked.filter((b) => b.why === COVERED_HELPER).map((b) => b.text);
+    if (coveredHelpers.length) state.report.coveredHelpers = coveredHelpers;
     // The items as the page is now, from the read above (no read or wait of its own): one whose
     // question is gone is no item and holds nothing; the others say what the page shows now.
     if (stillHere) reconcile(controls, pairs, controlReads - endReads);
@@ -3368,13 +3415,13 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // helper opened the next page). An item with no field there (a helper, a unit without its row,
     // a field gone since) gets none: the panel lists it last.
     const placeOf = new Map();
-    (stillHere ? controls : roundControls).forEach((c, i) => {
+    (stillHere ? controls : state.roundControls).forEach((c, i) => {
       const key = fieldKey(c);
       if (!placeOf.has(`${key}|${c.label}`)) placeOf.set(`${key}|${c.label}`, i);
       if (!placeOf.has(key)) placeOf.set(key, i);
     });
     // Answers filled too: the panel lists the whole page in one list, in this order.
-    for (const x of [report.filled, report.unknown, report.failed, report.noData, report.leftRequired, report.kept, report.checks].flat()) {
+    for (const x of [state.report.filled, state.report.unknown, state.report.failed, state.report.noData, state.report.leftRequired, state.report.kept, state.report.checks].flat()) {
       // Rows of one question share a key; their labels tell them apart.
       const at = x.key == null ? undefined : placeOf.get(`${x.key}|${x.label}`) ?? placeOf.get(x.key);
       if (at !== undefined) x.order = at;
@@ -3382,30 +3429,30 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // Anything the agent should look at before moving on.
     // The carrier probably changed this page: a known field renamed, or most of its questions
     // unfamiliar at once. Continue waits for the agent, and the panel says so.
-    report.pageChanged = report.renamed.length > 0 || (report.unknown.length >= 5 && report.unknown.length >= 0.4 * Math.max(1, report.fields));
+    state.report.pageChanged = state.report.renamed.length > 0 || (state.report.unknown.length >= 5 && state.report.unknown.length >= 0.4 * Math.max(1, state.report.fields));
     // A field drawn without a caption (the cargo commodity lists) is named after its rule.
     const called = (x) => x.label || x.name || x.path || 'a question with no label';
-    report.blockers = [
-      ...(report.pageChanged ? [`page changed: ${report.unknown.length} unfamiliar question(s)${report.renamed.length ? `, ${report.renamed.length} known field(s) renamed` : ''}`] : []),
+    state.report.blockers = [
+      ...(state.report.pageChanged ? [`page changed: ${state.report.unknown.length} unfamiliar question(s)${state.report.renamed.length ? `, ${state.report.renamed.length} known field(s) renamed` : ''}`] : []),
       // An unfamiliar question with no answer yet is left for the agent even when the page
       // doesn't mark it required (Progressive validates some only on Continue).
-      ...report.unknown.filter((x) => x.required || x.current == null).map((x) => `unfamiliar: ${called(x)}`),
-      ...report.noData.map((x) => `needs you: ${called(x)}`),
-      ...report.failed.map((x) => `failed: ${called(x)}`),
-      ...report.leftRequired.map((x) => `required: ${called(x)}`),
-      ...report.kept.filter((x) => x.differs).map((x) => `differs: ${called(x)}`),
+      ...state.report.unknown.filter((x) => x.required || x.current == null).map((x) => `unfamiliar: ${called(x)}`),
+      ...state.report.noData.map((x) => `needs you: ${called(x)}`),
+      ...state.report.failed.map((x) => `failed: ${called(x)}`),
+      ...state.report.leftRequired.map((x) => `required: ${called(x)}`),
+      ...state.report.kept.filter((x) => x.differs).map((x) => `differs: ${called(x)}`),
       // Another step's hidden fields (otherStep: AmWINS' prior carriers, filled again on every
       // step) are confirmed on their own step, not again on each later one (audit 2026-10-10).
-      ...report.checks.filter((x) => !x.otherStep).map((x) => `check: ${called(x)}`),
-      ...report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
-      ...(report.halted ? [report.reason] : []),
+      ...state.report.checks.filter((x) => !x.otherStep).map((x) => `check: ${called(x)}`),
+      ...state.report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
+      ...(state.report.halted ? [state.report.reason] : []),
       // The agent's own button during the fill (Next, "+", Looks Good): that step's move is theirs.
-      ...(agentPressed ? [AGENT_PRESSED] : []),
+      ...(state.agentPressed ? [AGENT_PRESSED] : []),
     ];
-    if (agentPressed) report.agentPressed = true;
+    if (state.agentPressed) state.report.agentPressed = true;
     // The step this fill was on: the one it started on when the agent moved to another meanwhile
     // (its items are that step's).
-    report.stepKey = stepChanged() ? startStep : stepKey();
+    state.report.stepKey = stepChanged() ? startStep : stepKey();
     // A page the plan expects questions on that shows none yet, with nothing done on it, is still
     // drawing (Business Owner Info right after the state is picked, OK 2026-10-07): Continue there
     // only gets "fields are empty" errors. (A tile page that was clicked continues.) Only a frame of
@@ -3414,12 +3461,12 @@ import { createSelect2Drivers } from './drivers/select2.js';
     // the page wasn't drawn, so the panel took the top frame's held Continue for "No questions found"
     // and filled the page once more (live recording, 2026-10-24). On a page the plan has questions for,
     // only a tile pick is done while it shows none (clickNextAction, W44-03).
-    const notDrawn = !report.fields && !report.actions.length && (topPage == null || topPage === startPage) && plan.some((s) => s.pages?.includes(startPage));
+    const notDrawn = !state.report.fields && !state.report.actions.length && (state.topPage == null || state.topPage === startPage) && plan.some((s) => s.pages?.includes(startPage));
     // The panel tries such a page again in a moment, and says nothing of it yet (W43-42).
-    if (notDrawn && !report.halted) report.notDrawn = true;
-    if (advance && window === window.top && !report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
-      && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)
-      && (!advance.steps?.length || (!!report.stepKey && stepIs(advance.steps, report.stepKey)))) {
+    if (notDrawn && !state.report.halted) state.report.notDrawn = true;
+    if (advance && window === window.top && !state.report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
+      && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(state.report.stepKey)
+      && (!advance.steps?.length || (!!state.report.stepKey && stepIs(advance.steps, state.report.stepKey)))) {
       // The last answer may still be redrawing part of the page (a new payment method reloads the
       // plan list): a Continue clicked meanwhile is lost. Let it finish first. `quietMs`: a page that
       // draws a question a moment after an answer (GEICO's USDOT record check) is waited for too,
@@ -3428,15 +3475,15 @@ import { createSelect2Drivers } from './drivers/select2.js';
       // Continue's (the panel's dock read "Clicking Continue…" there: the review of PR #170).
       phase(hold && confirmed == null ? 'waiting' : 'continue');
       if (serverBacked) await settle({ quietMs: 500, maxMs: 6000, why: 'continue' });
-      else if (advance.quietMs && quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'continue' });
+      else if (advance.quietMs && state.quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'continue' });
       // The report as the page is after that wait, from one read (reconcile), halted or not.
       const now = collectControls();
       const nowPairs = assign(now, plan);
       reconcile(now, nowPairs);
       // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
       // the report says why. (Reproduced 2026-10-08: halted, and Continue clicked all the same.)
-      if (report.halted) {
-        if (!report.blockers.includes(report.reason)) report.blockers.push(report.reason);
+      if (state.report.halted) {
+        if (!state.report.blockers.includes(state.report.reason)) state.report.blockers.push(state.report.reason);
       } else {
         // The carrier may have rewritten an answer during that wait (a late server response). An
         // answer whose field no longer shows it is the agent's to check (no retry here): it moves
@@ -3446,10 +3493,10 @@ import { createSelect2Drivers } from './drivers/select2.js';
           const item = { ...previous, reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
           const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(pair.control);
           if (at >= 0) item.order = at;
-          report.filled = report.filled.filter((x) => x !== previous);
-          report.failed.push(item);
+          state.report.filled = state.report.filled.filter((x) => x !== previous);
+          state.report.failed.push(item);
           mark(pair.control, 'failed', 'the carrier changed this answer after it was filled');
-          report.blockers.push(`failed: ${called(item)}`);
+          state.report.blockers.push(`failed: ${called(item)}`);
         }
         // A registered name drawn during that wait, after the fill's last check, makes an answer
         // given before it the agent's to verify, as during the fill: marked, and Continue waits.
@@ -3458,7 +3505,7 @@ import { createSelect2Drivers } from './drivers/select2.js';
           const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(control);
           if (at >= 0) item.order = at;
           mark(control, 'needs', IDENTITY_NOTE);
-          report.blockers.push(`needs you: ${called(item)}`);
+          state.report.blockers.push(`needs you: ${called(item)}`);
         }
         // A question drawn during that wait without an answer (`quietMs`) holds Continue: the fill
         // never read it, so it is the agent's. (What the page drew during the fill's own wait at the
@@ -3467,40 +3514,40 @@ import { createSelect2Drivers } from './drivers/select2.js';
         const drawn = advance.quietMs ? now.filter((c) => !readKeys.has(fieldKey(c)) && !hasValue(c)) : [];
         const found = !changed.length && !moved.length && !drawn.length && !pageBusy() && currentPage() === startPage && !stepChanged() ? findAdvanceButton(advance.text, advance) : null;
         // Per form and button (`byForm`): one already continued from is the agent's now.
-        const key = found && advance.byForm ? [report.stepKey, squash(buttonText(found)), unitFormsNow()?.[0]?.id ?? ''].filter(Boolean).join('@') : report.stepKey;
+        const key = found && advance.byForm ? [state.report.stepKey, squash(buttonText(found)), unitFormsNow()?.[0]?.id ?? ''].filter(Boolean).join('@') : state.report.stepKey;
         const button = found && !(advance.byForm && doneSteps.includes(key)) ? found : null;
         // Nothing held Continue, but none could be clicked: the page still busy after the wait
         // ('busy') or showing no Continue (`none`: not drawn yet, disabled, or a list's Looks Good
         // left out). The panel tries an automatic fill once more, and logs which (`advanceDue`,
         // W43-40: Progressive's Vehicle Summary, every vehicle added, not continued on 2026-10-22
         // with nothing said why; continued 3 of 3 times on earlier builds with the switch on).
-        if (!found && !changed.length && !moved.length && !drawn.length && !report.halted && !agentPressed) report.advanceDue = pageBusy() ? 'busy' : 'none';
+        if (!found && !changed.length && !moved.length && !drawn.length && !state.report.halted && !state.agentPressed) state.report.advanceDue = pageBusy() ? 'busy' : 'none';
         // The agent checks the answers first: Continue only for the page as they approved it.
         const approved = !hold || (confirmed != null && confirmed === receipt());
-        if (button && !approved) report.held = confirmed == null ? 'check' : 'changed';
+        if (button && !approved) state.report.held = confirmed == null ? 'check' : 'changed';
         // Pressed during the wait before Continue: held as above.
-        if (button && approved && agentPressed) {
-          report.agentPressed = true;
-          report.blockers.push(AGENT_PRESSED);
+        if (button && approved && state.agentPressed) {
+          state.report.agentPressed = true;
+          state.report.blockers.push(AGENT_PRESSED);
         } else if (button && approved && coveredBy(button)) {
           // Something is open over Continue (a dialog, a message, a mask): a script's click would
           // go through it. Continue waits until the agent closes it.
-          report.covered = true;
-          report.blockers.push(COVERED);
+          state.report.covered = true;
+          state.report.blockers.push(COVERED);
         } else if (button && approved) {
           const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
-          report.signatureBefore = signature();
+          state.report.signatureBefore = signature();
           pressButton(button);
           // Recorded once the press went out (on GEICO the page's world clicks a moment later, within
           // a second at most), never before it.
-          report.advanced = text;
-          if (advance.byForm) report.advanceKey = key;
+          state.report.advanced = text;
+          if (advance.byForm) state.report.advanceKey = key;
         }
       }
     }
-    resolveItems(report, plan);
-    return report;
+    resolveItems(state.report, plan);
+    return state.report;
     } finally {
       hiddenOk = [];
       fillUnits = null;
