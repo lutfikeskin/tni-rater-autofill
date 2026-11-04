@@ -7,7 +7,7 @@ import { amwins } from '../src/carriers/amwins.js';
 
 test('coverage: Progressive questions by data-model name or text, AmWINS by id / data-id, and what no rule claims', () => {
   assert.equal(fieldStatus({ q: '1D97', caption: 'Bodily Injury and Property Damage Liability' }, progressive).status, 'filled');
-  assert.equal(fieldStatus({ q: '2BCB', caption: 'Annual Mileage' }, progressive).status, 'ignored');
+  assert.equal(fieldStatus({ q: '2B00', caption: 'Add Vehicle By' }, progressive).status, 'ignored');
   // Renumbered (2026-10-07): 267 is Business Name now. Its data-model name says which rule it is.
   assert.equal(fieldStatus({ q: '267', ref: 'AccountInput.BusinessName', caption: 'Business Name' }, progressive, 'BusinessOwnerInfo').rule, 'Business / sole proprietor name');
   // A question id alone claims nothing, and a name no rule knows is unclaimed whatever its number.

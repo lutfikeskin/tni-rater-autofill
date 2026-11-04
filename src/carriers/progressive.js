@@ -916,8 +916,10 @@ export const progressive = {
       // never empty"). Found by its wording: the live page's question id is 2C41, older captures' 2BB4,
       // and older captures have no data-model name.
       { q: '2BB4', tni: 'progressive.gvw', source: 'standard', ask: 'What is the gross vehicle weight?', name: 'Gross vehicle weight (the VIN lookup\'s, else TNI: the first option)', kind: 'first-option', value: () => 'first option', keepPreset: true },
-      // Filled by the VIN lookup.
-      { q: '2BCB', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (from VIN lookup)', ignore: true },
+      // Annual mileage, on its own (not tied to GVW): the VIN lookup sometimes selects it and sometimes
+      // doesn't. Its choice is kept as it is; when nothing is selected, the list's first option (TNI,
+      // 2026-11-04: "if empty, the first; if filled, leave it"). Each vehicle's list starts elsewhere.
+      { q: '2BCB', tni: 'progressive.annual-mileage', source: 'standard', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (the VIN lookup\'s, else TNI: the first option)', kind: 'first-option', value: () => 'first option', keepPreset: true },
       // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
       // a box the lookup leaves empty goes to the agent.
       ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
