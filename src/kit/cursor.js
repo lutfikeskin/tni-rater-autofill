@@ -2232,6 +2232,30 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // a second at most), never before it.
           state.report.advanced = text;
           if (advance.byForm) state.report.advanceKey = key;
+          // On a page that waits on its server, Continue's request takes a second or more and the
+          // button stays on screen meanwhile. A second Continue sent during it broke the quote
+          // (Progressive, recording of 2026-11-04: the agent clicked it 0.7 s after the fill did;
+          // Filings drew, then Progressive's error page). The fill lasts until the page is done
+          // with it, so no follow-up fill starts on the page being left, and an agent's click on a
+          // Continue meanwhile is not passed to the page (the maintainer, 2026-11-04).
+          if (serverBacked && window === window.top) {
+            const re = new RegExp(advance.text, 'i');
+            const repeat = (event) => {
+              if (!event.isTrusted) return;
+              const path = event.composedPath?.() ?? [event.target];
+              if (!path.some((n) => n?.nodeType === 1 && safeMatches(n, agentPress()) && re.test(buttonText(n)))) return;
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              state.report.repeatsHeld = (state.report.repeatsHeld ?? 0) + 1;
+            };
+            document.addEventListener('click', repeat, true);
+            try {
+              // The next page drawn and quiet, as after a helper that opens one (`settledAt`).
+              if (await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'continued' }) && currentPage() !== startPage) settledAt = { at: Date.now(), sig: signature() };
+            } finally {
+              document.removeEventListener('click', repeat, true);
+            }
+          }
         }
       }
     }

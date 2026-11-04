@@ -1357,6 +1357,42 @@ test('Progressive: the page changed after the helper\'s fill, so the next one wa
   assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'start').map((x) => x.quietMs), [400, 400]);
 });
 
+// Progressive recording, 2026-11-04: the fill pressed Continue on More About Business and ended at
+// once; the agent clicked Continue 0.7 s later, during its request, and Progressive went to its error
+// page. The fill now lasts until the page is done with Continue, and an agent's Continue meanwhile
+// is not passed to the page (the maintainer, 2026-11-04); afterwards their clicks go through.
+test('Progressive: an agent\'s Continue during the fill\'s own Continue request is held, and the fill ends when the page is done', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  let busyUntil = 0;
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  addExtText(h, 'c', '2BA1');
+  const cont = addButton(h, 'Continue');
+  let pressed = 0;
+  let pressedAt = 0;
+  const agentClick = () => {
+    const event = { type: 'click', target: cont, isTrusted: true, composedPath: () => [cont], defaultPrevented: false, stopped: false,
+      preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() { this.stopped = true; } };
+    h.document._dispatch(event);
+    return event;
+  };
+  let during = null;
+  cont.onclick = () => {
+    pressed++;
+    pressedAt = clock.Date.now();
+    busyUntil = pressedAt + 1200;
+    setTimeout(() => { during = agentClick(); }, 700);
+  };
+  const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+    { maxRounds: 3, advance: { text: '^continue$' } });
+  const endedAfter = clock.Date.now() - pressedAt;
+  assert.equal(pressed, 1);
+  assert.equal(report.advanced, 'Continue');
+  assert.ok(endedAfter >= 1200, `the fill ended ${endedAfter} ms after its Continue, while the page was busy`);
+  assert.deepEqual([during?.defaultPrevented, during?.stopped, report.repeatsHeld], [true, true, 1]);
+  const after = agentClick();
+  assert.deepEqual([after.defaultPrevented, after.stopped], [false, false], 'after the fill, the agent\'s click is theirs');
+});
+
 // 2026-10-07 FL run: the commodity list fills in only after its category is picked, and its
 // first try found it empty ("failed: " with no name, as the list has no caption).
 test('a list that loads after another answer is given time; an unlabeled field is named after its rule', async () => {
@@ -4742,7 +4778,8 @@ test('an answer the carrier rewrites during the wait before Continue fails, and 
     const button = addButton(h, 'Continue');
     let clicks = 0;
     button.onclick = () => { clicks++; };
-    // Every settle builds an observer; the last one is the wait before Continue.
+    // Every settle builds an observer; the wait before Continue is the one before the wait after it
+    // (on a page that waits on its server the fill waits for its Continue to be done).
     let settles = 0;
     h.context.MutationObserver = class {
       constructor() { if (++settles === rewriteAt) setTimeout(() => cmp.setValue('carrier value'), 10); }
@@ -4763,8 +4800,8 @@ test('an answer the carrier rewrites during the wait before Continue fails, and 
   assert.deepEqual(Array.from(control.report.filled, (x) => x.key), ['ref:Test.foo']);
   assert.equal(control.input.value, 'wanted');
   // The carrier rewrites it during that last wait.
-  const { report, clicks, settles, input } = await run(control.settles);
-  assert.equal(settles, control.settles);
+  const { report, clicks, settles, input } = await run(control.settles - 1);
+  assert.equal(settles, control.settles - 1, 'no Continue, so no wait after it');
   assert.equal(clicks, 0, 'no Continue over a changed answer');
   assert.equal(report.advanced, undefined);
   assert.equal(report.halted, false);
