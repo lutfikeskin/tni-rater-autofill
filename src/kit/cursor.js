@@ -41,6 +41,14 @@ let running = null;
 // Fills the agent stopped before they began here (`run`: the panel's id for the fill; Stop can
 // come while the panel still prepares, before fill() starts): such a fill halts as it starts.
 const stoppedRuns = new Set();
+// The page a fill left settled as it ended, on a page that waits on its server (Progressive): a
+// helper (Add Vehicle, Cargo Van, View bill plan options) opened the next page and the fill's wait
+// held until that page and its requests were done. The next fill, a moment later, finds the same
+// questions and nothing busy, so it waits for a short quiet only (`START_SETTLED_QUIET_MS`).
+// Two Progressive recordings, 2026-11-04: on all such starts the page did nothing in the 400 ms.
+let settledAt = null;
+const SETTLED_FRESH_MS = 1500;
+const START_SETTLED_QUIET_MS = 100;
 // This frame's kit and the filled lists it has sent rows of (progress).
 const FRAME = Math.random().toString(36).slice(2);
 const listIds = new WeakMap();
@@ -447,7 +455,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // Stopped by the agent before it began (the panel was still preparing): nothing is done.
   if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
   phase('reading');
-  const settled = await settle({ quietMs: 400, maxMs: 15000, why: 'start' });
+  const left = settledAt;
+  settledAt = null;
+  const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && signature() === left.sig;
+  const settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' });
   phase(null);
   // Stopped while the page settled: nothing was done.
   if (!settled || state.report.halted) {
@@ -718,7 +729,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       judged(Math.min(thisRound.lagBound, firstOpen(allPairs, place)));
       // A lookup (Import Data) may wait on its server without changing the page for a while.
       phase('helper', state.pendingAction?.label ?? state.report.actions.at(-1)?.text ?? null);
-      if (!await settle(serverBacked ? {} : { quietMs: 800, maxMs: 8000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
+      if (!await settle(serverBacked ? { why: 'helper' } : { quietMs: 800, maxMs: 8000, why: 'helper' })) { halt('The helper response did not settle. Review before retrying.'); break; }
       if (!await verifyAction()) break;
       if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
       if (stepChanged()) break;
@@ -996,7 +1007,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           else if (c.el.isConnected === false) result = { ok: false, reason: 'the page did not keep the answer; check it' };
           else if (invalidControl(c) || !agreesWith(step, c)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
         } else if (result.ok) {
-          const settled = await settle(serverBacked ? { why: 'answer' } : { quietMs: 150, maxMs: 3000, why: 'answer' });
+          // On a page that waits on its server the redraw lands as its request ends, at most 114 ms later
+          // in two Progressive recordings (84 answers, 2026-11-04): 150 ms of quiet, as elsewhere.
+          const settled = await settle(serverBacked ? { quietMs: 150, why: 'answer' } : { quietMs: 150, maxMs: 3000, why: 'answer' });
           const currentControls = collectControls();
           const after = snap(currentControls);
           const mine = `${fieldKey(c)}|${c.label}`;
@@ -1262,7 +1275,12 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       traceRead(state.pendingAction);
     }
     if (!await verifyAction()) break;
-    if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
+    if (currentPage() !== startPage) {
+      state.report.navigatedTo = currentPage();
+      // The wait above held until the new page was drawn and quiet (`settledAt`).
+      if (serverBacked && thisRound.helperClicked) settledAt = { at: Date.now(), sig: signature() };
+      break;
+    }
     if (stepChanged()) break;
   }
   // The agent's step after the last round (Next clicked during its wait): stopped there too.
@@ -2142,8 +2160,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       // unless the fill's own wait at the end of its rounds left it as it is now. Held for the agent's
       // check with nothing approved yet (`hold`), Continue isn't clicked: the wait is the page's, not
       // Continue's (the panel's dock read "Clicking Continue…" there: the review of PR #170).
+      // On a page that waits on its server, the last answer's wait left nothing for this one in all
+      // 17 of two recordings (Progressive, 2026-11-04): 250 ms is enough to see a late redraw.
       phase(hold && confirmed == null ? 'waiting' : 'continue');
-      if (serverBacked) await settle({ quietMs: 500, maxMs: 6000, why: 'continue' });
+      if (serverBacked) await settle({ quietMs: 250, maxMs: 6000, why: 'continue' });
       else if (advance.quietMs && state.quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'continue' });
       // The report as the page is after that wait, from one read (reconcile), halted or not.
       const now = collectControls();

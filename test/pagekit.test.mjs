@@ -1306,6 +1306,57 @@ test('a helper that opens the next page leaves that page\'s questions to its own
   assert.deepEqual(Array.from(report.blockers), []);
 });
 
+// Two Progressive recordings (2026-11-04): a helper that opened the next page left it quiet, and the
+// next fill's 400 ms wait saw nothing; an answer's redraw landed within 114 ms of its request; the
+// wait before Continue saw nothing after the last answer's. The next fill begins after 100 ms of
+// quiet when the page is as the helper's fill left it, else after 400 ms; answers wait 150 ms, and
+// Continue 250 ms.
+test('Progressive: the fill after a helper opened the page begins sooner; answers and Continue wait less', async () => {
+  const h = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  addButton(h, 'Cargo Van').onclick = () => {
+    h.context.location.search = '?pageName=AddVehicle';
+    addExtText(h, 'c', '2BA1');
+  };
+  const tile = { id: 'tile', kind: 'action', action: 'vehicleTile:0', text: '^Cargo Van$', unique: true, label: 'Vehicle type', missing: 'Pick the vehicle yourself.',
+    path: 'action.vehicleTile', name: 'Click vehicleTile', pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  const abs = { id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' };
+  const starts = () => said.filter((x) => x.what === 'wait' && x.why === 'start').map((x) => x.quietMs);
+  assert.equal((await h.kit.fill([tile], { maxRounds: 3, trace: true })).navigatedTo, 'AddVehicle');
+  const next = addButton(h, 'Continue');
+  let continued = 0;
+  next.addEventListener('click', () => { continued++; });
+  await h.kit.fill([abs], { maxRounds: 3, trace: true, advance: { text: '^Continue$' } });
+  assert.deepEqual(starts(), [400, 100], 'the page as the helper left it');
+  assert.equal(continued, 1);
+  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'answer').map((x) => x.quietMs), [150]);
+  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'continue').map((x) => x.quietMs), [250]);
+  // No helper opened this page: the full wait.
+  await h.kit.fill([abs], { maxRounds: 2, trace: true });
+  assert.deepEqual(starts(), [400, 100, 400]);
+});
+
+test('Progressive: the page changed after the helper\'s fill, so the next one waits the full 400 ms', async () => {
+  const h = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  addButton(h, 'Cargo Van').onclick = () => {
+    h.context.location.search = '?pageName=AddVehicle';
+    addExtText(h, 'c', '2BA1');
+  };
+  const tile = { id: 'tile', kind: 'action', action: 'vehicleTile:0', text: '^Cargo Van$', unique: true, label: 'Vehicle type', missing: 'Pick the vehicle yourself.',
+    path: 'action.vehicleTile', name: 'Click vehicleTile', pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  await h.kit.fill([tile], { maxRounds: 3, trace: true });
+  addExtText(h, 'd', '2BA2');
+  await h.kit.fill([], { maxRounds: 2, trace: true });
+  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'start').map((x) => x.quietMs), [400, 400]);
+});
+
 // 2026-10-07 FL run: the commodity list fills in only after its category is picked, and its
 // first try found it empty ("failed: " with no name, as the list has no caption).
 test('a list that loads after another answer is given time; an unlabeled field is named after its rule', async () => {
@@ -3393,8 +3444,9 @@ test('USDOT belongs: an invalid answer, a late registered name and an agent edit
     assert.equal(r.own(r.report.failed, label).length, 1, label);
   }
   // A registered name drawn while the fill waits before Continue: the Yes is the agent's to
-  // verify, and Continue isn't clicked.
-  r = await belongsPage({ registered: 'Another Carrier Inc', shown: 600, options: { advance: { text: '^continue$' } } });
+  // verify, and Continue isn't clicked. (300 ms after the Yes: past its answer's 150 ms wait,
+  // within the 250 ms before Continue.)
+  r = await belongsPage({ registered: 'Another Carrier Inc', shown: 300, options: { advance: { text: '^continue$' } } });
   assert.equal(r.continued, false, r.report.blockers.join(' | '));
   assert.equal(r.own(r.report.noData).filter(identity).length, 1);
   assert.ok(r.held(/^needs you/), r.report.blockers.join(' | '));
@@ -8348,7 +8400,7 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.equal(seen[0].phase, null, 'answering');
   assert.equal(h.kit.progress(), null, 'the fill is over');
   // Each long wait names itself before it begins.
-  assert.match(CURSOR_SOURCE, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
+  assert.match(CURSOR_SOURCE, /phase\('reading'\);[^]{0,300}const settled = await settle\(\{ quietMs: fresh \? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
   assert.match(CURSOR_SOURCE, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
   assert.match(CURSOR_SOURCE, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
   assert.match(CURSOR_SOURCE, /if \(thisRound\.helperClicked\) phase\('helper', state\.pendingAction\?\.label \?\? state\.report\.actions\.at\(-1\)\?\.text \?\? null\);/);
