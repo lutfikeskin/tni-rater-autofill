@@ -1008,8 +1008,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           else if (invalidControl(c) || !agreesWith(step, c)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
         } else if (result.ok) {
           // On a page that waits on its server the redraw lands as its request ends, at most 114 ms later
-          // in two Progressive recordings (84 answers, 2026-11-04): 150 ms of quiet, as elsewhere.
-          const settled = await settle(serverBacked ? { quietMs: 150, why: 'answer' } : { quietMs: 150, maxMs: 3000, why: 'answer' });
+          // in two Progressive recordings (84 answers, 2026-11-04): 150 ms of quiet, as elsewhere, counted
+          // from the page's last change and from its last request's end (`requests`), so a request that
+          // ends without a change in the page is still waited after (review of PR 284).
+          const settled = await settle(serverBacked ? { quietMs: 150, requests: () => !state.report.halted, why: 'answer' } : { quietMs: 150, maxMs: 3000, why: 'answer' });
           const currentControls = collectControls();
           const after = snap(currentControls);
           const mine = `${fieldKey(c)}|${c.label}`;
