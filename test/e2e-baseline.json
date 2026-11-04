@@ -121,7 +121,7 @@
  },
  "test/fixtures/progressive/progressive_IA_expediter_van.json": {
   "questions": 101,
-  "filled": 73,
+  "filled": 74,
   "failed": 1,
   "unmapped": 5,
   "issues": [],
@@ -150,7 +150,7 @@
    },
    "AddVehicle": {
     "questions": 11,
-    "filled": 10,
+    "filled": 11,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -158,7 +158,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "7f04f8e849ca"
+    "outcomes": "ea2cf264cf9a"
    },
    "AddDriver": {
     "questions": 5,
@@ -220,7 +220,7 @@
  },
  "test/fixtures/progressive/progressive_FL_expediter_van.json": {
   "questions": 110,
-  "filled": 74,
+  "filled": 75,
   "failed": 1,
   "unmapped": 5,
   "issues": [],
@@ -249,13 +249,13 @@
    },
    "AddVehicle": {
     "questions": 12,
-    "filled": 9,
+    "filled": 10,
     "failed": [],
     "noData": 2,
     "unmapped": 0,
     "blockers": 2,
     "clicked": [],
-    "outcomes": "75f0a2f15b63"
+    "outcomes": "db5da64bcae2"
    },
    "AddDriver": {
     "questions": 9,
@@ -327,7 +327,7 @@
  },
  "test/fixtures/progressive/progressive_IN_expediter_van.json": {
   "questions": 112,
-  "filled": 78,
+  "filled": 79,
   "failed": 2,
   "unmapped": 0,
   "issues": [],
@@ -368,7 +368,7 @@
    },
    "AddVehicle": {
     "questions": 9,
-    "filled": 8,
+    "filled": 9,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -376,7 +376,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "323fa6ce06a0"
+    "outcomes": "ac54c77c5808"
    },
    "AddDriver": {
     "questions": 4,
@@ -430,7 +430,7 @@
  },
  "test/fixtures/progressive/progressive_NJ_expediter_van.json": {
   "questions": 78,
-  "filled": 49,
+  "filled": 50,
   "failed": 1,
   "unmapped": 0,
   "issues": [],
@@ -459,13 +459,13 @@
    },
    "AddVehicle": {
     "questions": 16,
-    "filled": 7,
+    "filled": 8,
     "failed": [],
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "7cec5fe16595"
+    "outcomes": "c1f845f28829"
    },
    "AddDriver": {
     "questions": 5,
@@ -517,7 +517,7 @@
  },
  "test/fixtures/progressive/progressive_NC_freight-hauler_box-truck.json": {
   "questions": 95,
-  "filled": 63,
+  "filled": 66,
   "failed": 4,
   "unmapped": 0,
   "issues": [],
@@ -538,17 +538,17 @@
    },
    "MostCommonVehicles": {
     "questions": 6,
-    "filled": 4,
+    "filled": 5,
     "failed": [],
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "88cbaf364dee"
+    "outcomes": "87f9556ff9d7"
    },
    "AddVehicle": {
     "questions": 11,
-    "filled": 7,
+    "filled": 9,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -556,7 +556,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "25355e93775f"
+    "outcomes": "aa63f016dcc8"
    },
    "AddDriver": {
     "questions": 6,
@@ -748,7 +748,7 @@
  },
  "test/fixtures/progressive/progressive_OH_expediter_van.json": {
   "questions": 104,
-  "filled": 68,
+  "filled": 69,
   "failed": 5,
   "unmapped": 0,
   "issues": [],
@@ -792,7 +792,7 @@
    },
    "AddVehicle": {
     "questions": 7,
-    "filled": 6,
+    "filled": 7,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -800,7 +800,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "199cf77ae71a"
+    "outcomes": "f599cb0e43a7"
    },
    "AddDriver": {
     "questions": 5,
@@ -864,7 +864,7 @@
  },
  "test/fixtures/progressive/progressive_PA_expediter_van.json": {
   "questions": 111,
-  "filled": 77,
+  "filled": 78,
   "failed": 1,
   "unmapped": 7,
   "issues": [],
@@ -893,7 +893,7 @@
    },
    "AddVehicle": {
     "questions": 10,
-    "filled": 9,
+    "filled": 10,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -901,7 +901,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "794710b3b4ce"
+    "outcomes": "6951e50d3da4"
    },
    "AddDriver": {
     "questions": 5,

@@ -4017,6 +4017,40 @@ test('Progressive\'s anti-theft device selected by the page after the fill gave 
   }
 });
 
+// FL live recording, 2026-11-04: a box truck's VIN lookup left the gross vehicle weight empty, and
+// no step named it (ignored as the lookup's), so the panel never showed it. TNI: the lookup's weight
+// kept as it is, else the list's first option. The live page's question id (2C41) isn't the
+// rule's (2BB4, an older capture's): the step finds it by its wording.
+test('Progressive\'s gross vehicle weight and annual mileage, each on its own: the list\'s first option when the VIN lookup left it empty, its own choice kept (keepPreset)', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [{ type: 'Box Truck' }], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const all = buildPlan(record, progressive, { vehicles: 0 });
+  const plan = all.filter((s) => s.q === '2BB4' || s.q === '2BCB');
+  assert.equal(plan.length, 2);
+  const lists = {
+    gvw: { q: '2C41', caption: 'What is the gross vehicle weight?', ref: 'RiskInput.GrossWeight', options: ['', '19,501 to 26,000', '26,001 to 33,000', '45,001 or more'] },
+    miles: { q: '2BCB', caption: 'Annual Mileage', ref: 'RiskInput.AnnualMileage', options: ['', '8,000 - 11,999', '12,000 - 15,999', '16,000 - 19,999'] },
+  };
+  // The FL run: the lookup selected the mileage and left the weight empty; and the other ways round.
+  const cases = [[null, '16,000 - 19,999'], ['26,001 to 33,000', null], [null, null], ['26,001 to 33,000', '16,000 - 19,999']];
+  for (const overwrite of [false, true]) {
+    for (const [gvw, miles] of cases) {
+      const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+      const made = {};
+      for (const [key, current] of [['gvw', gvw], ['miles', miles]]) {
+        const l = lists[key];
+        made[key] = addExtText(h, 'c', l.q, { caption: l.caption, ref: l.ref, required: true, value: current ?? '' });
+        Object.assign(made[key].cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => l.options.map((label) => ({ get: () => label })) } });
+      }
+      const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true, overwrite });
+      const where = `GVW ${gvw ?? 'empty'}, mileage ${miles ?? 'empty'}${overwrite ? ', replace existing answers' : ''}`;
+      assert.equal(made.gvw.cmp.getValue(), gvw ?? '19,501 to 26,000', where);
+      assert.equal(made.miles.cmp.getValue(), miles ?? '8,000 - 11,999', where);
+      assert.equal(report.filled.length, (gvw ? 0 : 1) + (miles ? 0 : 1), where);
+      assert.deepEqual([report.checks.length, report.unknown.length, report.leftRequired.length, report.blockers.length], [0, 0, 0, 0], where);
+    }
+  }
+});
+
 // AmWINS' vehicle rows after Import Valid Records: each row shows a VIN, in the import's order,
 // not the intake's. A step with a `witness` takes the row whose VIN is its unit's; a unit whose
 // VIN is on no row (rejected by the import) or on two stays the agent's, named without its VIN.
