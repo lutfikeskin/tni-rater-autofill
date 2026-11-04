@@ -239,6 +239,14 @@
     return node.matches?.(CONTROLS) ? [node, ...inside] : inside;
   };
   const asQuestion = (el) => !isPassword(el) && !/^(hidden|button|submit|reset|image)$/i.test(String(el.type ?? ''));
+  // A box drawn with no size and no label on screen is the page's own bookkeeping, not a question
+  // (Progressive's Current Page Errored and SSID values, named among every page's new questions in
+  // the recordings of 2026-11-04).
+  const shown = (el) => {
+    let r = null;
+    try { r = el.getBoundingClientRect?.() ?? null; } catch { /* not laid out */ }
+    return !r || r.width > 0 || r.height > 0 || [...(el.labels ?? [])].some((l) => l.getClientRects?.().length);
+  };
   function endBurst() {
     clearTimeout(burstTimer);
     burstTimer = null;
@@ -251,7 +259,7 @@
     for (const node of b.added) {
       if (node.isConnected === false) continue;
       for (const el of controlsIn(node)) {
-        if (seen.has(el) || !asQuestion(el)) continue;
+        if (seen.has(el) || !asQuestion(el) || !shown(el)) continue;
         seen.add(el);
         drawnCount++;
         if (drawn.length >= MAX_DRAWN) continue;

@@ -352,3 +352,17 @@ test('the trace only watches: nothing in it clicks, types, scrolls or dispatches
     assert.ok(!act.test(code), `trace.js must not ${act}`);
   }
 });
+
+// Progressive's recordings of 2026-11-04 named its hidden status boxes (Current Page Errored, SSID
+// Value: drawn with no size) among every page's new questions.
+test('a box drawn with no size and no label on screen is not one of the questions drawn', async () => {
+  const h = harness();
+  const team = new Control('select', { name: 'team', label: 'Team driving?', options: [{ text: 'No', value: 'N' }] });
+  const errored = new Control('input', { name: 'errored', type: 'checkbox', label: 'Current Page Errored' });
+  errored.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0 });
+  h.now = 1000;
+  h.mutate([{ addedNodes: [node([team, errored])], removedNodes: [] }]);
+  await h.advance(400);
+  const burst = h.events().find((e) => e.kind === 'burst');
+  assert.deepEqual([burst.drawnCount, burst.drawn.map((d) => d.label)], [1, ['Team driving?']]);
+});

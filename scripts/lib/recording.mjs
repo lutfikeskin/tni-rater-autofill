@@ -41,7 +41,9 @@ const clock = (ms) => {
 const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const quote = (s) => `"${String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)}"`;
 const fieldName = (e) => quote(e.field?.label || e.field?.key || 'a question');
-const docY = (e) => e.field?.rect?.docY ?? null;
+// Where an answer is down the page; none for a box drawn with no size (a page's hidden status box,
+// Progressive's Current Page Errored), which is never above or below a question.
+const docY = (e) => (e.field?.rect?.w === 0 && e.field.rect.h === 0 ? null : e.field?.rect?.docY ?? null);
 
 // Whether the person did it, as the recorder decides: a click or a key as the browser says (a
 // script's isn't trusted); a change only when trusted and within 2 s of their own gesture on that

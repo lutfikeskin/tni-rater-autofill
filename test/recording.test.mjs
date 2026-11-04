@@ -290,3 +290,26 @@ test('the vendored fflate keeps its MIT copyright and permission notice', () => 
   const head = vendored.slice(0, 2000);
   for (const line of [license.match(/^Copyright.*$/m)[0], 'Permission is hereby granted, free of charge']) assert.ok(head.includes(line), line);
 });
+
+// Progressive's recordings of 2026-11-04: its hidden "Current Page Errored" box (no size, at the top of
+// the page) is ticked and unticked by every Continue; each was marked ↑, above the answer before it.
+test('a box with no size is never marked above an answer, and the order goes on from the answer before it', () => {
+  const t0 = Date.parse('2026-11-04T13:21:00.000Z');
+  const field = (key, label, docY, w = 100, h = 20) => ({ key, q: null, kind: 'text', label, rect: { x: 0, y: 0, w, h, docY } });
+  const events = [
+    { kind: 'page', t: t0 + 100, seq: 1, frame: 0, page: 'MoreAboutBusiness', step: null, top: true },
+    { kind: 'input', t: t0 + 1000, seq: 2, frame: 0, trusted: false, gestureMs: null, len: 3, field: field('ref:A', 'Upper question', 500) },
+    { kind: 'change', t: t0 + 1100, seq: 3, frame: 0, trusted: true, gestureMs: null, field: { ...field('ref:Errored', 'Current Page Errored', 0, 0, 0), kind: 'checkbox' }, value: 'checked' },
+    { kind: 'input', t: t0 + 1200, seq: 4, frame: 0, trusted: false, gestureMs: null, len: 3, field: field('ref:B', 'Lower question', 600) },
+    { kind: 'input', t: t0 + 1300, seq: 5, frame: 0, trusted: false, gestureMs: null, len: 3, field: field('ref:C', 'Middle question', 550) },
+  ];
+  const files = recordingFiles({ ...manifestFor(), ended: '2026-11-04T13:21:05.000Z' }, events);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recording-'));
+  for (const [n, t] of Object.entries(files)) fs.writeFileSync(path.join(dir, n), t);
+  const report = recordingReport(readRecording(dir));
+  fs.rmSync(dir, { recursive: true, force: true });
+  assert.match(report, /\) set "checked" for "Current Page Errored"/);
+  assert.doesNotMatch(report, /↑ set "checked" for "Current Page Errored"/);
+  assert.doesNotMatch(report, /↑ set "Lower question"/);
+  assert.match(report, /↑ set "Middle question"/, 'above the lower one, the answer before it');
+});
