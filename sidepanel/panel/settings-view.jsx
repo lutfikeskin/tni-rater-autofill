@@ -6,7 +6,8 @@
 // (state.captureOff), captureSaid (state.captureStatus) and the developer recording (state.devrec).
 // What its controls do is the panel's (`act`, wired in sidepanel.js). Also the footer's Recording
 // usage line (state.recordingLine).
-// The panel still reads each switch from its box by id (`$('auto-advance').checked`), and the text
+// The panel reads each switch through switchOn (core.js): what this view draws (state.switches),
+// else its box by id (the test harnesses), else its default as drawn here. The text
 // boxes are the agent's: the panel reads and writes their values by id, so the upload token and the
 // AI key never go into the panel's state.
 // One part of the panel; sidepanel.js mounts it (mountSettings, mountRecordingLine).

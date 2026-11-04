@@ -8910,3 +8910,37 @@ test('loose reads 01/05/1980 and 1980-01-05 as the same date, and keeps month an
   assert.equal(loose('2020-12-20'), loose('12/20/2020'));
   assert.notEqual(loose('1980-05-01'), loose('01/05/1980'), 'May 1 is not January 5');
 });
+
+// Review of PR #282 (an independent pass): a control in an open shadow root labelled by an element
+// of the page around it (aria-labelledby) keeps that label, as before the kit was split.
+test('a control in a shadow root is labelled by the page element its aria-labelledby names', () => {
+  const h = harness();
+  const label = new FakeNode('span', { id: 'cargoLimitLabel', textContent: 'Cargo limit' });
+  const box = new SelectNode(['', '$50,000'], { id: 'limitBox', attrs: { 'aria-labelledby': 'cargoLimitLabel' } });
+  const host = new FakeNode('gds-select');
+  host.attachShadow({ mode: 'open' });
+  host.shadowRoot.append(box);
+  h.document.body.append(label, host);
+  const c = h.kit.capture(null, []).controls.find((x) => x.id === 'limitBox');
+  assert.match(String(c?.label ?? ''), /Cargo limit/);
+});
+
+// Review of PR #282 (an independent pass): while a fill runs in the frame, present() reads the
+// fill's own hidden-but-fillable fields, not the panel's list, as before the kit was split.
+test('present during a fill keeps the fill\'s hidden fields it may fill', async () => {
+  const h = harness();
+  const secret = makeInput({ id: 'secret', ariaLabel: 'Secret' });
+  secret._visible = false;
+  const name = makeInput({ id: 'name', ariaLabel: 'Name' });
+  h.document.body.append(secret, name);
+  let during = null;
+  const look = () => { during ??= plain(h.kit.present([{ key: 'secret', label: 'Secret' }])); };
+  name.addEventListener('input', look);
+  name.addEventListener('change', look);
+  await h.kit.fill([
+    { id: 'name', selector: '#name', path: 'x.name', kind: 'text', value: 'Sam' },
+    { id: 'secret', selector: '#secret', path: 'x.secret', kind: 'text', value: 's', hidden: true },
+  ], { maxRounds: 2 });
+  assert.ok(during, 'present ran during the fill');
+  assert.equal(during[0]?.hidden, undefined, 'the fill may fill it: present sees the control');
+});

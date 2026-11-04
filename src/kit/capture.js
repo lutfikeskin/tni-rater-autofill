@@ -10,6 +10,7 @@ import {
 import { adapter, withAdapter, currentPage, stepKey } from './adapter.js';
 import { redactionPattern } from '../redaction.js';
 import { agreesWith, assign } from './apply.js';
+import { getRunning } from './cursor.js';
 
 /** @import { PageControl } from './dom.js' */
 /** @import { PlanStep } from '../../types.js' */
@@ -173,7 +174,8 @@ export function present(items, hidden = [], steps = []) {
   const fillHidden = getHiddenOk();
   let controls;
   try {
-    setHiddenOk(hidden ?? []);
+    // A fill running in this frame keeps its own hidden-but-fillable fields.
+    if (!getRunning()) setHiddenOk(hidden ?? []);
     controls = collectControls();
   } finally {
     setHiddenOk(fillHidden);

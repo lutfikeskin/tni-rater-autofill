@@ -149,7 +149,7 @@ export const countControls = (el) => el.querySelectorAll(CONTROL_SELECTOR).lengt
 
 export function byId(el, id) {
   const root = /** @type {any} */ (el.getRootNode?.());
-  return root?.getElementById ? root.getElementById(id) : document.getElementById(id);
+  return root?.getElementById?.(id) ?? document.getElementById(id);
 }
 
 export function withoutCalendar(text) {
