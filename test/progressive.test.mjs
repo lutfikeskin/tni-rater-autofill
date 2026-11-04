@@ -271,7 +271,7 @@ test('Progressive preserves optional and server-owned controls', () => {
     assert.equal(step.verifyOnly, true, `decoded vehicle ${q} is verified, not typed`);
   }
   assert.equal(byQ(plan, '2CE3').value, true, 'standard: no permanently attached equipment');
-  for (const q of ['2CE0', '2BB4', '2BCB']) assert.equal(byQ(plan, q).ignore, true, `q${q} is left to the page`);
+  for (const q of ['2CE0', '2BCB']) assert.equal(byQ(plan, q).ignore, true, `q${q} is left to the page`);
 });
 
 test('Progressive coverage and helper ordering are conservative', () => {

@@ -623,7 +623,7 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.equal(byQ('2CE3').value, true);
   assert.equal(byQ('1FCD').value, '$1,000 Deductible');
   assert.equal(byQ('1FD2').value, '$1,000 Deductible');
-  assert.equal(byQ('2BB4').ignore, true, 'GVW comes from the VIN lookup');
+  assert.deepEqual([byQ('2BB4').ignore, byQ('2BB4').kind, byQ('2BB4').keepPreset], [false, 'first-option', true], 'GVW: the VIN lookup\'s, else the first option');
   assert.equal(byQ('28E6').value, false, 'driver 1 has no CDL');
   assert.ok(carrier.advance.exceptPages.includes('AdditionalDetails'));
   assert.ok(new RegExp(carrier.advance.text, 'i').test('Ok, start quote.'));

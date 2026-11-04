@@ -517,7 +517,7 @@
  },
  "test/fixtures/progressive/progressive_NC_freight-hauler_box-truck.json": {
   "questions": 95,
-  "filled": 63,
+  "filled": 65,
   "failed": 4,
   "unmapped": 0,
   "issues": [],
@@ -538,17 +538,17 @@
    },
    "MostCommonVehicles": {
     "questions": 6,
-    "filled": 4,
+    "filled": 5,
     "failed": [],
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "88cbaf364dee"
+    "outcomes": "87f9556ff9d7"
    },
    "AddVehicle": {
     "questions": 11,
-    "filled": 7,
+    "filled": 8,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -556,7 +556,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "25355e93775f"
+    "outcomes": "762593f5aed1"
    },
    "AddDriver": {
     "questions": 6,

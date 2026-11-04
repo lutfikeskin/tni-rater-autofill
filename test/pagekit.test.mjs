@@ -4017,6 +4017,29 @@ test('Progressive\'s anti-theft device selected by the page after the fill gave 
   }
 });
 
+// FL live recording, 2026-11-04: a box truck's VIN lookup left the gross vehicle weight empty, and
+// no step named it (ignored as the lookup's), so the panel never showed it. TNI: the lookup's weight
+// kept as it is, else the list's first option. The live page's question id (2C41) isn't the
+// rule's (2BB4, an older capture's): the step finds it by its wording.
+test('Progressive\'s gross vehicle weight: the list\'s first option when the VIN lookup left it empty, its own weight kept (keepPreset)', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [{ type: 'Box Truck' }], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive, { vehicles: 0 }).filter((s) => s.q === '2BB4');
+  assert.equal(plan.length, 1);
+  const weights = ['', '6,000 or less', '6,001 to 10,000', '19,501 to 26,000', '45,001 or more'];
+  for (const overwrite of [false, true]) {
+    for (const [current, kept] of [['', '6,000 or less'], ['19,501 to 26,000', '19,501 to 26,000']]) {
+      const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+      const list = addExtText(h, 'c', '2C41', { caption: 'What is the gross vehicle weight?', ref: 'RiskInput.GrossWeight', required: true, value: current });
+      Object.assign(list.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => weights.map((label) => ({ get: () => label })) } });
+      const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true, overwrite });
+      const where = `${current || 'empty'}${overwrite ? ', replace existing answers' : ''}`;
+      assert.equal(list.cmp.getValue(), kept, where);
+      assert.equal(report.filled.length, current ? 0 : 1, where);
+      assert.deepEqual([report.checks.length, report.unknown.length, report.leftRequired.length, report.blockers.length], [0, 0, 0, 0], where);
+    }
+  }
+});
+
 // AmWINS' vehicle rows after Import Valid Records: each row shows a VIN, in the import's order,
 // not the intake's. A step with a `witness` takes the row whose VIN is its unit's; a unit whose
 // VIN is on no row (rejected by the import) or on two stays the agent's, named without its VIN.

@@ -910,8 +910,13 @@ export const progressive = {
     // --- Add vehicle (AddVehicle) ----------------------------------------------------------------
     ...onPage(['AddVehicle', 'MostCommonVehicles'], [
       { q: '2B00', ask: 'Add Vehicle By', name: 'Vehicle entry method (agent chooses VIN)', ignore: true },
+      // GVW: the VIN lookup's choice, kept as it is; when the lookup left it empty, the list's first
+      // option (TNI, 2026-11-04, FL live recording: a 2023 International box truck's lookup left it
+      // empty and no step named it, so the panel never showed it; the maintainer: "the first option,
+      // never empty"). Found by its wording: the live page's question id is 2C41, older captures' 2BB4,
+      // and older captures have no data-model name.
+      { q: '2BB4', tni: 'progressive.gvw', source: 'standard', ask: 'What is the gross vehicle weight?', name: 'Gross vehicle weight (the VIN lookup\'s, else TNI: the first option)', kind: 'first-option', value: () => 'first option', keepPreset: true },
       // Filled by the VIN lookup.
-      { q: '2BB4', ask: 'What is the gross vehicle weight?', name: 'Gross vehicle weight (from VIN lookup)', ignore: true },
       { q: '2BCB', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (from VIN lookup)', ignore: true },
       // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
       // a box the lookup leaves empty goes to the agent.
