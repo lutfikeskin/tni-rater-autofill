@@ -21,6 +21,8 @@ Read `AGENTS.md` first and follow it. Read [Developer recording](../../../docs/d
 
 Before any analysis, check each recording against the question it was made for, and say what's missing. A thin recording is reported, not worked around: ask the maintainer to record again, saying exactly what to include.
 
+The panel saves each recording to Downloads as `recording-<id>.zip`. Move it into `layouts/recordings/` first (ignored, so it stays local), or ask the maintainer where it is.
+
 ```bash
 npm run recording -- layouts/recordings/recording-<id>.zip    # or the unzipped folder; writes reviews/recording-<id>.md
 ```
