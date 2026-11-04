@@ -225,6 +225,10 @@ export function resolveItems(report, plan) {
 export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null } = {}) {
   /** @type {RunState} */
   const state = /** @type {any} */ ({});
+  // The last helper's settled page, taken as this fill begins: one that returns early (another page,
+  // a stop page or step) uses it up too, so a later fill can't take it for its own (review of #284).
+  const left = settledAt;
+  settledAt = null;
   // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
   // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
   // (skipWhere).
@@ -456,8 +460,6 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // Stopped by the agent before it began (the panel was still preparing): nothing is done.
   if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
   phase('reading');
-  const left = settledAt;
-  settledAt = null;
   const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && signature() === left.sig;
   const settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' });
   phase(null);
