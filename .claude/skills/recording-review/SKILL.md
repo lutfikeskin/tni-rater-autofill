@@ -41,17 +41,18 @@ Read `reviews/recording-<id>.md` whole, then open a moment's screenshot or saved
 
 1. **Flow**: the steps in order, how long each was on screen, and who left it (the agent's click or the extension's press).
 2. **Where the time went**: per step, the time on screen, filling, answers, the fill's waiting and its slack, the page's requests, and the time without a fill (the agent's time, or nobody's).
-3. **Each wait**: `the extension waited <ms> for <what> (quiet <n> ms …): <how it ended>; <slack>`. "The page was quiet" with a large slack is a candidate. "At its limit" means the page never went quiet: look at what held it (`busy`, `changing`, `requests`). That is the page being slow, or a wait waiting on the wrong thing, never something to shorten blindly.
+3. **Each wait** (all but the waits after an answer): `the extension waited <ms> for <what> (quiet <n> ms …): <how it ended>; <slack>`. "The page was quiet" with a large slack is a candidate. "At its limit" means the page never went quiet: look at what held it (`busy`, `changing`, `requests`). That is the page being slow, or a wait waiting on the wrong thing, never something to shorten blindly. A wait after an answer shows only as `then waited <ms> for the page` on the answer's line, without how it ended or its slack: read those from `events.jsonl` (`kind: 'kit'`, `what: 'wait'`, `why: 'answer'`, with `start`, `ms` and `ended`; its slack is the part after the page's last `burst` or `request` before it ended).
 4. **Questions drawn late**: a question the page drew after the last action, and whether the fill answered it, left it or had already ended.
 5. **Order down the page**: answers given out of page order (the cursor going back up).
 6. **The agent's actions**: what they set, changed back or clicked by hand during or after a fill. A change to the fill's answer is a correction (see [Corrections](../../../docs/corrections.md)); a helper or Continue clicked by hand is extra agent work.
 
 ## 3. Find the speed candidates
 
-Group the waits across the recordings by what they were for (the report's words, one per `why`: before the fill `start`, after an answer `answer`, after a round of answers `round`, for a new view to load `load`, before a button that loads a view `before-load`, for the premium `rated`, after Continue `continue`, for a late question `drawn`) and by carrier. For each group, give the count, the median and worst duration, how many ended quiet or at their limit, and the median slack. Find each wait's `settle(...)` call in `src/kit/` (`grep -n "why: '<why>'" src/kit/*.js`; a call with no `why` by the `quietMs` the report names) and note its file and line.
+Group the waits across the recordings by what they were for (the report's words, one per `why`: before the fill `start`, after an answer `answer`, after a round of answers `round`, for a new view to load `load`, before a button that loads a view `before-load`, for the premium `rated`, after Continue `continue`, for a late question `drawn`) and by carrier. For each group, give the count, the median and worst duration, how many ended quiet or at their limit, and the median slack. Find each wait's `settle(...)` call in `src/kit/` (`grep -n "why: '<why>'" src/kit/*.js`; a call with no `why`, such as the drivers' in `src/kit/drivers/`, by the `quietMs` the report names: `grep -n 'settle(' src/kit/*.js src/kit/drivers/*.js`) and note its file and line.
 
 A wait is a candidate only when all of these hold:
 
+- its own end and slack are known: from the report, or for a wait after an answer from `events.jsonl`; a total alone is not enough;
 - it ended quiet nearly every time, with slack well above zero on every carrier it runs on;
 - it is not one of the checks in **Speed never costs a check**;
 - it appears in more than one recording, or the maintainer accepts one recording as enough;
