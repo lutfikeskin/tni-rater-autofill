@@ -1339,6 +1339,31 @@ test('Progressive: the fill after a helper opened the page begins sooner; answer
   assert.deepEqual(starts(), [400, 100, 400]);
 });
 
+// Review of PR 284: the answer wait counts its quiet from the page's last request too, in a frame
+// inside the page as well as the top one. A request ending 160 ms after the answer is waited after.
+test('Progressive: in a frame inside the page, an answer waits 150 ms after the request it set off', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  h.context.top = {};
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  const t0 = clock.Date.now();
+  let observer = null;
+  h.context.performance = { now: () => clock.Date.now() - t0 };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+  // The answer's request: the page busy while it runs (Ext.Ajax), and seen ending 160 ms later.
+  let busyUntil = 0;
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  addExtText(h, 'c', '2BA1', { onSet: () => {
+    busyUntil = clock.Date.now() + 160;
+    setTimeout(() => observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: clock.Date.now() - t0 - 160, responseEnd: clock.Date.now() - t0 }] }), 160);
+  } });
+  await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }], { maxRounds: 2, trace: true });
+  const wait = said.find((x) => x.what === 'wait' && x.why === 'answer');
+  assert.ok(wait.ms >= 300, `${wait.ms} ms: past the request's end and 150 ms after it`);
+});
+
 test('Progressive: the page changed after the helper\'s fill, so the next one waits the full 400 ms', async () => {
   const h = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
   h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
