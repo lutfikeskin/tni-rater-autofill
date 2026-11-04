@@ -15,7 +15,7 @@ Read `AGENTS.md` first and follow it. Read [Developer recording](../../../docs/d
 - **A recording is evidence for its own scenario.** One quote on one carrier and state shows what happened there, not on every page or carrier. Say how many recordings a claim rests on.
 - **The maintainer's recordings are test runs**, not agents' work: don't count them in weekly numbers.
 - **Speed never costs a check.** A wait may be shortened only where the page had long been quiet. These stay as they are unless the maintainer decides otherwise: rereading what the page kept (`agreesWith`), the retries for an answer the page didn't keep (`keepWait`), the edit guard, the wait for the page's own requests before a helper or Recalculate, the look before a click (`coveredBy`), and the never-click and never-advance limits.
-- **Build before blame.** Note each recording's build (its manifest's version and commit). A problem on a build older than a fix on `main` is "Watch".
+- **Build before blame.** Note each recording's build (`build.version` and `build.commit` in its `recording.json`). A problem on a build older than a fix on `main` is "Watch".
 
 ## 1. Is the recording good enough?
 
@@ -25,7 +25,7 @@ Before any analysis, check each recording against the question it was made for, 
 npm run recording -- layouts/recordings/recording-<id>.zip    # or the unzipped folder; writes reviews/recording-<id>.md
 ```
 
-Check, from the report's header, **Flow** and the zip's `manifest.json`:
+Check, from the report's header, **Flow** and the zip's `recording.json` (its `build`, `ended`, `events` and `dropped`):
 
 - **The right quote and steps.** The tab, carrier and steps the question is about were recorded, from the page before the problem to the one after it.
 - **It ended.** A recording saved from a closed panel has no end (`ended: null`); the report says it was cut short.
