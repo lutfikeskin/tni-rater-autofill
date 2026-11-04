@@ -472,22 +472,17 @@ panelStore.subscribe((stateNow) => {
 });
 
 /**
- * Reads a filling switch directly from state.switches (backed by panelStore),
- * falling back to $(domId).checked in unit-test harnesses where state.switches is uninitialized.
+ * A filling switch: what Settings says (state.switches), else its box (the test harnesses' vm has
+ * only boxes), else its default as Settings draws it: Replace answers off, every other one on.
  * @param {keyof import('../../types.js').PanelSwitches} name
  * @param {string} domId
- * @param {boolean} [fallback=true]
  * @returns {boolean}
  */
-function switchOn(name, domId, fallback = true) {
-  if (state?.switches && typeof state.switches[name] === 'boolean') {
-    return state.switches[name];
-  }
-  if (typeof $ === 'function') {
-    const el = /** @type {*} */ ($(domId));
-    if (el && typeof el.checked === 'boolean') return el.checked;
-  }
-  return fallback;
+function switchOn(name, domId) {
+  if (typeof state.switches?.[name] === 'boolean') return state.switches[name];
+  const box = /** @type {HTMLInputElement | null} */ ($(domId));
+  if (typeof box?.checked === 'boolean') return box.checked;
+  return name !== 'overwrite';
 }
 
 // Crashes nothing in the panel caught (an exception, a promise nobody awaited) go in the usage log,

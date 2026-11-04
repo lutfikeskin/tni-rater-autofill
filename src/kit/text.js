@@ -42,7 +42,7 @@ export function loose(v) {
   const s = String(v ?? '').trim();
   const m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/) ?? s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   // 1/5/1980, 01/05/1980 and 1980-01-05 are the same date.
-  if (m) return m[0].startsWith(m[3]) ? `d${m[3]}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}` : `d${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}${m[3]}`;
+  if (m) return m[1].length === 4 ? `d${m[2]}${m[3]}${m[1]}` : `d${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}${m[3]}`;
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 

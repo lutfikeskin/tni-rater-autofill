@@ -131,7 +131,7 @@ async function logSettings(reason, changed) {
   try {
     if (reason === 'changed' && !(state.intake && usage.currentSession())) return;
     const saved = await usage.settings();
-    usage.log(agentSettingsEvent(saved, { overwrite: typeof switchOn === 'function' ? switchOn('overwrite', 'overwrite', false) : (state?.switches?.overwrite ?? $('overwrite')?.checked ?? false), reason, changed, centralServer: usage.DEFAULT_SERVER }));
+    usage.log(agentSettingsEvent(saved, { overwrite: switchOn('overwrite', 'overwrite'), reason, changed, centralServer: usage.DEFAULT_SERVER }));
   } catch { /* the settings log is best effort */ }
 }
 

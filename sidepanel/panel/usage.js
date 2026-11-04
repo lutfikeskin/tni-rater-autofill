@@ -6,7 +6,7 @@ import { fieldChangeEvent, fillEvents, redactor, knownStep } from '../../src/usa
 import { quoteStatePick } from '../../src/quote-state.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { $, persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn } from './core.js';
+import { persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn } from './core.js';
 import { releaseDiscardedForms } from './record.js';
 import { noteChangedAfterDone, noteQuoteDone, noteQuoteState, onQuotePage, renderSteps, scheduleAutoFill, scheduleLayout, seedQuoteState, showStopPage, stopPageIsOurs, viewOf } from './coordinator.js';
 import { answeredOnPage, fillPage, unitArrival } from './fill.js';
@@ -55,7 +55,6 @@ function tellRecorder(cmd, tabId = state.tab?.id) {
 
 function onRecorderMessage(msg, sender) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
-  const sw = (name, domId, fallback = true) => (typeof switchOn === 'function' ? switchOn(name, domId, fallback) : (state?.switches && typeof state.switches[name] === 'boolean' ? state.switches[name] : (typeof $ === 'function' && typeof /** @type {*} */ ($(domId))?.checked === 'boolean' ? /** @type {*} */ ($(domId)).checked : fallback)));
   const carrier = state.tab.carrier?.id ?? null;
   const log = (...events) => { if (!state.tab.carrier?.practice) usage.log(...events); };
   // Layouts are of the quote page, the tab's top frame; a child frame names its own address.
@@ -101,11 +100,11 @@ function onRecorderMessage(msg, sender) {
     // buttons for us (Add Vehicle) count too.
     const page = samePage(msg.page);
     const hasButtons = (state.tab.carrier?.actions ?? []).some((a) => [].concat(a.page ?? []).includes(page));
-    const wanted = sw('autoPages', 'auto-pages') || (sw('autoFollowUps', 'auto-followups') && (state.autoPages.has(page) || (hasButtons && !msg.fields)));
+    const wanted = switchOn('autoPages', 'auto-pages') || (switchOn('autoFollowUps', 'auto-followups') && (state.autoPages.has(page) || (hasButtons && !msg.fields)));
     state.drawPending = null;
     if (wanted && (msg.fields > 0 || hasButtons) && onQuotePage()) {
       setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 100);
-    } else if (sw('autoPages', 'auto-pages') && !msg.fields && onQuotePage()) {
+    } else if (switchOn('autoPages', 'auto-pages') && !msg.fields && onQuotePage()) {
       // Arrived before it drew a question (GEICO's first step: 6 of 8 quotes on 2026-10-26 waited
       // 3–127 s for the agent's Fill, W44-11): filled as on arriving, once they show (new_fields).
       state.drawPending = { tabId: sender.tab.id, page };
@@ -157,7 +156,7 @@ function onRecorderMessage(msg, sender) {
     const firstFill = () => !state.autoPages.has(page) || !state.reports.get(currentReportKey())?.filled;
     // Or a page that arrived before it drew any (drawPending, W44-11).
     const drawnLate = state.drawPending?.tabId === sender.tab.id && state.drawPending.page === page;
-    if ((state.tab.carrier?.fillOnDraw?.test(state.tab.url ?? '') || drawnLate) && sw('autoPages', 'auto-pages') && firstFill() && onQuotePage() && !stopNoteFor(state.tab.carrier, page)) {
+    if ((state.tab.carrier?.fillOnDraw?.test(state.tab.url ?? '') || drawnLate) && switchOn('autoPages', 'auto-pages') && firstFill() && onQuotePage() && !stopNoteFor(state.tab.carrier, page)) {
       state.drawPending = null;
       setTimeout(() => { if (pageOf(state.tab?.url) === page) fillPage({ auto: 'page' }); }, 100);
     } else scheduleAutoFill(page, undefined, true);
@@ -170,7 +169,7 @@ function onRecorderMessage(msg, sender) {
     // Continue when the page is done" on, a follow-up fill adds the next intake unit (FL live run 3,
     // 2026-10-21: nothing ran on the list until the agent clicked "+").
     const step = tabStep(state.tab.carrier);
-    if (state.tab.carrier?.unitLists?.some((s) => s.steps.includes(step)) && sw('autoAdvance', 'auto-advance')) scheduleAutoFill(pageOf(state.tab.url));
+    if (state.tab.carrier?.unitLists?.some((s) => s.steps.includes(step)) && switchOn('autoAdvance', 'auto-advance')) scheduleAutoFill(pageOf(state.tab.url));
   }
   // A unit list drawn, or its rows changed (the recorder's list_shown): GEICO draws the list 5–7 s
   // after the Next that saved a unit's form, after the follow-up above ran (FL live run 6,
@@ -179,7 +178,7 @@ function onRecorderMessage(msg, sender) {
   // follow-up fill adds the next intake unit.
   if (msg.event === 'list_shown') {
     const step = knownStep(state.tab.carrier, msg.step) ?? tabStep(state.tab.carrier);
-    if (state.tab.carrier?.unitLists?.some((s) => s.steps.includes(step)) && (sw('autoAdvance', 'auto-advance') || sw('autoPages', 'auto-pages'))) scheduleAutoFill(pageOf(state.tab.url));
+    if (state.tab.carrier?.unitLists?.some((s) => s.steps.includes(step)) && (switchOn('autoAdvance', 'auto-advance') || switchOn('autoPages', 'auto-pages'))) scheduleAutoFill(pageOf(state.tab.url));
   }
   // A button the agent clicked themselves (its text, redacted): a helper or a Continue by hand.
   // On a one-address application, the step it was on (a known step name only, as elsewhere).

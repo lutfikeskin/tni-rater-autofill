@@ -670,7 +670,7 @@ function renderAi(holder, suggestions, ctx) {
   const rejectedPending = pending.filter((x) => x.rejected);
   const current = assistContextKey(state.intake?.record, state.active);
   const currentHash = aiFingerprint(current);
-  const canContinue = (typeof switchOn === 'function' ? switchOn('autoAdvance', 'auto-advance') : (state?.switches?.autoAdvance ?? $('auto-advance')?.checked ?? true)) && !!ctx.carrier.advance;
+  const canContinue = switchOn('autoAdvance', 'auto-advance') && !!ctx.carrier.advance;
   // Approving or rejecting acts on a cached pick in this intake and page. A driver/vehicle
   // switch can keep that pick pending; replacing the intake or page invalidates the callback.
   const decide = async (list, decision) => {

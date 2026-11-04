@@ -16,19 +16,6 @@ import { capture, receipt, readBack, present, signature, decisionSnapshot } from
 import { apply, agreesWith } from './apply.js';
 import { fill, progress, stop } from './cursor.js';
 
-// Constants and regex AST touchpoints preserved for test suites
-// (test/pagekit.test.mjs:991, test/weekly-signals.test.mjs:172, scripts/package.mjs):
-export const COLORS = { filled: '#16a34a', standard: '#2f6fd6', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed', agent: '#475569' };
-export const NEVER_ADVANCE = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out|order)\b/i;
-
-// Test AST touchpoints for fill engine phase transitions (test/pagekit.test.mjs:8337-8342):
-// phase('reading'); const settled = await settle({ quietMs: 400, maxMs: 15000, why: 'start' }); phase(null);
-// phase('premium'); const until = Date.now() + LOAD_MS;
-// phase(hold && confirmed == null ? 'waiting' : 'continue'); if (serverBacked) await settle
-// if (thisRound.helperClicked) phase('helper', state.pendingAction?.label ?? state.report.actions.at(-1)?.text ?? null);
-// report.rounds = round + 1; phase(null);
-// phase: running.phase ?? null, itemsAt:
-
 (() => {
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.

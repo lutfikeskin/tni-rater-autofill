@@ -86,8 +86,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   const page = pageOf(state.tab.url);
   // Looks right never replaces anything: the page is continued as the agent approved it. Nor does
   // the dock's Continue (W43-40).
-  // const overwrite = auto || confirmed || continuing ? false : $('overwrite').checked;
-  const overwrite = auto || confirmed || continuing ? false : (typeof switchOn === 'function' ? switchOn('overwrite', 'overwrite', false) : (state?.switches?.overwrite ?? /** @type {*} */ ($('overwrite'))?.checked ?? false));
+  const overwrite = auto || confirmed || continuing ? false : switchOn('overwrite', 'overwrite');
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
@@ -117,7 +116,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // The agent's edits on this page as the fill's tab holds them (retiring AI picks may just
     // have released some), never the tab in front.
     // Honor the latest switch after preparation, and log the same value used by the kit.
-    ctx.settings.autoAdvance = typeof switchOn === 'function' ? switchOn('autoAdvance', 'auto-advance') : (state?.switches?.autoAdvance ?? !!/** @type {*} */ ($('auto-advance'))?.checked);
+    ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
     // The add helpers are clicked only with the switch on now.
     if (ctx.adding) plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
@@ -421,8 +420,7 @@ function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, i
     if (fillCurrent(ctx) && pageOf(state.tab?.url) === page) scheduleAutoFill(page);
   }, 900);
   if (advanced) watchNextStep(carrier, page, advanced.signatureBefore, doneKey, run, ctx);
-  const sw = (name, domId, fallback = true) => (typeof switchOn === 'function' ? switchOn(name, domId, fallback) : (state?.switches && typeof state.switches[name] === 'boolean' ? state.switches[name] : (typeof $ === 'function' && typeof /** @type {*} */ ($(domId))?.checked === 'boolean' ? /** @type {*} */ ($(domId)).checked : fallback)));
-  return clicked && !moved && !state.autoPaused && sw('autoFollowUps', 'auto-followups');
+  return clicked && !moved && !state.autoPaused && switchOn('autoFollowUps', 'auto-followups');
 }
 
 // Luna is asked once the page has stopped changing: after the last follow-up fill of a helper
@@ -460,8 +458,7 @@ function assistAfterFill(frames, ctx, followUp) {
 // page unchanged since the Continue, 30 s (60 s) in all.
 async function watchNextStep(carrier, page, before, doneKey = null, run = null, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
   const tabId = ctx.tabId;
-  const sw = (name, domId, fallback = true) => (typeof switchOn === 'function' ? switchOn(name, domId, fallback) : (state?.switches && typeof state.switches[name] === 'boolean' ? state.switches[name] : (typeof $ === 'function' && typeof /** @type {*} */ ($(domId))?.checked === 'boolean' ? /** @type {*} */ ($(domId)).checked : fallback)));
-  if (!sw('autoFollowUps', 'auto-followups') && !sw('autoPages', 'auto-pages')) return;
+  if (!switchOn('autoFollowUps', 'auto-followups') && !switchOn('autoPages', 'auto-pages')) return;
   let last = null;
   let same = 0;
   let unchanged = 0;

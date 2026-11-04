@@ -88,6 +88,12 @@ export function listed(items) {
   });
 }
 
+// A unit list on screen, also in an open shadow root, and its rows (its add button's row is not one).
+/** @param {string} selector */
+const visibleList = (selector) => /** @type {HTMLElement | undefined} */ (deepQueryAll(document, selector).find((el) => el.getClientRects().length));
+/** @param {Element} list */
+const countRows = (list) => [...list.children].filter((li) => li.tagName === 'LI' && !li.classList.contains('add-state')).length;
+
 /**
  * Inspects a unit list table/container on screen by selector.
  * @param {string} selector
@@ -96,13 +102,13 @@ export function listed(items) {
  */
 export function unitList(selector, items) {
   if (!knownUnitLists.includes(selector)) knownUnitLists.push(selector);
-  const list = /** @type {HTMLElement | undefined} */ (deepQueryAll(document, selector).find((el) => el.getClientRects().length));
+  const list = visibleList(selector);
   if (!list) return null;
   const text = String(list.innerText ?? '').toUpperCase();
   const flat = ` ${text.replace(/[^A-Z0-9]+/g, ' ')} `;
   const lines = text.split(/\n+/).map((l) => ` ${l.replace(/[^A-Z0-9]+/g, ' ')} `);
   const word = (w) => String(w ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const rows = [...list.children].filter((li) => li.tagName === 'LI' && !li.classList.contains('add-state')).length;
+  const rows = countRows(list);
   const shown = (items ?? []).map((t) => {
     if (Array.isArray(t)) {
       const words = t.map(word).filter((w) => w.length >= 2);
@@ -121,8 +127,8 @@ export function unitList(selector, items) {
 export function unitListsNow() {
   try {
     return knownUnitLists.map((selector) => {
-      const list = [...document.querySelectorAll(selector)].find((el) => el.getClientRects().length);
-      return list ? `${selector}:${[...list.children].filter((li) => li.tagName === 'LI' && !li.classList.contains('add-state')).length}` : '';
+      const list = visibleList(selector);
+      return list ? `${selector}:${countRows(list)}` : '';
     }).filter(Boolean).join('|');
   } catch {
     return '';

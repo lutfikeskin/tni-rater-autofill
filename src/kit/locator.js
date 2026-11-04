@@ -40,7 +40,8 @@ export function createLocator(kit) {
   function assign(controls, plan) {
     const used = new Set();
     const donePaths = new Set();
-    const pairs = /** @type {any} */ ([]);
+    /** @type {any} */
+    const pairs = [];
     // Steps with a witness whose unit's row isn't among the rows on the page (none or several
     // read as the unit): left for the agent, named by unit (pairs.unwitnessed).
     const unwitnessed = [];

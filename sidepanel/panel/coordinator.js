@@ -66,7 +66,7 @@ function resetViews() {
 // picker may have left since. `unitsListed`: the unit list on screen holds every intake unit
 // (pickUnitToAdd), so its Looks Good may be clicked (advanceFor).
 /** @type {(carrier: CarrierConfig, extra?: FillOptions, autoAdvance?: boolean, active?: object, unitsListed?: boolean) => FillOptions} */
-const fillOptions = (carrier, extra = {}, autoAdvance = (typeof switchOn === 'function' ? switchOn('autoAdvance', 'auto-advance') : (state?.switches && typeof state.switches.autoAdvance === 'boolean' ? state.switches.autoAdvance : (typeof $ === 'function' && typeof /** @type {*} */ ($('auto-advance'))?.checked === 'boolean' ? /** @type {*} */ ($('auto-advance')).checked : true))), active = state.active, unitsListed = false) => ({
+const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 'auto-advance'), active = state.active, unitsListed = false) => ({
   replaceChoices: !!carrier.replaceChoices,
   // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
   // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only. The
@@ -88,7 +88,7 @@ const fillOptions = (carrier, extra = {}, autoAdvance = (typeof switchOn === 'fu
   advance: autoAdvance && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? advanceFor(carrier, unitsListed) : null,
   // "Check answers before Continue": Continue only for the page as the agent approved it (Looks
   // right passes its receipt as `confirmed`). Kept on this computer, not in the usage log.
-  hold: (typeof switchOn === 'function' ? switchOn('checkBeforeContinue', 'check-continue', false) : (state?.switches && typeof state.switches.checkBeforeContinue === 'boolean' ? state.switches.checkBeforeContinue : (typeof $ === 'function' && typeof /** @type {*} */ ($('check-continue'))?.checked === 'boolean' ? /** @type {*} */ ($('check-continue')).checked : false))),
+  hold: switchOn('checkBeforeContinue', 'check-continue'),
   confirmed: null,
   // Add NTL done on this intake's quote survives a panel reload (its removal hold depends on it).
   doneActions: [...state.doneActions, ...(state.intake?.ntlAdded ? ['addNtl'] : [])],
@@ -143,12 +143,11 @@ if (inExtension) {
 /** @param {{ tabId: number, carrier: CarrierConfig, page: string, tabUrl: string, auto?: boolean | string, overwrite?: boolean, asked?: boolean }} options */
 function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = false, asked = false }) {
   const session = usage.currentSession();
-  const sw = (name, domId, fallback = true) => (typeof switchOn === 'function' ? switchOn(name, domId, fallback) : (state?.switches && typeof state.switches[name] === 'boolean' ? state.switches[name] : (typeof $ === 'function' && typeof /** @type {*} */ ($(domId))?.checked === 'boolean' ? /** @type {*} */ ($(domId)).checked : fallback)));
   return {
     run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite, asked,
     intake: state.intake, revision: state.intakeRevision, ids: { session: session?.id ?? null, intakeId: session?.intakeId ?? null },
     view: viewOf(tabId, page, carrier), scope: editScope(page, carrier, tabStep(carrier, tabId)), active: { ...state.active },
-    settings: { autoAdvance: sw('autoAdvance', 'auto-advance'), autoFollowUps: sw('autoFollowUps', 'auto-followups'), autoPages: sw('autoPages', 'auto-pages'), overwrite: !!overwrite },
+    settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages'), overwrite: !!overwrite },
   };
 }
 function noteStaleFill(ctx) {
@@ -293,8 +292,7 @@ function logFillError(ctx, error) {
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  const sw = (name, domId, fallback = true) => (typeof switchOn === 'function' ? switchOn(name, domId, fallback) : (state?.switches && typeof state.switches[name] === 'boolean' ? state.switches[name] : (typeof $ === 'function' && typeof /** @type {*} */ ($(domId))?.checked === 'boolean' ? /** @type {*} */ ($(domId)).checked : fallback)));
-  if (state.autoPaused || !sw('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || stateIssue()) return;
+  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || stateIssue()) return;
   if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
@@ -347,8 +345,7 @@ async function autoFill(page) {
     const unseen = !state.reports.has(reportKey(tabId, page, carrier, ctx.active, stepBefore));
     // Honor the latest switch after preparation, and log the same value used by the kit. The unit the
     // fill adds (pickUnitToAdd) has its "+" and chooser Next clicked only with it on (`click`).
-    const sw = (name, domId, fallback = true) => (typeof switchOn === 'function' ? switchOn(name, domId, fallback) : (state?.switches && typeof state.switches[name] === 'boolean' ? state.switches[name] : (typeof $ === 'function' && typeof /** @type {*} */ ($(domId))?.checked === 'boolean' ? /** @type {*} */ ($(domId)).checked : fallback)));
-    ctx.settings.autoAdvance = sw('autoAdvance', 'auto-advance');
+    ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
     const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
@@ -774,8 +771,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   const where = `${page}|${knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey) ?? ''}`;
   const due = !frames.some((f) => f.halted || f.advanced || f.held) && frames.some((f) => f.notDrawn || f.advanceDue);
   let retrying = false;
-  const sw = (name, domId, fallback = true) => (typeof switchOn === 'function' ? switchOn(name, domId, fallback) : (state?.switches && typeof state.switches[name] === 'boolean' ? state.switches[name] : (typeof $ === 'function' && typeof /** @type {*} */ ($(domId))?.checked === 'boolean' ? /** @type {*} */ ($(domId)).checked : fallback)));
-  if (due && maps.triedAgain !== where && sw('autoFollowUps', 'auto-followups') && !maps.autoPaused) {
+  if (due && maps.triedAgain !== where && switchOn('autoFollowUps', 'auto-followups') && !maps.autoPaused) {
     maps.triedAgain = where;
     retrying = true;
     setTimeout(() => {
@@ -1130,12 +1126,11 @@ function renderSteps() {
 // Looks right ('changed'). With "Let me look before Continue" on, Looks right takes the place of
 // Fill again and continue.
 function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0, page, settled, held, tabId }, carrier = state.tab?.carrier) {
-  const sw = (name, domId, fallback = true) => (typeof switchOn === 'function' ? switchOn(name, domId, fallback) : (state?.switches && typeof state.switches[name] === 'boolean' ? state.switches[name] : (typeof $ === 'function' && typeof /** @type {*} */ ($(domId))?.checked === 'boolean' ? /** @type {*} */ ($(domId)).checked : fallback)));
   const holding = left || waiting;
   // A step the carrier's Continue is never clicked on (GEICO's Quote & Coverages: advance `steps`).
   const offSteps = !!carrier?.advance?.steps?.length && !carrier.advance.steps.includes(tabStep(carrier, tabId ?? state.tab?.id));
-  const autoAdvance = !!carrier?.advance && sw('autoAdvance', 'auto-advance') && !carrier.advance.exceptPages?.includes(page) && !offSteps;
-  const check = autoAdvance && sw('checkBeforeContinue', 'check-continue');
+  const autoAdvance = !!carrier?.advance && switchOn('autoAdvance', 'auto-advance') && !carrier.advance.exceptPages?.includes(page) && !offSteps;
+  const check = autoAdvance && switchOn('checkBeforeContinue', 'check-continue');
   const looks = { button: 'look-right', label: 'Looks right, continue' };
   const again = { alt: 'fill-again', altLabel: 'Fill this page again' };
   // Seen again once the agent went back to the page, or in a panel opened again (W43-39): it can be
@@ -1144,10 +1139,10 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
   if (holding) {
     const then = check ? 'Then check the answers and click Looks right. Never Bind or Submit.'
       : offSteps ? 'Then moving on is yours: nothing on this step is clicked for you.'
-      : !autoAdvance ? (carrier?.advance && sw('autoAdvance', 'auto-advance')
+      : !autoAdvance ? (carrier?.advance && switchOn('autoAdvance', 'auto-advance')
         ? 'Then click Continue on this page yourself. Nothing is submitted or bound.'
         : 'Then click Continue yourself, and Fill this page on the next one.')
-      : sw('autoFollowUps', 'auto-followups') ? 'Then the panel continues to the next page. Never Bind or Submit.'
+      : switchOn('autoFollowUps', 'auto-followups') ? 'Then the panel continues to the next page. Never Bind or Submit.'
       : 'Then Fill this page again to continue. Never Bind or Submit.';
     // Buttons waiting on others (Progressive's bill plan before Recalculate): the fill clicks them
     // in turn, and a question one waits on is a row of its own.
@@ -1171,7 +1166,7 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
   if (offSteps) return { phase: 'yours', tone: 'good', eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing here is clicked for you. Never Binds or Submits.', ...again };
   if (!autoAdvance) {
     return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', ...again,
-      sub: carrier?.advance && sw('autoAdvance', 'auto-advance') ? 'Click Continue on this page yourself. Never Binds or Submits.' : 'Click Continue, then fill the next page.' };
+      sub: carrier?.advance && switchOn('autoAdvance', 'auto-advance') ? 'Click Continue on this page yourself. Never Binds or Submits.' : 'Click Continue, then fill the next page.' };
   }
   // Nothing left and the page not moved on: the main button continues (a fill, which clicks the
   // page's Continue once nothing is left: W43-40). The same once the agent settled what was left,
@@ -1210,8 +1205,7 @@ function noteChangedAfterDone(carrier, page, step, tabId = state.tab?.id) {
 // sidepanel/sounds/quote-done.mp3, played with an audio element: no new permission. True when it was
 // started.
 function noteQuoteDone() {
-  const sw = (name, domId, fallback = true) => (typeof switchOn === 'function' ? switchOn(name, domId, fallback) : (state?.switches && typeof state.switches[name] === 'boolean' ? state.switches[name] : (typeof $ === 'function' && typeof /** @type {*} */ ($(domId))?.checked === 'boolean' ? /** @type {*} */ ($(domId)).checked : fallback)));
-  if (!sw('finishSound', 'finish-sound')) return false;
+  if (!switchOn('finishSound', 'finish-sound')) return false;
   return playChime();
 }
 // Chrome lets a page make sound once someone has clicked in it: the element is made and loaded on the
@@ -1312,12 +1306,11 @@ function dockFor() {
     return said;
   }
   // Nothing filled on this page yet: what the fill will and won't do here.
-  const sw = (name, domId, fallback = true) => (typeof switchOn === 'function' ? switchOn(name, domId, fallback) : (state?.switches && typeof state.switches[name] === 'boolean' ? state.switches[name] : (typeof $ === 'function' && typeof /** @type {*} */ ($(domId))?.checked === 'boolean' ? /** @type {*} */ ($(domId)).checked : fallback)));
   const hint = state.tab.background ? 'Fills the quote tab in the background. Go back to it to review.'
     // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd), and Next only up to
     // Additional Business Info (advance `steps`).
-    : sw('autoAdvance', 'auto-advance') && carrier.advance && carrier.unitLists ? 'Adds missing vehicles, trailers and drivers, and clicks Next up to Quote & Coverages. Never submits or binds.'
-    : sw('autoAdvance', 'auto-advance') && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
+    : switchOn('autoAdvance', 'auto-advance') && carrier.advance && carrier.unitLists ? 'Adds missing vehicles, trailers and drivers, and clicks Next up to Quote & Coverages. Never submits or binds.'
+    : switchOn('autoAdvance', 'auto-advance') && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
     : 'Nothing is submitted. Review, then click Next yourself.';
   const progress = quoteProgress(carrier, page, state.tabSteps.get(state.tab.id));
   return { phase: 'ready', eyebrow: 'Next', title: progress ? `Fill the ${progress.name} page` : 'Fill this page', sub: checksSaid ?? hint, ...fill };

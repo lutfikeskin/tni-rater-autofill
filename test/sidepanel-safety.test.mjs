@@ -103,6 +103,8 @@ function extractFunction(name) {
       if (!depth) {
         let source = SIDEPANEL.slice(start, i + 1);
         if (name !== 'persistGuardedEdits' && /\bpersistGuardedEdits\(/.test(source)) source += `\n${extractFunction('persistGuardedEdits')}`;
+        // The filling switches are read through switchOn (the harness's boxes stand in for Settings).
+        if (name !== 'switchOn' && /\bswitchOn\(/.test(source)) source += `\n${extractFunction('switchOn')}`;
         // Agent-edit scoping is shared by many functions: bring its helpers along.
         if (name !== 'agentEdited' && /\bagentEdited\(/.test(source)) source += `\n${extractFunction('agentEdited')}`;
         // So are a fill's context and its tab's maps (fillContext, rememberFill), and the tab's
@@ -5559,6 +5561,23 @@ test('the fill hint says Continue is clicked for the agent only while that setti
   });
 });
 
+// Review of PR #282: a filling switch read with no saved value and no box is its default as Settings
+// draws it, so Let me look first stays on and Replace answers off; every read goes through switchOn.
+test('a filling switch with no value reads as its default: Let me look first on, Replace answers off', () => {
+  const context = { state: { switches: {} }, $: () => null };
+  vm.runInNewContext(extractFunction('switchOn').split('\nfunction ')[0], context);
+  assert.equal(context.switchOn('checkBeforeContinue', 'check-continue'), true);
+  assert.equal(context.switchOn('overwrite', 'overwrite'), false);
+  for (const name of ['autoPages', 'autoFollowUps', 'autoAdvance', 'finishSound']) assert.equal(context.switchOn(name, name), true, name);
+  context.state.switches = { checkBeforeContinue: false, overwrite: true };
+  assert.equal(context.switchOn('checkBeforeContinue', 'check-continue'), false, 'the saved value wins');
+  assert.equal(context.switchOn('overwrite', 'overwrite'), true);
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  assert.match(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start)), /hold: switchOn\('checkBeforeContinue', 'check-continue'\),/);
+  assert.doesNotMatch(SIDEPANEL, /typeof switchOn/, 'no copies of switchOn inline');
+  assert.doesNotMatch(SIDEPANEL, /switchOn\('\w+', '[\w-]+', /, 'no call site picks its own default');
+});
+
 // What Settings' switches, boxes and usage buttons ask the panel to do (settingsActs), in a vm with
 // the calls recorded.
 function settingsActsHarness() {
@@ -6943,7 +6962,7 @@ test('a GEICO unit list drawn gets a follow-up fill with either switch on', () =
 function fillOptionsOf(state, carrier, active, { autoAdvance = false, unitsListed = false } = {}) {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const context = { state, URL, knownStep, advanceFor, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
-  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, context);
+  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('switchOn')}\nglobalThis.fillOptions = fillOptions;`, context);
   return context.fillOptions(carrier, {}, autoAdvance, active, unitsListed);
 }
 
@@ -7938,7 +7957,7 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   assert.ok(dock.indexOf('report?.empty') < dock.indexOf('if (report?.fields)'), 'before the page-with-questions word');
   // The dock's Fill asks with its `go` (test/panel/steps-view.test.jsx), and a Continue fills nothing over.
   assert.match(SIDEPANEL, /fill: \(go\) => fillPage\(\{ continuing: go === 'continue' \}\),/);
-  assert.match(extractFunction('fillPage'), /const overwrite = auto \|\| confirmed \|\| continuing \? false : \$\('overwrite'\)\.checked;/);
+  assert.match(extractFunction('fillPage'), /const overwrite = auto \|\| confirmed \|\| continuing \? false : switchOn\('overwrite', 'overwrite'\);/);
   // What the dock says keeps dockFor's word, its `go` included.
   const state = { settingsOpen: false, filling: false, reportFor: { at: 1700 } };
   const word = { phase: 'ready-continue', title: 'Ready for Continue', button: 'fill', label: 'Continue', go: 'continue', alt: 'fill-again' };
