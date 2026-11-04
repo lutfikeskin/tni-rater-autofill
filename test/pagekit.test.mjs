@@ -1418,6 +1418,32 @@ test('Progressive: an agent\'s Continue during the fill\'s own Continue request 
   assert.deepEqual([after.defaultPrevented, after.stopped], [false, false], 'after the fill, the agent\'s click is theirs');
 });
 
+// Progressive recording, 2026-11-04 (1143-fdc8): its own check refused the fill's Continue on More
+// About Business (Snapshot Pro blank): no request, the page stayed. Reported as continued, the panel
+// pressed it again 6 s later and then paused its automatic fills. A Continue the page refused without
+// asking its server is not reported as continued; one it sent on (a request) still is.
+test('Progressive: a Continue the page refuses in the browser is not reported as continued; one it sends on is', async () => {
+  const run = async (posts) => {
+    const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+    const t0 = clock.Date.now();
+    let observer = null;
+    h.context.performance = { now: () => clock.Date.now() - t0 };
+    h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+    addExtText(h, 'c', '2BA1');
+    const cont = addButton(h, 'Continue');
+    let pressed = 0;
+    cont.onclick = () => {
+      pressed++;
+      if (posts) observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: clock.Date.now() - t0, responseEnd: clock.Date.now() - t0 + 50 }] });
+    };
+    const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+      { maxRounds: 3, advance: { text: '^continue$' } });
+    return { pressed, advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) };
+  };
+  assert.deepEqual(await run(false), { pressed: 1, advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run(true), { pressed: 1, advanced: 'Continue', refused: null, said: false });
+});
+
 // 2026-10-07 FL run: the commodity list fills in only after its category is picked, and its
 // first try found it empty ("failed: " with no name, as the list has no caption).
 test('a list that loads after another answer is given time; an unlabeled field is named after its rule', async () => {

@@ -302,7 +302,7 @@
   // kind not listed here is shown as none, never kept as text: a shape let `sam-smith` through,
   // review of PR #258). Nothing the page gave is passed on as it is; a long one, or one missing
   // what it must say, is left out (review of PR #257).
-  const WAITS_FOR = new Set(['answer', 'round', 'load', 'before-load', 'rated', 'continue', 'drawn', 'start', 'helper']);
+  const WAITS_FOR = new Set(['answer', 'round', 'load', 'before-load', 'rated', 'continue', 'drawn', 'start', 'helper', 'continued']);
   const STEP_KINDS = new Set(['action', 'address-suggest', 'bool', 'choice', 'date', 'first-option', 'int', 'money', 'phone', 'pick-not', 'radio',
     'search-select', 'selected-option', 'state', 'text']);
   const TIMING = ['ms', 'settleMs', 'ajax', 'revealed', 'removed', 'changed'];

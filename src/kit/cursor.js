@@ -4,7 +4,7 @@
 import { oneLine, squash, sleep, loose } from "./text.js";
 import {
   adapter, currentPage, stepKey, stepIs, stopStepOn,
-  addStopSteps, pageAt, pageBusy, stepBars, perfNow, recentRequests, setComponentPrefix, watchRequests, settle,
+  addStopSteps, pageAt, pageBusy, stepBars, perfNow, recentRequests, setComponentPrefix, watchRequests, watchingRequests, settle,
   ratesStale, premiumReady, rated,
 } from "./adapter.js";
 import {
@@ -27,7 +27,7 @@ import {
   heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName, apply, agreesWith,
   summaryAccepted, waitedOut, unpicked, waitedOutUndrawn, WAIT_MS, WAIT_ROUND_MS,
   AFTER_WAIT_QUIET_MS, LOAD_MS, LOAD_RESULT_MS, LOAD_QUIET_MS, LOAD_HALT, KEPT_WATCH_MS,
-  ONCE_UNVERIFIED, NOTHING_LEFT, AGENT_PRESSED, RESET_QUIET_MS,
+  ONCE_UNVERIFIED, NOTHING_LEFT, AGENT_PRESSED, CONTINUE_REFUSED, RESET_QUIET_MS,
 } from "./apply.js";
 import { itemResolution, LIST_STATUS } from "../resolution.js";
 
@@ -2252,9 +2252,22 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
               state.report.repeatsHeld = (state.report.repeatsHeld ?? 0) + 1;
             };
             document.addEventListener('click', repeat, true);
+            const pressedAt = perfNow();
             try {
+              const done = await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'continued' });
               // The next page drawn and quiet, as after a helper that opens one (`settledAt`).
-              if (await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'continued' }) && currentPage() !== startPage) settledAt = { at: Date.now(), sig: signature() };
+              if (done && currentPage() !== startPage) settledAt = { at: Date.now(), sig: signature() };
+              // Quiet, still on this page, and nothing sent to the server: the page refused Continue in
+              // the browser (Progressive's own check, a question it requires still blank, says so at its
+              // top; recording of 2026-11-04, Snapshot Pro: no request). A Continue that goes through
+              // always posts. Not reported as continued, so the panel doesn't press it again 6 s later and
+              // then pause its automatic fills; the agent's answer there fills and continues as usual.
+              else if (done && currentPage() === startPage && !stepChanged() && watchingRequests() && !recentRequests.some((r) => r.start >= pressedAt - 5)) {
+                delete state.report.advanced;
+                delete state.report.advanceKey;
+                state.report.continueRefused = text;
+                state.report.blockers.push(CONTINUE_REFUSED);
+              }
             } finally {
               document.removeEventListener('click', repeat, true);
             }
