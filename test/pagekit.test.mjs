@@ -1464,6 +1464,26 @@ test('Progressive: a fill that returns early uses up the helper\'s settled page'
   assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'start').map((x) => x.quietMs), [400, 400]);
 });
 
+// Review of PR #284: the short start is for the page the helper opened. Another page drawing the
+// same questions since is waited for in full.
+test('Progressive: another page with the same questions as the helper\'s gets the full start wait', async () => {
+  const h = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  addButton(h, 'Cargo Van').onclick = () => {
+    h.context.location.search = '?pageName=AddVehicle';
+    addExtText(h, 'c', '2BA1');
+  };
+  const tile = { id: 'tile', kind: 'action', action: 'vehicleTile:0', text: '^Cargo Van$', unique: true, label: 'Vehicle type', missing: 'Pick the vehicle yourself.',
+    path: 'action.vehicleTile', name: 'Click vehicleTile', pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  assert.equal((await h.kit.fill([tile], { maxRounds: 3, trace: true })).navigatedTo, 'AddVehicle');
+  h.context.location.search = '?pageName=AddVehicle2';
+  await h.kit.fill([], { maxRounds: 2, trace: true });
+  assert.deepEqual(said.filter((x) => x.what === 'wait' && x.why === 'start').map((x) => x.quietMs), [400, 400]);
+});
+
 // 2026-10-07 FL run: the commodity list fills in only after its category is picked, and its
 // first try found it empty ("failed: " with no name, as the list has no caption).
 test('a list that loads after another answer is given time; an unlabeled field is named after its rule', async () => {

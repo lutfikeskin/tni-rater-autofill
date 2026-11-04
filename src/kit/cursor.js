@@ -43,8 +43,8 @@ let running = null;
 const stoppedRuns = new Set();
 // The page a fill left settled as it ended, on a page that waits on its server (Progressive): a
 // helper (Add Vehicle, Cargo Van, View bill plan options) opened the next page and the fill's wait
-// held until that page and its requests were done. The next fill, a moment later, finds the same
-// questions and nothing busy, so it waits for a short quiet only (`START_SETTLED_QUIET_MS`).
+// held until that page and its requests were done. The next fill, a moment later, finds the same page,
+// its questions and nothing busy, so it waits for a short quiet only (`START_SETTLED_QUIET_MS`).
 // Two Progressive recordings, 2026-11-04: on all such starts the page did nothing in the 400 ms.
 let settledAt = null;
 const SETTLED_FRESH_MS = 1500;
@@ -460,7 +460,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // Stopped by the agent before it began (the panel was still preparing): nothing is done.
   if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
   phase('reading');
-  const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && signature() === left.sig;
+  const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
   const settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' });
   phase(null);
   // Stopped while the page settled: nothing was done.
@@ -1283,7 +1283,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     if (currentPage() !== startPage) {
       state.report.navigatedTo = currentPage();
       // The wait above held until the new page was drawn and quiet (`settledAt`).
-      if (serverBacked && thisRound.helperClicked) settledAt = { at: Date.now(), sig: signature() };
+      if (serverBacked && thisRound.helperClicked) settledAt = { at: Date.now(), page: currentPage(), sig: signature() };
       break;
     }
     if (stepChanged()) break;
@@ -2258,7 +2258,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             try {
               const done = await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'continued' });
               // The next page drawn and quiet, as after a helper that opens one (`settledAt`).
-              if (done && currentPage() !== startPage) settledAt = { at: Date.now(), sig: signature() };
+              if (done && currentPage() !== startPage) settledAt = { at: Date.now(), page: currentPage(), sig: signature() };
               // Quiet, still on this page, and nothing sent to the server: the page refused Continue in
               // the browser (Progressive's own check, a question it requires still blank, says so at its
               // top; recording of 2026-11-04, Snapshot Pro: no request). A Continue that goes through
