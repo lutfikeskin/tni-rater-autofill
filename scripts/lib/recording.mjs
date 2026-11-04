@@ -85,7 +85,10 @@ function segments(events) {
     if (top && e.kind === 'page' && (!current || e.page !== current.page || (e.step ?? null) !== current.step)) open(e, e.page, e.step ?? null);
     else if (top && e.kind === 'step' && current && (e.step ?? null) !== current.step) open(e, current.page, e.step ?? null);
     else if (!current) open(e, e.page ?? '(before the first page event)', null);
-    current.events.push(e);
+    // The fill's wait or answer is logged when it ends: one begun on an earlier step (the wait after
+    // Continue, which ends on the next page) is told on the step it began on, not before its start.
+    const begun = e.kind === 'kit' && typeof e.start === 'number' && e.start < current.start ? out.findLast((x) => x.start <= e.start) : null;
+    (begun ?? current).events.push(e);
   }
   return out;
 }
@@ -252,7 +255,8 @@ export function recordingReport({ manifest, events }) {
   out.push('## Flow', '', '| # | Page · step | Arrived | On screen | Actions | Left by |', '| --- | --- | --- | --- | --- | --- |');
   const told = segs.map((s, i) => {
     const next = segs[i + 1]?.start ?? end;
-    const lines = actions(s.events);
+    // In time order: a wait moved here from a later step is logged after this step's own lines.
+    const lines = actions(s.events).sort((x, y) => x.t - y.t);
     const lastClick = [...s.events].reverse().find((e) => e.kind === 'click' && e.button && e.trusted !== false);
     return { s, lines, next, lastClick, n: i + 1 };
   });

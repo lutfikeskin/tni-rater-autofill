@@ -277,6 +277,11 @@ test('a wait that crosses into the next step counts on each step by the part of 
   assert.match(report, /\| 1 \| \/quote · Vehicles \| 2\.0 s \| 1\.9 s \| 1 \| 1\.0 s \| 1\.0 s \| 0 \(0\.0 s\) \| 0\.1 s \|/);
   assert.match(report, /\| 2 \| \/quote · Drivers \| 1\.0 s \| 0\.6 s \| 0 \| 0\.5 s \| 0\.5 s \| 0 \(0\.0 s\) \| 0\.4 s \|/);
   assert.match(report, /\| \| All \| 3\.0 s \| 2\.5 s \| 1 \| 1\.5 s \| 1\.5 s \| 0 \(0\.0 s\) \| 0\.5 s \|/);
+  // Told on the step it began on, after the answer before it, never before the step's start.
+  const vehicles = report.split('## 1. ')[1].split('## 2. ')[0];
+  assert.match(vehicles, /answered "Year"[^\n]*\n- 0:01\.0 \(\+0\.8 s\) the extension waited 1\.5 s /);
+  assert.doesNotMatch(report.split('## 2. ')[1], /waited 1\.5 s/);
+  assert.doesNotMatch(report, /\+-/);
   // The same wait in another frame at the same time (the fill runs in every frame): counted once.
   const framed = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:03.000Z' },
     events: [...events, { ...events[4], seq: 1, frame: 2, start: t0 + 1200, ms: 1000 }] });
