@@ -250,6 +250,8 @@
   // A box drawn with no size and no label on screen is the page's own bookkeeping, not a question
   // (Progressive's Current Page Errored and SSID values, named among every page's new questions in
   // the recordings of 2026-11-04).
+  // The boxes left out as they were drawn (`shown`), so their removal isn't counted either.
+  const unseen = new WeakSet();
   const shown = (el) => {
     let r = null;
     try { r = el.getBoundingClientRect?.() ?? null; } catch { /* not laid out */ }
@@ -267,7 +269,8 @@
     for (const node of b.added) {
       if (node.isConnected === false) continue;
       for (const el of controlsIn(node)) {
-        if (seen.has(el) || !asQuestion(el) || !shown(el)) continue;
+        if (seen.has(el) || !asQuestion(el)) continue;
+        if (!shown(el)) { unseen.add(el); continue; }
         seen.add(el);
         drawnCount++;
         if (drawn.length >= MAX_DRAWN) continue;
@@ -275,7 +278,8 @@
       }
     }
     let removed = 0;
-    for (const node of b.removed) removed += controlsIn(node).filter(asQuestion).length;
+    // A box left out as it was drawn is left out as it goes too (it has no size to measure by then).
+    for (const node of b.removed) removed += controlsIn(node).filter((el) => asQuestion(el) && !unseen.has(el)).length;
     push('burst', { end: b.end, records: b.records, ...(drawnCount ? { drawn, drawnCount } : {}), ...(removed ? { removed } : {}) }, { timeStamp: b.start });
   }
   let mutations = null;

@@ -365,6 +365,11 @@ test('a box drawn with no size and no label on screen is not one of the question
   await h.advance(400);
   const burst = h.events().find((e) => e.kind === 'burst');
   assert.deepEqual([burst.drawnCount, burst.drawn.map((d) => d.label)], [1, ['Team driving?']]);
+  // Taken away again (review of PR #286): the box left out as drawn isn't counted as removed.
+  h.mutate([{ addedNodes: [], removedNodes: [node([team, errored], { connected: false })] }]);
+  await h.advance(400);
+  const gone = h.events().filter((e) => e.kind === 'burst')[1];
+  assert.equal(gone.removed, 1);
 });
 
 // Review of PR #286: a radio or checkbox drawn with no size and shown by its label keeps the label's
