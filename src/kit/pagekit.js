@@ -3259,295 +3259,301 @@ import { createSelect2Drivers } from './drivers/select2.js';
       return false;
     }
 
-    // A helper that opened the next page (the vehicle tile opens Add Vehicle) leaves its questions
-    // to that page's own fill: none of them is reported or marked as this page's. So does the
-    // agent's Next to another step of a one-address application, and a stop step or a step that
-    // can't be read is not read at all.
-    const stillHere = !state.report.navigatedTo && currentPage() === startPage && !stepChanged() && !state.stoppedAt && !state.unreadStep;
-    // Answers still waiting for another try when the fill ended are left for the agent, and so is
-    // a field the page should have filled itself (emptyNote) but didn't.
-    // The page's questions are read once here for the end of the fill: these checks, the marks, the
-    // report's labels and order, and its reconciliation with the page (reconcile).
-    const endReads = controlReads;
-    const finalControls = stillHere ? collectControls() : [];
-    const finalPairs = stillHere ? assign(finalControls, plan) : [];
-    // A unit form drawn after the last round read the page has its own edits, never the last one's.
-    if (skipBy && stillHere) skipWhere(finalPairs.units);
-    identityAfterAnswer(finalPairs, finalControls);
-    // A unit whose row the page's rows don't show (its VIN on none of them, or on two): its
-    // answers stay the agent's, once per unit, naming it and not its VIN.
-    for (const step of finalPairs.unwitnessed ?? []) {
-      const unit = unitName(step.witness.path);
-      if (state.report.noData.some((x) => x.unit === unit)) continue;
-      const why = step.witness.value == null ? `the intake has no ${witnessName(step.witness)} for ${unit}` : `the row for ${unit} (its ${witnessName(step.witness)}) wasn't found`;
-      state.report.noData.push({ label: unit.replace(/^\w/, (ch) => ch.toUpperCase()), path: step.witness.path, name: unit, unit, key: null, q: null, controlKind: null, note: `${why}; check the rows and answer its questions yourself.` });
-    }
-    // A unit whose row no group of the page showed (`pager`): none of its questions was answered,
-    // and it is the agent's, named, never taken for done.
-    if (stillHere) state.report.noData.push(...unitGroups.missing());
-    // A row showing a VIN no intake vehicle has: an unintended vehicle may be on the quote. Left
-    // as it is (never removed or answered); Continue waits for the agent. Named by its place only.
-    for (const { witness, position, key } of finalPairs.extraRows ?? []) {
-      if (skippedKey(key)) continue;
-      const kind = String(witness.path ?? '').match(/^(\w+?)s?\[/)?.[1] ?? 'unit';
-      const label = `${kind.replace(/^\w/, (ch) => ch.toUpperCase())} row ${position || '?'} on the page`;
-      if (state.report.checks.some((x) => x.label === label)) continue;
-      state.report.checks.push({ label, path: null, name: label, key, q: null, controlKind: null,
-        note: `Its ${witnessName(witness)} matches no ${kind} on the intake. Remove it, or dismiss this check to confirm it belongs on this quote, before continuing.` });
-    }
-    for (const { step, control } of finalPairs) {
-      if (step.emptyNote && !hasValue(control) && !skippedField(control)) {
-        state.report.noData.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, note: step.emptyNote, ...describe(control) });
-        state.handled.set(step.id, { status: 'needs', note: step.emptyNote });
-        continue;
+    return await finishFill();
+
+    // The end of a fill, once its rounds are over: what the page shows now is read once more, the
+    // report is put together (items, blockers, what moved), and Continue is pressed when it may be.
+    async function finishFill() {
+      // A helper that opened the next page (the vehicle tile opens Add Vehicle) leaves its questions
+      // to that page's own fill: none of them is reported or marked as this page's. So does the
+      // agent's Next to another step of a one-address application, and a stop step or a step that
+      // can't be read is not read at all.
+      const stillHere = !state.report.navigatedTo && currentPage() === startPage && !stepChanged() && !state.stoppedAt && !state.unreadStep;
+      // Answers still waiting for another try when the fill ended are left for the agent, and so is
+      // a field the page should have filled itself (emptyNote) but didn't.
+      // The page's questions are read once here for the end of the fill: these checks, the marks, the
+      // report's labels and order, and its reconciliation with the page (reconcile).
+      const endReads = controlReads;
+      const finalControls = stillHere ? collectControls() : [];
+      const finalPairs = stillHere ? assign(finalControls, plan) : [];
+      // A unit form drawn after the last round read the page has its own edits, never the last one's.
+      if (skipBy && stillHere) skipWhere(finalPairs.units);
+      identityAfterAnswer(finalPairs, finalControls);
+      // A unit whose row the page's rows don't show (its VIN on none of them, or on two): its
+      // answers stay the agent's, once per unit, naming it and not its VIN.
+      for (const step of finalPairs.unwitnessed ?? []) {
+        const unit = unitName(step.witness.path);
+        if (state.report.noData.some((x) => x.unit === unit)) continue;
+        const why = step.witness.value == null ? `the intake has no ${witnessName(step.witness)} for ${unit}` : `the row for ${unit} (its ${witnessName(step.witness)}) wasn't found`;
+        state.report.noData.push({ label: unit.replace(/^\w/, (ch) => ch.toUpperCase()), path: step.witness.path, name: unit, unit, key: null, q: null, controlKind: null, note: `${why}; check the rows and answer its questions yourself.` });
       }
-      if ((!state.refill.has(step.id) && !state.waitingSince.has(step.id)) || state.handled.has(step.id) || skippedField(control) || agreesWith(step, control)) continue;
-      // One that waited for the page to the end (the fill stopped first) is as unanswered as one the page reset.
-      const reason = state.refill.has(step.id) ? 'the page did not keep the answer; check it' : 'the page was still working on this question; check it';
-      const base = { stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind };
-      // With answers on its unit waiting on it (`needs`): one item for the unit, as in a round.
-      if (state.refill.has(step.id) && holdUnit(step, control, base, reason, finalPairs)) continue;
-      state.report.failed.push({ ...base, reason, ...describe(control) });
-      state.handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason.replace(/; check it$/, '')}` });
-    }
-    // Out of rounds with questions still below the cursor, never judged (it waited on the page to the
-    // end): the same, as nothing said of them may be taken for nothing left.
-    if ((state.progressed || state.judgedTo !== Infinity) && state.report.rounds === maxRounds && !state.report.halted) halt('Filling reached its round limit. Check the page before retrying.');
-    // The page may have redrawn while filling, so mark the final fields: those just read, the page
-    // unchanged since (only the report changed). Read again only when the fill left its page.
-    const controls = state.stoppedAt || state.unreadStep ? [] : stillHere ? finalControls : collectControls();
-    const pairs = assign(controls, plan);
-    if (skipBy && stillHere) skipWhere(pairs.units);
-    for (const { step, control } of stillHere ? pairs : []) {
-      const h = state.handled.get(step.id);
-      if (h?.status) mark(control, h.status, h.note);
-    }
-    // A held unit form is marked on its first question, where its check says why.
-    for (const u of stillHere ? pairs.units : []) if (u.held && !skippedField(u.marker)) mark(u.marker, 'needs', heldFormNote(u));
-    // So is a unit's row no unit matched (its check names the row).
-    for (const { control, step } of stillHere ? pairs.unmatchedRows : []) if (!skippedField(control)) mark(control, 'needs', unmatchedRowNote(step));
-    // An unfamiliar question that went away during the fill (hidden by an answer, such as the
-    // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
-    if (stillHere) {
-      const onPageNow = keyIndex(controls);
-      state.report.unknown = state.report.unknown.filter((x) => onPageNow.has(x.key) || unitGroups.readElsewhere(x.key));
-      // Likewise a field that looked renamed (Codex on PR #43): it no longer holds Continue.
-      state.report.renamed = state.report.renamed.filter((x) => onPageNow.has(x.key));
-    }
-    // Question text for every field on the page, keyed like the usage recorder's changes.
-    state.report.labels = controls.map((c) => [fieldKey(c), c.label]);
-    // Each widget list's loaded choices (an ExtJS combo's; never agency staff lists), so the usage
-    // log can tell a pick from text typed into the box.
-    state.report.choices = controls.filter((c) => c.widget && c.kind === 'select' && c.options && !/agent|producer/i.test(c.label ?? ''))
-      .map((c) => [fieldKey(c), [...new Set(c.options.map((o) => o.text).filter(Boolean))]]);
-    state.report.skipped = controls.filter((c) => skippedField(c)).map((c) => ({ label: c.label, key: fieldKey(c) }));
-    const matched = new Set(pairs.map((p) => p.control));
-    for (const c of stillHere ? controls : []) {
-      if (!matched.has(c) && state.report.unknown.some((x) => x.key === fieldKey(c)) && !skippedField(c)) mark(c, 'needs', 'Unfamiliar question — left for you.');
-      if (!matched.has(c) && c.required && !hasValue(c) && !skippedField(c) && !pairs.held.has(c)) {
-        state.report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
-        mark(c, 'needs', 'required, and not on the intake form');
+      // A unit whose row no group of the page showed (`pager`): none of its questions was answered,
+      // and it is the agent's, named, never taken for done.
+      if (stillHere) state.report.noData.push(...unitGroups.missing());
+      // A row showing a VIN no intake vehicle has: an unintended vehicle may be on the quote. Left
+      // as it is (never removed or answered); Continue waits for the agent. Named by its place only.
+      for (const { witness, position, key } of finalPairs.extraRows ?? []) {
+        if (skippedKey(key)) continue;
+        const kind = String(witness.path ?? '').match(/^(\w+?)s?\[/)?.[1] ?? 'unit';
+        const label = `${kind.replace(/^\w/, (ch) => ch.toUpperCase())} row ${position || '?'} on the page`;
+        if (state.report.checks.some((x) => x.label === label)) continue;
+        state.report.checks.push({ label, path: null, name: label, key, q: null, controlKind: null,
+          note: `Its ${witnessName(witness)} matches no ${kind} on the intake. Remove it, or dismiss this check to confirm it belongs on this quote, before continuing.` });
       }
-    }
-    // A choice never offered (`whenOffered`), unless another rule for the same question answered it
-    // (GEICO's two pay plan groups, one of which lists 11 Payments), or a helper that may show it is
-    // still waiting (View More Payment Plans, for the agent's answers, or for a Recalculate: GEICO hides
-    // the link while the premium is out of date): the agent's, or the offered plan with the most (`orMost`).
-    const offerPending = state.report.blocked.some((x) => !state.clicked.has(x.id) && x.waits?.some((w) => w.say === NOTHING_LEFT))
-      || (state.unoffered.size > 0 && actions.some((a) => a.needsPremium && !state.clicked.has(a.action) && actionHere(a)) && !premiumReady());
-    for (const { item, control, step } of state.unoffered.values()) {
-      if (state.handled.has(step.id) || offerPending || state.report.filled.some((x) => x.path === step.path) || state.report.kept.some((x) => x.path === step.path)) continue;
-      const note = `The page doesn't offer "${step.value}" here: pick it yourself.`;
-      state.report.noData.push({ ...item, note });
-      state.handled.set(step.id, { status: 'needs', note });
-      mark(control, 'needs', note);
-    }
-    // A helper the agent must otherwise do by hand (the vehicle tile) that couldn't be clicked here,
-    // once the helpers it follows have run (an NTL still on the quote after the agent set it to No).
-    if (window === window.top && currentPage() === startPage && !stepChanged() && !state.stoppedAt && !state.unreadStep) {
-      for (const a of actions) {
-        if (!a.missing || state.clicked.has(a.action) || !actionHere(a) || findButton(a)
-          || !a.afterActions.every((id) => state.clicked.has(id)) || a.unlessActions?.some((id) => state.clicked.has(id))
-          || settledItem(a)) continue;
-        // A markable one carries its own id, scoped as `clicked` has it, for the panel's Mark done.
-        state.report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing, action: a.markable ? a.action : null });
-      }
-      // Clicked earlier, but what it adds never got in (Add Trailer opened, the trailer page left
-      // without filling it): the agent finishes it before Continue. A helper kept to a container
-      // (`within`: GEICO's add row) says so only where its list is on screen, not on the unit's
-      // own form, which one address draws in its place.
-      for (const a of actions) {
-        if (!a.unfinished || !a.doneWhen?.length || !state.clicked.has(a.action) || a.doneWhen.some((id) => state.clicked.has(id))
-          || !actionHere(a) || (a.within && !findButton(a, { disabledToo: true }))) continue;
-        state.report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.unfinished });
-      }
-    }
-    // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
-    // Nor is one that waited only for answers the page now shows, once the page took the button
-    // away: Progressive looked a second vehicle's VIN up by itself once it was typed (SC
-    // 2026-10-19), and the panel still said Look up VIN was waiting for the VIN. The page did it,
-    // so it's done, unclicked, as one already shown is: a helper that follows it (Add Trailer after
-    // every vehicle's lookup) doesn't wait for it either. One still waiting for another helper, a
-    // page or a premium stays, as does a menu item (`opener`: shown only with its menu open) and a
-    // helper the agent must do by hand (`missing`, reported above).
-    const doneByPage = (b) => {
-      if (!stillHere || !b.waits?.length || !b.waits.every((w) => w.path && !w.set && answered(pairs, w.path))) return false;
-      const a = actions.find((x) => x.action === b.id);
-      return !!a && !a.opener && !a.missing && !findButton(a);
-    };
-    for (const b of state.report.blocked) {
-      if (state.clicked.has(b.id) || !doneByPage(b)) continue;
-      state.clicked.add(b.id);
-      state.report.actions.push({ id: b.id, text: 'done by the page itself', alreadyShown: true });
-    }
-    // Each helper once, with what held it last (its prerequisites in one round, something open over
-    // it in the next).
-    state.report.blocked = state.report.blocked.filter((b, i, all) => !state.clicked.has(b.id) && all.findLastIndex((x) => x.id === b.id) === i);
-    // Helpers still held by something open over them: the panel names them (`coveredHelpers`).
-    const coveredHelpers = state.report.blocked.filter((b) => b.why === COVERED_HELPER).map((b) => b.text);
-    if (coveredHelpers.length) state.report.coveredHelpers = coveredHelpers;
-    // The items as the page is now, from the read above (no read or wait of its own): one whose
-    // question is gone is no item and holds nothing; the others say what the page shows now.
-    if (stillHere) reconcile(controls, pairs, controlReads - endReads);
-    // Where each item's field is on the page (`order`: its place among the page's questions, in
-    // document order), so the side panel lists what's left in the page's order, whichever kind
-    // of item it is. Read once, from the page as it is now (as the last round read it when a
-    // helper opened the next page). An item with no field there (a helper, a unit without its row,
-    // a field gone since) gets none: the panel lists it last.
-    const placeOf = new Map();
-    (stillHere ? controls : state.roundControls).forEach((c, i) => {
-      const key = fieldKey(c);
-      if (!placeOf.has(`${key}|${c.label}`)) placeOf.set(`${key}|${c.label}`, i);
-      if (!placeOf.has(key)) placeOf.set(key, i);
-    });
-    // Answers filled too: the panel lists the whole page in one list, in this order.
-    for (const x of [state.report.filled, state.report.unknown, state.report.failed, state.report.noData, state.report.leftRequired, state.report.kept, state.report.checks].flat()) {
-      // Rows of one question share a key; their labels tell them apart.
-      const at = x.key == null ? undefined : placeOf.get(`${x.key}|${x.label}`) ?? placeOf.get(x.key);
-      if (at !== undefined) x.order = at;
-    }
-    // Anything the agent should look at before moving on.
-    // The carrier probably changed this page: a known field renamed, or most of its questions
-    // unfamiliar at once. Continue waits for the agent, and the panel says so.
-    state.report.pageChanged = state.report.renamed.length > 0 || (state.report.unknown.length >= 5 && state.report.unknown.length >= 0.4 * Math.max(1, state.report.fields));
-    // A field drawn without a caption (the cargo commodity lists) is named after its rule.
-    const called = (x) => x.label || x.name || x.path || 'a question with no label';
-    state.report.blockers = [
-      ...(state.report.pageChanged ? [`page changed: ${state.report.unknown.length} unfamiliar question(s)${state.report.renamed.length ? `, ${state.report.renamed.length} known field(s) renamed` : ''}`] : []),
-      // An unfamiliar question with no answer yet is left for the agent even when the page
-      // doesn't mark it required (Progressive validates some only on Continue).
-      ...state.report.unknown.filter((x) => x.required || x.current == null).map((x) => `unfamiliar: ${called(x)}`),
-      ...state.report.noData.map((x) => `needs you: ${called(x)}`),
-      ...state.report.failed.map((x) => `failed: ${called(x)}`),
-      ...state.report.leftRequired.map((x) => `required: ${called(x)}`),
-      ...state.report.kept.filter((x) => x.differs).map((x) => `differs: ${called(x)}`),
-      // Another step's hidden fields (otherStep: AmWINS' prior carriers, filled again on every
-      // step) are confirmed on their own step, not again on each later one (audit 2026-10-10).
-      ...state.report.checks.filter((x) => !x.otherStep).map((x) => `check: ${called(x)}`),
-      ...state.report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
-      ...(state.report.halted ? [state.report.reason] : []),
-      // The agent's own button during the fill (Next, "+", Looks Good): that step's move is theirs.
-      ...(state.agentPressed ? [AGENT_PRESSED] : []),
-    ];
-    if (state.agentPressed) state.report.agentPressed = true;
-    // The step this fill was on: the one it started on when the agent moved to another meanwhile
-    // (its items are that step's).
-    state.report.stepKey = stepChanged() ? startStep : stepKey();
-    // A page the plan expects questions on that shows none yet, with nothing done on it, is still
-    // drawing (Business Owner Info right after the state is picked, OK 2026-10-07): Continue there
-    // only gets "fields are empty" errors. (A tile page that was clicked continues.) Only a frame of
-    // the page in front says so: Progressive keeps a hidden frame loaded with Business Owner Info's
-    // address for the whole quote, and on every later page it found none of "its" questions and said
-    // the page wasn't drawn, so the panel took the top frame's held Continue for "No questions found"
-    // and filled the page once more (live recording, 2026-10-24). On a page the plan has questions for,
-    // only a tile pick is done while it shows none (clickNextAction, W44-03).
-    const notDrawn = !state.report.fields && !state.report.actions.length && (state.topPage == null || state.topPage === startPage) && plan.some((s) => s.pages?.includes(startPage));
-    // The panel tries such a page again in a moment, and says nothing of it yet (W43-42).
-    if (notDrawn && !state.report.halted) state.report.notDrawn = true;
-    if (advance && window === window.top && !state.report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
-      && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(state.report.stepKey)
-      && (!advance.steps?.length || (!!state.report.stepKey && stepIs(advance.steps, state.report.stepKey)))) {
-      // The last answer may still be redrawing part of the page (a new payment method reloads the
-      // plan list): a Continue clicked meanwhile is lost. Let it finish first. `quietMs`: a page that
-      // draws a question a moment after an answer (GEICO's USDOT record check) is waited for too,
-      // unless the fill's own wait at the end of its rounds left it as it is now. Held for the agent's
-      // check with nothing approved yet (`hold`), Continue isn't clicked: the wait is the page's, not
-      // Continue's (the panel's dock read "Clicking Continue…" there: the review of PR #170).
-      phase(hold && confirmed == null ? 'waiting' : 'continue');
-      if (serverBacked) await settle({ quietMs: 500, maxMs: 6000, why: 'continue' });
-      else if (advance.quietMs && state.quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'continue' });
-      // The report as the page is after that wait, from one read (reconcile), halted or not.
-      const now = collectControls();
-      const nowPairs = assign(now, plan);
-      reconcile(now, nowPairs);
-      // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
-      // the report says why. (Reproduced 2026-10-08: halted, and Continue clicked all the same.)
-      if (state.report.halted) {
-        if (!state.report.blockers.includes(state.report.reason)) state.report.blockers.push(state.report.reason);
-      } else {
-        // The carrier may have rewritten an answer during that wait (a late server response). An
-        // answer whose field no longer shows it is the agent's to check (no retry here): it moves
-        // to `failed`, is marked, and Continue waits.
-        const changed = changedSinceFilled(nowPairs);
-        for (const { previous, pair } of changed) {
-          const item = { ...previous, reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
-          const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(pair.control);
-          if (at >= 0) item.order = at;
-          state.report.filled = state.report.filled.filter((x) => x !== previous);
-          state.report.failed.push(item);
-          mark(pair.control, 'failed', 'the carrier changed this answer after it was filled');
-          state.report.blockers.push(`failed: ${called(item)}`);
+      for (const { step, control } of finalPairs) {
+        if (step.emptyNote && !hasValue(control) && !skippedField(control)) {
+          state.report.noData.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, note: step.emptyNote, ...describe(control) });
+          state.handled.set(step.id, { status: 'needs', note: step.emptyNote });
+          continue;
         }
-        // A registered name drawn during that wait, after the fill's last check, makes an answer
-        // given before it the agent's to verify, as during the fill: marked, and Continue waits.
-        const moved = identityAfterAnswer(nowPairs, now);
-        for (const { item, control } of moved) {
-          const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(control);
-          if (at >= 0) item.order = at;
-          mark(control, 'needs', IDENTITY_NOTE);
-          state.report.blockers.push(`needs you: ${called(item)}`);
-        }
-        // A question drawn during that wait without an answer (`quietMs`) holds Continue: the fill
-        // never read it, so it is the agent's. (What the page drew during the fill's own wait at the
-        // end of its rounds, the fill read and answered.)
-        const readKeys = new Set(finalControls.map((c) => fieldKey(c)));
-        const drawn = advance.quietMs ? now.filter((c) => !readKeys.has(fieldKey(c)) && !hasValue(c)) : [];
-        const found = !changed.length && !moved.length && !drawn.length && !pageBusy() && currentPage() === startPage && !stepChanged() ? findAdvanceButton(advance.text, advance) : null;
-        // Per form and button (`byForm`): one already continued from is the agent's now.
-        const key = found && advance.byForm ? [state.report.stepKey, squash(buttonText(found)), unitFormsNow()?.[0]?.id ?? ''].filter(Boolean).join('@') : state.report.stepKey;
-        const button = found && !(advance.byForm && doneSteps.includes(key)) ? found : null;
-        // Nothing held Continue, but none could be clicked: the page still busy after the wait
-        // ('busy') or showing no Continue (`none`: not drawn yet, disabled, or a list's Looks Good
-        // left out). The panel tries an automatic fill once more, and logs which (`advanceDue`,
-        // W43-40: Progressive's Vehicle Summary, every vehicle added, not continued on 2026-10-22
-        // with nothing said why; continued 3 of 3 times on earlier builds with the switch on).
-        if (!found && !changed.length && !moved.length && !drawn.length && !state.report.halted && !state.agentPressed) state.report.advanceDue = pageBusy() ? 'busy' : 'none';
-        // The agent checks the answers first: Continue only for the page as they approved it.
-        const approved = !hold || (confirmed != null && confirmed === receipt());
-        if (button && !approved) state.report.held = confirmed == null ? 'check' : 'changed';
-        // Pressed during the wait before Continue: held as above.
-        if (button && approved && state.agentPressed) {
-          state.report.agentPressed = true;
-          state.report.blockers.push(AGENT_PRESSED);
-        } else if (button && approved && coveredBy(button)) {
-          // Something is open over Continue (a dialog, a message, a mask): a script's click would
-          // go through it. Continue waits until the agent closes it.
-          state.report.covered = true;
-          state.report.blockers.push(COVERED);
-        } else if (button && approved) {
-          const text = buttonText(button).slice(0, 40);
-          // On one-address applications (AmWINS) the side panel waits for the questions to change.
-          state.report.signatureBefore = signature();
-          pressButton(button);
-          // Recorded once the press went out (on GEICO the page's world clicks a moment later, within
-          // a second at most), never before it.
-          state.report.advanced = text;
-          if (advance.byForm) state.report.advanceKey = key;
+        if ((!state.refill.has(step.id) && !state.waitingSince.has(step.id)) || state.handled.has(step.id) || skippedField(control) || agreesWith(step, control)) continue;
+        // One that waited for the page to the end (the fill stopped first) is as unanswered as one the page reset.
+        const reason = state.refill.has(step.id) ? 'the page did not keep the answer; check it' : 'the page was still working on this question; check it';
+        const base = { stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind };
+        // With answers on its unit waiting on it (`needs`): one item for the unit, as in a round.
+        if (state.refill.has(step.id) && holdUnit(step, control, base, reason, finalPairs)) continue;
+        state.report.failed.push({ ...base, reason, ...describe(control) });
+        state.handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason.replace(/; check it$/, '')}` });
+      }
+      // Out of rounds with questions still below the cursor, never judged (it waited on the page to the
+      // end): the same, as nothing said of them may be taken for nothing left.
+      if ((state.progressed || state.judgedTo !== Infinity) && state.report.rounds === maxRounds && !state.report.halted) halt('Filling reached its round limit. Check the page before retrying.');
+      // The page may have redrawn while filling, so mark the final fields: those just read, the page
+      // unchanged since (only the report changed). Read again only when the fill left its page.
+      const controls = state.stoppedAt || state.unreadStep ? [] : stillHere ? finalControls : collectControls();
+      const pairs = assign(controls, plan);
+      if (skipBy && stillHere) skipWhere(pairs.units);
+      for (const { step, control } of stillHere ? pairs : []) {
+        const h = state.handled.get(step.id);
+        if (h?.status) mark(control, h.status, h.note);
+      }
+      // A held unit form is marked on its first question, where its check says why.
+      for (const u of stillHere ? pairs.units : []) if (u.held && !skippedField(u.marker)) mark(u.marker, 'needs', heldFormNote(u));
+      // So is a unit's row no unit matched (its check names the row).
+      for (const { control, step } of stillHere ? pairs.unmatchedRows : []) if (!skippedField(control)) mark(control, 'needs', unmatchedRowNote(step));
+      // An unfamiliar question that went away during the fill (hidden by an answer, such as the
+      // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
+      if (stillHere) {
+        const onPageNow = keyIndex(controls);
+        state.report.unknown = state.report.unknown.filter((x) => onPageNow.has(x.key) || unitGroups.readElsewhere(x.key));
+        // Likewise a field that looked renamed (Codex on PR #43): it no longer holds Continue.
+        state.report.renamed = state.report.renamed.filter((x) => onPageNow.has(x.key));
+      }
+      // Question text for every field on the page, keyed like the usage recorder's changes.
+      state.report.labels = controls.map((c) => [fieldKey(c), c.label]);
+      // Each widget list's loaded choices (an ExtJS combo's; never agency staff lists), so the usage
+      // log can tell a pick from text typed into the box.
+      state.report.choices = controls.filter((c) => c.widget && c.kind === 'select' && c.options && !/agent|producer/i.test(c.label ?? ''))
+        .map((c) => [fieldKey(c), [...new Set(c.options.map((o) => o.text).filter(Boolean))]]);
+      state.report.skipped = controls.filter((c) => skippedField(c)).map((c) => ({ label: c.label, key: fieldKey(c) }));
+      const matched = new Set(pairs.map((p) => p.control));
+      for (const c of stillHere ? controls : []) {
+        if (!matched.has(c) && state.report.unknown.some((x) => x.key === fieldKey(c)) && !skippedField(c)) mark(c, 'needs', 'Unfamiliar question — left for you.');
+        if (!matched.has(c) && c.required && !hasValue(c) && !skippedField(c) && !pairs.held.has(c)) {
+          state.report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
+          mark(c, 'needs', 'required, and not on the intake form');
         }
       }
+      // A choice never offered (`whenOffered`), unless another rule for the same question answered it
+      // (GEICO's two pay plan groups, one of which lists 11 Payments), or a helper that may show it is
+      // still waiting (View More Payment Plans, for the agent's answers, or for a Recalculate: GEICO hides
+      // the link while the premium is out of date): the agent's, or the offered plan with the most (`orMost`).
+      const offerPending = state.report.blocked.some((x) => !state.clicked.has(x.id) && x.waits?.some((w) => w.say === NOTHING_LEFT))
+        || (state.unoffered.size > 0 && actions.some((a) => a.needsPremium && !state.clicked.has(a.action) && actionHere(a)) && !premiumReady());
+      for (const { item, control, step } of state.unoffered.values()) {
+        if (state.handled.has(step.id) || offerPending || state.report.filled.some((x) => x.path === step.path) || state.report.kept.some((x) => x.path === step.path)) continue;
+        const note = `The page doesn't offer "${step.value}" here: pick it yourself.`;
+        state.report.noData.push({ ...item, note });
+        state.handled.set(step.id, { status: 'needs', note });
+        mark(control, 'needs', note);
+      }
+      // A helper the agent must otherwise do by hand (the vehicle tile) that couldn't be clicked here,
+      // once the helpers it follows have run (an NTL still on the quote after the agent set it to No).
+      if (window === window.top && currentPage() === startPage && !stepChanged() && !state.stoppedAt && !state.unreadStep) {
+        for (const a of actions) {
+          if (!a.missing || state.clicked.has(a.action) || !actionHere(a) || findButton(a)
+            || !a.afterActions.every((id) => state.clicked.has(id)) || a.unlessActions?.some((id) => state.clicked.has(id))
+            || settledItem(a)) continue;
+          // A markable one carries its own id, scoped as `clicked` has it, for the panel's Mark done.
+          state.report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing, action: a.markable ? a.action : null });
+        }
+        // Clicked earlier, but what it adds never got in (Add Trailer opened, the trailer page left
+        // without filling it): the agent finishes it before Continue. A helper kept to a container
+        // (`within`: GEICO's add row) says so only where its list is on screen, not on the unit's
+        // own form, which one address draws in its place.
+        for (const a of actions) {
+          if (!a.unfinished || !a.doneWhen?.length || !state.clicked.has(a.action) || a.doneWhen.some((id) => state.clicked.has(id))
+            || !actionHere(a) || (a.within && !findButton(a, { disabledToo: true }))) continue;
+          state.report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.unfinished });
+        }
+      }
+      // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
+      // Nor is one that waited only for answers the page now shows, once the page took the button
+      // away: Progressive looked a second vehicle's VIN up by itself once it was typed (SC
+      // 2026-10-19), and the panel still said Look up VIN was waiting for the VIN. The page did it,
+      // so it's done, unclicked, as one already shown is: a helper that follows it (Add Trailer after
+      // every vehicle's lookup) doesn't wait for it either. One still waiting for another helper, a
+      // page or a premium stays, as does a menu item (`opener`: shown only with its menu open) and a
+      // helper the agent must do by hand (`missing`, reported above).
+      const doneByPage = (b) => {
+        if (!stillHere || !b.waits?.length || !b.waits.every((w) => w.path && !w.set && answered(pairs, w.path))) return false;
+        const a = actions.find((x) => x.action === b.id);
+        return !!a && !a.opener && !a.missing && !findButton(a);
+      };
+      for (const b of state.report.blocked) {
+        if (state.clicked.has(b.id) || !doneByPage(b)) continue;
+        state.clicked.add(b.id);
+        state.report.actions.push({ id: b.id, text: 'done by the page itself', alreadyShown: true });
+      }
+      // Each helper once, with what held it last (its prerequisites in one round, something open over
+      // it in the next).
+      state.report.blocked = state.report.blocked.filter((b, i, all) => !state.clicked.has(b.id) && all.findLastIndex((x) => x.id === b.id) === i);
+      // Helpers still held by something open over them: the panel names them (`coveredHelpers`).
+      const coveredHelpers = state.report.blocked.filter((b) => b.why === COVERED_HELPER).map((b) => b.text);
+      if (coveredHelpers.length) state.report.coveredHelpers = coveredHelpers;
+      // The items as the page is now, from the read above (no read or wait of its own): one whose
+      // question is gone is no item and holds nothing; the others say what the page shows now.
+      if (stillHere) reconcile(controls, pairs, controlReads - endReads);
+      // Where each item's field is on the page (`order`: its place among the page's questions, in
+      // document order), so the side panel lists what's left in the page's order, whichever kind
+      // of item it is. Read once, from the page as it is now (as the last round read it when a
+      // helper opened the next page). An item with no field there (a helper, a unit without its row,
+      // a field gone since) gets none: the panel lists it last.
+      const placeOf = new Map();
+      (stillHere ? controls : state.roundControls).forEach((c, i) => {
+        const key = fieldKey(c);
+        if (!placeOf.has(`${key}|${c.label}`)) placeOf.set(`${key}|${c.label}`, i);
+        if (!placeOf.has(key)) placeOf.set(key, i);
+      });
+      // Answers filled too: the panel lists the whole page in one list, in this order.
+      for (const x of [state.report.filled, state.report.unknown, state.report.failed, state.report.noData, state.report.leftRequired, state.report.kept, state.report.checks].flat()) {
+        // Rows of one question share a key; their labels tell them apart.
+        const at = x.key == null ? undefined : placeOf.get(`${x.key}|${x.label}`) ?? placeOf.get(x.key);
+        if (at !== undefined) x.order = at;
+      }
+      // Anything the agent should look at before moving on.
+      // The carrier probably changed this page: a known field renamed, or most of its questions
+      // unfamiliar at once. Continue waits for the agent, and the panel says so.
+      state.report.pageChanged = state.report.renamed.length > 0 || (state.report.unknown.length >= 5 && state.report.unknown.length >= 0.4 * Math.max(1, state.report.fields));
+      // A field drawn without a caption (the cargo commodity lists) is named after its rule.
+      const called = (x) => x.label || x.name || x.path || 'a question with no label';
+      state.report.blockers = [
+        ...(state.report.pageChanged ? [`page changed: ${state.report.unknown.length} unfamiliar question(s)${state.report.renamed.length ? `, ${state.report.renamed.length} known field(s) renamed` : ''}`] : []),
+        // An unfamiliar question with no answer yet is left for the agent even when the page
+        // doesn't mark it required (Progressive validates some only on Continue).
+        ...state.report.unknown.filter((x) => x.required || x.current == null).map((x) => `unfamiliar: ${called(x)}`),
+        ...state.report.noData.map((x) => `needs you: ${called(x)}`),
+        ...state.report.failed.map((x) => `failed: ${called(x)}`),
+        ...state.report.leftRequired.map((x) => `required: ${called(x)}`),
+        ...state.report.kept.filter((x) => x.differs).map((x) => `differs: ${called(x)}`),
+        // Another step's hidden fields (otherStep: AmWINS' prior carriers, filled again on every
+        // step) are confirmed on their own step, not again on each later one (audit 2026-10-10).
+        ...state.report.checks.filter((x) => !x.otherStep).map((x) => `check: ${called(x)}`),
+        ...state.report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
+        ...(state.report.halted ? [state.report.reason] : []),
+        // The agent's own button during the fill (Next, "+", Looks Good): that step's move is theirs.
+        ...(state.agentPressed ? [AGENT_PRESSED] : []),
+      ];
+      if (state.agentPressed) state.report.agentPressed = true;
+      // The step this fill was on: the one it started on when the agent moved to another meanwhile
+      // (its items are that step's).
+      state.report.stepKey = stepChanged() ? startStep : stepKey();
+      // A page the plan expects questions on that shows none yet, with nothing done on it, is still
+      // drawing (Business Owner Info right after the state is picked, OK 2026-10-07): Continue there
+      // only gets "fields are empty" errors. (A tile page that was clicked continues.) Only a frame of
+      // the page in front says so: Progressive keeps a hidden frame loaded with Business Owner Info's
+      // address for the whole quote, and on every later page it found none of "its" questions and said
+      // the page wasn't drawn, so the panel took the top frame's held Continue for "No questions found"
+      // and filled the page once more (live recording, 2026-10-24). On a page the plan has questions for,
+      // only a tile pick is done while it shows none (clickNextAction, W44-03).
+      const notDrawn = !state.report.fields && !state.report.actions.length && (state.topPage == null || state.topPage === startPage) && plan.some((s) => s.pages?.includes(startPage));
+      // The panel tries such a page again in a moment, and says nothing of it yet (W43-42).
+      if (notDrawn && !state.report.halted) state.report.notDrawn = true;
+      if (advance && window === window.top && !state.report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
+        && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(state.report.stepKey)
+        && (!advance.steps?.length || (!!state.report.stepKey && stepIs(advance.steps, state.report.stepKey)))) {
+        // The last answer may still be redrawing part of the page (a new payment method reloads the
+        // plan list): a Continue clicked meanwhile is lost. Let it finish first. `quietMs`: a page that
+        // draws a question a moment after an answer (GEICO's USDOT record check) is waited for too,
+        // unless the fill's own wait at the end of its rounds left it as it is now. Held for the agent's
+        // check with nothing approved yet (`hold`), Continue isn't clicked: the wait is the page's, not
+        // Continue's (the panel's dock read "Clicking Continue…" there: the review of PR #170).
+        phase(hold && confirmed == null ? 'waiting' : 'continue');
+        if (serverBacked) await settle({ quietMs: 500, maxMs: 6000, why: 'continue' });
+        else if (advance.quietMs && state.quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'continue' });
+        // The report as the page is after that wait, from one read (reconcile), halted or not.
+        const now = collectControls();
+        const nowPairs = assign(now, plan);
+        reconcile(now, nowPairs);
+        // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
+        // the report says why. (Reproduced 2026-10-08: halted, and Continue clicked all the same.)
+        if (state.report.halted) {
+          if (!state.report.blockers.includes(state.report.reason)) state.report.blockers.push(state.report.reason);
+        } else {
+          // The carrier may have rewritten an answer during that wait (a late server response). An
+          // answer whose field no longer shows it is the agent's to check (no retry here): it moves
+          // to `failed`, is marked, and Continue waits.
+          const changed = changedSinceFilled(nowPairs);
+          for (const { previous, pair } of changed) {
+            const item = { ...previous, reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
+            const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(pair.control);
+            if (at >= 0) item.order = at;
+            state.report.filled = state.report.filled.filter((x) => x !== previous);
+            state.report.failed.push(item);
+            mark(pair.control, 'failed', 'the carrier changed this answer after it was filled');
+            state.report.blockers.push(`failed: ${called(item)}`);
+          }
+          // A registered name drawn during that wait, after the fill's last check, makes an answer
+          // given before it the agent's to verify, as during the fill: marked, and Continue waits.
+          const moved = identityAfterAnswer(nowPairs, now);
+          for (const { item, control } of moved) {
+            const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(control);
+            if (at >= 0) item.order = at;
+            mark(control, 'needs', IDENTITY_NOTE);
+            state.report.blockers.push(`needs you: ${called(item)}`);
+          }
+          // A question drawn during that wait without an answer (`quietMs`) holds Continue: the fill
+          // never read it, so it is the agent's. (What the page drew during the fill's own wait at the
+          // end of its rounds, the fill read and answered.)
+          const readKeys = new Set(finalControls.map((c) => fieldKey(c)));
+          const drawn = advance.quietMs ? now.filter((c) => !readKeys.has(fieldKey(c)) && !hasValue(c)) : [];
+          const found = !changed.length && !moved.length && !drawn.length && !pageBusy() && currentPage() === startPage && !stepChanged() ? findAdvanceButton(advance.text, advance) : null;
+          // Per form and button (`byForm`): one already continued from is the agent's now.
+          const key = found && advance.byForm ? [state.report.stepKey, squash(buttonText(found)), unitFormsNow()?.[0]?.id ?? ''].filter(Boolean).join('@') : state.report.stepKey;
+          const button = found && !(advance.byForm && doneSteps.includes(key)) ? found : null;
+          // Nothing held Continue, but none could be clicked: the page still busy after the wait
+          // ('busy') or showing no Continue (`none`: not drawn yet, disabled, or a list's Looks Good
+          // left out). The panel tries an automatic fill once more, and logs which (`advanceDue`,
+          // W43-40: Progressive's Vehicle Summary, every vehicle added, not continued on 2026-10-22
+          // with nothing said why; continued 3 of 3 times on earlier builds with the switch on).
+          if (!found && !changed.length && !moved.length && !drawn.length && !state.report.halted && !state.agentPressed) state.report.advanceDue = pageBusy() ? 'busy' : 'none';
+          // The agent checks the answers first: Continue only for the page as they approved it.
+          const approved = !hold || (confirmed != null && confirmed === receipt());
+          if (button && !approved) state.report.held = confirmed == null ? 'check' : 'changed';
+          // Pressed during the wait before Continue: held as above.
+          if (button && approved && state.agentPressed) {
+            state.report.agentPressed = true;
+            state.report.blockers.push(AGENT_PRESSED);
+          } else if (button && approved && coveredBy(button)) {
+            // Something is open over Continue (a dialog, a message, a mask): a script's click would
+            // go through it. Continue waits until the agent closes it.
+            state.report.covered = true;
+            state.report.blockers.push(COVERED);
+          } else if (button && approved) {
+            const text = buttonText(button).slice(0, 40);
+            // On one-address applications (AmWINS) the side panel waits for the questions to change.
+            state.report.signatureBefore = signature();
+            pressButton(button);
+            // Recorded once the press went out (on GEICO the page's world clicks a moment later, within
+            // a second at most), never before it.
+            state.report.advanced = text;
+            if (advance.byForm) state.report.advanceKey = key;
+          }
+        }
+      }
+      resolveItems(state.report, plan);
+      return state.report;
     }
-    resolveItems(state.report, plan);
-    return state.report;
     } finally {
       hiddenOk = [];
       fillUnits = null;
