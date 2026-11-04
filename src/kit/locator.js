@@ -1,3 +1,4 @@
+// @ts-check
 // The locator: which control on the page answers each plan step (`assign`), and which option of
 // a list is the answer (`matchOption`), with the unit-row and option helpers they use. The fill
 // engine (src/kit/pagekit.js) creates it once (`createLocator(kit)`) and keeps the names it calls;
@@ -39,7 +40,7 @@ export function createLocator(kit) {
   function assign(controls, plan) {
     const used = new Set();
     const donePaths = new Set();
-    const pairs = [];
+    const pairs = /** @type {any} */ ([]);
     // Steps with a witness whose unit's row isn't among the rows on the page (none or several
     // read as the unit): left for the agent, named by unit (pairs.unwitnessed).
     const unwitnessed = [];

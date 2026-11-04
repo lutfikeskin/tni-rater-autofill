@@ -6,7 +6,7 @@ import { normalizeIntake } from '../../src/normalize.js';
 import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { $, discardAiSuggestions, doneRestored, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, testIntakes } from './core.js';
+import { $, discardAiSuggestions, doneRestored, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes } from './core.js';
 import { firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, viewOf } from './coordinator.js';
@@ -131,7 +131,7 @@ async function logSettings(reason, changed) {
   try {
     if (reason === 'changed' && !(state.intake && usage.currentSession())) return;
     const saved = await usage.settings();
-    usage.log(agentSettingsEvent(saved, { overwrite: !!$('overwrite')?.checked, reason, changed, centralServer: usage.DEFAULT_SERVER }));
+    usage.log(agentSettingsEvent(saved, { overwrite: typeof switchOn === 'function' ? switchOn('overwrite', 'overwrite', false) : (state?.switches?.overwrite ?? $('overwrite')?.checked ?? false), reason, changed, centralServer: usage.DEFAULT_SERVER }));
   } catch { /* the settings log is best effort */ }
 }
 

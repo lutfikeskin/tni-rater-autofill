@@ -1041,3 +1041,131 @@
  * @property {string[]} [stepLinks]  the step bar's links: never a helper or a Continue
  * @property {string[]} [otherStep]  a step's own section in a page that holds every step (AmWINS' .form-tab)
  */
+
+// ---------------------------------------------------------------------------------------------
+// Side panel state and store (sidepanel/panel/)
+
+/**
+ * The side panel's six Filling switches.
+ * @typedef {object} PanelSwitches
+ * @property {boolean} autoPages  Fill pages when they open
+ * @property {boolean} autoFollowUps  Fill follow-up questions
+ * @property {boolean} autoAdvance  Continue when the page is done
+ * @property {boolean} checkBeforeContinue  Let me look first
+ * @property {boolean} [overwrite]  Replace prefilled answers
+ * @property {boolean} finishSound  Sound when the quote is done
+ */
+
+/**
+ * The side panel state shape managed by panelStore in state-store.js.
+ * @typedef {object} PanelState
+ * @property {any} [intake]
+ * @property {any} [recording]
+ * @property {ActiveUnits} [active]
+ * @property {any} [tab]
+ * @property {string | null} [checksCarrier]
+ * @property {Map<number, { carrier?: any, code?: string, session?: string, dismissed?: boolean }>} [quoteStates]
+ * @property {Map<string, { path?: string | null, shown?: string | null }>} [filled]
+ * @property {Map<string, string>} [labels]
+ * @property {Map<string, Set<string>>} [choices]
+ * @property {Set<string>} [autoPages]
+ * @property {Set<string>} [doneSteps]
+ * @property {Set<string>} [advanceRetried]
+ * @property {string | null} [assistPage]
+ * @property {any} [notesAsking]
+ * @property {any} [notesRetry]
+ * @property {Map<number, string>} [tabSessions]
+ * @property {Map<string, Set<string>>} [agentKeys]
+ * @property {Map<string, number>} [agentKeysEpochs]
+ * @property {boolean} [filling]
+ * @property {any} [autoTimer]
+ * @property {any} [autoDrawn]
+ * @property {boolean} [autoPending]
+ * @property {boolean} [autoPaused]
+ * @property {boolean} [unreadRetried]
+ * @property {any} [triedAgain]
+ * @property {string | null} [pagePending]
+ * @property {any} [drawPending]
+ * @property {Map<string, any>} [lastLayouts]
+ * @property {Map<string, any>} [lastRuns]
+ * @property {Promise<any>} [layoutChain]
+ * @property {any} [layoutTimer]
+ * @property {any} [layoutPending]
+ * @property {number} [intakeRevision]
+ * @property {number} [layoutGeneration]
+ * @property {boolean} [layoutHold]
+ * @property {Set<number>} [layoutReadyTabs]
+ * @property {Set<number>} [layoutNewTabs]
+ * @property {Map<number, number>} [viewTabs]
+ * @property {any} [layoutLatest]
+ * @property {number} [layoutErrors]
+ * @property {Set<string>} [layoutErrorsLogged]
+ * @property {Set<string>} [doneActions]
+ * @property {{ vehicles: Record<string, number>, drivers: Record<string, number>, trailers: Record<string, number> }} [unitForms]
+ * @property {{ step: string, list: string, id: string, held: boolean } | null} [unitShown]
+ * @property {Set<string>} [visitedPages]
+ * @property {number} [aiRun]
+ * @property {Map<string, any>} [aiCache]
+ * @property {number} [aiSettingsRun]
+ * @property {Map<string, Promise<any>>} [aiAsking]
+ * @property {boolean} [settingsOpen]
+ * @property {string} [view]
+ * @property {string} [filter]
+ * @property {PanelSwitches} [switches]
+ * @property {any} [ai]
+ * @property {boolean} [keyFormOpen]
+ * @property {any} [usageCard]
+ * @property {string} [usageNote]
+ * @property {any} [health]
+ * @property {boolean | null} [testRun]
+ * @property {boolean} [captureOff]
+ * @property {string | null} [captureStatus]
+ * @property {{ on: boolean, status: string | null, unfinished: any }} [devrec]
+ * @property {boolean} [recordingLine]
+ * @property {any} [steps]
+ * @property {any} [dock]
+ * @property {any} [feed]
+ * @property {Record<string, any>} [cards]
+ * @property {{ usage: any, window: any }} [notes]
+ * @property {any} [loadError]
+ * @property {any[]} [siteTrack]
+ * @property {any} [checks]
+ * @property {any[]} [pickers]
+ * @property {string | null} [fileConfirm]
+ * @property {any} [fileConfirmFrom]
+ * @property {any} [fileQuestion]
+ * @property {any} [client]
+ * @property {any} [clientNote]
+ * @property {boolean} [newQuoteOff]
+ * @property {any} [details]
+ * @property {boolean} [resetting]
+ * @property {any} [audio]
+ * @property {boolean} [showEmpty]
+ * @property {Set<string>} [detailsClosed]
+ * @property {Uint8Array | null} [pdfBytes]
+ * @property {any} [pdfDoc]
+ * @property {number} [pdfDraw]
+ * @property {any} [pdfTask]
+ * @property {any} [pdf]
+ * @property {any} [pdfSheet]
+ * @property {Map<string, any>} [reports]
+ * @property {any} [reportFor]
+ * @property {string | null} [pastKey]
+ * @property {any} [pastNodes]
+ * @property {boolean} [keyOpen]
+ * @property {any} [fillingFor]
+ * @property {Map<number, string>} [tabSteps]
+ * @property {Map<string, any>} [stopScreens]
+ * @property {Map<string, any>} [aiDocks]
+ * @property {any} [pdfReturn]
+ * @property {boolean} [detailsOpen]
+ * @property {any} [detailsReturn]
+ * @property {any} [browserWindow]
+ * @property {boolean} [closing]
+ */
+
+/**
+ * Zustand vanilla store for the side panel state.
+ * @typedef {import('zustand/vanilla').StoreApi<PanelState>} PanelStore
+ */
+

@@ -10,6 +10,10 @@ reviews/
 design/
 # Pages saved from the raters (Save page as, PDFs, captures): client data, kept locally.
 layouts/
+layouts.zip
+layouts*.zip
+/*.zip
+/*.tar*
 # Real client intake PDFs kept for testing by hand: client data, kept locally.
 test/TestIntakes/
 

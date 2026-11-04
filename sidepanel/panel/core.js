@@ -1,3 +1,4 @@
+// @ts-check
 // The side panel: its state, what it keeps in Chrome's storage, and the helpers every part uses.
 // One part of the panel; sidepanel.js wires the parts together.
 import { buildPlan, redactionTerms } from '../../src/plan.js';
@@ -6,7 +7,7 @@ import * as usage from '../usage-log.js';
 import { migrateStorage } from '../../src/storage-version.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../../src/ai/luna.js';
 import { inExtension } from './env.js';
-import { storeState } from './state-store.js';
+import { panelStore, storeState } from './state-store.js';
 import { firstUnits } from './intake.js';
 import { pageOf } from './usage.js';
 import { liveFrames, liveItems, refreshAnswers, renderReport, runKit, worldFor } from './fill.js';
@@ -247,6 +248,7 @@ function aiItemFingerprint(x) {
 let aiPersistQueue = Promise.resolve();
 const aiRetiredSignatures = new Set();
 
+/** @type {(id: string) => any} */
 const $ = (id) => document.getElementById(id);
 // What the panel knows and shows, kept in the panel's store (state-store.js): read and assigned as
 // a plain object here, and subscribed to by the React views.
@@ -452,24 +454,41 @@ const state = storeState({
   closing: false,
 });
 
-// A fill starting and ending, noted for the developer recording: its events count as during a fill
-// by their own time, not by when their batch reached the panel (a fill's last click, its Continue,
-// arrived once the fill had ended: live recording, 2026-10-23), and the timeline shows each fill.
-// One place for the eight that set `state.filling`.
-let fillingNow = state.filling;
-Object.defineProperty(state, 'filling', {
-  enumerable: true,
-  get: () => fillingNow,
-  set: (on) => {
-    const rec = state.recording;
-    if (!!on !== fillingNow && rec && !rec.stopping) {
+// A fill starting and ending, noted for the developer recording timeline.
+// Routed through panelStore subscription so state.filling updates remain reactive on the store.
+let fillingPrevious = !!panelStore.getState().filling;
+panelStore.subscribe((stateNow) => {
+  const on = !!stateNow.filling;
+  if (on !== fillingPrevious) {
+    const rec = stateNow.recording ?? state.recording;
+    if (rec && !rec.stopping) {
       const t = Date.now();
-      if (on) rec.fills.push({ start: t, end: null }); else if (rec.fills.at(-1)) rec.fills.at(-1).end = t;
-      rec.store.add([{ kind: 'fill', t, frame: 0, on: !!on }]);
+      if (on) rec.fills.push({ start: t, end: null });
+      else if (rec.fills.at(-1)) rec.fills.at(-1).end = t;
+      rec.store.add([{ kind: 'fill', t, frame: 0, on }]);
     }
-    fillingNow = !!on;
-  },
+    fillingPrevious = on;
+  }
 });
+
+/**
+ * Reads a filling switch directly from state.switches (backed by panelStore),
+ * falling back to $(domId).checked in unit-test harnesses where state.switches is uninitialized.
+ * @param {keyof import('../../types.js').PanelSwitches} name
+ * @param {string} domId
+ * @param {boolean} [fallback=true]
+ * @returns {boolean}
+ */
+function switchOn(name, domId, fallback = true) {
+  if (state?.switches && typeof state.switches[name] === 'boolean') {
+    return state.switches[name];
+  }
+  if (typeof $ === 'function') {
+    const el = /** @type {*} */ ($(domId));
+    if (el && typeof el.checked === 'boolean') return el.checked;
+  }
+  return fallback;
+}
 
 // Crashes nothing in the panel caught (an exception, a promise nobody awaited) go in the usage log,
 // so a review sees what the agent only saw as a panel that stopped: each message once while the
@@ -481,7 +500,7 @@ const loggedCrashes = new Set();
 async function migrateStoredData() {
   if (!inExtension) return;
   const run = () => migrateStorage(chrome.storage.local);
-  const result = await (navigator.locks ? navigator.locks.request('rater-storage-version', run) : run()).catch((error) => ({ error }));
+  const result = /** @type {*} */ (await (navigator.locks ? navigator.locks.request('rater-storage-version', run) : run()).catch((error) => ({ error })));
   if (result.error) logCrash(new Error(`stored data not migrated${result.failedAt ? ` to version ${result.failedAt}` : ''}: ${result.error?.name ?? 'Error'}`));
 }
 
@@ -664,7 +683,7 @@ function clearAgentKeys(scope) {
   epochs.set(scope, (epochs.get(scope) ?? 0) + 1);
   const task = agentKeysQueue.then(async () => agentKeysStore.set((await agentKeysStore.get()).filter((x) => x.scope !== scope)));
   agentKeysQueue = task.catch(() => {});
-  doneActionsQueue = doneActionsQueue.then(() => Promise.all([doneActionsStore.clear(scope), unitFormsStore.clear(scope)])).catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => Promise.all([doneActionsStore.clear(scope), unitFormsStore.clear(scope)])).then(() => {}).catch(() => {});
   // Done once the helper records are gone too: the same PDF loaded again right after a Clear must
   // not get the cleared intake's helper ids back (units taken as already added; Codex on PR #65).
   return Promise.all([task, doneActionsQueue]);
@@ -904,4 +923,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, testIntakes };
+export { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };
