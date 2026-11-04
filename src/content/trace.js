@@ -84,6 +84,14 @@
       return { x: num(r.left), y: num(r.top), w: num(r.width), h: num(r.height), docY: num(r.top + (window.scrollY ?? 0)) };
     } catch { return null; }
   };
+  // Where a question is: its own box, or, for one drawn with no size and a label on screen (a radio
+  // or checkbox shown by its label), the label's, so the report can tell its order down the page.
+  const fieldBox = (el) => {
+    const own = box(el);
+    if (!own || own.w || own.h) return own;
+    const label = [...(el.labels ?? [])].find((l) => l.getClientRects?.().length);
+    return label ? box(label) ?? own : own;
+  };
   const isPassword = (el) => String(el?.type ?? '').toLowerCase() === 'password';
 
   // What an event was on: the question, as the recorder names it, else the button (its words, as the
@@ -102,7 +110,7 @@
       if (isPassword(control)) return { password: true };
       let field;
       try { field = read.describe(control); } catch { field = { key: null, q: null, kind: null, label: '' }; }
-      return { control, field: { key: field.key, q: field.q, kind: field.kind, label: field.label, rect: box(control) } };
+      return { control, field: { key: field.key, q: field.q, kind: field.kind, label: field.label, rect: fieldBox(control) } };
     }
     const selector = read.buttons();
     const button = path.find((n) => n?.matches?.(selector));
@@ -239,12 +247,31 @@
     return node.matches?.(CONTROLS) ? [node, ...inside] : inside;
   };
   const asQuestion = (el) => !isPassword(el) && !/^(hidden|button|submit|reset|image)$/i.test(String(el.type ?? ''));
+  // A box drawn with no size and no label on screen is the page's own bookkeeping, not a question
+  // (Progressive's Current Page Errored and SSID values, named among every page's new questions in
+  // the recordings of 2026-11-04).
+  // The boxes left out as they were drawn (`shown`), so their removal isn't counted either.
+  const unseen = new WeakSet();
+  const shown = (el) => {
+    let r = null;
+    try { r = el.getBoundingClientRect?.() ?? null; } catch { /* not laid out */ }
+    return !r || r.width > 0 || r.height > 0 || [...(el.labels ?? [])].some((l) => l.getClientRects?.().length);
+  };
   function endBurst() {
     clearTimeout(burstTimer);
     burstTimer = null;
     const b = burst;
     burst = null;
     if (!b) return;
+    // Counted before this burst's own draws change what was left out: a box left out as it was
+    // drawn is left out as it goes too (it has no size to measure by then). Only what is off the page as the burst ends
+    // counts (a control moved stays on it), and not one this burst made: added and taken away again,
+    // it was never drawn in the trace.
+    let removed = 0;
+    for (const node of b.removed) {
+      if (node.isConnected === true || b.created.has(node)) continue;
+      removed += controlsIn(node).filter((el) => asQuestion(el) && !unseen.has(el)).length;
+    }
     const drawn = [];
     let drawnCount = 0;
     const seen = new Set();
@@ -252,25 +279,27 @@
       if (node.isConnected === false) continue;
       for (const el of controlsIn(node)) {
         if (seen.has(el) || !asQuestion(el)) continue;
+        if (!shown(el)) { unseen.add(el); continue; }
+        // Drawn again where it shows: a question now, and its removal counted.
+        unseen.delete(el);
         seen.add(el);
         drawnCount++;
         if (drawn.length >= MAX_DRAWN) continue;
         try { const f = read.describe(el); drawn.push({ key: f.key, kind: f.kind, label: f.label }); } catch { /* unreadable */ }
       }
     }
-    let removed = 0;
-    for (const node of b.removed) removed += controlsIn(node).filter(asQuestion).length;
     push('burst', { end: b.end, records: b.records, ...(drawnCount ? { drawn, drawnCount } : {}), ...(removed ? { removed } : {}) }, { timeStamp: b.start });
   }
   let mutations = null;
   if (typeof MutationObserver === 'function') {
     mutations = new MutationObserver((records) => {
       const now = performance.now();
-      burst ??= { start: now, records: 0, added: new Set(), removed: new Set() };
+      burst ??= { start: now, records: 0, added: new Set(), removed: new Set(), created: new Set() };
       burst.end = round(performance.timeOrigin + now);
       burst.records += records.length;
       for (const r of records) {
-        for (const n of r.addedNodes ?? []) if (burst.added.size < MAX_NODES) burst.added.add(n);
+        // Added before this burst took it away: made in this burst, not moved (`created`).
+        for (const n of r.addedNodes ?? []) if (burst.added.size < MAX_NODES) { burst.added.add(n); if (!burst.removed.has(n)) burst.created.add(n); }
         for (const n of r.removedNodes ?? []) if (burst.removed.size < MAX_NODES) burst.removed.add(n);
       }
       clearTimeout(burstTimer);

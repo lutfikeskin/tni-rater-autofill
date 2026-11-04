@@ -46,6 +46,9 @@ async function startRecording() {
   const store = await RecordingStore.start(manifest);
   // `fills`: when fills ran ({ start, end }), noted by state.filling's setter.
   state.recording = { store, tabId, carrier, redact, fills: state.filling ? [{ start: started.getTime(), end: null }] : [], started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false };
+  // Started during a fill: its start is the recording's, so the timeline counts that fill as one
+  // (its end alone would be no fill at all to the report).
+  if (state.filling) store.add([{ kind: 'fill', t: started.getTime(), frame: 0, on: true }]);
   renderDevrec();
   await ensureRecorder();
 }

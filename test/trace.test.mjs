@@ -241,7 +241,7 @@ test('the page\'s changes are one burst once quiet for 100 ms: the questions it 
   h.now = 1000;
   h.mutate([{ addedNodes: [node([team, secret, hidden])], removedNodes: [] }]);
   h.now = 1060;
-  h.mutate([{ addedNodes: [node([])], removedNodes: [node([], { matches: true, type: 'text' })] }]);
+  h.mutate([{ addedNodes: [node([])], removedNodes: [node([], { matches: true, type: 'text', connected: false })] }]);
   await h.advance(99);
   assert.ok(!h.events().some((e) => e.kind === 'burst'), 'not before the page is quiet');
   await h.advance(400);
@@ -351,6 +351,78 @@ test('the trace only watches: nothing in it clicks, types, scrolls or dispatches
   for (const act of [/\.click\(/, /\.value\s*=[^=]/, /dispatchEvent\(/, /\.focus\(/, /\.submit\(/, /scroll(To|By|IntoView)\(/, /\.checked\s*=[^=]/, /setAttribute\(/]) {
     assert.ok(!act.test(code), `trace.js must not ${act}`);
   }
+});
+
+// Progressive's recordings of 2026-11-04 named its hidden status boxes (Current Page Errored, SSID
+// Value: drawn with no size) among every page's new questions.
+test('a box drawn with no size and no label on screen is not one of the questions drawn', async () => {
+  const h = harness();
+  const team = new Control('select', { name: 'team', label: 'Team driving?', options: [{ text: 'No', value: 'N' }] });
+  const errored = new Control('input', { name: 'errored', type: 'checkbox', label: 'Current Page Errored' });
+  errored.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0 });
+  h.now = 1000;
+  h.mutate([{ addedNodes: [node([team, errored])], removedNodes: [] }]);
+  await h.advance(400);
+  const burst = h.events().find((e) => e.kind === 'burst');
+  assert.deepEqual([burst.drawnCount, burst.drawn.map((d) => d.label)], [1, ['Team driving?']]);
+  // Taken away again (review of PR #286): the box left out as drawn isn't counted as removed.
+  h.mutate([{ addedNodes: [], removedNodes: [node([team, errored], { connected: false })] }]);
+  await h.advance(400);
+  const gone = h.events().filter((e) => e.kind === 'burst')[1];
+  assert.equal(gone.removed, 1);
+  // Drawn again where it shows (review of PR #286): a question now, and its removal counted.
+  errored.getBoundingClientRect = () => ({ left: 10, top: 300, width: 16, height: 16 });
+  h.mutate([{ addedNodes: [node([errored])], removedNodes: [] }]);
+  await h.advance(400);
+  h.mutate([{ addedNodes: [], removedNodes: [node([errored], { connected: false })] }]);
+  await h.advance(400);
+  const [back, again] = h.events().filter((e) => e.kind === 'burst').slice(2);
+  assert.deepEqual([back.drawnCount, again.removed], [1, 1]);
+  // Added and taken away within one burst (review of PR #286): never drawn, so not counted as gone.
+  const brief = new Control('input', { name: 'brief', type: 'checkbox', label: 'Brief box' });
+  brief.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0 });
+  const added = node([brief], { connected: false });
+  h.mutate([{ addedNodes: [added], removedNodes: [added] }]);
+  await h.advance(400);
+  const passing = h.events().filter((e) => e.kind === 'burst')[4];
+  assert.deepEqual(['drawn' in passing, 'removed' in passing], [false, false]);
+});
+
+// Review of PR #286: a control moved within the page is taken away and added again in one burst.
+// Moved and left there, it's still on the page; moved and then taken away, it's gone.
+test('a question moved within the page isn\'t taken away; moved and then taken away, it is', async () => {
+  const h = harness();
+  const team = new Control('select', { name: 'team', label: 'Team driving?', options: [{ text: 'No', value: 'N' }] });
+  const moved = node([team]);
+  h.now = 1000;
+  h.mutate([{ addedNodes: [], removedNodes: [moved] }, { addedNodes: [moved], removedNodes: [] }]);
+  await h.advance(400);
+  const stayed = h.events().find((e) => e.kind === 'burst');
+  assert.equal('removed' in stayed, false, 'still on the page');
+  moved.isConnected = false;
+  h.mutate([{ addedNodes: [], removedNodes: [moved] }, { addedNodes: [moved], removedNodes: [] }, { addedNodes: [], removedNodes: [moved] }]);
+  await h.advance(400);
+  const gone = h.events().filter((e) => e.kind === 'burst')[1];
+  assert.equal(gone.removed, 1, 'it was on the page before the burst');
+});
+
+// Review of PR #286: a radio or checkbox drawn with no size and shown by its label keeps the label's
+// place on the page, so the report still tells its order; a box with no size and no label has none.
+test('a question with no size is placed where its label is on screen', async () => {
+  const h = harness();
+  const styled = new Control('input', { name: 'styled', type: 'checkbox', label: 'Styled box', top: 0 });
+  styled.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0 });
+  styled.labels = [{ getClientRects: () => [{}], getBoundingClientRect: () => ({ left: 20, top: 420, width: 90, height: 18 }) }];
+  const status = new Control('input', { name: 'errored', type: 'checkbox', label: 'Current Page Errored', top: 0 });
+  status.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0 });
+  h.controls.push(styled, status);
+  h.now = 1000;
+  h.emit('change', styled);
+  h.emit('change', status);
+  await h.advance(400);
+  const [a, b] = h.events().filter((e) => e.kind === 'change');
+  assert.deepEqual([a.field.rect.w, a.field.rect.docY], [90, 470], 'the label\'s box plus the scroll');
+  assert.deepEqual([b.field.rect.w, b.field.rect.h], [0, 0]);
 });
 
 // Recording of 2026-11-04 (1143-fdc8): two waits the fill engine had just been given names for were

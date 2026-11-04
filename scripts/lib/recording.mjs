@@ -41,7 +41,9 @@ const clock = (ms) => {
 const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const quote = (s) => `"${String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)}"`;
 const fieldName = (e) => quote(e.field?.label || e.field?.key || 'a question');
-const docY = (e) => e.field?.rect?.docY ?? null;
+// Where an answer is down the page; none for a box drawn with no size (a page's hidden status box,
+// Progressive's Current Page Errored), which is never above or below a question.
+const docY = (e) => (e.field?.rect?.w === 0 && e.field.rect.h === 0 ? null : e.field?.rect?.docY ?? null);
 
 // Whether the person did it, as the recorder decides: a click or a key as the browser says (a
 // script's isn't trusted); a change only when trusted and within 2 s of their own gesture on that
@@ -84,7 +86,10 @@ function segments(events) {
     if (top && e.kind === 'page' && (!current || e.page !== current.page || (e.step ?? null) !== current.step)) open(e, e.page, e.step ?? null);
     else if (top && e.kind === 'step' && current && (e.step ?? null) !== current.step) open(e, current.page, e.step ?? null);
     else if (!current) open(e, e.page ?? '(before the first page event)', null);
-    current.events.push(e);
+    // The fill's wait or answer is logged when it ends: one begun on an earlier step (the wait after
+    // Continue, which ends on the next page) is told on the step it began on, not before its start.
+    const begun = e.kind === 'kit' && typeof e.start === 'number' && e.start < current.start ? out.findLast((x) => x.start <= e.start) : null;
+    (begun ?? current).events.push(e);
   }
   return out;
 }
@@ -251,7 +256,8 @@ export function recordingReport({ manifest, events }) {
   out.push('## Flow', '', '| # | Page · step | Arrived | On screen | Actions | Left by |', '| --- | --- | --- | --- | --- | --- |');
   const told = segs.map((s, i) => {
     const next = segs[i + 1]?.start ?? end;
-    const lines = actions(s.events);
+    // In time order: a wait moved here from a later step is logged after this step's own lines.
+    const lines = actions(s.events).sort((x, y) => x.t - y.t);
     const lastClick = [...s.events].reverse().find((e) => e.kind === 'click' && e.button && e.trusted !== false);
     return { s, lines, next, lastClick, n: i + 1 };
   });
