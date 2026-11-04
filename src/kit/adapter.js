@@ -162,6 +162,8 @@ export function partsUndefined() {
 let requestWatch = null;
 /** @type {Array<{ start: number, end: number, poll: boolean }>} */
 export const recentRequests = [];
+/** Whether this frame sees its requests (watchRequests started and the browser has PerformanceObserver). */
+export const watchingRequests = () => !!requestWatch;
 const lastRequestEnd = () => recentRequests.reduce((m, r) => (r.poll ? m : Math.max(m, r.end)), -Infinity);
 
 const POLL_SLACK_MS = 40;

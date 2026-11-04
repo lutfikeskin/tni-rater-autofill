@@ -659,6 +659,8 @@
  * @property {[string, string[]][]} [choices]  field key, a combo's options
  * @property {{ label: string | null, key: string | null }[]} [skipped]
  * @property {string} [advanced]  the Continue it pressed
+ * @property {string} [continueRefused]  the Continue it pressed that the page refused, staying where it was (server-backed pages)
+ * @property {number} [repeatsHeld]  the agent's clicks on a Continue not passed to the page while the fill's own was under way (server-backed pages)
  * @property {string} [advanceKey]
  * @property {'busy' | 'none'} [advanceDue]
  * @property {'check' | 'changed'} [held]
