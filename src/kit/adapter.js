@@ -189,7 +189,7 @@ export function isBeat(address, start) {
 export const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /**
- * Starts observing network requests in the top frame.
+ * Starts observing this frame's network requests.
  */
 export function watchRequests() {
   if (requestWatch !== null) return;

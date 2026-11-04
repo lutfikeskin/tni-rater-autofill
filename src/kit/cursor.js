@@ -346,7 +346,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     return state.report;
   }
   setComponentPrefix(adapter().components);
-  if (window === window.top) watchRequests();
+  // Every frame that answers watches its own requests (an answer's wait counts from the last one's end).
+  watchRequests();
   if (!keepMarks) clear();
   stopSteps = [].concat(stopSteps ?? []);
   if (stopSteps.length) addStopSteps(stopSteps);
