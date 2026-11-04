@@ -366,3 +366,22 @@ test('a box drawn with no size and no label on screen is not one of the question
   const burst = h.events().find((e) => e.kind === 'burst');
   assert.deepEqual([burst.drawnCount, burst.drawn.map((d) => d.label)], [1, ['Team driving?']]);
 });
+
+// Review of PR #286: a radio or checkbox drawn with no size and shown by its label keeps the label's
+// place on the page, so the report still tells its order; a box with no size and no label has none.
+test('a question with no size is placed where its label is on screen', async () => {
+  const h = harness();
+  const styled = new Control('input', { name: 'styled', type: 'checkbox', label: 'Styled box', top: 0 });
+  styled.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0 });
+  styled.labels = [{ getClientRects: () => [{}], getBoundingClientRect: () => ({ left: 20, top: 420, width: 90, height: 18 }) }];
+  const status = new Control('input', { name: 'errored', type: 'checkbox', label: 'Current Page Errored', top: 0 });
+  status.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0 });
+  h.controls.push(styled, status);
+  h.now = 1000;
+  h.emit('change', styled);
+  h.emit('change', status);
+  await h.advance(400);
+  const [a, b] = h.events().filter((e) => e.kind === 'change');
+  assert.deepEqual([a.field.rect.w, a.field.rect.docY], [90, 470], 'the label\'s box plus the scroll');
+  assert.deepEqual([b.field.rect.w, b.field.rect.h], [0, 0]);
+});

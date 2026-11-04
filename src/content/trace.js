@@ -84,6 +84,14 @@
       return { x: num(r.left), y: num(r.top), w: num(r.width), h: num(r.height), docY: num(r.top + (window.scrollY ?? 0)) };
     } catch { return null; }
   };
+  // Where a question is: its own box, or, for one drawn with no size and a label on screen (a radio
+  // or checkbox shown by its label), the label's, so the report can tell its order down the page.
+  const fieldBox = (el) => {
+    const own = box(el);
+    if (!own || own.w || own.h) return own;
+    const label = [...(el.labels ?? [])].find((l) => l.getClientRects?.().length);
+    return label ? box(label) ?? own : own;
+  };
   const isPassword = (el) => String(el?.type ?? '').toLowerCase() === 'password';
 
   // What an event was on: the question, as the recorder names it, else the button (its words, as the
@@ -102,7 +110,7 @@
       if (isPassword(control)) return { password: true };
       let field;
       try { field = read.describe(control); } catch { field = { key: null, q: null, kind: null, label: '' }; }
-      return { control, field: { key: field.key, q: field.q, kind: field.kind, label: field.label, rect: box(control) } };
+      return { control, field: { key: field.key, q: field.q, kind: field.kind, label: field.label, rect: fieldBox(control) } };
     }
     const selector = read.buttons();
     const button = path.find((n) => n?.matches?.(selector));
