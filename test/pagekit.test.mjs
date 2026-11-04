@@ -19,8 +19,9 @@ import { kitCode } from '../scripts/lib/kit.mjs';
 // script itself, without a browser session, real quote data, or customer identifiers.
 // The fill engine as the extension injects it: built from src/kit/ (scripts/lib/kit.mjs).
 const PAGEKIT = await kitCode();
-// Its source, for the few checks that read how it is written.
-const PAGEKIT_SOURCE = fs.readFileSync(new URL('../src/kit/pagekit.js', import.meta.url), 'utf8');
+// The source of the kit modules the few checks that read how it is written look at.
+const CURSOR_SOURCE = fs.readFileSync(new URL('../src/kit/cursor.js', import.meta.url), 'utf8');
+const MARKS_SOURCE = fs.readFileSync(new URL('../src/kit/marks.js', import.meta.url), 'utf8');
 const FIELD_KEY = fs.readFileSync(new URL('../src/content/field-key.js', import.meta.url), 'utf8');
 // A carrier's page adapter, loaded before the kit as the panel does it (harness `adapter`).
 const ADAPTERS = Object.fromEntries(['progressive', 'geico', 'amwins'].map((id) => [id, fs.readFileSync(new URL(`../src/content/carriers/${id}.js`, import.meta.url), 'utf8')]));
@@ -988,7 +989,7 @@ test('a TNI standard gets its own mark, an intake answer the filled green, and a
 
 test('the side panel key shows the page marks in the page kit colors', () => {
   const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
-  const colors = [...PAGEKIT_SOURCE.match(/const COLORS = \{([^}]*)\}/)[1].matchAll(/(\w+): '(#[0-9a-f]{6})'/gi)];
+  const colors = [...MARKS_SOURCE.match(/const COLORS = \{([^}]*)\}/)[1].matchAll(/(\w+): '(#[0-9a-f]{6})'/gi)];
   assert.deepEqual(colors.map(([, status]) => status).sort(), ['agent', 'ai', 'failed', 'filled', 'needs', 'standard']);
   for (const [, status, hex] of colors) {
     assert.equal(css.match(new RegExp(`--mark-${status}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1].toLowerCase(), hex.toLowerCase(), status);
@@ -5520,6 +5521,19 @@ test('the unit lists on screen now: those the panel read here, with their rows',
   assert.equal(h.kit.unitListsNow(), '', 'gone');
 });
 
+// Review of PR #282: a list unitList reads inside an open shadow root is one the recorder sees too.
+test('the unit lists on screen now include one drawn in an open shadow root', () => {
+  const h = harness({ pathname: '/quote' });
+  const list = new FakeNode('ul', { id: 'summaryPage-AddDriver' });
+  list.append(new FakeNode('li'), new FakeNode('li'));
+  const host = new FakeNode('gds-list');
+  host.attachShadow({ mode: 'open' });
+  host.shadowRoot.append(list);
+  h.document.body.append(host);
+  assert.equal(h.kit.unitList('#summaryPage-AddDriver', []).rows, 2);
+  assert.equal(h.kit.unitListsNow(), '#summaryPage-AddDriver:2');
+});
+
 test('a unit added but never entered is said on its list, not on the unit\'s own form drawn at the same address', async () => {
   const unfinished = 'The "+" was clicked for vehicle 2, but no form was filled for it';
   const actions = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [
@@ -8334,12 +8348,12 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.equal(seen[0].phase, null, 'answering');
   assert.equal(h.kit.progress(), null, 'the fill is over');
   // Each long wait names itself before it begins.
-  assert.match(PAGEKIT_SOURCE, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
-  assert.match(PAGEKIT_SOURCE, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
-  assert.match(PAGEKIT_SOURCE, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
-  assert.match(PAGEKIT_SOURCE, /if \(thisRound\.helperClicked\) phase\('helper', state\.pendingAction\?\.label \?\? state\.report\.actions\.at\(-1\)\?\.text \?\? null\);/);
-  assert.match(PAGEKIT_SOURCE, /report\.rounds = round \+ 1;\s+phase\(null\);/, 'a new round answers again');
-  assert.match(PAGEKIT_SOURCE, /phase: running\.phase \?\? null, itemsAt:/);
+  assert.match(CURSOR_SOURCE, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
+  assert.match(CURSOR_SOURCE, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
+  assert.match(CURSOR_SOURCE, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
+  assert.match(CURSOR_SOURCE, /if \(thisRound\.helperClicked\) phase\('helper', state\.pendingAction\?\.label \?\? state\.report\.actions\.at\(-1\)\?\.text \?\? null\);/);
+  assert.match(CURSOR_SOURCE, /report\.rounds = round \+ 1;\s+phase\(null\);/, 'a new round answers again');
+  assert.match(CURSOR_SOURCE, /phase: running\.phase \?\? null, itemsAt:/);
 });
 
 // Review of PR #170: the phase test read the kit's source. Run: as the fill begins, progress() says
@@ -8886,4 +8900,47 @@ test('every fill in this file ended with only what is on the page in its report'
 test('every report item of this file\'s fills has a resolution that agrees with its list and fields', () => {
   assert.ok(resolutionChecked.items >= 1000, `${resolutionChecked.items} items checked`);
   for (const status of ['answered', 'kept', 'open', 'agent', 'confirm', 'review', 'failed', 'unknown']) assert.ok(resolutionChecked.statuses.has(status), `no item was ${status}`);
+});
+
+// Review of PR #282: a date the page rewrites between MM/DD/YYYY and ISO (a date mask) still agrees
+// with the answer, and each form keeps its own month and day.
+test('loose reads 01/05/1980 and 1980-01-05 as the same date, and keeps month and day apart', async () => {
+  const { loose } = await import('../src/kit/text.js');
+  for (const same of ['1/5/1980', '01/05/1980', '1980-01-05', '01-05-1980']) assert.equal(loose(same), 'd01051980', same);
+  assert.equal(loose('2020-12-20'), loose('12/20/2020'));
+  assert.notEqual(loose('1980-05-01'), loose('01/05/1980'), 'May 1 is not January 5');
+});
+
+// Review of PR #282 (an independent pass): a control in an open shadow root labelled by an element
+// of the page around it (aria-labelledby) keeps that label, as before the kit was split.
+test('a control in a shadow root is labelled by the page element its aria-labelledby names', () => {
+  const h = harness();
+  const label = new FakeNode('span', { id: 'cargoLimitLabel', textContent: 'Cargo limit' });
+  const box = new SelectNode(['', '$50,000'], { id: 'limitBox', attrs: { 'aria-labelledby': 'cargoLimitLabel' } });
+  const host = new FakeNode('gds-select');
+  host.attachShadow({ mode: 'open' });
+  host.shadowRoot.append(box);
+  h.document.body.append(label, host);
+  const c = h.kit.capture(null, []).controls.find((x) => x.id === 'limitBox');
+  assert.match(String(c?.label ?? ''), /Cargo limit/);
+});
+
+// Review of PR #282 (an independent pass): while a fill runs in the frame, present() reads the
+// fill's own hidden-but-fillable fields, not the panel's list, as before the kit was split.
+test('present during a fill keeps the fill\'s hidden fields it may fill', async () => {
+  const h = harness();
+  const secret = makeInput({ id: 'secret', ariaLabel: 'Secret' });
+  secret._visible = false;
+  const name = makeInput({ id: 'name', ariaLabel: 'Name' });
+  h.document.body.append(secret, name);
+  let during = null;
+  const look = () => { during ??= plain(h.kit.present([{ key: 'secret', label: 'Secret' }])); };
+  name.addEventListener('input', look);
+  name.addEventListener('change', look);
+  await h.kit.fill([
+    { id: 'name', selector: '#name', path: 'x.name', kind: 'text', value: 'Sam' },
+    { id: 'secret', selector: '#secret', path: 'x.secret', kind: 'text', value: 's', hidden: true },
+  ], { maxRounds: 2 });
+  assert.ok(during, 'present ran during the fill');
+  assert.equal(during[0]?.hidden, undefined, 'the fill may fill it: present sees the control');
 });

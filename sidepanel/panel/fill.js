@@ -1,3 +1,4 @@
+// @ts-check
 // The side panel: filling and capturing.
 // One part of the panel; sidepanel.js wires the parts together.
 import { sourcePlace } from '../../src/intake-source.js';
@@ -9,7 +10,7 @@ import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../.
 import * as usage from '../usage-log.js';
 import { isStandard } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
-import { $, aiSnapshotFieldMatches, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state } from './core.js';
+import { $, aiSnapshotFieldMatches, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
@@ -46,7 +47,7 @@ async function injectKit(tabId, carrier) {
 /**
  * @param {number} tabId
  * @param {CarrierConfig} carrier
- * @param {Function} func  run in each frame, after the kit is injected
+ * @param {(...args: any[]) => any} func  run in each frame, after the kit is injected
  * @param {any[]} [args]
  * @param {number[]} [frameIds]
  */
@@ -57,6 +58,7 @@ async function runKit(tabId, carrier, func, args = [], frameIds) {
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
+/** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean }} [options] */
 async function fillPage({ auto = false, confirmed = null, continuing = false } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
   if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
@@ -84,7 +86,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   const page = pageOf(state.tab.url);
   // Looks right never replaces anything: the page is continued as the agent approved it. Nor does
   // the dock's Continue (W43-40).
-  const overwrite = auto || confirmed || continuing ? false : $('overwrite').checked;
+  const overwrite = auto || confirmed || continuing ? false : switchOn('overwrite', 'overwrite');
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
@@ -114,7 +116,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // The agent's edits on this page as the fill's tab holds them (retiring AI picks may just
     // have released some), never the tab in front.
     // Honor the latest switch after preparation, and log the same value used by the kit.
-    ctx.settings.autoAdvance = !!$('auto-advance').checked;
+    ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
     // The add helpers are clicked only with the switch on now.
     if (ctx.adding) plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
@@ -418,7 +420,7 @@ function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, i
     if (fillCurrent(ctx) && pageOf(state.tab?.url) === page) scheduleAutoFill(page);
   }, 900);
   if (advanced) watchNextStep(carrier, page, advanced.signatureBefore, doneKey, run, ctx);
-  return clicked && !moved && !state.autoPaused && $('auto-followups').checked;
+  return clicked && !moved && !state.autoPaused && switchOn('autoFollowUps', 'auto-followups');
 }
 
 // Luna is asked once the page has stopped changing: after the last follow-up fill of a helper
@@ -456,7 +458,7 @@ function assistAfterFill(frames, ctx, followUp) {
 // page unchanged since the Continue, 30 s (60 s) in all.
 async function watchNextStep(carrier, page, before, doneKey = null, run = null, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
   const tabId = ctx.tabId;
-  if (!$('auto-followups').checked && !$('auto-pages').checked) return;
+  if (!switchOn('autoFollowUps', 'auto-followups') && !switchOn('autoPages', 'auto-pages')) return;
   let last = null;
   let same = 0;
   let unchanged = 0;
@@ -900,7 +902,8 @@ function renderReport(frames, ctx = {}) {
   // `halted`: the fill stopped short ("Filling stopped" above the list, or the agent's Stop).
   const entry = { key, tabId, page, step: step ?? null, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, otherLeft: needs.filter((x) => !finishLeftOk(carrier, x)).length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
     halted: frames.some((f) => !!f.halted),
-    ...(ctx.restoredAt ? { restored: true } : {}) };
+    ...(ctx.restoredAt ? { restored: true } : {}),
+    list: /** @type {any[]} */ ([]) };
   // The answers and the items in one list, by their place on the page: an item without a field on
   // the page (a helper, a unit without its row) after them, then answers without one (a click).
   const listed = [...doneRows.map((row) => ({ row, at: row })), ...needs.map((x) => ({ x, at: x }))];
@@ -939,7 +942,7 @@ function renderReport(frames, ctx = {}) {
     // Buttons waiting on others (Progressive's bill plan before Recalculate) aren't listed: the fill
     // clicks them in turn, and a question one waits on is a row. The fill log keeps them (blockerList).
     entry.list.length ? rowsHost(entry, rctx) : null,
-  ].filter((node) => node != null && node !== false);
+  ].filter((node) => node != null && /** @type {*} */ (node) !== false);
   if (key === currentReportKey()) state.filter = 'all';
   putReport(entry, nodes);
   renderSteps();
@@ -1302,8 +1305,8 @@ async function capturePage() {
   const record = state.intake?.record;
   const redact = redactor(redactionTerms(record));
   // Both are typed by the agent: a client's name or number in them is redacted like the page's.
-  const scenario = redact($('capture-scenario').value.trim()).slice(0, 60) || 'unnamed';
-  const typedNote = $('capture-note').value;
+  const scenario = redact(/** @type {*} */ ($('capture-scenario'))?.value?.trim?.() ?? '').slice(0, 60) || 'unnamed';
+  const typedNote = /** @type {*} */ ($('capture-note'))?.value ?? '';
   const note = redact(typedNote.trim()).slice(0, 200) || null;
   // Which quote the scenario belongs to (its session's first characters, no client data): two
   // clients' scenarios redacted to the same name stay apart.
@@ -1341,7 +1344,7 @@ async function capturePage() {
     Object.assign(document.createElement('a'), { href: url, download: `capture-${carrier.id}-${slug(scenario, 30)}${quote ? `-${quote.slice(0, 4)}` : ''}-${String(n).padStart(3, '0')}-${slug(data.page, 30)}.json` }).click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
     // Only the note this capture took: one being typed for the next step stays.
-    if ($('capture-note').value === typedNote) $('capture-note').value = '';
+    if (/** @type {*} */ ($('capture-note'))?.value === typedNote) /** @type {*} */ ($('capture-note')).value = '';
     captureSaid(`Saved capture ${n} of "${scenario}" (${frames.reduce((k, f) => k + f.controls.length, 0)} fields${top?.openLists?.length ? ', an open list' : ''}) to Downloads. Client details are [client]. Move it to layouts/ and skim it before sharing.`);
   } catch (e) {
     captureSaid(`Couldn't capture this page: ${e.message}`);

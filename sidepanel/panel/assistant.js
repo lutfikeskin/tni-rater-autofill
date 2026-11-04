@@ -8,7 +8,7 @@ import * as usage from '../usage-log.js';
 import { collectItems, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
 import { claimsTruncated, firstNameOf } from '../../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../../src/ai/providers.js';
-import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state } from './core.js';
+import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
 import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
@@ -670,7 +670,7 @@ function renderAi(holder, suggestions, ctx) {
   const rejectedPending = pending.filter((x) => x.rejected);
   const current = assistContextKey(state.intake?.record, state.active);
   const currentHash = aiFingerprint(current);
-  const canContinue = $('auto-advance').checked && !!ctx.carrier.advance;
+  const canContinue = switchOn('autoAdvance', 'auto-advance') && !!ctx.carrier.advance;
   // Approving or rejecting acts on a cached pick in this intake and page. A driver/vehicle
   // switch can keep that pick pending; replacing the intake or page invalidates the callback.
   const decide = async (list, decision) => {
