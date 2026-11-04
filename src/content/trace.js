@@ -263,6 +263,10 @@
     const b = burst;
     burst = null;
     if (!b) return;
+    // Counted before this burst's own draws change what was left out: a box left out as it was
+    // drawn is left out as it goes too (it has no size to measure by then).
+    let removed = 0;
+    for (const node of b.removed) removed += controlsIn(node).filter((el) => asQuestion(el) && !unseen.has(el)).length;
     const drawn = [];
     let drawnCount = 0;
     const seen = new Set();
@@ -271,15 +275,14 @@
       for (const el of controlsIn(node)) {
         if (seen.has(el) || !asQuestion(el)) continue;
         if (!shown(el)) { unseen.add(el); continue; }
+        // Drawn again where it shows: a question now, and its removal counted.
+        unseen.delete(el);
         seen.add(el);
         drawnCount++;
         if (drawn.length >= MAX_DRAWN) continue;
         try { const f = read.describe(el); drawn.push({ key: f.key, kind: f.kind, label: f.label }); } catch { /* unreadable */ }
       }
     }
-    let removed = 0;
-    // A box left out as it was drawn is left out as it goes too (it has no size to measure by then).
-    for (const node of b.removed) removed += controlsIn(node).filter((el) => asQuestion(el) && !unseen.has(el)).length;
     push('burst', { end: b.end, records: b.records, ...(drawnCount ? { drawn, drawnCount } : {}), ...(removed ? { removed } : {}) }, { timeStamp: b.start });
   }
   let mutations = null;

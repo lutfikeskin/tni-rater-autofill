@@ -370,6 +370,14 @@ test('a box drawn with no size and no label on screen is not one of the question
   await h.advance(400);
   const gone = h.events().filter((e) => e.kind === 'burst')[1];
   assert.equal(gone.removed, 1);
+  // Drawn again where it shows (review of PR #286): a question now, and its removal counted.
+  errored.getBoundingClientRect = () => ({ left: 10, top: 300, width: 16, height: 16 });
+  h.mutate([{ addedNodes: [node([errored])], removedNodes: [] }]);
+  await h.advance(400);
+  h.mutate([{ addedNodes: [], removedNodes: [node([errored], { connected: false })] }]);
+  await h.advance(400);
+  const [back, again] = h.events().filter((e) => e.kind === 'burst').slice(2);
+  assert.deepEqual([back.drawnCount, again.removed], [1, 1]);
 });
 
 // Review of PR #286: a radio or checkbox drawn with no size and shown by its label keeps the label's
