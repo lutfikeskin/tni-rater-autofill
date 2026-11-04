@@ -241,7 +241,7 @@ test('the page\'s changes are one burst once quiet for 100 ms: the questions it 
   h.now = 1000;
   h.mutate([{ addedNodes: [node([team, secret, hidden])], removedNodes: [] }]);
   h.now = 1060;
-  h.mutate([{ addedNodes: [node([])], removedNodes: [node([], { matches: true, type: 'text' })] }]);
+  h.mutate([{ addedNodes: [node([])], removedNodes: [node([], { matches: true, type: 'text', connected: false })] }]);
   await h.advance(99);
   assert.ok(!h.events().some((e) => e.kind === 'burst'), 'not before the page is quiet');
   await h.advance(400);
@@ -386,6 +386,24 @@ test('a box drawn with no size and no label on screen is not one of the question
   await h.advance(400);
   const passing = h.events().filter((e) => e.kind === 'burst')[4];
   assert.deepEqual(['drawn' in passing, 'removed' in passing], [false, false]);
+});
+
+// Review of PR #286: a control moved within the page is taken away and added again in one burst.
+// Moved and left there, it's still on the page; moved and then taken away, it's gone.
+test('a question moved within the page isn\'t taken away; moved and then taken away, it is', async () => {
+  const h = harness();
+  const team = new Control('select', { name: 'team', label: 'Team driving?', options: [{ text: 'No', value: 'N' }] });
+  const moved = node([team]);
+  h.now = 1000;
+  h.mutate([{ addedNodes: [], removedNodes: [moved] }, { addedNodes: [moved], removedNodes: [] }]);
+  await h.advance(400);
+  const stayed = h.events().find((e) => e.kind === 'burst');
+  assert.equal('removed' in stayed, false, 'still on the page');
+  moved.isConnected = false;
+  h.mutate([{ addedNodes: [], removedNodes: [moved] }, { addedNodes: [moved], removedNodes: [] }, { addedNodes: [], removedNodes: [moved] }]);
+  await h.advance(400);
+  const gone = h.events().filter((e) => e.kind === 'burst')[1];
+  assert.equal(gone.removed, 1, 'it was on the page before the burst');
 });
 
 // Review of PR #286: a radio or checkbox drawn with no size and shown by its label keeps the label's
