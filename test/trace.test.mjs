@@ -378,6 +378,14 @@ test('a box drawn with no size and no label on screen is not one of the question
   await h.advance(400);
   const [back, again] = h.events().filter((e) => e.kind === 'burst').slice(2);
   assert.deepEqual([back.drawnCount, again.removed], [1, 1]);
+  // Added and taken away within one burst (review of PR #286): never drawn, so not counted as gone.
+  const brief = new Control('input', { name: 'brief', type: 'checkbox', label: 'Brief box' });
+  brief.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0 });
+  const added = node([brief], { connected: false });
+  h.mutate([{ addedNodes: [added], removedNodes: [added] }]);
+  await h.advance(400);
+  const passing = h.events().filter((e) => e.kind === 'burst')[4];
+  assert.deepEqual(['drawn' in passing, 'removed' in passing], [false, false]);
 });
 
 // Review of PR #286: a radio or checkbox drawn with no size and shown by its label keeps the label's

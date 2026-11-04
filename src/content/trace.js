@@ -264,9 +264,12 @@
     burst = null;
     if (!b) return;
     // Counted before this burst's own draws change what was left out: a box left out as it was
-    // drawn is left out as it goes too (it has no size to measure by then).
+    // drawn is left out as it goes too (it has no size to measure by then). One the page added and took
+    // away again within this burst was never drawn in the trace, so it isn't counted as taken away.
+    const passing = new Set();
+    for (const node of b.added) for (const el of controlsIn(node)) passing.add(el);
     let removed = 0;
-    for (const node of b.removed) removed += controlsIn(node).filter((el) => asQuestion(el) && !unseen.has(el)).length;
+    for (const node of b.removed) removed += controlsIn(node).filter((el) => asQuestion(el) && !unseen.has(el) && !passing.has(el)).length;
     const drawn = [];
     let drawnCount = 0;
     const seen = new Set();
