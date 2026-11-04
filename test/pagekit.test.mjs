@@ -8337,7 +8337,7 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.match(PAGEKIT_SOURCE, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
   assert.match(PAGEKIT_SOURCE, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
   assert.match(PAGEKIT_SOURCE, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
-  assert.match(PAGEKIT_SOURCE, /if \(helperClicked\) phase\('helper', state\.pendingAction\?\.label \?\? state\.report\.actions\.at\(-1\)\?\.text \?\? null\);/);
+  assert.match(PAGEKIT_SOURCE, /if \(thisRound\.helperClicked\) phase\('helper', state\.pendingAction\?\.label \?\? state\.report\.actions\.at\(-1\)\?\.text \?\? null\);/);
   assert.match(PAGEKIT_SOURCE, /report\.rounds = round \+ 1;\s+phase\(null\);/, 'a new round answers again');
   assert.match(PAGEKIT_SOURCE, /phase: running\.phase \?\? null, itemsAt:/);
 });
