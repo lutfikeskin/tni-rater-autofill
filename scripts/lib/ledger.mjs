@@ -333,10 +333,13 @@ export function judgePattern(p, events, containsOf, testSessions = new Set()) {
   const hit = { yes: new Set(), no: new Set(), unknown: new Set() };
   const reached = new Set();
   const scenario = scenarioOf(p);
+  // A symptom with `when` happens only in a quote where that scenario ran, on any build (W46-08:
+  // W44-09's New Venture `when` the notes gave the years counted TNI's standard New Venture too).
+  const ran = p.kind === 'symptom' && p.when ? new Set(events.filter((e) => matches(p.when, e)).map(sessionOf)) : null;
   for (const e of events) {
     const c = containsOf(e);
     const s = sessionOf(e);
-    if (matches(p, e)) hit[c].add(s);
+    if (matches(p, e) && (!ran || ran.has(s))) hit[c].add(s);
     if (c === 'yes' && scenario && matches(scenario, e)) reached.add(s);
   }
   const fixed = hit.yes;

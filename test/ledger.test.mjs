@@ -312,6 +312,20 @@ test('a symptom on a fixed build recurs; its scenario without it is verified; ne
   assert.deepEqual([onTests.status, onTests.patterns[0].reachedTests, onTests.patterns[0].testOnly], ['verified (test runs only)', 2, true]);
 });
 
+// W46-08: a symptom with `when` happens only in a quote where that scenario ran. W44-09's symptom
+// (AmWINS New Venture `when` the notes gave the years) counted every New Venture, also TNI's
+// standard on intakes whose notes say nothing of the years, and read as recurred.
+test('a symptom with `when` counts only in quotes where its scenario ran (W46-08)', () => {
+  const sig = '`symptom fill_field page=AddDriver result=failed when agent_settings`';
+  // new2 failed but never logged agent_settings; new1 did, and its license filled.
+  const scoped = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), period(), fixed);
+  assert.deepEqual([scoped.status, scoped.patterns[0].quotes, scoped.patterns[0].reached], ['verified', 0, 1]);
+  // The failure in a quote that ran the scenario is a recurrence, as before.
+  const both = [...period(), { id: 'n2s', t: '2026-10-14T12:01:00.000Z', session: 'new2', v: '0.9.10', carrier: 'progressive', type: 'agent_settings' }];
+  const recurred = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), both, fixed);
+  assert.deepEqual([recurred.status, recurred.patterns[0].quotes], ['recurred', 1]);
+});
+
 test('an expected event is verified when seen, recurs when missing from its scenario; free text is never judged', () => {
   const seen = judgeItem(item('- [ ] W42-07 · S3 · Fix · Source · approved · signature: `expect fill_field source=*`'), period(), fixed);
   assert.equal(seen.status, 'verified');

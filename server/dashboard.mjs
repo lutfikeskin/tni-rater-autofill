@@ -70,10 +70,10 @@ function counts(live, quotes) {
     quotes: started.size,
     pagesFilled: new Set(live.filter((e) => e.type === 'fill_run' && e.filled > 0).map(pageKey)).size,
     answersFilled: new Set(live.filter((e) => e.type === 'fill_field' && e.result === 'filled').map(answerKey)).size,
-    // Another value or cleared (signals.mjs `corrected`); reformatted apart; and answers the agent
-    // gave where autofill gave none.
-    corrected: auto.filter((e) => e.vsAutofill === 'different' || e.vsAutofill === 'cleared').length,
-    reformatted: auto.filter((e) => e.vsAutofill === 'format').length,
+    // Another value or cleared, each answer once per quote as signals.mjs `corrected` (W46-07);
+    // reformatted apart; and answers the agent gave where autofill gave none.
+    corrected: new Set(auto.filter((e) => e.vsAutofill === 'different' || e.vsAutofill === 'cleared').map(answerKey)).size,
+    reformatted: new Set(auto.filter((e) => e.vsAutofill === 'format').map(answerKey)).size,
     byHand: live.filter((e) => agentChange(e) && !e.autofilled).length,
     problems: live.filter((e) => e.type === 'problem_report').length,
     unfamiliar: new Set(live.filter((e) => e.type === 'fill_field' && e.result === 'unfamiliar').map((e) => `${e.carrier}|${e.page}|${e.label ?? ''}`)).size,
