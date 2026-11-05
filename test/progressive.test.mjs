@@ -216,7 +216,7 @@ test('sole owner-driver with duplicated first name uses owner surname and driver
   assert.equal(byQ(plan, '297').value, 'Kone');
   // The owner doesn't drive: the first row is still the owner's, its date of birth theirs (TNI,
   // 2026-10-27: answer to PR question V4, with T3; before, none: the name didn't match).
-  record.applicant.ownerDrives = false;
+  record.applicant.ownerDrives = false; record.applicant.ownerDrivesAnswered = true;
   assert.equal(byQ(buildPlan(record, progressive), '2BB').value, record.drivers[0].dob);
 });
 
@@ -567,7 +567,7 @@ test('NoHit: the first word of a multi-word owner first name; other pages keep i
   assert.equal(byQ(plan, '295').value, 'Amina Sample', 'Business Owner Info keeps the whole first name');
   assert.equal(plan.find((s) => s.path === 'drivers[0].first' && s.q === '2898').value, 'Amina Sample', 'Add Driver keeps the whole first name');
   // The owner box alone (the owner doesn't drive): its words before the surname, then the first one.
-  record.applicant.ownerDrives = false;
+  record.applicant.ownerDrives = false; record.applicant.ownerDrivesAnswered = true;
   plan = buildPlan(record, progressive, {});
   assert.equal(byQ(plan, '1B7F').value, 'Amina');
   assert.equal(byQ(plan, '295').value, 'Amina Sample');
@@ -1167,12 +1167,17 @@ test('owner is a driver (29F): blank is TNI\'s Yes; the intake\'s No, or an owne
   };
   assert.deepEqual(step((r) => { r.applicant.ownerDrives = null; }), [true, 'standard', true, false, null], 'blank: TNI\'s standard Yes');
   assert.deepEqual(step(() => {}), [true, 'intake', false, false, null], 'the intake\'s Yes');
-  assert.deepEqual(step((r) => { r.applicant.ownerDrives = false; }), [false, 'intake', false, false, null], 'the intake\'s No stays No');
+  assert.deepEqual(step((r) => { r.applicant.ownerDrives = false; r.applicant.ownerDrivesAnswered = true; }), [false, 'intake', false, false, null], 'the intake\'s No, confirmed by the agent, stays No');
+  // TNI, 2026-11-05 (W46-02): the intake's No the agent hasn't answered yet: Yes, with the warning.
+  const pending = (() => { const record = baseRecord(); record.applicant.ownerDrives = false; return byQ(buildPlan(record, progressive), '29F'); })();
+  assert.deepEqual([pending.value, pending.source], [true, 'derived']);
+  assert.match(pending.warn, /Until you answer "Does the owner drive\?" in the intake checks/);
+  assert.equal(byQ(buildPlan(Object.assign(baseRecord(), {}), progressive), '29F').warn ?? null, null, 'the intake\'s Yes: no warning');
   // Another driver marked excluded: still the owner's Yes.
   assert.deepEqual(step((r) => { r.applicant.ownerDrives = null; r.drivers[1].excluded = true; }), [true, 'standard', true, false, null]);
   // The owner's own row marked excluded: not a driver, No, from the exclusion.
   assert.deepEqual(step((r) => { r.applicant.ownerDrives = null; r.drivers[0].excluded = true; }), [false, 'derived', false, false, null]);
-  assert.deepEqual(step((r) => { r.applicant.ownerDrives = false; r.drivers[0].excluded = true; }), [false, 'intake', false, false, null]);
+  assert.deepEqual(step((r) => { r.applicant.ownerDrives = false; r.applicant.ownerDrivesAnswered = true; r.drivers[0].excluded = true; }), [false, 'intake', false, false, null]);
   // The intake's Yes with the owner's row excluded: No, with a warning to confirm.
   const record = baseRecord();
   record.drivers[0].excluded = true;
@@ -1190,7 +1195,7 @@ test('owner is a driver (29F): the owner\'s name on two driver rows, one exclude
   const step = (box, excluded) => {
     const record = baseRecord();
     const senior = record.drivers[0];
-    record.applicant.ownerDrives = box;
+    record.applicant.ownerDrives = box; record.applicant.ownerDrivesAnswered = true;
     record.drivers = [{ ...senior, excluded: excluded[0] }, { ...senior, suffix: 'Jr', dob: '03/04/2004', licenseNumber: 'MD7654321', excluded: excluded[1] }];
     const s = byQ(buildPlan(record, progressive), '29F');
     return [s.value, s.source, s.manualOnly, s.note];
@@ -1211,7 +1216,7 @@ test('owner is a driver (29F): the owner\'s name on two driver rows, one exclude
 test('owner daily operations (2D7): Yes when the owner drives; No otherwise', () => {
   const daily = (box, excluded = false) => {
     const r = baseRecord();
-    r.applicant.ownerDrives = box;
+    r.applicant.ownerDrives = box; r.applicant.ownerDrivesAnswered = true;
     if (excluded) r.drivers[0].excluded = true;
     return byQ(buildPlan(r, progressive), '2D7');
   };
@@ -1231,7 +1236,7 @@ test('owner daily operations (2D7): Yes when the owner drives; No otherwise', ()
 test('owner drives No: the owner\'s driver row is excluded (28C1 Yes); blank, Yes, the agent\'s No and other drivers unchanged', () => {
   const record = (box, change = () => {}) => {
     const r = baseRecord();
-    r.applicant.ownerDrives = box;
+    r.applicant.ownerDrives = box; r.applicant.ownerDrivesAnswered = true;
     r.drivers.push({ first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'MD7654321', licenseState: 'MD' });
     change(r);
     return r;
@@ -1261,7 +1266,7 @@ test('owner drives No: the owner\'s driver row is excluded (28C1 Yes); blank, Ye
   // their own mark only.
   for (const [marked, excluded] of [[0, [true, false, false]], [1, [true, true, false]]]) {
     const family = baseRecord();
-    family.applicant.ownerDrives = false;
+    family.applicant.ownerDrives = false; family.applicant.ownerDrivesAnswered = true;
     const senior = family.drivers[0];
     family.drivers = [{ ...senior, excluded: null }, { ...senior, suffix: 'Jr', dob: '03/04/2004', licenseNumber: 'MD7654321', excluded: null },
       { first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'MD1112223', licenseState: 'MD', excluded: null }];
@@ -1281,7 +1286,7 @@ test('owner drives No (T3, V2): the owner\'s date of birth from the owner\'s row
   const casey = { first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'MD1112223', licenseState: 'MD' };
   const record = (drivers, box = false) => {
     const r = baseRecord();
-    r.applicant.ownerDrives = box;
+    r.applicant.ownerDrives = box; r.applicant.ownerDrivesAnswered = true;
     r.drivers = drivers;
     return r;
   };
@@ -1327,7 +1332,7 @@ test('the owner is the first driver (V4) on Progressive and AmWINS: date of birt
   const twin = { ...owner, dob: '05/06/1990', licenseNumber: 'MD2223334' };
   const record = (drivers, box) => {
     const r = baseRecord();
-    r.applicant.ownerDrives = box;
+    r.applicant.ownerDrives = box; r.applicant.ownerDrivesAnswered = true;
     r.drivers = drivers.map((d) => ({ ...d }));
     return r;
   };
@@ -1382,7 +1387,7 @@ test('the owner is the first driver (V4) on Progressive and AmWINS: date of birt
 test('the owner\'s names are never another person\'s; the first driver row is the owner\'s, for the date of birth (V4)', () => {
   const record = baseRecord();
   record.applicant.owner1 = 'Alice Sample';
-  record.applicant.ownerDrives = false;
+  record.applicant.ownerDrives = false; record.applicant.ownerDrivesAnswered = true;
   record.drivers = [{ first: 'Bob', middle: null, last: 'Sample', dob: '01/02/1990' }];
   let o = owner(record);
   assert.deepEqual([o.driver, o.named, o.first, o.last], [null, null, 'Alice', 'Sample']);
@@ -1406,7 +1411,7 @@ test('the owner\'s names are never another person\'s; the first driver row is th
   }
   record.drivers = [{ first: 'Alice', middle: null, last: 'Sample', dob: '03/04/1985' }];
   assert.equal(owner(record).named?.dob, '03/04/1985', 'the exact full name gives the name too');
-  record.applicant.ownerDrives = false;
+  record.applicant.ownerDrives = false; record.applicant.ownerDrivesAnswered = true;
   assert.equal(owner(record).driver, null, 'an owner who doesn\'t drive is not a driver row, even by full name');
   // ... but their own row gives their date of birth (TNI, 2026-10-26: answer to PR question, T3).
   assert.equal(byQ(buildPlan(record, progressive), '2BB').value, '03/04/1985');
@@ -1415,7 +1420,7 @@ test('the owner\'s names are never another person\'s; the first driver row is th
   record.applicant.owner1 = 'Alice';
   record.applicant.ownerDrives = null;
   assert.deepEqual([owner(record).named?.dob, owner(record).last], ['03/04/1985', 'Sample']);
-  record.applicant.ownerDrives = false;
+  record.applicant.ownerDrives = false; record.applicant.ownerDrivesAnswered = true;
   assert.equal(owner(record).driver, null);
   assert.equal(owner(record).last, 'Alice', 'a one-word box: the word, as before');
 });

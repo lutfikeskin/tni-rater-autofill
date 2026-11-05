@@ -587,7 +587,7 @@ test('AmWINS: an excluded driver\'s license number ends in "(Excluded)"; with no
 test('owner drives and the owner\'s exclusion agree on every carrier, whatever the box and the row\'s Excluded driver say', () => {
   for (const box of [true, false, null]) {
     for (const excluded of [true, false, null]) {
-      const r = with_({ 'applicant.ownerDrives': box, 'drivers.0.excluded': excluded });
+      const r = with_({ 'applicant.ownerDrives': box, 'applicant.ownerDrivesAnswered': true, 'drivers.0.excluded': excluded });
       const why = `box ${box}, row excluded ${excluded}`;
       const drives = excluded === true ? false : excluded === false ? true : box !== false;
       const prog = buildPlan(r, progressive, { drivers: 0 });

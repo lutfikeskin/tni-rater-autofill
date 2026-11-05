@@ -167,6 +167,12 @@ function renderWarnings() {
 async function toggleDone(i, isDone) {
   const w = state.intake.warnings[i];
   usage.log({ type: 'warning_checked', code: w.code, path: w.path, checked: isDone });
+  // Looks right on "Does the owner drive?" confirms the intake's No: the owner is quoted as excluded
+  // (W46-02: util.js ownerNoPending). Undo takes it back, unless the agent set Owner drives themselves.
+  if (w.code === 'drivers.owner-excluded' && state.intake.record.applicant) {
+    state.intake.record.applicant.ownerDrivesAnswered = isDone || !!state.intake.agentEdited?.includes('applicant.ownerDrives');
+    intakeEdited();
+  }
   const done = new Set(state.intake.done);
   if (isDone) done.add(i); else done.delete(i);
   state.intake.done = [...done];
@@ -270,6 +276,8 @@ async function agentEdit(path, after, kind) {
   set(state.intake.record, path, after);
   const edited = new Set(state.intake.agentEdited ?? []).add(path);
   state.intake.agentEdited = [...edited];
+  // The agent's own Owner drives answers "Does the owner drive?" (W46-02: util.js ownerNoPending).
+  if (path === 'applicant.ownerDrives' && state.intake.record.applicant) state.intake.record.applicant.ownerDrivesAnswered = true;
   // A value derived from this one (radius → miles, year established → years in business)
   // follows the edit, unless the agent set it here themselves; its row in the client details
   // shows the new value, shown as it fills in. One that empties stays until the drawer is said

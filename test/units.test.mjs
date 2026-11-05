@@ -69,7 +69,7 @@ test('a unit list is complete only on screen, with as many rows as the intake an
 // leaves the owner's row out. It is never the driver added next, and the list is complete without it.
 test('owner drives No: the owner\'s row is never added, and GEICO\'s driver list is complete without it', () => {
   const record = (ownerDrives, drivers = [{ first: 'Pat', last: 'Owner' }, { first: 'Casey', last: 'Example' }]) =>
-    ({ applicant: { ownerDrives, owner1: 'Pat Owner' }, vehicles: [], trailers: [], drivers });
+    ({ applicant: { ownerDrives, ownerDrivesAnswered: true, owner1: 'Pat Owner' }, vehicles: [], trailers: [], drivers });
   const list = (rows, shown) => ({ forms: [], lists: [null, { rows, shown }] });
   const no = record(false);
   // The list empty: Casey is added next, never the owner.
@@ -155,7 +155,7 @@ test('a unit the list doesn\'t have and no helper adds is named; one the plan ad
   // The picker not on driver 2 (no form read yet, so the list didn't move it): nothing adds them in
   // this fill. The note says to pick them, and never blames the owner question: with any driver row
   // GEICO's own are known (driversKnown), the box blank, Yes, No, or the owner under another name.
-  const notOwner = { ...record, applicant: { ownerDrives: false, owner1: 'Pat Owner' } };
+  const notOwner = { ...record, applicant: { ownerDrives: false, ownerDrivesAnswered: true, owner1: 'Pat Owner' } };
   const NOTE = 'Sam Second (driver 2 of the intake) isn\'t on GEICO\'s driver list: pick them in the panel and Fill again, or add them with "+" yourself.';
   for (const [why, r, s] of [['blank', blank, seen], ['Yes', yes, seen], ['unmatched', unmatched, seen], ['No', notOwner, { forms: [], lists: [null, { rows: 0, shown: [false, false] }] }]]) {
     const n = unitToAdd(geico, r, DRV, s);
@@ -183,7 +183,7 @@ test('the owner GEICO\'s quote leaves out is never named missing from its driver
   // The box's No (row unmarked); the row marked Excluded over a blank box or a Yes.
   for (const [box, mark] of [[false, null], [null, true], [true, true]]) {
     const why = `box ${box}, row ${mark ? 'marked' : 'unmarked'}`;
-    const r = { ...base, applicant: { ownerDrives: box, owner1: 'Pat Owner' }, drivers: [owner(mark), casey] };
+    const r = { ...base, applicant: { ownerDrives: box, ownerDrivesAnswered: true, owner1: 'Pat Owner' }, drivers: [owner(mark), casey] };
     assert.equal(geico.omittedDriver(r), 0, why);
     for (const rows of [0, 1, 2]) for (const shown of shows) for (const opts of [{}, { done: new Set(['driverEntered:1']) }, { unitForms: { drivers: { F: 1 } } }]) {
       const next = unitToAdd(geico, r, DRV, { forms: [], lists: [null, { rows, shown }] }, opts);
@@ -210,7 +210,7 @@ test('the owner GEICO\'s quote leaves out is never named missing from its driver
   // and the plan's noOtherDriver item ("needs you", pagekit.test.mjs) holds Looks Good.
   for (const [box, mark] of [[false, null], [null, true], [true, true]]) {
     const why = `only driver: box ${box}, row ${mark ? 'marked' : 'unmarked'}`;
-    const r = { ...base, applicant: { ownerDrives: box, owner1: 'Pat Owner' }, drivers: [owner(mark)] };
+    const r = { ...base, applicant: { ownerDrives: box, ownerDrivesAnswered: true, owner1: 'Pat Owner' }, drivers: [owner(mark)] };
     for (const [rows, shown] of [[0, [false]], [1, [true]], [1, [false]]]) {
       const next = unitToAdd(geico, r, DRV, { forms: [], lists: [null, { rows, shown }] });
       assert.equal(next.adding, null, `${why}, ${rows} rows`);
