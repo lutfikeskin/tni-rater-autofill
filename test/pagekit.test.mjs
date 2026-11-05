@@ -3040,6 +3040,98 @@ test('the business type popup with no list: Trucking typed in its own box, its o
   assert.equal(popupSearch._clicked, undefined);
 });
 
+// AZ live recording, 2026-11-05: Progressive's business type popup (no list until searched, as KY's;
+// COMMON TYPES' General Freight Trucking, q33, above the full list, q36, as OH's), with its own
+// Continue. `root` gets it; the returned parts say what was typed, pressed and picked.
+function becaPopup(root, { onContinue = null } = {}) {
+  const popup = new FakeNode('div', { className: 'downLayout pageStyle-1 becaPopupPage', textContent: 'What does the business do?' });
+  const box = makeInput({ id: `f_b${'B'.repeat(32)}1D_1_1`, name: 'string_1D|', ariaLabel: 'Business Type', attrs: { fieldref: 'BECAInput.BusinessTypeTextBox' } });
+  const search = new FakeNode('button', { textContent: 'Search' });
+  const cont = new FakeNode('button', { textContent: 'Continue' });
+  const common = [];
+  const all = [];
+  search.onclick = () => {
+    search._clicked = (search._clicked ?? 0) + 1;
+    if (box.value !== 'Trucking' || all.length) return;
+    common.push(makeInput({ id: `f_b${'B'.repeat(32)}33_1_1_0`, name: 'string_33', type: 'radio', value: 'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).', attrs: { fieldref: 'BECAInputNonShredded.BusinessLabelForGeneralFreight' } }));
+    for (const value of ['Auto Haulers Haul autos for a fee.', 'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).']) {
+      all.push(makeInput({ id: all.length ? `bt-${all.length}` : `f_b${'B'.repeat(32)}36_1_1_0`, name: 'string_36', type: 'radio', value, attrs: { fieldref: 'BECAInput.BusinessTypeLabel' } }));
+    }
+    cont.remove();
+    popup.append(radioGroup('COMMON TYPES', ...common), radioGroup('Business Type Label', ...all), cont);
+  };
+  cont.onclick = () => { cont._clicked = (cont._clicked ?? 0) + 1; cont._visible = false; onContinue?.(); };
+  popup.append(box, search, cont);
+  root.append(popup);
+  return { box, search, cont, picked: () => ({ common: common.find((r) => r.checked)?.value ?? null, all: all.find((r) => r.checked)?.value ?? null }) };
+}
+
+// AZ live recording, 2026-11-05: the popup is a frame of its own, which showed Business Owner Info's
+// address as the fill began there and the popup's a moment later. That frame's fill found its page
+// gone and stopped; nothing filled the popup, and the agent typed, searched and pressed its
+// Continue. Now the frame's fill begins again on the popup, and its Search and Continue are pressed
+// in the frame.
+test('AZ: the business type popup in a frame of its own is searched, picked and continued there', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  for (const lateAddress of [true, false]) {
+    const h = harness({ progressive: true, search: `?pageName=${lateAddress ? 'BusinessOwnerInfo' : 'BECAPopup'}` });
+    h.context.top = { location: { origin: 'https://synthetic.example', pathname: '/rater', search: '?pageName=BECAPopup', hash: '' } };
+    let popup = null;
+    const open = () => { h.context.location.search = '?pageName=BECAPopup'; popup = becaPopup(h.document.body); };
+    if (lateAddress) h.context.setTimeout(open, 150);
+    else open();
+    const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 10, expectPage: 'BECAPopup' });
+    assert.ok(popup, 'the popup was drawn');
+    assert.equal(popup.box.value, 'Trucking', `lateAddress=${lateAddress}: the frame's fill typed the search word`);
+    assert.equal(popup.search._clicked, 1, 'the popup\'s Search pressed in its frame');
+    assert.match(popup.picked().all ?? '', /^General Freight Trucking/);
+    assert.match(popup.picked().common ?? '', /^General Freight Trucking/, 'COMMON TYPES gets the same pick');
+    assert.equal(popup.cont._clicked, 1, 'the popup\'s Continue pressed in its frame, once');
+    assert.ok(report.actions.some((a) => a.id === 'businessTypePopupContinue'));
+    assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+  }
+});
+
+// Only a frame that turned into the top's own page begins again: one that turned into another page
+// stops as before (its page is gone, and that page gets a fill of its own).
+test('a frame that turns into another page than the top\'s does not begin again', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
+  h.context.top = { location: { origin: 'https://synthetic.example', pathname: '/rater', search: '?pageName=VehicleSummary', hash: '' } };
+  let popup = null;
+  h.context.setTimeout(() => { h.context.location.search = '?pageName=BECAPopup'; popup = becaPopup(h.document.body); }, 150);
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 10 });
+  assert.equal(popup.box.value, '');
+  assert.equal(report.navigatedTo, 'BECAPopup');
+});
+
+// The popup's Continue is pressed only once the fill picked the business type: never for a class the
+// fill leaves to the agent, and never while the pick is still open.
+test('the business type popup\'s Continue waits for the fill\'s pick, and never for another class', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Landscaping' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const h = harness({ progressive: true, search: '?pageName=BECAPopup' });
+  const popup = becaPopup(h.document.body);
+  await h.kit.fill(buildPlan(record, progressive), { maxRounds: 4 });
+  assert.equal(popup.box.value, '');
+  assert.equal(popup.search._clicked, undefined);
+  assert.equal(popup.cont._clicked, undefined, 'the business type is the agent\'s, and so is the popup\'s Continue');
+});
+
+// The popup drawn in the page itself (KY): the page's "Ok, start quote." behind it is never pressed
+// as the page's Continue (AZ live recording, 2026-11-05: pressed there to no effect, once per fill),
+// and the popup's own Continue is the helper's once the pick is in.
+test('with the business type popup open, the page\'s Continue behind it is never pressed', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const h = harness({ progressive: true, search: '?pageName=BECAPopup' });
+  const start = addButton(h, 'Ok, start quote.');
+  start.onclick = () => { start._clicked = (start._clicked ?? 0) + 1; };
+  const popup = becaPopup(h.document.body);
+  await h.kit.fill(buildPlan(record, progressive), { maxRounds: 10, advance: progressive.advance });
+  assert.equal(start._clicked, undefined, 'the page\'s Continue behind the popup');
+  assert.match(popup.picked().all ?? '', /^General Freight Trucking/);
+  assert.equal(popup.cont._clicked, 1);
+});
+
 // LA live run, 2026-10-28: New Customer's business description (q93) is a list of some 1,200
 // business names; the agent typed a word and picked from the narrowed list. Now the fill searches
 // for "Trucking" and picks General Freight Trucking, else For Hire Trucking, among the results only.

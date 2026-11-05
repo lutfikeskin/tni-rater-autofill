@@ -561,7 +561,13 @@ export const progressive = {
     // KY's popup opens with no result list (TNI, 2026-10-28): "Trucking" is typed into its own
     // Business Type box (q1D), then its own Search pressed, never the page's behind it. Done once the
     // list shows. IN and OH show the list at once: the box isn't typed, so this waits for the pick.
-    { id: 'businessTypePopupSearch', tni: 'progressive.business-type-search', page: 'BECAPopup', text: '^search$', within: BECA_POPUP, after: ['progressive.q1D'], unless: ['progressive.q36'], immediate: true, verify: 'revealed', label: 'Business type: Search', when: searchClass },
+    // AZ draws the popup in a frame of its own (live recording, 2026-11-05): pressed there (`inFrame`).
+    { id: 'businessTypePopupSearch', tni: 'progressive.business-type-search', page: 'BECAPopup', text: '^search$', within: BECA_POPUP, after: ['progressive.q1D'], unless: ['progressive.q36'], immediate: true, verify: 'revealed', label: 'Business type: Search', when: searchClass, inFrame: true },
+    // The popup's own Continue, once the fill picked the business type and left nothing in the popup
+    // for the agent: it closes the popup (no step's move: `moveOn` within it), and the page behind
+    // takes its Continue on a fill of its own. AZ live recording, 2026-11-05: the agent pressed it in
+    // the popup's frame, while the fill pressed the page's "Ok, start quote." behind the popup to no effect.
+    { id: 'businessTypePopupContinue', page: 'BECAPopup', text: '^continue$', within: BECA_POPUP, moveOn: true, afterAny: ['progressive.q36', 'progressive.q33'], whenClear: true, verify: 'gone', label: 'Business type: Continue', when: searchClass, inFrame: true },
     // Two tiles matching (two reefer tiles) means it's the agent's pick.
     // A page of tiles: picked even where the page shows no field (onBlankPage; the MD layout has none).
     { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, onBlankPage: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
@@ -726,8 +732,10 @@ export const progressive = {
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is
   // clicked. Never on the finish/buy pages.
   // Never on NoHit either: the agent adjusts the owner's details there (agentPages), nor on the
-  // Print page, whose next step is the agent's Print/Send.
-  advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFax', 'PrintEmailFaxConfirm', 'NoHit'] },
+  // Print page, whose next step is the agent's Print/Send. Nor while the business type popup is open
+  // (BECAPopup): the page's Continue is behind it, and the popup's own is a helper's
+  // (businessTypePopupContinue).
+  advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFax', 'PrintEmailFaxConfirm', 'NoHit', 'BECAPopup'] },
   rules: [
     ...SAFE_LABEL_RULES,
     // --- Named Insured and Business Overview (pageName=BusinessOwnerInfo) ---------------------
@@ -785,6 +793,10 @@ export const progressive = {
       { q: '1D', page: 'BECAPopup', selector: BECA_POPUP_BOX, whenShown: BECA_RESULTS, name: 'Business type search box (left alone: the list shows)', ignore: true },
       { q: '24D', ask: 'Business Type', control: 'text', each: true, name: 'Business type box (filled by the search)', ignore: true },
       { q: '1D', ask: 'Business Type', control: 'text', each: true, name: 'Business type search box', ignore: true },
+      // Above the full list, OH and AZ show General Freight Trucking alone under COMMON TYPES (q33):
+      // the same pick, where the fill picks it (AZ live recording, 2026-11-05: the agent picked it
+      // after the fill's pick in the full list, and Progressive took both).
+      { q: '33', tni: 'progressive.business-type-search', source: 'standard', field: 'BECAInputNonShredded.BusinessLabelForGeneralFreight', name: 'Business type (common types: General Freight Trucking)', kind: 'choice', value: searchBusinessType, matchStart: true, ignore: (r) => !searchClass(r) },
       { q: '36', tni: 'progressive.business-type-search', source: searchBusinessSource, ask: 'Business Type Label', name: 'Business type (search list: General Freight Trucking, else For Hire Trucking)', kind: 'choice', value: searchBusinessType, choiceAliases: () => ['For Hire Trucking'], matchStart: true, note: searchBusinessNote, unofferedNote: SEARCH_UNOFFERED },
       // LA's New Customer business description (q93, a list of 1,200 business names; TNI,
       // 2026-10-28): "Trucking" is searched for, then the same pick among its results (General

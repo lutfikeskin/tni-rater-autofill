@@ -245,6 +245,7 @@
  * @property {boolean} [loads]
  * @property {boolean} [unique]
  * @property {boolean} [immediate]
+ * @property {boolean} [inFrame]  clicked in whichever frame shows it (helpers are otherwise the top frame's): a popup drawn in a frame of its own
  * @property {boolean} [skipIfProtected]
  * @property {boolean} [waitRequired]
  * @property {boolean} [whenClear]  only once nothing on the page is left for the agent
@@ -484,6 +485,7 @@
  * @property {string | null} opener
  * @property {string | null} nudge
  * @property {boolean} immediate
+ * @property {boolean} inFrame
  * @property {boolean} skipIfProtected
  * @property {string[]} after
  * @property {string[]} afterAny
@@ -546,6 +548,7 @@
  *   a form that names its unit (carrier `unitNames`): each intake unit's name words, and the plan's unit
  * @property {{ [key: string]: any }} [givenBefore]
  * @property {UnitPager | null} [pager]  the carrier's `unitPager`
+ * @property {boolean} [restarted]  the kit's own: a frame's fill begun again on the page it turned into (pagekit fill)
  * @property {boolean} [trace]  a developer recording runs on the tab: the kit says what it waits
  *   for, answers and presses as `rater-trace` events (pagekit `kitTrace`, docs/developer-recording.md)
  */

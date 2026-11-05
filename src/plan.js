@@ -117,6 +117,9 @@ function actionSteps(carrier, record, active) {
       opener: a.opener ?? null,
       nudge: a.nudge ?? null,
       immediate: !!a.immediate,
+      // Clicked in whichever frame of the page shows it, not only the top one (Progressive's
+      // business type popup, which Arizona draws in a frame of its own).
+      inFrame: !!a.inFrame,
       // A helper that answers many questions at once: not clicked while an answer the agent gave
       // is on the page (it would reset it).
       skipIfProtected: !!a.skipIfProtected,
