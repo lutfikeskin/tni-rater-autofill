@@ -1272,7 +1272,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       const mo = new MutationObserver(() => { dirty = true; });
       mo.observe(document.body, { subtree: true, childList: true });
       try {
-        for (let tick = 0; Date.now() < until; tick++) {
+        // Stopped meanwhile (the agent's Stop, or an edit): the wait ends there, and the fill with it
+        // (CodeRabbit review of #290: otherwise it held the panel up to `loadResultMs`).
+        for (let tick = 0; Date.now() < until && !state.report.halted; tick++) {
           if ((dirty || tick % 5 === 0) && (opens ? currentPage() === opens : revealedNow(state.pendingAction))) break;
           dirty = false;
           await sleep(200);
@@ -1280,6 +1282,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       } finally {
         mo.disconnect();
       }
+      if (state.report.halted) { traceEnd(state.pendingAction); break; }
       if (!await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'load' })) { halt(LOAD_HALT); break; }
     }
     // One that rates the quote on a page that isn't ExtJS (GEICO's Recalculate) shows nothing

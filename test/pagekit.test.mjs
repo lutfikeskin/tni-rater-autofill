@@ -8670,6 +8670,23 @@ test('the business type Search waits for its popup, and Continue is never presse
   assert.equal(start._clicked, undefined, 'the page\'s Continue never pressed while the popup loads');
   assert.equal(report.navigatedTo, 'BECAPopup', 'the fill ends on the popup, which gets a fill of its own');
   assert.ok(report.actions.some((a) => a.id === 'businessTypeSearch'));
+
+  // CodeRabbit review of #290: stopped while the popup loads, the fill ends then, not when the wait
+  // for the popup would have run out (`loadResultMs`, 20 s).
+  const late = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
+  const lateRow = new FakeNode('div', { textContent: 'Business Type' });
+  const lateSearch = new FakeNode('button', { textContent: 'Search' });
+  lateSearch.onclick = () => { lateSearch._clicked = true; late.context.setTimeout(() => late.kit.stop(), 1000); };
+  lateRow.append(makeInput({ id: `f_b${'B'.repeat(32)}284_1_1`, name: 'string_284|', ariaLabel: 'Business Type', attrs: { fieldref: 'BECAInput.BusinessTypeTextBox' } }), lateSearch);
+  late.document.body.append(lateRow);
+  const lateStart = addButton(late, 'Ok, start quote.');
+  lateStart.onclick = () => { lateStart._clicked = true; };
+  const began = late.context.Date.now();
+  const stopped = await late.kit.fill(buildPlan(record, progressive), { maxRounds: 10, advance: progressive.advance });
+  assert.equal(lateSearch._clicked, true);
+  assert.equal(stopped.halted, true);
+  assert.ok(late.context.Date.now() - began < 5000, `ended ${late.context.Date.now() - began} ms in, with the stop`);
+  assert.equal(lateStart._clicked, undefined);
 });
 
 // W44-03, Progressive Business Owner Info in KY and OH (2026-10-26, 0.9.25 code): the arrival fill
