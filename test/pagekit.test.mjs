@@ -3085,7 +3085,7 @@ test('AZ: the business type popup in a frame of its own is searched, picked and 
     assert.equal(popup.box.value, 'Trucking', `lateAddress=${lateAddress}: the frame's fill typed the search word`);
     assert.equal(popup.search._clicked, 1, 'the popup\'s Search pressed in its frame');
     assert.match(popup.picked().all ?? '', /^General Freight Trucking/);
-    assert.match(popup.picked().common ?? '', /^General Freight Trucking/, 'COMMON TYPES gets the same pick');
+    assert.equal(popup.picked().common, null, 'COMMON TYPES left alone: the pick is the full list\'s');
     assert.equal(popup.cont._clicked, 1, 'the popup\'s Continue pressed in its frame, once');
     assert.ok(report.actions.some((a) => a.id === 'businessTypePopupContinue'));
     assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
@@ -3120,6 +3120,24 @@ test('a frame\'s fill begun again keeps the page the panel asked for', async () 
   assert.equal(popup.box.value, '');
   assert.equal(popup.search._clicked, undefined);
   assert.equal(popup.cont._clicked, undefined);
+});
+
+// CodeRabbit review of #288: the agent's own business in the full list is theirs, and no fill sets
+// General Freight Trucking under COMMON TYPES beside it.
+test('the agent\'s business type in the popup\'s list stays, and COMMON TYPES isn\'t picked beside it', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const h = harness({ progressive: true, search: '?pageName=BECAPopup' });
+  const popup = becaPopup(h.document.body);
+  popup.box.value = 'Trucking';
+  popup.search.onclick();
+  const agents = h.document.body.querySelectorAll?.('input[name="string_36"]') ?? [];
+  const auto = [...agents].find((r) => /^Auto Haulers/.test(r.value)) ?? null;
+  assert.ok(auto, 'the list is drawn');
+  auto.checked = true;
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 6, skip: ['ref:BECAInput.BusinessTypeLabel'] });
+  assert.match(popup.picked().all ?? '', /^Auto Haulers/, 'the agent\'s pick');
+  assert.equal(popup.picked().common, null, 'nothing beside it');
+  assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
 });
 
 // The popup's Continue is pressed only once the fill picked the business type: never for a class the
