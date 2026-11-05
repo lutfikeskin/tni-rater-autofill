@@ -357,9 +357,14 @@ export function ownerDrivesAnswered(intake, { edit, check }) {
   if (!applicant) return false;
   const item = (intake.warnings ?? []).findIndex((w) => w.code === 'drivers.owner-excluded');
   const before = applicant.ownerDrivesAnswered === true;
-  if (edit === 'applicant.ownerDrives') {
+  if (edit === 'applicant.ownerDrives' && typeof applicant.ownerDrives === 'boolean') {
     applicant.ownerDrivesAnswered = true;
     if (item >= 0 && !(intake.done ?? []).includes(item)) intake.done = [...(intake.done ?? []), item];
+  } else if (edit === 'applicant.ownerDrives') {
+    // The box cleared: no answer to the intake's No (blank is not No). The check stays, or is again,
+    // open for the agent (the review of PR #292).
+    applicant.ownerDrivesAnswered = false;
+    if (item >= 0) intake.done = (intake.done ?? []).filter((i) => i !== item);
   } else if (check && check.i === item && item >= 0) {
     applicant.ownerDrivesAnswered = check.done || !!intake.agentEdited?.includes('applicant.ownerDrives');
   } else return false;

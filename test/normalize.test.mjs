@@ -1014,6 +1014,14 @@ test('the panel\'s answer to "Does the owner drive?": Looks right, Undo and the 
   edited.record.applicant.ownerDrives = true;
   ownerDrivesAnswered(edited, { edit: 'applicant.ownerDrives' });
   assert.deepEqual([edited.record.applicant.ownerDrivesAnswered, exclude(edited)], [true, false]);
+  // The box cleared (blank is not No): no answer, the check open again (the review of PR #292).
+  edited.record.applicant.ownerDrives = null;
+  ownerDrivesAnswered(edited, { edit: 'applicant.ownerDrives' });
+  assert.deepEqual([edited.record.applicant.ownerDrivesAnswered, edited.done.includes(at(edited))], [false, false]);
+  const cleared = load();
+  cleared.record.applicant.ownerDrives = null;
+  ownerDrivesAnswered(cleared, { edit: 'applicant.ownerDrives' });
+  assert.deepEqual([cleared.record.applicant.ownerDrivesAnswered, cleared.done], [false, []]);
   // Another field's edit changes nothing; an intake without the check marks nothing done.
   assert.equal(ownerDrivesAnswered(load(), { edit: 'applicant.phone' }), false);
   const yes = { ...normalizeIntake({ ...raw, owner_drives: 'Yes' }, today), done: [], agentEdited: [] };
