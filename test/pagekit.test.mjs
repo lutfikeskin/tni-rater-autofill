@@ -3105,6 +3105,23 @@ test('a frame that turns into another page than the top\'s does not begin again'
   assert.equal(report.navigatedTo, 'BECAPopup');
 });
 
+// A fill begun again is still the fill of the page the panel asked for (Claude review of #288): where
+// the top moved on too while the frame's fill waited, the fill begun again finds the top on another
+// page than `expectPage` and fills, marks and clicks nothing (`pageMoved`).
+test('a frame\'s fill begun again keeps the page the panel asked for', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
+  const top = { location: { origin: 'https://synthetic.example', pathname: '/rater', search: '?pageName=BusinessOwnerInfo', hash: '' } };
+  h.context.top = top;
+  let popup = null;
+  h.context.setTimeout(() => { top.location.search = '?pageName=BECAPopup'; h.context.location.search = '?pageName=BECAPopup'; popup = becaPopup(h.document.body); }, 150);
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 10, expectPage: 'BusinessOwnerInfo' });
+  assert.equal(report.pageMoved, 'BECAPopup');
+  assert.equal(popup.box.value, '');
+  assert.equal(popup.search._clicked, undefined);
+  assert.equal(popup.cont._clicked, undefined);
+});
+
 // The popup's Continue is pressed only once the fill picked the business type: never for a class the
 // fill leaves to the agent, and never while the pick is still open.
 test('the business type popup\'s Continue waits for the fill\'s pick, and never for another class', async () => {
