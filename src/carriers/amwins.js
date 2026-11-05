@@ -611,6 +611,10 @@ export const amwins = {
 
     // --- Vehicles --------------------------------------------------------------------------------
     { name: 'File upload (not used)', label: '^select files?', ignore: true },
+    // After Submit, "Thank you for the submission!" offers to copy it to another product (BOP/Package,
+    // GL only, Property, Workers' Comp): not a quote question, left as the page has it (W46-09: it
+    // was counted as unfamiliar in 11 quotes, 2026-11-03 – 11-05).
+    { selector: '#product-copy', name: 'Product to copy the submission to (after Submit; left as the page has it)', ignore: true },
     { selector: '#vehLookupVin', path: 'amwins.vinList', name: 'VINs to look up (one per line)', source: 'derived', value: (r) => r.vehicles.map((v) => v.vin).filter(Boolean).join('\n') || null },
     { selector: dataId('locationNumber', VEHICLE), tni: 'amwins.vehicle-location', name: 'Vehicle location (standard: the first, the insured)', kind: 'first-option', source: 'standard', value: () => 'first option' },
     // VIN, year, make, model come from Import Data (its wording wins). Each row below is found by
