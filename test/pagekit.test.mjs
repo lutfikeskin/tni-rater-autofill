@@ -4910,8 +4910,6 @@ test('a blank claims answer is TNI\'s standard No: the page\'s No is kept, not a
   assert.match(mentioned.noData[0].note, /speeding ticket/);
 });
 
-// Codex on c31942e: a fact the intake doesn't give reaches the report as the agent's (manualOnly),
-// so the AI assistant leaves it (ai/common.js collectItems).
 // W46-09: after Submit, AmWINS' "Thank you for the submission!" offers to copy the submission to
 // another product (`#product-copy`: BOP/Package, General Liability Only, Property Only, Workers'
 // Compensation). Not a quote question: it was counted as unfamiliar in 11 quotes. Left as it is.
@@ -4923,8 +4921,16 @@ test('AmWINS\' copy-to-another-product box after Submit is left as the page has 
   const report = await h.kit.fill(buildPlan(record, amwins), { maxRounds: 2 });
   assert.equal(product.value, 'BOP/Package');
   assert.deepEqual(plain([...report.unknown, ...report.filled, ...report.leftRequired].filter((x) => /product/i.test(`${x.label} ${x.key}`))), []);
+  // A nearby box the rule must not take: another "Product" select, under another id, is still
+  // reported as a question without a rule.
+  const other = harness({ adapter: 'amwins', pathname: '/application/businessauto' });
+  other.document.body.append(new SelectNode(['', 'Business Auto', 'Trucking'], { id: 'product-type', name: 'product-type', ariaLabel: 'Product', value: '' }));
+  const unknown = (await other.kit.fill(buildPlan(record, amwins), { maxRounds: 2 })).unknown;
+  assert.deepEqual(plain(unknown.map((x) => [x.label, x.key])), [['Product', 'product-type']]);
 });
 
+// Codex on c31942e: a fact the intake doesn't give reaches the report as the agent's (manualOnly),
+// so the AI assistant leaves it (ai/common.js collectItems).
 test('AmWINS review mode confirms differing retained standard choices before Continue', async () => {
   const run = async (businessClass) => {
     const h = harness({ pathname: '/application/businessauto' });
