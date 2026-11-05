@@ -324,6 +324,11 @@ test('a symptom with `when` counts only in quotes where its scenario ran (W46-08
   const both = [...period(), { id: 'n2s', t: '2026-10-14T12:01:00.000Z', session: 'new2', v: '0.9.10', carrier: 'progressive', type: 'agent_settings' }];
   const recurred = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), both, fixed);
   assert.deepEqual([recurred.status, recurred.patterns[0].quotes], ['recurred', 1]);
+  // The scenario ran before the period (the quote loaded before --since), the symptom in it: still
+  // that quote's (the review of PR #293: judgeItem's `history`).
+  const before = { id: 'n2s', t: '2026-10-13T12:00:00.000Z', session: 'new2', v: '0.9.10', carrier: 'progressive', type: 'agent_settings' };
+  const early = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), period(), fixed, new Set(), [before, ...period()]);
+  assert.deepEqual([early.status, early.patterns[0].quotes], ['recurred', 1]);
 });
 
 test('an expected event is verified when seen, recurs when missing from its scenario; free text is never judged', () => {
@@ -399,6 +404,19 @@ test('weekly numbers sit beside the ledger\'s, with a trend only from 10 quotes 
   assert.equal(few.enough, false);
   assert.ok(few.rows.filter((r) => r.before !== '—').every((r) => r.trend === 'too few quotes'));
   assert.equal(weeklyRows(kpis(6, { restrictedActions: 1 }), prev).rows.at(-1).trend, 'must be 0');
+});
+
+// W46-07 (PR #293): corrections count each answer once per quote. A ledger counted the old way
+// (every change event; its label doesn't say "once per") gets no trend against the new number.
+test("a ledger's corrections counted per change event get no trend against the per-answer count", () => {
+  const corrections = (label) => parseLedger(BODY.replace(/^(\| Quotes \(.*)$/m, `$1\n| ${label} | 14.6 (292) |`)).numbers;
+  const row = (w) => w.rows.find((r) => r.label.startsWith('Autofilled answers'));
+  const old = weeklyRows(kpis(37), corrections('Autofilled answers corrected, per 100 filled'), { createdAt: '2026-11-05T20:48:50Z' });
+  assert.equal(row(old).label, 'Autofilled answers corrected, per 100 filled (each answer once per quote)');
+  assert.equal(row(old).trend, 'definition changed');
+  assert.ok(old.redefined.some((x) => x.name === 'Autofilled answers corrected'));
+  const same = weeklyRows(kpis(37), corrections('Autofilled answers corrected, per 100 filled (each answer once per quote)'));
+  assert.equal(row(same).trend, 'down (better)');
 });
 
 // Post-merge review of #106 and #108: #108 made a printed Progressive quote done (2026-10-20), and

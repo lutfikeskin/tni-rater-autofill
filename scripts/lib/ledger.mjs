@@ -329,13 +329,15 @@ const sessionOf = (e) => e.session ?? e.install ?? e.id;
  * `containsOf(e)`: 'yes' | 'no' | 'unknown' for the event's build. A "verified" that rests only on
  * test runs (the maintainer's own quotes) says so: it is not an agent's quote showing the fix held.
  */
-export function judgePattern(p, events, containsOf, testSessions = new Set()) {
+// `history`: every event, also before the period, where a symptom's `when` may have run (a quote
+// that loaded its intake before --since and showed the symptom after; the review of PR #293).
+export function judgePattern(p, events, containsOf, testSessions = new Set(), history = events) {
   const hit = { yes: new Set(), no: new Set(), unknown: new Set() };
   const reached = new Set();
   const scenario = scenarioOf(p);
   // A symptom with `when` happens only in a quote where that scenario ran, on any build (W46-08:
   // W44-09's New Venture `when` the notes gave the years counted TNI's standard New Venture too).
-  const ran = p.kind === 'symptom' && p.when ? new Set(events.filter((e) => matches(p.when, e)).map(sessionOf)) : null;
+  const ran = p.kind === 'symptom' && p.when ? new Set(history.filter((e) => matches(p.when, e)).map(sessionOf)) : null;
   for (const e of events) {
     const c = containsOf(e);
     const s = sessionOf(e);
@@ -394,8 +396,9 @@ export function combine(statuses) {
  *   false, or null when the merge commit isn't in this clone) and `lookupErrors` (gh failures)
  * @param events  the period's events
  * @param contains  (event) => 'yes' | 'no' | 'unknown' for this item's fix
+ * @param history  every event, also before the period (judgePattern)
  */
-export function judgeItem(item, events, contains, testSessions = new Set()) {
+export function judgeItem(item, events, contains, testSessions = new Set(), history = events) {
   const lookup = (item.lookupErrors ?? []).join('; ');
   const base = { id: item.id, title: item.title, type: item.type, severity: item.severity, inComment: !!item.inComment, prs: item.prDetails ?? [], fix: item.fix ?? null, lookup };
   if (item.ticked) return { ...base, status: 'ticked', note: 'closed in the ledger' };
@@ -431,7 +434,7 @@ export function judgeItem(item, events, contains, testSessions = new Set()) {
     const named = sig.named.map((cl) => countNamed(cl, events, contains, testSessions));
     return { ...base, status: 'check by hand', note: named.length ? 'free-text signature; its named events, for information' : 'free-text signature', named, builds, fixedQuotes };
   }
-  const patterns = sig.patterns.map((p) => judgePattern(p, events, contains, testSessions));
+  const patterns = sig.patterns.map((p) => judgePattern(p, events, contains, testSessions, history));
   return { ...base, status: combine(patterns.map((p) => p.status)), patterns, builds, fixedQuotes };
 }
 
@@ -452,7 +455,10 @@ export const NUMBERS = [
     redefined: { name: 'Quotes done', at: '2026-10-20T08:08:38Z', current: /\bprinted\b/i, change: 'a printed Progressive quote (Print/Send or its PDF) counts as done since 2026-10-20' } },
   { label: 'Median minutes for a done quote', match: /^Median minutes/i, show: (k) => `${k.medianMinutesDone ?? '—'}`, n: (k) => k.medianMinutesDone, better: -1 },
   { label: 'Answers filled by the rules, per quote', match: /^Answers filled/i, show: (k) => `${k.filledPerQuote ?? '—'}`, n: (k) => k.filledPerQuote, better: 1 },
-  { label: 'Autofilled answers corrected, per 100 filled', match: /^Autofilled answers/i, show: (k) => `${k.correctedPer100Filled ?? '—'} (${k.corrected})`, n: (k) => k.correctedPer100Filled, better: -1 },
+  // Each answer once per quote since W46-07 (PR #293); until then every change event counted, so a
+  // ledger whose label doesn't say "once per" counted the old way.
+  { label: 'Autofilled answers corrected, per 100 filled (each answer once per quote)', match: /^Autofilled answers/i, show: (k) => `${k.correctedPer100Filled ?? '—'} (${k.corrected})`, n: (k) => k.correctedPer100Filled, better: -1,
+    redefined: { name: 'Autofilled answers corrected', at: '2026-11-05T22:30:00Z', current: /\bonce per\b/i, change: 'each corrected answer counts once per quote since 2026-11-05 (W46-07); before, every change event counted' } },
   { label: `Left to the agent per quote (${LEFT.join(' / ')})`, match: /^Left to the agent/i, show: (k) => LEFT.map((r) => k.leftPerQuote?.[r] ?? 0).join(' / '), n: (k) => LEFT.reduce((a, r) => a + (k.leftPerQuote?.[r] ?? 0), 0), pick: 'sum', better: -1 },
   { label: 'Problem reports per 10 quotes', match: /^Problem reports/i, show: (k) => `${k.problemReportsPer10Quotes ?? '—'}${k.problemReportsInTestRuns ? ` (plus ${k.problemReportsInTestRuns} in test runs)` : ''}`, n: (k) => k.problemReportsPer10Quotes, better: -1 },
   { label: 'AI requests · error rate', match: /^AI requests/i, show: (k) => `${k.aiRequests} · ${k.aiErrorPercent ?? '—'}%`, n: (k) => k.aiErrorPercent, pick: 1, better: -1 },
