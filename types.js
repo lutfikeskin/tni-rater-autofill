@@ -257,8 +257,9 @@
 
 /**
  * How a click is known to have worked (pagekit fill): its result shows the premium, reveals more,
- * starts a download, the button goes, a coverage closes, or `appears` matches more than before.
- * @typedef {'premium' | 'revealed' | 'download' | 'gone' | 'cargoClosed' | 'glClosed' | 'interchangeClosed' | { appears: string }} ActionVerify
+ * starts a download, the button goes, a coverage closes, `appears` matches more than before, or the
+ * page is now `page` (a click that opens another page; with `loads`, waited for).
+ * @typedef {'premium' | 'revealed' | 'download' | 'gone' | 'cargoClosed' | 'glClosed' | 'interchangeClosed' | { appears: string } | { page: string }} ActionVerify
  */
 
 /**
