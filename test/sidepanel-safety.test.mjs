@@ -6253,6 +6253,7 @@ test('Luna checks driver first names once per intake, never with the assistant o
 test('Luna\'s GL and driver-gender check cards set the record as the agent\'s edit, or dismiss', async () => {
   const { get, set } = await import('../src/util.js');
   const { rederive } = await import('../src/normalize.js');
+  const { ownerDrivesAnswered } = await import('../src/util.js');
   const { GL_CHOICES, genderChoices } = await import('../src/ai/luna.js');
   const nodes = {};
   const $ = (id) => (nodes[id] ??= { id, hidden: false, textContent: '', replaceChildren(...kids) { this.kids = kids; }, focus() {} });
@@ -6265,7 +6266,7 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   ] };
   const calls = [];
   const sandbox = {
-    state: { intake, view: 'check' }, $, get, set, rederive, fieldInfo: (p) => ({ label: p }), sourcePlace: () => null, pdfPageSaid: () => '',
+    state: { intake, view: 'check' }, $, get, set, rederive, ownerDrivesAnswered, fieldInfo: (p) => ({ label: p }), sourcePlace: () => null, pdfPageSaid: () => '',
     document: { getElementById: () => null, querySelector: () => null },
     renderSteps() {}, renderSections: () => calls.push(['renderSections', get(record, 'drivers[0].gender') ?? null]), jumpTo() {}, openPdf() {},
     intakeEdited: () => calls.push(['intakeEdited']), usage: { log: (e) => calls.push(['log', e.type, e.path, e.code ?? null]) },

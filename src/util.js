@@ -342,6 +342,30 @@ export function ownerDrivesSaid(r) {
 // marks either on the record (`applicant.ownerDrivesAnswered`, record.js), and the No then excludes
 // the owner as before. An owner's row the intake marks "Excluded" is excluded as before, and one the
 // agent sets not excluded is a driver (above); with no driver rows nothing changes.
+// The panel's answer to "Does the owner drive?" (sidepanel/panel/record.js), on the loaded intake
+// (`{ record, warnings, done, agentEdited }`), after either:
+// - `edit`: the agent's edit of a field. Owner drives (Yes or No) answers it: the owner's answer is
+//   theirs, and the check is marked done (the review of PR #292: its card said "Until you answer"
+//   under the agent's answer).
+// - `check`: Looks right (`done` true) or Undo (false) on the warning at index `i`. Looks right on
+//   `drivers.owner-excluded` confirms the intake's No; Undo takes it back, unless the agent set Owner
+//   drives themselves.
+// Changes `intake` in place; true when the owner's answer changed (a quote's plans follow it).
+/** @param {any} intake @param {{ edit?: string, check?: { i: number, done: boolean } }} what @returns {boolean} */
+export function ownerDrivesAnswered(intake, { edit, check }) {
+  const applicant = intake?.record?.applicant;
+  if (!applicant) return false;
+  const item = (intake.warnings ?? []).findIndex((w) => w.code === 'drivers.owner-excluded');
+  const before = applicant.ownerDrivesAnswered === true;
+  if (edit === 'applicant.ownerDrives') {
+    applicant.ownerDrivesAnswered = true;
+    if (item >= 0 && !(intake.done ?? []).includes(item)) intake.done = [...(intake.done ?? []), item];
+  } else if (check && check.i === item && item >= 0) {
+    applicant.ownerDrivesAnswered = check.done || !!intake.agentEdited?.includes('applicant.ownerDrives');
+  } else return false;
+  return applicant.ownerDrivesAnswered !== before;
+}
+
 /** @param {any} r @returns {boolean} */
 export function ownerNoPending(r) {
   const row = ownerRow(r);
