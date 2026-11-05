@@ -329,6 +329,17 @@ test('a symptom with `when` counts only in quotes where its scenario ran (W46-08
   const before = { id: 'n2s', t: '2026-10-13T12:00:00.000Z', session: 'new2', v: '0.9.10', carrier: 'progressive', type: 'agent_settings' };
   const early = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), period(), fixed, new Set(), [before, ...period()]);
   assert.deepEqual([early.status, early.patterns[0].quotes], ['recurred', 1]);
+  // The scenario ran before the period on a fixed build, and the quote went on in the period on one
+  // without the symptom: reached, verified (the review of PR #293). Not by an install's events
+  // without a session, nor by a quote the period never saw on a fixed build.
+  const at = (t, x) => ({ id: `${x.session ?? 'none'}-${t}`, t, v: '0.9.10', carrier: 'progressive', ...x });
+  const later = [at('2026-10-14T12:00:00.000Z', { session: 'q3', type: 'fill_field', page: 'AddDriver', result: 'filled' })];
+  const ranBefore = [at('2026-10-13T12:00:00.000Z', { session: 'q3', type: 'agent_settings' }), at('2026-10-13T12:00:01.000Z', { install: 'i1', type: 'agent_settings' }),
+    at('2026-10-13T12:00:02.000Z', { session: 'q4', type: 'agent_settings' })];
+  const held = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), later, fixed, new Set(), [...ranBefore, ...later]);
+  assert.deepEqual([held.status, held.patterns[0].reached], ['verified', 1]);
+  const unseen = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), later, fixed, new Set(), ranBefore.slice(1).concat(later));
+  assert.deepEqual([unseen.status, unseen.patterns[0].reached], ['not exercised', 0]);
 });
 
 test('an expected event is verified when seen, recurs when missing from its scenario; free text is never judged', () => {
@@ -415,6 +426,10 @@ test("a ledger's corrections counted per change event get no trend against the p
   assert.equal(row(old).label, 'Autofilled answers corrected, per 100 filled (each answer once per quote)');
   assert.equal(row(old).trend, 'definition changed');
   assert.ok(old.redefined.some((x) => x.name === 'Autofilled answers corrected'));
+  // The label changed with the count, so the old label is the old count whenever the ledger was
+  // opened: one opened later from a build without #293 counted events too (the review of PR #293).
+  const later = weeklyRows(kpis(37), corrections('Autofilled answers corrected, per 100 filled'), { createdAt: '2026-11-20T09:00:00Z' });
+  assert.equal(row(later).trend, 'definition changed');
   const same = weeklyRows(kpis(37), corrections('Autofilled answers corrected, per 100 filled (each answer once per quote)'));
   assert.equal(row(same).trend, 'down (better)');
 });
