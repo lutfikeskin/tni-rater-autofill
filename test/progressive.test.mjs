@@ -472,17 +472,46 @@ test('search-style business type: General Freight Trucking, else For Hire Trucki
     const search = plan.find((s) => s.action === 'businessTypePopupSearch');
     assert.deepEqual([search.within, search.after, search.unless, search.verify], ['.becaPopupPage', ['progressive.q1D'], ['progressive.q36'], 'revealed']);
   }
+  // Another class: LA's business description stays the agent's; the popup is searched all the same,
+  // and its list is Luna's to suggest from (never a fact only the agent knows).
   const other = baseRecord();
-  other.operations.businessClass = 'Landscaping';
+  other.operations.businessClass = 'Flat Bed/Step Deck';
+  other.operations.whatHaul = 'Rebar and steel pipe';
   const plan = buildPlan(other, progressive, {});
-  for (const q of ['36', '93']) {
-    const s = byQ(plan, q);
-    assert.deepEqual([s.value, s.source, s.manualOnly], [null, 'fact', true], q);
-    assert.match(s.note, /Business type for a Landscaping: pick it yourself/);
+  const la = byQ(plan, '93');
+  assert.deepEqual([la.value, la.source, la.manualOnly, la.search], [null, 'fact', true, null]);
+  const popup = byQ(plan, '36');
+  assert.deepEqual([popup.value, popup.source, popup.manualOnly, popup.choiceAliases, popup.unofferedNote], [null, 'derived', false, [], null]);
+  assert.match(popup.note, /Business type for a Flat Bed\/Step Deck hauling Rebar and steel pipe: no exact match\. Luna suggests/);
+  assert.equal(plan.find((s) => s.q === '1D' && s.selector).ignore, false, 'Trucking typed for every class');
+  assert.ok(plan.find((s) => s.action === 'businessTypePopupSearch'), 'and searched');
+  assert.equal(plan.find((s) => s.action === 'businessTypePopupContinue'), undefined, 'the popup\'s Continue follows the agent\'s approval of Luna\'s pick');
+});
+
+// TNI, 2026-11-05: the popup's list names three intake classes outright. An auto hauler of scrap or
+// salvage isn't Progressive's Auto Haulers (which excludes it): Luna's, as any other class.
+test('the business type popup: Reefer, Auto Hauler and Household Goods Mover get their own business', () => {
+  const cases = [
+    ['Reefer', '', 'Refrigerated Goods Hauling'],
+    ['Auto Hauler', 'Used cars to auctions', 'Auto Haulers'],
+    ['Household Goods Mover', '', 'Household Movers'],
+    ['Auto Hauler', 'Salvage cars to the scrap yard', null],
+    ['Hotshot', '', null],
+    ['Dry Van', 'General freight', null],
+    ['', '', null],
+  ];
+  for (const [businessClass, whatHaul, want] of cases) {
+    const record = baseRecord();
+    Object.assign(record.operations, { businessClass, whatHaul });
+    const plan = buildPlan(record, progressive, {});
+    const s = byQ(plan, '36');
+    const where = `${businessClass || '(none)'} / ${whatHaul || '(none)'}`;
+    assert.equal(s.value, want, where);
+    assert.equal(s.source, 'derived', where);
+    assert.equal(s.manualOnly, false, `${where}: Luna may suggest`);
+    assert.equal(s.note == null, want != null, where);
+    assert.equal(!!plan.find((x) => x.action === 'businessTypePopupContinue'), want != null, `${where}: the popup's Continue only after the fill's own pick`);
   }
-  assert.equal(byQ(plan, '93').search, null);
-  assert.equal(plan.find((s) => s.q === '1D' && s.selector).ignore, true, 'never typed for another class');
-  assert.equal(plan.find((s) => s.action === 'businessTypePopupSearch'), undefined, 'never searched for another class');
 });
 
 test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () => {

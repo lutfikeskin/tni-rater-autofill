@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { buildPlan } from '../src/plan.js';
-import { collectItems } from '../src/ai/common.js';
+import { collectItems, evidenceFor } from '../src/ai/common.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
@@ -3027,17 +3027,18 @@ test('the business type popup with no list: Trucking typed in its own box, its o
     assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
     assert.equal(report.unknown.length, 0, JSON.stringify(report.unknown));
   }
-  // Another class: nothing typed or searched; the business type is the agent's.
+  // Another class (TNI, 2026-11-05): searched all the same, so the list is there for Luna's
+  // suggestion, and nothing in it picked by the fill.
   const h = harness({ progressive: true, search: '?pageName=BECAPopup' });
-  const popup = new FakeNode('div', { className: 'x-window becaPopupPage' });
-  const popupBox = makeInput({ id: 'popup-box', ariaLabel: 'Business Type', attrs: { fieldref: 'BECAInput.BusinessTypeTextBox' } });
-  const popupSearch = new FakeNode('button', { textContent: 'Search' });
-  popupSearch.onclick = () => { popupSearch._clicked = true; };
-  popup.append(popupBox, popupSearch);
-  h.document.body.append(popup);
-  await h.kit.fill(buildPlan({ ...record, operations: { businessClass: 'Landscaping' } }, progressive), { maxRounds: 3 });
-  assert.equal(popupBox.value, '');
-  assert.equal(popupSearch._clicked, undefined);
+  const other = becaPopup(h.document.body);
+  const report = await h.kit.fill(buildPlan({ ...record, operations: { businessClass: 'Flat Bed/Step Deck', whatHaul: 'Rebar' } }, progressive), { maxRounds: 6 });
+  assert.equal(other.box.value, 'Trucking');
+  assert.equal(other.search._clicked, 1);
+  assert.deepEqual(other.picked(), { common: null, all: null });
+  assert.equal(other.cont._clicked, undefined);
+  const left = report.noData.find((x) => x.path === 'progressive.q36');
+  assert.ok(left && !left.manualOnly, 'left for Luna\'s suggestion, never the agent\'s alone');
+  assert.match(left.note ?? '', /Luna suggests the closest business/);
 });
 
 // AZ live recording, 2026-11-05: Progressive's business type popup (no list until searched, as KY's;
@@ -3140,16 +3141,47 @@ test('the agent\'s business type in the popup\'s list stays, and COMMON TYPES is
   assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
 });
 
-// The popup's Continue is pressed only once the fill picked the business type: never for a class the
-// fill leaves to the agent, and never while the pick is still open.
-test('the business type popup\'s Continue waits for the fill\'s pick, and never for another class', async () => {
-  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Landscaping' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+// TNI, 2026-11-05: a class with no exact business goes to Luna, from the page's own list. The item the
+// fill leaves reaches Luna's request with the list's options (never blocked as the agent's alone), and
+// Luna's evidence holds the intake's business class, what they haul and the rule for the closest pick.
+test('a business type with no exact match reaches Luna with the list, the class and what they haul', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Flat Bed/Step Deck', whatHaul: 'Rebar and steel pipe' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
   const h = harness({ progressive: true, search: '?pageName=BECAPopup' });
-  const popup = becaPopup(h.document.body);
-  await h.kit.fill(buildPlan(record, progressive), { maxRounds: 4 });
-  assert.equal(popup.box.value, '');
-  assert.equal(popup.search._clicked, undefined);
-  assert.equal(popup.cont._clicked, undefined, 'the business type is the agent\'s, and so is the popup\'s Continue');
+  becaPopup(h.document.body);
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 6 });
+  const { items, blocked } = collectItems([report]);
+  const asked = items.find((x) => x.rulePath === null && /Business Type Label/.test(x.label));
+  assert.ok(asked, `the business type is Luna's to suggest: ${JSON.stringify(blocked.map((x) => [x.label, x.why]))}`);
+  assert.ok(asked.options.some((o) => /^General Freight Trucking/.test(o)) && asked.options.some((o) => /^Auto Haulers/.test(o)), 'from the page\'s own list');
+  const sources = Object.values(evidenceFor({ record, carrier: 'progressive', page: 'BECAPopup', active: {} }).sources);
+  assert.ok(sources.some((x) => x.path === 'operations.businessClass' && x.value === 'Flat Bed/Step Deck'));
+  assert.ok(sources.some((x) => x.path === 'operations.whatHaul' && x.value === 'Rebar and steel pipe'));
+  assert.ok(sources.some((x) => x.basis === 'tni_rule' && /best match the intake's business class and what they haul/.test(x.rule)));
+});
+
+// The popup's Continue is pressed only after a pick the fill made itself: a class the list names
+// outright (Auto Hauler: Auto Haulers, TNI 2026-11-05) gets the pick, and, being a class TNI's
+// standards weren't validated for, review mode: the search word is a check for the agent, which holds
+// the popup's Continue as it holds the page's. One left for Luna's suggestion never gets it, even
+// once a business is picked (Luna's, or the agent's): that pick is the agent's to approve and the
+// popup theirs to close.
+test('the business type popup\'s Continue follows the fill\'s own pick only', async () => {
+  const record = (businessClass) => ({ applicant: {}, garaging: {}, operations: { businessClass }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} });
+  const own = harness({ progressive: true, search: '?pageName=BECAPopup' });
+  const ownPopup = becaPopup(own.document.body);
+  const ownReport = await own.kit.fill(buildPlan(record('Auto Hauler'), progressive), { maxRounds: 10 });
+  assert.match(ownPopup.picked().all ?? '', /^Auto Haulers/);
+  assert.ok(ownReport.checks.some((x) => x.path === 'progressive.q1D'), 'review mode: the search word is the agent\'s to confirm');
+  assert.equal(ownPopup.cont._clicked, undefined, 'held by that check, as Continue is');
+  const left = harness({ progressive: true, search: '?pageName=BECAPopup' });
+  const leftPopup = becaPopup(left.document.body);
+  await left.kit.fill(buildPlan(record('Hotshot'), progressive), { maxRounds: 6 });
+  assert.equal(leftPopup.search._clicked, 1, 'searched, for the list Luna suggests from');
+  assert.equal(leftPopup.picked().all, null);
+  const picked = [...(left.document.body.querySelectorAll?.('input[name="string_36"]') ?? [])].find((r) => /^General Freight Trucking/.test(r.value));
+  picked.checked = true;
+  await left.kit.fill(buildPlan(record('Hotshot'), progressive), { maxRounds: 6, skip: ['ref:BECAInput.BusinessTypeLabel'] });
+  assert.equal(leftPopup.cont._clicked, undefined, 'a pick the fill didn\'t make: the popup is the agent\'s to close');
 });
 
 // The popup drawn in the page itself (KY): the page's "Ok, start quote." behind it is never pressed
