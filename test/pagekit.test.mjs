@@ -4912,6 +4912,19 @@ test('a blank claims answer is TNI\'s standard No: the page\'s No is kept, not a
 
 // Codex on c31942e: a fact the intake doesn't give reaches the report as the agent's (manualOnly),
 // so the AI assistant leaves it (ai/common.js collectItems).
+// W46-09: after Submit, AmWINS' "Thank you for the submission!" offers to copy the submission to
+// another product (`#product-copy`: BOP/Package, General Liability Only, Property Only, Workers'
+// Compensation). Not a quote question: it was counted as unfamiliar in 11 quotes. Left as it is.
+test('AmWINS\' copy-to-another-product box after Submit is left as the page has it, not unfamiliar (W46-09)', async () => {
+  const h = harness({ adapter: 'amwins', pathname: '/application/businessauto' });
+  const product = new SelectNode(['BOP/Package', 'General Liability Only', 'Property Only', 'Workers\' Compensation'], { id: 'product-copy', name: 'product-copy', ariaLabel: 'Product', value: 'BOP/Package' });
+  h.document.body.append(product);
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, amwins), { maxRounds: 2 });
+  assert.equal(product.value, 'BOP/Package');
+  assert.deepEqual(plain([...report.unknown, ...report.filled, ...report.leftRequired].filter((x) => /product/i.test(`${x.label} ${x.key}`))), []);
+});
+
 test('AmWINS review mode confirms differing retained standard choices before Continue', async () => {
   const run = async (businessClass) => {
     const h = harness({ pathname: '/application/businessauto' });
