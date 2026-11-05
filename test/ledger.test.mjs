@@ -312,6 +312,36 @@ test('a symptom on a fixed build recurs; its scenario without it is verified; ne
   assert.deepEqual([onTests.status, onTests.patterns[0].reachedTests, onTests.patterns[0].testOnly], ['verified (test runs only)', 2, true]);
 });
 
+// W46-08: a symptom with `when` happens only in a quote where that scenario ran. W44-09's symptom
+// (AmWINS New Venture `when` the notes gave the years) counted every New Venture, also TNI's
+// standard on intakes whose notes say nothing of the years, and read as recurred.
+test('a symptom with `when` counts only in quotes where its scenario ran (W46-08)', () => {
+  const sig = '`symptom fill_field page=AddDriver result=failed when agent_settings`';
+  // new2 failed but never logged agent_settings; new1 did, and its license filled.
+  const scoped = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), period(), fixed);
+  assert.deepEqual([scoped.status, scoped.patterns[0].quotes, scoped.patterns[0].reached], ['verified', 0, 1]);
+  // The failure in a quote that ran the scenario is a recurrence, as before.
+  const both = [...period(), { id: 'n2s', t: '2026-10-14T12:01:00.000Z', session: 'new2', v: '0.9.10', carrier: 'progressive', type: 'agent_settings' }];
+  const recurred = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), both, fixed);
+  assert.deepEqual([recurred.status, recurred.patterns[0].quotes], ['recurred', 1]);
+  // The scenario ran before the period (the quote loaded before --since), the symptom in it: still
+  // that quote's (the review of PR #293: judgeItem's `history`).
+  const before = { id: 'n2s', t: '2026-10-13T12:00:00.000Z', session: 'new2', v: '0.9.10', carrier: 'progressive', type: 'agent_settings' };
+  const early = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), period(), fixed, new Set(), [before, ...period()]);
+  assert.deepEqual([early.status, early.patterns[0].quotes], ['recurred', 1]);
+  // The scenario ran before the period on a fixed build, and the quote went on in the period on one
+  // without the symptom: reached, verified (the review of PR #293). Not by an install's events
+  // without a session, nor by a quote the period never saw on a fixed build.
+  const at = (t, x) => ({ id: `${x.session ?? 'none'}-${t}`, t, v: '0.9.10', carrier: 'progressive', ...x });
+  const later = [at('2026-10-14T12:00:00.000Z', { session: 'q3', type: 'fill_field', page: 'AddDriver', result: 'filled' })];
+  const ranBefore = [at('2026-10-13T12:00:00.000Z', { session: 'q3', type: 'agent_settings' }), at('2026-10-13T12:00:01.000Z', { install: 'i1', type: 'agent_settings' }),
+    at('2026-10-13T12:00:02.000Z', { session: 'q4', type: 'agent_settings' })];
+  const held = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), later, fixed, new Set(), [...ranBefore, ...later]);
+  assert.deepEqual([held.status, held.patterns[0].reached], ['verified', 1]);
+  const unseen = judgeItem(item(`- [ ] W44-09 · S2 · Fix · Years · approved · signature: ${sig}`), later, fixed, new Set(), ranBefore.slice(1).concat(later));
+  assert.deepEqual([unseen.status, unseen.patterns[0].reached], ['not exercised', 0]);
+});
+
 test('an expected event is verified when seen, recurs when missing from its scenario; free text is never judged', () => {
   const seen = judgeItem(item('- [ ] W42-07 · S3 · Fix · Source · approved · signature: `expect fill_field source=*`'), period(), fixed);
   assert.equal(seen.status, 'verified');
@@ -385,6 +415,23 @@ test('weekly numbers sit beside the ledger\'s, with a trend only from 10 quotes 
   assert.equal(few.enough, false);
   assert.ok(few.rows.filter((r) => r.before !== '—').every((r) => r.trend === 'too few quotes'));
   assert.equal(weeklyRows(kpis(6, { restrictedActions: 1 }), prev).rows.at(-1).trend, 'must be 0');
+});
+
+// W46-07 (PR #293): corrections count each answer once per quote. A ledger counted the old way
+// (every change event; its label doesn't say "once per") gets no trend against the new number.
+test("a ledger's corrections counted per change event get no trend against the per-answer count", () => {
+  const corrections = (label) => parseLedger(BODY.replace(/^(\| Quotes \(.*)$/m, `$1\n| ${label} | 14.6 (292) |`)).numbers;
+  const row = (w) => w.rows.find((r) => r.label.startsWith('Autofilled answers'));
+  const old = weeklyRows(kpis(37), corrections('Autofilled answers corrected, per 100 filled'), { createdAt: '2026-11-05T20:48:50Z' });
+  assert.equal(row(old).label, 'Autofilled answers corrected, per 100 filled (each answer once per quote)');
+  assert.equal(row(old).trend, 'definition changed');
+  assert.ok(old.redefined.some((x) => x.name === 'Autofilled answers corrected'));
+  // The label changed with the count, so the old label is the old count whenever the ledger was
+  // opened: one opened later from a build without #293 counted events too (the review of PR #293).
+  const later = weeklyRows(kpis(37), corrections('Autofilled answers corrected, per 100 filled'), { createdAt: '2026-11-20T09:00:00Z' });
+  assert.equal(row(later).trend, 'definition changed');
+  const same = weeklyRows(kpis(37), corrections('Autofilled answers corrected, per 100 filled (each answer once per quote)'));
+  assert.equal(row(same).trend, 'down (better)');
 });
 
 // Post-merge review of #106 and #108: #108 made a printed Progressive quote done (2026-10-20), and

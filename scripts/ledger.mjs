@@ -166,7 +166,7 @@ const contains = (item) => {
   containsOf.set(item.id, f);
   return f;
 };
-const items = ledger.items.map((item) => judgeItem(item, period, contains(item), testSessions));
+const items = ledger.items.map((item) => judgeItem(item, period, contains(item), testSessions, all));
 
 // The period's builds, with the merged fixes each carries.
 const quotes = quoteSessions(all);

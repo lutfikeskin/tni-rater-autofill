@@ -307,10 +307,13 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
 
   // The fixed weekly numbers (the brief tracks them week over week): per quote, so a quote filled
   // twenty times counts once.
-  const filledOnce = new Set(events.filter((e) => e.type === 'fill_field' && e.result === 'filled').map((e) => `${e.session}|${e.page}|${e.view ?? ''}|${e.key ?? e.q ?? ''}|${e.label ?? ''}`));
+  const answerOnce = (e) => `${e.session}|${e.page}|${e.view ?? ''}|${e.key ?? e.q ?? ''}|${e.label ?? ''}`;
+  const filledOnce = new Set(events.filter((e) => e.type === 'fill_field' && e.result === 'filled').map(answerOnce));
+  // Each autofilled answer the agent changed counts once per quote, as the filled ones do (W46-07:
+  // counting every change event, one answer changed three times was three).
   const agentChanges = events.filter((e) => e.type === 'field_change' && e.by === 'agent' && e.autofilled);
-  const corrected = agentChanges.filter((e) => e.vsAutofill === 'different' || e.vsAutofill === 'cleared').length;
-  const reformatted = agentChanges.filter((e) => e.vsAutofill === 'format').length;
+  const corrected = new Set(agentChanges.filter((e) => e.vsAutofill === 'different' || e.vsAutofill === 'cleared').map(answerOnce)).size;
+  const reformatted = new Set(agentChanges.filter((e) => e.vsAutofill === 'format').map(answerOnce)).size;
   const asks = events.filter((e) => e.type === 'ai_suggest');
   const per = (x, q) => (q ? Math.round((x / q) * 10) / 10 : null);
   const allDone = Object.values(outcomes).reduce((a, o) => a + o.done, 0);

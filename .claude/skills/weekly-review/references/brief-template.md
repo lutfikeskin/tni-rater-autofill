@@ -21,7 +21,7 @@ From the ledger report (`npm run ledger`): this period's numbers beside the prev
 | Quotes done (reached the carrier's final page or printed) | | | |
 | Median minutes for a done quote | | | |
 | Answers filled by the rules, per quote | | | |
-| Autofilled answers corrected, per 100 filled | | | |
+| Autofilled answers corrected, per 100 filled (each answer once per quote) | | | |
 | Left to the agent per quote (unfamiliar / leftRequired / noData / failed) | | | |
 | Problem reports per 10 quotes | | | |
 | AI requests · error rate (newest build) | | | |

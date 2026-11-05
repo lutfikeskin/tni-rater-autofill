@@ -329,15 +329,27 @@ const sessionOf = (e) => e.session ?? e.install ?? e.id;
  * `containsOf(e)`: 'yes' | 'no' | 'unknown' for the event's build. A "verified" that rests only on
  * test runs (the maintainer's own quotes) says so: it is not an agent's quote showing the fix held.
  */
-export function judgePattern(p, events, containsOf, testSessions = new Set()) {
+// `history`: every event, also before the period, where a symptom's `when` may have run (a quote
+// that loaded its intake before --since and showed the symptom after; the review of PR #293).
+export function judgePattern(p, events, containsOf, testSessions = new Set(), history = events) {
   const hit = { yes: new Set(), no: new Set(), unknown: new Set() };
   const reached = new Set();
   const scenario = scenarioOf(p);
+  // A symptom with `when` happens only in a quote where that scenario ran, on any build (W46-08:
+  // W44-09's New Venture `when` the notes gave the years counted TNI's standard New Venture too).
+  const ran = p.kind === 'symptom' && p.when ? new Set(history.filter((e) => matches(p.when, e)).map(sessionOf)) : null;
   for (const e of events) {
     const c = containsOf(e);
     const s = sessionOf(e);
-    if (matches(p, e)) hit[c].add(s);
+    if (matches(p, e) && (!ran || ran.has(s))) hit[c].add(s);
     if (c === 'yes' && scenario && matches(scenario, e)) reached.add(s);
+  }
+  // That scenario run before the period, on a build with the fix, in a quote the period saw on such a
+  // build, reached it too (the review of PR #293). By the quote's own session only: an install's
+  // events without one are many quotes.
+  if (ran) {
+    const period = new Set(events.filter((e) => e.session && containsOf(e) === 'yes').map((e) => e.session));
+    for (const e of history) if (e.session && period.has(e.session) && containsOf(e) === 'yes' && matches(scenario, e)) reached.add(e.session);
   }
   const fixed = hit.yes;
   const missing = p.kind === 'expect' && p.when ? [...reached].filter((s) => !fixed.has(s)).length : 0;
@@ -391,8 +403,9 @@ export function combine(statuses) {
  *   false, or null when the merge commit isn't in this clone) and `lookupErrors` (gh failures)
  * @param events  the period's events
  * @param contains  (event) => 'yes' | 'no' | 'unknown' for this item's fix
+ * @param history  every event, also before the period (judgePattern)
  */
-export function judgeItem(item, events, contains, testSessions = new Set()) {
+export function judgeItem(item, events, contains, testSessions = new Set(), history = events) {
   const lookup = (item.lookupErrors ?? []).join('; ');
   const base = { id: item.id, title: item.title, type: item.type, severity: item.severity, inComment: !!item.inComment, prs: item.prDetails ?? [], fix: item.fix ?? null, lookup };
   if (item.ticked) return { ...base, status: 'ticked', note: 'closed in the ledger' };
@@ -428,7 +441,7 @@ export function judgeItem(item, events, contains, testSessions = new Set()) {
     const named = sig.named.map((cl) => countNamed(cl, events, contains, testSessions));
     return { ...base, status: 'check by hand', note: named.length ? 'free-text signature; its named events, for information' : 'free-text signature', named, builds, fixedQuotes };
   }
-  const patterns = sig.patterns.map((p) => judgePattern(p, events, contains, testSessions));
+  const patterns = sig.patterns.map((p) => judgePattern(p, events, contains, testSessions, history));
   return { ...base, status: combine(patterns.map((p) => p.status)), patterns, builds, fixedQuotes };
 }
 
@@ -438,9 +451,10 @@ export const MIN_TREND_QUOTES = 10;
 const LEFT = ['unfamiliar', 'leftRequired', 'noData', 'failed'];
 // The numbers the brief tracks week over week, in the brief template's order; `better`: +1 higher
 // is better, -1 lower is, 0 neither; `pick`: which number of the ledger's cell (parentheses aside).
-// `redefined`: when the number's definition changed (`at`), how a ledger's label says it was counted
-// under the new one (`current`), and what changed; a ledger number counted under the old one gets no
-// trend (weeklyRows).
+// `redefined`: how a ledger's label says the number was counted under its new definition
+// (`current`), what changed, and `at`, when it changed, only for a row whose label lagged the count
+// (a ledger opened after `at` counted the new way under the old label); without `at` the label alone
+// decides. A ledger number counted under the old definition gets no trend (weeklyRows).
 export const NUMBERS = [
   { label: 'Quotes (any carrier · per carrier)', match: /^Quotes \(/i, show: (k) => `${k.quotes} · ${k.carrierQuotes}`, n: (k) => k.quotes, better: 0 },
   // A printed Progressive quote is done since PR #108 (signals.mjs FINAL, FINAL_CLICK; merged
@@ -449,7 +463,11 @@ export const NUMBERS = [
     redefined: { name: 'Quotes done', at: '2026-10-20T08:08:38Z', current: /\bprinted\b/i, change: 'a printed Progressive quote (Print/Send or its PDF) counts as done since 2026-10-20' } },
   { label: 'Median minutes for a done quote', match: /^Median minutes/i, show: (k) => `${k.medianMinutesDone ?? '—'}`, n: (k) => k.medianMinutesDone, better: -1 },
   { label: 'Answers filled by the rules, per quote', match: /^Answers filled/i, show: (k) => `${k.filledPerQuote ?? '—'}`, n: (k) => k.filledPerQuote, better: 1 },
-  { label: 'Autofilled answers corrected, per 100 filled', match: /^Autofilled answers/i, show: (k) => `${k.correctedPer100Filled ?? '—'} (${k.corrected})`, n: (k) => k.correctedPer100Filled, better: -1 },
+  // Each answer once per quote since W46-07 (PR #293); until then every change event counted. The label
+  // changed with the count in one commit, so a ledger whose label doesn't say "once per" counted the
+  // old way whenever it was opened (no `at`: a ledger from a build without #293 counts events).
+  { label: 'Autofilled answers corrected, per 100 filled (each answer once per quote)', match: /^Autofilled answers/i, show: (k) => `${k.correctedPer100Filled ?? '—'} (${k.corrected})`, n: (k) => k.correctedPer100Filled, better: -1,
+    redefined: { name: 'Autofilled answers corrected', current: /\bonce per\b/i, change: 'each corrected answer counts once per quote since 2026-11-05 (W46-07); before, every change event counted' } },
   { label: `Left to the agent per quote (${LEFT.join(' / ')})`, match: /^Left to the agent/i, show: (k) => LEFT.map((r) => k.leftPerQuote?.[r] ?? 0).join(' / '), n: (k) => LEFT.reduce((a, r) => a + (k.leftPerQuote?.[r] ?? 0), 0), pick: 'sum', better: -1 },
   { label: 'Problem reports per 10 quotes', match: /^Problem reports/i, show: (k) => `${k.problemReportsPer10Quotes ?? '—'}${k.problemReportsInTestRuns ? ` (plus ${k.problemReportsInTestRuns} in test runs)` : ''}`, n: (k) => k.problemReportsPer10Quotes, better: -1 },
   { label: 'AI requests · error rate', match: /^AI requests/i, show: (k) => `${k.aiRequests} · ${k.aiErrorPercent ?? '—'}%`, n: (k) => k.aiErrorPercent, pick: 1, better: -1 },
@@ -467,8 +485,9 @@ export function cellNumber(cell, pick = 0) {
 /**
  * This period's weekly numbers (signals' `kpis`) beside the ledger's, with a trend only when both
  * periods have at least MIN_TREND_QUOTES quotes: below that a change is noise. A ledger number
- * counted before its definition changed (`redefined`: its label lacks the new wording, and the
- * ledger issue, when `createdAt` is known, was opened before the change) gets no trend either: the
+ * counted before its definition changed (`redefined`: its label lacks the new wording, and, for a
+ * row whose label lagged its count, the ledger issue, when `createdAt` is known, was opened before
+ * the change) gets no trend either: the
  * two periods count it differently.
  * @param {{createdAt?: string|null}} opts  createdAt: when the ledger issue was opened (gh), if known
  */
@@ -483,9 +502,10 @@ export function weeklyRows(kpis, previous, { createdAt = null } = {}) {
     const label = prevLabel(row);
     const before = label == null ? null : cellNumber(prev[label], row.pick ?? 0);
     const now = row.n(kpis);
-    // The ledger's label names the definition it was counted under, unless the issue was opened after
-    // the change (its label copied from a report older than the change).
-    const old = !!row.redefined && label != null && !row.redefined.current.test(label) && !(counted && counted >= row.redefined.at);
+    // The ledger's label names the definition it was counted under, unless the row's label lagged its
+    // count (`at`) and the issue was opened after the change (its label copied from an older report).
+    const lagged = row.redefined?.at && counted && counted >= row.redefined.at;
+    const old = !!row.redefined && label != null && !row.redefined.current.test(label) && !lagged;
     if (old && before != null) redefined.push({ name: row.redefined.name, change: row.redefined.change });
     let trend = '—';
     if (row.zero && now > 0) trend = 'must be 0';

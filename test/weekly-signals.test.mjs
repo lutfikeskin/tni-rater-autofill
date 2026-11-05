@@ -143,6 +143,10 @@ test('signals gives the weekly numbers per quote and how each quote ended', () =
   assert.deepEqual(s.outcomes.progressive.stopped, [['CoveragesRates', 1]]);
   assert.equal(s.kpis.donePercent, 50);
   assert.equal(s.kpis.corrected, 1);
+  // The same answer changed again, and then put back: still one corrected answer (W46-07).
+  events.push({ id: 'c2', t: '2026-10-06T12:32:00Z', receivedAt: '2026-10-06T12:32:00Z', session: 'new', v: '0.9.9', carrier: 'progressive', type: 'field_change', page: 'Quote', by: 'agent', autofilled: 'x', vsAutofill: 'cleared', kind: 'select', from: 'No', to: null });
+  events.push({ id: 'c3', t: '2026-10-06T12:33:00Z', receivedAt: '2026-10-06T12:33:00Z', session: 'new', v: '0.9.9', carrier: 'progressive', type: 'field_change', page: 'Quote', by: 'agent', autofilled: 'x', vsAutofill: 'different', kind: 'select', from: null, to: 'No' });
+  assert.equal(signals(events, { since: '2026-10-06' }).kpis.corrected, 1);
   assert.equal(s.kpis.leftPerQuote.unfamiliar, 1);
   assert.equal(s.kpis.aiErrorPercent, 50);
   assert.equal(s.kpis.restrictedActions, 0);

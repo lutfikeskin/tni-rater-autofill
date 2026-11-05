@@ -67,7 +67,7 @@ function sample() {
 test('totals per window: per quote, test runs left out', () => {
   const s = summarize(sample(), { now: NOW });
   const byWindow = Object.fromEntries(s.totals.map((t) => [t.window, t]));
-  assert.deepEqual(byWindow['24h'], { window: '24h', quotes: 1, pagesFilled: 1, answersFilled: 2, corrected: 2, reformatted: 1, byHand: 1, problems: 1, unfamiliar: 1, testRuns: 1 });
+  assert.deepEqual(byWindow['24h'], { window: '24h', quotes: 1, pagesFilled: 1, answersFilled: 2, corrected: 1, reformatted: 1, byHand: 1, problems: 1, unfamiliar: 1, testRuns: 1 });
   assert.deepEqual([byWindow['7d'].quotes, byWindow['7d'].pagesFilled, byWindow['7d'].answersFilled], [2, 2, 3]);
   assert.deepEqual([byWindow['30d'].quotes, byWindow['30d'].pagesFilled, byWindow['30d'].answersFilled, byWindow['30d'].testRuns], [3, 3, 4, 1]);
 });
@@ -91,7 +91,8 @@ test('fingerprints from RATER_TEST_INTAKES leave their quotes out', () => {
 
 test('per agent, carrier and build, and the lists newest first', () => {
   const s = summarize(sample(), { now: NOW, window: '30d' });
-  assert.deepEqual(s.agents.map((r) => [r.key, r.quotes, r.answersFilled, r.corrected, r.problems]), [['AB', 1, 2, 2, 1], ['CD', 1, 1, 0, 0], ['EF', 1, 1, 0, 0]]);
+  assert.deepEqual(s.agents.map((r) => [r.key, r.quotes, r.answersFilled, r.corrected, r.problems]), [['AB', 1, 2, 1, 1], ['CD', 1, 1, 0, 0], ['EF', 1, 1, 0, 0]]);
+  // AB's two changes to one autofilled answer (another value, then cleared) count once (W46-07).
   assert.deepEqual(s.carriers.map((r) => [r.key, r.quotes, r.pagesFilled]), [['progressive', 1, 1], ['amwins', 1, 1], ['geico', 1, 1]]);
   assert.deepEqual(s.builds.map((r) => [r.key, r.quotes]), [['0.9.29 store', 2], ['0.9.20 unpacked', 1]]);
   const times = s.activity.map((a) => a.t);
