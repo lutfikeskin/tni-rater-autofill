@@ -321,6 +321,28 @@ const searchBusinessType = (r) => (searchClass(r) ? 'General Freight Trucking' :
 const searchBusinessSource = (r) => (searchClass(r) ? 'standard' : 'fact');
 const searchBusinessNote = (r) => (searchClass(r) ? null : `Business type for a ${r.operations.businessClass || 'business of this class'}: pick it yourself (the fill picks it for expediters and general freight haulers only).`);
 const SEARCH_UNOFFERED = 'The business type list shows neither General Freight Trucking nor For Hire Trucking, or several options for it: pick it yourself (TNI takes General Freight Trucking, else For Hire Trucking, for expediters and general freight haulers; never another business).';
+// The popup's list (q36) for the other intake classes (TNI, 2026-11-05, after the AZ list of 21
+// trucking businesses): the classes it names outright get that business; an auto hauler of scrap or
+// salvage isn't one (Progressive's Auto Haulers excludes hauling to scrap or salvage). Any other class
+// is left for Luna, which suggests the closest business from the business class and what they haul
+// (`progressive.business-type-closest`), and the agent approves it; never a fact only the agent knows.
+/** @type {[RegExp, string][]} */
+const CLASS_BUSINESS_TYPES = [
+  [/^reefer$/i, 'Refrigerated Goods Hauling'],
+  [/^auto\s+hauler$/i, 'Auto Haulers'],
+  [/^household\s+goods\s+mover$/i, 'Household Movers'],
+];
+const SCRAP_HAUL = /scrap|salvage|junk/i;
+const classBusinessType = (r) => {
+  const found = CLASS_BUSINESS_TYPES.find(([re]) => re.test(String(r.operations.businessClass ?? '').trim()))?.[1] ?? null;
+  return found === 'Auto Haulers' && SCRAP_HAUL.test(String(r.operations.whatHaul ?? '')) ? null : found;
+};
+// The popup's pick the fill makes itself: TNI's standard, else the class's own business.
+const popupBusinessType = (r) => searchBusinessType(r) ?? classBusinessType(r);
+const popupBusinessSource = (r) => (searchClass(r) ? 'standard' : 'derived');
+const popupBusinessNote = (r) => (popupBusinessType(r) ? null
+  : `Business type for a ${r.operations.businessClass || 'business of unknown class'}${r.operations.whatHaul ? ` hauling ${r.operations.whatHaul}` : ''}: no exact match. Luna suggests the closest business from the business class and what they haul; check it, or pick it yourself.`);
+const popupBusinessUnoffered = (r) => (searchClass(r) ? SEARCH_UNOFFERED : null);
 // The popup's own Business Type box and Search (KY), apart from the page's box and Search behind it.
 const BECA_POPUP = '.becaPopupPage';
 const BECA_POPUP_BOX = `${BECA_POPUP} [fieldref="BECAInput.BusinessTypeTextBox"]`;
@@ -562,12 +584,13 @@ export const progressive = {
     // Business Type box (q1D), then its own Search pressed, never the page's behind it. Done once the
     // list shows. IN and OH show the list at once: the box isn't typed, so this waits for the pick.
     // AZ draws the popup in a frame of its own (live recording, 2026-11-05): pressed there (`inFrame`).
-    { id: 'businessTypePopupSearch', tni: 'progressive.business-type-search', page: 'BECAPopup', text: '^search$', within: BECA_POPUP, after: ['progressive.q1D'], unless: ['progressive.q36'], immediate: true, verify: 'revealed', label: 'Business type: Search', when: searchClass, inFrame: true },
+    { id: 'businessTypePopupSearch', tni: 'progressive.business-type-search', page: 'BECAPopup', text: '^search$', within: BECA_POPUP, after: ['progressive.q1D'], unless: ['progressive.q36'], immediate: true, verify: 'revealed', label: 'Business type: Search', inFrame: true },
     // The popup's own Continue, once the fill picked the business type and left nothing in the popup
     // for the agent: it closes the popup (no step's move: `moveOn` within it), and the page behind
     // takes its Continue on a fill of its own. AZ live recording, 2026-11-05: the agent pressed it in
     // the popup's frame, while the fill pressed the page's "Ok, start quote." behind the popup to no effect.
-    { id: 'businessTypePopupContinue', page: 'BECAPopup', text: '^continue$', within: BECA_POPUP, moveOn: true, after: ['progressive.q36'], whenClear: true, verify: 'gone', label: 'Business type: Continue', when: searchClass, inFrame: true },
+    // Only after a pick the fill makes itself: one Luna suggests is the agent's to approve, and to close.
+    { id: 'businessTypePopupContinue', page: 'BECAPopup', text: '^continue$', within: BECA_POPUP, moveOn: true, after: ['progressive.q36'], whenClear: true, verify: 'gone', label: 'Business type: Continue', when: (r) => !!popupBusinessType(r), inFrame: true },
     // Two tiles matching (two reefer tiles) means it's the agent's pick.
     // A page of tiles: picked even where the page shows no field (onBlankPage; the MD layout has none).
     { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, onBlankPage: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
@@ -788,8 +811,9 @@ export const progressive = {
       // mentioning the name ("Auto Haulers … for hire trucking …") is never it (`matchStart`).
       // The popup's own box (q1D, found inside the popup, before the page's box takes the first
       // "Business Type") is left alone while the list shows (typing filters it away: IN, OH); with
-      // no list yet (KY) it gets "Trucking", and businessTypePopupSearch presses the popup's Search.
-      { q: '1D', tni: 'progressive.business-type-search', source: 'standard', page: 'BECAPopup', selector: BECA_POPUP_BOX, unlessShown: BECA_RESULTS, name: 'Business type search box ("Trucking" until the list shows)', value: () => SEARCH_WORD, ignore: (r) => !searchClass(r) },
+      // no list yet (KY) it gets "Trucking", and businessTypePopupSearch presses the popup's Search:
+      // for every class (TNI, 2026-11-05), since the list it shows is the one Luna picks from too.
+      { q: '1D', tni: 'progressive.business-type-search', source: 'standard', page: 'BECAPopup', selector: BECA_POPUP_BOX, unlessShown: BECA_RESULTS, name: 'Business type search box ("Trucking" until the list shows)', value: () => SEARCH_WORD },
       { q: '1D', page: 'BECAPopup', selector: BECA_POPUP_BOX, whenShown: BECA_RESULTS, name: 'Business type search box (left alone: the list shows)', ignore: true },
       { q: '24D', ask: 'Business Type', control: 'text', each: true, name: 'Business type box (filled by the search)', ignore: true },
       { q: '1D', ask: 'Business Type', control: 'text', each: true, name: 'Business type search box', ignore: true },
@@ -798,7 +822,9 @@ export const progressive = {
       // fill that also picked here could set General Freight Trucking beside the agent's other
       // business (CodeRabbit review of #288).
       { q: '33', field: 'BECAInputNonShredded.BusinessLabelForGeneralFreight', name: 'Business type (common types: left alone; the full list gets the pick)', ignore: true },
-      { q: '36', tni: 'progressive.business-type-search', source: searchBusinessSource, ask: 'Business Type Label', name: 'Business type (search list: General Freight Trucking, else For Hire Trucking)', kind: 'choice', value: searchBusinessType, choiceAliases: () => ['For Hire Trucking'], matchStart: true, note: searchBusinessNote, unofferedNote: SEARCH_UNOFFERED },
+      // The other classes: their own business where the list names it, else Luna's suggestion
+      // (classBusinessType, popupBusinessNote).
+      { q: '36', tni: 'progressive.business-type-search', source: popupBusinessSource, ask: 'Business Type Label', name: 'Business type (search list: General Freight Trucking, else For Hire Trucking)', kind: 'choice', value: popupBusinessType, choiceAliases: (r) => (searchClass(r) ? ['For Hire Trucking'] : []), matchStart: true, note: popupBusinessNote, unofferedNote: popupBusinessUnoffered },
       // LA's New Customer business description (q93, a list of 1,200 business names; TNI,
       // 2026-10-28): "Trucking" is searched for, then the same pick among its results (General
       // Freight Trucking, else For Hire Trucking; never "Auto Hauler (For Hire Trucking)").
