@@ -824,7 +824,7 @@ export const progressive = {
       { q: '33', field: 'BECAInputNonShredded.BusinessLabelForGeneralFreight', name: 'Business type (common types: left alone; the full list gets the pick)', ignore: true },
       // The other classes: their own business where the list names it, else Luna's suggestion
       // (classBusinessType, popupBusinessNote).
-      { q: '36', tni: 'progressive.business-type-search', source: popupBusinessSource, ask: 'Business Type Label', name: "Business type (search list: General Freight Trucking, else For Hire Trucking; the class's own business; else Luna's suggestion)", kind: 'choice', value: popupBusinessType, choiceAliases: (r) => (searchClass(r) ? ['For Hire Trucking'] : []), matchStart: true, note: popupBusinessNote, unofferedNote: popupBusinessUnoffered },
+      { q: '36', tni: 'progressive.business-type-search', source: popupBusinessSource, ask: 'Business Type Label', name: 'Business type (search list: General Freight Trucking, else For Hire Trucking)', kind: 'choice', value: popupBusinessType, choiceAliases: (r) => (searchClass(r) ? ['For Hire Trucking'] : []), matchStart: true, note: popupBusinessNote, unofferedNote: popupBusinessUnoffered },
       // LA's New Customer business description (q93, a list of 1,200 business names; TNI,
       // 2026-10-28): "Trucking" is searched for, then the same pick among its results (General
       // Freight Trucking, else For Hire Trucking; never "Auto Hauler (For Hire Trucking)").
