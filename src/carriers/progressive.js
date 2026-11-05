@@ -577,9 +577,12 @@ export const progressive = {
     // A driver counts once the list comes back from its page; Add Driver opened and left holds
     // Continue with a note, like a trailer.
     { id: 'addDriver', page: 'DriverSummary', text: '^add (a |another )?driver$|^add another$', opener: '^add$', unlessActions: ['driverEntered'], scope: 'driver', label: 'Driver', doneWhen: (r, a) => [`driverEntered:${a.drivers ?? 0}`], unfinished: 'Add Driver was opened, but this intake driver was never entered: add them (Add → Add Driver) before Continue.' },
-    // Some states (IN, OH) show the business type as a box with a Search next to it, which opens
-    // the business type list (BECAPopup).
-    { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
+    // Some states (IN, OH, KY, AZ) show the business type as a box with a Search next to it, which
+    // opens the business type list (BECAPopup). That page is waited for (`loads`, verified by the
+    // page it opens): the popup came 2.6 s after the click, its first request 0.3 s after it, and
+    // the fill's wait had ended by then, so "Ok, start quote." was pressed while it loaded (AZ live
+    // recording, 2026-11-05). Clicked once the page has been quiet 250 ms, its requests included.
+    { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'], loads: true, quietMs: 250, verify: { page: 'BECAPopup' } },
     // KY's popup opens with no result list (TNI, 2026-10-28): "Trucking" is typed into its own
     // Business Type box (q1D), then its own Search pressed, never the page's behind it. Done once the
     // list shows. IN and OH show the list at once: the box isn't typed, so this waits for the pick.

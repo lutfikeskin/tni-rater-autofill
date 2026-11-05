@@ -8647,6 +8647,31 @@ test('a page the plan has questions for that shows none yet is reported not draw
   assert.equal(report.advanceDue, undefined);
 });
 
+// AZ live recording, 2026-11-05: the business type's Search opened its popup 2.6 s after the click
+// (its first request 0.3 s after it). The fill's wait after the click had ended by then, and it
+// pressed "Ok, start quote." while the popup loaded. Now the Search waits for the page it opens
+// (BECAPopup), and the fill ends there: that page gets a fill of its own.
+test('the business type Search waits for its popup, and Continue is never pressed while it loads', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
+  const row = new FakeNode('div', { textContent: 'Business Type' });
+  const box = makeInput({ id: `f_b${'B'.repeat(32)}284_1_1`, name: 'string_284|', ariaLabel: 'Business Type', attrs: { fieldref: 'BECAInput.BusinessTypeTextBox' } });
+  const search = new FakeNode('button', { textContent: 'Search' });
+  search.onclick = () => {
+    search._clicked = (search._clicked ?? 0) + 1;
+    h.context.setTimeout(() => { h.context.location.search = '?pageName=BECAPopup'; becaPopup(h.document.body); }, 2600);
+  };
+  row.append(box, search);
+  h.document.body.append(row);
+  const start = addButton(h, 'Ok, start quote.');
+  start.onclick = () => { start._clicked = (start._clicked ?? 0) + 1; };
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 10, advance: progressive.advance });
+  assert.equal(search._clicked, 1, 'pressed once, never again while its popup loads');
+  assert.equal(start._clicked, undefined, 'the page\'s Continue never pressed while the popup loads');
+  assert.equal(report.navigatedTo, 'BECAPopup', 'the fill ends on the popup, which gets a fill of its own');
+  assert.ok(report.actions.some((a) => a.id === 'businessTypeSearch'));
+});
+
 // W44-03, Progressive Business Owner Info in KY and OH (2026-10-26, 0.9.25 code): the arrival fill
 // read no field, clicked the business type's Search (the only thing it could do on the page before it
 // drew its questions), and that click let "Ok, start quote." go with every question unanswered: the

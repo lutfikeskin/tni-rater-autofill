@@ -1261,15 +1261,19 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     }
     // Its view comes a moment after the page went quiet (GEICO's chooser after "+", with no
     // spinner: FL live run 4, 2026-10-21, "+" clicked three times in 1.4 s): waited for, once
-    // the page is quiet again, before the click counts as lost.
-    if (loads && state.pendingAction?.verify === 'revealed') {
+    // the page is quiet again, before the click counts as lost. So is a page it opens (`{ page }`:
+    // Progressive's business type Search, whose first request went out 0.3 s after the click, by
+    // when the wait above had ended, and "Ok, start quote." followed while the popup loaded; AZ
+    // live recording, 2026-11-05).
+    const opens = state.pendingAction?.verify?.page ?? null;
+    if (loads && (state.pendingAction?.verify === 'revealed' || opens)) {
       const until = Date.now() + loadResultMs;
       let dirty = true;
       const mo = new MutationObserver(() => { dirty = true; });
       mo.observe(document.body, { subtree: true, childList: true });
       try {
         for (let tick = 0; Date.now() < until; tick++) {
-          if ((dirty || tick % 5 === 0) && revealedNow(state.pendingAction)) break;
+          if ((dirty || tick % 5 === 0) && (opens ? currentPage() === opens : revealedNow(state.pendingAction))) break;
           dirty = false;
           await sleep(200);
         }
@@ -1353,6 +1357,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     if (a.verify === 'revealed') accepted = revealedNow(a);
     // `{ appears }`: more of these on the page than before the click (any, when there were none).
     if (a.verify?.appears) accepted = deepQueryAll(document, a.verify.appears).length > (a.before ?? 0);
+    // `{ page }`: the click opened that page (Progressive's business type Search, its popup).
+    if (a.verify?.page) accepted = currentPage() === a.verify.page;
     if (!accepted) {
       state.clicked.delete(a.action);
       state.report.invalidatedActions.push(a.action);
@@ -1360,7 +1366,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       state.report.blocked.push({ id: a.action, why: 'result not verified yet' });
       // A click whose result never showed is tried again, twice at most in one fill (the
       // button is due again, being unclicked); then it stays the agent's, and they're told.
-      if (a.verify === 'revealed' || a.verify?.appears) {
+      if (a.verify === 'revealed' || a.verify?.appears || a.verify?.page) {
         // A helper that loads a view is never clicked again: it was waited for (above).
         if (a.loads) {
           state.exhausted.add(a.action);
