@@ -48,6 +48,9 @@ const stoppedRuns = new Set();
 // Two Progressive recordings, 2026-11-04: on all such starts the page did nothing in the 400 ms.
 let settledAt = null;
 const SETTLED_FRESH_MS = 1500;
+
+// The top frame's page as it is now: null where it can't be read (another origin's frame).
+const topPageNow = () => { try { return pageAt(window.top.location); } catch { return null; } };
 const START_SETTLED_QUIET_MS = 100;
 // This frame's kit and the filled lists it has sent rows of (progress).
 const FRAME = Math.random().toString(36).slice(2);
@@ -222,9 +225,11 @@ export function resolveItems(report, plan) {
  * @param {FillOptions} [options]
  * @returns {Promise<FillReport>}
  */
-export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null } = {}) {
+export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
   /** @type {RunState} */
   const state = /** @type {any} */ ({});
+  // The plan as given (helpers included, which the fill sets apart below), for a fill begun again.
+  const givenPlan = plan;
   // The last helper's settled page, taken as this fill begins: one that returns early (another page,
   // a stop page or step) uses it up too, so a later fill can't take it for its own (review of #284).
   const left = settledAt;
@@ -275,6 +280,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     }
   };
   /** @type {any[]} */ const actions = plan.filter((s) => s.kind === 'action');
+  // Helpers are clicked in the top frame, and those marked `inFrame` in any frame that shows them.
+  const helpersHere = window === window.top || actions.some((a) => a.inFrame);
   /** @type {any[]} */ plan = plan.filter((s) => s.kind !== 'action');
   state.clicked = new Set(doneActions);
   state.openersTried = new Set();
@@ -469,6 +476,16 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     state.report.stepKey = stepKey();
     if (running === thisFill) running = null;
     return state.report;
+  }
+  // A frame that turned into the top's page while the fill waited to begin: Arizona's business
+  // type popup draws in a frame of its own, which showed Business Owner Info as the fill began there
+  // and the popup a moment later (AZ live recording, 2026-11-05: that frame's fill found its page
+  // gone and did nothing, and no fill came after it). The fill begins again on the page it shows
+  // now, once.
+  if (!restarted && window !== window.top && currentPage() !== startPage && currentPage() === topPageNow()) {
+    adapter().offRequest(countAjax);
+    if (running === thisFill) running = null;
+    return fill(givenPlan, { ...arguments[1], restarted: true });
   }
   // The step on screen as the fill begins, on a page with a step progress bar (null elsewhere:
   // AmWINS' headings change with its dialogs). Read once the page has settled.
@@ -728,7 +745,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     if (state.report.halted) { judged(Math.min(thisRound.lagBound, firstOpen(allPairs, place))); break; }
     // Buttons that must come right after their field (Verify DOT, Lookup VIN) go first: the page
     // is judged down to the first question still to act on (the helper's own field is above it).
-    if (window === window.top && clickNextAction(controls, true)) {
+    if (helpersHere && clickNextAction(controls, true)) {
       judged(Math.min(thisRound.lagBound, firstOpen(allPairs, place)));
       // A lookup (Import Data) may wait on its server without changing the page for a while.
       phase('helper', state.pendingAction?.label ?? state.report.actions.at(-1)?.text ?? null);
@@ -1170,7 +1187,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       continue;
     }
     thisRound.helperClicked = false;
-    if (!thisRound.changed && window === window.top && !state.agentPressed) {
+    if (!thisRound.changed && helpersHere && !state.agentPressed) {
       state.loadDue = null;
       thisRound.changed = thisRound.helperClicked = clickNextAction(controls);
       // A helper that loads a view (GEICO's "+", Add Driver) is clicked on a page quiet for a
@@ -1829,7 +1846,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       blocked.push(a.action);
       state.report.blocked.push({ id: a.action, why: COVERED_HELPER, waits: [{ say: 'what is open over it closed' }], text: buttonText(el).slice(0, 60) || (a.label ?? '') });
     };
-    for (const a of actions.filter((x) => (!immediateOnly || x.immediate) && (!blank || x.onBlankPage))) {
+    for (const a of actions.filter((x) => (!immediateOnly || x.immediate) && (!blank || x.onBlankPage) && (window === window.top || x.inFrame))) {
       // A link verified by its going away that is back on its page (NTL removed by hand, then
       // asked for again) is due again.
       if (state.clicked.has(a.action) && a.verify === 'gone' && actionHere(a) && findButton(a)) state.clicked.delete(a.action);
