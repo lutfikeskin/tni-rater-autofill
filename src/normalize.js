@@ -1138,10 +1138,15 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // driver with a carrier-by-carrier walkthrough: agents read it as "does the owner drive?", answered
   // No (not excluded) and left the box No, and no row gave the owner's details (2026-10-28 runs; such a
   // record is now read as the owner driving: util.js ownerDrivesSaid).
+  // TNI, 2026-11-05 (W46-02): the intake's No alone no longer excludes the owner. Agents reversed it on
+  // the carrier's page in 6 of 7 quotes. The item is red (`alert`), and the owner stays a driver until
+  // the agent answers: Owner drives set here (Yes or No), or Looks right, which confirms the No and
+  // quotes the owner as excluded (util.js ownerNoPending; the panel marks the answer on the record).
   const own = ownerRow(record);
   if (own && own.excluded !== true && a.ownerDrives === false) {
     const who = [own.first, own.last].filter(Boolean).join(' ') || `Driver ${rows.drivers[0]}`;
-    check('drivers.owner-excluded', 'applicant.ownerDrives', `Does the owner drive? The intake says No, so the owner (${who}, the first driver) is quoted as excluded.`);
+    warnings.push({ code: 'drivers.owner-excluded', path: 'applicant.ownerDrives', level: 'check', alert: true,
+      msg: `Does the owner drive? The intake says No. Until you answer, the owner (${who}, the first driver) is quoted as a driver. Set Owner drives to Yes, or click Looks right to quote them as excluded.` });
   }
 
   // --- Vehicles and trailers ------------------------------------------------------------------

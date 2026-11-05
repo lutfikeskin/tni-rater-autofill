@@ -329,7 +329,61 @@ export function ownerRowNameDiffers(r) {
 export function ownerDrivesSaid(r) {
   const said = r?.applicant?.ownerDrives;
   if (said === false && ownerRow(r)?.excluded === false) return true;
+  if (ownerNoPending(r)) return true;
   return typeof said === 'boolean' ? said : null;
+}
+
+// The intake's own "owner drives" No, which the agent hasn't answered yet. TNI, 2026-11-05 (W46-02):
+// that No is a red check on the Intake step (normalize.js `drivers.owner-excluded`), and the owner
+// stays a driver until the agent answers it: agents reversed the intake's No on the carrier's page in
+// 6 of 7 quotes (Progressive's exclude question, GEICO's owner driver), and in the panel in more.
+// It replaces R1 (2026-10-26: the intake's No alone excluded the owner). The agent answers by setting
+// Owner drives themselves (Yes or No), or Looks right on the check, which confirms the No: the panel
+// marks either on the record (`applicant.ownerDrivesAnswered`, record.js), and the No then excludes
+// the owner as before. An owner's row the intake marks "Excluded" is excluded as before, and one the
+// agent sets not excluded is a driver (above); with no driver rows nothing changes.
+// The panel's answer to "Does the owner drive?" (sidepanel/panel/record.js), on the loaded intake
+// (`{ record, warnings, done, agentEdited }`), after either:
+// - `edit`: the agent's edit of a field. Owner drives (Yes or No) answers it: the owner's answer is
+//   theirs, and the check is marked done (the review of PR #292: its card said "Until you answer"
+//   under the agent's answer).
+// - `check`: Looks right (`done` true) or Undo (false) on the warning at index `i`. Looks right on
+//   `drivers.owner-excluded` confirms the intake's No (and puts it back in a box the agent cleared);
+//   Undo takes it back, unless the agent set Owner drives (Yes or No) themselves.
+// Changes `intake` in place; true when the owner's answer changed (a quote's plans follow it).
+/** @param {any} intake @param {{ edit?: string, check?: { i: number, done: boolean } }} what @returns {boolean} */
+export function ownerDrivesAnswered(intake, { edit, check }) {
+  const applicant = intake?.record?.applicant;
+  if (!applicant) return false;
+  const item = (intake.warnings ?? []).findIndex((w) => w.code === 'drivers.owner-excluded');
+  const before = applicant.ownerDrivesAnswered === true;
+  if (edit === 'applicant.ownerDrives' && typeof applicant.ownerDrives === 'boolean') {
+    applicant.ownerDrivesAnswered = true;
+    if (item >= 0 && !(intake.done ?? []).includes(item)) intake.done = [...(intake.done ?? []), item];
+  } else if (edit === 'applicant.ownerDrives') {
+    // The box cleared: no answer to the intake's No (blank is not No). The check stays, or is again,
+    // open for the agent (the review of PR #292).
+    applicant.ownerDrivesAnswered = false;
+    if (item >= 0) intake.done = (intake.done ?? []).filter((i) => i !== item);
+  } else if (check && check.i === item && item >= 0) {
+    const edited = !!intake.agentEdited?.includes('applicant.ownerDrives');
+    if (check.done && applicant.ownerDrives == null) {
+      // Looks right after the agent cleared the box confirms the intake's No, as the check says: the
+      // box gets it back and is the intake's again, so Undo reopens it (the review of PR #292).
+      applicant.ownerDrives = false;
+      if (edited) intake.agentEdited = intake.agentEdited.filter((p) => p !== 'applicant.ownerDrives');
+      applicant.ownerDrivesAnswered = true;
+      return true;
+    }
+    applicant.ownerDrivesAnswered = check.done || (edited && typeof applicant.ownerDrives === 'boolean');
+  } else return false;
+  return applicant.ownerDrivesAnswered !== before;
+}
+
+/** @param {any} r @returns {boolean} */
+export function ownerNoPending(r) {
+  const row = ownerRow(r);
+  return r?.applicant?.ownerDrives === false && r.applicant.ownerDrivesAnswered !== true && !!row && row.excluded == null;
 }
 
 // The owner's row while the owner doesn't drive (ownerDrivesSaid No): the first row (ownerRow; TNI,
@@ -413,6 +467,10 @@ export function ownerDrivesSource(r) {
 // not excluded (ownerDrivesSaid), is never silent either: the agent confirms that Yes (PR #216
 // review, 2026-10-28).
 export function ownerDrivesWarn(r) {
+  // The intake's No not yet answered (W46-02): quoted as a driver until the agent answers.
+  if (ownerNoPending(r)) {
+    return 'The intake says the owner doesn\'t drive. Until you answer "Does the owner drive?" in the intake checks, the owner is quoted as a driver: Yes. Confirm it with the client.';
+  }
   if (r?.applicant?.ownerDrives === false && ownerDrivesSaid(r) === true) {
     return 'The intake says the owner doesn\'t drive, but their driver row is set not excluded, so the owner is quoted as a driver: Yes. Confirm it with the client.';
   }

@@ -38,7 +38,7 @@ test('expired policy is not currently insured; proof availability is independent
 test('an owner who shares a surname with a driver keeps their own name on both carriers; the date of birth is the first row\'s (V4)', () => {
   const r = record();
   r.applicant.owner1 = 'Alice Example';
-  r.applicant.ownerDrives = false;
+  r.applicant.ownerDrives = false; r.applicant.ownerDrivesAnswered = true;
   r.drivers = [{ first: 'Bob', last: 'Example', dob: '01/02/1990', licenseNumber: 'SYNTHETIC-ONE' }];
   const progressivePlan = buildPlan(r, progressive);
   assert.equal(progressivePlan.find((s) => s.q === '295').value, 'Alice');

@@ -7673,7 +7673,7 @@ test('a Continue kept to steps, never inside the chooser, and continued per form
 // `noOtherDriver` item, which has no button, is a "needs you" blocker on Drivers & Incidents instead:
 // Continue (Looks Good) waits for the agent.
 test('GEICO\'s owner the only driver, not driving (V1): a needs-you item on Drivers & Incidents holds Looks Good', async () => {
-  const record = { applicant: { owner1: 'Pat Owner', ownerDrives: false }, operations: {}, garaging: {}, coverage: {}, claims: {}, notes: {}, priorInsurance: [],
+  const record = { applicant: { owner1: 'Pat Owner', ownerDrives: false, ownerDrivesAnswered: true }, operations: {}, garaging: {}, coverage: {}, claims: {}, notes: {}, priorInsurance: [],
     vehicles: [], trailers: [], drivers: [{ first: 'Pat', last: 'Owner', excluded: null }] };
   const steps = (r) => buildPlan(r, geico, { vehicles: 0, drivers: 0, trailers: 0 }).filter((s) => s.kind === 'action' && s.action === 'noOtherDriver');
   const page = () => {
