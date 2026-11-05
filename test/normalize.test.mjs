@@ -1018,6 +1018,12 @@ test('the panel\'s answer to "Does the owner drive?": Looks right, Undo and the 
   edited.record.applicant.ownerDrives = null;
   ownerDrivesAnswered(edited, { edit: 'applicant.ownerDrives' });
   assert.deepEqual([edited.record.applicant.ownerDrivesAnswered, edited.done.includes(at(edited))], [false, false]);
+  // Looks right then confirms the intake's No, as the check says: the box gets it back, excluded.
+  // Undo reopens it, the No unanswered again: a driver (the review of PR #292).
+  assert.equal(ownerDrivesAnswered(edited, { check: { i: at(edited), done: true } }), true);
+  assert.deepEqual([edited.record.applicant.ownerDrives, edited.record.applicant.ownerDrivesAnswered, edited.agentEdited, exclude(edited)], [false, true, [], true]);
+  ownerDrivesAnswered(edited, { check: { i: at(edited), done: false } });
+  assert.deepEqual([edited.record.applicant.ownerDrivesAnswered, exclude(edited)], [false, false]);
   const cleared = load();
   cleared.record.applicant.ownerDrives = null;
   ownerDrivesAnswered(cleared, { edit: 'applicant.ownerDrives' });

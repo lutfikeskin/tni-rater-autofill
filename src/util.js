@@ -348,8 +348,8 @@ export function ownerDrivesSaid(r) {
 //   theirs, and the check is marked done (the review of PR #292: its card said "Until you answer"
 //   under the agent's answer).
 // - `check`: Looks right (`done` true) or Undo (false) on the warning at index `i`. Looks right on
-//   `drivers.owner-excluded` confirms the intake's No; Undo takes it back, unless the agent set Owner
-//   drives themselves.
+//   `drivers.owner-excluded` confirms the intake's No (and puts it back in a box the agent cleared);
+//   Undo takes it back, unless the agent set Owner drives (Yes or No) themselves.
 // Changes `intake` in place; true when the owner's answer changed (a quote's plans follow it).
 /** @param {any} intake @param {{ edit?: string, check?: { i: number, done: boolean } }} what @returns {boolean} */
 export function ownerDrivesAnswered(intake, { edit, check }) {
@@ -366,7 +366,16 @@ export function ownerDrivesAnswered(intake, { edit, check }) {
     applicant.ownerDrivesAnswered = false;
     if (item >= 0) intake.done = (intake.done ?? []).filter((i) => i !== item);
   } else if (check && check.i === item && item >= 0) {
-    applicant.ownerDrivesAnswered = check.done || !!intake.agentEdited?.includes('applicant.ownerDrives');
+    const edited = !!intake.agentEdited?.includes('applicant.ownerDrives');
+    if (check.done && applicant.ownerDrives == null) {
+      // Looks right after the agent cleared the box confirms the intake's No, as the check says: the
+      // box gets it back and is the intake's again, so Undo reopens it (the review of PR #292).
+      applicant.ownerDrives = false;
+      if (edited) intake.agentEdited = intake.agentEdited.filter((p) => p !== 'applicant.ownerDrives');
+      applicant.ownerDrivesAnswered = true;
+      return true;
+    }
+    applicant.ownerDrivesAnswered = check.done || (edited && typeof applicant.ownerDrives === 'boolean');
   } else return false;
   return applicant.ownerDrivesAnswered !== before;
 }
