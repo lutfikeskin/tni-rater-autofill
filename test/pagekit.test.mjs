@@ -991,7 +991,7 @@ test('a TNI standard gets its own mark, an intake answer the filled green, and a
 test('the side panel key shows the page marks in the page kit colors', () => {
   const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
   const colors = [...MARKS_SOURCE.match(/const COLORS = \{([^}]*)\}/)[1].matchAll(/(\w+): '(#[0-9a-f]{6})'/gi)];
-  assert.deepEqual(colors.map(([, status]) => status).sort(), ['agent', 'ai', 'failed', 'filled', 'needs', 'standard']);
+  assert.deepEqual(colors.map(([, status]) => status).sort(), ['agent', 'ai', 'failed', 'filled', 'needs', 'own', 'standard']);
   for (const [, status, hex] of colors) {
     assert.equal(css.match(new RegExp(`--mark-${status}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1].toLowerCase(), hex.toLowerCase(), status);
     assert.match(css, new RegExp(`\\.mark\\.${status} \\{[^}]*var\\(--mark-${status}\\)`), status);
@@ -8955,10 +8955,12 @@ test("GEICO: an agent's Medical Payments default is filled where listed and the 
     h.document.body.append(med);
     const plan = buildPlan({ ...geicoRecord(), garaging: { state: 'TX' } }, { id: 'geico', useGenericRules: false, rules, actions: [] }, {}, { overlay: makeOverlay({ medPay: { value: 2_000 } }, 'geico') });
     const report = await h.kit.fill(plan, { maxRounds: 6 });
-    return { med: med.value, filled: plain(report.filled.map((x) => x.source)), left: plain(report.noData.map((x) => [x.manualOnly, x.note])) };
+    return { med: med.value, outline: med.style.outline, filled: plain(report.filled.map((x) => x.source)), left: plain(report.noData.map((x) => [x.manualOnly, x.note])) };
   };
   let r = await run(['Not Included', '$500', '$1,000', '$2,000', '$5,000']);
   assert.deepEqual([r.med, r.filled, r.left], ['$2,000', ['agent-default'], []], "listed: the agent's amount");
+  // Marked on the page in its own colour (teal), apart from TNI's standards (blue) and intake answers (green).
+  assert.equal(r.outline, '2px solid #0f766e');
   r = await run(['Not Included', '$500', '$1,000', '$5,000']);
   assert.deepEqual([r.med, r.filled], ['', []], 'not listed: left as it is');
   assert.equal(r.left.length, 1);

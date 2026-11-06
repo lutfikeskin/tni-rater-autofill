@@ -49,14 +49,21 @@ const changed = (id, effective, rec = record()) => {
   return new Map(before.map((s, i) => [s, after[i]]).filter(([a, b]) => JSON.stringify(a) !== JSON.stringify(b)).map(([a, b]) => [key(a), [a, b]]));
 };
 
-test('switched off: a stored profile changes no plan and no rulebook', () => {
-  assert.equal(AGENT_DEFAULTS_ON, false, 'phase 5 turns the feature on with the TNI defaults page');
-  setActiveDefaults({ values: EVERYTHING });
+test('no profile confirmed for the quote: every plan and rulebook is the rules\' own; confirmed: the panel\'s plans take it', () => {
+  assert.equal(AGENT_DEFAULTS_ON, true, 'the TNI defaults page is on (phase 5)');
+  for (const c of CARRIERS) {
+    assert.equal(overlayFor(c.id), null);
+    assert.equal(rulebookRewriteFor(c.id), null);
+    for (const state of ['OH', 'TX']) assert.deepEqual(data(planFor(record(state), c, {})), data(buildPlan(record(state), c, {})), `${c.id} ${state}`);
+  }
+  // A profile replacing nothing changes nothing either.
+  setActiveDefaults({ values: { medPay: { value: 5_000 } } });
   try {
+    for (const c of CARRIERS) assert.equal(overlayFor(c.id), null);
+    setActiveDefaults({ values: EVERYTHING });
     for (const c of CARRIERS) {
-      assert.equal(overlayFor(c.id), null);
-      assert.equal(rulebookRewriteFor(c.id), null);
-      for (const state of ['OH', 'TX']) assert.deepEqual(data(planFor(record(state), c, {})), data(buildPlan(record(state), c, {})), `${c.id} ${state}`);
+      assert.deepEqual(data(planFor(record(), c, {})), data(withOverlay(c.id, EVERYTHING)), c.id);
+      assert.ok(rulebookRewriteFor(c.id), c.id);
     }
   } finally {
     setActiveDefaults(null);
@@ -270,8 +277,8 @@ test('isAgentDefault reads a report item\'s method', () => {
   assert.equal(isAgentDefault(buildPlan(record(), carrier('progressive'), {}).find((s) => s.q === '1FE4')), false);
 });
 
-test('only the module, the panel\'s planFor, Luna\'s evidence and the review tooling\'s adapter import it', () => {
-  const allowed = new Set(['sidepanel/panel/plan-for.js', 'src/ai/common.js', 'scripts/lib/agent-defaults.mjs']);
+test('only the module, the panel\'s planFor and its own folder, Luna\'s evidence and the review tooling\'s adapter import it', () => {
+  const allowed = new Set(['sidepanel/panel/plan-for.js', 'src/ai/common.js', 'scripts/lib/agent-defaults.mjs', 'sidepanel/panel/agent-defaults/store.js', 'sidepanel/panel/agent-defaults/view.jsx']);
   const walk = (dir) => fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((d) => {
     const rel = `${dir}/${d.name}`;
     if (d.isDirectory()) return ['node_modules', 'dist', 'layouts'].includes(d.name) ? [] : walk(rel);

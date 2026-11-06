@@ -28,6 +28,7 @@ import { mountPdf } from './panel/pdf-sheet-view.jsx';
 import { mountLoadError, mountNote } from './panel/notes-view.jsx';
 import { mountSiteTrack } from './panel/site-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
+import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer } from './panel/agent-defaults/store.js';
 import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
@@ -55,6 +56,7 @@ function wire() {
     ...settingsActs(),
     ...aiActs(),
     testRun: (on) => { state.testRun = on; markTestRun(on); },
+    defaults: defaultsActs(), // agent defaults
     capture: () => capturePage(),
     devrec: recordable ? { start: () => startRecording(), note: () => noteRecording(), stop: () => stopRecording(), recover: () => recoverRecording() } : null,
   });
@@ -211,6 +213,10 @@ async function init() {
     state.switches = { ...state.switches, autoFollowUps: saved.autoFollowUps ?? true, autoPages: saved.autoPages ?? true, autoAdvance: saved.autoAdvance ?? true,
       checkBeforeContinue: saved.checkBeforeContinue ?? true, finishSound: saved.finishSound ?? true };
   });
+  // agent defaults: the stored profiles and this quote's answer, before the settings are logged; the
+  // agent's answer is logged and the page's dock and cards follow it.
+  await loadDefaults();
+  onDefaultsAnswer(async (choice) => { await answerDefaults(choice); logSettings('changed', 'defaults'); renderSteps(); });
   // The panel opened on a saved intake: the settings in force for the rest of its quote.
   if (state.intake && usage.currentSession()) logSettings('opened');
   // A correction's profile the panel closed before logging (or an intake loaded by an earlier version).

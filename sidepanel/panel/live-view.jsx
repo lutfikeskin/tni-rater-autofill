@@ -9,18 +9,21 @@ import { createRoot } from 'react-dom/client';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { liveEntries, phaseSaid } from './live.js';
+// agent defaults: an answer the agent's own default gave.
+import { isOwnDefault } from './agent-defaults/store.js';
 
 // What a need row says, by the item's kind; any other kind needs the agent's answer.
 const NEED_SAID = { failed: 'Couldn’t fill' };
 
 // An answer in. Drawn again only when what it shows changes, or it stops being the fresh one.
-const AnswerRow = memo(function AnswerRow({ label, shown, standard, fresh }) {
+const AnswerRow = memo(function AnswerRow({ label, shown, standard, own, fresh }) {
   return (
     <div className={`row${fresh ? ' fresh' : ''}`}>
       <div className="row-head">
         <span className="row-icon" aria-hidden="true">✓</span>
         <span className="row-text"><span className="row-label">{label || 'Answer'}</span><span className="row-value">{shown || 'filled'}</span></span>
         {standard ? <span className="tag standard" title="A TNI standard answer, not a fact from the intake">TNI standard</span> : null}
+        {own ? <span className="tag own" title="Your own default in place of TNI's standard">Your default</span> : null}
       </div>
     </div>
   );
@@ -96,7 +99,7 @@ function LiveView({ view }) {
     <div id="live" className="rows live" ref={list}>
       {entries.map(({ row: x, item }, i) => (item
         ? <NeedRow key={keys[i]} label={item.label} kind={item.kind} />
-        : <AnswerRow key={keys[i]} label={x.label} shown={x.shown} standard={!!x.standard} fresh={x === fresh} />))}
+        : <AnswerRow key={keys[i]} label={x.label} shown={x.shown} standard={!!x.standard} own={isOwnDefault(x, 'filled')} fresh={x === fresh} />))}
       {f.stopping ? null : <TypingRow label={label} value={value} />}
     </div>
   );

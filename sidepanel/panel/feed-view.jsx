@@ -37,6 +37,7 @@ function AnswerKey({ open }) {
         <span className="key-plain">none = from the intake</span>
         <span className="tag derived">Worked out</span>
         <span className="tag standard">TNI standard</span>
+        <span className="tag own">Your default</span>
         <span className="tag ai">AI</span>
         <span className="tag you">You</span>
         <span className="tag page">On the page</span>
@@ -45,6 +46,7 @@ function AnswerKey({ open }) {
         <span className="key-title">Marks on the rater page:</span>
         <span><span className="mark filled" />Filled</span>
         <span><span className="mark standard" />TNI standard</span>
+        <span><span className="mark own" />Your default</span>
         <span><span className="mark needs" />Needs you</span>
         <span><span className="mark failed" />Couldn’t fill</span>
         <span><span className="mark ai" />AI answer</span>

@@ -243,13 +243,14 @@ export function checkDismissedEvent(x, { redact = (v) => v, keySalt } = {}) {
 // Continue and filling on arrival on, replacing answers off), the AI assistant (on unless turned off, applying
 // choices automatically, whether a key is set: never the key), and where usage goes (`central`,
 // `other`: a test server, `off`). `reason`: intake (loaded), opened (the panel on a saved
-// intake) or changed (`changed` names the setting).
+// intake) or changed (`changed` names the setting). `defaults`: the agent's own defaults in force
+// for the quote ({ id, value | 'ask', carrier? }; [] for TNI's), given once the agent answered.
 /**
  * @param {{ serverUrl?: string, autoFollowUps?: boolean, autoAdvance?: boolean, autoPages?: boolean, aiOn?: boolean, lunaAuto?: boolean, lunaKey?: string }} [saved]
- * @param {{ overwrite?: boolean, reason?: string, changed?: string, centralServer?: string }} [opts]
+ * @param {{ overwrite?: boolean, reason?: string, changed?: string, centralServer?: string, defaults?: { id: string, value: number | string, carrier?: string }[] }} [opts]
  * @returns {AgentSettingsEvent}
  */
-export function agentSettingsEvent(saved = {}, { overwrite = false, reason, changed, centralServer } = {}) {
+export function agentSettingsEvent(saved = {}, { overwrite = false, reason, changed, centralServer, defaults } = {}) {
   const url = saved.serverUrl;
   return {
     type: 'agent_settings', reason, ...(changed ? { changed } : {}),
@@ -258,6 +259,9 @@ export function agentSettingsEvent(saved = {}, { overwrite = false, reason, chan
       aiOn: saved.aiOn !== false, aiAuto: saved.lunaAuto === true, aiKey: !!saved.lunaKey,
       uploads: url === '' ? 'off' : url === undefined || url === centralServer ? 'central' : 'other',
     },
+    // The agent's own defaults this quote fills with (docs/agent-defaults-spec.md), once the agent
+    // answered whose they are: [] for TNI's.
+    ...(defaults ? { defaults } : {}),
   };
 }
 
@@ -408,10 +412,10 @@ function fieldWhy(x, list) {
 //   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep).
 /**
  * @param {Partial<FillReport>[]} frames  the page kit's fill reports, one per frame (a stop page's: its blockers only)
- * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string }} ctx
+ * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string }} ctx
  * @returns {UsageEvent[]}
  */
-export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step }) {
+export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash }) {
   // Typed for the report list it reads (the body takes any key).
   /** @type {<K extends keyof FillReport>(k: K) => NonNullable<FillReport[K]>} */
   const all = /** @param {any} k @returns {any} */ (k) => frames.flatMap((f) => f[k] ?? []);
@@ -420,7 +424,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   /** @type {UsageEvent[]} */
   const events = [{
     type: 'fill_run', carrier, page, view, overwrite, auto, ms,
-    ...(run ? { run } : {}), ...(rules ? { rules } : {}), ...(settings ? { settings } : {}), ...stepField,
+    ...(run ? { run } : {}), ...(rules ? { rules } : {}), ...(settings ? { settings } : {}), ...(defaultsHash ? { defaultsHash } : {}), ...stepField,
     fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0),
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,

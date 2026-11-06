@@ -26,6 +26,7 @@ import { fillCurrent, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill
 import { DOCK_PHASES, phaseSaid } from './live.js';
 import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
 import { leftOf, listCounts } from './report-rows.js';
+import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -149,6 +150,8 @@ function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = f
     intake: state.intake, revision: state.intakeRevision, ids: { session: session?.id ?? null, intakeId: session?.intakeId ?? null },
     view: viewOf(tabId, page, carrier), scope: editScope(page, carrier, tabStep(carrier, tabId)), active: { ...state.active },
     settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages'), overwrite: !!overwrite },
+    // agent defaults: the fingerprint of the agent's own defaults this fill runs with (none: TNI's).
+    defaultsHash: fillDefaultsHash(),
   };
 }
 function noteStaleFill(ctx) {
@@ -280,20 +283,20 @@ function logFill(ctx, frames, results, started) {
   usage.log(...fillEvents(ctx.listNote ? [...frames, { blockers: [ctx.listNote] }] : frames, {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
-    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results),
+    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash,
   }));
 }
 // A rejected fill has no fill_run result to carry its rule version and switches.
 function logFillError(ctx, error) {
   if (ctx.carrier.practice) return;
   usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run,
-    rules: rulesVersion ?? undefined, settings: ctx.settings, auto: ctx.auto, error: fillErrorText(ctx, error), ...ctx.ids });
+    rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, error: fillErrorText(ctx, error), ...ctx.ids });
 }
 
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || stateIssue()) return;
+  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || stateIssue() || defaultsHold()) return;
   if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
@@ -307,7 +310,7 @@ async function autoFill(page) {
   state.autoDrawn = null;
   // The client may have been cleared while this fill was waiting to run.
   if (state.autoPaused || state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
-  if (stopNoteFor(state.tab.carrier, page) || stateIssue()) return;
+  if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold()) return;
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
   // step themselves (same address, new questions). It's filled as a new page, with its report.
@@ -839,7 +842,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
     persistUnitForms(tabId, maps.unitForms);
     if (copied) persistAgentKeys(tabId, maps.agentKeys);
   }
-  for (const x of frames.flatMap((f) => f.filled)) maps.filled.set(x.key, { path: x.path, shown: x.shown, standard: isStandard(x, 'filled') });
+  for (const x of frames.flatMap((f) => f.filled)) maps.filled.set(x.key, { path: x.path, shown: x.shown, standard: isStandard(x, 'filled'), own: isOwnDefault(x, 'filled') });
   // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
   const quoteKey = carrier?.quoteState?.key;
   const pickedState = quoteKey && frames.flatMap((f) => f.filled).find((x) => x.key === quoteKey);
@@ -1268,6 +1271,10 @@ function dockFor() {
   if (issue) {
     return { phase: 'hold', tone: 'bad', eyebrow: 'Check first', title: 'Sort out the state above', sub: `${issue.intake} answers fail on a ${issue.picked} quote.`,
       button: 'fill', label: 'Fill this page', disabled: true, alt: 'fill-anyway', altLabel: 'Fill anyway' };
+  }
+  // agent defaults: no fill until the agent says whose defaults this quote takes (the card above).
+  if (state.intake && defaultsHold()) {
+    return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Answer the question above', sub: 'Your own defaults, or TNI\'s standards, for this quote.', button: 'fill', label: 'Fill this page', disabled: true };
   }
   // The carrier's portal pages outside a quote are never filled (fillPage).
   if (!onQuotePage()) return { phase: 'portal', eyebrow: 'Next', title: 'Open the client’s quote', sub: 'This is the portal. Filling starts on a quote page.' };

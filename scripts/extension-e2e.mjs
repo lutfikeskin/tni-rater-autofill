@@ -16,6 +16,15 @@
 //
 //   npm run package && npm run replay   # (in another terminal)
 //   npm run e2e:extension -- [screenshot folder]
+//
+// Agents' own defaults (docs/agent-defaults-spec.md): with E2E_DEFAULTS=mine (or tni) the agent has
+// initials and a TNI defaults profile (UM $300K, comprehensive deductible $500) before the panel
+// opens. The run then checks the quote asks whose defaults it fills with and holds filling until
+// answered, answers Yes, mine (or Use TNI's) in the panel, and that AmWINS gets the agent's amounts
+// (or TNI's $100K and $1,000), marked as the agent's own on the page (or as TNI's standards), with
+// agent_settings.defaults logged (or an empty list). A fill on the mock (a practice page) logs no
+// fill events, so fill_run's defaultsHash is the unit tests'. Without it nothing about defaults
+// changes from the run above.
 
 import { chromium } from 'playwright';
 import path from 'node:path';
@@ -38,6 +47,10 @@ const leavesMachine = (url) => /^(https?|wss?):$/.test(url.protocol) && !LOCAL_H
 // not saved with it): refused or missing, so the run never needs the network, and no request or
 // error of the extension's.
 const MOCK_URL = 'http://localhost:8792/test/fixtures/amwins/application.html';
+// Agents' own defaults (above): '' (none), 'mine' or 'tni'.
+const DEFAULTS = process.env.E2E_DEFAULTS ?? '';
+if (DEFAULTS && !['mine', 'tni'].includes(DEFAULTS)) throw new Error(`E2E_DEFAULTS must be mine or tni, not ${DEFAULTS}`);
+const PROFILE = { v: 1, active: 'e2e-profile', profiles: { 'e2e-profile': { name: 'Test Agent', values: { umCsl: { value: 300_000 }, compDeductible: { value: 500 } } } } };
 const MOCK_HTML = fs.readFileSync('test/fixtures/amwins/application.html', 'utf8');
 const MOCK_ASSETS = new Set([...MOCK_HTML.matchAll(/<(?:link|script|iframe|img)\b[^>]*\b(?:href|src)="([^"]+)"/g)].map((m) => new URL(m[1], MOCK_URL).href));
 const outside = [];
@@ -70,10 +83,11 @@ console.log('ext id', id);
 // is turned off: this run checks filling, and the local server has no OpenAI key (npm run mock:luna
 // checks Luna). Let me look before Continue and Fill each page as soon as it opens, on by default,
 // are off: the run presses Fill this page itself and waits for the panel's own Continue.
-await sw.evaluate(async (serverUrl) => {
+await sw.evaluate(async ({ serverUrl, profile }) => {
   const { settings = {} } = await chrome.storage.local.get('settings');
-  await chrome.storage.local.set({ settings: { ...settings, serverUrl, aiOn: false, checkBeforeContinue: false, autoPages: false } });
-}, usageUrl);
+  // With a defaults run, the agent's initials and TNI defaults profile, as Settings would keep them.
+  await chrome.storage.local.set({ settings: { ...settings, serverUrl, aiOn: false, checkBeforeContinue: false, autoPages: false, ...(profile ? { agent: 'E2E' } : {}) }, ...(profile ? { agentDefaults: profile } : {}) });
+}, { serverUrl: usageUrl, profile: DEFAULTS ? PROFILE : null });
 console.log('usage server', usageUrl);
 const mock = await ctx.newPage();
 await mock.goto(MOCK_URL);
@@ -97,6 +111,37 @@ await panel.setInputFiles('#file', 'test/fixtures/sample-intake.pdf');
 await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake, null, { timeout: 15000, polling: 100 });
 await panel.locator('#details-row').waitFor({ state: 'visible', timeout: 10000 });
 console.log('site:', await panel.textContent('#site'));
+// Agents' own defaults: the quote asks whose defaults it fills with, and nothing fills until the
+// agent answers in the panel.
+let defaultsAsked = !DEFAULTS;
+if (DEFAULTS) {
+  await panel.bringToFront();
+  if (await panel.locator('#page-view').isHidden().catch(() => true)) await panel.click('#step-fill').catch(() => {});
+  const title = panel.locator('#defaults-note .issue-title');
+  await title.waitFor({ state: 'visible', timeout: 10000 });
+  const asked = await title.textContent();
+  const held = await panel.locator('#dock').getAttribute('data-phase');
+  const fillOff = await panel.locator('#fill').isDisabled().catch(() => null);
+  console.log('Defaults asked:', JSON.stringify({ asked, held, fillOff }));
+  if (process.argv[2]) await panel.screenshot({ path: path.join(process.argv[2], `defaults-asked.png`), animations: 'disabled' });
+  // The first mark the fill puts on UM and the comprehensive deductible (the carrier's reload after
+  // Save & Continue redraws the page without them, so they are watched, not read at the end).
+  await mock.evaluate(() => {
+    const seen = window.__e2eMarks = {};
+    new MutationObserver((changes) => {
+      for (const { target } of changes) {
+        const mark = target.getAttribute?.('data-rater-autofill');
+        if (mark && ['uninsuredMotoristsLimit', 'comprehensiveDeductible'].includes(target.id)) seen[target.id] ??= mark;
+      }
+    }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-rater-autofill'] });
+  });
+  await panel.locator('#defaults-note button', { hasText: DEFAULTS === 'mine' ? 'Yes, mine' : 'Use TNI\'s' }).click();
+  const now = await panel.locator('#defaults-note .issue-title').textContent();
+  console.log('Defaults answered:', now);
+  defaultsAsked = asked === 'Fill this quote with Test Agent\'s defaults?' && held === 'hold' && fillOff !== false
+    && (DEFAULTS === 'mine' ? now === 'Defaults: Test Agent, 2 changed' : now === 'TNI\'s standards for this quote');
+  if (!defaultsAsked) console.log('DEFAULTS: the quote did not ask and hold before filling, or the answer was not taken.');
+}
 // The sample intake answers every client fact AmWINS asks, and TNI's standards answer the rest,
 // so nothing would be left to the agent. Clear the second driver's marital status (Married on the
 // PDF) in All client details, as an agent correcting the intake would: that row's marital status
@@ -350,6 +395,7 @@ const kept = await mock.evaluate(() => {
     driverFirst: v('#driversPanel [data-id="firstName"]'), driverDob: v('#driversPanel [data-id="dateOfBirth"]'), gender: v('#driversPanel [data-id="gender"]'),
     usage: v('#vehiclesPanel [data-id="usageType"]'), bodyType: v('#vehiclesPanel [data-id="bodyType"]'),
     medicalPayment: v('#medicalPayment'), symbol6: v('#autoSymbol6'), towing: v('#towingAndLaborReimbursement'),
+    um: v('#uninsuredMotoristsLimit'), comp: v('#comprehensiveDeductible'),
     prior0: v('#priorCarrierCoveragePanel0 [data-id="carrierName"]'), prior1: v('#priorCarrierCoveragePanel1 [data-id="carrierName"]'), prior2: v('#priorCarrierCoveragePanel2 [data-id="carrierName"]'),
   };
 });
@@ -359,6 +405,7 @@ const kept = await mock.evaluate(() => {
 const EXACT = { additionalInterest: '0', valuedLossRuns: '0', claimFreeLossRuns: '0', currentCarrier: '1 TO 2 YEARS', licenseYear: '2005', secondLicenseYear: '2012', gender: 'MALE', secondGender: 'MALE', maritalStatus: 'SINGLE', secondMaritalStatus: 'DIVORCED', vehicleLeased: '0', prior0: 'NO PRIOR', prior1: 'NO PRIOR', prior2: 'NO PRIOR', mailingState: 'Illinois', bodyType: 'Cargo Van', medicalPayment: '$5,000', towing: '$75', usage: 'FOR HIRE', natureOfBusiness: 'TRANSPORTATION' };
 const lost = Object.entries(kept).filter(([k, x]) => k !== 'declaration' && (x == null || x === '' || x === false || x === '(missing)' || x === 'State' || (k in EXACT && x !== EXACT[k]))).map(([k]) => k);
 console.log('Kept after the reloads:', JSON.stringify(kept));
+const seenMarks = DEFAULTS ? await mock.evaluate(() => window.__e2eMarks ?? {}) : {};
 if (lost.length) console.log('LOST:', lost.join(', '));
 
 // The agent goes back a step: the panel must leave them there (no second Save & Continue).
@@ -479,8 +526,23 @@ const toProduction = outside.filter((r) => r.includes(`//${PRODUCTION_HOST}/`));
 console.log(`Usage: ${received.length} events to the local server (${[...new Set(received)].join(', ')}), ${outside.length} requests off this machine (${toProduction.length} to production)`);
 if (outside.length) console.log('OFF THIS MACHINE:', outside.join('; '));
 const usageOk = !outside.length && received.includes('intake_loaded') && profileWhole;
+// Agents' own defaults: what was filled and logged.
+let defaultsOk = true;
+if (DEFAULTS) {
+  // The settings each quote logs (agent_settings is logged on practice pages too; a fill there never
+  // is, so fill_run's defaultsHash and fill_field's source are the unit tests', not this run's).
+  const marks = { um: seenMarks.uninsuredMotoristsLimit ?? null, comp: seenMarks.comprehensiveDeductible ?? null };
+  const settingsLogged = stored.filter((e) => e.type === 'agent_settings' && Array.isArray(e.defaults)).sort((a, b) => Date.parse(a.t) - Date.parse(b.t)).map((e) => e.defaults);
+  const mine = DEFAULTS === 'mine';
+  // The page marks the agent's own default teal (`own`), TNI's standard blue (`standard`).
+  const want = mine ? { um: '$300K', comp: '$500', mark: 'own', logged: [{ id: 'umCsl', value: 300000 }, { id: 'compDeductible', value: 500 }] } : { um: '$100K', comp: '$1,000', mark: 'standard', logged: [] };
+  console.log('Defaults:', JSON.stringify({ um: kept.um, comp: kept.comp, umMark: marks.um, compMark: marks.comp, logged: settingsLogged.at(-1) ?? null }));
+  defaultsOk = defaultsAsked && kept.um === want.um && kept.comp === want.comp && marks.um === want.mark && marks.comp === want.mark
+    && JSON.stringify(settingsLogged.at(-1)) === JSON.stringify(want.logged);
+  if (!defaultsOk) console.log(`DEFAULTS: ${mine ? 'the agent\'s amounts were not filled or logged as theirs' : 'TNI\'s amounts were not filled, or defaults were logged'}.`);
+}
 console.log(`Errors: ${errors.length}${errors.length ? ` (${errors.join('; ')})` : ''}`);
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = usageOk && !errors.length && !docScrolled && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone with the earlier steps’ reports, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: the panel’s document scrolled, manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
+const ok = defaultsOk && usageOk && !errors.length && !docScrolled && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? `OK: ${DEFAULTS === 'mine' ? 'the quote asked whose defaults it takes and held filling, the agent\'s UM $300K and comprehensive $500 were filled marked as their own on the page and logged in agent_settings, ' : DEFAULTS === 'tni' ? 'the quote asked whose defaults it takes and held filling, Use TNI\'s filled TNI\'s amounts marked as standards and logged an empty list, ' : ''}manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone with the earlier steps’ reports, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.` : !defaultsOk ? 'FAILED: agents\' own defaults (above).' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: the panel’s document scrolled, manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
 process.exit(ok ? 0 : 1);

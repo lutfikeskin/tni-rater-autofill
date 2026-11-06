@@ -61,10 +61,14 @@
      the list and the page agree (it was grey here and blue there). */
   --standard-ink: #2451a0;
   --standard-soft: #e9eff9;
+  /* An agent's own default in place of a TNI standard: the teal of its mark (--mark-own). */
+  --own-ink: #0f5e58;
+  --own-soft: #e3f3f1;
   /* The marks the page kit puts on the carrier page (pagekit.js COLORS; a test keeps them equal):
      the "Marks on the rater page" key shows exactly these. */
   --mark-filled: #16a34a;
   --mark-standard: #2f6fd6;
+  --mark-own: #0f766e;
   --mark-needs: #d97706;
   --mark-failed: #dc2626;
   --mark-ai: #7c3aed;
@@ -398,6 +402,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .tag.intake { color: var(--brand-dark); background: var(--surface-selected); }
 .tag.derived { color: var(--brand-dark); background: var(--surface-selected); }
 .tag.standard { color: var(--standard-ink); background: var(--standard-soft); }
+.tag.own { color: var(--own-ink); background: var(--own-soft); }
 .tag.ai { color: var(--ai-dark); background: var(--ai-soft); }
 .tag.you { color: var(--success-ink); background: var(--success-soft); }
 .tag.page, .tag.clicked { color: var(--ink-muted); background: var(--surface-sunken); }
@@ -413,6 +418,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 /* As the page kit marks the page (pagekit.js mark): solid for an answer in, dashed for one left. */
 .mark.filled { border: 2px solid var(--mark-filled); }
 .mark.standard { border: 2px solid var(--mark-standard); }
+.mark.own { border: 2px solid var(--mark-own); }
 .mark.needs { border-color: var(--mark-needs); }
 .mark.failed { border-color: var(--mark-failed); }
 .mark.ai { border: 2px solid var(--mark-ai); }

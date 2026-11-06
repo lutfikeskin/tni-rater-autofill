@@ -13,6 +13,7 @@ import { cancelLayouts, dropReports, holdLayouts, renderSite, resetViews, stopPa
 import { refreshAnswers, runKit } from './fill.js';
 import { stopRecording } from './dev-recording.js';
 import { flushSync } from 'react-dom';
+import { refreshDefaults } from './agent-defaults/store.js';
 
 // ---------------------------------------------------------------------------------------------
 // The intake PDF, shown in the panel with the item it was opened for marked on it
@@ -413,6 +414,8 @@ async function clearClient() {
   await forgetPdf();
   await persistAiPending();
   await clearAgentKeys(scope);
+  // agent defaults: no client, no question.
+  refreshDefaults();
   render();
   renderSite();
 }

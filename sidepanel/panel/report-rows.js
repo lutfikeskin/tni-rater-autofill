@@ -10,12 +10,12 @@ import { agentPickable, choiceSaid, choicesOf, finishLeftOk } from './report-mod
 let rowIds = 0;
 
 // An answer in the page's list (groupRows' row): `kind` is its source ('intake', 'derived',
-// 'standard', 'edited'), or what it is when it's no answer of ours ('clicked', 'page', 'yours',
+// 'standard', 'edited', or 'own': the agent's own default in place of TNI's standard), or what it is when it's no answer of ours ('clicked', 'page', 'yours',
 // 'changed'). `changed`: what the page shows now where that isn't the fill's answer (checkAnswers);
 // `change`: the choices Change answer offers ({ x, options, current }); `source`: where it came
 // from, as the row says it (answerSource).
 function answerRecord(row) {
-  return { ...row, id: ++rowIds, type: 'answer', kind: row.kind ?? (row.edited ? 'edited' : row.standard ? 'standard' : row.from ? 'derived' : 'intake'),
+  return { ...row, id: ++rowIds, type: 'answer', kind: row.kind ?? (row.edited ? 'edited' : row.own ? 'own' : row.standard ? 'standard' : row.from ? 'derived' : 'intake'),
     open: false, gone: false, changed: null, change: null, head: null, note: null, where: null };
 }
 

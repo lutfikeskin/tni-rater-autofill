@@ -24,7 +24,7 @@ const shown = (container) => [...$(container, 'issues').children].filter((c) => 
 test('the cards above the answers keep their places and order, each hidden while it says nothing', () => {
   const { container } = render(<Cards />);
   expect([...$(container, 'issues').children].map((c) => [c.id, c.hidden])).toEqual([
-    ['carrier-note', true], ['state-note', true], ['stop-note', true], ['review-note', true], ['fill-error', true]]);
+    ['carrier-note', true], ['state-note', true], ['defaults-note', true], ['stop-note', true], ['review-note', true], ['fill-error', true]]);
   expect($(container, 'fill-waiting').hidden).toBe(true);
   act(() => {
     state.cards = { fill: card({ title: 'Filling didn’t finish', text: 'The page stopped answering.', role: 'alert' }),

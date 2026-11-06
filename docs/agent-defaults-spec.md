@@ -1,6 +1,6 @@
 # Spec: agents' own defaults ("My defaults")
 
-Status: **in progress**, switched off. Written 2026-11-05 from the code on `main` (530f86f). Done: the server (rollout step 1), the generic hooks (step 2), the module, switched off (step 3), and the review tooling (step 4). Not yet: the Settings page and logging, Advanced.
+Status: **in progress**, on. Written 2026-11-05 from the code on `main` (530f86f). Done: the server (rollout step 1), the generic hooks (step 2), the module (step 3), the review tooling (step 4), and the TNI defaults page with its logging (step 5). Not yet: Advanced (step 6). TNI's answers to the open questions below are pending; until then the maintainer's provisional choices (recorded there) apply.
 
 ## Goal
 
@@ -97,12 +97,12 @@ The feature lives in its own modules. Core code (plan building, rules, the page 
 | Registry of overridable standards (data only) | `src/agent-defaults/registry.js` | Yes |
 | The overlay: plan step in, plan step out; cross-field checks | `src/agent-defaults/overlay.js` (**done**, switched off) | Yes |
 | Effective defaults, the off switch, Luna's rulebook rewrite, their log entries; `defaultsHash` from step 5 | `src/agent-defaults/index.js` (the module's entry point; **done**, switched off) | Yes |
-| Storage and the Settings section | `sidepanel/panel/agent-defaults/store.js`, `view.jsx` | Yes |
+| Storage, the quote's question and hold, logging, and the Settings section | `sidepanel/panel/agent-defaults/store.js`, `view.jsx` (**done**) | Yes |
 | Server shapes | `server/agent-defaults.mjs` (**done**, PR #299) | Yes |
 | Plan building | `src/plan.js`: an optional `overlay` hook | No |
 | Rules | `std` metadata on standard rules: data, ignored without the module | Describes them only |
 | The panel's plans | one `planFor()` wrapper in the panel, used by every `buildPlan` call | Wires the module in, one line |
-| Report tag and page colour | a source → style map (`agent-default` is one entry) | One entry |
+| Report tag and page colour | the report's row kind `own` ("Your default"), the live row's tag, the key, and the page kit's `own` mark (teal, `COLORS` in `src/kit/marks.js`) | One entry each |
 | Luna's rulebook | an optional `rewrite` hook on `rulebookFor` | No |
 
 The rule is that **only `src/agent-defaults/` and `sidepanel/panel/agent-defaults/` import from `src/agent-defaults/`**, apart from the one wiring line in `planFor()`, the one in Luna's evidence (`src/ai/common.js`, the rulebook rewrite), the review tooling's adapter (`scripts/lib/agent-defaults.mjs`) and, from step 5, one in usage logging. `test/agent-defaults.test.mjs` fails on any other importer.
@@ -247,7 +247,7 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 2. **Generic hooks, no feature.** Add the `overlay` hook in `buildPlan`, `tni` on steps, the `planFor()` wrapper, the `rulebookFor` `rewrite` hook, and `std` metadata on standard rules. Prove nothing changed: `npm test`, the carrier mocks, and `npm run benchmark -- --save` on `main` then `--against` on the branch with zero differences. *Done.*
 3. **The module, switched off.** Add `src/agent-defaults/` (registry, overlay with its cross-field checks, effective defaults, the rulebook rewrite, `isAgentDefault`, the log entries) with `test/agent-defaults.test.mjs` and `AGENT_DEFAULTS_ON = false`, and wire it into `planFor()` and `evidenceFor`. Progressive and AmWINS write a million-dollar UM the way their lists do ("$1 million CSL", "$1M"). *Done.*
 4. **Review tooling.** Update signals, review, benchmark and answer key for `agent-default` and the logged defaults, before any agent can switch defaults on. Otherwise the benchmark would replay those quotes with TNI's values and report false differences. *Done: one adapter, `scripts/lib/agent-defaults.mjs`, replays each quote with its logged defaults (`profileFromLog`, `replayOverlay` in the module), keeps answer-key cells and rule suggestions apart from TNI's standards, and gives the weekly signals the defaults in force and corrections of them apart ([learning](learning.md)).*
-5. **Basic UI, switched on.** Add the TNI defaults section, the profile question, the page colour, the report tag and logging, and set `AGENT_DEFAULTS_ON = true`. Requires step 4 merged. Test the e2e with an override on each carrier mock.
+5. **Basic UI, switched on.** Add the TNI defaults section, the profile question, the page colour, the report tag and logging, and set `AGENT_DEFAULTS_ON = true`. Requires step 4 merged. Test the e2e with an override on each carrier mock. *Done: Settings → TNI defaults (profiles, an amount per standard from `choices.all`), the quote's question as a card above the page's answers with the dock held (`defaultsHold` in the panel's store, checked where the quote-state hold is), `agent_settings.defaults` and `defaultsHash`, the "Your default" tag and the teal mark, overlay errors logged as `client_error`.*
 6. **Advanced.** Add per-carrier amounts, carrier-only coverage standards, and "Ask me".
 
 Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rules.md) (the provenance table and the new source), [learning.md](learning.md) (`agent_settings.defaults`, signals), [ai-assistant.md](ai-assistant.md) (the rulebook from effective values), [hosting.md](hosting.md) (the server whitelist) and [testing.md](testing.md).
@@ -278,8 +278,8 @@ Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rul
 
 ## Open questions for TNI
 
-1. May agents override TNI's coverage standards at all, and which ones? Which should TNI lock?
-2. Should "Ask me" be allowed for every workflow standard, or only some?
-3. Per-state defaults in Advanced (for example a different UM in no-fault states): needed, or later?
-4. Profiles stored per computer, or synced through the collection server so they follow the agent?
-5. Should the weekly review alert when an agent's default differs from TNI's, or only count it?
+1. May agents override TNI's coverage standards at all, and which ones? Which should TNI lock? *Provisional (the maintainer's choice, 2026-11-06, until TNI answers): all five shared coverage amounts are open to agents; none is locked. A lock is one `locked: true` in the registry.*
+2. Should "Ask me" be allowed for every workflow standard, or only some? *Provisional: "Ask me" only for the five coverage amounts, in Advanced; no workflow standard is offered (owner drives never is, above).*
+3. Per-state defaults in Advanced (for example a different UM in no-fault states): needed, or later? *Provisional: later.*
+4. Profiles stored per computer, or synced through the collection server so they follow the agent? *Provisional: per computer (`chrome.storage.local`).*
+5. Should the weekly review alert when an agent's default differs from TNI's, or only count it? *Provisional: count it (the signals' Agents' own defaults section), no alert.*

@@ -26,6 +26,7 @@ import { answerRecord, needId, needRecord, reopenRow, setHead, settleRow, showLi
 import { mountRows } from './report-view.jsx';
 import { mountReportHead } from './notes-view.jsx';
 import { flushSync } from 'react-dom';
+import { defaultsHold, isOwnDefault } from './agent-defaults/store.js';
 /** @import { CarrierConfig, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -66,6 +67,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // The tab's quote is for another state than the intake's: nothing is filled until the agent says
   // the state is right (or Fill anyway), on request or automatically (stateIssue).
   if (state.intake && stateIssue()) { showStateNote(); renderSteps(); return; }
+  // agent defaults: nothing fills until the agent says whose defaults this quote takes (the card above).
+  if (state.intake && defaultsHold()) { renderSteps(); return; }
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
@@ -878,11 +881,11 @@ function renderReport(frames, ctx = {}) {
     // (checkAnswers) and changing it (changeAnswer); `kind`: what it is when it's no answer of ours.
     // Its value is what the page shows (`now`), not what the fill put in; one the page or the agent
     // changed since (`changed`) is theirs, not counted as the fill's ('changed', 'yours').
-    ...filled.map((x) => ({ label: x.label || x.name, value: x.now ?? x.shown ?? '', standard: isStandard(x, 'filled'), path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId,
+    ...filled.map((x) => ({ label: x.label || x.name, value: x.now ?? x.shown ?? '', standard: isStandard(x, 'filled'), own: isOwnDefault(x, 'filled'), path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId,
       answer: !x.changed, ...(x.changed ? { kind: x.changed === 'you' ? 'yours' : 'changed' } : {}), key: x.key, field: x.label ?? null, q: x.q ?? null, offPage: x.offPage ?? null, frame: x.frame, order: x.order })),
     ...earlier.map((x) => {
       const was = before.get(x.key);
-      return { label: x.label || x.name, value: x.now || was.shown || 'filled', standard: isStandard(x, 'kept') || !!was.standard, path: was.path, from: fromOf.get(x.stepId), edited: editedBy(was.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: was.shown ? x.key : null, field: x.label ?? null, q: x.q ?? null, offPage: x.offPage ?? null, frame: x.frame, order: x.order };
+      return { label: x.label || x.name, value: x.now || was.shown || 'filled', standard: isStandard(x, 'kept') || !!was.standard, own: isOwnDefault(x, 'kept') || !!was.own, path: was.path, from: fromOf.get(x.stepId), edited: editedBy(was.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: was.shown ? x.key : null, field: x.label ?? null, q: x.q ?? null, offPage: x.offPage ?? null, frame: x.frame, order: x.order };
     }),
     ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
     ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: isStandard(x, 'kept'), group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page', frame: x.frame, order: x.order })),
@@ -977,6 +980,7 @@ function answerSource(rec) {
     intake: { kind: 'intake', text: `Intake${place ? pdfPageSaid(place.page, ' p.') : ''}`, title: 'From the intake' },
     derived: { kind: 'derived', text: 'Worked out', title: 'Worked out from intake answers' },
     standard: { kind: 'standard', text: 'TNI standard', title: 'A TNI standard answer, not a fact from the intake' },
+    own: { kind: 'own', text: 'Your default', title: 'Your own default in place of TNI\'s standard (Settings → TNI defaults)' },
     edited: { kind: 'you', text: 'Your edit', title: 'From your correction in the panel' },
     page: rec.standard ? { kind: 'standard', text: 'TNI standard', title: 'The page already had the TNI standard answer' } : { kind: 'page', text: 'On the page', title: 'The page already had it' },
     clicked: { kind: 'clicked', text: 'Clicked', title: 'Clicked for you' },
@@ -989,6 +993,7 @@ function answerSource(rec) {
     intake: [`Intake${place ? pdfPageSaid(place.page, ', page ') : ''}`, rec.path ? said(rec.path) : `Answer: ${rec.value}`],
     derived: ['Worked out from the intake', (rec.from ?? []).map(said).join(' · ')],
     standard: ['TNI standard answer', `Answer: ${rec.value}`],
+    own: ['Your own default', `Answer: ${rec.value}. In place of TNI's standard, from Settings → TNI defaults.`],
     edited: ['Your correction in the panel', rec.path ? said(rec.path) : `Answer: ${rec.value}`],
     page: ['Already on the page', 'The fill left it as the page had it.'],
     clicked: ['Clicked for you', `“${rec.value}”`],
