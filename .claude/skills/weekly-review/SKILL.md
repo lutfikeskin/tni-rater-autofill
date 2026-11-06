@@ -97,7 +97,7 @@ For each, record:
   - **Capture**: needs a live layout or before/after captures (`npm run captures`, `docs/new-carrier.md`). Say which page, scenario and answer to change.
   - **Watch**: already fixed or too little data; give the signature to check next week.
   - **Drop**: intended behavior or noise; say why (for example an attestation the agent must answer).
-- **Size** (S, M, L) and **reach**: carriers, states, pages, quotes affected.
+- **Size** (S, M, L) and **reach**: carriers, states, pages, quotes affected. The question's concept row in `docs/concepts.md` (`npm run concepts`) names the other carriers' questions to check; the reach is what the evidence shows on them (a list a carrier changed is that carrier's), and an unfamiliar question has no row yet.
 
 ## 6. Write the brief and ask for decisions
 
