@@ -77,8 +77,15 @@ export function makeOverlay(effective, carrierId) {
           return { ...agents(step, `Your default UM of ${amountSaid(amount)} needs a liability limit at least as high, which the intake doesn't show: answer it yourself.`), agentDefault: { id: std.id, amount: amountSaid(amount), tni: amountSaid(tni) } };
         }
       }
+      // A list condition giving TNI's own answer (GEICO's Medical Payments Not Included where it lists
+      // no limit) is TNI's fallback, not the agent's amount: without it the step is the agent's there.
+      const kept = step.onlyIf?.filter((x) => x.value == null) ?? null;
+      const onlyIf = step.onlyIf && kept?.length !== step.onlyIf.length
+        ? { onlyIf: kept?.length ? kept : null, onlyNote: `Your default ${label.toLowerCase()} of ${amountSaid(amount)} isn't offered here: answer it yourself.` }
+        : {};
       return {
         ...step,
+        ...onlyIf,
         source: AGENT_DEFAULT_SOURCE,
         standard: false,
         value: std.write(amount),
