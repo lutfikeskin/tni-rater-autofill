@@ -40,6 +40,8 @@ function IssueCard({ tone, title, text, notes, compare, actions, role }) {
 const NOTES = [
   { name: 'carrier', id: 'carrier-note' },
   { name: 'state', id: 'state-note' },
+  // agent defaults: whose defaults this quote fills with (sidepanel/panel/agent-defaults/store.js).
+  { name: 'defaults', id: 'defaults-note' },
   { name: 'stop', id: 'stop-note' },
   { name: 'review', id: 'review-note' },
   { name: 'fill', id: 'fill-error' },

@@ -328,6 +328,24 @@ test('the agent\'s settings event has every setting, defaults included, and neve
   assert.equal(agentSettingsEvent({ serverUrl: central }, { reason: 'opened', centralServer: central }).values.uploads, 'central');
 });
 
+test('agents\' own defaults: the settings event carries them once answered, a fill their fingerprint', () => {
+  const central = 'https://central.example';
+  // Before the agent says whose defaults the quote takes: no `defaults` at all.
+  assert.equal('defaults' in agentSettingsEvent({}, { reason: 'intake', centralServer: central }), false);
+  // TNI's: an empty list. The agent's: each default in force.
+  assert.deepEqual(agentSettingsEvent({}, { reason: 'changed', changed: 'defaults', centralServer: central, defaults: [] }).defaults, []);
+  const mine = [{ id: 'umCsl', value: 300000 }, { id: 'medPay', value: 'ask', carrier: 'geico' }];
+  assert.deepEqual(agentSettingsEvent({}, { reason: 'changed', changed: 'defaults', centralServer: central, defaults: mine }).defaults, mine);
+  // A fill with the agent's defaults carries the fingerprint on its fill_run only; with TNI's, none.
+  const frames = [{ fields: 1, rounds: 1, filled: [{ key: 'um', q: 'um', label: 'UM', controlKind: 'select', shown: '$300K' }] }];
+  const ctx = { carrier: 'amwins', page: 'Coverages', overwrite: false, ms: 1, redact: (s) => s };
+  const [run, field] = fillEvents(frames, { ...ctx, defaultsHash: '0a1b2c3d4e5f' });
+  assert.equal(run.type, 'fill_run');
+  assert.equal(run.defaultsHash, '0a1b2c3d4e5f');
+  assert.equal(field.defaultsHash, undefined);
+  assert.equal('defaultsHash' in fillEvents(frames, ctx)[0], false);
+});
+
 test('the platform: system and Chrome major version, from userAgentData or the user agent', () => {
   assert.deepEqual(platformOf({ userAgentData: { platform: 'Windows', brands: [{ brand: 'Not A;Brand', version: '99' }, { brand: 'Google Chrome', version: '141' }] }, userAgent: '' }), { os: 'Windows', chrome: 141 });
   assert.deepEqual(platformOf({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36' }), { os: 'macOS', chrome: 140 });

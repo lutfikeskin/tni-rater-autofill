@@ -16,6 +16,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { TniDefaults } from './agent-defaults/view.jsx';
 
 // A checkbox the panel reads by id. It shows `checked` whenever that changes, or whenever `said`
 // (what it was said in) is said again, and the agent's click is passed on as the box's own change
@@ -156,6 +157,9 @@ function Settings({ act }) {
         </div>
         <p className="fine">Never Binds or Submits.</p>
       </div>
+
+      {/* agent defaults: Settings → TNI defaults, hidden while the feature is off. */}
+      {act.defaults ? <TniDefaults act={act.defaults} /> : null}
 
       <Assistant act={act} />
 

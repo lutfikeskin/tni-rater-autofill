@@ -14,6 +14,7 @@ import { stopRecording } from './dev-recording.js';
 import { reviewIntake } from './assistant.js';
 import { uploadNow } from './usage-panel.js';
 import { clientNote, keepPdf, workSaid } from './pdf-view.js';
+import { quoteStarting, refreshDefaults, settingsDefaults } from './agent-defaults/store.js';
 
 // ---------------------------------------------------------------------------------------------
 // Loading the intake PDF
@@ -69,6 +70,8 @@ async function loadFile(file, { reset = false } = {}) {
   // among them (radius miles, years in business) stays theirs after the panel reopens.
   // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
   state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test };
+  // agent defaults: nothing fills with the last quote's answer until this one is set up and asked.
+  quoteStarting();
   if (same) keepWork(state.intake, same);
   state.view = firstView(state.intake);
   state.filter = 'all';
@@ -107,6 +110,8 @@ async function loadFile(file, { reset = false } = {}) {
   render();
   refreshTab();
   reviewIntake();
+  // agent defaults: a new quote, asked again whose defaults it fills with.
+  refreshDefaults();
 }
 
 // What a problem report is about: the tab's vehicle, driver or trailer (`view`), and the last fill
@@ -131,7 +136,8 @@ async function logSettings(reason, changed) {
   try {
     if (reason === 'changed' && !(state.intake && usage.currentSession())) return;
     const saved = await usage.settings();
-    usage.log(agentSettingsEvent(saved, { overwrite: switchOn('overwrite', 'overwrite'), reason, changed, centralServer: usage.DEFAULT_SERVER }));
+    // agent defaults: the quote's own defaults once the agent answered whose they are.
+    usage.log(agentSettingsEvent(saved, { overwrite: switchOn('overwrite', 'overwrite'), reason, changed, centralServer: usage.DEFAULT_SERVER, defaults: settingsDefaults() }));
   } catch { /* the settings log is best effort */ }
 }
 

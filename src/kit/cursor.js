@@ -1075,10 +1075,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           state.quietDue = true;
           state.unoffered.delete(step.id);
           state.keepWait.delete(step.id);
-          // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
+          // A TNI standard is marked apart from intake answers, so the agent sees the assumptions; an
+          // agent's own default in place of one (source agent-default) apart from both.
           state.handled.set(step.id, step.standard
             ? { status: 'standard', note: instead ?? `TNI standard answer, not from the intake: ${step.name}` }
-            : { status: 'filled', note: instead ?? `filled from intake: ${step.name}` });
+            : step.source === 'agent-default'
+              ? { status: 'own', note: instead ?? `your own default, in place of TNI's standard: ${step.name}` }
+              : { status: 'filled', note: instead ?? `filled from intake: ${step.name}` });
           if (step.warn) {
             state.report.checks.push({ ...item, note: step.warn, ...describe(c) });
             state.handled.set(step.id, { status: 'needs', note: step.warn });

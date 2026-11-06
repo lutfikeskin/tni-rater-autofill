@@ -1,0 +1,225 @@
+import { afterEach, beforeEach, expect, test } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/react';
+import { storeState } from '../../sidepanel/panel/state-store.js';
+import * as usage from '../../sidepanel/usage-log.js';
+import { state as panelState } from '../../sidepanel/panel/core.js';
+import { TniDefaults } from '../../sidepanel/panel/agent-defaults/view.jsx';
+import {
+  answerDefaults, defaultsActs, defaultsHold, fillDefaultsHash, initialsChanged, isOwnDefault, loadDefaults, onDefaultsAnswer, refreshDefaults, settingsDefaults,
+} from '../../sidepanel/panel/agent-defaults/store.js';
+import { AGENT_DEFAULTS_ON, overlayFor } from '../../src/agent-defaults/index.js';
+
+// Agents' own defaults in the panel (docs/agent-defaults-spec.md, phase 5): Settings → TNI defaults
+// keeps the agent's profiles, and each quote asks whose defaults it fills with before anything fills.
+
+afterEach(cleanup);
+
+test('the feature is on', () => {
+  expect(AGENT_DEFAULTS_ON).toBe(true);
+});
+
+// The section, drawn from the store.
+const PROFILE = { v: 1, active: 'p1', profiles: { p1: { name: 'Jordan K.', values: { medPay: { value: 1_000 } } }, p2: { name: 'Sam', values: {} } } };
+const actsOf = (calls) => Object.fromEntries(['create', 'pick', 'remove', 'set'].map((name) => [name, (...a) => calls.push([name, ...a])]));
+
+test('without initials the section asks for them, and offers no profile', () => {
+  storeState({ agentDefaults: PROFILE, defaultsInitials: null });
+  const { container } = render(<TniDefaults act={actsOf([])} />);
+  expect(container.textContent).toMatch(/Set your initials above/);
+  expect(container.querySelector('#defaults-profile')).toBeNull();
+});
+
+test('with initials: the profile, each standard with TNI\'s amount first, and the agent\'s picks', () => {
+  storeState({ agentDefaults: PROFILE, defaultsInitials: 'JK' });
+  const calls = [];
+  const { container } = render(<TniDefaults act={actsOf(calls)} />);
+  const profile = container.querySelector('#defaults-profile');
+  expect([...profile.options].map((o) => o.textContent)).toEqual(['None: TNI\'s everywhere', 'Jordan K.', 'Sam']);
+  expect(profile.value).toBe('p1');
+  const med = container.querySelector('#default-medPay');
+  expect([...med.options].map((o) => o.textContent)).toEqual(['TNI\'s ($5,000)', '$500', '$1,000', '$2,000']);
+  expect(med.selectedOptions[0].textContent).toBe('$1,000');
+  expect(container.textContent).toMatch(/TNI's: \$5,000/);
+  const rental = container.querySelector('#default-rental');
+  expect([...rental.options].map((o) => o.textContent)).toEqual(['TNI\'s ($40/day, $1,200)', '$30/day, $900', '$50/day, $1,500', '$100/day, $3,000']);
+  expect(container.querySelectorAll('select[id^="default-"]').length).toBe(5);
+  fireEvent.change(med, { target: { value: '2' } });
+  fireEvent.change(rental, { target: { value: '1' } });
+  fireEvent.change(container.querySelector('#default-umCsl'), { target: { value: '-1' } });
+  fireEvent.change(profile, { target: { value: '' } });
+  expect(calls).toEqual([['set', 'medPay', 2_000], ['set', 'rental', { perDay: 50, max: 1_500 }], ['set', 'umCsl', null], ['pick', null]]);
+});
+
+test('a new profile is named, then created', () => {
+  storeState({ agentDefaults: { v: 1, active: null, profiles: {} }, defaultsInitials: 'JK' });
+  const calls = [];
+  const { container, getByText } = render(<TniDefaults act={actsOf(calls)} />);
+  expect(container.querySelector('#default-medPay')).toBeNull();
+  fireEvent.click(getByText('New profile'));
+  fireEvent.change(container.querySelector('#defaults-new-name'), { target: { value: 'Jordan K.' } });
+  fireEvent.click(getByText('Create'));
+  expect(calls).toEqual([['create', 'Jordan K.']]);
+});
+
+// The store: what the quote waits on, logs and fills with.
+let answers;
+beforeEach(async () => {
+  storeState({ cards: {}, agentDefaults: null, defaultsInitials: null, intake: null });
+  usage.restoreSession(null);
+  await usage.saveSettings({ agent: 'JK' });
+  await loadDefaults();
+  // Each test starts with no profile (outside the extension the store keeps them in memory).
+  for (const id of Object.keys(panelState.agentDefaults.profiles)) await defaultsActs().remove(id);
+  answers = [];
+  onDefaultsAnswer((choice) => { answers.push(choice); return answerDefaults(choice); });
+});
+
+async function profileWithMedPay() {
+  const acts = defaultsActs();
+  await acts.create('Jordan K.');
+  await acts.set('medPay', 2_000);
+}
+const loadQuote = () => {
+  panelState.intake = { record: {} };
+  usage.startSession('intake-1');
+  refreshDefaults();
+};
+
+test('a quote waits for the agent to say whose defaults it takes, then fills and logs with them', async () => {
+  await profileWithMedPay();
+  expect(defaultsHold()).toBe(false); // no quote yet
+  loadQuote();
+  expect(defaultsHold()).toBe(true);
+  expect(settingsDefaults()).toBeUndefined();
+  expect(overlayFor('geico')).toBeNull();
+  const card = panelState.cards.defaults;
+  expect(card.title).toBe('Fill this quote with Jordan K.\'s defaults?');
+  expect(card.notes).toEqual(['Medical payments: $2,000 (TNI\'s: $5,000)']);
+  expect(card.actions.map((a) => a.label)).toEqual(['Yes, mine', 'Use TNI\'s']);
+  await card.actions[0].onClick();
+  expect(answers).toEqual(['mine']);
+  expect(defaultsHold()).toBe(false);
+  expect(settingsDefaults()).toEqual([{ id: 'medPay', value: 2_000 }]);
+  expect(fillDefaultsHash()).toMatch(/^[0-9a-f]{12}$/);
+  expect(overlayFor('geico')).toBeTypeOf('function');
+  expect(panelState.cards.defaults.title).toBe('Defaults: Jordan K., 1 changed');
+  // Use TNI's for this quote: TNI's everywhere, logged as an empty list.
+  await answerDefaults('tni');
+  expect(settingsDefaults()).toEqual([]);
+  expect(fillDefaultsHash()).toBeUndefined();
+  expect(overlayFor('geico')).toBeNull();
+  expect(panelState.cards.defaults.title).toBe('TNI\'s standards for this quote');
+  // The next quote asks again.
+  loadQuote();
+  expect(defaultsHold()).toBe(true);
+});
+
+// "Yes, mine" is for the amounts it was given for: an edited, switched or deleted profile asks again
+// (and logs again once answered); "Use TNI's" stands whatever the profile does.
+test('a profile changed after "Yes, mine" asks the quote again before anything fills with it', async () => {
+  await profileWithMedPay();
+  loadQuote();
+  await answerDefaults('mine');
+  expect(defaultsHold()).toBe(false);
+  // An amount edited: asked again, nothing fills with the new amount, nothing logged for it yet.
+  await defaultsActs().set('medPay', 1_000);
+  expect(defaultsHold()).toBe(true);
+  expect(settingsDefaults()).toBeUndefined();
+  expect(fillDefaultsHash()).toBeUndefined();
+  expect(overlayFor('geico')).toBeNull();
+  expect(panelState.cards.defaults.title).toBe('Fill this quote with Jordan K.\'s defaults?');
+  await answerDefaults('mine');
+  expect(defaultsHold()).toBe(false);
+  expect(settingsDefaults()).toEqual([{ id: 'medPay', value: 1_000 }]);
+  // Another profile picked: asked again.
+  const first = panelState.agentDefaults.active;
+  await defaultsActs().create('Sam');
+  await defaultsActs().set('umCsl', 300_000);
+  expect(defaultsHold()).toBe(true);
+  // Back to the approved one, as it was: its answer stands.
+  await defaultsActs().pick(first);
+  expect(defaultsHold()).toBe(false);
+  // New initials, then the same profile again: asked again.
+  await initialsChanged('XY');
+  await defaultsActs().pick(first);
+  expect(defaultsHold()).toBe(true);
+  // "Use TNI's" stands through an edit.
+  await answerDefaults('tni');
+  await defaultsActs().set('medPay', 2_000);
+  expect(defaultsHold()).toBe(false);
+  expect(settingsDefaults()).toEqual([]);
+});
+
+test('no question without a profile replacing something, without initials, or without a quote', async () => {
+  loadQuote();
+  expect(defaultsHold()).toBe(false); // no profile
+  const acts = defaultsActs();
+  await acts.create('Jordan K.');
+  expect(defaultsHold()).toBe(false); // a profile with TNI's everywhere
+  await acts.set('medPay', 5_000); // TNI's own amount
+  expect(defaultsHold()).toBe(false);
+  await acts.set('medPay', 2_000);
+  expect(defaultsHold()).toBe(true);
+  // New initials: no active profile until one is picked again.
+  await initialsChanged('XY');
+  expect(panelState.agentDefaults.active).toBeNull();
+  expect(defaultsHold()).toBe(false);
+  expect(panelState.cards.defaults).toBeNull();
+  await defaultsActs().pick(Object.keys(panelState.agentDefaults.profiles)[0]);
+  expect(defaultsHold()).toBe(true);
+  // Blank initials: TNI's everywhere, nothing asked.
+  await initialsChanged(null);
+  await defaultsActs().pick(Object.keys(panelState.agentDefaults.profiles)[0]);
+  expect(defaultsHold()).toBe(false);
+  // The client cleared: no question.
+  await initialsChanged('JK');
+  await defaultsActs().pick(Object.keys(panelState.agentDefaults.profiles)[0]);
+  panelState.intake = null;
+  refreshDefaults();
+  expect(defaultsHold()).toBe(false);
+  expect(panelState.cards.defaults).toBeNull();
+});
+
+test('profiles: ids are random, a deleted active profile leaves none active, an unknown standard is refused', async () => {
+  const acts = defaultsActs();
+  await acts.create('Jordan K.');
+  await acts.create('Sam');
+  const ids = Object.keys(panelState.agentDefaults.profiles);
+  expect(ids).toHaveLength(2);
+  for (const id of ids) expect(id).toMatch(/^[0-9a-f-]{36}$/);
+  await acts.set('nope', 1);
+  await acts.set('medPay', 2_000);
+  const active = panelState.agentDefaults.active;
+  expect(panelState.agentDefaults.profiles[active].values).toEqual({ medPay: { value: 2_000 } });
+  await acts.set('medPay', null);
+  expect(panelState.agentDefaults.profiles[active].values).toEqual({});
+  await acts.remove(active);
+  expect(panelState.agentDefaults.active).toBeNull();
+  expect(Object.keys(panelState.agentDefaults.profiles)).toHaveLength(1);
+});
+
+// Every report row the panel builds from a fill keeps "Your default": the page's report and the
+// rows an automatic follow-up adds to it.
+test('report rows from a fill and from a follow-up both carry the agent\'s own default', async () => {
+  const fs = await import('node:fs');
+  for (const file of ['sidepanel/panel/fill.js', 'sidepanel/panel/coordinator.js']) {
+    const text = fs.readFileSync(file, 'utf8');
+    const rows = text.match(/standard: isStandard\(x, 'filled'\)[^\n]*/g) ?? [];
+    expect(rows.length, file).toBeGreaterThan(0);
+    for (const row of rows) expect(row, file).toContain("own: isOwnDefault(x, 'filled')");
+  }
+});
+
+test('an answer is the agent\'s own default by its source', () => {
+  expect(isOwnDefault({ source: 'agent-default' }, 'filled')).toBe(true);
+  expect(isOwnDefault({ source: 'standard', standard: true }, 'filled')).toBe(false);
+});
+
+
+// The report: an answer the agent's own default gave is its own kind of row, tagged "Your default".
+test('a report row from the agent\'s own default is its own kind', async () => {
+  const { answerRecord } = await import('../../sidepanel/panel/report-rows.js');
+  expect(answerRecord({ label: 'Medical payments', value: '$2,000', own: true, standard: false }).kind).toBe('own');
+  expect(answerRecord({ label: 'Medical payments', value: '$5,000', standard: true }).kind).toBe('standard');
+  expect(answerRecord({ label: 'Medical payments', value: '$2,000', own: true, edited: true }).kind).toBe('edited');
+});

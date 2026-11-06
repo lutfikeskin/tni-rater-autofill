@@ -7,8 +7,9 @@ import { adapter } from './adapter.js';
 /** @import { PageControl } from './dom.js' */
 
 export const MARK = 'data-rater-autofill';
-export const COLORS = { filled: '#16a34a', standard: '#2f6fd6', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed', agent: '#475569' };
-export const SOLID_MARKS = new Set(['filled', 'standard', 'ai', 'agent']);
+// `own`: an agent's own default in place of TNI's standard (docs/agent-defaults-spec.md), teal.
+export const COLORS = { filled: '#16a34a', standard: '#2f6fd6', own: '#0f766e', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed', agent: '#475569' };
+export const SOLID_MARKS = new Set(['filled', 'standard', 'own', 'ai', 'agent']);
 export const BANNER_ID = 'rater-autofill-ai-banner';
 
 /**
@@ -31,7 +32,7 @@ export function highlightTargets(c) {
 /**
  * Applies an autofill status visual mark outline and tooltip to control c.
  * @param {PageControl} c
- * @param {'filled' | 'standard' | 'needs' | 'failed' | 'ai' | 'agent' | string} status
+ * @param {'filled' | 'standard' | 'own' | 'needs' | 'failed' | 'ai' | 'agent' | string} status
  * @param {string} [note]
  */
 export function mark(c, status, note) {

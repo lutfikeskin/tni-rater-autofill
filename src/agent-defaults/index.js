@@ -24,7 +24,7 @@ import { AGENT_DEFAULT_SOURCE, makeOverlay, safeOverlay, amountSaid } from './ov
 export { AGENT_DEFAULT_SOURCE, REGISTRY, amountSaid };
 
 // The feature's switch. Phase 5 turns it on with the TNI defaults page (docs/agent-defaults-spec.md).
-export const AGENT_DEFAULTS_ON = false;
+export const AGENT_DEFAULTS_ON = true;
 
 // The profile whose defaults this quote fills with: set by the panel once the agent confirms it for
 // the quote (phase 5), null otherwise. No profile, no change.
@@ -177,4 +177,23 @@ export function replayOverlay(defaults, carrierId) {
   if (!profile || !carrierId) return null;
   const effective = effectiveDefaults(profile, carrierId);
   return Object.keys(effective).length ? makeOverlay(effective, carrierId) : null;
+}
+
+/**
+ * The fingerprint of the defaults a fill runs with (fill_run's and fill_error's `defaultsHash`): 12 hex
+ * digits over what defaultsForLog says of the profile, so the same defaults give the same hash on any
+ * computer; null with none (TNI's everywhere). Not a secret: it only tells two sets of defaults apart.
+ * @param {DefaultsProfile | null} profile @returns {string | null}
+ */
+export function defaultsHash(profile) {
+  const said = defaultsForLog(profile);
+  if (!said.length) return null;
+  // Two FNV-1a passes (32 bits each, different offsets): enough to tell profiles apart, and sync.
+  const text = JSON.stringify(said);
+  const fnv = (seed) => {
+    let h = seed >>> 0;
+    for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16).padStart(8, '0');
+  };
+  return `${fnv(0x811c9dc5)}${fnv(0x01000193)}`.slice(0, 12);
 }

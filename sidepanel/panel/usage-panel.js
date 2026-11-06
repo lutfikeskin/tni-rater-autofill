@@ -10,6 +10,7 @@ import { logSettings, problemContext } from './intake.js';
 import { pageOf } from './usage.js';
 import { announce, issueSaid, renderSite, renderSteps, unlockAudio } from './coordinator.js';
 import { aiSettings, renderAiSettings } from './assistant.js';
+import { initialsChanged } from './agent-defaults/store.js';
 
 // ---------------------------------------------------------------------------------------------
 // Usage log panel and problem reports
@@ -107,7 +108,10 @@ function settingsActs() {
     serverToken: async (value) => { await usage.saveSettings({ serverToken: value.trim() }); uploadNow(); renderAiSettings(); },
     upload: () => uploadNow(),
     agent: async (value) => {
-      await usage.saveSettings({ agent: value.trim().toUpperCase().slice(0, 6) || null });
+      const initials = value.trim().toUpperCase().slice(0, 6) || null;
+      await usage.saveSettings({ agent: initials });
+      // agent defaults: new initials, no active profile until one is picked again.
+      await initialsChanged(initials);
       renderUsage();
     },
     exportLog: async () => {
