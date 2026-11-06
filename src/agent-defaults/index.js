@@ -142,3 +142,39 @@ export function defaultsForLog(profile) {
   }
   return out;
 }
+
+/**
+ * The profile a quote's logged `agent_settings.defaults` describe (defaultsForLog's inverse): what
+ * the review tooling replays a recorded quote with (scripts/lib/agent-defaults.mjs). A rental default
+ * logs its daily amount: the list's choice with that amount. An entry it can't read is left out, so
+ * that standard replays as TNI's.
+ * @param {unknown} defaults @returns {DefaultsProfile | null}
+ */
+export function profileFromLog(defaults) {
+  if (!Array.isArray(defaults) || !defaults.length) return null;
+  /** @type {Required<Pick<DefaultsProfile, 'values' | 'carriers'>>} */
+  const profile = { values: {}, carriers: {} };
+  for (const d of defaults) {
+    const entry = typeof d?.id === 'string' ? entryOf(d.id) : null;
+    const list = entry && (d.carrier ? entry.choices[d.carrier] : entry.choices.all);
+    if (!list) continue;
+    const choice = list.find((c) => (typeof c === 'number' ? c === d.value : c.perDay === d.value));
+    const pick = d.value === 'ask' ? { ask: /** @type {const} */ (true) } : choice != null ? { value: choice } : null;
+    if (!pick) continue;
+    if (d.carrier) (profile.carriers[d.carrier] ??= {})[d.id] = pick;
+    else profile.values[d.id] = pick;
+  }
+  return profile;
+}
+
+/**
+ * The overlay a recorded quote was filled with on this carrier, from its logged defaults; null when it
+ * logged none. Not behind AGENT_DEFAULTS_ON: it replays what a build with the feature on did.
+ * @param {unknown} defaults @param {string | null | undefined} carrierId @returns {StepOverlay | null}
+ */
+export function replayOverlay(defaults, carrierId) {
+  const profile = profileFromLog(defaults);
+  if (!profile || !carrierId) return null;
+  const effective = effectiveDefaults(profile, carrierId);
+  return Object.keys(effective).length ? makeOverlay(effective, carrierId) : null;
+}

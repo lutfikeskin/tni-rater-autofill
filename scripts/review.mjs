@@ -165,7 +165,7 @@ p(`| Builds | ${week.builds.map((b) => `${b.version} ${b.channel}: ${b.quotes} q
 p(`| Quotes done (reached the carrier's final page or printed) | ${k.donePercent ?? '—'}% |`);
 p(`| Answers filled by the rules, per quote | ${k.filledPerQuote ?? '—'} |`);
 p(`| Left to the agent per quote (each question once per quote): ${Object.keys(k.leftPerQuote).join(' / ') || '—'} | ${Object.values(k.leftPerQuote).join(' / ') || '—'} |`);
-p(`| Autofilled answers the agent corrected (another value or cleared) · reformatted | ${k.corrected} · ${k.reformatted} |`);
+p(`| Autofilled answers the agent corrected (another value or cleared) · reformatted | ${k.corrected}${k.correctedOwnDefault ? ` (${k.correctedOwnDefault} the agent's own default)` : ''} · ${k.reformatted} |`);
 p(`| Autofilled answers the agent put back after they changed (a carrier overwrite, or the agent's own edit) | ${restoredAutofill} |`);
 p(`| Autofilled answers the agent re-entered unchanged (from an empty field; not corrections) | ${sameAsAutofill} |`);
 p(`| AI requests | ${asks.length}${asks.length ? ` (${asks.filter((a) => a.error).length} errors, median ${median(asks.filter((a) => !a.error).map((a) => a.ms))} ms)` : ''} |`);

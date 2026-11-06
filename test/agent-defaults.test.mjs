@@ -18,7 +18,7 @@ import { REGISTRY } from '../src/agent-defaults/registry.js';
 import { makeOverlay, safeOverlay, liabilityAmount, amountSaid, AGENT_DEFAULT_SOURCE } from '../src/agent-defaults/overlay.js';
 import {
   AGENT_DEFAULTS_ON, setActiveDefaults, overlayFor, rulebookRewriteFor, makeRulebookRewrite,
-  effectiveDefaults, defaultsForLog, isAgentDefault,
+  effectiveDefaults, defaultsForLog, isAgentDefault, profileFromLog, replayOverlay,
 } from '../src/agent-defaults/index.js';
 import { DEFAULTS_SHAPE, AGENT_DEFAULT_SOURCE as SERVER_SOURCE } from '../server/agent-defaults.mjs';
 
@@ -270,8 +270,8 @@ test('isAgentDefault reads a report item\'s method', () => {
   assert.equal(isAgentDefault(buildPlan(record(), carrier('progressive'), {}).find((s) => s.q === '1FE4')), false);
 });
 
-test('only the module, the panel\'s planFor and Luna\'s evidence import it', () => {
-  const allowed = new Set(['sidepanel/panel/plan-for.js', 'src/ai/common.js']);
+test('only the module, the panel\'s planFor, Luna\'s evidence and the review tooling\'s adapter import it', () => {
+  const allowed = new Set(['sidepanel/panel/plan-for.js', 'src/ai/common.js', 'scripts/lib/agent-defaults.mjs']);
   const walk = (dir) => fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((d) => {
     const rel = `${dir}/${d.name}`;
     if (d.isDirectory()) return ['node_modules', 'dist', 'layouts'].includes(d.name) ? [] : walk(rel);
@@ -281,4 +281,20 @@ test('only the module, the panel\'s planFor and Luna\'s evidence import it', () 
     .filter((f) => !f.startsWith('src/agent-defaults/'))
     .filter((f) => /from ['"][^'"]*agent-defaults\/(index|overlay|registry)\.js['"]/.test(fs.readFileSync(path.join(root, f), 'utf8')));
   assert.deepEqual(importers.sort(), [...allowed].sort());
+});
+
+test('a quote\'s logged defaults replay as the profile it was filled with', () => {
+  const profile = { values: { medPay: { value: 2_000 }, rental: { value: { perDay: 50, max: 1_500 } } }, carriers: { geico: { umCsl: { ask: true } }, progressive: { umCsl: { value: 50_000 } } } };
+  const log = defaultsForLog(profile);
+  assert.deepEqual(profileFromLog(log), profile);
+  for (const c of CARRIERS) assert.deepEqual(effectiveDefaults(profileFromLog(log), c.id), effectiveDefaults(profile, c.id), c.id);
+  // An entry the registry or the list no longer has is left out: that standard replays as TNI's.
+  assert.deepEqual(profileFromLog([{ id: 'gone', value: 1 }, { id: 'medPay', value: 7 }, { id: 'medPay', value: 1_000, carrier: 'nowhere' }]), { values: {}, carriers: {} });
+  assert.equal(profileFromLog([]), null);
+  assert.equal(profileFromLog(undefined), null);
+  assert.equal(replayOverlay([], 'geico'), null);
+  assert.equal(replayOverlay([{ id: 'medPay', value: 5_000 }], 'geico'), null, 'TNI\'s own amount: nothing replaced');
+  // Not behind the off switch: it replays what a build with the feature on did.
+  const replayed = buildPlan(record(), carrier('geico'), {}, { overlay: replayOverlay(log, 'geico') });
+  assert.deepEqual(data(replayed), data(withOverlay('geico', effectiveDefaults(profile, 'geico'))));
 });

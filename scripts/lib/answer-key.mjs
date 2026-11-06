@@ -32,6 +32,7 @@ import { SECTIONS } from '../../src/schema.js';
 import { matchIntake, normalizeForMatch } from '../../src/usage.js';
 import { get } from '../../src/util.js';
 import { activeOf, choiceVerdict, shown } from './benchmark.mjs';
+import { AGENT_DEFAULT_SOURCE } from './agent-defaults.mjs';
 
 export const KEY_KIND = 'tni-answer-key';
 const KINDS = ['value', 'fromIntake', 'agent', 'na', 'perQuote'];
@@ -376,7 +377,8 @@ export function sheetModel(rows, { key = null } = {}) {
     const kind = first.kind;
     const valued = list.filter((c) => c.row.status === 'value');
     const of = (source) => valued.filter((c) => c.row.source === source);
-    const group = of('standard').length ? 'standard'
+    // A TNI standard, or one an agent's own default replaced in some quotes (agent defaults).
+    const group = of('standard').length || of(AGENT_DEFAULT_SOURCE).length ? 'standard'
       : of('intake').length ? 'mapping'
         : of('derived').length ? (COVERAGE_PAGE.test(first.page + (first.step ? ` › ${first.step}` : '')) || COVERAGE_PAGE.test(id) ? 'coverage' : 'derived')
           : 'agent';
@@ -399,16 +401,21 @@ export function sheetModel(rows, { key = null } = {}) {
       const value = answers.size ? JSON.parse(ranked(answers)[0].text) : null;
       // A pick the key can't hold as a value (any option but one, the first option, the page's
       // suggestion): the option the agents' quotes ended on, else none (the reviewer types it).
+      // agent defaults: a quote an agent's own default filled says what that agent wanted, never TNI's
+      // answer, so it proposes nothing for the question. A question no quote filled with TNI's standard
+      // (a standard's only because defaults filled it) proposes none: there, a quote left to the agent
+      // is one client's choice, not TNI's.
+      const tni = of('standard').length ? list.filter((c) => c.row.source !== AGENT_DEFAULT_SOURCE) : [];
       const picked = new Map();
-      for (const c of list) { const v = (c.truthRow ?? c.row).detail.truth?.value; if (CHOICE.has(kind) && v != null && v !== '') tally(picked, v); }
+      for (const c of tni) { const v = (c.truthRow ?? c.row).detail.truth?.value; if (CHOICE.has(kind) && v != null && v !== '') tally(picked, v); }
       const proposed = value ?? (picked.size ? ranked(picked)[0].text : null);
       const states = new Set(of('standard').map((c) => c.row.detail.state));
       // Restricted to those states only when a quote elsewhere gets another answer today.
-      const elsewhere = list.some((c) => c.row.status !== 'unsure' && !states.has(c.row.detail.state));
+      const elsewhere = tni.some((c) => c.row.status !== 'unsure' && !states.has(c.row.detail.state));
       // An agent who corrected it, or answered it themselves, otherwise: no answer is preselected;
       // the reviewer chooses between today's rule and the agents' answers.
       const others = new Map();
-      for (const c of list) {
+      for (const c of tni) {
         const tr = c.truthRow ?? c.row;
         if (proposed == null || !['corrected', 'agent'].includes(tr.group)) continue;
         if (agentVerdict(tr.detail.truth, { value: proposed }, CHOICE.has(kind), tr.detail.record) === 'wrong') tally(others, CHOICE.has(kind) ? String(tr.detail.truth.value) : 'other typed text');
@@ -446,7 +453,9 @@ export function sheetModel(rows, { key = null } = {}) {
       if (truthGroup === 'corrected') attention.push('the agent corrected the autofill');
       if (c.row.result === 'differ' || c.truthRow?.result === 'differ') attention.push('today\'s rules and the agent\'s answer differ');
       // A quote whose answer today's rules can't be paired with takes the question's answer.
-      if (c.row.status !== 'unsure' && !covers(c)) attention.push(group === 'coverage' ? 'coverage choice' : `today's rules answer this quote differently (${c.row.status === 'value' ? `${show(d.step, kind)}, ${c.row.source}` : STATUS[c.row.status] ?? c.row.status})`);
+      // agent defaults: an answer the agent's own default gave is theirs for that quote, not TNI's rule.
+      if (c.row.source === AGENT_DEFAULT_SOURCE) attention.push("filled with the agent's own default, not TNI's");
+      else if (c.row.status !== 'unsure' && !covers(c)) attention.push(group === 'coverage' ? 'coverage choice' : `today's rules answer this quote differently (${c.row.status === 'value' ? `${show(d.step, kind)}, ${c.row.source}` : STATUS[c.row.status] ?? c.row.status})`);
       // The quote's own proposal: today's answer, the agent's choice where they changed it, else the agent's.
       let answer;
       const agentChoice = CHOICE.has(kind) && t?.value != null && ['corrected', 'agent'].includes(truthGroup) ? t.value : null;

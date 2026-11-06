@@ -12,6 +12,7 @@
 import { isPageLayout, sessionContexts } from './events.mjs';
 import { fieldIdentities, ENTITY_PAGES } from './layouts.mjs';
 import { fieldStatus } from './coverage.mjs';
+import { isOwnDefault } from './agent-defaults.mjs';
 
 const CHOICE = new Set(['select', 'radio', 'checkbox', 'combo']);
 const textOf = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -76,7 +77,8 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
       if (e.result === 'filled') {
         a.source = 'autofill';
         a.autofilled = true;
-        // Where the fill's answer came from (intake, derived, standard, fact, attestation).
+        // Where the fill's answer came from (intake, derived, standard, fact, attestation, or the
+        // agent's own default: agent-default).
         if (e.source) a.ruleSource = e.source;
         if (e.shown !== undefined) { a.value = e.shown; a.filledValue = e.shown; }
       }
@@ -250,7 +252,9 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     }
 
     if (isMapped) {
-      const filled = obs.filter((o) => o.autofilled);
+      // An answer filled with the agent's own default (agent defaults) says nothing about TNI's rule:
+      // its correction is the agent overriding themselves (the weekly signals count those apart).
+      const filled = obs.filter((o) => o.autofilled && !isOwnDefault(o.ruleSource));
       const corrected = filled.filter((o) => o.corrected);
       if (intakesOf(filled) >= minIntakes && corrected.length / filled.length >= 0.2) {
         const changes = new Map();

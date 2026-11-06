@@ -715,3 +715,14 @@ test('identity: controls drawn together stay apart; a shared text falls back to 
   assert.equal(questionOf(two)({ session: 'no-layout', carrier: 'progressive', page: 'CoveragesRates', q: '3AA', label: 'A text only one question reads', type: 'ai_decision' }),
     'progressive|CoveragesRates|text:a text only one question reads', 'a text no other question shares: still by its text');
 });
+
+// agent defaults: corrections of an answer the agent's own default filled are the agent overriding
+// themselves, never a reason to review TNI's rule.
+test('learning never suggests reviewing a rule for corrections of the agent\'s own default', () => {
+  const events = week(10).map((e) => (e.type === 'fill_field' && e.q === '2B9D' ? { ...e, source: 'agent-default' } : e));
+  const { suggestions } = learn(events, { carriers: CARRIERS, minIntakes: 5 });
+  assert.ok(!suggestions.review.some((s) => s.q === '2B9D'));
+  // The same corrections of a TNI standard still are.
+  const standard = week(10).map((e) => (e.type === 'fill_field' && e.q === '2B9D' ? { ...e, source: 'standard' } : e));
+  assert.equal(learn(standard, { carriers: CARRIERS, minIntakes: 5 }).suggestions.review.find((s) => s.q === '2B9D').corrected, 6);
+});

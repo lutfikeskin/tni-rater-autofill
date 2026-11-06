@@ -1,6 +1,6 @@
 # Spec: agents' own defaults ("My defaults")
 
-Status: **in progress**, switched off. Written 2026-11-05 from the code on `main` (530f86f). Done: the server (rollout step 1), the generic hooks (step 2) and the module, switched off (step 3). Not yet: review tooling, the Settings page and logging, Advanced.
+Status: **in progress**, switched off. Written 2026-11-05 from the code on `main` (530f86f). Done: the server (rollout step 1), the generic hooks (step 2), the module, switched off (step 3), and the review tooling (step 4). Not yet: the Settings page and logging, Advanced.
 
 ## Goal
 
@@ -105,7 +105,7 @@ The feature lives in its own modules. Core code (plan building, rules, the page 
 | Report tag and page colour | a source → style map (`agent-default` is one entry) | One entry |
 | Luna's rulebook | an optional `rewrite` hook on `rulebookFor` | No |
 
-The rule is that **only `src/agent-defaults/` and `sidepanel/panel/agent-defaults/` import from `src/agent-defaults/`**, apart from the one wiring line in `planFor()`, the one in Luna's evidence (`src/ai/common.js`, the rulebook rewrite) and, from step 5, one in usage logging. `test/agent-defaults.test.mjs` fails on any other importer.
+The rule is that **only `src/agent-defaults/` and `sidepanel/panel/agent-defaults/` import from `src/agent-defaults/`**, apart from the one wiring line in `planFor()`, the one in Luna's evidence (`src/ai/common.js`, the rulebook rewrite), the review tooling's adapter (`scripts/lib/agent-defaults.mjs`) and, from step 5, one in usage logging. `test/agent-defaults.test.mjs` fails on any other importer.
 
 ### Registry: `src/agent-defaults/registry.js`
 
@@ -171,7 +171,7 @@ Each standard rule an override may change gains a `std` field. The field names i
 ### Removing the feature
 
 1. Delete `src/agent-defaults/`, `sidepanel/panel/agent-defaults/` and `server/agent-defaults.mjs` (with its lines marked `agent defaults` in `server/index.mjs`, its name in `server/Dockerfile` and in `SERVER_HASH`).
-2. Delete the wiring line in `planFor()`, the one in `src/ai/common.js` and the one in usage logging.
+2. Delete the wiring line in `planFor()`, the one in `src/ai/common.js` and the one in usage logging, and `scripts/lib/agent-defaults.mjs` with its uses (marked `agent defaults` in the benchmark, answer key, learning and signals).
 3. Optionally delete the `std` fields on rules; they're inert without the module.
 4. Delete the `agent-default` entry from the source → style map and the module's tests.
 
@@ -217,7 +217,7 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 - `fill_field.source = 'agent-default'`. `agent_settings` (already logged per quote) gains `defaults`: only the overrides, as `{ id, value | 'ask', carrier? }`, so the review knows what each quote was filled with.
 - Add a `defaultsHash` beside the `rules` fingerprint on `fill_run` and `fill_error`: the same rules with different defaults fill different answers.
 - **Signals and review**: `source` counts include `agent-default`. A correction of an `agent-default` answer is reported apart from a correction of a TNI standard. It means the agent overrode their own default, not that TNI's rule is wrong.
-- **Benchmark and answer key**: replay each quote with the defaults its `agent_settings` logged. Otherwise every agent default reads as "today's rules differ".
+- **Benchmark and answer key**: replay each quote with the defaults its last `agent_settings` logged. Otherwise every agent default reads as "today's rules differ". So every quote's `agent_settings` must log `defaults` once the feature is on: the list in force for it, and an empty list after **Use TNI's**.
 - **Developer recordings** store the effective defaults, so a replay reproduces the fill.
 
 ## Risk analysis
@@ -246,7 +246,7 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 1. **Server.** Accept `agent-default` in `source`, `defaults` in `agent_settings` and `defaultsHash` on fill runs, then deploy. This changes no behaviour. *Done and deployed; see [hosting](hosting.md).*
 2. **Generic hooks, no feature.** Add the `overlay` hook in `buildPlan`, `tni` on steps, the `planFor()` wrapper, the `rulebookFor` `rewrite` hook, and `std` metadata on standard rules. Prove nothing changed: `npm test`, the carrier mocks, and `npm run benchmark -- --save` on `main` then `--against` on the branch with zero differences. *Done.*
 3. **The module, switched off.** Add `src/agent-defaults/` (registry, overlay with its cross-field checks, effective defaults, the rulebook rewrite, `isAgentDefault`, the log entries) with `test/agent-defaults.test.mjs` and `AGENT_DEFAULTS_ON = false`, and wire it into `planFor()` and `evidenceFor`. Progressive and AmWINS write a million-dollar UM the way their lists do ("$1 million CSL", "$1M"). *Done.*
-4. **Review tooling.** Update signals, review, benchmark and answer key for `agent-default` and the logged defaults, before any agent can switch defaults on. Otherwise the benchmark would replay those quotes with TNI's values and report false differences.
+4. **Review tooling.** Update signals, review, benchmark and answer key for `agent-default` and the logged defaults, before any agent can switch defaults on. Otherwise the benchmark would replay those quotes with TNI's values and report false differences. *Done: one adapter, `scripts/lib/agent-defaults.mjs`, replays each quote with its logged defaults (`profileFromLog`, `replayOverlay` in the module), keeps answer-key cells and rule suggestions apart from TNI's standards, and gives the weekly signals the defaults in force and corrections of them apart ([learning](learning.md)).*
 5. **Basic UI, switched on.** Add the TNI defaults section, the profile question, the page colour, the report tag and logging, and set `AGENT_DEFAULTS_ON = true`. Requires step 4 merged. Test the e2e with an override on each carrier mock.
 6. **Advanced.** Add per-carrier amounts, carrier-only coverage standards, and "Ask me".
 
