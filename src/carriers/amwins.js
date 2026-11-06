@@ -56,6 +56,9 @@ import { driverExcluded, ownerRowExcluded, owner, ownerDobNote } from '../answer
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { EXPEDITING_OR_GENERAL_FREIGHT, namesExpeditingOrGeneralFreight } from '../answers/classes.js';
 
+// A UM limit as AmWINS lists it: $100K, and from a million $1M or $1.5M (captured layouts), never $1000K.
+const umK = (/** @type {number} */ a) => (a >= 1_000_000 ? `$${a / 1_000_000}M` : usdK(a, 'K'));
+
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
 const street = (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null;
@@ -655,7 +658,7 @@ export const amwins = {
     { concept: 'coverage.rental', tni: 'amwins.rental', name: `Rental reimbursement (standard: ${usd(STANDARDS.rental.perDay)}/day, ${usd(STANDARDS.rental.max)})`, label: 'transportation expense|rental reimbursement', kind: 'choice', source: 'standard', value: () => `${usd(STANDARDS.rental.perDay)} day / ${usd(STANDARDS.rental.max)} total`,
       std: { id: 'rental', write: (r) => `${usd(r.perDay)} day / ${usd(r.max)} total`, name: (r) => `Rental reimbursement (standard: ${usd(r.perDay)}/day, ${usd(r.max)})` } },
     { concept: 'coverage.um', selector: '#uninsuredMotoristsLimit', tni: 'amwins.um', name: `UM limit (standard: ${usdK(STANDARDS.umCsl, 'K')})`, kind: 'choice', source: 'standard', value: () => usdK(STANDARDS.umCsl, 'K'),
-      std: { id: 'umCsl', write: (a) => usdK(a, 'K'), name: (a) => `UM limit (standard: ${usdK(a, 'K')})` } },
+      std: { id: 'umCsl', write: (a) => umK(a), name: (a) => `UM limit (standard: ${umK(a)})` } },
     { concept: 'coverage.medpay', selector: '#medicalPayment', tni: 'amwins.medpay-pip', name: `Medical payments (standard: ${usd(STANDARDS.medPay)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.medPay),
       std: { id: 'medPay', write: usd, name: (a) => `Medical payments (standard: ${usd(a)})` } },
     { concept: 'coverage.comp-coll', selector: '#comprehensiveDeductible', tni: 'amwins.comp-coll', name: `Comprehensive deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.deductible),

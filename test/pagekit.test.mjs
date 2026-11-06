@@ -14,6 +14,7 @@ import { assistContextKey } from '../src/ai/common.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
 import { assertReportResolutions } from './resolution-check.mjs';
 import { kitCode } from '../scripts/lib/kit.mjs';
+import { makeOverlay } from '../src/agent-defaults/overlay.js';
 
 // This is a deliberately small DOM/ExtJS replay.  It exercises the injected MAIN-world
 // script itself, without a browser session, real quote data, or customer identifiers.
@@ -8939,6 +8940,35 @@ test('GEICO: Medical Payments $5,000 wherever offered and PIP declined beside it
   // answer), and Basic PIP kept as GEICO has it.
   r = await run({ med: NE, pip: ['$10,000/No deductible'], pipHas: '$10,000/No deductible', state: 'FL' });
   assert.deepEqual([r.med, r.pip, r.left, r.clicks, r.againFailed], ['$5,000', '$10,000/No deductible', [], ['print'], []], 'FL');
+});
+
+// An agent's own Medical Payments default (src/agent-defaults/, switched off) on GEICO's list: filled
+// where GEICO lists it; the agent's where the list lacks it, and where GEICO lists no limit at all
+// (TNI's own Not Included there is TNI's fallback, never filled as the agent's default), even with
+// Not Included already chosen on the page.
+test("GEICO: an agent's Medical Payments default is filled where listed and the agent's where GEICO lists no limit", async () => {
+  const rules = geico.rules.filter((r) => r.q === 'MedicalPayments');
+  const run = async (options, has = '') => {
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    geicoBar(h, 'Quote & Coverages');
+    const med = new SelectNode(['Please Select', ...options].map((t) => ({ text: t, value: t === 'Please Select' ? '' : t })), { id: 'Id_med_11', ariaLabel: 'Medical Payments (MED)', value: has });
+    h.document.body.append(med);
+    const plan = buildPlan({ ...geicoRecord(), garaging: { state: 'TX' } }, { id: 'geico', useGenericRules: false, rules, actions: [] }, {}, { overlay: makeOverlay({ medPay: { value: 2_000 } }, 'geico') });
+    const report = await h.kit.fill(plan, { maxRounds: 6 });
+    return { med: med.value, filled: plain(report.filled.map((x) => x.source)), left: plain(report.noData.map((x) => [x.manualOnly, x.note])) };
+  };
+  let r = await run(['Not Included', '$500', '$1,000', '$2,000', '$5,000']);
+  assert.deepEqual([r.med, r.filled, r.left], ['$2,000', ['agent-default'], []], "listed: the agent's amount");
+  r = await run(['Not Included', '$500', '$1,000', '$5,000']);
+  assert.deepEqual([r.med, r.filled], ['', []], 'not listed: left as it is');
+  assert.equal(r.left.length, 1);
+  assert.equal(r.left[0][0], true);
+  assert.match(r.left[0][1], /doesn't list \$2,000 medical payments/);
+  for (const has of ['', 'Not Included']) {
+    r = await run(['Not Included'], has);
+    assert.deepEqual([r.med, r.filled], [has, []], `no limit listed (${has || 'nothing chosen'}): never Not Included as the agent's default`);
+    assert.deepEqual(r.left, [[true, "Your default medical payments of $2,000 isn't offered here: answer it yourself."]]);
+  }
 });
 
 // Speed (PR 178, 2026-10-26): every wait wakes when its quiet time is over, not on its next 60 ms
