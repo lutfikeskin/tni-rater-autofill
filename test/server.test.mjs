@@ -215,9 +215,10 @@ test('dropped fields are named on the event (names only, bounded), and health na
   await withServer({ dataDir }, async ({ post, base }) => {
     await post({ events: [ev({ seq: -1, ...many, 'Jordan Sample': 'x' })] });
     const health = await (await fetch(`${base}/v1/health`)).json();
-    // The server's own files, as the image copies them (server/Dockerfile): index.mjs, then the dashboard's.
+    // The server's own files, as the image copies them (server/Dockerfile): index.mjs, the
+    // dashboard's, then agent defaults'.
     const hash = crypto.createHash('sha256');
-    for (const f of ['index.mjs', 'dashboard.mjs']) hash.update(fs.readFileSync(new URL(`../server/${f}`, import.meta.url)));
+    for (const f of ['index.mjs', 'dashboard.mjs', 'agent-defaults.mjs']) hash.update(fs.readFileSync(new URL(`../server/${f}`, import.meta.url)));
     assert.equal(health.server, hash.digest('hex').slice(0, 12));
     assert.equal(health.server, SERVER_HASH);
   });
@@ -511,6 +512,37 @@ test('keeps why an answer was given, and a dismissed check, in their shapes only
   assert.deepEqual([ok.source, ok.standard, ok.review], ['standard', true, true]);
   assert.deepEqual([odd.source, odd.standard], [undefined, undefined]);
   assert.deepEqual([dismissed.type, dismissed.label, dismissed.mark], ['check_dismissed', 'Liability', 'check']);
+});
+
+// agent defaults (server/agent-defaults.mjs; docs/agent-defaults-spec.md): the server keeps them
+// before any build sends them, so the first build that does loses nothing.
+test('keeps an agent default\'s answer source, the agent\'s defaults and their fingerprint, in their shapes only', async () => {
+  const dataDir = tmp();
+  const defaults = [{ id: 'medPay', value: 1000 }, { id: 'umCsl', value: 300000, carrier: 'geico' }, { id: 'hazmat', value: 'ask' }, { id: 'umType', value: 'Add-On', carrier: 'geico' }];
+  let r;
+  await withServer({ dataDir }, async ({ post }) => {
+    r = await (await post({ events: [
+      ev({ type: 'fill_field', filled: undefined, result: 'filled', q: '1FE4', source: 'agent-default' }),
+      ev({ type: 'agent_settings', filled: undefined, reason: 'changed', changed: 'defaults', defaults }),
+      ev({ type: 'agent_settings', filled: undefined, reason: 'changed', defaults: [{ id: 'medPay', value: 1000, client: 'Ann' }] }),
+      ev({ type: 'agent_settings', filled: undefined, reason: 'changed', defaults: [{ id: 'medPay', value: 'x'.repeat(41) }] }),
+      ev({ type: 'agent_settings', filled: undefined, reason: 'changed', defaults: { medPay: 1000 } }),
+      ev({ type: 'agent_settings', filled: undefined, reason: 'changed', defaults: Array.from({ length: 41 }, () => ({ id: 'medPay', value: 1000 })) }),
+      ev({ defaultsHash: '0123456789ab' }),
+      ev({ type: 'fill_error', filled: undefined, error: 'x', defaultsHash: '0123456789ab' }),
+      ev({ defaultsHash: 'not a hash' }),
+    ] })).json();
+  });
+  assert.equal(r.accepted, 8);
+  assert.deepEqual(r.rejected.map((x) => x.index), [8], 'a malformed fingerprint refuses the event, like the rules\'');
+  const [field, settings, extraKey, longValue, notList, tooMany, run, error] = stored(dataDir);
+  assert.equal(field.source, 'agent-default');
+  assert.deepEqual([settings.changed, settings.defaults], ['defaults', defaults]);
+  for (const odd of [extraKey, longValue, notList, tooMany]) {
+    assert.equal(odd.defaults, undefined);
+    assert.deepEqual(odd.dropped, ['defaults']);
+  }
+  assert.deepEqual([run.defaultsHash, error.defaultsHash], ['0123456789ab', '0123456789ab']);
 });
 
 test('a problem report keeps the fill it is about, in its shapes', async () => {

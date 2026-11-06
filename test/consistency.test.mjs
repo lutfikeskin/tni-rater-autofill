@@ -9,10 +9,10 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { EVENT_FIELDS, COMMON, RUN_FIELDS, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT } from '../server/index.mjs';
+import { EVENT_FIELDS, COMMON, RUN_FIELDS, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT } from '../server/index.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
-import { redactionTerms } from '../src/plan.js';
+import { redactionTerms, SOURCES } from '../src/plan.js';
 import { CARRIERS } from '../src/carriers.js';
 import { DEFAULT_SERVER } from '../sidepanel/usage-log.js';
 import { fillEvents, fieldChangeEvent, intakeProfile, redactor, ID_LIKE as EXTENSION_ID_LIKE, LIMIT as EXTENSION_LIMIT, PROFILE_UNITS as EXTENSION_UNITS } from '../src/usage.js';
@@ -43,11 +43,18 @@ test('fill events carry only fields the server keeps (nothing silently dropped)'
     assert.deepEqual(dropped, [], `${e.type}: the server drops ${dropped.join(', ')}`);
     for (const [k, valid] of Object.entries(RUN_FIELDS)) if (e[k] !== undefined) assert.ok(valid(e[k]), `${e.type}.${k} as the extension sends it would be refused`);
   }
-  assert.deepEqual(Object.keys(RUN_FIELDS).sort(), ['rules', 'run', 'settings', 'step']);
+  assert.deepEqual(Object.keys(RUN_FIELDS).sort(), ['defaultsHash', 'rules', 'run', 'settings', 'step']);
   for (const f of ['run', 'rules', 'settings', 'step']) assert.ok(EVENT_FIELDS.fill_run.includes(f), `fill_run keeps ${f}`);
   for (const f of ['run', 'step']) assert.ok(EVENT_FIELDS.fill_field.includes(f), `fill_field keeps ${f}`);
   for (const f of ['run', 'rules', 'settings']) assert.ok(EVENT_FIELDS.fill_error.includes(f), `fill_error keeps ${f} without a fill_run result`);
   assert.ok(EVENT_FIELDS.field_change.includes('step'));
+});
+
+// A source the server didn't know would be dropped from every fill_field that carries it. For agent
+// defaults (server/agent-defaults.mjs) the server also keeps agent-default, a TNI standard the agent
+// replaced with their own default, ahead of any build that sends it.
+test('the server keeps every answer source the plan gives, and agent-default', () => {
+  assert.deepEqual(FIELD_SOURCES, [...SOURCES, 'agent-default']);
 });
 
 // Audit 2026-10-08: field changes too, text and choice alike.

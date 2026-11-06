@@ -44,6 +44,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { MIN_DASHBOARD_TOKEN, WINDOWS, eventReader, renderDashboard, summarize, testIntakesFrom } from './dashboard.mjs';
+// agent defaults: everything about them is in that module (removal steps at its top).
+import { AGENT_DEFAULT_FIELDS, AGENT_DEFAULT_RUN_FIELDS, AGENT_DEFAULT_SOURCE, cleanAgentDefaults } from './agent-defaults.mjs';
 
 const MAX_BODY = 4 * 1024 * 1024;
 const MAX_EVENTS_PER_REQUEST = 2000;
@@ -56,7 +58,8 @@ const DASHBOARD_CACHE_MS = 30_000;
 // Which version of the server is running (this file and the dashboard's): the daily review
 // compares it with the repository's.
 export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url)))
-  .update(fs.readFileSync(new URL('./dashboard.mjs', import.meta.url))).digest('hex').slice(0, 12);
+  .update(fs.readFileSync(new URL('./dashboard.mjs', import.meta.url)))
+  .update(fs.readFileSync(new URL('./agent-defaults.mjs', import.meta.url))).digest('hex').slice(0, 12);
 // Names of dropped fields kept on an event: field-like names only, at most this many.
 const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
 const MAX_DROPPED = 20;
@@ -140,8 +143,8 @@ export const EVENT_FIELDS = {
   // (AmWINS). Their shapes are checked below (RUN_FIELDS): a malformed value refuses the event.
   fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
-  // source: where the answer comes from (plan.js); standard, manualOnly, review: a TNI standard,
-  // the agent's only, a review-mode answer the agent confirms.
+  // source: where the answer comes from (plan.js; FIELD_SOURCES below); standard, manualOnly,
+  // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
   fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review'],
   // A button the agent clicked themselves: its text (60 characters), and the step on screen.
   agent_click: ['text', 'step'],
@@ -164,6 +167,8 @@ export const EVENT_FIELDS = {
   // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
   ai_decision: ['model', 'policy', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
 };
+// agent defaults: their fields on agent_settings, fill_run and fill_error.
+for (const [type, fields] of Object.entries(AGENT_DEFAULT_FIELDS)) EVENT_FIELDS[type].push(...fields);
 
 // The run-identity fields (audit 2026-10-08, finding 7; Contract 1): their exact shapes, since a
 // review joins events by them. An event with one of these present but malformed is refused, not
@@ -175,7 +180,13 @@ export const RUN_FIELDS = {
   settings: (v) => !!v && typeof v === 'object' && !Array.isArray(v)
     && Object.keys(v).length === SETTINGS_KEYS.length && SETTINGS_KEYS.every((k) => typeof v[k] === 'boolean'),
   step: (v) => typeof v === 'string' && v.length <= 120,
+  // agent defaults: the fingerprint of the defaults a fill ran with.
+  ...AGENT_DEFAULT_RUN_FIELDS,
 };
+
+// Where a filled answer came from: the rules' sources (SOURCES in src/plan.js), and, for agent
+// defaults, a TNI standard the agent replaced with their own default.
+export const FIELD_SOURCES = ['intake', 'derived', 'standard', 'fact', 'attestation', AGENT_DEFAULT_SOURCE];
 
 // The business profile (intake_profile): no name, number, address, date of birth or VIN, and every
 // value in its exact shape. A yes/no is true, false or null (unanswered, never No); a dollar amount
@@ -328,7 +339,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       if (out.blockerList !== undefined && !(Array.isArray(out.blockerList) && out.blockerList.length <= 12 && out.blockerList.every((b) => typeof b === 'string' && b.length <= 120))) drop('blockerList');
       if (out.since !== undefined && !(Number.isSafeInteger(out.since) && out.since >= 0)) drop('since');
     }
-    if (out.source !== undefined && !['intake', 'derived', 'standard', 'fact', 'attestation'].includes(out.source)) drop('source');
+    if (out.source !== undefined && !FIELD_SOURCES.includes(out.source)) drop('source');
     for (const k of ['standard', 'manualOnly', 'review']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
     if (out.type === 'check_dismissed' && out.mark !== undefined && !(out.mark === null || (typeof out.mark === 'string' && /^[a-z-]{1,20}$/.test(out.mark)))) drop('mark');
     if (out.install !== undefined && !(typeof out.install === 'string' && /^[0-9a-f-]{36}$/.test(out.install))) drop('install');
@@ -336,6 +347,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       && (out.platform.os === null || (typeof out.platform.os === 'string' && out.platform.os.length <= 20))
       && (out.platform.chrome === null || (Number.isSafeInteger(out.platform.chrome) && out.platform.chrome > 0 && out.platform.chrome < 1000)))) drop('platform');
     if (out.type === 'usage_lost' && out.count !== undefined && !(Number.isSafeInteger(out.count) && out.count > 0)) drop('count');
+    // agent defaults: a list of defaults out of its shape goes whole.
+    cleanAgentDefaults(out, drop);
     if (out.type === 'agent_settings') {
       const v = out.values;
       const ok = !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length <= 12
