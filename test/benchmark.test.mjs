@@ -156,3 +156,27 @@ test('compareRuns lists answers whose result changed between two runs of the sam
   assert.equal(changeKind('left', 'differ'), 'differs');
   assert.equal(changeKind('differ', 'blank'), 'withdrawn');
 });
+
+// agent defaults: a quote filled with the agent's own default (its agent_settings logged it) replays
+// with that default, so the agent keeping their own amount agrees, never "today's rules differ".
+test('benchmark replays a quote with the agent\'s own defaults it logged', () => {
+  const med = (defaults, shown) => {
+    const base = { session: 's', intakeId: 'sample', carrier: 'geico', page: '/quote', view: 't1', step: 'Quote & Coverages' };
+    const label = 'Medical Payments (MED)';
+    const options = ['Please Select', 'Not Included', '$500', '$1,000', '$2,000', '$5,000'];
+    const events = [
+      { id: '1', t: '2026-10-05T12:00:00Z', ...base, type: 'intake_loaded', carrier: undefined, state: 'OH', businessClass: 'Expediter' },
+      ...(defaults ? [{ id: '0', t: '2026-10-05T12:00:00Z', session: 's', type: 'agent_settings', values: {}, defaults }] : []),
+      { id: '2', t: '2026-10-05T12:00:01Z', ...base, type: 'page_layout', fields: [{ id: 'Id_med_1', label, kind: 'select', options }] },
+      { id: '3', t: '2026-10-05T12:00:02Z', ...base, type: 'fill_field', q: null, key: 'cov:medical payments med', label, controlKind: 'select', result: 'filled', path: 'geico.qMedicalPayments', shown, source: defaults?.length ? 'agent-default' : 'standard' },
+    ];
+    return benchmark(events, { carriers: CARRIERS, raws: new Map([['sample', raw]]) }).rows.find((r) => r.label === label);
+  };
+  const own = med([{ id: 'medPay', value: 2_000 }], '$2,000');
+  assert.deepEqual([own.result, own.source, own.today, own.withDefaults], ['agree', 'agent-default', '$2,000', true]);
+  // Without the log, the same answer reads as a difference from TNI's $5,000.
+  const plain = med(null, '$2,000');
+  assert.deepEqual([plain.result, plain.source, plain.today, plain.withDefaults], ['differ', 'standard', '$5,000', undefined]);
+  // "Use TNI's" logs an empty list: TNI's answer, as before.
+  assert.deepEqual([med([], '$5,000').result, med([], '$5,000').source], ['agree', 'standard']);
+});

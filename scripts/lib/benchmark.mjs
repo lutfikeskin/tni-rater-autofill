@@ -15,6 +15,10 @@
 // the options the quote's layouts recorded. Typed text is never logged, so a text answer is
 // compared through the intake paths the agent's text matched (matchesIntake) or the rule path that
 // filled it.
+//
+// A quote filled with an agent's own defaults (agent defaults: its agent_settings logged them) is
+// replayed with those defaults, so their answers compare as the fill gave them (source agent-default),
+// never as a rule that now differs.
 
 import { normalizeIntake } from '../../src/normalize.js';
 import { buildPlan } from '../../src/plan.js';
@@ -25,6 +29,7 @@ import { get, STATES } from '../../src/util.js';
 import { isPageLayout, quoteSessions, sessionContexts } from './events.mjs';
 import { claimingRule } from './coverage.mjs';
 import { finalAnswers } from './learn.mjs';
+import { replayer } from './agent-defaults.mjs';
 
 const CHOICE = new Set(['select', 'radio', 'checkbox', 'combo']);
 // pagekit's normalisation for option text.
@@ -179,7 +184,7 @@ function layoutOptions(events) {
 // (no rule claims it; the agent's), `unsure` (only a selector might claim it, or which unit's row
 // can't be told), `agent` (a rule leaves it to the agent), `ignored`, `blank` (no answer from this
 // intake), or `value`.
-function today(a, unit, record, carrier, element) {
+function today(a, unit, record, carrier, element, overlay = null) {
   const f = { ref: a.ref ?? a.layout?.ref ?? undefined, caption: a.layout?.caption ?? a.label, kind: a.layout?.kind ?? a.kind, opts: a.layout?.opts, ...(element ?? {}) };
   let claim = claimingRule(f, carrier, a.page);
   // A checkbox takes only a yes/no rule (pagekit `fits`): the fill engine goes on to the next rule.
@@ -221,7 +226,7 @@ function today(a, unit, record, carrier, element) {
   }
   const name = rule.name ?? rule.path ?? rule.q ?? rule.label;
   const active = activeOf(unit);
-  const steps = buildPlan(record, { ...carrier, rules: [rule], useGenericRules: false, actions: [] }, active).filter((s) => s.kind !== 'action');
+  const steps = buildPlan(record, { ...carrier, rules: [rule], useGenericRules: false, actions: [] }, active, { overlay }).filter((s) => s.kind !== 'action');
   if (!steps.length) return { status: 'blank', rule: name, pairedBy };
   // Several units' steps (Rates rows, a driver list): the page's own unit, else one answer for all.
   // An answer that names no vehicle, driver or trailer (recorded before views) can't pick a row.
@@ -230,7 +235,8 @@ function today(a, unit, record, carrier, element) {
   const same = new Set(pick.map((s) => JSON.stringify([s.value, s.note, s.ignore]))).size === 1;
   if (!same) return { status: 'unsure', rule: name, pairedBy, reason: 'which unit' };
   const step = pick[0];
-  // Where today's answer comes from (intake, derived, standard, fact, attestation; plan.js).
+  // Where today's answer comes from (intake, derived, standard, fact, attestation; plan.js), or the
+  // agent's own default (agent-default) the quote logged.
   const source = step.source ?? null;
   if (step.ignore) return { status: 'ignored', rule: name, pairedBy, source, step };
   if (step.note && step.value == null) return { status: 'agent', rule: name, pairedBy, source, step };
@@ -261,6 +267,8 @@ export function benchmark(events, { carriers, raws, detail = false }) {
   const editedSessions = new Set(events.filter((e) => e.type === 'intake_edit' && e.session).map((e) => e.session));
   const elementOf = elementIds(events);
   const optionsOf = layoutOptions(events);
+  // agent defaults: the overlay each quote's logged defaults replay with.
+  const overlayOf = replayer(events);
   const rows = [];
   const missing = new Set();
   let replayed = 0;
@@ -278,7 +286,8 @@ export function benchmark(events, { carriers, raws, detail = false }) {
       const kind = a.layout?.kind === 'combo' ? 'combo' : a.kind ?? a.layout?.kind;
       const choice = CHOICE.has(kind);
       const truth = truthOf(a, choice);
-      const now = today(a, unit, record, carrier, a.q ? null : elementOf(session, a));
+      const overlay = overlayOf(session, carrier.id);
+      const now = today(a, unit, record, carrier, a.q ? null : elementOf(session, a), overlay);
       let result;
       let reason = now.reason ?? null;
       if (!truth) result = 'unknown';
@@ -308,6 +317,8 @@ export function benchmark(events, { carriers, raws, detail = false }) {
         result,
         ...(result === 'unsure' ? { reason } : {}),
         intakeEdited: editedSessions.has(session),
+        // Replayed with the agent's own defaults the quote logged (agent defaults).
+        ...(overlay ? { withDefaults: true } : {}),
       };
       // In memory only, for TNI's answer key (answer-key.mjs): today's step, the quote's answer and
       // the intake read again. Not enumerable, so --save never writes the intake's values.

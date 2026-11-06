@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { quoteSessions } from './events.mjs';
 import { receivedAt } from './daily.mjs';
+import { defaultsInForce, isOwnDefault } from './agent-defaults.mjs';
 
 // Numbers and quoted values masked, so one problem across vehicles, amounts and options counts once.
 export const mask = (s) => String(s ?? '').replace(/"[^"]*"/g, '"…"').replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
@@ -312,7 +313,12 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   // Each autofilled answer the agent changed counts once per quote, as the filled ones do (W46-07:
   // counting every change event, one answer changed three times was three).
   const agentChanges = events.filter((e) => e.type === 'field_change' && e.by === 'agent' && e.autofilled);
-  const corrected = new Set(agentChanges.filter((e) => e.vsAutofill === 'different' || e.vsAutofill === 'cleared').map(answerOnce)).size;
+  const correctedOnce = new Set(agentChanges.filter((e) => e.vsAutofill === 'different' || e.vsAutofill === 'cleared').map(answerOnce));
+  const corrected = correctedOnce.size;
+  // agent defaults: of those, answers the fill gave from the agent's own default (its last fill of the
+  // answer said so): the agent overriding themselves, not a TNI rule to review.
+  const filledSource = new Map(events.filter((e) => e.type === 'fill_field' && e.result === 'filled').map((e) => [answerOnce(e), e.source]));
+  const correctedOwnDefault = [...correctedOnce].filter((k) => isOwnDefault(filledSource.get(k))).length;
   const reformatted = new Set(agentChanges.filter((e) => e.vsAutofill === 'format').map(answerOnce)).size;
   const asks = events.filter((e) => e.type === 'ai_suggest');
   const per = (x, q) => (q ? Math.round((x / q) * 10) / 10 : null);
@@ -325,6 +331,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     filledPerQuote: per(filledOnce.size, inPeriod.size),
     correctedPer100Filled: filledOnce.size ? Math.round((corrected / filledOnce.size) * 1000) / 10 : null,
     corrected,
+    correctedOwnDefault,
     reformatted,
     leftPerQuote: Object.fromEntries([...left].map(([r, s2]) => [r, per(s2.size, inPeriod.size)])),
     donePercent: carrierQuotes ? Math.round((allDone / carrierQuotes) * 100) : null,
@@ -348,6 +355,9 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   for (const e of events) if (e.type === 'agent_settings' && inPeriod.has(e.session) && e.values) lastSettings.set(e.session, e.values);
   const settingsOn = new Map();
   for (const v of lastSettings.values()) for (const [k, x] of Object.entries(v)) tally(settingsOn, typeof x === 'boolean' ? (x ? `${k} on` : `${k} off`) : `${k}: ${x}`);
+
+  // agent defaults: the agents' own defaults the period's quotes were filled with.
+  const ownDefaults = defaultsInForce(events, inPeriod);
 
   // Buttons the agents clicked themselves, per quote; checks they dismissed; where answers came from.
   const clicks = new Map();
@@ -415,6 +425,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     problems,
     crashes: top(crashes, n),
     settings: { quotes: lastSettings.size, on: top(settingsOn, 30) },
+    ownDefaults,
     agentClicks: [...clicks].map(([k, s2]) => [k, s2.size]).sort((a, b) => b[1] - a[1]).slice(0, n),
     dismissed: [...dismissed].map(([k, s2]) => [k, s2.size]).sort((a, b) => b[1] - a[1]).slice(0, n),
     sources: top(sources, 10),
@@ -449,7 +460,7 @@ export function markdown(s, { noTestList = false } = {}) {
     `| Quotes done (reached the carrier's final page or printed) | ${k.donePercent ?? '—'}% |`,
     `| Median minutes for a done quote | ${k.medianMinutesDone ?? '—'} |`,
     `| Answers filled by the rules, per quote | ${k.filledPerQuote ?? '—'} |`,
-    `| Autofilled answers the agent corrected, per 100 filled (another value or cleared; reformatted apart: ${k.reformatted}) | ${k.correctedPer100Filled ?? '—'} (${k.corrected}) |`,
+    `| Autofilled answers the agent corrected, per 100 filled (another value or cleared; reformatted apart: ${k.reformatted}${k.correctedOwnDefault ? `; ${k.correctedOwnDefault} of them the agent's own default` : ''}) | ${k.correctedPer100Filled ?? '—'} (${k.corrected}) |`,
     `| Left to the agent per quote: ${Object.keys(k.leftPerQuote).join(' / ') || '—'} | ${Object.values(k.leftPerQuote).join(' / ') || '—'} |`,
     `| Problem reports per 10 quotes (plus ${k.problemReportsInTestRuns} in test runs) | ${k.problemReportsPer10Quotes ?? '—'} |`,
     `| AI requests · error rate | ${k.aiRequests} · ${k.aiErrorPercent ?? '—'}% |`,
@@ -474,6 +485,7 @@ export function markdown(s, { noTestList = false } = {}) {
   L.push('## Signs a carrier changed a page', '', ...list(s.pageChanges, ' runs'), '');
   L.push('## Panel crashes', '', 'Errors nothing in the panel caught (client_error), by build; test runs included. Each one is a finding.', '', ...list(s.crashes), '');
   L.push('## Settings in force', '', `The last agent_settings of each quote (${s.settings.quotes} quotes reported one).`, '', ...list(s.settings.on, ' quotes'), '');
+  L.push("## Agents' own defaults", '', `The defaults each quote's last agent_settings logged in place of TNI's (${s.ownDefaults.quotes} quotes reported them), by the number of quotes and who had them. An answer they filled reads as agent-default below, never as a TNI standard.`, '', ...(s.ownDefaults.defaults.length ? s.ownDefaults.defaults.map((d) => `- ${d.quotes} quotes · ${d.text} · ${d.agents.join(', ') || '?'}`) : ['None.']), '');
   L.push('## Buttons agents clicked themselves', '', 'By the number of quotes: a helper the extension has (Recalculate, Print, Lookup VIN) clicked by hand is one it didn\'t do.', '', ...list(s.agentClicks, ' quotes'), '');
   L.push('## Checks agents dismissed', '', 'Needs-you items waved through with ×, by the number of quotes.', '', ...list(s.dismissed, ' quotes'), '');
   L.push('## Where filled answers came from', '', ...list(s.sources), '');

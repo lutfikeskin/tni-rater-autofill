@@ -365,3 +365,23 @@ test('the benchmark scores the key with the test-run list the review reads, and 
   assert.equal(unkeyed.status, 0, unkeyed.stderr);
   assert.doesNotMatch(`${unkeyed.stderr}${fs.readFileSync(path.join(c.dir, 'unkeyed.md'), 'utf8')}`, /No test-run list|answer key/);
 });
+
+// agent defaults: a quote filled with the agent's own default (replayed by the benchmark) keeps it as
+// that quote's answer, flagged as the agent's own, never as today's rules answering it differently;
+// TNI's standard stays the question's proposal.
+test('sheetModel keeps a quote filled with the agent\'s own default apart from TNI\'s standard', () => {
+  const Q = 'progressive|CoveragesRates|ref:MedPay';
+  const row = (session, source, value) => ({
+    id: `${session}|${Q}`, session, intakeId: session, carrier: 'progressive', page: 'CoveragesRates', question: Q, label: 'Medical Payments', kind: 'select', status: 'value', source, group: 'kept', result: 'agree',
+    detail: { step: { kind: 'choice', value }, truth: { group: 'kept', value }, record: {}, unit: '', state: 'OH', options: null },
+  });
+  const m = sheetModel([row('s1', 'standard', '$5,000 per person'), row('s2', 'agent-default', '$2,000 per person')]);
+  assert.equal(m.questions[0].group, 'standard');
+  assert.deepEqual(m.questions[0].proposal, { answer: { value: '$5,000 per person' } });
+  const own = m.cells.find((c) => c.id.startsWith('s2|'));
+  assert.deepEqual(own.attention, ['filled with the agent\'s own default, not TNI\'s']);
+  assert.deepEqual(own.proposal, { answer: { value: '$2,000 per person' } });
+  assert.deepEqual(m.cells.find((c) => c.id.startsWith('s1|')).attention, []);
+  // A question only agents' defaults filled is still a standard's.
+  assert.equal(sheetModel([row('s2', 'agent-default', '$2,000 per person')]).questions[0].group, 'standard');
+});

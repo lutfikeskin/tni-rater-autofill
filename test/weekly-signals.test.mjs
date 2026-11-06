@@ -341,3 +341,32 @@ test('the agent\'s latest test mark wins, and the new events are digested', () =
   assert.equal(report.lastRun.advanced, 'Continue', 'joined to the run it names, not the last fill on its page');
   assert.match(markdown(s), /## Panel crashes[\s\S]*## Settings in force[\s\S]*## Buttons agents clicked themselves/);
 });
+
+// agent defaults: the defaults each quote was filled with, by quote and agent; a correction of an
+// answer the agent's own default filled is counted apart from corrections of TNI's rules.
+test('signals list the agents\' own defaults and count corrections of them apart', () => {
+  const events = week();
+  const at = (i) => ({ t: `2026-10-06T13:0${i}:00Z`, receivedAt: `2026-10-06T13:0${i}:00Z` });
+  const base = { v: '0.9.9', carrier: 'progressive', agent: 'AB' };
+  events.push(
+    { id: 'd1', ...at(0), ...base, session: 'new', type: 'agent_settings', values: {}, defaults: [{ id: 'medPay', value: 2000 }, { id: 'umCsl', value: 'ask', carrier: 'geico' }] },
+    { id: 'd2', ...at(0), ...base, session: 'old', type: 'agent_settings', values: {}, defaults: [] },
+    { id: 'f1', ...at(1), ...base, session: 'new', type: 'fill_field', page: 'CoveragesRates', q: '1FE4', label: 'Medical Payments', result: 'filled', source: 'agent-default' },
+    { id: 'f2', ...at(1), ...base, session: 'new', type: 'fill_field', page: 'CoveragesRates', q: '1FCD', label: 'Comprehensive', result: 'filled', source: 'standard' },
+    { id: 'c1', ...at(2), ...base, session: 'new', type: 'field_change', page: 'CoveragesRates', q: '1FE4', label: 'Medical Payments', by: 'agent', autofilled: 'x', vsAutofill: 'different', kind: 'select', from: '$2,000', to: '$5,000' },
+    { id: 'c2', ...at(3), ...base, session: 'new', type: 'field_change', page: 'CoveragesRates', q: '1FCD', label: 'Comprehensive', by: 'agent', autofilled: 'x', vsAutofill: 'different', kind: 'select', from: '$1,000', to: '$500' },
+  );
+  const s = signals(events, { since: '2026-10-06' });
+  assert.equal(s.kpis.corrected, 2);
+  assert.equal(s.kpis.correctedOwnDefault, 1);
+  assert.deepEqual(s.ownDefaults, { quotes: 2, defaults: [
+    { text: 'Medical payments: $2,000', quotes: 1, agents: ['AB'] },
+    { text: 'Uninsured / underinsured motorist (CSL) (geico): Ask me', quotes: 1, agents: ['AB'] },
+  ] });
+  const md = markdown(s);
+  assert.match(md, /## Agents' own defaults/);
+  assert.match(md, /- 1 quotes · Medical payments: \$2,000 · AB/);
+  assert.match(md, /1 of them the agent's own default/);
+  // A week without them says so.
+  assert.match(markdown(signals(week(), { since: '2026-10-06' })), /## Agents' own defaults\n\n.*\n\nNone\./);
+});
