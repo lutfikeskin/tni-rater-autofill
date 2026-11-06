@@ -669,7 +669,7 @@ test('the owner: names from the owner box (or their row when it carries the name
   // The first row under another name is still the owner's (V4).
   const firstRow = plan(with_({ 'applicant.owner1': 'Amina K. Kone', 'applicant.ownerDrives': false, 'applicant.ownerDrivesAnswered': true, drivers: [{ ...CASEY, excluded: null }] }));
   assert.deepEqual([one(firstRow, 'Owner date of birth', BOI).value, one(firstRow, 'Owner marital status', BOI).value], ['07/09/1995', 'Single']);
-  // The agent's Excluded driver No on it is the owner driving (the maintainer, 2026-10-28: util.js
+  // The agent's Excluded driver No on it is the owner driving (the maintainer, 2026-10-28: answers/owner.js
   // ownerDrivesSaid): the details still come from that row. Before, no row was the owner's and the
   // details were left to the agent.
   const notExcluded = plan(with_({ 'applicant.owner1': 'Amina K. Kone', 'applicant.ownerDrives': false, 'applicant.ownerDrivesAnswered': true, drivers: [{ ...CASEY, excluded: false }] }));
@@ -903,7 +903,7 @@ test('owner drives No (T1, T3): GEICO leaves the owner\'s row, the first, out an
   const blankMarked = no([{ ...owner, excluded: true }, casey], { 'applicant.ownerDrives': null });
   assert.deepEqual([geico.omittedDriver(blankMarked), added(blankMarked, 0)], [0, []]);
   // The agent's Excluded driver No for the owner's row in client details, the box still No: the owner
-  // drives (the maintainer, 2026-10-28: util.js ownerDrivesSaid), as with the box's Yes. GEICO lists
+  // drives (the maintainer, 2026-10-28: answers/owner.js ownerDrivesSaid), as with the box's Yes. GEICO lists
   // the owner and the other driver is added; both owner-driver questions are Yes. (Before, the row
   // was added as an Add Driver while the owner-driver questions stayed No.)
   const corrected = no([{ ...owner, excluded: false }, casey]);
@@ -1407,7 +1407,7 @@ test('SR-22: No for everyone; Yes only when GEICO lists one driver', () => {
   assert.equal(value(other, 'SR-22 (the owner; TNI: No unless the intake says otherwise)'), true);
   agents(one(plan(other, { drivers: 0 }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)'));
   // The box says the owner doesn't drive, but the agent set the only row's Excluded driver to No: the
-  // owner drives (the maintainer, 2026-10-28: util.js ownerDrivesSaid), GEICO's only driver, so the
+  // owner drives (the maintainer, 2026-10-28: answers/owner.js ownerDrivesSaid), GEICO's only driver, so the
   // owner's form gets the Yes. (Before, the row was added as an Add Driver with the owner not driving.)
   const notExcluded = with_({ 'operations.needSr22': true, 'applicant.ownerDrives': false, 'applicant.ownerDrivesAnswered': true, 'applicant.owner1': 'Jordan Sample', 'drivers.0.excluded': false });
   assert.equal(value(notExcluded, 'SR-22 (the owner; TNI: No unless the intake says otherwise)'), true);
