@@ -47,6 +47,7 @@ Follow `docs/corrections.md` for every item, and read the document for its layer
 3. **Fix the layer that owns the cause**, keeping its contracts:
    - a rule declares its answer's `source`; facts and attestations stay the agent's (`test/provenance.test.mjs`);
    - exact mappings and calculations stay in code; the model only resolves a bounded choice; a `standard` rule names its entry in the AI rulebook (`tni`, `src/ai/rulebook/`), which changes with it (`test/rulebook.test.mjs`);
+   - every rule names its `concept` from `src/concepts.js`: a new question takes the concept of the same meaning on another carrier, else a new catalog entry with its meaning. A change to a shared answer (`src/answers/`, `src/standards.js`) reaches every question in its concept's row of `docs/concepts.md`: check each, and run `npm run concepts` after a rule change (`test/concepts.test.mjs`);
    - agent edits stay protected, review stops and retained-value checks stay, and `NEVER_CLICK` / `NEVER_ADVANCE` are never widened to make a flow pass;
    - an answer the maintainer decided carries its source and date in a comment, as existing rules do (`(TNI, 2026-10-09)`), and becomes a test case that fails if the answer changes;
    - a usage server change that accepts new event fields is deployed before the extension that sends them (`docs/hosting.md`).
@@ -59,6 +60,7 @@ Run `npm test` and the checks the `docs/testing.md` table lists for the layers t
 | Touched | Checks |
 | --- | --- |
 | Intake reading or normalizing | `test/normalize.test.mjs`, `test/intake-regressions.test.mjs` |
+| A carrier rule added, removed or given another concept | `test/concepts.test.mjs`, `npm run concepts` (regenerates `docs/concepts.md`) |
 | Progressive rules or page execution | `test/progressive.test.mjs`, `test/pagekit.test.mjs`, `npm run e2e -- --fixtures` (and `-- --renumber` for matching changes) |
 | AmWINS rules or flow | `npm run mock:amwins` |
 | GEICO rules or quote flow | `test/geico.test.mjs`, `test/geico-fixture.test.mjs`, the GEICO tests in `test/pagekit.test.mjs`, `test/recorder.test.mjs` and `test/sidepanel-safety.test.mjs`, `npm run mock:geico` |

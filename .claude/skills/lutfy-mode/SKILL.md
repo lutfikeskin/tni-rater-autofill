@@ -26,7 +26,7 @@ A live-run problem starts from their recording, usage log, or the quote they jus
 
 Do not invent client facts or insurance answers. Missing, explicit No, and not applicable are different. A TNI standard recorded in [Intake and rules](../../../docs/intake-and-rules.md) may fill a blank the intake does not answer. Any other fill without intake support is invented. An ambiguous owner, name, or business-type match warns and leaves the field empty.
 
-When the user states a TNI answer, encode it as a `standard` rule in that document and in code. Rewrite a conflicting rule. Do not stack a second one on top. Decide each concept once for every carrier. Prefer a class-level guard over a per-page patch.
+When the user states a TNI answer, encode it as a `standard` rule in that document and in code. Rewrite a conflicting rule. Do not stack a second one on top. Decide each concept once for every carrier: a shared answer lives in `src/answers/`, one module per subject, and every carrier rule names its `concept` from [src/concepts.js](../../../src/concepts.js). [docs/concepts.md](../../../docs/concepts.md) lists every question that asks a concept; change them together. Prefer a class-level guard over a per-page patch.
 
 Keep the current behavior when the user says it is fine. Drop a side task they abandon.
 
