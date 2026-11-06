@@ -402,8 +402,10 @@ export function sheetModel(rows, { key = null } = {}) {
       // A pick the key can't hold as a value (any option but one, the first option, the page's
       // suggestion): the option the agents' quotes ended on, else none (the reviewer types it).
       // agent defaults: a quote an agent's own default filled says what that agent wanted, never TNI's
-      // answer, so it proposes nothing for the question (a question only defaults filled proposes none).
-      const tni = list.filter((c) => c.row.source !== AGENT_DEFAULT_SOURCE);
+      // answer, so it proposes nothing for the question. A question no quote filled with TNI's standard
+      // (a standard's only because defaults filled it) proposes none: there, a quote left to the agent
+      // is one client's choice, not TNI's.
+      const tni = of('standard').length ? list.filter((c) => c.row.source !== AGENT_DEFAULT_SOURCE) : [];
       const picked = new Map();
       for (const c of tni) { const v = (c.truthRow ?? c.row).detail.truth?.value; if (CHOICE.has(kind) && v != null && v !== '') tally(picked, v); }
       const proposed = value ?? (picked.size ? ranked(picked)[0].text : null);

@@ -389,4 +389,11 @@ test('sheetModel keeps a quote filled with the agent\'s own default apart from T
   assert.deepEqual(only.questions[0].proposal, { answer: null });
   assert.equal(only.questions[0].choose, undefined);
   for (const c of only.cells) assert.deepEqual(c.proposal, { answer: { value: '$2,000 per person' } });
+  // Nor is a quote that left it to the agent: with no TNI standard among the quotes, the agent's own
+  // choice for one client is never proposed as the question's answer.
+  const left = { ...row('s4', null, null), status: 'agent', source: null, group: 'agent', result: null };
+  left.detail = { ...left.detail, step: null, truth: { group: 'agent', value: '$10,000 per person' } };
+  const mixed = sheetModel([row('s2', 'agent-default', '$2,000 per person'), left]);
+  assert.equal(mixed.questions[0].group, 'standard');
+  assert.deepEqual(mixed.questions[0].proposal, { answer: null });
 });
