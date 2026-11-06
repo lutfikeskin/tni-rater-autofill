@@ -5,10 +5,12 @@
 // default changes; this file only keeps the agent's choices and says them.
 //
 // - chrome.storage.local `agentDefaults`: { v: 1, active: <profile id> | null, activeFor: <initials>
-//   | null, profiles: { [id]:
-//   { name, values: { [standard id]: { value } } } } }. Missing means none: TNI's everywhere. Ids are
-//   random, never the agent's initials. The active profile counts only under the initials it was
-//   picked with (`activeFor`): changing the initials leaves none active, even if that write fails.
+//   | null, profiles: { [id]: { name, values: { [standard id]: { value } }, carriers?: { [carrier id]:
+//   { [standard id]: { value } | { ask: true } } } } } }. `values` is the basic section's; `carriers`
+//   Advanced's, a carrier's own pick over the basic one (no pick: "Same as above"). Missing means
+//   none: TNI's everywhere. Ids are random, never the agent's initials. The active profile counts
+//   only under the initials it was picked with (`activeFor`): changing the initials leaves none
+//   active, even if that write fails.
 // - chrome.storage.session `agentDefaultsQuote`: { session, choice: 'mine' | 'tni', profile, initials,
 //   hash }, this quote's answer to "Fill this quote with <profile>'s defaults?". Asked again for each
 //   new quote (usage session); a panel opened again keeps it. "Yes, mine" holds only for the profile,
@@ -23,9 +25,10 @@
 // they're used). Removing the feature: this folder, those lines, and the TNI defaults section's mount.
 
 import {
-  AGENT_DEFAULTS_ON, REGISTRY, amountSaid, defaultsForLog, defaultsHash, effectiveDefaults, isAgentDefault,
-  onDefaultsError, setActiveDefaults,
+  AGENT_DEFAULTS_ON, REGISTRY, amountSaid, carrierOverrides, defaultsForLog, defaultsHash, effectiveDefaults,
+  isAgentDefault, onDefaultsError, setActiveDefaults,
 } from '../../../src/agent-defaults/index.js';
+import { CARRIERS } from '../../../src/carriers.js';
 import { STANDARD_IDS } from '../../../src/standards.js';
 import * as usage from '../../usage-log.js';
 import { inExtension } from '../env.js';
@@ -67,8 +70,12 @@ function activeProfile() {
   if (!AGENT_DEFAULTS_ON || !initials || !stored?.active || stored.activeFor !== initials) return null;
   return stored.profiles[stored.active] ?? null;
 }
-// A profile replacing anything: one that only repeats TNI's asks nothing.
-const replacesAny = (profile) => !!profile && Object.keys(effectiveDefaults(profile, null)).length > 0;
+// A profile replacing anything, in the basic section or a carrier's (Advanced): one that only repeats
+// TNI's asks nothing.
+const replacesAny = (profile) => !!profile && defaultsForLog(profile).length > 0;
+// The carriers Advanced offers: those the registry lists amounts for.
+export const DEFAULTS_CARRIERS = Object.freeze(Object.keys(REGISTRY[0]?.choices ?? {}).filter((id) => id !== 'all')
+  .map((id) => ({ id, name: CARRIERS.find((c) => c.id === id)?.name ?? id })));
 // This quote's answer, when it is this quote's; "Yes, mine" only while the profile, the initials and
 // the amounts are the ones it was given for.
 function choiceHere() {
@@ -162,12 +169,22 @@ let onAnswer = (_choice) => {};
 /** @param {(choice: 'mine' | 'tni') => void} fn */
 export function onDefaultsAnswer(fn) { onAnswer = fn; }
 
+// Each change from TNI's standards, as the quote's card lists them: the basic ones, then each
+// carrier's own (a carrier's TNI's over a basic default included).
 function changedSaid(profile) {
-  const effective = effectiveDefaults(profile, null);
-  return REGISTRY.filter((e) => effective[e.id]).map((e) => {
-    const d = effective[e.id];
-    return `${e.label}: ${'ask' in d ? 'you answer it' : amountSaid(d.value)} (TNI's: ${amountSaid(STANDARD_IDS[e.id]())})`;
-  });
+  const said = (e, d) => {
+    const tni = STANDARD_IDS[e.id]();
+    if ('ask' in d) return `${e.label}: you answer it (TNI's: ${amountSaid(tni)})`;
+    if (JSON.stringify(d.value) === JSON.stringify(tni)) return `${e.label}: TNI's ${amountSaid(tni)}`;
+    return `${e.label}: ${amountSaid(d.value)} (TNI's: ${amountSaid(tni)})`;
+  };
+  const basic = effectiveDefaults({ values: profile.values }, null);
+  const lines = REGISTRY.filter((e) => basic[e.id]).map((e) => said(e, basic[e.id]));
+  for (const c of DEFAULTS_CARRIERS) {
+    const own = carrierOverrides(profile, c.id);
+    for (const e of REGISTRY) if (own[e.id]) lines.push(`${c.name} only: ${said(e, own[e.id])}`);
+  }
+  return lines;
 }
 
 function say() {
@@ -257,6 +274,21 @@ export function defaultsActs() {
       if (value == null) delete values[stdId];
       else values[stdId] = { value: /** @type {DefaultChoice} */ (value) };
       await store({ ...stored, profiles: { ...stored.profiles, [id]: { ...profile, values } } });
+    },
+    // Advanced: a carrier's own pick for a standard. null is "Same as above" (the basic one), 'ask'
+    // leaves it to the agent there, else an amount (a DefaultChoice) that carrier's list offers.
+    setCarrier: async (carrierId, stdId, pick) => {
+      const stored = now();
+      const id = stored.active;
+      const profile = id ? stored.profiles[id] : null;
+      if (!profile || !REGISTRY.some((e) => e.id === stdId) || !DEFAULTS_CARRIERS.some((c) => c.id === carrierId)) return;
+      const carriers = { ...(profile.carriers ?? {}) };
+      const own = { ...(carriers[carrierId] ?? {}) };
+      if (pick == null) delete own[stdId];
+      else own[stdId] = pick === 'ask' ? { ask: true } : { value: /** @type {DefaultChoice} */ (pick) };
+      if (Object.keys(own).length) carriers[carrierId] = own;
+      else delete carriers[carrierId];
+      await store({ ...stored, profiles: { ...stored.profiles, [id]: { ...profile, carriers } } });
     },
   };
 }

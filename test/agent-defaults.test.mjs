@@ -18,7 +18,7 @@ import { REGISTRY } from '../src/agent-defaults/registry.js';
 import { makeOverlay, safeOverlay, liabilityAmount, amountSaid, AGENT_DEFAULT_SOURCE } from '../src/agent-defaults/overlay.js';
 import {
   AGENT_DEFAULTS_ON, setActiveDefaults, overlayFor, rulebookRewriteFor, makeRulebookRewrite,
-  effectiveDefaults, defaultsForLog, isAgentDefault, profileFromLog, replayOverlay,
+  effectiveDefaults, carrierOverrides, defaultsForLog, isAgentDefault, profileFromLog, replayOverlay,
 } from '../src/agent-defaults/index.js';
 import { DEFAULTS_SHAPE, AGENT_DEFAULT_SOURCE as SERVER_SOURCE } from '../server/agent-defaults.mjs';
 
@@ -288,6 +288,31 @@ test('only the module, the panel\'s planFor and its own folder, Luna\'s evidence
     .filter((f) => !f.startsWith('src/agent-defaults/'))
     .filter((f) => /from ['"][^'"]*agent-defaults\/(index|overlay|registry)\.js['"]/.test(fs.readFileSync(path.join(root, f), 'utf8')));
   assert.deepEqual(importers.sort(), [...allowed].sort());
+});
+
+// Advanced: what a carrier's own picks change there beyond the basic ones, so the log (and the replay
+// from it) says what filled each carrier, a carrier's TNI's over a basic default included.
+test('a carrier\'s own picks: logged where they differ from the basic ones, TNI\'s over a basic default too', () => {
+  const profile = { values: { medPay: { value: 2_000 } }, carriers: {
+    geico: { medPay: { value: 5_000 }, umCsl: { value: 300_000 } }, // TNI's over the basic $2,000; its own UM
+    amwins: { medPay: { value: 2_000 } }, // the same as the basic one: nothing of its own
+    progressive: { medPay: { value: 7 } }, // an amount its list doesn't offer: TNI's there, as filled
+  } };
+  assert.deepEqual(carrierOverrides(profile, 'geico'), { umCsl: { value: 300_000 }, medPay: { value: 5_000 } });
+  assert.deepEqual(carrierOverrides(profile, 'amwins'), {});
+  assert.deepEqual(carrierOverrides(profile, 'progressive'), { medPay: { value: 5_000 } });
+  assert.deepEqual(carrierOverrides({ values: {}, carriers: { geico: { medPay: { value: 7 } } } }, 'geico'), {}, 'no basic default: TNI\'s anyway');
+  assert.deepEqual(carrierOverrides(null, 'geico'), {});
+  assert.deepEqual(defaultsForLog(profile), [
+    { id: 'medPay', value: 2_000 },
+    { id: 'umCsl', value: 300_000, carrier: 'geico' }, { id: 'medPay', value: 5_000, carrier: 'geico' },
+    { id: 'medPay', value: 5_000, carrier: 'progressive' },
+  ]);
+  // Replayed from the log, each carrier gets what it was filled with.
+  const replayed = profileFromLog(defaultsForLog(profile));
+  for (const c of ['progressive', 'amwins', 'geico']) assert.deepEqual(effectiveDefaults(replayed, c), effectiveDefaults(profile, c), c);
+  assert.deepEqual(effectiveDefaults(profile, 'geico'), { umCsl: { value: 300_000 } });
+  assert.deepEqual(effectiveDefaults(profile, 'progressive'), {});
 });
 
 test('a quote\'s logged defaults replay as the profile it was filled with', () => {

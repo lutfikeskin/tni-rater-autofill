@@ -403,6 +403,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .tag.derived { color: var(--brand-dark); background: var(--surface-selected); }
 .tag.standard { color: var(--standard-ink); background: var(--standard-soft); }
 .tag.own { color: var(--own-ink); background: var(--own-soft); }
+#defaults-advanced { margin-top: 10px; }
+#defaults-advanced > summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
+.defaults-carrier { margin-top: 8px; }
 .tag.ai { color: var(--ai-dark); background: var(--ai-soft); }
 .tag.you { color: var(--success-ink); background: var(--success-soft); }
 .tag.page, .tag.clicked { color: var(--ink-muted); background: var(--surface-sunken); }

@@ -122,9 +122,33 @@ export function makeRulebookRewrite(effective, carrierId) {
 export const isAgentDefault = (item, list) => resolutionOf(item, list).method === AGENT_DEFAULT_SOURCE;
 
 /**
+ * What a carrier's own (Advanced) settings change there beyond the basic ones: each standard whose
+ * carrier pick is in force and differs from the basic default ({ value } or { ask: true }), and
+ * TNI's amount ({ value: TNI's }) where the carrier's pick puts TNI's back over a basic default (a
+ * pick of TNI's, or one its list no longer offers, which effectiveDefaults leaves as TNI's). No pick
+ * ("Same as above") is left out.
+ * @param {DefaultsProfile | null} profile @param {string} carrierId @returns {EffectiveDefaults}
+ */
+export function carrierOverrides(profile, carrierId) {
+  /** @type {EffectiveDefaults} */
+  const out = {};
+  const own = profile?.carriers?.[carrierId];
+  if (!own || typeof own !== 'object') return out;
+  const here = effectiveDefaults({ carriers: { [carrierId]: own } }, carrierId);
+  const basic = effectiveDefaults({ values: profile?.values }, null);
+  for (const entry of REGISTRY) {
+    if (entry.locked) continue;
+    if (here[entry.id]) { if (!same(here[entry.id], basic[entry.id])) out[entry.id] = here[entry.id]; continue; }
+    if (basic[entry.id] && own[entry.id]) out[entry.id] = { value: STANDARD_IDS[entry.id]() };
+  }
+  return out;
+}
+
+/**
  * What agent_settings.defaults logs: each standard the profile replaces, basic ones without a carrier,
- * in a fixed order (server/agent-defaults.mjs DEFAULTS_SHAPE). Only valid choices are logged, as
- * effectiveDefaults would use them. A rental default logs its daily amount.
+ * then each carrier's own (carrierOverrides), in a fixed order (server/agent-defaults.mjs
+ * DEFAULTS_SHAPE). Only valid choices are logged, as effectiveDefaults would use them; a carrier's
+ * TNI's over a basic default is logged as TNI's amount. A rental default logs its daily amount.
  * @param {DefaultsProfile | null} profile
  * @returns {{ id: string, value: number | 'ask', carrier?: string }[]}
  */
@@ -137,8 +161,8 @@ export function defaultsForLog(profile) {
   };
   for (const [id, d] of Object.entries(effectiveDefaults({ values: profile.values }, null))) one(id, d);
   for (const carrierId of Object.keys(profile.carriers ?? {}).sort()) {
-    const own = effectiveDefaults({ carriers: { [carrierId]: profile.carriers[carrierId] } }, carrierId);
-    for (const [id, d] of Object.entries(own)) one(id, d, carrierId);
+    const own = carrierOverrides(profile, carrierId);
+    for (const entry of REGISTRY) if (own[entry.id]) one(entry.id, own[entry.id], carrierId);
   }
   return out;
 }

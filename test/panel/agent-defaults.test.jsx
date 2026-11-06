@@ -20,7 +20,7 @@ test('the feature is on', () => {
 
 // The section, drawn from the store.
 const PROFILE = { v: 1, active: 'p1', profiles: { p1: { name: 'Jordan K.', values: { medPay: { value: 1_000 } } }, p2: { name: 'Sam', values: {} } } };
-const actsOf = (calls) => Object.fromEntries(['create', 'pick', 'remove', 'set'].map((name) => [name, (...a) => calls.push([name, ...a])]));
+const actsOf = (calls) => Object.fromEntries(['create', 'pick', 'remove', 'set', 'setCarrier'].map((name) => [name, (...a) => calls.push([name, ...a])]));
 
 test('without initials the section asks for them, and offers no profile', () => {
   storeState({ agentDefaults: PROFILE, defaultsInitials: null });
@@ -48,6 +48,30 @@ test('with initials: the profile, each standard with TNI\'s amount first, and th
   fireEvent.change(container.querySelector('#default-umCsl'), { target: { value: '-1' } });
   fireEvent.change(profile, { target: { value: '' } });
   expect(calls).toEqual([['set', 'medPay', 2_000], ['set', 'rental', { perDay: 50, max: 1_500 }], ['set', 'umCsl', null], ['pick', null]]);
+});
+
+// Advanced: each carrier's own row, "Same as above" first, TNI's there only when the basic row
+// replaces it, that carrier's other amounts, then "Ask me".
+test('Advanced: a row per carrier and standard, from that carrier\'s list', () => {
+  storeState({ agentDefaults: { ...PROFILE, profiles: { ...PROFILE.profiles, p1: { ...PROFILE.profiles.p1, carriers: { geico: { umCsl: { ask: true } } } } } }, defaultsInitials: 'JK' });
+  const calls = [];
+  const { container } = render(<TniDefaults act={actsOf(calls)} />);
+  expect(container.querySelector('#defaults-advanced').open).toBe(false);
+  expect([...container.querySelectorAll('.defaults-carrier .eyebrow')].map((e) => e.textContent)).toEqual(['Progressive', 'AmWINS', 'GEICO']);
+  expect(container.querySelectorAll('select[id^="advanced-"]').length).toBe(15);
+  const med = container.querySelector('#advanced-geico-medPay');
+  expect([...med.options].map((o) => o.textContent)).toEqual(['Same as above ($1,000)', 'TNI\'s ($5,000)', '$500', '$2,000', 'Ask me']);
+  expect(med.value).toBe('same');
+  const um = container.querySelector('#advanced-amwins-umCsl');
+  expect([...um.options].map((o) => o.textContent)).toEqual(['Same as above ($100,000)', '$300,000', '$500,000', '$750,000', '$1,000,000', '$1,500,000', '$2,000,000', 'Ask me']);
+  expect(container.querySelector('#advanced-geico-umCsl').value).toBe('ask');
+  fireEvent.change(med, { target: { value: 'ask' } });
+  fireEvent.change(med, { target: { value: 'tni' } });
+  fireEvent.change(med, { target: { value: '1' } });
+  fireEvent.change(container.querySelector('#advanced-geico-umCsl'), { target: { value: 'same' } });
+  fireEvent.change(um, { target: { value: '5' } });
+  expect(calls).toEqual([['setCarrier', 'geico', 'medPay', 'ask'], ['setCarrier', 'geico', 'medPay', 5_000], ['setCarrier', 'geico', 'medPay', 2_000],
+    ['setCarrier', 'geico', 'umCsl', null], ['setCarrier', 'amwins', 'umCsl', 2_000_000]]);
 });
 
 test('a new profile is named, then created', () => {
@@ -208,6 +232,42 @@ test('report rows from a fill and from a follow-up both carry the agent\'s own d
     expect(rows.length, file).toBeGreaterThan(0);
     for (const row of rows) expect(row, file).toContain("own: isOwnDefault(x, 'filled')");
   }
+});
+
+test('Advanced picks alone ask the quote too, and the card and the log name their carrier', async () => {
+  const acts = defaultsActs();
+  await acts.create('Jordan K.');
+  await acts.setCarrier('geico', 'umCsl', 500_000);
+  await acts.setCarrier('nowhere', 'umCsl', 500_000);
+  await acts.setCarrier('geico', 'nope', 1);
+  const id = panelState.agentDefaults.active;
+  expect(panelState.agentDefaults.profiles[id].carriers).toEqual({ geico: { umCsl: { value: 500_000 } } });
+  loadQuote();
+  expect(defaultsHold()).toBe(true);
+  expect(panelState.cards.defaults.notes).toEqual(['GEICO only: Uninsured / underinsured motorist (CSL): $500,000 (TNI\'s: $100,000)']);
+  await answerDefaults('mine');
+  expect(settingsDefaults()).toEqual([{ id: 'umCsl', value: 500_000, carrier: 'geico' }]);
+  expect(overlayFor('geico')).toBeTypeOf('function');
+  expect(overlayFor('amwins')).toBeNull();
+  // A basic default with TNI's on GEICO and "Ask me" on Progressive.
+  await acts.set('medPay', 2_000);
+  await acts.setCarrier('geico', 'medPay', 5_000);
+  await acts.setCarrier('progressive', 'medPay', 'ask');
+  expect(panelState.cards.defaults.notes).toEqual(['Medical payments: $2,000 (TNI\'s: $5,000)', 'Progressive only: Medical payments: you answer it (TNI\'s: $5,000)',
+    'GEICO only: Uninsured / underinsured motorist (CSL): $500,000 (TNI\'s: $100,000)', 'GEICO only: Medical payments: TNI\'s $5,000']);
+  // Changed after the answer: asked again, then filled and logged with the new picks.
+  expect(panelState.cards.defaults.title).toBe('Fill this quote with Jordan K.\'s defaults?');
+  await answerDefaults('mine');
+  expect(panelState.cards.defaults.title).toBe('Defaults: Jordan K., 4 changed');
+  // The log: basic first, then each carrier's own, carriers in a fixed (alphabetical) order.
+  expect(settingsDefaults()).toEqual([{ id: 'medPay', value: 2_000 }, { id: 'umCsl', value: 500_000, carrier: 'geico' },
+    { id: 'medPay', value: 5_000, carrier: 'geico' }, { id: 'medPay', value: 'ask', carrier: 'progressive' }]);
+  // Same as above again: the carrier's picks go.
+  for (const [c, s] of [['geico', 'umCsl'], ['geico', 'medPay'], ['progressive', 'medPay']]) await acts.setCarrier(c, s, null);
+  expect(panelState.agentDefaults.profiles[id].carriers).toEqual({});
+  expect(defaultsHold()).toBe(true);
+  await answerDefaults('mine');
+  expect(settingsDefaults()).toEqual([{ id: 'medPay', value: 2_000 }]);
 });
 
 test('an answer is the agent\'s own default by its source', () => {
