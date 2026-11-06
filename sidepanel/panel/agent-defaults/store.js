@@ -175,11 +175,15 @@ export async function answerDefaults(choice) {
   if (!id) return;
   const hash = choice === 'mine' ? defaultsHash(activeProfile()) : null;
   const next = { session: id, choice, profile: state.agentDefaults?.active ?? null, initials, hash };
-  // Taken only once saved: an answer Chrome refused leaves the quote asked and held, and is logged.
+  // Taken only once saved. An answer Chrome refused is logged and drops this quote's earlier one too
+  // (a "Yes, mine" the agent was switching away from never keeps filling): the quote is asked again
+  // and held.
   try {
     await session.set(next);
   } catch (error) {
     logCrash(error);
+    quote = null;
+    apply();
     return;
   }
   quote = next;

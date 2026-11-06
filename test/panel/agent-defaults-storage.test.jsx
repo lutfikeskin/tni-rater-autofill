@@ -51,6 +51,15 @@ test('a write Chrome refuses changes nothing: the quote stays held, and the over
   await answerDefaults('mine');
   expect(defaultsHold()).toBe(false);
   expect(overlayFor('geico')).toBeTypeOf('function');
+  // Switching to TNI's can't be saved either: the earlier "Yes, mine" no longer counts, so the quote is
+  // asked again and held, never filled with the defaults the agent tried to stop.
+  failing.add('agentDefaultsQuote');
+  await answerDefaults('tni');
+  expect(defaultsHold()).toBe(true);
+  expect(overlayFor('geico')).toBeNull();
+  failing.delete('agentDefaultsQuote');
+  await answerDefaults('mine');
+  expect(overlayFor('geico')).toBeTypeOf('function');
 
   // An amount that can't be saved: the panel keeps the saved one, and so does the quote.
   failing.add('agentDefaults');
