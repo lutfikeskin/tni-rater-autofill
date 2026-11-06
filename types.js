@@ -124,6 +124,9 @@
  * its field and where its value comes from: src/carriers.js; what each option does: src/plan.js
  * fieldSteps, which copies it onto the plan step.
  * @typedef {object} CarrierRule
+ * @property {string} [concept]  what the question is about, for every carrier: an id of src/concepts.js CONCEPTS
+ *   (owner.drives, coverage.um); test/concepts.test.mjs checks every carrier rule has one; docs/concepts.md
+ *   lists each concept's questions on every carrier (`npm run concepts`). Nothing at fill time reads it
  * @property {string} [name]  what the panel calls the question
  * @property {string} [path]  a client-record path: the answer, unless `value` gives one
  * @property {(record: ClientRecord, active: ActiveUnits) => any} [value]
