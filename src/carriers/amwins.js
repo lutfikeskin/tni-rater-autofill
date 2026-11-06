@@ -649,13 +649,19 @@ export const amwins = {
     // --- Coverages -------------------------------------------------------------------------------
     { concept: 'coverage.liability', name: 'CSL liability limit', label: '^csl liability limit$', path: 'coverage.autoLiabLimit' },
     // Uninsured motorists Yes at $100K, rental $40 a day ($1,200) and towing $75: TNI's (recorded
-    // 2026-10-26, W44-32: "limits are fine").
+    // 2026-10-26, W44-32: "limits are fine"). Each `std` writes another amount the same way
+    // (CarrierRule `std`; test/std-metadata.test.mjs holds it to the rule).
     { concept: 'coverage.um', tni: 'amwins.um', name: 'Uninsured motorists (standard: Yes)', label: '^uninsured motorists$', kind: 'bool', source: 'standard', value: () => true },
-    { concept: 'coverage.rental', tni: 'amwins.rental', name: `Rental reimbursement (standard: ${usd(STANDARDS.rental.perDay)}/day, ${usd(STANDARDS.rental.max)})`, label: 'transportation expense|rental reimbursement', kind: 'choice', source: 'standard', value: () => `${usd(STANDARDS.rental.perDay)} day / ${usd(STANDARDS.rental.max)} total` },
-    { concept: 'coverage.um', selector: '#uninsuredMotoristsLimit', tni: 'amwins.um', name: `UM limit (standard: ${usdK(STANDARDS.umCsl, 'K')})`, kind: 'choice', source: 'standard', value: () => usdK(STANDARDS.umCsl, 'K') },
-    { concept: 'coverage.medpay', selector: '#medicalPayment', tni: 'amwins.medpay-pip', name: `Medical payments (standard: ${usd(STANDARDS.medPay)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.medPay) },
-    { concept: 'coverage.comp-coll', selector: '#comprehensiveDeductible', tni: 'amwins.comp-coll', name: `Comprehensive deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.deductible) },
-    { concept: 'coverage.comp-coll', selector: '#collisionDeductible', tni: 'amwins.comp-coll', name: `Collision deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.deductible) },
+    { concept: 'coverage.rental', tni: 'amwins.rental', name: `Rental reimbursement (standard: ${usd(STANDARDS.rental.perDay)}/day, ${usd(STANDARDS.rental.max)})`, label: 'transportation expense|rental reimbursement', kind: 'choice', source: 'standard', value: () => `${usd(STANDARDS.rental.perDay)} day / ${usd(STANDARDS.rental.max)} total`,
+      std: { id: 'rental', write: (r) => `${usd(r.perDay)} day / ${usd(r.max)} total`, name: (r) => `Rental reimbursement (standard: ${usd(r.perDay)}/day, ${usd(r.max)})` } },
+    { concept: 'coverage.um', selector: '#uninsuredMotoristsLimit', tni: 'amwins.um', name: `UM limit (standard: ${usdK(STANDARDS.umCsl, 'K')})`, kind: 'choice', source: 'standard', value: () => usdK(STANDARDS.umCsl, 'K'),
+      std: { id: 'umCsl', write: (a) => usdK(a, 'K'), name: (a) => `UM limit (standard: ${usdK(a, 'K')})` } },
+    { concept: 'coverage.medpay', selector: '#medicalPayment', tni: 'amwins.medpay-pip', name: `Medical payments (standard: ${usd(STANDARDS.medPay)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.medPay),
+      std: { id: 'medPay', write: usd, name: (a) => `Medical payments (standard: ${usd(a)})` } },
+    { concept: 'coverage.comp-coll', selector: '#comprehensiveDeductible', tni: 'amwins.comp-coll', name: `Comprehensive deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.deductible),
+      std: { id: 'compDeductible', write: usd, name: (a) => `Comprehensive deductible (standard: ${usd(a)})` } },
+    { concept: 'coverage.comp-coll', selector: '#collisionDeductible', tni: 'amwins.comp-coll', name: `Collision deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', source: 'standard', value: () => usd(STANDARDS.deductible),
+      std: { id: 'collDeductible', write: usd, name: (a) => `Collision deductible (standard: ${usd(a)})` } },
     { concept: 'coverage.waiver-of-collision', tni: 'amwins.waiver-collision', name: 'Waiver of collision (standard: No)', label: '^has waiver of collision$', kind: 'bool', source: 'standard', value: () => false },
     { concept: 'coverage.roadside', selector: '#towingAndLaborReimbursement', tni: 'amwins.towing', name: 'Towing and labor (standard: $75)', kind: 'choice', source: 'standard', value: () => '$75' },
     // PIP: No whenever Medical Payments is offered, which on AmWINS is always (the Coverages step

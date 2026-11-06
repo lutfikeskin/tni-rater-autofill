@@ -1,7 +1,8 @@
 // @ts-check
 // The side panel: its state, what it keeps in Chrome's storage, and the helpers every part uses.
 // One part of the panel; sidepanel.js wires the parts together.
-import { buildPlan, redactionTerms } from '../../src/plan.js';
+import { redactionTerms } from '../../src/plan.js';
+import { planFor } from './plan-for.js';
 import { clientErrorEvent, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { migrateStorage } from '../../src/storage-version.js';
@@ -781,7 +782,7 @@ async function restoreReports(tabId) {
   for (const e of was.entries) {
     if (!e?.key || !String(e.key).startsWith(`${tabId}|`) || state.reports.has(e.key) || !Array.isArray(e.frames)) continue;
     const active = { ...firstUnits(), ...(e.active ?? {}) };
-    const plan = buildPlan(state.intake.record, carrier, active);
+    const plan = planFor(state.intake.record, carrier, active);
     const live = e.key === front ? await liveItems(tabId, carrier, [...reviewItems(e.frames), ...answerItems(e.frames)], plan) : null;
     // A fill, another tab or another intake since the page was read: not made again here.
     if (state.reports.has(e.key) || state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) continue;

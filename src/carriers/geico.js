@@ -500,14 +500,17 @@ const NO_PHYSICAL_DAMAGE = /\bno\s+(?:comp(?:rehensive)?|coll(?:ision)?|phys(?:i
 const noPhysicalDamage = notesLine(NO_PHYSICAL_DAMAGE);
 const physicalDamageNote = (what) => (r) => (noPhysicalDamage(r) ? `The intake's notes say ${quote(noPhysicalDamage(r), 80)}: answer ${what} yourself.` : null);
 const physicalDamageSource = (r) => (noPhysicalDamage(r) ? 'fact' : 'standard');
-// TNI's standard coverages (src/standards.js), as GEICO's options write them.
-const DEDUCTIBLE = `${usd(STANDARDS.deductible)} deductible`;
+// TNI's standard coverages (src/standards.js), as GEICO's options write them. The rules' `std`
+// (CarrierRule `std`) write any amount the same way; test/std-metadata.test.mjs holds them to the rules.
+const deductible = (/** @type {number} */ a) => `${usd(a)} deductible`;
+const DEDUCTIBLE = deductible(STANDARDS.deductible);
 // TNI's uninsured motorist limit and pay plan on GEICO (FL live run 4, 2026-10-21: W43-17, W43-18).
 // Texas lists only split limits for uninsured motorist bodily injury: there TNI's is $100,000/$300,000
 // (W43-33, TNI, 2026-10-21).
 const UM_SPLIT = '$100,000/$300,000';
 const texas = (r) => garagingIs(r, 'TX');
-const UM_LIMIT = `${usd(STANDARDS.umCsl)} Combined Single Limit`;
+const umLimit = (/** @type {number} */ a) => `${usd(a)} Combined Single Limit`;
+const UM_LIMIT = umLimit(STANDARDS.umCsl);
 const PAY_PLAN = '11 Payments';
 
 // Farthest one-way distance: the intake's radius in miles, as GEICO's band; long haul ("Unlimited",
@@ -896,7 +899,8 @@ const ROAD_SERVICE = 'I accept this coverage';
 // Fire and theft and rental reimbursement on every vehicle (TNI, FL live run 5, 2026-10-21, W43-22):
 // rental needs comprehensive and collision, so it follows them (physicalDamageSource).
 const FIRE_THEFT = 'Not Included';
-const RENTAL = `${usd(STANDARDS.rental.perDay)} Per Day, ${usd(STANDARDS.rental.max)} Max`;
+const rental = (/** @type {{ perDay: number, max: number }} */ r) => `${usd(r.perDay)} Per Day, ${usd(r.max)} Max`;
+const RENTAL = rental(STANDARDS.rental);
 // Rental reimbursement with downtime: TNI's Not Included on every vehicle (W43-30, 2026-10-21: "always
 // No"), unless a line of the intake's notes mentions downtime or rental: then the agent's, quoted.
 const DOWNTIME = 'Not Included';
@@ -1435,11 +1439,13 @@ export const geico = {
       // accepted GEICO resets it; GEICO fills one answer a round in page order, so UM comes after. GA and SC caption it "(UMBI)", SC asks underinsured
       // separately: the same limit (W43-33, TNI, 2026-10-21).
       { concept: 'coverage.um', q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury (TNI: ${usd(STANDARDS.umCsl)} CSL; TX ${UM_SPLIT})`,
-        kind: 'choice', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT), choiceAliases: (r) => (texas(r) ? [UM_LIMIT] : []) },
+        kind: 'choice', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT), choiceAliases: (r) => (texas(r) ? [UM_LIMIT] : []),
+        // Texas' split is its own exception: the standard amount applies elsewhere only.
+        std: { id: 'umCsl', applies: (r) => !texas(r), write: umLimit, name: (a) => `Uninsured motorist bodily injury (TNI: ${usd(a)} CSL; TX ${UM_SPLIT})` } },
       { concept: 'coverage.um', q: 'UninsuredMotoristUmbi', ask: 'Uninsured Motorist Bodily Injury (UMBI)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury, UMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
-        kind: 'choice', source: 'standard', value: () => UM_LIMIT },
+        kind: 'choice', source: 'standard', value: () => UM_LIMIT, std: { id: 'umCsl', write: umLimit, name: (a) => `Uninsured motorist bodily injury, UMBI (TNI: ${usd(a)} CSL)` } },
       { concept: 'coverage.um', q: 'UnderinsuredMotorist', ask: 'Underinsured Motorist Bodily Injury (UIMBI)', control: 'select', tni: 'geico.um', name: `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
-        kind: 'choice', source: 'standard', value: () => UM_LIMIT },
+        kind: 'choice', source: 'standard', value: () => UM_LIMIT, std: { id: 'umCsl', write: umLimit, name: (a) => `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(a)} CSL)` } },
       // TNI, 2026-10-27: when a state asks UM/UIM type or deductible (another form of the UM
       // questions), type is Add-On and deductible $1,000; the deductible isn't always shown.
       { concept: 'coverage.um', q: 'UninsuredMotoristDeductible', ask: 'Uninsured Motorist Deductible', control: 'select', tni: 'geico.um',
@@ -1455,7 +1461,9 @@ export const geico = {
       // medical payments, $2,500 without (TNI, 2026-10-26, W44-26; above). The page kit reads the lists.
       { concept: 'coverage.medpay', q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', tni: 'geico.medpay-pip', name: `Medical payments (TNI: ${MED_PAY}; Not Included where GEICO offers no limit)`, kind: 'choice',
         source: 'standard', value: () => MED_PAY, onlyIf: [{ limit: true }, { limit: false, value: 'Not Included' }],
-        unofferedNote: 'GEICO doesn\'t list $5,000 medical payments here: pick it yourself (TNI takes $5,000 medical payments wherever GEICO offers them).' },
+        unofferedNote: 'GEICO doesn\'t list $5,000 medical payments here: pick it yourself (TNI takes $5,000 medical payments wherever GEICO offers them).',
+        std: { id: 'medPay', write: usd, name: (a) => `Medical payments (TNI: ${usd(a)}; Not Included where GEICO offers no limit)`,
+          unofferedNote: (a) => `GEICO doesn't list ${usd(a)} medical payments here: pick it yourself (TNI takes ${usd(a)} medical payments wherever GEICO offers them).` } },
       { concept: 'coverage.pip', q: 'BasicPip', ask: 'Basic Personal Injury Protection', control: 'select', tni: 'geico.medpay-pip', name: 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)', kind: 'choice',
         ignore: florida, source: (r) => (florida(r) ? null : 'standard'), value: (r) => (florida(r) ? null : '$2,500'),
         onlyIf: (r) => (florida(r) ? null : [{ path: MED_PATH, limit: true, value: 'I decline' }, { path: MED_PATH, limit: false }]),
@@ -1470,13 +1478,15 @@ export const geico = {
       // service only the motor vehicles. TNI's comprehensive and collision are $1,000 deductibles
       // (physicalDamageSource); the rest are the agent's.
       ...ROW_COVERAGES.map(/** @returns {CarrierRule} */ ([suffix, name]) => (['COMP', 'COLL'].includes(suffix)
-        ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', trailers: true, tni: 'geico.comp-coll', name, kind: 'choice', source: physicalDamageSource, value: () => DEDUCTIBLE, note: physicalDamageNote(name.toLowerCase()) }
+        ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', trailers: true, tni: 'geico.comp-coll', name, kind: 'choice', source: physicalDamageSource, value: () => DEDUCTIBLE, note: physicalDamageNote(name.toLowerCase()),
+          std: { id: suffix === 'COMP' ? 'compDeductible' : 'collDeductible', write: deductible } }
         : ['ERS', 'HVRS'].includes(suffix)
           ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.road-service', name: `${name} (TNI: accepted)`, kind: 'choice', source: 'standard', value: () => ROAD_SERVICE }
           : suffix === 'FT'
             ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', trailers: true, tni: 'geico.fire-theft', name: `${name} (TNI: ${FIRE_THEFT})`, kind: 'choice', source: 'standard', value: () => FIRE_THEFT }
             : suffix === 'Rental'
-              ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.rental', name: `${name} (TNI: ${RENTAL})`, kind: 'choice', source: physicalDamageSource, value: () => RENTAL, note: physicalDamageNote(name.toLowerCase()) }
+              ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.rental', name: `${name} (TNI: ${RENTAL})`, kind: 'choice', source: physicalDamageSource, value: () => RENTAL, note: physicalDamageNote(name.toLowerCase()),
+                std: { id: 'rental', write: rental, name: (r) => `${name} (TNI: ${rental(r)})` } }
               : suffix === 'RRWDT'
                 ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', tni: 'geico.rental-downtime', name: `${name} (TNI: ${DOWNTIME})`, kind: 'choice',
                   source: (r) => (downtimeMention(r) ? 'fact' : 'standard'), value: (r) => (downtimeMention(r) ? null : DOWNTIME), note: downtimeNote }

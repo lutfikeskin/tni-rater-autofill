@@ -26,10 +26,17 @@ export const GENERAL = general;
 export const CARRIER_PARTS = { progressive, amwins, geico };
 
 // The general part's entries, then the carrier's. Luna reads each entry's text only, not its
-// section heading (the headings would add about 3,000 characters on Progressive).
-/** @param {string} carrier @returns {RulebookEntry[]} */
-export function rulebookFor(carrier) {
+// section heading (the headings would add about 3,000 characters on Progressive). `rewrite`: a hook
+// given each entry, whose returned entry Luna reads instead (a plan overlay that changes an answer
+// changes the rulebook entry stating it, docs/agent-defaults-spec.md); none leaves them as written.
+/**
+ * @param {string} carrier
+ * @param {{ rewrite?: ((entry: RulebookEntry) => RulebookEntry) | null }} [options]
+ * @returns {RulebookEntry[]}
+ */
+export function rulebookFor(carrier, { rewrite = null } = {}) {
   const part = Object.hasOwn(CARRIER_PARTS, carrier) ? CARRIER_PARTS[carrier] : null;
   if (!part) return [];
-  return [general, part].flatMap((p) => p.sections.flatMap((s) => s.rules));
+  const entries = [general, part].flatMap((p) => p.sections.flatMap((s) => s.rules));
+  return rewrite ? entries.map((entry) => rewrite(entry)) : entries;
 }

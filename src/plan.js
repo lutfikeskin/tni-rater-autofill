@@ -7,7 +7,7 @@ import { stepResolution } from './resolution.js';
 import { fieldInfo } from './schema.js';
 import { get, listOf } from './util.js';
 
-/** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, ListCondition, PlanStep } from '../types.js' */
+/** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, ListCondition, PlanOptions, PlanStep, StepOverlay } from '../types.js' */
 
 // Where a rule's answer comes from (Contract 2, docs/intake-and-rules.md):
 //   intake       a record path, no computed value (the default for a rule with `path` only)
@@ -47,15 +47,18 @@ export function reviewWarn(record, carrier) {
  * @param {ClientRecord} record   client record from normalizeIntake()
  * @param {CarrierConfig|null} carrier  entry from CARRIERS
  * @param {ActiveUnits} active  which driver/vehicle/trailer this page is about
+ * @param {PlanOptions} [options]  overlay: a hook given each field step with its rule, before the
+ *   step's resolution is decided; the step it returns is the plan's. None (the default) leaves every
+ *   step as the rules give it. plan.js knows nothing of what plugs in (docs/agent-defaults-spec.md).
  * @returns {PlanStep[]}
  */
-export function buildPlan(record, carrier, active = {}) {
+export function buildPlan(record, carrier, active = {}, { overlay = null } = {}) {
   // A carrier's `rowSections`: repeating sections its own rules answer row by row, where a generic
   // label rule never answers (a row the intake doesn't describe stays the agent's).
   const generic = carrier?.useGenericRules === false ? [] : carrier?.rowSections?.length
     ? GENERIC_RULES.map((rule) => ({ ...rule, notWithin: carrier.rowSections })) : GENERIC_RULES;
   const rules = [...(carrier?.rules ?? []), ...generic];
-  return [...fieldSteps(rules, record, carrier, active), ...actionSteps(carrier, record, active)];
+  return [...fieldSteps(rules, record, carrier, active, overlay), ...actionSteps(carrier, record, active)];
 }
 
 const withIndex = (path, active) => {
@@ -193,9 +196,10 @@ function onlyIfOf(conditions) {
  * @param {ClientRecord} record
  * @param {CarrierConfig|null} carrier
  * @param {ActiveUnits} active
+ * @param {StepOverlay | null} overlay
  * @returns {FieldStep[]}
  */
-function fieldSteps(rules, record, carrier, active) {
+function fieldSteps(rules, record, carrier, active, overlay) {
   const review = !supportedClass(record, carrier);
   const reviewNote = review ? reviewWarn(record, carrier) : null;
   const expanded = rules.flatMap((rule) => {
@@ -274,6 +278,8 @@ function fieldSteps(rules, record, carrier, active) {
       // The carrier's question id when the rule was written: only the rule's name (its path), never
       // how its field is found (Progressive renumbers questions). These find it (pagekit assign):
       q: rule.q ?? null,
+      // The TNI rulebook entry its answer follows (CarrierRule `tni`), for the report and the log.
+      tni: rule.tni ?? null,
       // the field's data-model name (Duck Creek fieldref),
       field: rule.field ?? null,
       // else its question on the page: exact text(s), or `label` (re) on these pages,
@@ -390,8 +396,10 @@ function fieldSteps(rules, record, carrier, active) {
       // is resolved for the unit so the page kit can name it ("vehicle 2"); never its position.
       witness: rule.witness ? { selector: rule.witness.selector, path: withIndex(rule.witness.path, active), value: get(record, withIndex(rule.witness.path, active)) ?? null } : null,
     };
+    // A plugged-in overlay may change the step; its resolution then follows the step it returns.
+    const shaped = overlay ? overlay(step, rule, { record, carrier, active }) : step;
     // The answer, how it was decided, why, and what it needs, from the fields above (resolution.js).
-    return { ...step, resolution: stepResolution(step) };
+    return { ...shaped, resolution: stepResolution(shaped) };
   });
 }
 

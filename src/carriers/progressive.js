@@ -42,11 +42,18 @@ import { garagingIs } from '../answers/state.js';
 import { recentModel, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
 import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
 
-// TNI's standard coverages (src/standards.js), as Progressive's options write them.
-const UM_CSL = `${usdK(STANDARDS.umCsl)} CSL`;
-const DEDUCTIBLE = `${usd(STANDARDS.deductible)} Deductible`;
-const RENTAL = `${usd(STANDARDS.rental.perDay)} per day, ${usd(STANDARDS.rental.max)} max`;
-const MED_PAY = `${usd(STANDARDS.medPay)} per person`;
+// TNI's standard coverages (src/standards.js), as Progressive's options write them. The rules'
+// `std` (CarrierRule `std`) write any amount the same way; test/std-metadata.test.mjs holds them to
+// the rules.
+const umCsl = (/** @type {number} */ a) => `${usdK(a)} CSL`;
+const deductible = (/** @type {number} */ a) => `${usd(a)} Deductible`;
+const rental = (/** @type {{ perDay: number, max: number }} */ r) => `${usd(r.perDay)} per day, ${usd(r.max)} max`;
+const medPay = (/** @type {number} */ a) => `${usd(a)} per person`;
+const glass = (/** @type {number} */ a) => [`${deductible(a)} w/ $0 Glass Deductible`];
+const UM_CSL = umCsl(STANDARDS.umCsl);
+const DEDUCTIBLE = deductible(STANDARDS.deductible);
+const RENTAL = rental(STANDARDS.rental);
+const MED_PAY = medPay(STANDARDS.medPay);
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -1098,18 +1105,21 @@ export const progressive = {
       // loss and 5k accidental death alone or together. Progressive picked all three; TNI's standard
       // is 5k Medical and Hospital alone. Other states with this control keep Progressive's choice.
       { concept: 'coverage.pip', q: '1FB2', tni: 'progressive.arkansas-pip', source: 'standard', field: 'PIPInput.Limit', name: 'Personal injury protection, AR (standard: 5k Medical and Hospital; other states: as Progressive set it)', kind: 'choice', value: (r) => (isArkansas(r) ? '5k Medical and Hospital' : null), ignore: (r) => !isArkansas(r), emptyNote: (r) => (isArkansas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida, Texas and Arkansas only: choose it yourself.') },
-      { concept: 'coverage.um', q: '1DEE', tni: 'progressive.um', source: 'standard', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => UM_CSL, scope: 'policy' },
+      { concept: 'coverage.um', q: '1DEE', tni: 'progressive.um', source: 'standard', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => UM_CSL, scope: 'policy', std: { id: 'umCsl', write: umCsl } },
       // SC (2026-10-07): uninsured and underinsured motorist as BI & PD together, each $100k CSL with
       // the deductible Progressive lists for it (the agent's picks on that quote).
-      { concept: 'coverage.um', q: '1E68', tni: 'progressive.um', source: 'standard', field: 'LineInput.UMBIPDLimit', ask: 'Uninsured Motorist Bodily Injury & Property Damage', name: `Uninsured motorist BI & PD (standard: ${UM_CSL})`, kind: 'choice', value: () => `${UM_CSL} w/ $200 Deductible` },
-      { concept: 'coverage.um', q: '1E6C', tni: 'progressive.um', source: 'standard', field: 'LineInput.UIMBIPDLimit', ask: 'Underinsured Motorist Bodily Injury & Property Damage', name: `Underinsured motorist BI & PD (standard: ${UM_CSL})`, kind: 'choice', value: () => `${UM_CSL} w/ $0 Deductible` },
+      { concept: 'coverage.um', q: '1E68', tni: 'progressive.um', source: 'standard', field: 'LineInput.UMBIPDLimit', ask: 'Uninsured Motorist Bodily Injury & Property Damage', name: `Uninsured motorist BI & PD (standard: ${UM_CSL})`, kind: 'choice', value: () => `${UM_CSL} w/ $200 Deductible`,
+        std: { id: 'umCsl', write: (a) => `${umCsl(a)} w/ $200 Deductible`, name: (a) => `Uninsured motorist BI & PD (standard: ${umCsl(a)})` } },
+      { concept: 'coverage.um', q: '1E6C', tni: 'progressive.um', source: 'standard', field: 'LineInput.UIMBIPDLimit', ask: 'Underinsured Motorist Bodily Injury & Property Damage', name: `Underinsured motorist BI & PD (standard: ${UM_CSL})`, kind: 'choice', value: () => `${UM_CSL} w/ $0 Deductible`,
+        std: { id: 'umCsl', write: (a) => `${umCsl(a)} w/ $0 Deductible`, name: (a) => `Underinsured motorist BI & PD (standard: ${umCsl(a)})` } },
       // States that ask UM and UIM separately (PA 1DCA/1DDE, IN and AR 1DBF/1DD8): the same $100k
       // CSL. Uninsured first: AR offers underinsured only up to the uninsured limit (live run
       // 2026-10-19: tried while uninsured was still $1 million, it offered only that, and failed).
       // A fill answers down the page, not in this order: every captured page (IA, IN) lists
       // uninsured above underinsured.
       ...[{ concept: 'coverage.um', q: '1DCA', ask: 'Uninsured Motorist Bodily Injury' }, { concept: 'coverage.um', q: '1DDE', ask: 'Underinsured Motorist Bodily Injury' }, { concept: 'coverage.um', q: '1DBF', field: 'LineInput.UMBILimit' }, { concept: 'coverage.um', q: '1DD8', field: 'LineInput.UIMBILimit' }]
-        .map(/** @param {CarrierRule} which @returns {CarrierRule} */ (which) => ({ ...which, source: 'standard', tni: 'progressive.um', name: `Uninsured / underinsured motorist (standard: ${UM_CSL})`, kind: 'choice', value: () => UM_CSL })),
+        .map(/** @param {CarrierRule} which @returns {CarrierRule} */ (which) => ({ ...which, source: 'standard', tni: 'progressive.um', name: `Uninsured / underinsured motorist (standard: ${UM_CSL})`, kind: 'choice', value: () => UM_CSL,
+          std: { id: 'umCsl', write: umCsl, name: (a) => `Uninsured / underinsured motorist (standard: ${umCsl(a)})` } })),
       // Pennsylvania first-party benefits: not on the intake means not bought, except medical
       // expense, which PA requires (its lowest, $5,000).
       { concept: 'coverage.pip', q: '1E66', tni: 'progressive.pa-benefits', source: 'standard', ask: 'Medical Expense Benefits', name: 'PA medical expense benefits (required: lowest, $5,000)', kind: 'choice', value: () => '$5,000' },
@@ -1125,9 +1135,12 @@ export const progressive = {
       // SC (2026-10-07) lists comprehensive with a $0 glass deductible ("$1,000 Deductible w/ $0
       // Glass Deductible"): the same deductible.
       // TNI's standard deductibles (the intake has no deductible field).
-      { concept: 'coverage.comp-coll', q: '1FCD', tni: 'progressive.deductibles', source: 'standard', field: 'ComprehensiveInput.Deductible', name: `Comprehensive deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE, choiceAliases: () => [`${DEDUCTIBLE} w/ $0 Glass Deductible`], scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-      { concept: 'coverage.comp-coll', q: '1FD2', tni: 'progressive.deductibles', source: 'standard', field: 'CollisionInput.Deductible', name: `Collision deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-      { concept: 'coverage.rental', q: '1FF2', tni: 'progressive.rental', source: 'standard', field: 'RentalInput.Limit', name: `Rental reimbursement (standard: ${usd(STANDARDS.rental.perDay)}/day, ${usd(STANDARDS.rental.max)} max)`, kind: 'choice', value: () => RENTAL, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { concept: 'coverage.comp-coll', q: '1FCD', tni: 'progressive.deductibles', source: 'standard', field: 'ComprehensiveInput.Deductible', name: `Comprehensive deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE, choiceAliases: () => glass(STANDARDS.deductible), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0,
+        std: { id: 'compDeductible', write: deductible, name: (a) => `Comprehensive deductible (standard: ${usd(a)})`, aliases: glass } },
+      { concept: 'coverage.comp-coll', q: '1FD2', tni: 'progressive.deductibles', source: 'standard', field: 'CollisionInput.Deductible', name: `Collision deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0,
+        std: { id: 'collDeductible', write: deductible, name: (a) => `Collision deductible (standard: ${usd(a)})` } },
+      { concept: 'coverage.rental', q: '1FF2', tni: 'progressive.rental', source: 'standard', field: 'RentalInput.Limit', name: `Rental reimbursement (standard: ${usd(STANDARDS.rental.perDay)}/day, ${usd(STANDARDS.rental.max)} max)`, kind: 'choice', value: () => RENTAL, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0,
+        std: { id: 'rental', write: rental, name: (r) => `Rental reimbursement (standard: ${usd(r.perDay)}/day, ${usd(r.max)} max)` } },
       // Offered for a truck tractor next to Rental reimbursement (FL, 2026-10-05). TNI: Not selected.
       { concept: 'coverage.rental-downtime', q: '1FF9', tni: 'progressive.rental-downtime', source: 'standard', field: 'RentalWithDTInput.Limit', name: 'Rental with downtime (TNI: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { concept: 'coverage.roadside', q: '2000', tni: 'progressive.roadside', source: 'standard', field: 'RoadsideInput.Limit', name: 'Roadside / towing (first selected option)', kind: 'selected-option', value: () => 'Selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
@@ -1136,7 +1149,8 @@ export const progressive = {
       { concept: 'coverage.umpd', q: '1FDD', tni: 'progressive.umpd', source: 'standard', field: 'UMPDInput.Limit', ask: 'UMPDInput.Limit', name: 'UMPD limit (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle' },
       // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle):
       // $5,000 wherever Progressive offers it (TNI, 2026-10-26, W44-26).
-      { concept: 'coverage.medpay', q: '1FE4', tni: 'progressive.medpay', source: 'standard', field: 'MedicalPaymentInput.Limit', name: `Medical payments per person (standard: ${usd(STANDARDS.medPay)})`, kind: 'choice', value: () => MED_PAY, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { concept: 'coverage.medpay', q: '1FE4', tni: 'progressive.medpay', source: 'standard', field: 'MedicalPaymentInput.Limit', name: `Medical payments per person (standard: ${usd(STANDARDS.medPay)})`, kind: 'choice', value: () => MED_PAY, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0,
+        std: { id: 'medPay', write: medPay, name: (a) => `Medical payments per person (standard: ${usd(a)})` } },
       { concept: 'coverage.cargo', q: '2158', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
       { concept: 'coverage.cargo', q: '215A', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },
       // TNI: an unselected Reefer option on the intake means this coverage is not requested.
@@ -1182,8 +1196,10 @@ export const progressive = {
     // They carry the vehicle rows' data-model names: each row is found by its trailer's year, make
     // and model, on this page only.
     ...onPage('CoveragesRates', [
-      { concept: 'coverage.comp-coll', q: 'TR1FCD', tni: 'progressive.trailer-row', source: 'standard', field: 'ComprehensiveInput.Deductible', name: `Trailer comprehensive deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE, choiceAliases: () => [`${DEDUCTIBLE} w/ $0 Glass Deductible`] },
-      { concept: 'coverage.comp-coll', q: 'TR1FD2', tni: 'progressive.trailer-row', source: 'standard', field: 'CollisionInput.Deductible', name: `Trailer collision deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE },
+      { concept: 'coverage.comp-coll', q: 'TR1FCD', tni: 'progressive.trailer-row', source: 'standard', field: 'ComprehensiveInput.Deductible', name: `Trailer comprehensive deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE, choiceAliases: () => glass(STANDARDS.deductible),
+        std: { id: 'compDeductible', write: deductible, name: (a) => `Trailer comprehensive deductible (standard: ${usd(a)})`, aliases: glass } },
+      { concept: 'coverage.comp-coll', q: 'TR1FD2', tni: 'progressive.trailer-row', source: 'standard', field: 'CollisionInput.Deductible', name: `Trailer collision deductible (standard: ${usd(STANDARDS.deductible)})`, kind: 'choice', value: () => DEDUCTIBLE,
+        std: { id: 'collDeductible', write: deductible, name: (a) => `Trailer collision deductible (standard: ${usd(a)})` } },
       { concept: 'coverage.rental', q: 'TR1FF2', tni: 'progressive.trailer-row', source: 'standard', field: 'RentalInput.Limit', name: 'Trailer rental reimbursement (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
       { concept: 'coverage.fire-theft', q: 'TR200F', tni: 'progressive.trailer-row', source: 'standard', field: 'FireAndTheftInput.Deductible', name: 'Trailer fire / theft (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
       { concept: 'trailer.equipment', q: 'TR2CE0', source: 'derived', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },

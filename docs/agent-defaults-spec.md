@@ -7,7 +7,7 @@ Status: **proposal**, not implemented. Written 2026-11-05 from the code on `main
 Agents can replace TNI's standard answers with their own, from Settings, without changing how anything else is decided. There are two levels:
 
 1. **TNI defaults** (basic): the shared coverage amounts every carrier fills, set once for all carriers.
-2. **Advanced**: the same amounts per carrier, each carrier's own coverage standards, and the option to make any TNI standard "ask me" instead of filled.
+2. **Advanced**: the same amounts per carrier, each carrier's own coverage standards, and the option to make a TNI standard "ask me" instead of filled, except a workflow standard other answers rest on (owner drives; see below).
 
 Nothing here lets a default answer a question the client answers, or one that only the agent may answer.
 
@@ -82,8 +82,8 @@ A collapsed **Advanced** section below it, with one group per carrier:
 
 - **Per-carrier amounts**: the basic rows again, with "Same as above" as the default, offering every amount that carrier sells.
 - **Carrier-only coverage standards**: AmWINS towing; GEICO's UM deductible and UM/UIM type; Progressive's MD PIP; and so on. Each comes with TNI's value and the carrier's own options.
-- **Ask me instead**: any standard, coverage or workflow, can be switched to "Ask me". The step then becomes the agent's (`fact`-like: not filled, with a note, `manualOnly`, never Luna's).
-- **Workflow standards offer only TNI's answer or "Ask me", never a different fixed answer.** These are assumptions about the client (no hazmat, owner drives, continuously insured). A preset "Yes" or "No" of the agent's own would answer for every client without evidence. "Ask me" moves the answer toward the agent, which is never less correct.
+- **Ask me instead**: a coverage standard, or a workflow standard whose assumption reaches only its own step and listed dependents, can be switched to "Ask me". Owner drives can't: other answers read its assumption directly (below), so the agent corrects it in All client details instead. The step then becomes the agent's (`fact`-like: not filled, with a note, `manualOnly`, never Luna's).
+- **Workflow standards offer only TNI's answer or "Ask me", never a different fixed answer.** These are assumptions about the client (no hazmat, continuously insured). Owner drives is one too, but it offers no "Ask me" either (below). A preset "Yes" or "No" of the agent's own would answer for every client without evidence. "Ask me" moves the answer toward the agent, which is never less correct.
 - Per-state overrides are **not in v1** (open question 3).
 
 ## Code design

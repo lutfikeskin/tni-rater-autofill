@@ -1070,7 +1070,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   const logged = [], rendered = [], layouts = [], assisted = [];
   const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
   const context = { watchFill: () => () => {},
-    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
+    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }], knownStep,
@@ -1109,7 +1109,7 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
   // for them, the report having none.
   const hosts = [];
   const context = { watchFill: () => () => {},
-    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {} }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
+    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {} }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: () => {}, renderSteps: () => {}, announce: () => {}, rowsHost: (entry) => { hosts.push(entry); return {}; },
     fillEvents: () => [], isStandard, knownStep, fillSkip: () => [], fillSkipBy: () => null, tabMaps: () => ({ agentKeys: new Map() }), showFinish: () => {},
@@ -2129,7 +2129,7 @@ function keptReportsHarness(memory, { session = { intakeId: 'intake-a' }, state 
     usage: { currentSession: () => session },
     store: { get: async (k) => structuredClone(memory[k]), set: async (k, v) => { memory[k] = structuredClone(v); }, remove: async (k) => { delete memory[k]; }, keys: async () => Object.keys(memory) },
     firstUnits: () => ({ vehicles: 0, drivers: 0, trailers: 0 }),
-    buildPlan: (record, carrier, active) => [{ drivers: active.drivers }],
+    planFor: (record, carrier, active) => [{ drivers: active.drivers }],
     renderReport: (frames, ctx) => rendered.push({ frames, ctx }), refreshAnswers: () => rendered.push('refreshAnswers'),
     currentReportKey: () => front,
     liveItems: async (tabId, carrier, items) => { reads.push(items); return live; },
@@ -2659,7 +2659,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), layoutReadyTabs: new Set(),
       autoPaused: false, filling: false, assistPage: 'Rates' };
     const context = { watchFill: () => () => {},
-      state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
+      state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options,
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
       recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {},
@@ -3029,7 +3029,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
     stopScreen, fillEvents, isStandard, resolutionOf, renderSite: () => { context.rendered = (context.rendered ?? 0) + 1; },
     // These carriers declare no quote-state control (the state warning has its own test).
     quoteStatePick: () => undefined, showStateNote: () => {},
-    sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
+    sha256Hex, planFor: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
     busy: false, runs: [],
     runKit: async (tabId, carrier, func) => {
       const source = String(func);
@@ -3593,7 +3593,7 @@ test('an automatic fill readies its tab for layouts only when it went through', 
   const run = async (runKit) => {
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
     const context = { watchFill: () => () => {},
-      state, Date, crypto, rulesVersion: null, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
+      state, Date, crypto, rulesVersion: null, pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options,
       runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
       redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: () => {}, pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
@@ -4074,7 +4074,7 @@ function stopHarness(page = 'DeclinationNotice') {
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
     usage: { log: (...events) => logged.push(...events), currentSession: () => ({ id: 'quote-1' }) },
     runKit: async (...args) => { kits.push(args); return []; }, tellRecorder: async () => {}, ensureRecorder: async () => {},
-    pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {}, buildPlan: () => [], fillOptions: () => ({}),
+    pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {}, planFor: () => [], fillOptions: () => ({}),
     scheduleLayout: () => {}, store: { set: async () => {} },
   };
   vm.runInNewContext(`${PAGE_HELPERS}\n${['showStopPage', 'stopPageIsOurs', 'fillPage', 'scheduleAutoFill', 'autoFill', 'aiActionCurrent', 'onRecorderMessage', 'viewOf', 'saveViews', 'stepScope'].map(extractFunction).join('\n')}`, context);
@@ -4276,7 +4276,7 @@ test('a manual capture is numbered in its scenario, keeps a redacted note and sc
   const context = {
     state: { tab: { id: 3, url: 'Operations', carrier: { id: 'progressive' } }, intake: { record: { garaging: {}, operations: {}, vehicles: [], trailers: [], coverage: {} } }, active: {}, intakeRevision: 0 },
     $: (id) => ui[id], document: { createElement: (tag) => ({ tag, click() { assert.equal(this.tag, 'a'); assert.equal(this.href, 'blob:x'); downloads.push(this.download); } }) },
-    redactor: () => (s) => s.split('Jordan Avery').join('[client]'), redactionTerms: () => [], buildPlan: () => [],
+    redactor: () => (s) => s.split('Jordan Avery').join('[client]'), redactionTerms: () => [], planFor: () => [],
     pageOf: (u) => u, viewOf: () => 't1',
     runKit: async () => [{ result: { isTopFrame: true, page: context.domPage ?? 'Operations', step: 'Business Owner Info', controls: [{ q: '2A1' }], openLists: [] } },
       // A child frame with no questions but a message: kept as evidence.
@@ -4516,7 +4516,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   const context = {
     state, URL, crypto, Date, rulesVersion: rules, $: (id) => ui[id], pageOf: (url) => new URL(url).pathname, onQuotePage: () => true, showStopPage() {},
     clearTimeout() {}, setTimeout: () => 1, pickListItem: async () => {}, noteMissingUnit: () => {},
-    buildPlan: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
+    planFor: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
     fillOptions: () => ({}), pendingAi: () => [], ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
     runKit: async (tabId, carrier, func, args) => { seen.options = args[1]; markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
     fillEvents, isStandard, resolutionOf, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
@@ -7594,7 +7594,7 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
       persistDoneActions: () => { calls.persisted++; },
       save: async () => { calls.saved++; },
       renderPickers: () => { calls.rendered++; },
-      unitToAdd, unitListSpecs, unitMissing, buildPlan,
+      unitToAdd, unitListSpecs, unitMissing, planFor: buildPlan,
     };
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
     const ctx = { tabId: 4, intake, revision: 1, asked, settings: { autoAdvance, autoPages } };
@@ -7981,7 +7981,7 @@ test('a unit list not read as complete is said in counts in the usage log', asyn
     const state = { tab: { id: 4 }, intake: { record }, intakeRevision: 1, active: { vehicles: 1, drivers: 0, trailers: 0 },
       unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms }, doneActions: new Set() };
     const context = { state, knownStep, runKit: async () => [{ result: { step: 'Vehicles', forms: [], lists } }], fillCurrent: () => true,
-      persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs, unitMissing, buildPlan };
+      persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs, unitMissing, planFor: buildPlan };
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
     const ctx = { tabId: 4, intake: state.intake, revision: 1, settings: { autoAdvance: true } };
     await context.pickUnitToAdd(geico, ctx);
@@ -8243,7 +8243,7 @@ test('a quote-wide helper the agent clicks themselves is done, as if the fill ha
   const run = (page, text) => {
     const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set() };
     let saved = 0;
-    const context = { state, buildPlan: () => plan, persistDoneActions: () => { saved++; } };
+    const context = { state, planFor: () => plan, persistDoneActions: () => { saved++; } };
     vm.runInNewContext(extractFunction('agentHelperDone'), context);
     context.agentHelperDone(progressive, page, undefined, text);
     return [[...state.doneActions], saved];
@@ -8268,7 +8268,7 @@ test('a helper the fill checks after its click is not done by the agent clicking
     pages: [].concat(a.page ?? []), steps: null, text: typeof a.text === 'function' ? null : a.text ?? null, near: a.near ?? null, token: a.token ?? null,
     within: a.within ?? null, opener: a.opener ?? null, unique: !!a.unique, needsRecalculation: !!a.needsRecalculation, verify: a.verify ?? null }));
   const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set() };
-  const context = { state, buildPlan: () => plan, persistDoneActions: () => {} };
+  const context = { state, planFor: () => plan, persistDoneActions: () => {} };
   vm.runInNewContext(extractFunction('agentHelperDone'), context);
   context.agentHelperDone(progressive, 'CoveragesRates', undefined, 'Done with this coverage');
   assert.deepEqual([...state.doneActions], []);
@@ -8861,7 +8861,7 @@ test('the agent\'s own click of the finishing action lifts the changed mark', ()
   const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set(['recalculate', 'printProposal', 'printProposal:changed']) };
   let steps = 0;
   const chimes = [];
-  const context = { state, buildPlan: () => plan, persistDoneActions: () => {}, renderSteps: () => { steps++; }, noteQuoteDone: (tabId) => chimes.push(tabId ?? null) };
+  const context = { state, planFor: () => plan, persistDoneActions: () => {}, renderSteps: () => { steps++; }, noteQuoteDone: (tabId) => chimes.push(tabId ?? null) };
   vm.runInNewContext(extractFunction('agentHelperDone'), context);
   context.agentHelperDone(geico, 'quote', 'Quote & Coverages', 'Print Quote Proposal');
   assert.deepEqual([[...state.doneActions], steps], [['recalculate', 'printProposal'], 1], 'lifted, and the strip and the dock say so');
@@ -9084,7 +9084,7 @@ test('the agent\'s own click of a finishing action already done and unchanged ch
   // quote printed and nothing changed since.
   const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set(['recalculate', 'printProposal']) };
   const chimes = [];
-  const context = { state, buildPlan: () => plan, persistDoneActions: () => {}, renderSteps: () => {}, noteQuoteDone: () => chimes.push(1) };
+  const context = { state, planFor: () => plan, persistDoneActions: () => {}, renderSteps: () => {}, noteQuoteDone: () => chimes.push(1) };
   vm.runInNewContext(extractFunction('agentHelperDone'), context);
   context.agentHelperDone(geico, 'quote', 'Quote & Coverages', 'Print Quote Proposal');
   assert.deepEqual(chimes, [], 'the same quote printed again');

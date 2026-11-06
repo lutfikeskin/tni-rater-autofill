@@ -16,6 +16,18 @@ export const STANDARDS = Object.freeze({
   rental: Object.freeze({ perDay: 40, max: 1_200 }),
 });
 
+// The shared standards a rule's `std` metadata names (CarrierRule `std`), each with TNI's amount:
+// comprehensive and collision are two answers that share TNI's one deductible. A rule carrying
+// `std` writes exactly that amount (test/std-metadata.test.mjs); a hook may replace it
+// (docs/agent-defaults-spec.md). Nothing reads these ids without one.
+export const STANDARD_IDS = Object.freeze({
+  umCsl: () => STANDARDS.umCsl,
+  medPay: () => STANDARDS.medPay,
+  compDeductible: () => STANDARDS.deductible,
+  collDeductible: () => STANDARDS.deductible,
+  rental: () => STANDARDS.rental,
+});
+
 // An amount as most options write it: $1,000.
 export const usd = (/** @type {number} */ amount) => `$${amount.toLocaleString('en-US')}`;
 
