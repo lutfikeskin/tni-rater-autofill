@@ -5,9 +5,12 @@
 // Every panel caller goes through planFor, so the plan that fills, the plan the usage log rebuilds
 // and the plan Luna's report comes from are built alike. A hook that changes plan steps (buildPlan's
 // `overlay`, docs/agent-defaults-spec.md) plugs in here only; test/plan-hooks.test.mjs fails if a
-// panel file calls buildPlan directly. Today nothing plugs in: the plan is the rules' own.
+// panel file calls buildPlan directly. The agent's own defaults plug in here (src/agent-defaults/):
+// overlayFor gives null while the feature is off or no profile is confirmed, and the plan is the
+// rules' own.
 
 import { buildPlan } from '../../src/plan.js';
+import { overlayFor } from '../../src/agent-defaults/index.js';
 
 /** @import { ActiveUnits, CarrierConfig, ClientRecord, PlanStep } from '../../types.js' */
 
@@ -18,5 +21,5 @@ import { buildPlan } from '../../src/plan.js';
  * @returns {PlanStep[]}
  */
 export function planFor(record, carrier, active = {}) {
-  return buildPlan(record, carrier, active);
+  return buildPlan(record, carrier, active, { overlay: overlayFor(carrier?.id) });
 }

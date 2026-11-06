@@ -1,6 +1,7 @@
 // Shared intake scoping and field restrictions for Luna assistance.
 // Exact answers, calculations and page execution remain in code.
 import { rulebookFor } from './tni-rules.js';
+import { rulebookRewriteFor } from '../agent-defaults/index.js';
 import { noPriorInsurance, priorPolicyExpired } from '../util.js';
 import { redactionTerms } from '../plan.js';
 import { redactor } from '../usage.js';
@@ -209,7 +210,8 @@ export function evidenceFor(context) {
   // TNI's rules first, keyed by their ids: the general part and this carrier's (none for a carrier
   // without a part), the same for every request on that carrier, so its requests share one start.
   const sources = {};
-  for (const rule of rulebookFor(context.carrier)) sources[rule.id] = { basis: 'tni_rule', rule: rule.text };
+  // An agent's own default rewrites the entries stating the standard it replaces (src/agent-defaults/).
+  for (const rule of rulebookFor(context.carrier, { rewrite: rulebookRewriteFor(context.carrier) })) sources[rule.id] = { basis: 'tni_rule', rule: rule.text };
   let n = 0;
   const flatten = (obj, path = '') => {
     for (const [key, value] of Object.entries(obj ?? {})) {

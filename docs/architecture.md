@@ -64,6 +64,7 @@ Measure automatic-answer accuracy, the share automated, and whole-quote correctn
 
 - [intake.js](../src/intake.js), [normalize.js](../src/normalize.js), [schema.js](../src/schema.js): extraction and record.
 - [plan.js](../src/plan.js), [carriers.js](../src/carriers.js): plans and carrier registration.
+- [src/agent-defaults/](../src/agent-defaults/): agents' own defaults in place of TNI's standard amounts ([spec](agent-defaults-spec.md)), switched off; it plugs into `planFor` and Luna's rulebook only, through their generic hooks.
 - [types.js](../types.js), at the root: the carrier config, plan steps, fill report and usage events as JSDoc types, checked by `npm run typecheck` in the files that opt in ([testing](testing.md)).
 - [sidepanel/panel/](../sidepanel/panel/) and [sidepanel.js](../sidepanel/sidepanel.js), [pagekit.js](../src/kit/pagekit.js): orchestration and browser execution; [src/content/carriers/](../src/content/carriers/): each carrier's page adapter.
 

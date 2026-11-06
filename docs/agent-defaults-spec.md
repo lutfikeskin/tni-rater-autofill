@@ -1,6 +1,6 @@
 # Spec: agents' own defaults ("My defaults")
 
-Status: **proposal**, not implemented. Written 2026-11-05 from the code on `main` (530f86f).
+Status: **in progress**, switched off. Written 2026-11-05 from the code on `main` (530f86f). Done: the server (rollout step 1), the generic hooks (step 2) and the module, switched off (step 3). Not yet: review tooling, the Settings page and logging, Advanced.
 
 ## Goal
 
@@ -95,8 +95,8 @@ The feature lives in its own modules. Core code (plan building, rules, the page 
 | Part | Where | Knows about agent defaults? |
 | --- | --- | --- |
 | Registry of overridable standards (data only) | `src/agent-defaults/registry.js` | Yes |
-| The overlay: plan step in, plan step out; cross-field checks | `src/agent-defaults/overlay.js`, `checks.js` | Yes |
-| Effective defaults, their log entries and `defaultsHash` | `src/agent-defaults/index.js` (the module's only entry point) | Yes |
+| The overlay: plan step in, plan step out; cross-field checks | `src/agent-defaults/overlay.js` (**done**, switched off) | Yes |
+| Effective defaults, the off switch, Luna's rulebook rewrite, their log entries; `defaultsHash` from step 5 | `src/agent-defaults/index.js` (the module's entry point; **done**, switched off) | Yes |
 | Storage and the Settings section | `sidepanel/panel/agent-defaults/store.js`, `view.jsx` | Yes |
 | Server shapes | `server/agent-defaults.mjs` (**done**, PR #299) | Yes |
 | Plan building | `src/plan.js`: an optional `overlay` hook | No |
@@ -105,23 +105,23 @@ The feature lives in its own modules. Core code (plan building, rules, the page 
 | Report tag and page colour | a source → style map (`agent-default` is one entry) | One entry |
 | Luna's rulebook | an optional `rewrite` hook on `rulebookFor` | No |
 
-The rule is that **only `src/agent-defaults/` and `sidepanel/panel/agent-defaults/` import from `src/agent-defaults/`**, apart from the one wiring line in `planFor()` and one in usage logging. An import-graph test enforces this, the same way `test/usage.test.mjs` already checks the rules' import graph.
+The rule is that **only `src/agent-defaults/` and `sidepanel/panel/agent-defaults/` import from `src/agent-defaults/`**, apart from the one wiring line in `planFor()`, the one in Luna's evidence (`src/ai/common.js`, the rulebook rewrite) and, from step 5, one in usage logging. `test/agent-defaults.test.mjs` fails on any other importer.
 
 ### Registry: `src/agent-defaults/registry.js`
 
 ```js
-// One entry per overridable standard: data only.
+// One entry per overridable standard: data only (DefaultEntry in types.js).
 {
-  id: 'medPay',                 // stable storage key, also the log's id
+  id: 'medPay',                 // a STANDARD_IDS key (src/standards.js): the storage key, the log's id,
+                                // and the `std` id its rules carry; TNI's amount comes from there, live
   label: 'Medical payments',
-  level: 'basic',               // basic | carrier
-  kind: 'coverage',             // coverage | workflow (workflow: only 'tni' or 'ask')
-  tni: () => STANDARDS.medPay,  // TNI's value, live
-  choices: { all: [1000, 2000, 5000, 10000], progressive: [...], geico: [...], amwins: [...] },
-  locked: false,                // TNI may lock it
-  ask: true,                    // "Ask me" allowed
+  choices: { all: [500, 1000, 2000, 5000], progressive: [...], geico: [...], amwins: [...] },
+  dependents: [{ carrier: 'geico', concept: 'coverage.pip', tni: 'geico.medpay-pip' }, ...],
+  locked: false,                // TNI may lock it: nothing stored replaces it
 }
 ```
+
+`choices.all` is what every carrier sells (the TNI defaults page); a carrier's own list is what its Advanced row offers, from the carriers' captured layouts. Only the five shared coverage amounts are in the registry today. Workflow standards (owner drives and the like) are not: see the cross-field checks below.
 
 The registry lists no rules. An override reaches **only the rules that carry its id in their own `std` field** (below), never everything sharing a `tni` id or a `concept`. Those groups are too coarse: GEICO's `geico.medpay-pip` (and concept-wise its PIP) holds Basic PIP beside Medical Payments, and `geico.um` holds the UM deductible and UM/UIM type beside the UM limits. A Med Pay or UM amount must never land in those. They carry no `medPay` or `umCsl` `std`; one may later get its own registry id (`umDeductible`). Taking an entry out of the registry puts that one standard back to TNI's everywhere. A stored default whose id the registry no longer has is ignored.
 
@@ -157,21 +157,21 @@ Each standard rule an override may change gains a `std` field. The field names i
 - `buildPlan(record, carrier, active, { overlay } = {})`. After `fieldSteps` builds a step, and **before** its resolution is computed, it calls `overlay?.(step, rule, { record, carrier, active })` and uses the step that comes back. `plan.js` never imports the module.
 - Steps gain `tni: rule.tni ?? null`, which is generic and useful to logs anyway.
 - The overlay (in the module) acts only when `step.source === 'standard'`, the rule has `std`, and `std.applies` (if given) is true for this record and unit:
-  - with **Ask me**, the source becomes `fact` with the note "You chose to answer this yourself (Settings → TNI defaults)";
-  - with a **value**, the source becomes `agent-default`, the value is `std.write(amount)`, the name is `std.name(amount)`, and the choice aliases are `std.aliases(amount)` (none when the rule gives none);
+  - with **Ask me**, the step becomes the agent's (`manualOnly`, source `fact`) with the note "You chose to answer <standard> yourself (Settings → TNI defaults)";
+  - with a **value**, the source becomes `agent-default`, the value is `std.write(amount)`, the name is `std.name(amount)`, the choice aliases are `std.aliases(amount)` (none when the rule gives none), the unoffered note says the default isn't offered, and `agentDefault` records the standard, the amount and TNI's (for the report);
   - with a **locked** standard, or no default, the step is returned unchanged.
 - **One way to build a panel plan.** A `planFor(state, carrier, active)` wrapper replaces the seven `buildPlan` calls in `coordinator.js`, `core.js`, `fill.js` and `usage.js`. It is the only place the overlay is passed in, so the plan that fills, the plan that logs and the plan Luna reads can't disagree. A test fails if a panel file calls `buildPlan` directly.
 
 ### Failure isolation and the off switch
 
-- **A failing overlay never breaks a fill.** `planFor()` runs the overlay per step inside try/catch. If it throws, that step goes to the agent with the note "Your default couldn't be applied: answer it yourself", and a `client_error` is logged. It neither falls back silently to TNI's value nor stops the plan; the other steps fill as normal.
-- **Off switch:** `AGENT_DEFAULTS_ON` in `src/agent-defaults/index.js`. When it's false, `planFor()` passes no overlay, the Settings section is hidden, and nothing new is logged. Stored defaults are kept, so turning it back on restores them.
+- **A failing overlay never breaks a fill.** The overlay `overlayFor()` gives is wrapped per step in try/catch (`safeOverlay`). If it throws, that step goes to the agent with the note "Your default couldn't be applied: answer it yourself", and the error goes to `onDefaultsError` (the panel logs it as a `client_error` from step 5). It neither falls back silently to TNI's value nor stops the plan; the other steps fill as normal.
+- **Off switch:** `AGENT_DEFAULTS_ON` in `src/agent-defaults/index.js`. When it's false, `overlayFor()` and `rulebookRewriteFor()` give null, so `planFor()` passes no overlay and Luna's rulebook is TNI's; from step 5 the Settings section is hidden too, and nothing new is logged. Stored defaults are kept, so turning it back on restores them.
 - **One standard off:** remove its registry entry (above).
 
 ### Removing the feature
 
 1. Delete `src/agent-defaults/`, `sidepanel/panel/agent-defaults/` and `server/agent-defaults.mjs` (with its lines marked `agent defaults` in `server/index.mjs`, its name in `server/Dockerfile` and in `SERVER_HASH`).
-2. Delete the wiring line in `planFor()` and the one in usage logging.
+2. Delete the wiring line in `planFor()`, the one in `src/ai/common.js` and the one in usage logging.
 3. Optionally delete the `std` fields on rules; they're inert without the module.
 4. Delete the `agent-default` entry from the source → style map and the module's tests.
 
@@ -188,8 +188,8 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 - **Rental follows comp and collision** (GEICO): "Ask me" on comp or collision makes rental the agent's.
 - **Answers coupled to a coverage follow "Ask me".** The registry lists each entry's `dependents`: the `std` ids or rule `q`s whose own TNI answer assumes it (PIP declined beside Med Pay; GEICO's rental behind comprehensive and collision). "Ask me" on the entry makes those the agent's as well where their own source is `standard`, with the note "Answer this after <entry>, which you chose to answer yourself". Where the intake answers a dependent (`derived`), it stays as it is.
 - **Dependents follow their prerequisite whenever it goes to the agent, not only on "Ask me".** A default can also fail at fill time: the carrier doesn't list the amount (unoffered), a cross-field check stops it (UM above the liability limit), or the overlay throws. If the prerequisite goes to the agent and the dependent is still filled with TNI's coupled answer, the quote can contradict itself. For example, GEICO's Med Pay goes to the agent because its list lacks the default, the agent picks Not Included, and Basic PIP is still declined "because Med Pay is offered": the client ends up with neither coverage.
-  - Whether the amount is offered is known only on the page, so the hold is checked at fill time. The overlay gives each dependent step `requires`: the paths of its prerequisite steps (a new generic step field, read by the page kit, which knows nothing about defaults). The page kit fills a step with `requires` only once each required step was filled by this fill with the plan's answer. Otherwise the step is the agent's, with the note "Answer this after <prerequisite>, which is yours to answer". A required step the agent then answers doesn't release the dependent: the agent answers both.
-  - `requires` is given only where the overlay changed the prerequisite (a default or "Ask me"). Without defaults no step has it, so TNI's own behaviour is unchanged.
+  - **Today (conservative):** a dependent is the agent's whenever its prerequisite is replaced at all, by a default or "Ask me", with the note "Answer this after <prerequisite>, which your default changes". It is never filled with TNI's coupled answer beside an agent default, so no fill-time failure of the prerequisite can leave the quote contradicting itself. The cost is one more question for the agent where the default does fill. A dependent the agent replaces itself (GEICO's rental with a rental default) takes its own default.
+  - **Later, if that question proves a burden:** whether the amount is offered is known only on the page, so a finer hold would be checked at fill time. The overlay would give each dependent step `requires`: the paths of its prerequisite steps (a new generic step field, read by the page kit, which knows nothing about defaults). The page kit would fill a step with `requires` only once each required step was filled by this fill with the plan's answer, and otherwise leave it to the agent. `requires` would be given only where the overlay changed the prerequisite, so TNI's own behaviour stays unchanged.
 - **Assumptions other code reads are never "Ask me".** A step overlay changes plan steps only. Some workflow standards are read straight from the record by shared helpers, so no step change reaches those readers. Owner drives is one: with the box blank, `ownerDrives()` (src/answers/owner.js) is TNI's Yes for the owner's daily operations, GEICO's driver list (`listedDriver`, `driversKnown`) and its SR-22 answer, and Progressive's exclusion answer. "Ask me" there would leave all of those answering as if the owner drives, contradicting the agent. Owner drives therefore stays TNI's (`ask: false`, `locked: true`). An agent who knows the owner doesn't drive sets it in All client details: that is an intake correction the record carries, so every reader sees it. A workflow standard is offered "Ask me" only when its assumption reaches nothing but its own step and its listed dependents. A test proves this for each entry (below), so a new helper reading it later fails that test instead of silently contradicting the agent.
 - State exceptions (GEICO's Texas UM split, Progressive's SC BI & PD, Florida PIP) stay TNI's: through their own non-`standard` sources, or through `std.applies` where the exception is a branch inside a `standard` rule (priority row 3).
 
@@ -197,7 +197,8 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 
 - `rulebookFor(carrier, { rewrite })`: a generic hook the module fills in, so the rulebook text states the effective values (entries carry `std` metadata, like rules). Today it states TNI's amounts, so Luna would contradict an agent default on a re-asked or unfilled coverage field.
 - An "Ask me" step is `manualOnly`, so Luna never suggests it. That matches the meaning of "Ask me".
-- The AI cache key includes a digest of the effective defaults, so a cached suggestion made under different defaults isn't reused.
+- The rewrite (`rulebookRewriteFor()`, wired in `evidenceFor`) appends to each entry stating a replaced standard, as its rules' `tni` names it, what the agent's default is there, or that the agent answers it.
+- From step 5, the AI cache key includes a digest of the effective defaults, so a cached suggestion made under different defaults isn't reused.
 
 ### Storage
 
@@ -242,9 +243,9 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 
 ## Rollout
 
-1. **Server.** Accept `agent-default` in `source`, `defaults` in `agent_settings` and `defaultsHash` on fill runs, then deploy. This changes no behaviour. *Done in code; see [hosting](hosting.md).*
-2. **Generic hooks, no feature.** Add the `overlay` hook in `buildPlan`, `tni` on steps, the `planFor()` wrapper, the `rulebookFor` `rewrite` hook, and `std` metadata on standard rules. Prove nothing changed: `npm test`, the carrier mocks, and `npm run benchmark -- --save` on `main` then `--against` on the branch with zero differences.
-3. **The module, switched off.** Add `src/agent-defaults/` (registry, overlay, checks, `isAgentDefault`) with its tests and `AGENT_DEFAULTS_ON = false`.
+1. **Server.** Accept `agent-default` in `source`, `defaults` in `agent_settings` and `defaultsHash` on fill runs, then deploy. This changes no behaviour. *Done and deployed; see [hosting](hosting.md).*
+2. **Generic hooks, no feature.** Add the `overlay` hook in `buildPlan`, `tni` on steps, the `planFor()` wrapper, the `rulebookFor` `rewrite` hook, and `std` metadata on standard rules. Prove nothing changed: `npm test`, the carrier mocks, and `npm run benchmark -- --save` on `main` then `--against` on the branch with zero differences. *Done.*
+3. **The module, switched off.** Add `src/agent-defaults/` (registry, overlay with its cross-field checks, effective defaults, the rulebook rewrite, `isAgentDefault`, the log entries) with `test/agent-defaults.test.mjs` and `AGENT_DEFAULTS_ON = false`, and wire it into `planFor()` and `evidenceFor`. Progressive and AmWINS write a million-dollar UM the way their lists do ("$1 million CSL", "$1M"). *Done.*
 4. **Review tooling.** Update signals, review, benchmark and answer key for `agent-default` and the logged defaults, before any agent can switch defaults on. Otherwise the benchmark would replay those quotes with TNI's values and report false differences.
 5. **Basic UI, switched on.** Add the TNI defaults section, the profile question, the page colour, the report tag and logging, and set `AGENT_DEFAULTS_ON = true`. Requires step 4 merged. Test the e2e with an override on each carrier mock.
 6. **Advanced.** Add per-carrier amounts, carrier-only coverage standards, and "Ask me".
@@ -268,7 +269,7 @@ Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rul
 - **Review mode:** an `agent-default` step is `reviewRequired`.
 - **Server and extension agree on `SOURCES`.**
 - **Every panel plan goes through `planFor()`.** No panel file calls `buildPlan` directly.
-- **Import boundary:** only the module's own files, `planFor()` and usage logging import `src/agent-defaults/`.
+- **Import boundary:** only the module's own files, `planFor()`, `src/ai/common.js` and usage logging import `src/agent-defaults/`.
 - **Off and empty are no-ops:** with `AGENT_DEFAULTS_ON = false`, or with no defaults stored, every fixture's plan deep-equals the plan without the overlay.
 - **`std` metadata matches its rule:** `std.write(TNI's amount)` equals the rule's value, and `std.name(TNI's amount)` equals its name.
 - **A throwing overlay** sends that step to the agent with its note and leaves the other steps unchanged.

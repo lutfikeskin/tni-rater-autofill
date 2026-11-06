@@ -45,7 +45,8 @@ import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, curre
 // TNI's standard coverages (src/standards.js), as Progressive's options write them. The rules'
 // `std` (CarrierRule `std`) write any amount the same way; test/std-metadata.test.mjs holds them to
 // the rules.
-const umCsl = (/** @type {number} */ a) => `${usdK(a)} CSL`;
+// A million and up as Progressive lists it: "$1 million CSL" (captured layouts), not "$1000k CSL".
+const umCsl = (/** @type {number} */ a) => (a >= 1_000_000 ? `$${a / 1_000_000} million CSL` : `${usdK(a)} CSL`);
 const deductible = (/** @type {number} */ a) => `${usd(a)} Deductible`;
 const rental = (/** @type {{ perDay: number, max: number }} */ r) => `${usd(r.perDay)} per day, ${usd(r.max)} max`;
 const medPay = (/** @type {number} */ a) => `${usd(a)} per person`;

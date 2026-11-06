@@ -386,6 +386,10 @@
  * @property {boolean} manualOnly
  * @property {string | null} q
  * @property {string | null} tni  the TNI rulebook entry its rule names (CarrierRule `tni`)
+ * @property {{ id: string, amount?: string, tni?: string, ask?: boolean }} [agentDefault]  the agent's own default
+ *   the step took (src/agent-defaults/overlay.js): its standard, the amounts said, or "Ask me"
+ * @property {string} [defaultInfo]  why the agent's default didn't apply here (a state's own exception); shown in
+ *   the report only, never a note (a step with a note is left to the agent)
  * @property {string | null} field
  * @property {string[] | null} ask
  * @property {string[] | null} pages
@@ -549,6 +553,34 @@
  * @typedef {object} PlanOptions
  * @property {StepOverlay | null} [overlay]
  */
+
+// Agents' own defaults (src/agent-defaults/, docs/agent-defaults-spec.md)
+
+/** An amount a default picks: a limit or deductible, or rental's daily amount and maximum. @typedef {number | { perDay: number, max: number }} DefaultChoice */
+
+/**
+ * A TNI standard an agent may replace (src/agent-defaults/registry.js).
+ * @typedef {object} DefaultEntry
+ * @property {string} id  a key of src/standards.js STANDARD_IDS; the rules carrying it in `std` are its targets
+ * @property {string} label  what the panel calls it
+ * @property {Record<string, DefaultChoice[]>} choices  `all`: what every carrier sells (the TNI defaults page);
+ *   per carrier id: what that carrier lists (Advanced)
+ * @property {{ carrier: string, concept?: string, tni?: string, std?: string }[]} dependents  rules whose own TNI
+ *   answer assumes this standard is TNI's: they become the agent's when it is replaced or asked
+ * @property {boolean} [locked]  TNI's answer always; nothing stored replaces it
+ */
+
+/**
+ * An agent's defaults profile, as stored: basic defaults for every carrier (`values`), and a carrier's
+ * own (`carriers`, Advanced), each a registry id's { value } or { ask: true }.
+ * @typedef {object} DefaultsProfile
+ * @property {string} [id]  random, never the agent's initials
+ * @property {string} [name]
+ * @property {Record<string, { value: DefaultChoice } | { ask: true }>} [values]
+ * @property {Record<string, Record<string, { value: DefaultChoice } | { ask: true }>>} [carriers]
+ */
+
+/** The defaults in force on one carrier: registry id -> { value } or { ask: true }, only those differing from TNI's. @typedef {Record<string, { value: DefaultChoice } | { ask: true }>} EffectiveDefaults */
 
 // ---------------------------------------------------------------------------------------------
 // The fill (src/kit/pagekit.js `fill`)
