@@ -400,7 +400,7 @@ async function autoFill(page) {
         // With their sources and groups as the report has them (answerSources, groupRows).
         const rctx = { tabId, page, carrier };
         const { fromOf, groupOf, ticks, editedBy } = answerSources(plan);
-        const answers = groupRows(added.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: isStandard(x, 'filled'), path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null })), ticks);
+        const answers = groupRows(added.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: isStandard(x, 'filled'), own: isOwnDefault(x, 'filled'), path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null })), ticks);
         appendRows([...answers, ...frames.flatMap((f) => f.actions ?? []).map((a) => ({ label: 'Clicked', value: a.text || a.id, kind: 'clicked' }))], rctx);
         state.reportFor.filled = (state.reportFor.filled ?? 0) + answers.filter((row) => row.answer).length;
         renderSteps();

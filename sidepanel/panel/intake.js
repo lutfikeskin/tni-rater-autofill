@@ -14,7 +14,7 @@ import { stopRecording } from './dev-recording.js';
 import { reviewIntake } from './assistant.js';
 import { uploadNow } from './usage-panel.js';
 import { clientNote, keepPdf, workSaid } from './pdf-view.js';
-import { refreshDefaults, settingsDefaults } from './agent-defaults/store.js';
+import { quoteStarting, refreshDefaults, settingsDefaults } from './agent-defaults/store.js';
 
 // ---------------------------------------------------------------------------------------------
 // Loading the intake PDF
@@ -70,6 +70,8 @@ async function loadFile(file, { reset = false } = {}) {
   // among them (radius miles, years in business) stays theirs after the panel reopens.
   // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
   state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test };
+  // agent defaults: nothing fills with the last quote's answer until this one is set up and asked.
+  quoteStarting();
   if (same) keepWork(state.intake, same);
   state.view = firstView(state.intake);
   state.filter = 'all';

@@ -106,7 +106,7 @@ function extractFunction(name) {
         // no quote waits on them, no fill carries their fingerprint, and an answer is the agent's own
         // default only by its source, unless the harness gives them.
         const defaultsStubs = { defaultsHold: '() => false', fillDefaultsHash: '() => undefined', isOwnDefault: "(x) => x?.source === 'agent-default'",
-          initialsChanged: 'async () => {}', refreshDefaults: '() => {}', settingsDefaults: '() => undefined' };
+          initialsChanged: 'async () => {}', refreshDefaults: '() => {}', quoteStarting: '() => {}', settingsDefaults: '() => undefined' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.

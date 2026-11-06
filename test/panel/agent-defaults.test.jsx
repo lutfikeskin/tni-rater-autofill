@@ -198,6 +198,18 @@ test('profiles: ids are random, a deleted active profile leaves none active, an 
   expect(Object.keys(panelState.agentDefaults.profiles)).toHaveLength(1);
 });
 
+// Every report row the panel builds from a fill keeps "Your default": the page's report and the
+// rows an automatic follow-up adds to it.
+test('report rows from a fill and from a follow-up both carry the agent\'s own default', async () => {
+  const fs = await import('node:fs');
+  for (const file of ['sidepanel/panel/fill.js', 'sidepanel/panel/coordinator.js']) {
+    const text = fs.readFileSync(file, 'utf8');
+    const rows = text.match(/standard: isStandard\(x, 'filled'\)[^\n]*/g) ?? [];
+    expect(rows.length, file).toBeGreaterThan(0);
+    for (const row of rows) expect(row, file).toContain("own: isOwnDefault(x, 'filled')");
+  }
+});
+
 test('an answer is the agent\'s own default by its source', () => {
   expect(isOwnDefault({ source: 'agent-default' }, 'filled')).toBe(true);
   expect(isOwnDefault({ source: 'standard', standard: true }, 'filled')).toBe(false);

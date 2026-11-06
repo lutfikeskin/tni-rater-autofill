@@ -28,7 +28,7 @@ const failing = vi.hoisted(() => {
 
 const { state: panelState } = await import('../../sidepanel/panel/core.js');
 const usage = await import('../../sidepanel/usage-log.js');
-const { answerDefaults, defaultsActs, defaultsHold, initialsChanged, loadDefaults, refreshDefaults } = await import('../../sidepanel/panel/agent-defaults/store.js');
+const { answerDefaults, defaultsActs, defaultsHold, initialsChanged, loadDefaults, quoteStarting, refreshDefaults } = await import('../../sidepanel/panel/agent-defaults/store.js');
 const { overlayFor } = await import('../../src/agent-defaults/index.js');
 
 test('a write Chrome refuses changes nothing: the quote stays held, and the overlay follows what was saved', async () => {
@@ -71,4 +71,61 @@ test('a write Chrome refuses changes nothing: the quote stays held, and the over
   await initialsChanged(null);
   expect(overlayFor('geico')).toBeNull();
   expect(defaultsHold()).toBe(false);
+  failing.clear();
+});
+
+// A quote whose answer is being saved, a refused answer after the panel reopens, a new intake being
+// set up, and new initials whose profile write failed: none fills with defaults the agent didn't
+// approve for that quote under those initials.
+test('nothing fills with defaults while the answer saves, after a refused answer and a reopen, while a new quote is set up, or under new initials', async () => {
+  failing.clear();
+  await usage.saveSettings({ agent: 'JK' });
+  await loadDefaults();
+  const acts = defaultsActs();
+  await acts.create('Sam');
+  await acts.set('umCsl', 300_000);
+  panelState.intake = { record: {} };
+  usage.startSession('intake-2');
+  refreshDefaults();
+  await answerDefaults('mine');
+  expect(overlayFor('geico')).toBeTypeOf('function');
+
+  // While "Use TNI's" is being saved: held, and the defaults no longer fill.
+  const saved = answerDefaults('tni');
+  expect(defaultsHold()).toBe(true);
+  expect(overlayFor('geico')).toBeNull();
+  await saved;
+  expect(defaultsHold()).toBe(false);
+  await answerDefaults('mine');
+
+  // Refused, then the panel reopened: still asked, never the earlier "Yes, mine".
+  failing.add('agentDefaultsQuote');
+  await answerDefaults('tni');
+  failing.delete('agentDefaultsQuote');
+  await loadDefaults();
+  expect(defaultsHold()).toBe(true);
+  expect(overlayFor('geico')).toBeNull();
+  await answerDefaults('mine');
+
+  // A new intake loading: held from the moment it is the panel's, with the last quote's answer
+  // unused, until the new quote is set up and asks.
+  quoteStarting();
+  expect(defaultsHold()).toBe(true);
+  expect(overlayFor('geico')).toBeNull();
+  expect(panelState.cards.defaults).toBeNull();
+  usage.startSession('intake-3');
+  refreshDefaults();
+  expect(defaultsHold()).toBe(true);
+  expect(panelState.cards.defaults.title).toBe('Fill this quote with Sam\'s defaults?');
+  await answerDefaults('mine');
+
+  // New initials whose profile write fails, then the panel reopened under them: no profile active.
+  failing.add('agentDefaults');
+  await usage.saveSettings({ agent: 'XY' });
+  await initialsChanged('XY');
+  failing.delete('agentDefaults');
+  await loadDefaults();
+  expect(panelState.agentDefaults.active).toBeNull();
+  expect(defaultsHold()).toBe(false);
+  expect(overlayFor('geico')).toBeNull();
 });

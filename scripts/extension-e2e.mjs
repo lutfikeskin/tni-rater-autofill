@@ -50,7 +50,7 @@ const MOCK_URL = 'http://localhost:8792/test/fixtures/amwins/application.html';
 // Agents' own defaults (above): '' (none), 'mine' or 'tni'.
 const DEFAULTS = process.env.E2E_DEFAULTS ?? '';
 if (DEFAULTS && !['mine', 'tni'].includes(DEFAULTS)) throw new Error(`E2E_DEFAULTS must be mine or tni, not ${DEFAULTS}`);
-const PROFILE = { v: 1, active: 'e2e-profile', profiles: { 'e2e-profile': { name: 'Test Agent', values: { umCsl: { value: 300_000 }, compDeductible: { value: 500 } } } } };
+const PROFILE = { v: 1, active: 'e2e-profile', activeFor: 'E2E', profiles: { 'e2e-profile': { name: 'Test Agent', values: { umCsl: { value: 300_000 }, compDeductible: { value: 500 } } } } };
 const MOCK_HTML = fs.readFileSync('test/fixtures/amwins/application.html', 'utf8');
 const MOCK_ASSETS = new Set([...MOCK_HTML.matchAll(/<(?:link|script|iframe|img)\b[^>]*\b(?:href|src)="([^"]+)"/g)].map((m) => new URL(m[1], MOCK_URL).href));
 const outside = [];
