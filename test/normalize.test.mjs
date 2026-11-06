@@ -8,7 +8,7 @@ import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance } from '../src/util.js';
 import { progressive } from '../src/carriers/progressive.js';
-import { owner, ownerDrivesAnswered } from '../src/util.js';
+import { owner, ownerDrivesAnswered } from '../src/answers/owner.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 
@@ -981,7 +981,7 @@ test('"owner drives" No: the owner\'s driver row, the first, is an excluded driv
   assert.deepEqual([items(other).length, exclude(other, 0), exclude(other, 1)], [1, true, false]);
 });
 
-// The panel's answer to "Does the owner drive?" (W46-02; record.js calls util.js ownerDrivesAnswered
+// The panel's answer to "Does the owner drive?" (W46-02; record.js calls answers/owner.js ownerDrivesAnswered
 // from Looks right, Undo and the agent's Owner drives edit): it decides whether the owner is quoted as
 // excluded or as a driver on every carrier, so it is tested here (the review of PR #292).
 test('the panel\'s answer to "Does the owner drive?": Looks right, Undo and the agent\'s edit (W46-02)', () => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildPlan } from '../src/plan.js';
 import { progressive } from '../src/carriers/progressive.js';
-import { owner } from '../src/util.js';
+import { owner } from '../src/answers/owner.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { parseEdit } from '../src/normalize.js';
@@ -1298,7 +1298,7 @@ test('owner drives No (T3, V2): the owner\'s date of birth from the owner\'s row
   assert.deepEqual(dob(r).map((s) => [s.value, s.source, s.note]), [['01/02/1980', 'derived', null], ['01/02/1980', 'derived', null]]);
   // The agent's Excluded driver No on the owner's row (client details) with the box still No: the
   // owner drives (the maintainer, 2026-10-28: "Does the owner drive?" Yes is the owner driving and
-  // not excluded, on every carrier; util.js ownerDrivesSaid). Business Owner Info gets the owner's
+  // not excluded, on every carrier; answers/owner.js ownerDrivesSaid). Business Owner Info gets the owner's
   // name and date of birth from that row, and the owner-driver question is Yes. Before, the box's No
   // dropped the row as the owner's driver row and its Excluded No dropped it as the excluded owner's,
   // so no row gave the name or date of birth (2026-10-28 runs: a fill error, then the agent set Owner

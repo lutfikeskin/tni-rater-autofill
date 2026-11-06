@@ -51,7 +51,8 @@
 
 import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
-import { driverExcluded, ownerRowExcluded, owner, ownerDobNote, HAZ_HAUL } from '../util.js';
+import { HAZ_HAUL } from '../util.js';
+import { driverExcluded, ownerRowExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { EXPEDITING_OR_GENERAL_FREIGHT, namesExpeditingOrGeneralFreight } from '../answers/classes.js';
 
@@ -209,7 +210,7 @@ const licenseYearNote = (r, a) => (birthYear(r, a) == null
 // in client details). AmWINS asks nothing about excluding a driver, so TNI (2026-10-20) writes
 // "(Excluded)" after their license number. With no number to write it after, the box is the agent's.
 // The owner's row when the intake says the owner doesn't drive counts too (TNI, 2026-10-26: answer
-// to PR question, R1: util.js driverExcluded): the first row, whatever its name (TNI, 2026-10-27:
+// to PR question, R1: answers/owner.js driverExcluded): the first row, whatever its name (TNI, 2026-10-27:
 // answer to PR question V4); a later row with the owner's name only by its own mark. The owner's row
 // marked over a blank box or a Yes stays an excluded driver here (V3: only GEICO leaves it out).
 const excludedDriver = (r, a) => driverExcluded(r, driverOf(r, a));
