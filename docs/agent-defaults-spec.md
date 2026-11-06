@@ -186,6 +186,7 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 - **UM can't exceed the auto liability limit.** If it would, the UM step is left to the agent with a note. This is common in practice: a $1M UM default with a $750K liability.
 - **Med Pay coupling.** GEICO's and AmWINS' PIP answers ("PIP No because Med Pay is offered") assume Med Pay is chosen. Basic offers no "None" for Med Pay. If "Ask me" is chosen for Med Pay, the coupled PIP step becomes the agent's too.
 - **Rental follows comp and collision** (GEICO): "Ask me" on comp or collision makes rental the agent's.
+- **Answers resting on the same assumption follow "Ask me".** Some standards are worked out from another standard's assumption. With the owner-drives box blank, TNI assumes the owner drives (`standard`), and the owner's daily operations question (`ownerDailyOps`: GEICO, Progressive) is then Yes as `standard` too, from that same assumption. "Ask me" on owner drives makes those dependent answers the agent's as well, with the note "Answer this after owner drives, which you chose to answer yourself". Otherwise a TNI Yes could contradict the agent's No on owner drives. The registry lists each entry's dependents (`dependents`: the `std` ids or rule `q`s resting on it). The overlay makes a dependent the agent's only where its own source is `standard`; where the intake answers it (`derived`), it stays as it is. A workflow standard's dependents are listed with it when it becomes overridable.
 - State exceptions (GEICO's Texas UM split, Progressive's SC BI & PD, Florida PIP) stay TNI's: through their own non-`standard` sources, or through `std.applies` where the exception is a branch inside a `standard` rule (priority row 3).
 
 ### AI (Luna)
@@ -252,6 +253,7 @@ Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rul
 - **Null defaults:** `buildPlan(..., null)` deep-equals today's plan for every fixture intake.
 - **Locked:** a locked standard ignores any override.
 - **Ask me:** the step is `manualOnly` with the note; coupled PIP and rental steps follow.
+- **Dependents follow "Ask me":** with the owner-drives box blank and "Ask me" on owner drives, the owner's daily operations step on GEICO and on Progressive is the agent's (not filled Yes); with the box answered Yes on the intake, daily operations stays `derived` Yes.
 - **Unsold amount:** the step goes to the agent with a note, with no fallback.
 - **UM above liability:** the step goes to the agent.
 - **Exact targets:** with Med Pay and UM overrides on every carrier mock, GEICO's Basic PIP, UM deductible and UM/UIM type steps are unchanged.

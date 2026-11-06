@@ -102,7 +102,7 @@ That server also refuses an event whose run id, rules hash, settings object or s
 commit, optionally `+dirty`) only in those shapes. It refuses events from the local test page (`carrier: 'test'`, localhost), which are
 no quote; the review scripts also skip the ones stored before. The server names what it dropped on
 the stored event (`dropped`: field names only, at most 20, `droppedMore` counts the rest), and
-`/v1/health` names its version (`server`, a hash of its `server/index.mjs` and `server/dashboard.mjs`). `node scripts/server-check.mjs` compares that with this checkout, without
+`/v1/health` names its version (`server`, a hash of its `server/index.mjs`, `server/dashboard.mjs` and `server/agent-defaults.mjs`, the files the image copies). `node scripts/server-check.mjs` compares that with this checkout, without
 sending any event: after a deploy it should say `same`.
 
 The server accepts `intake_profile`, a profile of the client's business (`PROFILE` in
