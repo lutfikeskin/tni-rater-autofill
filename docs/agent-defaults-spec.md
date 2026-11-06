@@ -70,6 +70,7 @@ A Settings section titled **TNI defaults** shows one row per shared coverage con
 
 - Each row defaults to **Use TNI's**. That stores nothing, so it follows TNI when TNI changes its standard.
 - Choices are **pick-lists only, no free text**. Each list is the intersection of amounts every carrier sells, kept in code (below). An amount only some carriers sell goes under Advanced.
+- At the top, the **profile** these defaults belong to: pick one, create one, or none (TNI's everywhere). See Storage.
 - A **Reset all to TNI** button.
 - When TNI has changed its value since the agent picked theirs, the row shows "TNI's is now $X".
 
@@ -116,31 +117,37 @@ The rule is that **only `src/agent-defaults/` and `sidepanel/panel/agent-default
   level: 'basic',               // basic | carrier
   kind: 'coverage',             // coverage | workflow (workflow: only 'tni' or 'ask')
   tni: () => STANDARDS.medPay,  // TNI's value, live
-  rules: ['progressive.medpay', 'geico.medpay-pip', 'amwins.medpay-pip'], // the `tni` ids it drives
   choices: { all: [1000, 2000, 5000, 10000], progressive: [...], geico: [...], amwins: [...] },
   locked: false,                // TNI may lock it
   ask: true,                    // "Ask me" allowed
 }
 ```
 
-`tni` ids already group the rules (`amwins.um`, `geico.um`, `progressive.um`, and so on), so the registry points at them instead of at single rules. Taking an entry out of the registry puts that one standard back to TNI's everywhere. A stored default whose id the registry no longer has is ignored.
+The registry lists no rules. An override reaches **only the rules that carry its id in their own `std` field** (below), never everything sharing a `tni` id or a `concept`. Those groups are too coarse: GEICO's `geico.medpay-pip` (and concept-wise its PIP) holds Basic PIP beside Medical Payments, and `geico.um` holds the UM deductible and UM/UIM type beside the UM limits. A Med Pay or UM amount must never land in those. They carry no `medPay` or `umCsl` `std`; one may later get its own registry id (`umDeductible`). Taking an entry out of the registry puts that one standard back to TNI's everywhere. A stored default whose id the registry no longer has is ignored.
 
 ### Rules: metadata, not rewrites
 
-Each standard rule the registry can override gains a `std` field describing how it writes an amount in this carrier's words. Its own `value` stays as it is, so the rule still gives TNI's answer by itself:
+Each standard rule an override may change gains a `std` field. The field names its registry id, how the rule writes an amount in this carrier's words, and where the default applies (`applies`). The rule's own `value` stays as it is, so the rule still gives TNI's answer by itself:
 
 ```js
 { q: '1FE4', tni: 'progressive.medpay', source: 'standard', ..., value: () => MED_PAY,
   std: { id: 'medPay', write: (amount) => usd(amount), name: (amount) => `Medical payments per person (standard: ${usd(amount)})` } }
+
+// GEICO's UM limit picks Texas' split inside the same `standard` rule: the default stays out of Texas.
+{ q: 'UninsuredMotorist', tni: 'geico.um', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT), ...,
+  std: { id: 'umCsl', applies: (r) => !texas(r), write: (amount) => usd(amount), ... } }
 ```
 
-A consistency test holds every rule to `std.write(TNI's amount) === value(record)` and `std.name(TNI's amount) === name`. The metadata therefore can't drift from the rule, and deleting it (or the whole module) changes nothing the rule fills.
+- **Exact targets.** A rule gets `std` only for the one answer it writes. A rule that answers something else under the same `tni` id or `concept` (Basic PIP, UM deductible, UM/UIM type) gets none.
+- **State and carrier exceptions stay TNI's.** A `standard` rule that branches inside its `value` (GEICO's Texas UM split, Florida PIP, Progressive's SC BI & PD) declares `applies`, which is false wherever the rule gives the exception. There the overlay leaves the step unchanged and adds the note "Texas: TNI's $100,000/$300,000 applies here, not your default", so the agent sees why their default didn't apply. `source === 'standard'` alone is not enough: these exceptions are `standard` too.
+- **Amount-bearing text.** A rule whose `note` or `unofferedNote` states the amount (GEICO's "doesn't list $5,000 medical payments") gives `std.note(amount)` too.
+- **Held to the rule.** For every fixture record and for one synthetic record per state (50 states and DC), wherever `applies` is true: `std.write(TNI's amount)` equals the rule's value, `std.name(TNI's amount)` equals its name, and `std.note` equals its note. A rule carrying the wrong `std` fails this, because a PIP rule's value is no Med Pay amount. So does a state branch without `applies`, because Texas' split is no CSL amount. The metadata therefore can't drift from the rule, and deleting it (or the whole module) changes nothing the rule fills.
 
 ### Plan: one generic hook
 
 - `buildPlan(record, carrier, active, { overlay } = {})`. After `fieldSteps` builds a step, and **before** its resolution is computed, it calls `overlay?.(step, rule, { record, carrier, active })` and uses the step that comes back. `plan.js` never imports the module.
 - Steps gain `tni: rule.tni ?? null`, which is generic and useful to logs anyway.
-- The overlay (in the module) acts only when `step.source === 'standard'` and the rule has `std`:
+- The overlay (in the module) acts only when `step.source === 'standard'`, the rule has `std`, and `std.applies` (if given) is true for this record and unit:
   - with **Ask me**, the source becomes `fact` with the note "You chose to answer this yourself (Settings → TNI defaults)";
   - with a **value**, the source becomes `agent-default`, the value is `std.write(amount)` and the name is `std.name(amount)`;
   - with a **locked** standard, or no default, the step is returned unchanged.
@@ -170,7 +177,7 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 - **UM can't exceed the auto liability limit.** If it would, the UM step is left to the agent with a note. This is common in practice: a $1M UM default with a $750K liability.
 - **Med Pay coupling.** GEICO's and AmWINS' PIP answers ("PIP No because Med Pay is offered") assume Med Pay is chosen. Basic offers no "None" for Med Pay. If "Ask me" is chosen for Med Pay, the coupled PIP step becomes the agent's too.
 - **Rental follows comp and collision** (GEICO): "Ask me" on comp or collision makes rental the agent's.
-- Existing state exceptions (GEICO's Texas UM split, Progressive's SC BI & PD, Florida PIP) keep their own sources and are untouched (priority row 3).
+- State exceptions (GEICO's Texas UM split, Progressive's SC BI & PD, Florida PIP) stay TNI's: through their own non-`standard` sources, or through `std.applies` where the exception is a branch inside a `standard` rule (priority row 3).
 
 ### AI (Luna)
 
@@ -180,8 +187,10 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 
 ### Storage
 
-- `chrome.storage.local`, key `agentDefaults`: `{ [initials]: { v: 1, values: { [id]: { value, tniAtPick } | { ask: true } }, carriers: { [carrierId]: {...} } } }`.
-- Keyed by the agent's initials, since computers are shared. Changing initials switches defaults; blank initials use TNI's.
+- `chrome.storage.local`, key `agentDefaults`: `{ v: 1, active: <profile id> | null, profiles: { [id]: { name, values: { [stdId]: { value, tniAtPick } | { ask: true } }, carriers: { [carrierId]: {...} } } } }`. Each profile id is random (`crypto.randomUUID()`).
+- **Defaults belong to a profile the agent picks, never to initials.** Two agents may share initials on one computer, so initials can't tell their defaults apart. In Settings the agent creates a profile ("Jordan K.") or picks an existing one. With no active profile, every answer is TNI's.
+- **No silent carry-over.** Changing the panel's initials, or loading an intake while the active profile was last confirmed under other initials, clears the active profile, so TNI's apply. The panel then asks "Use your defaults? (Jordan K.)" before anything else fills. One agent's defaults therefore can't fill another agent's quote just by being left on.
+- **Always visible.** While a profile is active, the panel header and the fill report name it ("Defaults: Jordan K., 2 changed"). The log carries the overrides (`agent_settings.defaults`) but not the profile's name.
 - A new key with a "missing means TNI" reader needs no migration. A later shape change follows [storage-version.js](../src/storage-version.js).
 - No client data is stored there, only amounts and choices.
 
@@ -198,6 +207,7 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 
 | # | Risk | Likelihood | Impact | Mitigation in this spec |
 | --- | --- | --- | --- | --- |
+| R1b | A default lands in the wrong answer (Basic PIP, UM deductible or type) or overrides a state exception inside a standard rule (GEICO Texas UM) | Medium without exact targets | High: wrong coverage | Overrides reach only rules carrying that id in `std`; `std.applies` keeps exceptions TNI's; the per-state consistency test fails on a wrong `std` or a missing `applies` |
 | R1 | A default overrides a client's request or an agent-only question | Low (by design) | High: wrong quote | The override applies only where `source === 'standard'` after normal resolution; test: no `intake`/`derived`/`fact`/`attestation` step ever changes with any defaults |
 | R2 | Workflow standards become preset client facts ("no hazmat" for everyone) | Medium if allowed | High: misrepresentation on an application | Workflow standards offer only TNI's answer or "Ask me" |
 | R3 | The amount isn't on the carrier's list and the field fails or falls back silently | Medium | Medium | Per-carrier choice lists; a missing option goes to the agent with a note, never a silent fallback |
@@ -207,7 +217,7 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 | R7 | The weekly review, benchmark and answer key read agent defaults as rule errors | High | Medium: noisy reviews, wrong fixes | Log defaults per quote; replay with them; report `agent-default` corrections apart |
 | R8 | Luna contradicts the agent's default | Medium | Low–Medium | Rulebook from effective values; cache key includes the defaults digest |
 | R9 | A stale pinned default after TNI changes its standard | Medium | Low–Medium | "Use TNI's" stores nothing; a pinned row shows "TNI's is now $X" |
-| R10 | The wrong agent's defaults on a shared computer | Medium | Medium | Keyed by initials; the panel header shows "Your defaults: 2 changed" while any override is active |
+| R10 | The wrong agent's defaults on a shared computer, same initials included | Medium | High: another agent's coverages on a quote | Defaults belong to an explicitly picked profile with a random id, never to initials; changing initials clears it; the header and report name the active profile |
 | R11 | Answer retention or `replace` / `keepChoice` behaviour changes | Low | Medium | Only `value` and `source` change; a rule's `replace`, `keepChoice` and similar flags are untouched; carrier mocks are run with overrides |
 | R12 | Touching 92 rules changes today's answers | Low | High | Rules keep their values; they only gain `std` metadata, held to them by a consistency test; phase 2 is proven identical with `npm run benchmark -- --against` |
 | R13 | Review mode (unvalidated class) is bypassed by a default | Low | Medium | `agent-default` is `reviewRequired` exactly when `standard` would be |
@@ -233,6 +243,9 @@ Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rul
 - **Ask me:** the step is `manualOnly` with the note; coupled PIP and rental steps follow.
 - **Unsold amount:** the step goes to the agent with a note, with no fallback.
 - **UM above liability:** the step goes to the agent.
+- **Exact targets:** with Med Pay and UM overrides on every carrier mock, GEICO's Basic PIP, UM deductible and UM/UIM type steps are unchanged.
+- **Texas and another state:** with a UM override, GEICO in Texas keeps TNI's $100,000/$300,000 split with the note, and GEICO in Ohio takes the default.
+- **Profiles:** two profiles under the same initials stay apart; changing initials clears the active profile; no active profile means TNI's everywhere.
 - **Review mode:** an `agent-default` step is `reviewRequired`.
 - **Server and extension agree on `SOURCES`.**
 - **Every panel plan goes through `planFor()`.** No panel file calls `buildPlan` directly.
@@ -248,5 +261,5 @@ Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rul
 1. May agents override TNI's coverage standards at all, and which ones? Which should TNI lock?
 2. Should "Ask me" be allowed for every workflow standard, or only some?
 3. Per-state defaults in Advanced (for example a different UM in no-fault states): needed, or later?
-4. Defaults stored per computer and initials, or synced through the collection server so they follow the agent?
+4. Profiles stored per computer, or synced through the collection server so they follow the agent?
 5. Should the weekly review alert when an agent's default differs from TNI's, or only count it?
