@@ -88,12 +88,14 @@ export async function loadDefaults() {
   apply();
 }
 
-// The panel shows only what was saved: a write that fails changes nothing and is logged.
+// The panel shows only what was saved: a write that fails changes no profile and is logged. The
+// module still follows what changed in memory meanwhile (initials blanked: no defaults fill).
 async function store(next) {
   try {
     await local.set(next);
   } catch (error) {
     logCrash(error);
+    apply();
     return;
   }
   state.agentDefaults = next;
@@ -172,8 +174,15 @@ export async function answerDefaults(choice) {
   const id = currentSessionId();
   if (!id) return;
   const hash = choice === 'mine' ? defaultsHash(activeProfile()) : null;
-  quote = { session: id, choice, profile: state.agentDefaults?.active ?? null, initials, hash };
-  await session.set(quote);
+  const next = { session: id, choice, profile: state.agentDefaults?.active ?? null, initials, hash };
+  // Taken only once saved: an answer Chrome refused leaves the quote asked and held, and is logged.
+  try {
+    await session.set(next);
+  } catch (error) {
+    logCrash(error);
+    return;
+  }
+  quote = next;
   apply();
 }
 
