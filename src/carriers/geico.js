@@ -115,7 +115,7 @@ const on = (steps, form, rules) => rules.map((rule) => ({ steps: [].concat(steps
 // Facts the intake doesn't supply are the agent's (plan.js: `source: 'fact'` is never filled); with
 // no note the panel says "<name> isn't on the intake: answer it yourself."
 /** @param {string} field @param {string} name @param {CarrierRule} [more] @returns {CarrierRule} */
-const fact = (field, name, more = {}) => ({ field, name, source: 'fact', ...more });
+const fact = (concept, field, name, more = {}) => ({ concept, field, name, source: 'fact', ...more });
 const quote = (v, n = 60) => `"${String(v).trim().slice(0, n)}"`;
 
 // --- Business ----------------------------------------------------------------------------------
@@ -406,19 +406,19 @@ const unitTypeNote = (r) => {
 // Shown on Business & Owner Info, and again with the owner's Social Security number (OWNER_CHECK).
 /** @type {CarrierRule[]} */
 const OWNER_IDENTITY = [
-  { field: 'GiveBusinessName', ask: 'What is the customer\'s business name?', path: 'applicant.name', name: 'Business name (company, else the owner)', source: 'derived', value: businessName },
-  { field: 'GiveFirstName', ask: 'Business Owner First Name', name: 'Owner first name', source: 'derived', value: ownerFirst, note: (r) => (ownerFirst(r)?.length > MAX_NAME ? nameNote(ownerFirst(r), 'owner\'s first name') : null) },
-  { field: 'GiveLastName', ask: 'Business Owner Last Name', name: 'Owner last name', source: 'derived', value: ownerLast, note: (r) => (ownerLast(r)?.length > MAX_NAME ? nameNote(ownerLast(r), 'owner\'s last name') : null) },
-  { field: 'GiveDateOfBirth', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', source: 'derived', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
-  { field: 'GiveStreet', path: 'garaging.street', name: 'Business street (GEICO\'s suggestion for the intake\'s address)', kind: 'address-suggest', source: 'derived',
+  { concept: 'business.name', field: 'GiveBusinessName', ask: 'What is the customer\'s business name?', path: 'applicant.name', name: 'Business name (company, else the owner)', source: 'derived', value: businessName },
+  { concept: 'owner.name', field: 'GiveFirstName', ask: 'Business Owner First Name', name: 'Owner first name', source: 'derived', value: ownerFirst, note: (r) => (ownerFirst(r)?.length > MAX_NAME ? nameNote(ownerFirst(r), 'owner\'s first name') : null) },
+  { concept: 'owner.name', field: 'GiveLastName', ask: 'Business Owner Last Name', name: 'Owner last name', source: 'derived', value: ownerLast, note: (r) => (ownerLast(r)?.length > MAX_NAME ? nameNote(ownerLast(r), 'owner\'s last name') : null) },
+  { concept: 'owner.dob', field: 'GiveDateOfBirth', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', source: 'derived', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
+  { concept: 'business.address', field: 'GiveStreet', path: 'garaging.street', name: 'Business street (GEICO\'s suggestion for the intake\'s address)', kind: 'address-suggest', source: 'derived',
     value: streetLine, fallback: (r) => streetParts(r).street, checkNumber: true, note: streetNote },
-  { field: 'GiveUnitNumber', ask: 'Unit Number', path: 'garaging.unit', name: 'Business unit number', source: 'derived', value: (r) => unitParts(r).number, ignore: noUnit, note: unitNumberNote },
-  { field: 'GiveUnitType', ask: 'Unit Type', path: 'garaging.unit', name: 'Business unit type', kind: 'choice', source: 'derived', value: (r) => unitParts(r).type, ignore: noUnit, note: unitTypeNote },
-  { field: 'GiveZip', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'Business ZIP', source: 'derived', value: zip5, note: zipNote },
+  { concept: 'business.address', field: 'GiveUnitNumber', ask: 'Unit Number', path: 'garaging.unit', name: 'Business unit number', source: 'derived', value: (r) => unitParts(r).number, ignore: noUnit, note: unitNumberNote },
+  { concept: 'business.address', field: 'GiveUnitType', ask: 'Unit Type', path: 'garaging.unit', name: 'Business unit type', kind: 'choice', source: 'derived', value: (r) => unitParts(r).type, ignore: noUnit, note: unitTypeNote },
+  { concept: 'business.address', field: 'GiveZip', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'Business ZIP', source: 'derived', value: zip5, note: zipNote },
   // GEICO lists the cities it knows for the ZIP and picks one; a city it doesn't list leaves GEICO's,
   // with a check naming the intake's (`keepUnlisted`; TNI, 2026-10-21, W43-35: GA listed one city and
   // OTHER, and the agent kept GEICO's).
-  { field: 'GiveCity', ask: 'City', path: 'garaging.city', name: 'Business city', kind: 'choice', keepUnlisted: true },
+  { concept: 'business.address', field: 'GiveCity', ask: 'City', path: 'garaging.city', name: 'Business city', kind: 'choice', keepUnlisted: true },
 ];
 
 // --- Vehicles and trailers ---------------------------------------------------------------------
@@ -540,11 +540,11 @@ const personalUseNote = (r) => (r.operations.personalUse === true && (r.vehicles
 // and flagged.
 /** @returns {CarrierRule[]} */
 const parking = (unit) => [
-  { field: 'GiveStreet', q: `GiveStreet.${unit}`, ask: `Where does the customer usually park their ${unit} when not in use?`, name: `Where the ${unit} is parked: street (as GEICO has it)`, ignore: true,
+  { concept: `${unit}.garaging`, field: 'GiveStreet', q: `GiveStreet.${unit}`, ask: `Where does the customer usually park their ${unit} when not in use?`, name: `Where the ${unit} is parked: street (as GEICO has it)`, ignore: true,
     emptyNote: (r) => `GEICO left where the ${unit} is parked empty: enter it yourself${r.garaging?.street ? ` (the intake's garaging street is ${quote(r.garaging.street)})` : ''}.` },
-  { field: 'GiveZip', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: `Where the ${unit} is parked: ZIP`, source: 'derived', value: zip5, note: zipNote },
+  { concept: `${unit}.garaging`, field: 'GiveZip', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: `Where the ${unit} is parked: ZIP`, source: 'derived', value: zip5, note: zipNote },
   // A city GEICO doesn't list for the ZIP: GEICO's kept, with a check (W43-35, as on Business & Owner Info).
-  { field: 'GiveCity', ask: 'City', path: 'garaging.city', name: `Where the ${unit} is parked: city`, kind: 'choice', keepUnlisted: true },
+  { concept: `${unit}.garaging`, field: 'GiveCity', ask: 'City', path: 'garaging.city', name: `Where the ${unit} is parked: city`, kind: 'choice', keepUnlisted: true },
 ];
 
 // --- Drivers -----------------------------------------------------------------------------------
@@ -904,6 +904,8 @@ const downtimeMention = notesLine(/\bdown[\s-]*time\b|\brental\b/i);
 const downtimeNote = (r) => (downtimeMention(r) ? `The intake's notes say ${quote(downtimeMention(r), 80)}: answer rental reimbursement with downtime yourself.` : null);
 const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 'Fire and theft'], ['Rental', 'Rental reimbursement'],
   ['RRWDT', 'Rental reimbursement with downtime'], ['ERS', 'Emergency road service'], ['HVRS', 'Heavy vehicle road service']];
+// Each row's concept (src/concepts.js).
+const ROW_CONCEPTS = { COMP: 'coverage.comp-coll', COLL: 'coverage.comp-coll', FT: 'coverage.fire-theft', Rental: 'coverage.rental', RRWDT: 'coverage.rental-downtime', ERS: 'coverage.roadside', HVRS: 'coverage.roadside' };
 // What a vehicle's row needs on that vehicle before GEICO offers its answers (`needs`): collision
 // lists only Not Included until comprehensive (or fire and theft) is chosen, and rental and road
 // service say "Comprehensive or fire & theft, and collision coverage are required before adding this
@@ -912,7 +914,7 @@ const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 
 // then one needs-you item for the vehicle, not a failure for each row behind it.
 const ROW_NEEDS = { COLL: ['COMP'], Rental: ['COMP', 'COLL'], RRWDT: ['COMP', 'COLL'], ERS: ['COMP', 'COLL'], HVRS: ['COMP', 'COLL'] };
 /** @param {CarrierRule} rule @returns {CarrierRule} */
-const withNeeds = (rule) => (ROW_NEEDS[rule.q] ? { ...rule, needs: ROW_NEEDS[rule.q] } : rule);
+const withNeeds = (rule) => ({ concept: ROW_CONCEPTS[rule.q], ...rule, ...(ROW_NEEDS[rule.q] ? { needs: ROW_NEEDS[rule.q] } : {}) });
 
 // --- Adding units --------------------------------------------------------------------------------
 
@@ -1174,14 +1176,14 @@ export const geico = {
     // A ZIP GEICO carried over from the last quote is replaced with the intake's (`replace`; TNI,
     // 2026-10-21, W43-28: 4 of 5 quotes opened with another ZIP, kept and flagged, and the agent
     // typed it); one the agent typed or marked done is theirs (the fill's skip), never replaced.
-    { notPages: GATEWAY_OFF, selector: '#start-quote-zip', name: 'Start quote: ZIP (the garaging ZIP)', path: 'garaging.zip', source: 'derived', value: zip5, note: zipNote, replace: true },
-    { notPages: GATEWAY_OFF, selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
+    { concept: 'business.address', notPages: GATEWAY_OFF, selector: '#start-quote-zip', name: 'Start quote: ZIP (the garaging ZIP)', path: 'garaging.zip', source: 'derived', value: zip5, note: zipNote, replace: true },
+    { concept: 'business.usdot', notPages: GATEWAY_OFF, selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
     // The Search Products window (TNI, FL live run 3, 2026-10-21: "after Search Products you should
     // select commercial auto"): Commercial Auto/Trucking ticked, and no other product; its own USDOT
     // box takes the intake's number.
-    { notPages: GATEWAY_OFF, selector: `${PRODUCT}#commercial, ${PRODUCT}[value="commercial"]`, name: 'Start quote: Commercial Auto/Trucking (TNI: ticked)', q: 'gatewayCommercial', tni: 'geico.product',
+    { concept: 'quote.product', notPages: GATEWAY_OFF, selector: `${PRODUCT}#commercial, ${PRODUCT}[value="commercial"]`, name: 'Start quote: Commercial Auto/Trucking (TNI: ticked)', q: 'gatewayCommercial', tni: 'geico.product',
       kind: 'bool', source: 'standard', value: () => true },
-    { notPages: GATEWAY_OFF, selector: '#start-quote-usdot', name: 'Start quote: USDOT number (Search Products)', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
+    { concept: 'business.usdot', notPages: GATEWAY_OFF, selector: '#start-quote-usdot', name: 'Start quote: USDOT number (Search Products)', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
     // The gateway's own controls are never answered: the header search, the other products, the
     // alerts settings. One rule each, as a selector rule answers its first match only (the header
     // search took the one that named the products too, and they were left unfamiliar). The product
@@ -1190,53 +1192,53 @@ export const geico = {
     ...[['input[name="header-search-type"]', 'Gateway: policy or quote search'], ['#search-input-id', 'Gateway: search box'],
       [PRODUCT, 'Gateway: another product (never ticked)', true],
       ['[id^="alerts-pref"]', 'Gateway: alerts settings']]
-      .map(/** @param {any[]} row @returns {CarrierRule} */ ([selector, name, every = false]) => ({ notPages: GATEWAY_OFF, selector, name, q: 'gatewayDashboard', ignore: true, every })),
+      .map(/** @param {any[]} row @returns {CarrierRule} */ ([selector, name, every = false]) => ({ concept: selector === PRODUCT ? 'quote.product' : 'quote.navigation', notPages: GATEWAY_OFF, selector, name, q: 'gatewayDashboard', ignore: true, every })),
     // --- Business Class & USDOT ----------------------------------------------------------------
     ...on(BUSINESS_CLASS, {}, [
-      { field: 'GiveInitialZipCode', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'ZIP code (the garaging ZIP)', source: 'derived', value: zip5, note: zipNote },
-      { tni: 'geico.current-geico-policy', field: 'GiveCurrentGeicoCommercialAutoPolicyYesNo', ask: 'Does the customer\'s business have a current GEICO commercial auto policy?', name: 'Current GEICO commercial auto policy',
+      { concept: 'business.address', field: 'GiveInitialZipCode', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'ZIP code (the garaging ZIP)', source: 'derived', value: zip5, note: zipNote },
+      { concept: 'prior.same-carrier', tni: 'geico.current-geico-policy', field: 'GiveCurrentGeicoCommercialAutoPolicyYesNo', ask: 'Does the customer\'s business have a current GEICO commercial auto policy?', name: 'Current GEICO commercial auto policy',
         kind: 'bool', source: currentGeicoSource, clientFact: true, value: currentGeico, note: currentGeicoNote },
-      { field: 'GiveDepartmentOfTransportationNumber', ask: 'What is the customer\'s USDOT number?', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
+      { concept: 'business.usdot', field: 'GiveDepartmentOfTransportationNumber', ask: 'What is the customer\'s USDOT number?', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
       // The business description lists 1,599 kinds of business (too many for the AI assistant), the
       // more detailed one 26. An expediter or a general freight hauler is For Hire Trucking, then
       // Other For-Hire Trucking (TNI, 2026-10-21: forHire). Any other class is the agent's pick,
       // never matched by words ("Freight Hauler" isn't "Freight Forwarder").
-      { field: 'GivePrimaryBusinessDescription', ask: 'Please choose what best describes the customer\'s business.', tni: 'geico.business-description', name: 'Business description (For Hire Trucking for an expediter or freight hauler)',
+      { concept: 'business.class', field: 'GivePrimaryBusinessDescription', ask: 'Please choose what best describes the customer\'s business.', tni: 'geico.business-description', name: 'Business description (For Hire Trucking for an expediter or freight hauler)',
         kind: 'choice', source: describeSource, value: (r) => (forHire(r) ? 'For Hire Trucking' : null), note: (r) => (forHire(r) ? null : describeNote('What best describes the business')(r)) },
-      { field: 'GiveSecondaryBusinessDescription', ask: 'Please give us a little more information about what the customer\'s business does.', tni: 'geico.business-description', name: 'More about the business (Other For-Hire Trucking for an expediter or freight hauler)',
+      { concept: 'business.class', field: 'GiveSecondaryBusinessDescription', ask: 'Please give us a little more information about what the customer\'s business does.', tni: 'geico.business-description', name: 'More about the business (Other For-Hire Trucking for an expediter or freight hauler)',
         kind: 'choice', source: describeSource, value: (r) => (forHire(r) ? 'Other For-Hire Trucking' : null), choiceAliases: expediterDescriptions, note: (r) => (forHire(r) ? null : describeNote('The more detailed description')(r)) },
       // GEICO is the first carrier mapped to ask it. Intakes from before the question are null:
       // unanswered, which is TNI's No unless the notes mention a team (W43-34).
-      { field: 'TeamDrivingOrSlipSeatingYesNo', ask: 'Do any of your customer\'s vehicles require team driving or slip seating to keep the vehicle continuously moving?', path: 'operations.teamDriving', tni: 'geico.team-driving', name: 'Team driving or slip seating (TNI: No unless the intake says otherwise)',
+      { concept: 'operations.team-driving', field: 'TeamDrivingOrSlipSeatingYesNo', ask: 'Do any of your customer\'s vehicles require team driving or slip seating to keep the vehicle continuously moving?', path: 'operations.teamDriving', tni: 'geico.team-driving', name: 'Team driving or slip seating (TNI: No unless the intake says otherwise)',
         kind: 'bool', ...noUnless((r) => r.operations.teamDriving, teamMention), note: teamNote },
       // The intake's answer; blank is TNI's No unless the intake points to hazardous freight (W43-34).
-      { field: 'GiveAnyVehicleNeedHazardousMaterialPlacardYesNo', ask: 'Do any of the customer\'s vehicles or loads require a hazardous material placard?', path: 'operations.hazPlacard', tni: 'general.hazmat-placard', name: 'Hazardous material placard (TNI: No unless the intake says otherwise)',
+      { concept: 'operations.hazmat-placard', field: 'GiveAnyVehicleNeedHazardousMaterialPlacardYesNo', ask: 'Do any of the customer\'s vehicles or loads require a hazardous material placard?', path: 'operations.hazPlacard', tni: 'general.hazmat-placard', name: 'Hazardous material placard (TNI: No unless the intake says otherwise)',
         kind: 'bool', ...noUnless((r) => r.operations.hazPlacard, placardMention), note: placardNote },
       // The intake's ELD answer (GA live run, 2026-10-21, W43-29: only the AI assistant answered it).
-      { field: 'GiveElectronicLoggingDevice', ask: 'Does the customer have an electronic logging device (ELD) in their vehicle(s)?', path: 'operations.usesEld', name: 'Electronic logging device (ELD)', kind: 'bool',
+      { concept: 'operations.eld', field: 'GiveElectronicLoggingDevice', ask: 'Does the customer have an electronic logging device (ELD) in their vehicle(s)?', path: 'operations.usesEld', name: 'Electronic logging device (ELD)', kind: 'bool',
         note: (r) => (typeof r.operations.usesEld === 'boolean' ? null : 'The intake doesn\'t say whether the vehicles have an ELD: answer it yourself.') },
       // Not shown on the captured quotes (what reveals it isn't known).
-      { field: 'GiveFilingType', name: 'State or federal filing', kind: 'choice', source: held((r) => (ntlNoFilings(r) ? 'standard' : 'derived')), clientFact: true, value: filingType, note: holdOr(filingTypeNote) },
+      { concept: 'filings.which', field: 'GiveFilingType', name: 'State or federal filing', kind: 'choice', source: held((r) => (ntlNoFilings(r) ? 'standard' : 'derived')), clientFact: true, value: filingType, note: holdOr(filingTypeNote) },
       // Questions shown for other kinds of business (hidden on the captured quotes): not on the
       // intake, a general freight class doesn't make them No.
-      fact('GiveAnyVehicleTransportFoodYesNo', 'Food delivery (UberEats, DoorDash)'),
-      fact('GiveDeliverPackagesForAmazonYesNo', 'Amazon package delivery'),
-      fact('GiveApplicationsToProcessAmazonDeliveries', 'Amazon delivery programs'),
-      fact('GiveIsAmazonDeliveryServicePartnerOwnerYesNo', 'Amazon Delivery Service Partner owner'),
-      fact('GiveAnyVehicleHaulOilAndGasFieldsYesNo', 'Hauls to or from oil and gas fields'),
-      fact('GiveAnyVehicleHaulCoiledSteelYesNo', 'Hauls coiled steel'),
-      fact('AnyVehicleTransportClientsYesNo', 'Transports clients for a fee'),
-      fact('AnyVehicleTransportChilderForDayCareYesNo', 'Transports children for a daycare'),
-      fact('TransportSeasonalTemporaryWorkersYesNo', 'Transports seasonal or temporary workers'),
+      fact('operations.delivery', 'GiveAnyVehicleTransportFoodYesNo', 'Food delivery (UberEats, DoorDash)'),
+      fact('operations.delivery', 'GiveDeliverPackagesForAmazonYesNo', 'Amazon package delivery'),
+      fact('operations.delivery', 'GiveApplicationsToProcessAmazonDeliveries', 'Amazon delivery programs'),
+      fact('operations.delivery', 'GiveIsAmazonDeliveryServicePartnerOwnerYesNo', 'Amazon Delivery Service Partner owner'),
+      fact('operations.special-hauls', 'GiveAnyVehicleHaulOilAndGasFieldsYesNo', 'Hauls to or from oil and gas fields'),
+      fact('operations.special-hauls', 'GiveAnyVehicleHaulCoiledSteelYesNo', 'Hauls coiled steel'),
+      fact('operations.passengers', 'AnyVehicleTransportClientsYesNo', 'Transports clients for a fee'),
+      fact('operations.passengers', 'AnyVehicleTransportChilderForDayCareYesNo', 'Transports children for a daycare'),
+      fact('operations.passengers', 'TransportSeasonalTemporaryWorkersYesNo', 'Transports seasonal or temporary workers'),
     ]),
     // Shown with a USDOT number (and hidden on Additional Business Info).
     ...on([BUSINESS_CLASS, MORE_BUSINESS], {}, [
-      { field: 'GiveDepartmentOfTransportationNumberStatus', ask: 'Does the customer have a USDOT Number registered to themselves or their business?', name: 'Has a USDOT number',
+      { concept: 'business.usdot', field: 'GiveDepartmentOfTransportationNumberStatus', ask: 'Does the customer have a USDOT Number registered to themselves or their business?', name: 'Has a USDOT number',
         kind: 'choice', source: held(dotStatusSource), clientFact: true, value: dotStatus, note: holdOr(dotStatusNote) },
       // "USDOT Information: Is this the customer's business?", under GEICO's record of the number:
       // Yes when the record (the question's text) shows the intake's house number, street and ZIP;
       // otherwise the agent checks it against the client (TNI, FL live run 5, 2026-10-21, W43-24).
-      { field: 'GiveExtendUsDotVerifyBusinessAddress', name: 'USDOT record is the client\'s business (Yes when it shows the intake\'s street and ZIP)', kind: 'bool',
+      { concept: 'business.usdot-record', field: 'GiveExtendUsDotVerifyBusinessAddress', name: 'USDOT record is the client\'s business (Yes when it shows the intake\'s street and ZIP)', kind: 'bool',
         source: (r) => (recordWords(r) ? 'derived' : 'attestation'), value: (r) => (recordWords(r) ? true : null), labelHas: recordWords,
         labelNote: RECORD_NOTE, note: (r) => (recordWords(r) ? null : RECORD_NOTE) },
     ]),
@@ -1245,29 +1247,29 @@ export const geico = {
     ...on(BUSINESS_OWNER, {}, [
       ...OWNER_IDENTITY,
       // Prefilled by GEICO; never the application date or the prior policy's expiration.
-      { field: 'GiveEffectiveDate', name: 'Coverage start date (as GEICO has it)', ignore: true,
+      { concept: 'quote.effective-date', field: 'GiveEffectiveDate', name: 'Coverage start date (as GEICO has it)', ignore: true,
         emptyNote: 'GEICO left the coverage start date empty, and it isn\'t on the intake: pick it yourself.' },
-      { field: 'GiveMaritalStatus', ask: 'Marital Status', name: 'Owner marital status', kind: 'choice', source: 'derived', clientFact: true,
+      { concept: 'owner.marital-status', field: 'GiveMaritalStatus', ask: 'Marital Status', name: 'Owner marital status', kind: 'choice', source: 'derived', clientFact: true,
         value: (r) => ownerDetails(r)?.maritalStatus ?? null, note: ownerRowNote('marital status') },
-      { field: 'GivePhoneNumber', ask: 'Please confirm the owner\'s phone number', path: 'applicant.phone', name: 'Owner phone (the intake\'s phone)', note: phoneNote },
-      { field: 'GiveBusinessPhoneNumber', ask: 'Please confirm the business phone number', path: 'applicant.phone', name: 'Business phone', note: phoneNote },
-      { field: 'GiveEmail', ask: 'What\'s the customer\'s email address?', path: 'applicant.email', name: 'Customer email' },
-      { field: 'GiveBusinessOwnershipType', ask: 'Business ownership type:', name: 'Business ownership type (from the company name)', kind: 'choice', source: 'derived', clientFact: true, value: ownershipType, note: ownershipNote, warn: ownershipWarn },
+      { concept: 'business.contact', field: 'GivePhoneNumber', ask: 'Please confirm the owner\'s phone number', path: 'applicant.phone', name: 'Owner phone (the intake\'s phone)', note: phoneNote },
+      { concept: 'business.contact', field: 'GiveBusinessPhoneNumber', ask: 'Please confirm the business phone number', path: 'applicant.phone', name: 'Business phone', note: phoneNote },
+      { concept: 'business.contact', field: 'GiveEmail', ask: 'What\'s the customer\'s email address?', path: 'applicant.email', name: 'Customer email' },
+      { concept: 'business.structure', field: 'GiveBusinessOwnershipType', ask: 'Business ownership type:', name: 'Business ownership type (from the company name)', kind: 'choice', source: 'derived', clientFact: true, value: ownershipType, note: ownershipNote, warn: ownershipWarn },
       // The intake's answer; a blank box is TNI's standard Yes, and an owner whose driver row the
       // intake marks excluded is not a driver, No (TNI, 2026-10-26, W44-25: answers/owner.js ownerDrives).
       // The owner's row is the first (TNI, 2026-10-27: answer to PR question V4), so a later row with
       // the owner's name, marked or not, changes nothing: V4 replaces the 2026-10-26 answer that left
       // the owner's name on several rows, only some excluded, to the agent.
-      { tni: 'general.owner-drives', field: 'GiveOwnerActiveDriverStatusYesNo', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives', name: 'Owner is a driver (TNI: Yes when the intake leaves it blank, unless excluded)', kind: 'bool',
+      { concept: 'owner.drives', tni: 'general.owner-drives', field: 'GiveOwnerActiveDriverStatusYesNo', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives', name: 'Owner is a driver (TNI: Yes when the intake leaves it blank, unless excluded)', kind: 'bool',
         source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn },
       // Yes when the owner drives and isn't excluded; No otherwise (TNI, 2026-10-27).
-      { tni: 'general.owner-daily-ops', field: 'GiveOwnerInvolvedInDailyOperationsYesNo',
+      { concept: 'owner.daily-ops', tni: 'general.owner-daily-ops', field: 'GiveOwnerInvolvedInDailyOperationsYesNo',
         ask: 'Is the owner involved in the daily operations of the business?',
         name: 'Owner involved in daily operations (Yes when the owner drives)', kind: 'bool',
         source: ownerDailyOpsSource, value: ownerDailyOps, warn: ownerDrivesWarn },
     ]),
     // Never filled, wherever GEICO asks it (and never logged: typed values never are).
-    fact('GiveSocialSecurityNumber', 'Owner Social Security number (never filled)', { steps: [BUSINESS_OWNER, VEHICLES], ask: 'Business Owner Social Security Number',
+    fact('owner.ssn', 'GiveSocialSecurityNumber', 'Owner Social Security number (never filled)', { steps: [BUSINESS_OWNER, VEHICLES], ask: 'Business Owner Social Security Number',
       note: 'The owner\'s Social Security number is never filled: enter it yourself only if the client gave it.' }),
 
     // --- Vehicles ------------------------------------------------------------------------------
@@ -1277,154 +1279,154 @@ export const geico = {
       // The chooser behind Add Vehicle or Trailer: the unit the panel is adding (the intake's next
       // vehicle, then trailer, not on the quote: pickUnitToAdd), also when the agent clicked "+".
       // With none left, or the list not read yet, it is the agent's (a fact: never the AI assistant's).
-      { field: 'GiveVehicleOrTrailer', ask: 'What would the customer like to add?', name: 'Vehicle or trailer to add (the next intake unit not on the quote)', kind: 'choice',
+      { concept: 'quote.unit-entry', field: 'GiveVehicleOrTrailer', ask: 'What would the customer like to add?', name: 'Vehicle or trailer to add (the next intake unit not on the quote)', kind: 'choice',
         source: (r, a) => (chosen(r, a) ? 'derived' : 'fact'), value: chosen,
         note: (r, a) => (chosen(r, a) ? null : 'Every intake vehicle and trailer looks to be on the quote already: pick Vehicle or Trailer for the unit you are adding yourself.') },
       // GEICO works it out from the values (disabled), on both forms.
-      { field: 'GiveStatedAmount', name: 'Stated amount (GEICO works it out)', ignore: true },
+      { concept: 'vehicle.value', field: 'GiveStatedAmount', name: 'Stated amount (GEICO works it out)', ignore: true },
     ]),
     ...on(VEHICLES, { whenShown: VEHICLE_FORM }, [
-      { field: 'YesNoPreQuoteHaveFullVinActivity', ask: 'Entering the customer\'s VIN can help speed things up. Do you have it handy?', path: 'vehicles[].vin', name: 'VIN at hand',
+      { concept: 'vehicle.vin', field: 'YesNoPreQuoteHaveFullVinActivity', ask: 'Entering the customer\'s VIN can help speed things up. Do you have it handy?', path: 'vehicles[].vin', name: 'VIN at hand',
         kind: 'bool', source: 'derived', value: (r, a) => (hasVin(r, a) ? true : null), note: (r, a) => (hasVin(r, a) ? null : 'The intake has no VIN for this vehicle: answer it yourself.') },
-      { field: 'GiveVinPreQuote', path: 'vehicles[].vin', name: 'VIN' },
-      { field: 'GiveYear', ask: 'Year', path: 'vehicles[].year', name: 'Vehicle year', kind: 'choice', verifyOnly: hasVin },
-      { field: 'GiveMake', path: 'vehicles[].make', name: 'Vehicle make', kind: 'choice', verifyOnly: hasVin },
-      { field: 'GiveModel', path: 'vehicles[].model', name: 'Vehicle model', kind: 'choice', verifyOnly: hasVin },
+      { concept: 'vehicle.vin', field: 'GiveVinPreQuote', path: 'vehicles[].vin', name: 'VIN' },
+      { concept: 'vehicle.year', field: 'GiveYear', ask: 'Year', path: 'vehicles[].year', name: 'Vehicle year', kind: 'choice', verifyOnly: hasVin },
+      { concept: 'vehicle.make', field: 'GiveMake', path: 'vehicles[].make', name: 'Vehicle make', kind: 'choice', verifyOnly: hasVin },
+      { concept: 'vehicle.model', field: 'GiveModel', path: 'vehicles[].model', name: 'Vehicle model', kind: 'choice', verifyOnly: hasVin },
       // 40 kinds of vehicle: "Van" alone is five of them.
-      { field: 'GiveOtherVehicleType', waitFor: afterDecode, ask: 'Which of the following best describes the customer\'s vehicle?', tni: 'geico.vehicle-type', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, Box Truck or else Box/Straight Truck for a box truck, else the agent\'s pick)', kind: 'choice',
+      { concept: 'vehicle.type', field: 'GiveOtherVehicleType', waitFor: afterDecode, ask: 'Which of the following best describes the customer\'s vehicle?', tni: 'geico.vehicle-type', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, Box Truck or else Box/Straight Truck for a box truck, else the agent\'s pick)', kind: 'choice',
         source: (r, a) => (vehicleType(r, a) ? 'standard' : null), value: vehicleType, choiceAliases: vehicleTypeAliases, note: (r, a) => (vehicleType(r, a) ? null : typeNote('vehicle', vehicleOf)(r, a)) },
-      { field: 'GiveAnyVehicleCustomizationYesNo', waitFor: afterDecode, ask: 'Does the customer have any customizations?', path: 'operations.equipVehicle', tni: 'geico.customizations', name: 'Customizations (from the attached equipment value)',
+      { concept: 'vehicle.equipment', field: 'GiveAnyVehicleCustomizationYesNo', waitFor: afterDecode, ask: 'Does the customer have any customizations?', path: 'operations.equipVehicle', tni: 'geico.customizations', name: 'Customizations (from the attached equipment value)',
         kind: 'bool', source: valueSource(noEquipValue), clientFact: true, value: customization, note: customizationNote },
-      { field: 'GiveTotalCustomizationValue', waitFor: afterDecode, ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', tni: 'geico.customizations', name: 'Customization value (the attached equipment value, else TNI: 0)',
+      { concept: 'vehicle.equipment', field: 'GiveTotalCustomizationValue', waitFor: afterDecode, ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', tni: 'geico.customizations', name: 'Customization value (the attached equipment value, else TNI: 0)',
         kind: 'money', source: valueSource(noEquipValue), value: customizationValue, note: customizationValueNote },
       // Its value without the customizations: the intake's vehicle value (today's, never cost new).
-      { field: 'GiveCostExcludingPermanentlyAttachedEquipment', waitFor: afterDecode, path: 'vehicles[].value', name: 'Vehicle value without customizations', kind: 'money', note: valueNote('vehicle', vehicleOf) },
-      fact('GiveDetailedCostNew', 'Cost new', { note: 'What the vehicle cost new isn\'t on the intake (its value there is today\'s): answer it yourself.' }),
+      { concept: 'vehicle.value', field: 'GiveCostExcludingPermanentlyAttachedEquipment', waitFor: afterDecode, path: 'vehicles[].value', name: 'Vehicle value without customizations', kind: 'money', note: valueNote('vehicle', vehicleOf) },
+      fact('vehicle.cost-new', 'GiveDetailedCostNew', 'Cost new', { note: 'What the vehicle cost new isn\'t on the intake (its value there is today\'s): answer it yourself.' }),
       // Also sets GEICO's lowest liability limit: never worked out from the type or model. TNI
       // (2026-10-21): GEICO's own band, from the VIN, is kept.
-      { field: 'GiveGrossVehicleWeight', ask: 'What is the Gross Vehicle Weight (GVW)?', name: 'Gross vehicle weight (as GEICO has it)', ignore: true,
+      { concept: 'vehicle.gvw', field: 'GiveGrossVehicleWeight', ask: 'What is the Gross Vehicle Weight (GVW)?', name: 'Gross vehicle weight (as GEICO has it)', ignore: true,
         emptyNote: 'GEICO left the gross vehicle weight empty, and it isn\'t on the intake: answer it from the registration.' },
-      { field: 'GiveCommercialVehicleCompCollision', waitFor: afterDecode, ask: 'Would the customer like to add comprehensive or collision coverage?', tni: 'geico.comp-coll', name: 'Comprehensive or collision wanted (TNI: Yes)',
+      { concept: 'coverage.comp-coll', field: 'GiveCommercialVehicleCompCollision', waitFor: afterDecode, ask: 'Would the customer like to add comprehensive or collision coverage?', tni: 'geico.comp-coll', name: 'Comprehensive or collision wanted (TNI: Yes)',
         kind: 'bool', source: physicalDamageSource, value: () => true, note: physicalDamageNote('whether to add comprehensive or collision') },
       ...parking('vehicle'),
-      { field: 'GiveFarthestOneWayDistance', waitFor: afterDecode, ask: 'What is the farthest one-way distance (in miles) this vehicle travels for work?', name: 'Farthest one-way distance (from the radius)',
+      { concept: 'operations.radius', field: 'GiveFarthestOneWayDistance', waitFor: afterDecode, ask: 'What is the farthest one-way distance (in miles) this vehicle travels for work?', name: 'Farthest one-way distance (from the radius)',
         kind: 'choice', source: 'derived', value: distanceBand, note: distanceNote },
-      { field: 'GiveCommercialVehicleForPersonalUse', waitFor: afterDecode, ask: 'Is this vehicle ever used for personal use?', path: 'operations.personalUse', name: 'Personal use',
+      { concept: 'operations.personal-use', field: 'GiveCommercialVehicleForPersonalUse', waitFor: afterDecode, ask: 'Is this vehicle ever used for personal use?', path: 'operations.personalUse', name: 'Personal use',
         kind: 'bool', source: 'derived', value: personalUse, note: personalUseNote },
-      fact('GiveRegisteredStateYesNo', 'Registered in the garaging state'),
+      fact('vehicle.registered-state', 'GiveRegisteredStateYesNo', 'Registered in the garaging state'),
       // Shown for other uses (hidden on the captured quotes): a commercial quote doesn't make them Yes.
-      fact('GiveVehicleUsedForPackageDelivery', 'Used for package delivery'),
-      fact('GiveVehicleIsUsedForFoodDelivery', 'Used for food delivery'),
-      fact('GiveVehicleUsedForBusinessOperations', 'Used for business operations'),
-      fact('GiveVehicleUsedForPrimarySourceOfIncome', 'Primary source of income'),
-      fact('GiveVehicleTowingOrRepossessionYesNo', 'Towing or repossession'),
+      fact('operations.delivery', 'GiveVehicleUsedForPackageDelivery', 'Used for package delivery'),
+      fact('operations.delivery', 'GiveVehicleIsUsedForFoodDelivery', 'Used for food delivery'),
+      fact('vehicle.use', 'GiveVehicleUsedForBusinessOperations', 'Used for business operations'),
+      fact('vehicle.use', 'GiveVehicleUsedForPrimarySourceOfIncome', 'Primary source of income'),
+      fact('operations.special-hauls', 'GiveVehicleTowingOrRepossessionYesNo', 'Towing or repossession'),
     ]),
     // The trailer form (NE): the active trailer's answers, never a vehicle's.
     ...on(VEHICLES, { whenShown: TRAILER_FORM }, [
-      { field: 'GiveYear', ask: 'Year', path: 'trailers[].year', name: 'Trailer year', kind: 'choice' },
+      { concept: 'trailer.year', field: 'GiveYear', ask: 'Year', path: 'trailers[].year', name: 'Trailer year', kind: 'choice' },
       // 19 kinds of trailer: a gooseneck hitch isn't a Gooseneck Trailer.
-      { field: 'GiveOtherVehicleType', q: 'GiveOtherVehicleType.trailer', ask: 'Which of the following best describes the customer\'s trailer?', name: 'Trailer type (the agent\'s pick)', note: typeNote('trailer', trailerOf) },
-      { field: 'GiveCommercialVehicleCompCollision', q: 'GiveCommercialVehicleCompCollision.trailer', ask: 'Would the customer like to add comprehensive or collision coverage?', tni: 'geico.comp-coll', name: 'Trailer comprehensive or collision wanted (TNI: Yes)',
+      { concept: 'trailer.type', field: 'GiveOtherVehicleType', q: 'GiveOtherVehicleType.trailer', ask: 'Which of the following best describes the customer\'s trailer?', name: 'Trailer type (the agent\'s pick)', note: typeNote('trailer', trailerOf) },
+      { concept: 'coverage.comp-coll', field: 'GiveCommercialVehicleCompCollision', q: 'GiveCommercialVehicleCompCollision.trailer', ask: 'Would the customer like to add comprehensive or collision coverage?', tni: 'geico.comp-coll', name: 'Trailer comprehensive or collision wanted (TNI: Yes)',
         kind: 'bool', source: physicalDamageSource, value: () => true, note: physicalDamageNote('whether to add comprehensive or collision on this trailer') },
-      { field: 'GiveTotalCustomizationValue', q: 'GiveTotalCustomizationValue.trailer', path: 'trailerInfo.equipTrailer', tni: 'geico.customizations', name: 'Trailer customization value (the trailer equipment value, else TNI: 0)',
+      { concept: 'trailer.equipment', field: 'GiveTotalCustomizationValue', q: 'GiveTotalCustomizationValue.trailer', path: 'trailerInfo.equipTrailer', tni: 'geico.customizations', name: 'Trailer customization value (the trailer equipment value, else TNI: 0)',
         kind: 'money', source: valueSource(noTrailerValue), value: trailerCustomizationValue, note: trailerCustomizationNote },
-      { field: 'GiveCostExcludingPermanentlyAttachedEquipment', path: 'trailers[].value', name: 'Trailer value without customizations', kind: 'money', note: valueNote('trailer', trailerOf) },
+      { concept: 'trailer.value', field: 'GiveCostExcludingPermanentlyAttachedEquipment', path: 'trailers[].value', name: 'Trailer value without customizations', kind: 'money', note: valueNote('trailer', trailerOf) },
       ...parking('trailer'),
-      { field: 'GiveFarthestOneWayDistance', q: 'GiveFarthestOneWayDistance.trailer', name: 'Trailer farthest one-way distance (from the radius)', kind: 'choice', source: 'derived', value: distanceBand, note: distanceNote },
-      fact('GiveRegisteredStateYesNo', 'Trailer registered in the garaging state', { q: 'GiveRegisteredStateYesNo.trailer' }),
+      { concept: 'operations.radius', field: 'GiveFarthestOneWayDistance', q: 'GiveFarthestOneWayDistance.trailer', name: 'Trailer farthest one-way distance (from the radius)', kind: 'choice', source: 'derived', value: distanceBand, note: distanceNote },
+      fact('trailer.registered-state', 'GiveRegisteredStateYesNo', 'Trailer registered in the garaging state', { q: 'GiveRegisteredStateYesNo.trailer' }),
     ]),
 
     // --- Drivers & Incidents -------------------------------------------------------------------
     // The driver GEICO adds for an owner who drives (named after the owner): the owner's answers,
     // from their driver row, never the panel's active driver.
     ...on(DRIVERS, { unlessShown: OWNER_DRIVER_FORM }, [
-      { field: 'GiveDriverLicenseState', q: 'GiveDriverLicenseState.owner', name: 'Owner\'s license state', kind: 'state', source: 'derived', value: (r) => ownerDetails(r)?.licenseState ?? null, note: ownerRowNote('license state') },
-      { field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', ask: 'We just need a little more info about this driver. Do they need a Certificate of Financial Responsibility or SR-22?',
+      { concept: 'driver.license-state', field: 'GiveDriverLicenseState', q: 'GiveDriverLicenseState.owner', name: 'Owner\'s license state', kind: 'state', source: 'derived', value: (r) => ownerDetails(r)?.licenseState ?? null, note: ownerRowNote('license state') },
+      { concept: 'driver.sr22', field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', ask: 'We just need a little more info about this driver. Do they need a Certificate of Financial Responsibility or SR-22?',
         path: 'operations.needSr22', tni: 'geico.sr22', name: 'SR-22 (the owner; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Owner, note: sr22Note(sr22Owner) },
       // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard; cdlAnswer).
-      { field: 'CommercialDriverLicense', q: 'CommercialDriverLicense.owner', ask: 'Does this driver have a CDL?', tni: 'general.cdl-blank', name: 'Owner has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
+      { concept: 'driver.cdl', field: 'CommercialDriverLicense', q: 'CommercialDriverLicense.owner', ask: 'Does this driver have a CDL?', tni: 'general.cdl-blank', name: 'Owner has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
         source: (r) => (cdlStandard(ownerDetails(r)) ? 'standard' : 'derived'), value: (r) => cdlAnswer(ownerDetails(r)), note: ownerRowNote('CDL answer') },
     ]),
     // Add Driver: the panel's active driver.
     ...on(DRIVERS, { whenShown: ADD_DRIVER_FORM }, [
-      { field: 'GiveFirstName', ask: 'First Name', path: 'drivers[].first', name: 'Driver first name', note: driverNote((r, a) => (driverOf(r, a)?.first?.length > MAX_NAME ? nameNote(driverOf(r, a).first, 'driver\'s first name') : null)), warn: excludedWarn },
-      { field: 'GiveLastName', ask: 'Last Name', path: 'drivers[].last', name: 'Driver last name', note: driverNote((r, a) => (driverOf(r, a)?.last?.length > MAX_NAME ? nameNote(driverOf(r, a).last, 'driver\'s last name') : null)) },
+      { concept: 'driver.name', field: 'GiveFirstName', ask: 'First Name', path: 'drivers[].first', name: 'Driver first name', note: driverNote((r, a) => (driverOf(r, a)?.first?.length > MAX_NAME ? nameNote(driverOf(r, a).first, 'driver\'s first name') : null)), warn: excludedWarn },
+      { concept: 'driver.name', field: 'GiveLastName', ask: 'Last Name', path: 'drivers[].last', name: 'Driver last name', note: driverNote((r, a) => (driverOf(r, a)?.last?.length > MAX_NAME ? nameNote(driverOf(r, a).last, 'driver\'s last name') : null)) },
       // GEICO is the first carrier mapped with a suffix box.
-      { field: 'GiveDriverSuffix', ask: 'Suffix', path: 'drivers[].suffix', name: 'Driver suffix', kind: 'choice', optional: true, note: driverNote() },
-      { field: 'GiveDateOfBirth', ask: 'Date of Birth', path: 'drivers[].dob', name: 'Driver date of birth', kind: 'date', note: driverNote(dobNote) },
-      { field: 'GiveDriverLicenseState', ask: 'Driver\'s License State', path: 'drivers[].licenseState', name: 'Driver license state', kind: 'state', note: driverNote() },
-      { field: 'GiveDriverRelationshipToBusiness', ask: 'What is their relationship to the business?', tni: 'geico.relationship', name: 'Driver\'s relationship to the business (Owner, else Employee)', kind: 'choice', source: relationshipSource, clientFact: true,
+      { concept: 'driver.name', field: 'GiveDriverSuffix', ask: 'Suffix', path: 'drivers[].suffix', name: 'Driver suffix', kind: 'choice', optional: true, note: driverNote() },
+      { concept: 'driver.dob', field: 'GiveDateOfBirth', ask: 'Date of Birth', path: 'drivers[].dob', name: 'Driver date of birth', kind: 'date', note: driverNote(dobNote) },
+      { concept: 'driver.license-state', field: 'GiveDriverLicenseState', ask: 'Driver\'s License State', path: 'drivers[].licenseState', name: 'Driver license state', kind: 'state', note: driverNote() },
+      { concept: 'driver.relationship', field: 'GiveDriverRelationshipToBusiness', ask: 'What is their relationship to the business?', tni: 'geico.relationship', name: 'Driver\'s relationship to the business (Owner, else Employee)', kind: 'choice', source: relationshipSource, clientFact: true,
         value: relationship, note: driverNote(relationshipNote) },
-      { field: 'CommercialDriverLicense', ask: 'Does this driver have a CDL?', path: 'drivers[].cdl', tni: 'general.cdl-blank', name: 'Driver has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
+      { concept: 'driver.cdl', field: 'CommercialDriverLicense', ask: 'Does this driver have a CDL?', path: 'drivers[].cdl', tni: 'general.cdl-blank', name: 'Driver has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
         source: (r, a) => (cdlStandard(driverOf(r, a)) ? 'standard' : 'intake'), value: (r, a) => cdlAnswer(driverOf(r, a)), note: driverNote() },
       // Hidden on the captured Add Driver form.
-      { field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', path: 'operations.needSr22', tni: 'geico.sr22', name: 'SR-22 (this driver; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Driver, note: driverNote(sr22Note(sr22Driver)) },
+      { concept: 'driver.sr22', field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', path: 'operations.needSr22', tni: 'geico.sr22', name: 'SR-22 (this driver; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Driver, note: driverNote(sr22Note(sr22Driver)) },
       // Asked again on Add Driver for a driver who is the business's owner, with the owner's mobile
       // phone (PA live run, 2026-10-21, W43-29: both unfamiliar, the first answered by the AI
       // assistant from the intake): the owner-drives answer of Business & Owner Info (a blank box
       // TNI's Yes, W44-25) and the intake's phone. Open (W43-26): on that run GEICO redrew this
       // question as Yes after Save and Continue; the answer here is the same one the agent approved
       // there.
-      { tni: 'general.owner-drives', field: 'GiveOwnerActiveDriverStatusYesNo', q: 'GiveOwnerActiveDriverStatusYesNo.driver', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives', name: 'Owner is a driver (Add Driver; TNI: Yes when the intake leaves it blank, unless excluded)', kind: 'bool',
+      { concept: 'owner.drives', tni: 'general.owner-drives', field: 'GiveOwnerActiveDriverStatusYesNo', q: 'GiveOwnerActiveDriverStatusYesNo.driver', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives', name: 'Owner is a driver (Add Driver; TNI: Yes when the intake leaves it blank, unless excluded)', kind: 'bool',
         source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn, note: driverNote() },
-      { field: 'GiveMobilePhoneNumber', ask: 'Owner\'s Mobile Phone Number', path: 'applicant.phone', name: 'Owner\'s mobile phone (the intake\'s phone)', note: driverNote(phoneNote) },
+      { concept: 'business.contact', field: 'GiveMobilePhoneNumber', ask: 'Owner\'s Mobile Phone Number', path: 'applicant.phone', name: 'Owner\'s mobile phone (the intake\'s phone)', note: driverNote(phoneNote) },
     ]),
 
     // --- Additional Business Info --------------------------------------------------------------
     ...on(MORE_BUSINESS, {}, [
-      { field: 'GiveBusinessStartDate', ask: 'How many years has this business been operating?', path: 'applicant.yearsInBusiness', name: 'Years in business', kind: 'choice', source: 'derived',
+      { concept: 'business.years', field: 'GiveBusinessStartDate', ask: 'How many years has this business been operating?', path: 'applicant.yearsInBusiness', name: 'Years in business', kind: 'choice', source: 'derived',
         value: (r) => startBucket(r.applicant.yearsInBusiness), note: (r) => (startBucket(r.applicant.yearsInBusiness) != null ? null
           // A range in the notes whose ends differ (TNI, 2026-10-27: answer to PR question V7).
           : r.applicant.yearsInBusinessRange === true ? 'The notes give years in business as a range: answer it yourself.'
             : 'The intake has no years in business (or year established): answer it yourself.') },
-      { field: 'GiveNumberOfEmployees', ask: 'How many employees does the customer\'s business have, including part-time employees?', tni: 'geico.employees', name: 'Number of employees (the drivers besides the owner)', kind: 'choice',
+      { concept: 'business.employees', field: 'GiveNumberOfEmployees', ask: 'How many employees does the customer\'s business have, including part-time employees?', tni: 'geico.employees', name: 'Number of employees (the drivers besides the owner)', kind: 'choice',
         source: (r) => (employees(r) ? 'standard' : 'fact'), value: employees, note: (r) => (employees(r) ? null : 'The intake lists no drivers: answer how many employees the business has yourself.') },
-      { tni: 'geico.current-auto', field: 'GiveCurrentAutoInsuranceStatus', ask: 'Does the customer currently have personal or commercial auto insurance?', name: 'Currently has auto insurance', kind: 'choice', source: currentAutoSource, clientFact: true, value: currentAuto, note: currentAutoNote },
-      fact('GiveInsurancePriorToBeingDeployed', 'Insured before being deployed'),
-      { field: 'GiveYearsWithCurrentAutoInsurer', ask: 'How long has the customer been with their current auto insurance company?', tni: 'geico.years-with-insurer', name: 'Years with the current auto insurer (1-3 with a current policy)', kind: 'choice',
+      { concept: 'prior.currently-insured', tni: 'geico.current-auto', field: 'GiveCurrentAutoInsuranceStatus', ask: 'Does the customer currently have personal or commercial auto insurance?', name: 'Currently has auto insurance', kind: 'choice', source: currentAutoSource, clientFact: true, value: currentAuto, note: currentAutoNote },
+      fact('prior.deployed', 'GiveInsurancePriorToBeingDeployed', 'Insured before being deployed'),
+      { concept: 'prior.tenure', field: 'GiveYearsWithCurrentAutoInsurer', ask: 'How long has the customer been with their current auto insurance company?', tni: 'geico.years-with-insurer', name: 'Years with the current auto insurer (1-3 with a current policy)', kind: 'choice',
         source: yearsSource, value: yearsWithInsurer, note: yearsNote },
-      { field: 'GiveCurrentBodilyInjuryLimits', ask: 'What bodily injury limits does the customer currently have on their vehicle insurance?', path: 'priorInsurance[0].limit', name: 'Current bodily injury limits',
+      { concept: 'prior.limit', field: 'GiveCurrentBodilyInjuryLimits', ask: 'What bodily injury limits does the customer currently have on their vehicle insurance?', path: 'priorInsurance[0].limit', name: 'Current bodily injury limits',
         kind: 'choice', source: 'derived', value: currentBi, note: currentBiNote },
-      { field: 'GiveOtherLiabilityInsurance', ask: 'What kind of liability insurance does the customer currently have to cover their business?', tni: 'geico.other-liability', name: 'Liability insurance the business has (None unless the notes say)',
+      { concept: 'prior.other-coverages', field: 'GiveOtherLiabilityInsurance', ask: 'What kind of liability insurance does the customer currently have to cover their business?', tni: 'geico.other-liability', name: 'Liability insurance the business has (None unless the notes say)',
         kind: 'choice', source: otherLiabilitySource, clientFact: true, value: otherLiability, note: otherLiabilityNote },
       // TNI (2026-10-21): No for every intake.
       // TNI, 2026-10-27: No at quote; any needed AI/waiver is added after the policy starts. GEICO
       // reworded the named-AI question (dropped "or a designated insured"); both wordings match.
-      { field: 'GiveInsuredOrWaiverYesNo', tni: 'general.additional-insured',
+      { concept: 'coverage.additional-insured', field: 'GiveInsuredOrWaiverYesNo', tni: 'general.additional-insured',
         ask: ['Does the customer need to add a named additional insured? Or do they need a named waiver of subrogation?',
           'Does the customer need to add a named additional insured or a designated insured? Or do they need a named waiver of subrogation?'],
         name: 'Named additional insured or waiver of subrogation (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
-      { field: 'GiveHasContractForBlanketAiEndorsement', ask: 'Does the customer have a contract that requires a blanket additional insured endorsement?', tni: 'general.additional-insured', name: 'Blanket additional insured by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
-      { field: 'GiveHasContractForBlanketWosEndorsement', tni: 'general.additional-insured', name: 'Blanket waiver of subrogation by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
-      { field: 'GiveHasFilingsYesNo', ask: 'Is the customer required to provide proof of insurance/filings to a state or federal agency?', path: 'operations.filingsRequired', tni: 'geico.filings', name: 'Filings required (TNI: No unless the intake says otherwise)',
+      { concept: 'coverage.additional-insured', field: 'GiveHasContractForBlanketAiEndorsement', ask: 'Does the customer have a contract that requires a blanket additional insured endorsement?', tni: 'general.additional-insured', name: 'Blanket additional insured by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
+      { concept: 'coverage.waiver-of-subrogation', field: 'GiveHasContractForBlanketWosEndorsement', tni: 'general.additional-insured', name: 'Blanket waiver of subrogation by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
+      { concept: 'filings.required', field: 'GiveHasFilingsYesNo', ask: 'Is the customer required to provide proof of insurance/filings to a state or federal agency?', path: 'operations.filingsRequired', tni: 'geico.filings', name: 'Filings required (TNI: No unless the intake says otherwise)',
         kind: 'bool', value: (r) => (ntlNoDotFilings(r) ? false : hasFilings.value(r)), source: held((r) => (ntlNoFilings(r) ? 'standard' : hasFilings.source(r))), note: holdOr(filingsNote) },
       // Shown after Yes (FL): only a box the intake names is ticked.
-      { field: 'AddFilings.FederalLiability', ask: 'Federal Liability (includes MCS-90)', path: 'operations.filingsWhich', name: 'Federal liability filing', kind: 'bool', source: held('derived'),
+      { concept: 'filings.which', field: 'AddFilings.FederalLiability', ask: 'Federal Liability (includes MCS-90)', path: 'operations.filingsWhich', name: 'Federal liability filing', kind: 'bool', source: held('derived'),
         value: (r) => filingBoxes(r).federal, ignore: (r) => !filingBoxes(r).federal, note: holdOr() },
-      { field: 'AddFilings.MCS90', ask: 'MCS-90', name: 'MCS-90 filing (as the page has it)', ignore: true },
-      { field: 'AddFilings.StateFiling', ask: 'State', path: 'operations.filingsWhich', name: 'State filing', kind: 'bool', source: held('derived'),
+      { concept: 'filings.which', field: 'AddFilings.MCS90', ask: 'MCS-90', name: 'MCS-90 filing (as the page has it)', ignore: true },
+      { concept: 'filings.which', field: 'AddFilings.StateFiling', ask: 'State', path: 'operations.filingsWhich', name: 'State filing', kind: 'bool', source: held('derived'),
         value: (r) => filingBoxes(r).state, ignore: (r) => !filingBoxes(r).state, note: holdOr() },
     ]),
 
     // --- Quote & Coverages ---------------------------------------------------------------------
     ...on(COVERAGES, {}, [
-      fact('PolicyTermSliderCollect', 'Policy term'),
+      fact('quote.policy-term', 'PolicyTermSliderCollect', 'Policy term'),
       // TNI's 11 Payments (FL live run 4, 2026-10-21, W43-18), one of the plans View More Payment
       // Plans shows (`whenOffered`: waited for until then). Two groups (pay in full and
       // installments, each with its own name): one rule each; the one listing it is answered. Not
       // offered once View More Payment Plans was clicked (TX: Pay In Full, 4 Payments Bi-Monthly
       // Plan, 9 Payments): the plan with the most payments offered, Pay In Full counting one, named
       // in the report (TNI, 2026-10-21, W43-32).
-      ...[1, 2].map(/** @returns {CarrierRule} */ () => ({ field: 'GivePayPlanV2', tni: 'geico.pay-plan', name: 'Payment plan (TNI: 11 Payments)', kind: 'choice', source: 'standard', value: () => PAY_PLAN,
+      ...[1, 2].map(/** @returns {CarrierRule} */ () => ({ concept: 'quote.payment', field: 'GivePayPlanV2', tni: 'geico.pay-plan', name: 'Payment plan (TNI: 11 Payments)', kind: 'choice', source: 'standard', value: () => PAY_PLAN,
         each: true, whenOffered: true, orMost: { count: '^(\\d+)\\s+payments?\\b', one: '^pay\\s+in\\s+full\\b', after: 'morePayPlans', name: 'the plan with the most payments GEICO offers' } })),
-      { q: 'LiabilityCoverage', ask: 'Liability Coverage', control: 'select', name: 'Liability coverage', kind: 'choice', source: 'derived', value: liabilityType, note: liabilityNote },
+      { concept: 'coverage.liability', q: 'LiabilityCoverage', ask: 'Liability Coverage', control: 'select', name: 'Liability coverage', kind: 'choice', source: 'derived', value: liabilityType, note: liabilityNote },
       // The intake's limit, by its amount ($1M CSL is "$1,000,000 Combined Single Limit"). A split
       // limit, State Minimum or one GEICO doesn't offer finds no option: the agent's, never the next one up.
-      { ask: 'Bodily Injury or Combined Single Limit Liability', control: 'select', path: 'coverage.autoLiabLimit', name: 'Liability limit', kind: 'choice', ignore: ntlQuote,
+      { concept: 'coverage.liability', ask: 'Bodily Injury or Combined Single Limit Liability', control: 'select', path: 'coverage.autoLiabLimit', name: 'Liability limit', kind: 'choice', ignore: ntlQuote,
         note: (r) => ntlNote(r) ?? (liabilityType(r) ? null : 'Pick the liability limit yourself, with the liability coverage.') },
       // An NTL quote: the intake's liability limit in GEICO's NTL list (the same choices, $300,000 to
       // $1,000,000 CSL), drawn once the permanent lease is answered.
-      { ask: 'Non Trucking Liability (NTL)', control: 'select', path: 'coverage.autoLiabLimit', name: 'Non-trucking liability limit (the intake\'s liability limit)', kind: 'choice',
+      { concept: 'coverage.ntl', ask: 'Non Trucking Liability (NTL)', control: 'select', path: 'coverage.autoLiabLimit', name: 'Non-trucking liability limit (the intake\'s liability limit)', kind: 'choice',
         ignore: (r) => !ntlQuote(r) },
       // TNI's $100,000 CSL, in every state (FL live run 4, 2026-10-21, W43-17: GEICO pre-selected
       // $750,000); Texas lists only split limits, $100,000/$300,000 there (W43-33), but CSL ones with
@@ -1432,35 +1434,35 @@ export const geico = {
       // $100,000 CSL then. A state without either option leaves it to the agent. After NTL is
       // accepted GEICO resets it; GEICO fills one answer a round in page order, so UM comes after. GA and SC caption it "(UMBI)", SC asks underinsured
       // separately: the same limit (W43-33, TNI, 2026-10-21).
-      { q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury (TNI: ${usd(STANDARDS.umCsl)} CSL; TX ${UM_SPLIT})`,
+      { concept: 'coverage.um', q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury (TNI: ${usd(STANDARDS.umCsl)} CSL; TX ${UM_SPLIT})`,
         kind: 'choice', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT), choiceAliases: (r) => (texas(r) ? [UM_LIMIT] : []) },
-      { q: 'UninsuredMotoristUmbi', ask: 'Uninsured Motorist Bodily Injury (UMBI)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury, UMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
+      { concept: 'coverage.um', q: 'UninsuredMotoristUmbi', ask: 'Uninsured Motorist Bodily Injury (UMBI)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury, UMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
         kind: 'choice', source: 'standard', value: () => UM_LIMIT },
-      { q: 'UnderinsuredMotorist', ask: 'Underinsured Motorist Bodily Injury (UIMBI)', control: 'select', tni: 'geico.um', name: `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
+      { concept: 'coverage.um', q: 'UnderinsuredMotorist', ask: 'Underinsured Motorist Bodily Injury (UIMBI)', control: 'select', tni: 'geico.um', name: `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
         kind: 'choice', source: 'standard', value: () => UM_LIMIT },
       // TNI, 2026-10-27: when a state asks UM/UIM type or deductible (another form of the UM
       // questions), type is Add-On and deductible $1,000; the deductible isn't always shown.
-      { q: 'UninsuredMotoristDeductible', ask: 'Uninsured Motorist Deductible', control: 'select', tni: 'geico.um',
+      { concept: 'coverage.um', q: 'UninsuredMotoristDeductible', ask: 'Uninsured Motorist Deductible', control: 'select', tni: 'geico.um',
         name: 'Uninsured motorist deductible (TNI: $1,000)', kind: 'choice', source: 'standard', value: () => '$1,000' },
-      { q: 'UmUimType', ask: 'UM/UIM Type', control: 'select', tni: 'geico.um',
+      { concept: 'coverage.um', q: 'UmUimType', ask: 'UM/UIM Type', control: 'select', tni: 'geico.um',
         name: 'UM/UIM type (TNI: Add-On)', kind: 'choice', source: 'standard', value: () => 'Add-On' },
       // Property damage liability and UMPD stay the agent's (W43-33).
-      { q: 'PropertyDamage', ask: 'Property Damage Liability (PD)', control: 'select', name: 'Property damage liability', source: 'fact' },
-      { q: 'UninsuredMotoristPd', ask: 'Uninsured Motorist Property Damage (UMPD)', control: 'select', name: 'Uninsured motorist property damage', source: 'fact' },
+      { concept: 'coverage.liability', q: 'PropertyDamage', ask: 'Property Damage Liability (PD)', control: 'select', name: 'Property damage liability', source: 'fact' },
+      { concept: 'coverage.umpd', q: 'UninsuredMotoristPd', ask: 'Uninsured Motorist Property Damage (UMPD)', control: 'select', name: 'Uninsured motorist property damage', source: 'fact' },
       // FL: one choice each, kept as GEICO has them (pipKept).
-      { q: 'Stacked', ask: 'Is Stacked', control: 'select', name: 'Stacked uninsured motorist', ...pipKept('stacked uninsured motorist') },
+      { concept: 'coverage.um', q: 'Stacked', ask: 'Is Stacked', control: 'select', name: 'Stacked uninsured motorist', ...pipKept('stacked uninsured motorist') },
       // Medical Payments $5,000, Not Included where GEICO lists no limit; Basic PIP declined beside
       // medical payments, $2,500 without (TNI, 2026-10-26, W44-26; above). The page kit reads the lists.
-      { q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', tni: 'geico.medpay-pip', name: `Medical payments (TNI: ${MED_PAY}; Not Included where GEICO offers no limit)`, kind: 'choice',
+      { concept: 'coverage.medpay', q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', tni: 'geico.medpay-pip', name: `Medical payments (TNI: ${MED_PAY}; Not Included where GEICO offers no limit)`, kind: 'choice',
         source: 'standard', value: () => MED_PAY, onlyIf: [{ limit: true }, { limit: false, value: 'Not Included' }],
         unofferedNote: 'GEICO doesn\'t list $5,000 medical payments here: pick it yourself (TNI takes $5,000 medical payments wherever GEICO offers them).' },
-      { q: 'BasicPip', ask: 'Basic Personal Injury Protection', control: 'select', tni: 'geico.medpay-pip', name: 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)', kind: 'choice',
+      { concept: 'coverage.pip', q: 'BasicPip', ask: 'Basic Personal Injury Protection', control: 'select', tni: 'geico.medpay-pip', name: 'Basic personal injury protection (TNI: declined beside medical payments, else $2,500; FL: as GEICO has it)', kind: 'choice',
         ignore: florida, source: (r) => (florida(r) ? null : 'standard'), value: (r) => (florida(r) ? null : '$2,500'),
         onlyIf: (r) => (florida(r) ? null : [{ path: MED_PATH, limit: true, value: 'I decline' }, { path: MED_PATH, limit: false }]),
         unofferedNote: 'GEICO doesn\'t offer the basic personal injury protection answer TNI takes here (I decline beside medical payments, else $2,500): pick it yourself.',
         emptyNote: (r) => (florida(r) ? 'GEICO left basic personal injury protection empty: pick it yourself.' : null) },
-      { q: 'PipOptions', ask: 'PIP Options', control: 'select', name: 'PIP options', ...pipKept('the PIP options') },
-      { q: 'ExcludedWorkLoss', ask: 'Excluded Work Loss', control: 'select', name: 'Excluded work loss', ...pipKept('excluded work loss') },
+      { concept: 'coverage.pip', q: 'PipOptions', ask: 'PIP Options', control: 'select', name: 'PIP options', ...pipKept('the PIP options') },
+      { concept: 'coverage.pip', q: 'ExcludedWorkLoss', ask: 'Excluded Work Loss', control: 'select', name: 'Excluded work loss', ...pipKept('excluded work loss') },
       // A vehicle's coverage rows: its year, make and model name them (scope 'vehicle'), and each
       // step takes the row naming its unit, never the row at its position. Comprehensive, collision
       // and fire and theft list the trailers among the vehicles (`trailers`: a 4-vehicle FL quote
@@ -1481,64 +1483,64 @@ export const geico = {
                 : { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })).map(withNeeds),
       // The same customization questions as on the vehicle form, per vehicle. Found by their text:
       // their rows don't name the vehicle, so with several vehicles they are the agent's.
-      { q: 'CustomizationValue', ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', scope: 'vehicle', tni: 'geico.customizations', name: 'Customization value (the attached equipment value, else TNI: 0)',
+      { concept: 'vehicle.equipment', q: 'CustomizationValue', ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', scope: 'vehicle', tni: 'geico.customizations', name: 'Customization value (the attached equipment value, else TNI: 0)',
         kind: 'money', source: valueSource(noEquipValue), value: customizationValue, note: customizationValueNote },
-      { ask: 'How much would this vehicle be worth without customizations or modifications?', path: 'vehicles[].value', scope: 'vehicle', name: 'Vehicle value without customizations', kind: 'money', note: valueNote('vehicle', vehicleOf) },
+      { concept: 'vehicle.value', ask: 'How much would this vehicle be worth without customizations or modifications?', path: 'vehicles[].value', scope: 'vehicle', name: 'Vehicle value without customizations', kind: 'money', note: valueNote('vehicle', vehicleOf) },
       // Motor truck cargo. The stems name other things than they ask: "…BusinessDocument…" is
       // household goods or ginned cotton, "…MobileHomes…" also business documents and securities.
-      { field: 'GiveMtcEligibleRequireCoverageYesNo', ask: 'Does the customer require Motor Truck Cargo Coverage?', path: 'coverage.cargo', name: 'Motor truck cargo wanted', kind: 'bool', note: cargoNote },
+      { concept: 'coverage.cargo', field: 'GiveMtcEligibleRequireCoverageYesNo', ask: 'Does the customer require Motor Truck Cargo Coverage?', path: 'coverage.cargo', name: 'Motor truck cargo wanted', kind: 'bool', note: cargoNote },
       // TNI's No unless the intake's class or haul names them (W43-23).
-      { field: 'GiveMtcRequireCoverageForMobileHomesYesNo', ask: 'Does the customer require coverage for mobile or modular homes or buildings, business documents, or non-negotiable securities?',
+      { concept: 'coverage.cargo', field: 'GiveMtcRequireCoverageForMobileHomesYesNo', ask: 'Does the customer require coverage for mobile or modular homes or buildings, business documents, or non-negotiable securities?',
         tni: 'geico.cargo-questions', name: 'Cargo: mobile homes, business documents or securities (TNI: No unless the intake names them)', kind: 'bool', ...cargoNo(MOBILE_HOMES, 'mobile or modular homes, business documents or securities') },
       // A household goods mover hauls household goods: Yes. Otherwise TNI's No (W43-30), unless the
       // intake's class, haul or notes mention household goods, household moving or cotton: then the agent's.
-      { field: 'GiveMtcRequireCoverageForBusinessDocumentYesNo', ask: 'Will the customer be hauling household goods or cotton that was ginned within 72 hours?',
+      { concept: 'coverage.cargo', field: 'GiveMtcRequireCoverageForBusinessDocumentYesNo', ask: 'Will the customer be hauling household goods or cotton that was ginned within 72 hours?',
         tni: 'geico.household-goods', name: 'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)',
         kind: 'bool', source: householdSource, value: household, note: householdNote },
-      { field: 'GiveMtcDoesTransportLiveAnimalsYesNo', tni: 'geico.cargo-questions', name: 'Cargo: live animals (TNI: No unless the intake names them)', kind: 'bool', ...cargoNo(LIVE_ANIMALS, 'live animals') },
-      { field: 'GiveMtcRequireCoverageForRefrigerationBreakdownYesNo', ask: 'Does the customer require refrigeration breakdown coverage?', path: 'coverage.reeferBreakdown', tni: 'geico.reefer-breakdown', name: 'Refrigeration breakdown (Yes with a reefer)', kind: 'bool',
+      { concept: 'coverage.cargo', field: 'GiveMtcDoesTransportLiveAnimalsYesNo', tni: 'geico.cargo-questions', name: 'Cargo: live animals (TNI: No unless the intake names them)', kind: 'bool', ...cargoNo(LIVE_ANIMALS, 'live animals') },
+      { concept: 'coverage.reefer-breakdown', field: 'GiveMtcRequireCoverageForRefrigerationBreakdownYesNo', ask: 'Does the customer require refrigeration breakdown coverage?', path: 'coverage.reeferBreakdown', tni: 'geico.reefer-breakdown', name: 'Refrigeration breakdown (Yes with a reefer)', kind: 'bool',
         source: reeferSource, value: reeferBreakdown, note: reeferNote },
       // Up to four, from what they haul (TNI, as on Progressive: W43-23); with no match, the AI may
       // suggest one for the agent's approval (not a client fact: no manualOnly).
-      { field: 'GiveMtcHaulingCommoditiesCollect', ask: 'Select up to four commodities the customer hauls the most', name: 'Cargo commodities', kind: 'choice',
+      { concept: 'cargo.commodity', field: 'GiveMtcHaulingCommoditiesCollect', ask: 'Select up to four commodities the customer hauls the most', name: 'Cargo commodities', kind: 'choice',
         source: 'derived', value: commodities,
         note: (r) => (commodities(r) ? null : carPartsMixedNote(r) ?? `Pick up to four commodities yourself${r.operations.whatHaul ? `: the intake says they haul ${quote(r.operations.whatHaul)}` : ''}.`) },
-      { q: 'CargoLimit', ask: 'Motor Truck Cargo', control: 'select', name: 'Motor truck cargo limit and deductible', kind: 'choice', source: cargoLimitSource, value: cargoChoice, note: cargoLimitNote },
+      { concept: 'coverage.cargo', q: 'CargoLimit', ask: 'Motor Truck Cargo', control: 'select', name: 'Motor truck cargo limit and deductible', kind: 'choice', source: cargoLimitSource, value: cargoChoice, note: cargoLimitNote },
       // Trailer interchange's card (FL live run, 2026-10-28), opened when the intake asks for it
       // (openInterchange): TNI's answers (util.js, general.trailer-interchange). Without the request
       // every one but the first is the agent's (a fact, never Luna's).
-      { field: 'GiveTrailerInterchangeEligibleRequireCoverageYesNo', ask: 'Does the customer need Trailer Interchange Coverage?', path: 'trailerInfo.interchange', name: 'Trailer interchange', kind: 'bool' },
-      { field: 'GiveTrailerInterchangeAgreementYesNo', ask: 'Does the customer have a trailer interchange agreement?', name: 'Trailer interchange agreement (the intake\'s Yes)', kind: 'bool',
+      { concept: 'interchange.wanted', field: 'GiveTrailerInterchangeEligibleRequireCoverageYesNo', ask: 'Does the customer need Trailer Interchange Coverage?', path: 'trailerInfo.interchange', name: 'Trailer interchange', kind: 'bool' },
+      { concept: 'interchange.agreement', field: 'GiveTrailerInterchangeAgreementYesNo', ask: 'Does the customer have a trailer interchange agreement?', name: 'Trailer interchange agreement (the intake\'s Yes)', kind: 'bool',
         source: (r) => (interchangeRequested(r) ? 'derived' : 'fact'), value: () => true, note: interchangeUnrequested },
-      { field: 'GiveTrailerInterchangeAgreementProvideOnRequestYesNo', ask: 'Does the customer agree to provide the trailer interchange agreement upon request?', tni: 'general.trailer-interchange', name: 'Trailer interchange agreement provided on request (TNI: Yes)', kind: 'bool',
+      { concept: 'interchange.agreement-on-request', field: 'GiveTrailerInterchangeAgreementProvideOnRequestYesNo', ask: 'Does the customer agree to provide the trailer interchange agreement upon request?', tni: 'general.trailer-interchange', name: 'Trailer interchange agreement provided on request (TNI: Yes)', kind: 'bool',
         source: (r) => (interchangeRequested(r) ? 'standard' : 'fact'), value: () => true, note: interchangeUnrequested },
-      { field: 'GiveTrailerInterchangeNumberOfTrailers', ask: 'How many non-owned trailers will the customer haul?', tni: 'general.trailer-interchange', name: 'Non-owned trailers hauled (TNI\'s default 1, to confirm)', kind: 'choice',
+      { concept: 'interchange.trailer-count', field: 'GiveTrailerInterchangeNumberOfTrailers', ask: 'How many non-owned trailers will the customer haul?', tni: 'general.trailer-interchange', name: 'Non-owned trailers hauled (TNI\'s default 1, to confirm)', kind: 'choice',
         source: (r) => (interchangeRequested(r) ? 'standard' : 'fact'), value: () => INTERCHANGE_TRAILERS, note: interchangeUnrequested, warn: interchangeCountWarn },
       // From the intake's trailer type, never its hitch (TNI, 2026-10-28: the run's Gooseneck hitch
       // isn't the trailer).
-      { field: 'GiveTrailerInterchangeCommonTrailerType', ask: 'Select most common trailer type', name: 'Most common trailer type (the intake\'s trailer type, to confirm)', kind: 'choice',
+      { concept: 'interchange.trailer-type', field: 'GiveTrailerInterchangeCommonTrailerType', ask: 'Select most common trailer type', name: 'Most common trailer type (the intake\'s trailer type, to confirm)', kind: 'choice',
         source: (r) => (interchangeType(r) ? 'derived' : 'fact'), value: interchangeType, note: interchangeTypeNote, warn: interchangeTypeWarn },
-      { q: 'TrailerInterchangeLimit', ask: 'Trailer Interchange', control: 'select', tni: 'general.trailer-interchange', name: 'Trailer interchange limit (the intake\'s, or the next one up, with a $1,000 deductible)', kind: 'choice',
+      { concept: 'interchange.limit', q: 'TrailerInterchangeLimit', ask: 'Trailer Interchange', control: 'select', tni: 'general.trailer-interchange', name: 'Trailer interchange limit (the intake\'s, or the next one up, with a $1,000 deductible)', kind: 'choice',
         source: (r) => interchangeLimitSource(r, INTERCHANGE_LIMITS), value: interchangeLimit, note: (r) => interchangeLimitNote(r, INTERCHANGE_LIMITS, 'GEICO'),
         warn: (r) => interchangeLimitRaised(r, INTERCHANGE_LIMITS, 'GEICO') },
       // Hired and non-owned autos: interchange or rented trailers don't make them Yes.
-      fact('GiveHiredCoverageRequired', 'Hired auto coverage'),
-      fact('GiveHiredAutoCostGreaterThanThreshold', 'Hired auto cost over GEICO\'s threshold'),
-      fact('GiveHiredAutoCoverageNeeded', 'Hired auto coverage needed'),
-      fact('GiveBrokeredAnyTrips', 'Brokered trips'),
-      fact('GiveHasOperatedAsFreightBrokerOrForwarder', 'Operated as a freight broker or forwarder'),
-      fact('GiveIsIntermodalEndorsementRequired', 'Intermodal (UIIA) endorsement'),
-      fact('GiveNonOwnedAutoLiability', 'Non-owned auto liability'),
-      fact('GiveNonOwnedVehicleUsedInBusiness', 'Non-owned vehicles used in the business'),
-      fact('GiveNonOwnedTrailerPdEligibleRequireCoverageYesNo', 'Non-owned trailer physical damage'),
-      { field: 'GiveMotorTruckGeneralLiabilityCoverageRequired', ask: 'Does the customer need Motor Truck General Liability?', path: 'coverage.gl', name: 'Motor truck general liability wanted', kind: 'bool' },
+      fact('coverage.hired-auto', 'GiveHiredCoverageRequired', 'Hired auto coverage'),
+      fact('coverage.hired-auto', 'GiveHiredAutoCostGreaterThanThreshold', 'Hired auto cost over GEICO\'s threshold'),
+      fact('coverage.hired-auto', 'GiveHiredAutoCoverageNeeded', 'Hired auto coverage needed'),
+      fact('operations.brokerage', 'GiveBrokeredAnyTrips', 'Brokered trips'),
+      fact('operations.brokerage', 'GiveHasOperatedAsFreightBrokerOrForwarder', 'Operated as a freight broker or forwarder'),
+      fact('coverage.intermodal', 'GiveIsIntermodalEndorsementRequired', 'Intermodal (UIIA) endorsement'),
+      fact('coverage.non-owned-auto', 'GiveNonOwnedAutoLiability', 'Non-owned auto liability'),
+      fact('operations.non-owned-vehicles', 'GiveNonOwnedVehicleUsedInBusiness', 'Non-owned vehicles used in the business'),
+      fact('interchange.non-owned-trailer-pd', 'GiveNonOwnedTrailerPdEligibleRequireCoverageYesNo', 'Non-owned trailer physical damage'),
+      { concept: 'coverage.gl', field: 'GiveMotorTruckGeneralLiabilityCoverageRequired', ask: 'Does the customer need Motor Truck General Liability?', path: 'coverage.gl', name: 'Motor truck general liability wanted', kind: 'bool' },
       // Its follow-ups: TNI's answers on every carrier (TNI, 2026-10-28; util.js glAnswer, general.gl),
       // opened when the intake asks for GL (openGl).
-      { field: 'GiveIncomeOnlyFromTruckingOperation', ask: 'Does all of the customer\'s income come from their for-hire trucking operations?', name: 'GL: all income from for-hire trucking (TNI: Yes)', kind: 'bool', ...glAnswer(true) },
-      { field: 'GiveOperateFromWarehouseOrOtherAccessiblePremises', ask: 'Does the customer operate a warehouse, facility, or other premises that their customers have access to?', name: 'GL: premises customers visit (TNI: No)', kind: 'bool', ...glAnswer(false) },
-      { field: 'GiveInvolvedInAnySetupOrInstallation', ask: 'Does the customer\'s business do any setup or installation?', name: 'GL: setup or installation (TNI: No)', kind: 'bool', ...glAnswer(false) },
-      { field: 'GiveOperateOrInvolvedInAnyWayForOilGasProduction', name: 'GL: oil and gas production (TNI: No unless the intake mentions oil or gas work)', kind: 'bool', ...GL_OIL_GAS },
-      { q: 'GeneralLiabilityLimit', ask: 'Motor Truck General Liability', control: 'select', name: 'Motor truck general liability limit', kind: 'choice', source: 'derived', value: glLimit, note: glLimitNote },
+      { concept: 'gl.trucking-income', field: 'GiveIncomeOnlyFromTruckingOperation', ask: 'Does all of the customer\'s income come from their for-hire trucking operations?', name: 'GL: all income from for-hire trucking (TNI: Yes)', kind: 'bool', ...glAnswer(true) },
+      { concept: 'gl.premises', field: 'GiveOperateFromWarehouseOrOtherAccessiblePremises', ask: 'Does the customer operate a warehouse, facility, or other premises that their customers have access to?', name: 'GL: premises customers visit (TNI: No)', kind: 'bool', ...glAnswer(false) },
+      { concept: 'gl.setup-installation', field: 'GiveInvolvedInAnySetupOrInstallation', ask: 'Does the customer\'s business do any setup or installation?', name: 'GL: setup or installation (TNI: No)', kind: 'bool', ...glAnswer(false) },
+      { concept: 'gl.oil-gas', field: 'GiveOperateOrInvolvedInAnyWayForOilGasProduction', name: 'GL: oil and gas production (TNI: No unless the intake mentions oil or gas work)', kind: 'bool', ...GL_OIL_GAS },
+      { concept: 'coverage.gl', q: 'GeneralLiabilityLimit', ask: 'Motor Truck General Liability', control: 'select', name: 'Motor truck general liability limit', kind: 'choice', source: 'derived', value: glLimit, note: glLimitNote },
     ]),
   ]),
 };

@@ -3,7 +3,9 @@
   "version": "0.9.32",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "description": "Chrome extension that fills Progressive and GEICO rater pages from a TNI quote application PDF",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
@@ -22,6 +24,7 @@
     "summary": "node scripts/summarize-usage.mjs server-data",
     "signals": "node scripts/weekly-signals.mjs server-data",
     "ledger": "node scripts/ledger.mjs",
+    "concepts": "node scripts/concepts.mjs",
     "replay": "node scripts/replay.mjs",
     "bakeoff:score": "node scripts/bakeoff-score.mjs test/bakeoff/answer-key.json",
     "package": "node scripts/package.mjs",
