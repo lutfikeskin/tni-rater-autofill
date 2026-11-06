@@ -130,18 +130,27 @@ The registry lists no rules. An override reaches **only the rules that carry its
 Each standard rule an override may change gains a `std` field. The field names its registry id, how the rule writes an amount in this carrier's words, and where the default applies (`applies`). The rule's own `value` stays as it is, so the rule still gives TNI's answer by itself:
 
 ```js
+// Progressive writes "$5,000 per person" (MED_PAY).
 { q: '1FE4', tni: 'progressive.medpay', source: 'standard', ..., value: () => MED_PAY,
-  std: { id: 'medPay', write: (amount) => usd(amount), name: (amount) => `Medical payments per person (standard: ${usd(amount)})` } }
+  std: { id: 'medPay', write: (amount) => `${usd(amount)} per person`, name: (amount) => `Medical payments per person (standard: ${usd(amount)})` } }
 
-// GEICO's UM limit picks Texas' split inside the same `standard` rule: the default stays out of Texas.
+// GEICO writes "$100,000 Combined Single Limit" (UM_LIMIT), and picks Texas' split inside the same
+// `standard` rule: the default stays out of Texas.
 { q: 'UninsuredMotorist', tni: 'geico.um', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT), ...,
-  std: { id: 'umCsl', applies: (r) => !texas(r), write: (amount) => usd(amount), ... } }
+  std: { id: 'umCsl', applies: (r) => !texas(r), write: (amount) => `${usd(amount)} Combined Single Limit`, ... } }
+
+// Progressive's comprehensive deductible also takes a glass-deductible option of the same amount.
+{ q: '1FCD', tni: 'progressive.deductibles', source: 'standard', ..., value: () => DEDUCTIBLE,
+  choiceAliases: () => [`${DEDUCTIBLE} w/ $0 Glass Deductible`],
+  std: { id: 'compDeductible', write: (amount) => `${usd(amount)} Deductible`,
+    aliases: (amount) => [`${usd(amount)} Deductible w/ $0 Glass Deductible`] } }
 ```
 
 - **Exact targets.** A rule gets `std` only for the one answer it writes. A rule that answers something else under the same `tni` id or `concept` (Basic PIP, UM deductible, UM/UIM type) gets none.
-- **State and carrier exceptions stay TNI's.** A `standard` rule that branches inside its `value` (GEICO's Texas UM split, Florida PIP, Progressive's SC BI & PD) declares `applies`, which is false wherever the rule gives the exception. There the overlay leaves the step unchanged and adds the note "Texas: TNI's $100,000/$300,000 applies here, not your default", so the agent sees why their default didn't apply. `source === 'standard'` alone is not enough: these exceptions are `standard` too.
+- **State and carrier exceptions stay TNI's.** A `standard` rule that branches inside its `value` (GEICO's Texas UM split, Florida PIP, Progressive's SC BI & PD) declares `applies`, which is false wherever the rule gives the exception. There the overlay leaves the step's answer unchanged and sets `defaultInfo` to "Texas: TNI's $100,000/$300,000 applies here, not your default", so the agent sees why their default didn't apply. It is **never `note`**: to the page kit a step with a `note` is the agent's and isn't filled (`!s.note` in `src/kit/cursor.js`), so a note would leave Texas' UM blank instead of TNI's split. `defaultInfo` is shown in the panel's report only; the page kit and the resolution don't read it. `source === 'standard'` alone is not enough: these exceptions are `standard` too.
 - **Amount-bearing text.** A rule whose `note` or `unofferedNote` states the amount (GEICO's "doesn't list $5,000 medical payments") gives `std.note(amount)` too.
-- **Held to the rule.** For every fixture record and for one synthetic record per state (50 states and DC), wherever `applies` is true: `std.write(TNI's amount)` equals the rule's value, `std.name(TNI's amount)` equals its name, and `std.note` equals its note. A rule carrying the wrong `std` fails this, because a PIP rule's value is no Med Pay amount. So does a state branch without `applies`, because Texas' split is no CSL amount. The metadata therefore can't drift from the rule, and deleting it (or the whole module) changes nothing the rule fills.
+- **Aliases follow the amount.** The page kit tries a step's `choiceAliases` before matching by amount, so an alias left at TNI's amount could pick "$1,000 Deductible w/ $0 Glass Deductible" for a $500 default even with "$500 Deductible" listed. A rule with `choiceAliases` that name the amount gives `std.aliases(amount)`, and the overlay replaces the step's aliases with them. If it doesn't, the overlay drops the step's aliases rather than keep a stale one.
+- **Held to the rule.** For every fixture record and for one synthetic record per state (50 states and DC), wherever `applies` is true: `std.write(TNI's amount)` equals the rule's value, `std.name(TNI's amount)` equals its name, `std.note` equals its note, and `std.aliases(TNI's amount)` equals its `choiceAliases`. A rule carrying the wrong `std` fails this, because a PIP rule's value is no Med Pay amount. So does a state branch without `applies`, because Texas' split is no CSL amount. The metadata therefore can't drift from the rule, and deleting it (or the whole module) changes nothing the rule fills.
 
 ### Plan: one generic hook
 
@@ -149,7 +158,7 @@ Each standard rule an override may change gains a `std` field. The field names i
 - Steps gain `tni: rule.tni ?? null`, which is generic and useful to logs anyway.
 - The overlay (in the module) acts only when `step.source === 'standard'`, the rule has `std`, and `std.applies` (if given) is true for this record and unit:
   - with **Ask me**, the source becomes `fact` with the note "You chose to answer this yourself (Settings → TNI defaults)";
-  - with a **value**, the source becomes `agent-default`, the value is `std.write(amount)` and the name is `std.name(amount)`;
+  - with a **value**, the source becomes `agent-default`, the value is `std.write(amount)`, the name is `std.name(amount)`, and the choice aliases are `std.aliases(amount)` (none when the rule gives none);
   - with a **locked** standard, or no default, the step is returned unchanged.
 - **One way to build a panel plan.** A `planFor(state, carrier, active)` wrapper replaces the seven `buildPlan` calls in `coordinator.js`, `core.js`, `fill.js` and `usage.js`. It is the only place the overlay is passed in, so the plan that fills, the plan that logs and the plan Luna reads can't disagree. A test fails if a panel file calls `buildPlan` directly.
 
@@ -231,9 +240,9 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 1. **Server.** Accept `agent-default` in `source`, `defaults` in `agent_settings` and `defaultsHash` on fill runs, then deploy. This changes no behaviour. *Done in code; see [hosting](hosting.md).*
 2. **Generic hooks, no feature.** Add the `overlay` hook in `buildPlan`, `tni` on steps, the `planFor()` wrapper, the `rulebookFor` `rewrite` hook, and `std` metadata on standard rules. Prove nothing changed: `npm test`, the carrier mocks, and `npm run benchmark -- --save` on `main` then `--against` on the branch with zero differences.
 3. **The module, switched off.** Add `src/agent-defaults/` (registry, overlay, checks, `isAgentDefault`) with its tests and `AGENT_DEFAULTS_ON = false`.
-4. **Basic UI, switched on.** Add the TNI defaults section, the page colour, the report tag and logging. Test the e2e with an override on each carrier mock.
-5. **Advanced.** Add per-carrier amounts, carrier-only coverage standards, and "Ask me".
-6. **Review tooling.** Update signals, review, benchmark and answer key for `agent-default` and the logged defaults.
+4. **Review tooling.** Update signals, review, benchmark and answer key for `agent-default` and the logged defaults, before any agent can switch defaults on. Otherwise the benchmark would replay those quotes with TNI's values and report false differences.
+5. **Basic UI, switched on.** Add the TNI defaults section, the profile question, the page colour, the report tag and logging, and set `AGENT_DEFAULTS_ON = true`. Requires step 4 merged. Test the e2e with an override on each carrier mock.
+6. **Advanced.** Add per-carrier amounts, carrier-only coverage standards, and "Ask me".
 
 Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rules.md) (the provenance table and the new source), [learning.md](learning.md) (`agent_settings.defaults`, signals), [ai-assistant.md](ai-assistant.md) (the rulebook from effective values), [hosting.md](hosting.md) (the server whitelist) and [testing.md](testing.md).
 
@@ -246,7 +255,8 @@ Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rul
 - **Unsold amount:** the step goes to the agent with a note, with no fallback.
 - **UM above liability:** the step goes to the agent.
 - **Exact targets:** with Med Pay and UM overrides on every carrier mock, GEICO's Basic PIP, UM deductible and UM/UIM type steps are unchanged.
-- **Texas and another state:** with a UM override, GEICO in Texas keeps TNI's $100,000/$300,000 split with the note, and GEICO in Ohio takes the default.
+- **Texas and another state:** with a UM override, GEICO in Texas still **fills** TNI's $100,000/$300,000 split, its step has no `note`, and the report shows the `defaultInfo`; GEICO in Ohio takes the default.
+- **Aliases:** with a $500 comprehensive default on Progressive's mock listing both "$500 Deductible" and "$1,000 Deductible w/ $0 Glass Deductible", the fill picks $500.
 - **Profiles:** two profiles under the same initials stay apart; a new intake with an active profile fills nothing until the agent answers the question; **Use TNI's** fills TNI's for that quote and keeps the profile; blank initials mean no profile and TNI's everywhere; changing initials clears the active profile.
 - **Review mode:** an `agent-default` step is `reviewRequired`.
 - **Server and extension agree on `SOURCES`.**
