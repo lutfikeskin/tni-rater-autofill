@@ -256,7 +256,7 @@ Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rul
 - **UM above liability:** the step goes to the agent.
 - **Exact targets:** with Med Pay and UM overrides on every carrier mock, GEICO's Basic PIP, UM deductible and UM/UIM type steps are unchanged.
 - **Texas and another state:** with a UM override, GEICO in Texas still **fills** TNI's $100,000/$300,000 split, its step has no `note`, and the report shows the `defaultInfo`; GEICO in Ohio takes the default.
-- **Aliases:** with a $500 comprehensive default on Progressive's mock listing both "$500 Deductible" and "$1,000 Deductible w/ $0 Glass Deductible", the fill picks $500.
+- **Aliases:** with a $500 comprehensive default on Progressive's mock listing "$500" (not "$500 Deductible", which would match exactly before any alias is tried and hide the bug) and "$1,000 Deductible w/ $0 Glass Deductible", the fill picks "$500". With a stale $1,000 alias left on the step it would pick the glass option, so this test fails on that bug.
 - **Profiles:** two profiles under the same initials stay apart; a new intake with an active profile fills nothing until the agent answers the question; **Use TNI's** fills TNI's for that quote and keeps the profile; blank initials mean no profile and TNI's everywhere; changing initials clears the active profile.
 - **Review mode:** an `agent-default` step is `reviewRequired`.
 - **Server and extension agree on `SOURCES`.**
