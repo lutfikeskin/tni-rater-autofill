@@ -114,6 +114,42 @@ test('a quote waits for the agent to say whose defaults it takes, then fills and
   expect(defaultsHold()).toBe(true);
 });
 
+// "Yes, mine" is for the amounts it was given for: an edited, switched or deleted profile asks again
+// (and logs again once answered); "Use TNI's" stands whatever the profile does.
+test('a profile changed after "Yes, mine" asks the quote again before anything fills with it', async () => {
+  await profileWithMedPay();
+  loadQuote();
+  await answerDefaults('mine');
+  expect(defaultsHold()).toBe(false);
+  // An amount edited: asked again, nothing fills with the new amount, nothing logged for it yet.
+  await defaultsActs().set('medPay', 1_000);
+  expect(defaultsHold()).toBe(true);
+  expect(settingsDefaults()).toBeUndefined();
+  expect(fillDefaultsHash()).toBeUndefined();
+  expect(overlayFor('geico')).toBeNull();
+  expect(panelState.cards.defaults.title).toBe('Fill this quote with Jordan K.\'s defaults?');
+  await answerDefaults('mine');
+  expect(defaultsHold()).toBe(false);
+  expect(settingsDefaults()).toEqual([{ id: 'medPay', value: 1_000 }]);
+  // Another profile picked: asked again.
+  const first = panelState.agentDefaults.active;
+  await defaultsActs().create('Sam');
+  await defaultsActs().set('umCsl', 300_000);
+  expect(defaultsHold()).toBe(true);
+  // Back to the approved one, as it was: its answer stands.
+  await defaultsActs().pick(first);
+  expect(defaultsHold()).toBe(false);
+  // New initials, then the same profile again: asked again.
+  await initialsChanged('XY');
+  await defaultsActs().pick(first);
+  expect(defaultsHold()).toBe(true);
+  // "Use TNI's" stands through an edit.
+  await answerDefaults('tni');
+  await defaultsActs().set('medPay', 2_000);
+  expect(defaultsHold()).toBe(false);
+  expect(settingsDefaults()).toEqual([]);
+});
+
 test('no question without a profile replacing something, without initials, or without a quote', async () => {
   loadQuote();
   expect(defaultsHold()).toBe(false); // no profile

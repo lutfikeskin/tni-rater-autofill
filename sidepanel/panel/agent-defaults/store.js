@@ -7,9 +7,11 @@
 // - chrome.storage.local `agentDefaults`: { v: 1, active: <profile id> | null, profiles: { [id]:
 //   { name, values: { [standard id]: { value } } } } }. Missing means none: TNI's everywhere. Ids are
 //   random, never the agent's initials; changing the initials clears `active`.
-// - chrome.storage.session `agentDefaultsQuote`: { session, choice: 'mine' | 'tni' }, this quote's
-//   answer to "Fill this quote with <profile>'s defaults?". Asked again for each new quote (usage
-//   session); a panel opened again keeps it.
+// - chrome.storage.session `agentDefaultsQuote`: { session, choice: 'mine' | 'tni', profile, initials,
+//   hash }, this quote's answer to "Fill this quote with <profile>'s defaults?". Asked again for each
+//   new quote (usage session); a panel opened again keeps it. "Yes, mine" holds only for the profile,
+//   initials and amounts (their defaultsHash) it was given for: a profile switched, edited or deleted
+//   since asks again, so nothing fills with amounts the agent didn't approve for this quote.
 // - Until the quote's question is answered nothing fills (defaultsHold: fillPage, the automatic
 //   fills and the dock wait on it, as on the quote-state hold).
 //
@@ -58,8 +60,15 @@ function activeProfile() {
 }
 // A profile replacing anything: one that only repeats TNI's asks nothing.
 const replacesAny = (profile) => !!profile && Object.keys(effectiveDefaults(profile, null)).length > 0;
-// This quote's answer, when it is this quote's.
-const choiceHere = () => (quote && quote.session === currentSessionId() ? quote.choice : null);
+// This quote's answer, when it is this quote's; "Yes, mine" only while the profile, the initials and
+// the amounts are the ones it was given for.
+function choiceHere() {
+  if (!quote || quote.session !== currentSessionId()) return null;
+  if (quote.choice !== 'mine') return quote.choice;
+  const same = quote.profile === (state.agentDefaults?.active ?? null) && quote.initials === initials
+    && quote.hash != null && quote.hash === defaultsHash(activeProfile());
+  return same ? 'mine' : null;
+}
 
 // Tells the module which defaults fill this quote: the profile's after "Yes, mine", else none.
 function apply() {
@@ -79,9 +88,15 @@ export async function loadDefaults() {
   apply();
 }
 
+// The panel shows only what was saved: a write that fails changes nothing and is logged.
 async function store(next) {
+  try {
+    await local.set(next);
+  } catch (error) {
+    logCrash(error);
+    return;
+  }
   state.agentDefaults = next;
-  await local.set(next);
   apply();
 }
 
@@ -156,7 +171,8 @@ function say() {
 export async function answerDefaults(choice) {
   const id = currentSessionId();
   if (!id) return;
-  quote = { session: id, choice };
+  const hash = choice === 'mine' ? defaultsHash(activeProfile()) : null;
+  quote = { session: id, choice, profile: state.agentDefaults?.active ?? null, initials, hash };
   await session.set(quote);
   apply();
 }
