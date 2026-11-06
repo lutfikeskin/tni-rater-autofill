@@ -3,7 +3,8 @@
 // is about and its options, the dock and the page strip.
 // One part of the panel; sidepanel.js wires the parts together.
 import { sourcePlace } from '../../src/intake-source.js';
-import { buildPlan, redactionTerms, supportedClass } from '../../src/plan.js';
+import { redactionTerms, supportedClass } from '../../src/plan.js';
+import { planFor } from './plan-for.js';
 import { advanceFor } from '../../src/units.js';
 import { quoteProgress, stopScreen } from '../../src/carriers.js';
 import { quotedCarrierPolicy } from '../../src/util.js';
@@ -346,7 +347,7 @@ async function autoFill(page) {
     // Honor the latest switch after preparation, and log the same value used by the kit. The unit the
     // fill adds (pickUnitToAdd) has its "+" and chooser Next clicked only with it on (`click`).
     ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
-    const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
+    const plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // The tab moved on to another page meanwhile: that one gets its own fill (fillPage).
@@ -496,7 +497,7 @@ async function captureLayout(job, reason) {
   const { tabId, carrier, page } = job;
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
-      [buildPlan(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
+      [planFor(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
     if (!jobCurrent(job) || superseded(job)) return;
     if (fillStarted()) return waitForFill(job);
     // The page actually read, as the page itself names it: the tab's address in the panel can

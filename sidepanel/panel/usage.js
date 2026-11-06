@@ -1,7 +1,8 @@
 // @ts-check
 // The side panel: usage recording (see src/usage.js for what is and isn't kept).
 // One part of the panel; sidepanel.js wires the parts together.
-import { buildPlan, redactionTerms } from '../../src/plan.js';
+import { redactionTerms } from '../../src/plan.js';
+import { planFor } from './plan-for.js';
 import { fieldChangeEvent, fillEvents, redactor, knownStep } from '../../src/usage.js';
 import { quoteStatePick } from '../../src/quote-state.js';
 import * as usage from '../usage-log.js';
@@ -210,7 +211,7 @@ function agentHelperDone(carrier, page, step, text) {
   const words = String(text ?? '').trim();
   if (!carrier?.actions?.length || !state.intake?.record || !words || words.length > 80) return;
   let plan;
-  try { plan = buildPlan(state.intake.record, carrier, state.active); } catch { return; }
+  try { plan = planFor(state.intake.record, carrier, state.active); } catch { return; }
   const done = plan.filter((s) => s.kind === 'action' && s.action === s.baseAction && !s.needsRecalculation && !s.verify && s.text
     && !s.near && !s.token && !s.within && !s.opener && !s.unique
     && (!s.pages?.length || s.pages.includes(page)) && (!s.steps?.length || (!!step && s.steps.includes(step)))

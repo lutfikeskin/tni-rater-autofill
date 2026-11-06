@@ -3,7 +3,8 @@
 // One part of the panel; sidepanel.js wires the parts together.
 import { sourcePlace } from '../../src/intake-source.js';
 import { fieldInfo } from '../../src/schema.js';
-import { buildPlan, redactionTerms } from '../../src/plan.js';
+import { redactionTerms } from '../../src/plan.js';
+import { planFor } from './plan-for.js';
 import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem } from '../../src/units.js';
 import { get } from '../../src/util.js';
 import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../../src/usage.js';
@@ -95,7 +96,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
-  let plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
+  let plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
   // The page view lists the answers as they go in and the dock has Stop; the new report replaces
   // the last one when it comes (kept until then, in case this fill stops before it gets anywhere).
   state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false };
@@ -118,7 +119,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // Honor the latest switch after preparation, and log the same value used by the kit.
     ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
     // The add helpers are clicked only with the switch on now.
-    if (ctx.adding) plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
+    if (ctx.adding) plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
     if (state.fillingFor?.run === ctx.run && state.fillingFor.stopping) {
       tabMaps(tabId).autoPaused = true;
@@ -298,7 +299,7 @@ async function pickUnitToAdd(carrier, ctx) {
   // allowed (GEICO's Add Driver while the panel's driver is another one): named after the fill,
   // left for the agent (noteMissingUnit; W44-01, OH 2026-10-26: the quote printed with one of two
   // drivers, the panel silent).
-  try { ctx.unitMissing = unitMissing(next, buildPlan(record, carrier, { ...state.active, adding: { ...next.adding, click: true } })); } catch { /* no plan, nothing said */ }
+  try { ctx.unitMissing = unitMissing(next, planFor(record, carrier, { ...state.active, adding: { ...next.adding, click: true } })); } catch { /* no plan, nothing said */ }
 }
 
 // The unit pickUnitToAdd found missing from the list on screen with nothing to add it (ctx.unitMissing),
@@ -1317,7 +1318,7 @@ async function capturePage() {
   const asked = JSON.stringify([tabId, page, state.active, state.intakeRevision, usage.currentSession()?.id ?? null]);
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
-      [record ? buildPlan(record, carrier, state.active) : null, record ? redactionTerms(record) : []]);
+      [record ? planFor(record, carrier, state.active) : null, record ? redactionTerms(record) : []]);
     // Frames with questions, the top one, and any with messages or an open list (evidence only).
     const frames = results.map((r) => r.result).filter((f) => f && (f.controls.length || f.isTopFrame || f.messages?.length || f.openLists?.length));
     const top = frames.find((f) => f.isTopFrame);

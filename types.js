@@ -193,6 +193,9 @@
  * @property {string} [group]
  * @property {ClientValue<string | null>} [summaryAfter]
  * @property {ClientValue<string[]>} [choiceAliases]
+ * @property {StandardMeta} [std]  how this standard rule writes a shared TNI amount (src/standards.js
+ *   STANDARD_IDS), for a hook that may replace the amount (docs/agent-defaults-spec.md); nothing at fill
+ *   time reads it without one. test/std-metadata.test.mjs holds it to the rule
  * @property {boolean} [matchStart]  a choice is an option reading as the answer or an alias, or beginning with
  *   it, never one that only mentions it further on (Progressive's business type lists: "<name> <description>",
  *   and "Auto Hauler (For Hire Trucking)" is not For Hire Trucking)
@@ -382,6 +385,7 @@
  * @property {boolean} reviewRequired
  * @property {boolean} manualOnly
  * @property {string | null} q
+ * @property {string | null} tni  the TNI rulebook entry its rule names (CarrierRule `tni`)
  * @property {string | null} field
  * @property {string[] | null} ask
  * @property {string[] | null} pages
@@ -519,6 +523,32 @@
  */
 
 /** @typedef {FieldStep | ActionStep} PlanStep */
+
+/**
+ * A standard rule's description of the one shared TNI amount it writes (CarrierRule `std`). Each
+ * function, given TNI's amount (STANDARD_IDS[id]()), gives exactly what the rule itself gives wherever
+ * `applies` holds; given another amount, the same words with that amount.
+ * @typedef {object} StandardMeta
+ * @property {string} id  a key of src/standards.js STANDARD_IDS (medPay, umCsl, compDeductible, collDeductible, rental)
+ * @property {(amount: any) => any} write  the rule's value
+ * @property {(record: ClientRecord, active: ActiveUnits) => boolean} [applies]  false where the rule gives
+ *   an exception of its own (GEICO's Texas UM split): there the amount isn't this standard's
+ * @property {(amount: any) => string} [name]  the rule's name, when it states the amount
+ * @property {(amount: any) => string[]} [aliases]  the rule's choiceAliases, when they state it
+ * @property {(amount: any) => string} [unofferedNote]  the rule's unofferedNote, when it states it
+ */
+
+/**
+ * A hook buildPlan calls with each field step and the rule it came from, before the step's resolution
+ * is decided; the step it returns is the plan's (docs/agent-defaults-spec.md).
+ * @typedef {(step: Omit<FieldStep, 'resolution'>, rule: CarrierRule, context: { record: ClientRecord, carrier: CarrierConfig | null, active: ActiveUnits }) => Omit<FieldStep, 'resolution'>} StepOverlay
+ */
+
+/**
+ * buildPlan's options.
+ * @typedef {object} PlanOptions
+ * @property {StepOverlay | null} [overlay]
+ */
 
 // ---------------------------------------------------------------------------------------------
 // The fill (src/kit/pagekit.js `fill`)
