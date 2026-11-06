@@ -189,7 +189,9 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 
 - `chrome.storage.local`, key `agentDefaults`: `{ v: 1, active: <profile id> | null, profiles: { [id]: { name, values: { [stdId]: { value, tniAtPick } | { ask: true } }, carriers: { [carrierId]: {...} } } } }`. Each profile id is random (`crypto.randomUUID()`).
 - **Defaults belong to a profile the agent picks, never to initials.** Two agents may share initials on one computer, so initials can't tell their defaults apart. In Settings the agent creates a profile ("Jordan K.") or picks an existing one. With no active profile, every answer is TNI's.
-- **No silent carry-over.** Changing the panel's initials, or loading an intake while the active profile was last confirmed under other initials, clears the active profile, so TNI's apply. The panel then asks "Use your defaults? (Jordan K.)" before anything else fills. One agent's defaults therefore can't fill another agent's quote just by being left on.
+- **Confirmed for every quote.** A profile being active is never enough on its own: two agents with the same initials could share a computer, and nothing about the second one changes. So each time an intake is loaded (each new quote), before anything fills, the panel asks "Fill this quote with **Jordan K.**'s defaults?" with two buttons, **Yes, mine** and **Use TNI's**. The answer holds for that quote only. Until the agent answers, nothing fills, the same as a held page. **Use TNI's** fills TNI's everywhere and leaves the profile stored for next time.
+- **Blank initials use TNI's.** With no initials set, no profile can be active: every answer is TNI's and the question isn't asked.
+- **Changing initials** clears the active profile as well, so TNI's apply until a profile is picked again.
 - **Always visible.** While a profile is active, the panel header and the fill report name it ("Defaults: Jordan K., 2 changed"). The log carries the overrides (`agent_settings.defaults`) but not the profile's name.
 - A new key with a "missing means TNI" reader needs no migration. A later shape change follows [storage-version.js](../src/storage-version.js).
 - No client data is stored there, only amounts and choices.
@@ -217,7 +219,7 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 | R7 | The weekly review, benchmark and answer key read agent defaults as rule errors | High | Medium: noisy reviews, wrong fixes | Log defaults per quote; replay with them; report `agent-default` corrections apart |
 | R8 | Luna contradicts the agent's default | Medium | Low–Medium | Rulebook from effective values; cache key includes the defaults digest |
 | R9 | A stale pinned default after TNI changes its standard | Medium | Low–Medium | "Use TNI's" stores nothing; a pinned row shows "TNI's is now $X" |
-| R10 | The wrong agent's defaults on a shared computer, same initials included | Medium | High: another agent's coverages on a quote | Defaults belong to an explicitly picked profile with a random id, never to initials; changing initials clears it; the header and report name the active profile |
+| R10 | The wrong agent's defaults on a shared computer, same initials included | Medium | High: another agent's coverages on a quote | Defaults belong to an explicitly picked profile with a random id, never to initials; each quote asks the agent to confirm the active profile before anything fills; blank or changed initials mean TNI's; the header and report name the profile |
 | R11 | Answer retention or `replace` / `keepChoice` behaviour changes | Low | Medium | Only `value` and `source` change; a rule's `replace`, `keepChoice` and similar flags are untouched; carrier mocks are run with overrides |
 | R12 | Touching 92 rules changes today's answers | Low | High | Rules keep their values; they only gain `std` metadata, held to them by a consistency test; phase 2 is proven identical with `npm run benchmark -- --against` |
 | R13 | Review mode (unvalidated class) is bypassed by a default | Low | Medium | `agent-default` is `reviewRequired` exactly when `standard` would be |
@@ -245,7 +247,7 @@ Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rul
 - **UM above liability:** the step goes to the agent.
 - **Exact targets:** with Med Pay and UM overrides on every carrier mock, GEICO's Basic PIP, UM deductible and UM/UIM type steps are unchanged.
 - **Texas and another state:** with a UM override, GEICO in Texas keeps TNI's $100,000/$300,000 split with the note, and GEICO in Ohio takes the default.
-- **Profiles:** two profiles under the same initials stay apart; changing initials clears the active profile; no active profile means TNI's everywhere.
+- **Profiles:** two profiles under the same initials stay apart; a new intake with an active profile fills nothing until the agent answers the question; **Use TNI's** fills TNI's for that quote and keeps the profile; blank initials mean no profile and TNI's everywhere; changing initials clears the active profile.
 - **Review mode:** an `agent-default` step is `reviewRequired`.
 - **Server and extension agree on `SOURCES`.**
 - **Every panel plan goes through `planFor()`.** No panel file calls `buildPlan` directly.
