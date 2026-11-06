@@ -7,7 +7,7 @@
 // - chrome.storage.local `agentDefaults`: { v: 1, active: <profile id> | null, activeFor: <initials>
 //   | null, profiles: { [id]: { name, values: { [standard id]: { value } }, carriers?: { [carrier id]:
 //   { [standard id]: { value } | { ask: true } } } } } }. `values` is the basic section's; `carriers`
-//   Advanced's, a carrier's own pick over the basic one (no pick: "Same as above"). Missing means
+//   Advanced's, a carrier's own pick over the basic one (no pick: "As above"). Missing means
 //   none: TNI's everywhere. Ids are random, never the agent's initials. The active profile counts
 //   only under the initials it was picked with (`activeFor`): changing the initials leaves none
 //   active, even if that write fails.
@@ -275,7 +275,7 @@ export function defaultsActs() {
       else values[stdId] = { value: /** @type {DefaultChoice} */ (value) };
       await store({ ...stored, profiles: { ...stored.profiles, [id]: { ...profile, values } } });
     },
-    // Advanced: a carrier's own pick for a standard. null is "Same as above" (the basic one), 'ask'
+    // Advanced: a carrier's own pick for a standard. null is "As above" (the basic one), 'ask'
     // leaves it to the agent there, else an amount (a DefaultChoice) that carrier's list offers.
     setCarrier: async (carrierId, stdId, pick) => {
       const stored = now();

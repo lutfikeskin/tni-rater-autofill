@@ -126,7 +126,7 @@ export const isAgentDefault = (item, list) => resolutionOf(item, list).method ==
  * carrier pick is in force and differs from the basic default ({ value } or { ask: true }), and
  * TNI's amount ({ value: TNI's }) where the carrier's pick puts TNI's back over a basic default (a
  * pick of TNI's, or one its list no longer offers, which effectiveDefaults leaves as TNI's). No pick
- * ("Same as above") is left out.
+ * ("As above") is left out.
  * @param {DefaultsProfile | null} profile @param {string} carrierId @returns {EffectiveDefaults}
  */
 export function carrierOverrides(profile, carrierId) {
