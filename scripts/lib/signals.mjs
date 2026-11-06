@@ -357,7 +357,8 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   for (const v of lastSettings.values()) for (const [k, x] of Object.entries(v)) tally(settingsOn, typeof x === 'boolean' ? (x ? `${k} on` : `${k} off`) : `${k}: ${x}`);
 
   // agent defaults: the agents' own defaults the period's quotes were filled with.
-  const ownDefaults = defaultsInForce(events, inPeriod);
+  // Read from all the events, so a quote of the period whose settings arrived before it keeps them.
+  const ownDefaults = defaultsInForce(all, inPeriod);
 
   // Buttons the agents clicked themselves, per quote; checks they dismissed; where answers came from.
   const clicks = new Map();

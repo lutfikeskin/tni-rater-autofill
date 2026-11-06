@@ -382,6 +382,11 @@ test('sheetModel keeps a quote filled with the agent\'s own default apart from T
   assert.deepEqual(own.attention, ['filled with the agent\'s own default, not TNI\'s']);
   assert.deepEqual(own.proposal, { answer: { value: '$2,000 per person' } });
   assert.deepEqual(m.cells.find((c) => c.id.startsWith('s1|')).attention, []);
-  // A question only agents' defaults filled is still a standard's.
-  assert.equal(sheetModel([row('s2', 'agent-default', '$2,000 per person')]).questions[0].group, 'standard');
+  // A question only agents' defaults filled is still a standard's, and proposes nothing: the agents'
+  // own amounts are never offered as TNI's answer.
+  const only = sheetModel([row('s2', 'agent-default', '$2,000 per person'), row('s3', 'agent-default', '$2,000 per person')]);
+  assert.equal(only.questions[0].group, 'standard');
+  assert.deepEqual(only.questions[0].proposal, { answer: null });
+  assert.equal(only.questions[0].choose, undefined);
+  for (const c of only.cells) assert.deepEqual(c.proposal, { answer: { value: '$2,000 per person' } });
 });

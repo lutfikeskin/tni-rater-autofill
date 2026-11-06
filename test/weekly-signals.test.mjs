@@ -370,3 +370,11 @@ test('signals list the agents\' own defaults and count corrections of them apart
   // A week without them says so.
   assert.match(markdown(signals(week(), { since: '2026-10-06' })), /## Agents' own defaults\n\n.*\n\nNone\./);
 });
+
+// A quote of the period whose agent_settings arrived before the period still lists its defaults.
+test('signals read a period quote\'s defaults logged before the period', () => {
+  const events = week();
+  events.push({ id: 'd0', t: '2026-10-05T23:00:00Z', receivedAt: '2026-10-05T23:00:00Z', v: '0.9.9', carrier: 'progressive', agent: 'AB', session: 'new', type: 'agent_settings', values: {}, defaults: [{ id: 'umCsl', value: 300000 }] });
+  const s = signals(events, { since: '2026-10-06' });
+  assert.deepEqual(s.ownDefaults, { quotes: 1, defaults: [{ text: 'Uninsured / underinsured motorist (CSL): $300,000', quotes: 1, agents: ['AB'] }] });
+});

@@ -401,16 +401,19 @@ export function sheetModel(rows, { key = null } = {}) {
       const value = answers.size ? JSON.parse(ranked(answers)[0].text) : null;
       // A pick the key can't hold as a value (any option but one, the first option, the page's
       // suggestion): the option the agents' quotes ended on, else none (the reviewer types it).
+      // agent defaults: a quote an agent's own default filled says what that agent wanted, never TNI's
+      // answer, so it proposes nothing for the question (a question only defaults filled proposes none).
+      const tni = list.filter((c) => c.row.source !== AGENT_DEFAULT_SOURCE);
       const picked = new Map();
-      for (const c of list) { const v = (c.truthRow ?? c.row).detail.truth?.value; if (CHOICE.has(kind) && v != null && v !== '') tally(picked, v); }
+      for (const c of tni) { const v = (c.truthRow ?? c.row).detail.truth?.value; if (CHOICE.has(kind) && v != null && v !== '') tally(picked, v); }
       const proposed = value ?? (picked.size ? ranked(picked)[0].text : null);
       const states = new Set(of('standard').map((c) => c.row.detail.state));
       // Restricted to those states only when a quote elsewhere gets another answer today.
-      const elsewhere = list.some((c) => c.row.status !== 'unsure' && !states.has(c.row.detail.state));
+      const elsewhere = tni.some((c) => c.row.status !== 'unsure' && !states.has(c.row.detail.state));
       // An agent who corrected it, or answered it themselves, otherwise: no answer is preselected;
       // the reviewer chooses between today's rule and the agents' answers.
       const others = new Map();
-      for (const c of list) {
+      for (const c of tni) {
         const tr = c.truthRow ?? c.row;
         if (proposed == null || !['corrected', 'agent'].includes(tr.group)) continue;
         if (agentVerdict(tr.detail.truth, { value: proposed }, CHOICE.has(kind), tr.detail.record) === 'wrong') tally(others, CHOICE.has(kind) ? String(tr.detail.truth.value) : 'other typed text');
