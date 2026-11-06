@@ -215,9 +215,10 @@ test('dropped fields are named on the event (names only, bounded), and health na
   await withServer({ dataDir }, async ({ post, base }) => {
     await post({ events: [ev({ seq: -1, ...many, 'Jordan Sample': 'x' })] });
     const health = await (await fetch(`${base}/v1/health`)).json();
-    // The server's own files, as the image copies them (server/Dockerfile): index.mjs, then the dashboard's.
+    // The server's own files, as the image copies them (server/Dockerfile): index.mjs, the
+    // dashboard's, then agent defaults'.
     const hash = crypto.createHash('sha256');
-    for (const f of ['index.mjs', 'dashboard.mjs']) hash.update(fs.readFileSync(new URL(`../server/${f}`, import.meta.url)));
+    for (const f of ['index.mjs', 'dashboard.mjs', 'agent-defaults.mjs']) hash.update(fs.readFileSync(new URL(`../server/${f}`, import.meta.url)));
     assert.equal(health.server, hash.digest('hex').slice(0, 12));
     assert.equal(health.server, SERVER_HASH);
   });
@@ -513,8 +514,8 @@ test('keeps why an answer was given, and a dismissed check, in their shapes only
   assert.deepEqual([dismissed.type, dismissed.label, dismissed.mark], ['check_dismissed', 'Liability', 'check']);
 });
 
-// Agents' own defaults (docs/agent-defaults-spec.md): the server keeps them before any build sends
-// them, so the first build that does loses nothing.
+// agent defaults (server/agent-defaults.mjs; docs/agent-defaults-spec.md): the server keeps them
+// before any build sends them, so the first build that does loses nothing.
 test('keeps an agent default\'s answer source, the agent\'s defaults and their fingerprint, in their shapes only', async () => {
   const dataDir = tmp();
   const defaults = [{ id: 'medPay', value: 1000 }, { id: 'umCsl', value: 300000, carrier: 'geico' }, { id: 'hazmat', value: 'ask' }, { id: 'umType', value: 'Add-On', carrier: 'geico' }];

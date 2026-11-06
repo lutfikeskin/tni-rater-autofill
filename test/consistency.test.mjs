@@ -50,9 +50,9 @@ test('fill events carry only fields the server keeps (nothing silently dropped)'
   assert.ok(EVENT_FIELDS.field_change.includes('step'));
 });
 
-// A source the server didn't know would be dropped from every fill_field that carries it. The
-// server also keeps agent-default, a TNI standard the agent replaced with their own default
-// (docs/agent-defaults-spec.md), ahead of any build that sends it.
+// A source the server didn't know would be dropped from every fill_field that carries it. For agent
+// defaults (server/agent-defaults.mjs) the server also keeps agent-default, a TNI standard the agent
+// replaced with their own default, ahead of any build that sends it.
 test('the server keeps every answer source the plan gives, and agent-default', () => {
   assert.deepEqual(FIELD_SOURCES, [...SOURCES, 'agent-default']);
 });

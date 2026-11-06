@@ -11,6 +11,6 @@
 # entrypoint that chowns /data first), then redeploy and confirm /v1/events still stores.
 FROM node:22-alpine
 WORKDIR /app
-COPY server/index.mjs server/dashboard.mjs server/privacy.html server/
+COPY server/index.mjs server/dashboard.mjs server/agent-defaults.mjs server/privacy.html server/
 ENV HOST=0.0.0.0 DATA_DIR=/data NODE_ENV=production
 CMD ["node", "server/index.mjs"]
