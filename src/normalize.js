@@ -6,7 +6,8 @@
 // client wrote it and gets a warning instead.
 
 import { stateCode } from './quote-state.js';
-import { STATES, noPriorInsurance, ownerRow, ownerRowNameDiffers, set, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyNotAuto } from './util.js';
+import { STATES, noPriorInsurance, set, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyNotAuto } from './util.js';
+import { ownerRow, ownerRowNameDiffers } from './answers/owner.js';
 
 /** @import { IntakeResult } from '../types.js' */
 
@@ -1110,7 +1111,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   });
   if (companyAsWritten && !companyName(companyAsWritten)) info('company.none', 'applicant.name', `Company name "${companyAsWritten}": sole proprietor.`);
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
-  // A blank "owner drives" box is TNI's Yes on the carriers (2026-10-26, W44-25: util.js
+  // A blank "owner drives" box is TNI's Yes on the carriers (2026-10-26, W44-25: answers/owner.js
   // ownerDrives; the record keeps it blank): an owner missing from the driver list is then listed as a
   // driver whose details aren't on the intake, as with the intake's Yes. Since the owner is always the
   // first driver (TNI, 2026-10-27: answer to PR question V4), only with no driver rows (as before).
@@ -1119,7 +1120,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       : `Owner drives is blank (TNI standard Yes), but "${a.owner1}" isn't a driver. Add their details, or set Owner drives to No.`);
   }
   // TNI, 2026-10-27 (answer to PR question V4): "The owner is always the first driver on the intake's
-  // driver list". A first row whose name isn't the owner box's (util.js ownerRowNameDiffers) is still
+  // driver list". A first row whose name isn't the owner box's (answers/owner.js ownerRowNameDiffers) is still
   // the owner, and this check says it was taken as the owner (in place of T2's `drivers.owner-unclear`).
   // It names no one: the row is its path.
   if (ownerRowNameDiffers(record)) {
@@ -1127,7 +1128,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   }
   // TNI, 2026-10-26 (answer to PR question, R1): "owner drives" says only whether the owner drives;
   // the intake's No makes the owner's driver row an excluded driver on every carrier, as an "Excluded"
-  // mark does (util.js driverExcluded). The owner's row is the first (TNI, 2026-10-27: answer to PR
+  // mark does (answers/owner.js driverExcluded). The owner's row is the first (TNI, 2026-10-27: answer to PR
   // question V4; before, T2's row by the owner's exact full name, with `drivers.owner-unclear` when
   // none was). GEICO's quote leaves the owner's row out (T1), as it does when that row is marked
   // "Excluded" over a blank box or a Yes (V3). The record keeps the rows as read (`excluded` stays
@@ -1137,11 +1138,11 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // No, the owner is excluded, the same on every carrier. Before, it was on the owner's row's Excluded
   // driver with a carrier-by-carrier walkthrough: agents read it as "does the owner drive?", answered
   // No (not excluded) and left the box No, and no row gave the owner's details (2026-10-28 runs; such a
-  // record is now read as the owner driving: util.js ownerDrivesSaid).
+  // record is now read as the owner driving: answers/owner.js ownerDrivesSaid).
   // TNI, 2026-11-05 (W46-02): the intake's No alone no longer excludes the owner. Agents reversed it on
   // the carrier's page in 6 of 7 quotes. The item is red (`alert`), and the owner stays a driver until
   // the agent answers: Owner drives set here (Yes or No), or Looks right, which confirms the No and
-  // quotes the owner as excluded (util.js ownerNoPending; the panel marks the answer on the record).
+  // quotes the owner as excluded (answers/owner.js ownerNoPending; the panel marks the answer on the record).
   const own = ownerRow(record);
   if (own && own.excluded !== true && a.ownerDrives === false) {
     const who = [own.first, own.last].filter(Boolean).join(' ') || `Driver ${rows.drivers[0]}`;

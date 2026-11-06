@@ -31,11 +31,11 @@
 // doesn't answer it.
 
 import { companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity, carPartsMixedNote } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitRaised,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
 import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
-import { owner, ownerDobNote, HAZ_HAUL } from '../util.js';
+import { HAZ_HAUL } from '../util.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreightHauler } from '../answers/classes.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingIs } from '../answers/state.js';
@@ -137,7 +137,7 @@ const trailerEquipmentSource = (r) => (r.trailerInfo?.equipTrailer == null ? 'st
 // A driver the intake marks excluded ("Excluded" in their license-number box, normalize.js; or set
 // in client details). TNI (2026-10-20): the exclude question is Yes for them. The owner's row when
 // the intake says the owner doesn't drive counts too (TNI, 2026-10-26: answer to PR question, R1:
-// util.js driverExcluded). The owner's row is the first, whatever its name (TNI, 2026-10-27: answer
+// answers/owner.js driverExcluded). The owner's row is the first, whatever its name (TNI, 2026-10-27: answer
 // to PR question V4); a later row with the owner's name is excluded only by its own mark. It stays
 // an excluded driver here, also marked over a blank box or a Yes (V3: only GEICO leaves it out).
 const excludedDriver = (r, a) => driverExcluded(r, r.drivers?.[a.drivers ?? 0]);
@@ -840,7 +840,7 @@ export const progressive = {
       { concept: 'owner.name', q: '297', source: 'derived', field: 'AccountInput.BusinessOwnerLastName', ask: 'Last Name', name: 'Owner last name', value: (r) => owner(r).last },
       { concept: 'owner.name', q: '298', field: 'AccountInput.BusinessOwnerSuffix', ask: 'Suffix', optional: true, name: 'Owner suffix (optional)', ignore: true },
       // The intake's answer; a blank box is TNI's standard Yes, and an owner whose driver row the
-      // intake marks excluded is not a driver, No (TNI, 2026-10-26, W44-25: util.js ownerDrives).
+      // intake marks excluded is not a driver, No (TNI, 2026-10-26, W44-25: answers/owner.js ownerDrives).
       // The owner's row is the first (TNI, 2026-10-27: answer to PR question V4), so a later row with
       // the owner's name, marked or not, changes nothing: V4 replaces the 2026-10-26 answer that left
       // the owner's name on several rows, only some excluded, to the agent.
