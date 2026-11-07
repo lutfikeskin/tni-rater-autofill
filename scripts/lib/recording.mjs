@@ -237,7 +237,6 @@ function timeTable(ordered, told, end) {
   return out;
 }
 
-/** The report, as Markdown. */
 /**
  * **Waits by kind** (REC-12): the fill's waits grouped by what they were for, each with how many,
  * the median and the longest, how they ended and the median slack, so a review needn't add them up
@@ -259,6 +258,7 @@ function waitTable(ordered) {
   return out;
 }
 
+/** The report, as Markdown. */
 export function recordingReport({ manifest, events }) {
   const ordered = [...events].sort((a, b) => a.t - b.t || (a.frame ?? 0) - (b.frame ?? 0) || (a.seq ?? 0) - (b.seq ?? 0));
   // How long each fill ran, on its end.
