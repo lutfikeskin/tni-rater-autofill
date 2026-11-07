@@ -131,6 +131,18 @@ test('signals flags a restricted action the extension clicked', () => {
   assert.match(markdown(s), /Safety finding/);
 });
 
+// Audit 2026-11-07, FLOW-12: fills of a hidden tab, with their median time against the others', per
+// carrier, to judge whether Chrome's throttling is worth saying in the dock.
+test('signals sets fills of a hidden tab against the others on the carrier', () => {
+  const events = week();
+  const run = (id, over) => ({ id, t: '2026-10-06T13:00:00Z', receivedAt: '2026-10-06T13:00:00Z', session: 'new', v: '0.9.9', carrier: 'geico', type: 'fill_run', page: 'Vehicles', clicked: [], ...over });
+  events.push(run('h1', { background: true, hiddenMs: 9000, ms: 30000 }), run('h2', { hiddenMs: 2000, ms: 12000 }), run('v1', { ms: 4000 }), run('v2', { ms: 6000 }), run('s', { auto: 'stop', ms: 0, background: true }));
+  const s = signals(events, { since: '2026-10-06' });
+  assert.deepEqual(s.hiddenFills.geico, { runs: 4, background: 1, hidden: 2, medianMs: 30000, medianMsOthers: 6000 });
+  assert.match(markdown(s), /## Fills of a hidden tab[\s\S]*- geico: 1 in the background, 2 hidden, of 4 runs · median 30000 ms against 6000 ms/);
+  assert.equal(s.hiddenFills.progressive, undefined, 'a carrier with no such fill is left out');
+});
+
 test('mask merges values that only differ in numbers or quoted text', () => {
   assert.equal(mask('unfamiliar: 2021 RAM PROMASTER 2500'), mask('unfamiliar: 2019 RAM PROMASTER 3500'));
   assert.equal(mask('no option matches "$1M CSL"'), 'no option matches "…"');

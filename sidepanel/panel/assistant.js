@@ -160,16 +160,21 @@ async function reviewClaimsBox({ retry = false } = {}) {
     if (!cfg.on || !cfg.ready || state.intake !== intake) return;
     const started = Date.now();
     const read = claimsContext(intake.record);
-    const logged = { type: 'ai_suggest', page: 'ClaimsBox', model: cfg.model };
+    // Logged as the quote it began in (as a page review's), also when the intake is replaced
+    // while Luna answers: the tokens were spent, though the answer is dropped.
+    const origin = usage.currentSession();
+    const logged = { type: 'ai_suggest', page: 'ClaimsBox', model: cfg.model, session: origin?.id ?? null, intakeId: origin?.intakeId ?? null };
     const failed = intake.warnings.findIndex((w) => w.code === 'ai.claims-review-failed');
     try {
       const result = await reviewNotes(intake.record, cfg, { redact: redactor(redactionTerms(intake.record)) });
-      // Nothing about a replaced intake is logged under the new one.
-      if (state.intake !== intake) return;
-      const changed = claimsContext(intake.record) !== read;
+      // A replaced intake gets nothing; its quote's log keeps the usage.
+      const replaced = state.intake !== intake;
+      const changed = !replaced && claimsContext(intake.record) !== read;
       usage.log({ ...logged, ms: Date.now() - started, items: result.lines, suggested: result.flagged, leave: result.lines - result.flagged,
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens,
-        cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens, ...(changed ? { error: 'Answer discarded: the claims box or coverages changed.' } : {}) });
+        cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
+        ...(replaced ? { error: 'Answer discarded: the intake was replaced.' } : changed ? { error: 'Answer discarded: the claims box or coverages changed.' } : {}) });
+      if (replaced) return;
       if (changed) { again = true; return; }
       // Warnings are marked checked by position: an earlier failure, or Luna's items from a claims
       // box the agent has since edited, are replaced in place, never removed.
@@ -182,9 +187,9 @@ async function reviewClaimsBox({ retry = false } = {}) {
       if (result.warnings.some((w) => w.code === 'ai.ntl') && intake.record.claims) intake.record.claims.aiNtl = true;
       intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length, context: read };
     } catch (e) {
-      if (state.intake !== intake) return;
       const msg = e instanceof AssistError ? e.message : 'The claims-box review failed.';
-      usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+      usage.log({ ...logged, ms: Date.now() - started, ...spentOf(e), error: msg.slice(0, 200) });
+      if (state.intake !== intake) return;
       if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Luna couldn't review the claims box and Additional Notes. Read them for coverage requests, e.g. NTL or a different limit." });
       intake.notesReview = { failed: true, model: cfg.model };
     }
@@ -232,26 +237,29 @@ async function reviewDriverGender({ retry = false } = {}) {
     if (!cfg.on || !cfg.ready || state.intake !== intake) return;
     const started = Date.now();
     const read = driverNamesContext(intake.record);
-    const logged = { type: 'ai_suggest', page: 'DriverNames', model: cfg.model };
+    const origin = usage.currentSession();
+    const logged = { type: 'ai_suggest', page: 'DriverNames', model: cfg.model, session: origin?.id ?? null, intakeId: origin?.intakeId ?? null };
     const failed = intake.warnings.findIndex((w) => w.code === 'ai.driver-names-failed');
     try {
       const result = await reviewDriverNames(intake.record, cfg);
-      if (state.intake !== intake) return;
-      const changed = driverNamesContext(intake.record) !== read;
+      const replaced = state.intake !== intake;
+      const changed = !replaced && driverNamesContext(intake.record) !== read;
       if (result.modelCalls) {
         usage.log({ ...logged, ms: Date.now() - started, items: result.names, suggested: result.flagged, leave: result.names - result.flagged,
           tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens,
-          cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens, ...(changed ? { error: 'Answer discarded: a driver name changed.' } : {}) });
+          cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
+          ...(replaced ? { error: 'Answer discarded: the intake was replaced.' } : changed ? { error: 'Answer discarded: a driver name changed.' } : {}) });
       }
+      if (replaced) return;
       if (changed) { again = true; return; }
       if (failed >= 0) intake.warnings[failed] = { code: 'ai.driver-names-reviewed', path: 'drivers', level: 'info', msg: 'Luna checked the drivers\' first names after an earlier failure.' };
       // A driver whose gender the agent set meanwhile keeps it: no item for them.
       intake.warnings.push(...result.warnings.filter((w) => !get(intake.record, w.path)));
       intake.namesReview = { done: true, model: cfg.model, flagged: result.flagged, context: read };
     } catch (e) {
-      if (state.intake !== intake) return;
       const msg = e instanceof AssistError ? e.message : 'The driver-name check failed.';
-      usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+      usage.log({ ...logged, ms: Date.now() - started, ...spentOf(e), error: msg.slice(0, 200) });
+      if (state.intake !== intake) return;
       if (failed < 0) intake.warnings.push({ code: 'ai.driver-names-failed', path: 'drivers', level: 'info', msg: "Luna couldn't check the drivers' first names. Gender is filled Male (TNI standard) unless you set it under All client details." });
       intake.namesReview = { failed: true, model: cfg.model };
     }
@@ -293,6 +301,9 @@ async function applyCheckChoice(i, choice) {
 
 // ctx: { tabId, page, carrier } of the fill these frames came from.
 async function runAssist(frames, ctx) {
+  // The quote the review is for: its ai_suggest is logged as that quote's, also when the intake was
+  // replaced while Luna answered (usage-log.js log keeps an event's own session and intakeId).
+  const origin = usage.currentSession();
   const record = state.intake?.record;
   const active = { ...state.active };
   // What Luna's answers rest on (assistContextKey): the intake as Luna sees it, the driver/vehicle,
@@ -371,7 +382,8 @@ async function runAssist(frames, ctx) {
     // The page's other choice questions and their answers go along as context (redacted, bounded,
     // never typed values): what the agent sees beside the questions left to them.
     const context = { record, carrier: ctx.carrier.id, page: ctx.page, active, pageAnswers: pageAnswers(ctx.snapshots, missing, record) };
-    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
+    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length,
+      session: origin?.id ?? null, intakeId: origin?.intakeId ?? null };
     let answered = () => {};
     const sigs = missing.map(sigOf);
     const pending = new Promise((resolve) => { answered = resolve; });
@@ -386,14 +398,17 @@ async function runAssist(frames, ctx) {
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length, ...leaveCounts(fresh),
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
         reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
-        ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
+        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
       if (why) { dropped(`it answered after ${why}, so nothing was applied`); return; }
       fresh.forEach(x => state.aiCache.set(sigOf(x), {
         ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),
       }));
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : 'The assistant could not review this page. Nothing was applied.';
-      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: redactor(redactionTerms(record))(msg).slice(0, 200) });
+      // Which prompt failed (luna.js suggest: error.promptHash), only as its 12 hex characters, and what
+      // a failed or dropped review spent before it stopped (error.usage).
+      const prompt = /^[0-9a-f]{12}$/.test(e?.promptHash ?? '') ? { promptHash: e.promptHash } : {};
+      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, ...prompt, ...spentOf(e), error: redactor(redactionTerms(record))(msg).slice(0, 200) });
       if (!stale()) holder.say({ bad: `AI assistant: ${msg}` });
       else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;
@@ -414,6 +429,15 @@ async function runAssist(frames, ctx) {
   else if (applied) dropped(`${staleWhy()} after its selections were put in`, 'Click Fill this page to review them before continuing.');
   else dropped(`${staleWhy()} before its answers were shown, so nothing was applied`);
   syncAiBanner(ctx);
+}
+
+// The usage counters a failed Luna review carries (luna.js: error.usage), for its ai_suggest event:
+// the calls made before it failed or was dropped were paid for. None for a call never answered.
+function spentOf(e) {
+  const u = e?.usage;
+  if (!u || typeof u !== 'object') return {};
+  const keys = ['modelCalls', 'tokensIn', 'tokensOut', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'];
+  return Object.fromEntries(keys.filter((k) => Number.isFinite(u[k]) && u[k] >= 0).map((k) => [k, u[k]]));
 }
 
 // Why Luna left questions, as counts (luna.js leaveWhy): it said information is missing, saw a
@@ -648,7 +672,7 @@ function aiDecisionEvent(x, ctx, decision) {
   return {
     type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
     decision, choice: x.controlKind !== 'text' && x.choice ? redact(x.choice) : undefined,
-    model: x.model, policy: x.policy, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
+    model: x.model, policy: x.policy, promptHash: x.promptHash ?? undefined, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
   };
 }
 
