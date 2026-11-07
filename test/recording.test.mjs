@@ -72,6 +72,21 @@ test('a saved recording is its manifest and its events in the order they happene
   assert.deepEqual(files['events.jsonl'].trim().split('\n').map((l) => JSON.parse(l).kind), ['page', 'gap', 'click']);
 });
 
+// REC-10 (audit 2026-11-07): two recordings on "the same build" could differ in rules, defaults,
+// switches or trace, and the report couldn't tell; a newer format was read without a word.
+test('a recording says what its run needs to be reproduced, and the report warns of a format it doesn\'t know', () => {
+  const manifest = newManifest({ id: 'geico-x', carrier: 'geico', scenario: 'x', started: '2026-10-23T14:12:00.000Z', build, session: 'session-1', rules: 'rules-1',
+    defaultsHash: null, settings: { autoAdvance: true, autoFollowUps: false, autoPages: true, checkBeforeContinue: true }, platform: 'Windows' });
+  manifest.versions.trace = 2;
+  manifest.versions.recorder = 12;
+  assert.equal(manifest.version, 2);
+  const report = recordingReport({ manifest, events: [] });
+  assert.match(report, /Rules rules-1 · defaults TNI's · auto-advance on, follow-ups off, automatic pages on, check before Continue on · trace 2, recorder 12 · Windows · session session-1/);
+  assert.doesNotMatch(report, /format is version/);
+  assert.match(recordingReport({ manifest: { ...manifest, version: 3 }, events: [] }), /This recording's format is version 3; this report reads up to 2/);
+  assert.doesNotMatch(recordingReport({ manifest: { ...manifest, version: 1 }, events: [] }), /^Rules /m, 'a format-1 recording has none of it');
+});
+
 // The origin private file system's handles, as much of them as the store uses.
 class FakeFile {
   constructor() { this.content = ''; }
@@ -381,4 +396,22 @@ test('a wait\'s slack counts what the wait saw itself, and says when the trace s
   // Nothing seen by either: all slack, as before; and a recording from before REC-02: the trace's alone.
   assert.match(report({ lastChange: t0 + 1000, lastHeld: t0 + 1000 }), /the page did nothing during it\n/);
   assert.match(report({}), /the page did nothing during it\n/);
+});
+
+// REC-04 (audit 2026-11-07): a recording whose panel followed another tab looked complete.
+test('the report says when the panel followed another tab, and for how long, and when the recorded tab was closed', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: 'Home', top: true },
+    { kind: 'panel', t: t0 + 1000, frame: 0, away: true, followed: 9, recorded: 4 },
+    { kind: 'panel', t: t0 + 4000, frame: 0, away: false, followed: 4, recorded: 4 },
+    { kind: 'panel', t: t0 + 5000, frame: 0, closed: true, recorded: 4 },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
+  assert.match(report, /The panel followed another tab for 3\.0 s: what the quote did there is not in this recording/);
+  assert.match(report, /THE PANEL MOVED TO ANOTHER TAB/);
+  assert.match(report, /the panel is back on the recorded tab/);
+  assert.match(report, /THE RECORDED TAB WAS CLOSED/);
+  assert.match(report, /The recorded tab was closed, which ended the recording\./);
+  assert.ok(!/followed another tab/.test(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) })));
 });
