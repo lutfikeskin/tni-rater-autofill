@@ -68,6 +68,7 @@ class Element {
   }
 
   get textContent() { return this.text + this.children.map((child) => child.textContent).join(''); }
+  get localName() { return this.tagName.toLowerCase(); }
   getAttribute(name) { return this.attrs.get(name) ?? null; }
   hasAttribute(name) { return this.attrs.has(name); }
   setAttribute(name, value) { this.attrs.set(name, String(value)); }
@@ -860,6 +861,20 @@ test('GEICO radios in shadow roots are fields in page order, and the agent\'s pi
     'the question without its tooltip, the option\'s words');
   h.tick();
   assert.equal(changes(h).length, 2, 'reported once');
+});
+
+// Audit 2026-11-07 (ENG-14): the same radios in closed shadow roots (no shadowRoot): Chrome hands the
+// recorder's isolated world the root (chrome.dom.openOrClosedShadowRoot), and the question is still seen.
+test('GEICO radios in closed shadow roots are still fields, through chrome.dom', () => {
+  const h = harness({ adapter: 'geico', realKeys: true });
+  h.context.chrome.dom = { openOrClosedShadowRoot: (el) => el.shadowRoot ?? el._closedRoot ?? null };
+  const name = 'Id_GiveCurrentGeicoCommercialAutoPolicyYesNo_48657';
+  const options = [gdsOption(name, 0, 'Yes', 'Yes', { checked: true }), gdsOption(name, 1, 'No', 'No')];
+  const group = gdsGroup(name, options, { question: 'Does the business have a current GEICO commercial auto policy?' });
+  for (const host of [group, ...options.map((o) => o.host)]) { host._closedRoot = host.shadowRoot; delete host.shadowRoot; }
+  h.append(group, ...options.map((o) => o.host));
+  h.tick();
+  assert.deepEqual([...(h.sent.find((m) => m.event === 'new_fields')?.keys ?? [])], ['ref:GiveCurrentGeicoCommercialAutoPolicyYesNo']);
 });
 
 test('while paused, a gesture inside a GEICO option counts for its radio; the fill\'s own click does not', () => {

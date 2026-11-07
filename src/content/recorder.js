@@ -63,13 +63,20 @@
   // is read with one query, as before.
   function deepAll(root, selector) {
     const all = [...(root.querySelectorAll?.('*') ?? [])];
-    if (!all.some((el) => el.shadowRoot)) return [...(root.querySelectorAll?.(selector) ?? [])];
+    const roots = all.map(shadowOf);
+    if (!roots.some(Boolean)) return [...(root.querySelectorAll?.(selector) ?? [])];
     const out = [];
-    for (const el of all) {
+    all.forEach((el, i) => {
       if (el.matches?.(selector)) out.push(el);
-      if (el.shadowRoot) out.push(...deepAll(el.shadowRoot, selector));
-    }
+      if (roots[i]) out.push(...deepAll(roots[i], selector));
+    });
     return out;
+  }
+  // An element's shadow root, a closed one too where Chrome gives it (the kit's shadowOf, src/kit/dom.js).
+  function shadowOf(el) {
+    if (el?.shadowRoot) return el.shadowRoot;
+    if (!el?.localName?.includes('-')) return null;
+    try { return globalThis.chrome?.dom?.openOrClosedShadowRoot?.(el) ?? null; } catch { return null; }
   }
 
   // The element an event happened on. An event from inside a shadow root reaches the window
@@ -102,7 +109,7 @@
   // The radio of the option a gesture is on: its card, its slotted words, anything in its shadow root.
   const optionRadio = (target) => {
     for (let n = target, i = 0; n && i < 12; n = n.parentElement ?? n.getRootNode?.()?.host ?? null, i++) {
-      const radio = n.shadowRoot?.querySelector?.('input[type=radio]');
+      const radio = shadowOf(n)?.querySelector?.('input[type=radio]');
       if (radio && radioHost(radio) === n) return radio;
     }
     return null;
