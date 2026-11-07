@@ -9989,3 +9989,38 @@ test('a detached list pick that fires no input or change event still stops the f
   assert.deepEqual([...report.protectedKeys], ['ref:Test.combo']);
   assert.equal(combo.input.value, 'Agent choice');
 });
+
+// Audit 2026-11-07 (ENG-18): a write focuses its field and blurs it, so an automatic fill that
+// wrote while the agent typed in another field took their next keystrokes. The write waits until
+// they pause, and their field has its focus back after it.
+test('a write waits while the agent types in another field, and gives that field its focus back', async () => {
+  const h = harness();
+  const notes = makeInput({ id: 'notes', ariaLabel: 'Notes' });
+  const years = new SelectNode([{ text: '', value: '' }, { text: '3', value: '3' }], { id: 'yrsInBusiness', ariaLabel: 'Years in Business' });
+  h.document.body.append(years, notes);
+  for (const el of [notes, years]) {
+    el.focus = () => { h.document.activeElement = el; };
+    el.blur = () => { if (h.document.activeElement === el) h.document.activeElement = h.document.body; };
+  }
+  let wroteAt = null;
+  years.addEventListener('change', () => { wroteAt ??= clock.Date.now(); });
+  // The agent is in Notes, typing: a key now and another a second later.
+  notes.focus();
+  const key = () => notes.dispatchEvent({ type: 'keydown', key: 'a', target: notes, isTrusted: true });
+  key();
+  const started = clock.Date.now();
+  setTimeout(key, 1000);
+  const report = await h.kit.fill([{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: '3', name: 'Years in business' }], { maxRounds: 3 });
+  assert.equal(years.value, '3', JSON.stringify(report.failed));
+  assert.ok(wroteAt - started >= 2500, `written ${wroteAt - started} ms in, while the agent typed`);
+  assert.equal(h.document.activeElement, notes, 'their field has its focus back');
+  // Nobody typing: written at once, and focus where the write leaves it.
+  const quiet = harness();
+  const box = new SelectNode([{ text: '', value: '' }, { text: '3', value: '3' }], { id: 'yrsInBusiness', ariaLabel: 'Years in Business' });
+  quiet.document.body.append(box);
+  let at = null;
+  box.addEventListener('change', () => { at ??= clock.Date.now(); });
+  const t0 = clock.Date.now();
+  await quiet.kit.fill([{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: '3', name: 'Years in business' }], { maxRounds: 3 });
+  assert.ok(at - t0 < 1000, `${at - t0} ms`);
+});

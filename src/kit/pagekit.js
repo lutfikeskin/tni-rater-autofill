@@ -11,7 +11,7 @@ import { adapter, pageBusy, perfNow, stepKey, stopStepOn, settle, getKnownStopSt
 import { collectControls, fieldKey, describe, invalidControl } from './dom.js';
 import { mark, clear, markKey, reveal, aiBanner } from './marks.js';
 import { listed, unitList, unitListsNow, unitFormsNow } from './units.js';
-import { guardEdits, answerEdits, getAnswerEditSession, STOP_STEP_HALT, EDIT_HALT_ANSWERS } from './guard.js';
+import { guardEdits, answerEdits, getAnswerEditSession, watchTyping, STOP_STEP_HALT, EDIT_HALT_ANSWERS } from './guard.js';
 import { capture, receipt, readBack, present, signature, decisionSnapshot } from './capture.js';
 import { apply, agreesWith } from './apply.js';
 import { fill, progress, stop } from './cursor.js';
@@ -21,6 +21,8 @@ import { fill, progress, stop } from './cursor.js';
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
   if (globalThis.__raterKit?.version === 94 && globalThis.__raterKit.build === BUILD) return;
+  // The agent's key presses, from now on in this document: a write waits while they type elsewhere (apply).
+  watchTyping();
 
   /**
    * Puts answers the agent accepted from the AI assistant (or that it was allowed to pick itself)

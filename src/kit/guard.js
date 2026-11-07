@@ -13,6 +13,48 @@ export const STOP_HALT = 'You stopped the fill. Nothing more was filled or click
 export const STOP_STEP_HALT = 'This step is yours: nothing is filled or clicked here.';
 export const STEP_UNREAD_HALT = 'The step on screen could not be read (the progress bar and the page title disagree): fill again once the page settles.';
 
+// The agent typing (audit 2026-11-07, ENG-18): a write moves focus to its field and off it, so one
+// landing while the agent types in another field took their next keystrokes. The last trusted key
+// press, watched from the kit's start in each document (watchTyping); a write waits while the agent
+// types in another field (typingElsewhere), and gives their field its focus back (focusedControl).
+export const TYPING_MS = 1500;
+let lastKey = -Infinity;
+let typingWatched = false;
+
+/** Watches the agent's key presses in this document, once. */
+export function watchTyping() {
+  if (typingWatched || typeof document === 'undefined') return;
+  typingWatched = true;
+  document.addEventListener('keydown', (event) => { if (event.isTrusted) lastKey = Date.now(); }, true);
+}
+
+/**
+ * The control the agent's focus is in (through open shadow roots), when it is one they type or pick
+ * in: a text box, a list, a text area or an editable element. Null otherwise.
+ * @returns {HTMLElement | null}
+ */
+export function focusedControl() {
+  let el = /** @type {any} */ (document.activeElement);
+  for (let i = 0; el?.shadowRoot?.activeElement && i < 8; i++) el = el.shadowRoot.activeElement;
+  if (!el || el === document.body || el === document.documentElement) return null;
+  const tag = String(el.tagName ?? '').toUpperCase();
+  const typed = tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true
+    || (tag === 'INPUT' && !/^(button|submit|reset|image|checkbox|radio|file|hidden)$/i.test(el.type ?? ''));
+  return typed ? el : null;
+}
+
+/**
+ * Whether the agent is typing in a field other than `el`: a trusted key press within TYPING_MS, with
+ * their focus in another control.
+ * @param {Element} el
+ * @returns {boolean}
+ */
+export function typingElsewhere(el) {
+  if (Date.now() - lastKey >= TYPING_MS) return false;
+  const focused = focusedControl();
+  return !!focused && focused !== el;
+}
+
 /**
  * Installs listeners to detect trusted agent edits to page controls.
  * @param {(key: string, c: PageControl) => void} onEdit

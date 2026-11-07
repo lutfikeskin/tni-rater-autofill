@@ -8,6 +8,7 @@ import { unitFormsOf } from './units.js';
 import { createLocator } from './locator.js';
 import { createAddressDriver } from './drivers/address.js';
 import { createSelect2Drivers } from './drivers/select2.js';
+import { typingElsewhere, focusedControl } from './guard.js';
 
 /** @import { PageControl } from './dom.js' */
 /** @import { FailCode, PlanStep, WriteResult } from '../../types.js' */
@@ -112,6 +113,32 @@ export const drivers = [
 export async function apply(step, c) {
   // Stopped (the agent's Stop, or their edit): nothing more is written.
   if (waitsStopped()) return interrupted();
+  // The agent typing in another field (audit 2026-11-07, ENG-18): the write waits until they pause
+  // (at most TYPING_WAIT_MS), and their field has its focus back after it, which the write's own
+  // focus and blur took.
+  for (const end = Date.now() + TYPING_WAIT_MS; typingElsewhere(c.el) && Date.now() < end && !waitsStopped();) await pause(TYPING_POLL_MS);
+  if (waitsStopped()) return interrupted();
+  const theirs = focusedControl();
+  try {
+    return await write(step, c);
+  } finally {
+    if (theirs && theirs !== c.el && theirs.isConnected !== false && focusedControl() !== theirs) {
+      try { theirs.focus({ preventScroll: true }); } catch { /* gone */ }
+    }
+  }
+}
+
+// How long a write waits for the agent to stop typing in another field, and how often it looks.
+export const TYPING_WAIT_MS = 10000;
+const TYPING_POLL_MS = 250;
+
+/**
+ * Writes a plan step's value into control c with the driver that writes it, or the plain controls' own way.
+ * @param {any} step
+ * @param {PageControl} c
+ * @returns {Promise<{ ok: boolean, shown?: string | null, reason?: string, options?: string[] }>}
+ */
+async function write(step, c) {
   const driver = drivers.find((d) => d.writes(step, c));
   if (driver) return driver.write(step, c);
 
