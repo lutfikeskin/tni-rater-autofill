@@ -279,6 +279,26 @@ test('a rejected automatic choice keeps blocking until manual change or explicit
   assert.equal(context.pendingAi(1, 'Quote').length, 0, 'explicit confirmation releases the blocker');
 });
 
+// CodeRabbit on #410: the fill's own tab's AI picks hold its Continue, read by that tab's quote,
+// whichever tab is in front.
+test('the fill options hold Continue for the fill\'s own tab\'s AI picks, by that tab\'s quote', () => {
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  const source = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4);
+  const carrier = { id: 'amwins', advance: { text: '^continue$' } };
+  // Tab 7's pick, made on its quote A; tab 8 (quote B) is in front.
+  const state = { tab: { id: 8, url: 'https://carrier.test/quote?id=B', carrier }, intake: { record: {} }, recording: null, tabSessions: new Map(),
+    aiCache: new Map([['7\n/quote\nm\np\nc\nitem', { done: 'auto', key: 'k', quoteHash: 'https://carrier.test/quote?id=A' }]]) };
+  const context = { state, switchOn: () => false, advanceFor: () => ({ text: '^continue$' }), stepScope: (page) => page, knownStep: () => null, unitNameFor: () => null,
+    editScope: (page) => page, pageOf: (url) => new URL(url).pathname, firstUnits: () => ({}), usage: { currentSession: () => null }, aiFingerprint: (url) => url };
+  vm.createContext(context);
+  vm.runInContext(`${source}\n${['tabMaps', 'givenEarlier', 'aiDecisionBlocks', 'pendingAi'].map(extractFunction).join('\n')}\nglobalThis.fillOptions = fillOptions;`, context);
+  const options = context.fillOptions(carrier, {}, true, {}, false, { tabId: 7, tabUrl: 'https://carrier.test/quote?id=A', intake: state.intake });
+  assert.equal(options.advance, null, 'tab 7\'s pick holds its Continue');
+  // A pick from another quote that tab showed before: not this quote's.
+  const other = context.fillOptions(carrier, {}, true, {}, false, { tabId: 7, tabUrl: 'https://carrier.test/quote?id=C', intake: state.intake });
+  assert.deepEqual(other.advance, { text: '^continue$' });
+});
+
 test('a persisted manual correction is protected after the panel reloads', () => {
   const sig = '1\nQuote\ngpt-6-luna\nluna-v1\ncontext\nitem';
   const state = { aiCache: new Map([[sig, { key: 'optional-choice', manual: true }]]) };

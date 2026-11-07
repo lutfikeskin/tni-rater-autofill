@@ -94,7 +94,8 @@ const fillOptionsFor = (carrier, extra, autoAdvance, active, unitsListed, fill, 
     .filter(([s, raw]) => s === stepScope(page, carrier, active, carrier.layoutSteps ? knownStep(carrier, raw.split('@')[0]) : undefined) + raw).map(([, raw]) => raw),
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
-  advance: autoAdvance && carrier.advance && !pendingAi(fill.tabId, page).length ? advanceFor(carrier, unitsListed) : null,
+  // The fill's own tab's picks, of its quote: the address now when it is in front, else the one the fill was asked on.
+  advance: autoAdvance && carrier.advance && !pendingAi(fill.tabId, page, fill.tabId === state.tab?.id ? state.tab?.url : fill.tabUrl).length ? advanceFor(carrier, unitsListed) : null,
   // "Check answers before Continue": Continue only for the page as the agent approved it (Looks
   // right passes its receipt as `confirmed`). Kept on this computer, not in the usage log.
   hold: switchOn('checkBeforeContinue', 'check-continue'),

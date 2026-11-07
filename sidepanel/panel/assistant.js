@@ -454,12 +454,13 @@ function leaveCounts(suggestions) {
 // are any, the page's Continue is never clicked automatically. Picks made before the agent
 // changed the intake or the driver/vehicle are included: they're still on the page, unapproved,
 // so they keep blocking until the agent approves or rejects them (the card always offers both).
-function pendingAi(tabId, page) {
+// `url`: the tab's address, whose quote a pick must be of (the tab in front's unless given).
+function pendingAi(tabId, page, url = state.tab?.url) {
   const out = [];
   for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
     if (t === String(tabId) && p === page && aiDecisionBlocks(x)
-      && (!x.quoteHash || x.quoteHash === aiFingerprint(state.tab?.url))) out.push(x);
+      && (!x.quoteHash || x.quoteHash === aiFingerprint(url))) out.push(x);
   }
   return out;
 }
