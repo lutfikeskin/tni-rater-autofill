@@ -3719,6 +3719,51 @@ test('Stop while an address box waits for its suggestions: nothing is picked and
   assert.equal(report.filled.length, 0);
 });
 
+test('Stop while a list waits for its options (a plain list, select2\'s search, Progressive\'s combo): nothing is picked, at once', async () => {
+  const stopIn = (h, ms) => { const t0 = clock.Date.now(); setTimeout(() => h.kit.stop(), ms); return () => clock.Date.now() - t0; };
+  // A plain list still loading (one placeholder option): the fill would wait 6 s for it.
+  {
+    const h = harness();
+    const list = new SelectNode([{ text: '', value: '' }], { id: 'odd', ariaLabel: 'Body type' });
+    h.document.body.append(list);
+    setTimeout(() => { list.options = [...list.options, { text: 'Box', value: 'box' }]; }, 2000);
+    const took = stopIn(h, 500);
+    const report = await h.kit.fill([{ id: 'body', selector: '#odd', path: 'x.body', kind: 'choice', value: 'Box' }], { maxRounds: 3 });
+    assert.ok(took() <= 600, `the plain list: the fill ended ${took()} ms in`);
+    assert.deepEqual([report.halted, list.value, report.filled.length], [true, '', 0]);
+  }
+  // A select2 type-ahead whose server never answers: 6 s for its results.
+  {
+    const h = harness();
+    const select = new SelectNode([{ text: '', value: '' }], { id: 'classCodeAndDescription', ariaLabel: 'Classification' });
+    const container = new FakeNode('span', { className: 'select2 select2-container' });
+    const opener = new FakeNode('span', { className: 'select2-selection' });
+    container.append(opener);
+    h.document.body.append(select, container);
+    opener.addEventListener('mousedown', () => {
+      const search = makeInput({ className: 'select2-search__field' });
+      search.className = 'select2-search__field';
+      h.document.body.append(search);
+    });
+    const took = stopIn(h, 500);
+    const report = await h.kit.fill([{ id: 'cls', selector: '#classCodeAndDescription', path: 'x.cls', kind: 'search-select', value: '484122', search: '484122' }], { maxRounds: 3 });
+    assert.ok(took() <= 600, `select2: the fill ended ${took()} ms in`);
+    assert.deepEqual([report.halted, select.value, report.filled.length], [true, '', 0]);
+  }
+  // Progressive's combo whose list fills only later (cargo commodities): 6 s for it.
+  {
+    const h = harness({ ext: true, search: '?pageName=NewCustomer' });
+    const field = addExtText(h, 'a', '93');
+    let records = [];
+    Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records, isLoading: () => false }, doQuery: () => {} });
+    setTimeout(() => { records = [{ get: () => 'Trucking' }]; }, 3000);
+    const took = stopIn(h, 500);
+    const report = await h.kit.fill([{ id: 'desc', q: '93', field: fieldOf('93'), path: 'progressive.q93', name: 'Business description', kind: 'choice', value: 'Trucking' }], { maxRounds: 3 });
+    assert.ok(took() <= 600, `Progressive's combo: the fill ended ${took()} ms in`);
+    assert.deepEqual([report.halted, field.cmp.getValue() ?? '', report.filled.length], [true, '', 0]);
+  }
+});
+
 // Bitwarden comparison (2026-10-22): the page the panel asked to fill is checked as the fill starts.
 // Another one in the top frame is left alone: nothing filled, and the marks of an earlier fill stay.
 test('a fill meant for another page than the top frame shows fills nothing and names the page found', async () => {
@@ -6451,6 +6496,18 @@ test('GEICO\'s Recalculate: Stop while the page redraws after its premium ends t
   assert.match(report.reason, /You stopped the fill/);
   assert.equal(p.comp.value, '$500 deductible', 'nothing put back after Stop');
   assert.equal(p.more._clicked, undefined, 'nothing more clicked');
+});
+
+test('GEICO\'s Recalculate: Stop while the fill puts GEICO\'s changes back ends the put-back after the answer going in', async () => {
+  const p = recalcPage({ redraw: ({ comp, coll }) => { comp.value = '$500 deductible'; coll.value = '$500 deductible'; } });
+  // The agent stops as the first answer goes back in.
+  p.comp.addEventListener('change', () => p.h.kit.stop());
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+  assert.equal(p.recalcs, 1);
+  assert.deepEqual([p.comp.value, p.coll.value], ['$1,000 deductible', '$500 deductible'], 'the second is not put back after Stop');
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.equal(p.more._clicked, undefined);
 });
 
 // W43-41 (FL, 2026-10-22): after the fill's Recalculate, the liability limit, UM, road service and
