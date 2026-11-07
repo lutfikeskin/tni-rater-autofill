@@ -141,6 +141,8 @@ if (inExtension) {
   Promise.all(RULE_FILES.map((f) => fetch(chrome.runtime.getURL(f)).then((r) => r.text()))).then(rulesHash)
     .then((hash) => { rulesVersion = hash; }).catch(() => {});
 }
+// The same fingerprint, for a developer recording's manifest (null until read).
+const rulesFingerprint = () => rulesVersion;
 
 // What a fill is about, taken before it waits on anything (audit 2026-10-08, finding 5): its own
 // id (`run`, shared by its events), the tab, carrier and page it fills, the intake and revision it
@@ -1619,4 +1621,4 @@ function stopPageIsOurs() {
   return !state.layoutHold || state.layoutReadyTabs.has(state.tab?.id);
 }
 
-export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };
+export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, rulesFingerprint, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };

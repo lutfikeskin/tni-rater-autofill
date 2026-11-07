@@ -72,6 +72,21 @@ test('a saved recording is its manifest and its events in the order they happene
   assert.deepEqual(files['events.jsonl'].trim().split('\n').map((l) => JSON.parse(l).kind), ['page', 'gap', 'click']);
 });
 
+// REC-10 (audit 2026-11-07): two recordings on "the same build" could differ in rules, defaults,
+// switches or trace, and the report couldn't tell; a newer format was read without a word.
+test('a recording says what its run needs to be reproduced, and the report warns of a format it doesn\'t know', () => {
+  const manifest = newManifest({ id: 'geico-x', carrier: 'geico', scenario: 'x', started: '2026-10-23T14:12:00.000Z', build, session: 'session-1', rules: 'rules-1',
+    defaultsHash: null, settings: { autoAdvance: true, autoFollowUps: false, autoPages: true, checkBeforeContinue: true }, platform: 'Windows' });
+  manifest.versions.trace = 2;
+  manifest.versions.recorder = 12;
+  assert.equal(manifest.version, 2);
+  const report = recordingReport({ manifest, events: [] });
+  assert.match(report, /Rules rules-1 · defaults TNI's · auto-advance on, follow-ups off, automatic pages on, check before Continue on · trace 2, recorder 12 · Windows · session session-1/);
+  assert.doesNotMatch(report, /format is version/);
+  assert.match(recordingReport({ manifest: { ...manifest, version: 3 }, events: [] }), /This recording's format is version 3; this report reads up to 2/);
+  assert.doesNotMatch(recordingReport({ manifest: { ...manifest, version: 1 }, events: [] }), /^Rules /m, 'a format-1 recording has none of it');
+});
+
 // The origin private file system's handles, as much of them as the store uses.
 class FakeFile {
   constructor() { this.content = ''; }

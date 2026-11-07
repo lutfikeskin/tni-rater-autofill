@@ -8737,14 +8737,32 @@ test('a panel that pops out or docks stops and saves its recording first', async
 
 test('a new recording first stops a trace a closed panel left in the tab', async () => {
   const done = [];
-  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: false };
+  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: false, switches: { autoPages: false, checkBeforeContinue: false } };
+  let manifest = null;
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
-    usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => { done.push('store'); return {}; } },
+    usage: { build: () => ({}), currentSession: () => ({ id: 'session-1', intakeId: 'intake-1' }) }, RecordingStore: { start: async (m) => { manifest = m; done.push('store'); return {}; } },
     setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => { done.push('inject'); },
+    rulesFingerprint: () => 'rules-1', fillDefaultsHash: () => null, navigator: { platform: 'Win32', userAgentData: { platform: 'Windows' } },
     chrome: { tabs: { sendMessage: async (tabId, msg) => { done.push(`${msg.ra}:${msg.cmd}:${tabId}`); } } } };
   vm.runInNewContext(extractFunction('startRecording'), context);
   await context.startRecording();
   assert.deepEqual(done, ['trace:stop:4', 'store', 'inject']);
+  // REC-10 (audit 2026-11-07): what the run needs to be reproduced, beside the build.
+  assert.deepEqual(JSON.parse(JSON.stringify([manifest.session, manifest.intake, manifest.rules, manifest.defaultsHash, manifest.settings, manifest.platform])),
+    ['session-1', 'intake-1', 'rules-1', null, { autoAdvance: true, autoFollowUps: true, autoPages: false, checkBeforeContinue: false }, 'Windows']);
+});
+
+test('the recording\'s manifest names the trace and recorder its top frame\'s first batch came from', () => {
+  const manifest = { versions: { trace: null, recorder: null } };
+  const store = { manifest, add() {} };
+  const state = { recording: { tabId: 4, store, fills: [], redact: (s) => s, carrier: {} } };
+  const context = { state, stampEvents: (events) => events, knownStep: () => null };
+  vm.runInNewContext(extractFunction('onTraceMessage'), context);
+  context.onTraceMessage({ ra: 'trace', events: [], v: 2, recorder: 12 }, { tab: { id: 4 }, frameId: 3 }, () => {});
+  assert.deepEqual({ ...manifest.versions }, { trace: null, recorder: null }, 'a frame\'s is not the page\'s');
+  context.onTraceMessage({ ra: 'trace', events: [], v: 2, recorder: 12 }, { tab: { id: 4 }, frameId: 0 }, () => {});
+  context.onTraceMessage({ ra: 'trace', events: [], v: 3, recorder: 13 }, { tab: { id: 4 }, frameId: 0 }, () => {});
+  assert.deepEqual({ ...manifest.versions }, { trace: 2, recorder: 12 });
 });
 
 test('a recording started during a fill begins with that fill, so its end isn\'t one without a start', async () => {
@@ -8753,6 +8771,7 @@ test('a recording started during a fill begins with that fill, so its end isn\'t
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
     usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => ({ add: (events) => added.push(...events) }) },
     setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => {}, Date,
+    rulesFingerprint: () => null, fillDefaultsHash: () => null, navigator: {},
     chrome: { tabs: { sendMessage: async () => {} } } };
   vm.runInNewContext(extractFunction('startRecording'), context);
   await context.startRecording();
