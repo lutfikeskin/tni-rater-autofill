@@ -297,6 +297,9 @@ function showFinish({ auto = false } = {}) {
 /** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {FillReport[]} frames */
 function logFill(ctx, frames, results, started) {
   if (ctx.carrier.practice) return;
+  // The kept answers logged in this quote (fillEvents' keptLogged): a new usage session, a new set.
+  const session = usage.currentSession()?.id ?? null;
+  if (state.keptLogged?.session !== session) state.keptLogged = { session, seen: new Set() };
   const redact = redactor(redactionTerms(ctx.intake.record));
   state.lastRuns?.set(`${ctx.tabId}|${ctx.page}`, { run: ctx.run, at: Date.now(), step: stepOfResults(ctx.carrier, results),
     blockers: frames.flatMap((f) => f.blockers ?? []).slice(0, 6).map((b) => redact(String(b)).slice(0, 120)) });
@@ -305,6 +308,7 @@ function logFill(ctx, frames, results, started) {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
     run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash,
+    keptLogged: state.keptLogged.seen,
   }));
 }
 // A rejected fill has no fill_run result to carry its rule version and switches.

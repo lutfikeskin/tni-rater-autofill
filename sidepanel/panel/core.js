@@ -309,6 +309,9 @@ const state = storeState({
   // The last fill on each tab and page ("<tab>|<page>" -> { run, at, step, blockers }), so a
   // problem report names the fill it is about.
   lastRuns: new Map(),
+  // The kept answers logged in this usage session ({ session, seen }: logFill, fillEvents'
+  // keptLogged), so a page filled again doesn't log each again.
+  keptLogged: null,
   layoutChain: Promise.resolve(),
   layoutTimer: null,
   layoutPending: null,

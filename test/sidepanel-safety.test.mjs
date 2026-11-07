@@ -8345,6 +8345,23 @@ test('a unit list not read as complete is said in counts in the usage log', asyn
   assert.equal(run_.fields, 0);
 });
 
+// Audit 2026-11-07, LEARN-11: the fill's kept answers are logged once per usage session; a new
+// quote's session starts again.
+test('a fill logs its kept answers once per quote, and again for a new quote', () => {
+  const logged = [];
+  let session = { id: 's1' };
+  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => session }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, fillEvents, knownStep };
+  vm.runInNewContext(extractFunction('logFill'), context);
+  const fill = () => context.logFill({ carrier: { id: 'geico' }, intake: { record: {} }, page: '/quote', view: 't1', run: 'r', settings: {} },
+    [{ fields: 1, filled: [], blockers: [], kept: [{ label: 'Garaging ZIP', key: 'ref:GiveZip', controlKind: 'text', now: '20001' }] }], [{ frameId: 0, result: { stepKey: 'Vehicles' } }], Date.now());
+  const kept = () => logged.filter((e) => e.result === 'kept').length;
+  fill(); fill();
+  assert.equal(kept(), 1);
+  session = { id: 's2' };
+  fill();
+  assert.equal(kept(), 2, 'a new quote logs it again');
+});
+
 // W43-42 (Progressive, 2026-10-22): a 29-second automatic follow-up fill showed no rows until it
 // ended. An automatic fill is watched as the agent's is; its rows show from the first answer in.
 test('an automatic fill lists its answers as they go in, from the first one', async () => {
