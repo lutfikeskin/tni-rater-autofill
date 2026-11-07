@@ -332,7 +332,14 @@ function logFillError(ctx, error) {
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || stateIssue() || defaultsHold() || quoteOwnerIssue(ctx.tabId)) return;
+  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || quoteOwnerIssue(ctx.tabId)) return;
+  // Held by the quote's state or the defaults question, a follow-up waits for nothing. A step with no
+  // report yet (AmWINS' next step at the same address, which autoFill fills as a new page) is a page's
+  // opening fill: fillPage keeps it for resumeHeldFill, to run once the hold lifts.
+  if (stateIssue() || defaultsHold()) {
+    if (ctx.tabId === state.tab?.id && pageOf(state.tab?.url) === page && !state.reports.has(reportKey(ctx.tabId, page, state.tab.carrier))) fillPage({ auto: 'page' });
+    return;
+  }
   if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);

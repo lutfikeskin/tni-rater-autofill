@@ -6019,6 +6019,32 @@ test('after a hold lifts, the page whose opening fill it held fills as on openin
   assert.match(extractFunction('applyAi'), /state\.filling = false;\n[^\n]*\n\s*resumeHeldFill\(\);/);
 });
 
+// #414 review: AmWINS' next step opens at the same address (new_fields -> scheduleAutoFill ->
+// autoFill, which fills a step without a report as a new page). Under a state or defaults hold
+// scheduleAutoFill dropped it before fillPage could keep it for resumeHeldFill. A step with no
+// report yet goes to fillPage, which keeps it; a follow-up on a step already filled still waits for
+// nothing.
+test('a new step at the same address opened under a hold is kept for when the hold lifts', () => {
+  const run = ({ hold = 'state', report = false, front = 7 } = {}) => {
+    const fills = [];
+    const timers = [];
+    const state = { tab: { id: 7, url: 'Quote', carrier: { name: 'AmWINS' } }, intake: {}, intakeRevision: 0, autoPages: new Set(['Quote']), autoPaused: false, filling: false,
+      reports: new Map(report ? [['7|Quote|Coverages', {}]] : []) };
+    const context = { state, $: () => ({ checked: true }), switchOn: () => true, onQuotePage: () => true, stopNoteFor: () => null, quoteOwnerIssue: () => null,
+      stateIssue: () => (hold === 'state' ? { picked: 'Texas' } : null), defaultsHold: () => hold === 'defaults', pageOf: (u) => u,
+      reportKey: (tabId, page) => `${tabId}|${page}|Coverages`, fillPage: (o) => fills.push(o), fillCurrent: () => true, autoFill: () => fills.push('autoFill'),
+      setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout: () => {} };
+    vm.runInNewContext(extractFunction('scheduleAutoFill'), context);
+    context.scheduleAutoFill('Quote', { tabId: front, intake: state.intake, revision: 0 }, true);
+    return { fills: JSON.parse(JSON.stringify(fills)), timers: timers.length };
+  };
+  assert.deepEqual(run(), { fills: [{ auto: 'page' }], timers: 0 }, 'a state hold: the new step goes to fillPage, which keeps it');
+  assert.deepEqual(run({ hold: 'defaults' }), { fills: [{ auto: 'page' }], timers: 0 }, 'a defaults hold: the same');
+  assert.deepEqual(run({ report: true }), { fills: [], timers: 0 }, 'a follow-up on a step filled: nothing waits');
+  assert.deepEqual(run({ front: 8 }), { fills: [], timers: 0 }, 'another tab\'s: nothing');
+  assert.deepEqual(run({ hold: null }), { fills: [], timers: 1 }, 'no hold: scheduled as before');
+});
+
 test('the fill hint says Continue is clicked for the agent only while that setting is on and the carrier has an advance pattern', () => {
   const geico = { name: 'GEICO', advance: { text: 'Next' }, unitLists: {} };
   const prog = { name: 'Progressive', advance: { text: 'Continue' } };
@@ -8390,10 +8416,11 @@ test('no fill, follow-up or scheduled fill while the quote state differs from th
   t.release(t.results);
   await run;
   assert.equal(t.seen.rendered, 1);
-  // A follow-up isn't scheduled either.
+  // A follow-up (its page filled, with a report) isn't scheduled either.
   const timers = [];
-  const state = { autoPaused: false, autoPages: new Set(['Quote']), tab: { id: 1, url: 'Quote', carrier: { id: 'progressive' } }, filling: false, intake: {}, tabSteps: new Map() };
-  const context = { state, $: () => ({ checked: true }), onQuotePage: () => true, setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {}, pageOf: (u) => u, stateIssue: () => issue };
+  const state = { autoPaused: false, autoPages: new Set(['Quote']), tab: { id: 1, url: 'Quote', carrier: { id: 'progressive' } }, filling: false, intake: {}, tabSteps: new Map(), reports: new Map([['1|Quote', {}]]) };
+  const context = { state, $: () => ({ checked: true }), onQuotePage: () => true, setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {}, pageOf: (u) => u, stateIssue: () => issue,
+    reportKey: (tabId, page) => `${tabId}|${page}`, fillPage: () => timers.push('fillPage') };
   vm.runInNewContext(extractFunction('scheduleAutoFill'), context);
   context.scheduleAutoFill('Quote');
   assert.equal(timers.length, 0);
