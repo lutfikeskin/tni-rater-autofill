@@ -272,6 +272,8 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   for (const r of allRuns) {
     for (const c of r.clicked ?? []) tally(actions, `helper ${String(typeof c === 'string' ? c : JSON.stringify(c)).replace(/:\d+$/, '')}`);
     if (r.advanced) tally(actions, `advance "${typeof r.advanced === 'string' ? r.advanced : JSON.stringify(r.advanced)}"`);
+    // A Continue that didn't take, clicked a second time (`retried`): whether the retry still earns its place.
+    if (r.retried) tally(actions, `Continue clicked again on ${r.carrier} ${r.page}`);
   }
   const restricted = [...actions].filter(([a]) => isRestricted(a));
 

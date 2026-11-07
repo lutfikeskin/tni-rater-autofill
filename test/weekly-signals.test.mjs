@@ -143,6 +143,17 @@ test('signals sets fills of a hidden tab against the others on the carrier', () 
   assert.equal(s.hiddenFills.progressive, undefined, 'a carrier with no such fill is left out');
 });
 
+// Audit 2026-11-07, FLOW-11: the lost-Continue retry rests on no proof that the first click was
+// lost: each second click is counted among the extension's clicks.
+test('signals counts each Continue clicked again after it didn’t take', () => {
+  const events = week();
+  events.push({ id: 'r', t: '2026-10-06T13:00:00Z', receivedAt: '2026-10-06T13:00:00Z', session: 'new', v: '0.9.9', carrier: 'progressive', type: 'fill_run', page: 'Rates', auto: 'page', retried: true, advanced: 'Continue', clicked: [] });
+  const s = signals(events, { since: '2026-10-06' });
+  assert.deepEqual(s.actions.find(([a]) => a.startsWith('Continue clicked again')), ['Continue clicked again on progressive Rates', 1]);
+  assert.match(markdown(s), /Continue clicked again on progressive Rates ×1/);
+  assert.deepEqual(s.restricted, []);
+});
+
 test('mask merges values that only differ in numbers or quoted text', () => {
   assert.equal(mask('unfamiliar: 2021 RAM PROMASTER 2500'), mask('unfamiliar: 2019 RAM PROMASTER 3500'));
   assert.equal(mask('no option matches "$1M CSL"'), 'no option matches "…"');

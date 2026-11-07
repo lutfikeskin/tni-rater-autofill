@@ -5198,15 +5198,21 @@ test('a recorder already in the page is told to resume, unless a fill or AI appl
 
 // Audit 2026-10-08, finding 6: a Continue that didn't take went unreported after the silent retry.
 test('a Continue that did not take after its retry pauses automatic filling, tells the agent and is logged', async () => {
-  const logged = [], appended = [];
+  const logged = [], appended = [], asked = [];
   let fills = 0;
   const state = { tab: { id: 1, url: 'Step' }, intake: {}, filling: false, pagePending: null, autoPaused: false, advanceRetried: new Set(), doneSteps: new Set(['Step||Vehicles']) };
   const context = { state, pageOf: (u) => u, $: () => ({ checked: true }), setTimeout: (fn) => fn(), fillProblem: (ctx, text) => appended.push(text),
-    runKit: async () => [{ frameId: 0, result: 'same' }], fillPage: () => { fills++; }, usage: { log: (e) => logged.push(e) } };
+    runKit: async () => [{ frameId: 0, result: 'same' }], fillPage: (o) => { fills++; asked.push(o); }, usage: { log: (e) => logged.push(e) } };
   vm.runInNewContext(extractFunction('watchNextStep'), context);
   const carrier = { id: 'amwins', practice: false };
   await context.watchNextStep(carrier, 'Step', 'same', 'Step||Vehicles', 'run-1');
   assert.equal(fills, 1, 'the lost Continue is clicked once more, silently');
+  // Logged as the retry it is (audit 2026-11-07, FLOW-11): fillPage marks its fill (ctx.retried),
+  // and its fill_run and fill_error say `retried`.
+  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [{ auto: 'page', retried: true }]);
+  assert.match(extractFunction('fillPage'), /const ctx = fillContext\([^\n]*\n\s*if \(retried\) ctx\.retried = true;/);
+  assert.match(extractFunction('logFill'), /retried: !!ctx\.retried,/);
+  assert.match(extractFunction('logFillError'), /\.\.\.\(ctx\.retried \? \{ retried: true \} : \{\}\)/);
   assert.deepEqual([[...state.advanceRetried], state.doneSteps.has('Step||Vehicles'), state.autoPaused, logged], [['Step||Vehicles'], false, false, []]);
   // The retried fill clicked Continue again and watches again; the step still doesn't change.
   await context.watchNextStep(carrier, 'Step', 'same', 'Step||Vehicles', 'run-2');

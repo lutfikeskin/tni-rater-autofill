@@ -318,7 +318,7 @@ function logFill(ctx, frames, results, started) {
   usage.log(...fillEvents(ctx.listNote ? [...frames, { blockers: [ctx.listNote] }] : frames, {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
-    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background,
+    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background, retried: !!ctx.retried,
     keptLogged: state.keptLogged.seen,
   }));
 }
@@ -326,7 +326,7 @@ function logFill(ctx, frames, results, started) {
 function logFillError(ctx, error) {
   if (ctx.carrier.practice) return;
   usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run,
-    rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, error: fillErrorText(ctx, error), ...ctx.ids });
+    rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, ...(ctx.retried ? { retried: true } : {}), error: fillErrorText(ctx, error), ...ctx.ids });
 }
 
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes

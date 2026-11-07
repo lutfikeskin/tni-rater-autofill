@@ -87,8 +87,9 @@ function resumeHeldFill() {
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
-/** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean }} [options] */
-async function fillPage({ auto = false, confirmed = null, continuing = false } = {}) {
+// `retried`: the second click of a Continue that didn't take (watchNextStep), logged as such.
+/** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean, retried?: boolean }} [options] */
+async function fillPage({ auto = false, confirmed = null, continuing = false, retried = false } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
   if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
   // The tab's quote is for another state than the intake's: nothing is filled until the agent says
@@ -135,6 +136,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
+  if (retried) ctx.retried = true;
   await pickListItem(carrier, page, ctx);
   // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
   if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); resumeHeldFill(); return; }
@@ -538,7 +540,7 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     if (retries && unchanged >= patience && doneKey && !state.filling && !state.advanceRetried.has(doneKey)) {
       state.advanceRetried.add(doneKey);
       state.doneSteps.delete(doneKey);
-      fillPage({ auto: 'page' });
+      fillPage({ auto: 'page', retried: true });
       return;
     }
     if (unchanged >= patience && doneKey && !state.filling && (!retries || state.advanceRetried.has(doneKey))) {

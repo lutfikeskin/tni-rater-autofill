@@ -875,6 +875,7 @@
  * @property {string} [step]
  * @property {boolean} [background]  the panel filled the quote tab while the agent was on another tab
  * @property {number} [hiddenMs]  how long the quote tab's page was hidden during the fill, only when it was
+ * @property {boolean} [retried]  the second click of a Continue that didn't take (watchNextStep)
  * @property {number} fields
  * @property {number} rounds
  * @property {number} filled
