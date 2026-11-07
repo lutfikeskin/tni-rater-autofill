@@ -18,7 +18,7 @@ import { $, forgetKeptReports, persistAgentKeys, persistDoneActions, persistUnit
 import { firstUnits, save } from './intake.js';
 import { checkShown, renderPickers, renderWarnings, showScreen } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
-import { afterFill, appendRows, assistAfterFill, fillPage, noteMissingUnit, pickListItem, renderReport, runKit, worldFor } from './fill.js';
+import { afterFill, appendRows, assistAfterFill, fillPage, kitCall, kitGone, noteMissingUnit, pickListItem, renderReport, worldFor } from './fill.js';
 import { pendingAi } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNameFor, unitScope } from './scope.js';
@@ -390,9 +390,9 @@ async function autoFill(page) {
     // automatic fill showed nothing until it ended).
     state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false, auto: true };
     unwatch = watchFill(ctx);
-    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
+    const results = await kitCall(tabId, carrier, 'fill', [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
+    if (results.some((r) => r.result?.pageMoved) || kitGone(results)) { moved = true; notePageMoved(ctx); return; }
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
@@ -533,7 +533,7 @@ async function captureLayout(job, reason) {
   if (fillStarted()) return waitForFill(job);
   const { tabId, carrier, page } = job;
   try {
-    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
+    const results = await kitCall(tabId, carrier, 'capture',
       [planFor(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
     if (!jobCurrent(job) || superseded(job)) return;
     if (fillStarted()) return waitForFill(job);
@@ -698,7 +698,7 @@ async function layoutWhenQuiet(job, tries = 0) {
   if (state.filling) return afterFill();
   let busy;
   try {
-    busy = (await runKit(job.tabId, job.carrier, () => globalThis.__raterKit.busy())).some((r) => r.result);
+    busy = (await kitCall(job.tabId, job.carrier, 'busy')).some((r) => r.result);
   } catch (e) {
     // Couldn't ask the page: the same as a layout that couldn't be read, unless it moved on.
     if (live()) layoutFailed(job, reason(), layoutErrorKind(e));
