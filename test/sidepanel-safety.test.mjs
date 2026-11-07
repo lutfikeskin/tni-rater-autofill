@@ -133,7 +133,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -8585,9 +8585,53 @@ test('an automatic fill lists its answers as they go in, from the first one', as
   await run;
   assert.equal(t.state.fillingFor, null);
   assert.match(watched, /:stopped$/);
-  // Shown once a row is in, never for a follow-up that has answered nothing yet: the dock here, the
-  // live list in test/panel/live-view.test.jsx.
-  assert.match(extractFunction('dockFor'), /if \(state\.filling && f\?\.tabId === state\.tab\.id && \(!f\.auto \|\| !!f\.rows\?\.length\)\) \{/);
+  // Shown once a row is in, or once it has gone on a while (fillShown, below), never for a quick
+  // follow-up that has answered nothing yet: the dock here, the live list in test/panel/live-view.test.jsx.
+  assert.match(extractFunction('dockFor'), /if \(state\.filling && fillShown\(f\)\) return fillingSaid\(f\);/);
+});
+
+// Audit 2026-11-07, FLOW-05: a quiet automatic follow-up (waiting on a helper, Recalculate or the
+// premium, W43-42: 29 s) ran with no Stop under the last report's buttons, and a fill on another quote
+// tab couldn't be stopped from the tab in front.
+test('a fill running is said with its Stop: a quiet follow-up once it has gone on a while, one on another tab by its carrier', () => {
+  const pick = (d, keys) => Object.fromEntries(keys.map((k) => [k, d[k]]));
+  const carrier = { name: 'GEICO', advance: { text: 'Next' } };
+  const h = dockHarness({ carrier, extra: { QUIET_MS: 1500, DOCK_PHASES: new Set(['premium']), phaseSaid: (p) => [p.name === 'premium' ? 'Waiting for the premium' : 'x'] } });
+  h.state.filling = true;
+  // A quick follow-up with nothing in yet: the page's own word stays (its buttons held: renderDock's busy).
+  h.state.fillingFor = { run: 'r', tabId: 7, carrier, auto: true, rows: [], filled: 0, started: Date.now(), phase: { name: 'premium' } };
+  assert.equal(h.dock().phase, 'ready');
+  // Gone on a while (watchFill marks it `shown`): the fill, with Stop and what it waits on.
+  h.state.fillingFor = { ...h.state.fillingFor, shown: true };
+  assert.deepEqual(pick(h.dock(), ['phase', 'title', 'button', 'label', 'disabled']), { phase: 'filling', title: 'Waiting for the premium…', button: 'fill-stop', label: 'Stop', disabled: false });
+  // On another tab than the one in front, a rater's or not: named, with Stop.
+  h.state.fillingFor = { run: 'r', tabId: 9, carrier, rows: [{ label: 'Gender' }], filled: 1 };
+  assert.deepEqual(pick(h.dock(), ['phase', 'eyebrow', 'title', 'button', 'label']), { phase: 'elsewhere', eyebrow: 'Filling · 1 in', title: 'Filling your other GEICO tab', button: 'fill-stop', label: 'Stop' });
+  h.state.tab = { id: 3, url: 'https://news.example/', carrier: null };
+  assert.equal(h.dock().phase, 'elsewhere');
+  h.state.fillingFor = { ...h.state.fillingFor, stopping: true };
+  assert.deepEqual(pick(h.dock(), ['eyebrow', 'label', 'disabled']), { eyebrow: 'Stopping', label: 'Stopping…', disabled: true });
+  // The tab in front keeps its mark while another fills (src/tab-mark.js markFor: 'keep').
+});
+
+test('watchFill says a quiet automatic fill as one once it has gone on QUIET_MS, and autoFill holds the dock from its start', async () => {
+  const ticks = [];
+  let drawn = 0;
+  const state = { fillingFor: { run: 'r', auto: true, rows: [], started: 1000 } };
+  let now = 1000;
+  const context = { state, inExtension: true, QUIET_MS: 1500, UNANSWERED_MS: 5000, Date: { now: () => now }, renderSteps: () => { drawn++; },
+    setInterval: (fn) => { ticks.push(fn); return 1; }, clearInterval() {}, worldFor: () => 'ISOLATED',
+    chrome: { scripting: { executeScript: async () => [] } } };
+  vm.runInNewContext(extractFunction('watchFill'), context);
+  context.watchFill({ run: 'r', tabId: 7, carrier: {} });
+  now = 2000;
+  await ticks[0]();
+  assert.equal(!!state.fillingFor.shown, false);
+  now = 2600;
+  await ticks[0]();
+  assert.deepEqual([state.fillingFor.shown, drawn > 0], [true, true]);
+  assert.match(extractFunction('autoFill'), /state\.filling = true;\n\s+state\.autoPending = false;\n\s+\/\/[^\n]*\n\s+renderSteps\(\);/);
+  assert.match(extractFunction('autoFill'), /auto: true, started: Date\.now\(\) \};/);
 });
 
 test('the business profile is logged on load, after a correction settles, and on opening, only when it changed', async () => {
