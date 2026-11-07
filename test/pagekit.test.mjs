@@ -9652,9 +9652,10 @@ test('a value an earlier fill gave that a rule replaces (`replace`) is kept once
   assert.equal(report.checks[0]?.note, 'This was changed after it was filled (Mailing state): left as it is. Check it.');
 });
 
-// On GEICO's Quote & Coverages the page takes answers back: that rule (`takenBack`) still decides,
-// and the agent's Fill this page (its steps without keys) gives such an answer again.
-test('on the steps where the page takes answers back, the agent\'s Fill this page still gives them again', async () => {
+// The maintainer, 2026-11-07: on GEICO's Quote & Coverages too, an answer the fill gave that shows
+// otherwise now is kept and flagged, by the agent's Fill this page as well, also where the panel's
+// keys of the tab's answers don't name it (a panel opened again knows it from the kept reports only).
+test('on the steps where the page takes answers back, an answer showing otherwise is kept by every fill', async () => {
   const h = harness({ adapter: 'geico', pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   const comp = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_20000_COMP`, value: 'Not Included' });
@@ -9662,7 +9663,11 @@ test('on the steps where the page takes answers back, the agent\'s Fill this pag
   const step = { id: 'comp', selector: '[id$="_COMP"]', steps: ['Quote & Coverages'], path: 'geico.qCOMP', name: 'Comprehensive', kind: 'choice', value: '$1,000 deductible' };
   const first = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true });
   comp.value = 'Not Included';
-  await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, takenBack: { steps: ['Quote & Coverages'], keys: null }, givenBefore: givenBy(first) });
+  let report = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, takenBack: { steps: ['Quote & Coverages'], keys: {} }, givenBefore: givenBy(first) });
+  assert.equal(comp.value, 'Not Included');
+  assert.deepEqual(plain(report.checks.map((x) => x.note)), ['This was changed after it was filled (Comprehensive): left as it is. Check it.']);
+  // Replace existing answers gives it again.
+  report = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, overwrite: true, takenBack: { steps: ['Quote & Coverages'], keys: {} }, givenBefore: givenBy(first) });
   assert.equal(comp.value, '$1,000 deductible');
 });
 
