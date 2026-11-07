@@ -1,7 +1,7 @@
 // @ts-check
 // Which federal filings the intake's "which filings" box asks for, read once for every carrier that
 // ticks filings by name (GEICO's Add Filings boxes and filing type, AmWINS' BMC-91, MCS-90 and
-// BMC-32). TNI, 2026-11-07 (the maintainer, audit CARR-01): filings follow GEICO's stricter reading,
+// BMC-32, Progressive's Federal filing). TNI, 2026-11-07 (the maintainer, audit CARR-01): filings follow GEICO's stricter reading,
 // shared by the carriers. Each carrier maps the result onto its own boxes and words its own notes.
 //
 // - A federal liability filing is named by BMC-91 (or 91X), MCS-90 or "federal liability". "Federal"
