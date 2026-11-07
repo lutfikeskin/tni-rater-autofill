@@ -518,3 +518,43 @@ test('a component a change adds with its question already drawn in its shadow ro
   assert.equal(bursts.length, 1);
   assert.deepEqual([bursts[0].drawnCount, bursts[0].drawn.map((d) => d.label)], [1, ['Trailer type']]);
 });
+
+// Review of PR #377 (second round): a large added subtree was listed whole (querySelectorAll) before
+// the turn's budget applied, and a root attached after its host was looked at was never watched.
+test('a large added subtree is walked a turn\'s elements at a time, never listed whole', async () => {
+  const h = harness();
+  let walked = 0;
+  // A tree walker over elements' `children`, as the browser's walks (the recorder's walker kept).
+  const textWalker = h.context.document.createTreeWalker;
+  h.context.document.createTreeWalker = (root, what) => {
+    if (what !== 1) return textWalker(root, what);
+    const todo = [...(root.children ?? [])].reverse();
+    return { nextNode: () => { const n = todo.pop() ?? null; if (n) { walked++; todo.push(...[...(n.children ?? [])].reverse()); } return n; } };
+  };
+  const listed = [];
+  const host = { tagName: 'GDS-CARD', localName: 'gds-card', nodeType: 1, children: [], shadowRoot: { nodeType: 11, children: [], querySelectorAll: () => [] } };
+  const section = { tagName: 'SECTION', localName: 'section', nodeType: 1, matches: () => false,
+    children: [...Array.from({ length: 12_000 }, () => ({ tagName: 'DIV', localName: 'div', nodeType: 1, children: [], shadowRoot: null })), host],
+    querySelectorAll: (sel) => { if (sel === '*') listed.push(sel); return []; } };
+  h.mutate([{ addedNodes: [section], removedNodes: [] }]);
+  assert.ok(walked <= 5000, `one turn's elements in the change's callback (${walked})`);
+  assert.equal(h.observers.observed.includes(host.shadowRoot), false);
+  await h.advance(10);
+  assert.equal(walked, 12_001);
+  assert.equal(h.observers.observed.includes(host.shadowRoot), true);
+  assert.deepEqual(listed, [], 'never listed whole');
+});
+
+test('a component whose shadow root comes after it was looked at is watched once it has one, its questions drawn then', async () => {
+  const h = harness();
+  const trailer = new Control('select', { name: 'trailer', label: 'Trailer type', options: [{ text: 'Flatbed', value: 'F' }] });
+  const host = { tagName: 'GDS-SELECT', localName: 'gds-select', nodeType: 1, isConnected: true, shadowRoot: null, querySelectorAll: () => [], matches: () => false };
+  h.mutate([{ addedNodes: [host], removedNodes: [] }]);
+  await h.advance(400);
+  // Defined later: its upgrade attaches its root, which no change says.
+  host.shadowRoot = { nodeType: 11, isConnected: true, querySelectorAll: (sel) => (sel === '*' ? [] : [trailer]) };
+  await h.advance(1000);
+  assert.equal(h.observers.observed.filter((x) => x === host.shadowRoot).length, 1);
+  const drew = h.events().filter((e) => e.kind === 'burst' && e.drawnCount);
+  assert.deepEqual(drew.map((b) => b.drawn.map((d) => d.label)), [['Trailer type']]);
+});

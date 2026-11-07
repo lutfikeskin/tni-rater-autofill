@@ -228,6 +228,8 @@
       push('step', { step: nowStep, from: step });
       step = nowStep;
     }
+    // A component that has its shadow root only now (below).
+    lateRoots();
   }, 500);
 
   // What the page does on its own. A run of DOM changes ends BURST_QUIET_MS after the last one, as
@@ -308,11 +310,15 @@
   // rest on the next tick, so a large page or redraw never stalls the page and none is left unlooked
   // (review of PR #377). A node added under one still waiting its turn waits on that one's look.
   // A root a change brought is part of that change: its controls, drawn before it was watched,
-  // count as drawn (`drawn`).
+  // count as drawn (`drawn`). A component whose root came after it was looked at (one defined
+  // later: its upgrade attaches the root, and no change says so) is looked at again each half
+  // second while it has none, at most MAX_BARE of them (`bare`).
   const watchedRoots = new WeakSet();
   const SHADOW_SCAN = 5000;
+  const MAX_BARE = 1000;
   const shadowWork = [];
   const waiting = new Set();
+  const bare = new Set();
   let looking = null;
   let shadowTimer = null;
   const toLook = (node, drawn) => { shadowWork.push({ node, drawn }); waiting.add(node); };
@@ -320,9 +326,27 @@
     for (let p = node.parentNode ?? node.host; p; p = p.parentNode ?? p.host) if (waiting.has(p)) return true;
     return false;
   };
+  // The elements under a node one at a time (a tree walker, so a turn's look stops where its budget
+  // does, never listing a large subtree first); a list of them where there is no walker.
+  const SHOW_ELEMENT = (typeof NodeFilter === 'object' && NodeFilter?.SHOW_ELEMENT) || 1;
+  const elementsIn = (node) => {
+    try {
+      const walker = document.createTreeWalker?.(node, SHOW_ELEMENT);
+      if (typeof walker?.nextNode === 'function') return () => walker.nextNode();
+    } catch { /* not walkable */ }
+    let list = [];
+    try { list = node.querySelectorAll?.('*') ?? []; } catch { /* not queryable */ }
+    let i = 0;
+    return () => (i < list.length ? list[i++] : null);
+  };
   const rootOf = (el, drawn) => {
     const root = el?.shadowRoot;
-    if (!root || watchedRoots.has(root)) return;
+    if (!root) {
+      if (String(el?.localName ?? '').includes('-') && bare.size < MAX_BARE) bare.add(el);
+      return;
+    }
+    bare.delete(el);
+    if (watchedRoots.has(root)) return;
     watchedRoots.add(root);
     try { mutations.observe(root, { childList: true, subtree: true }); } catch { return; }
     if (drawn) {
@@ -340,15 +364,26 @@
         const next = shadowWork.shift();
         if (!next) break;
         waiting.delete(next.node);
-        let list = [];
-        try { list = next.node.querySelectorAll?.('*') ?? []; } catch { /* not queryable */ }
-        looking = { list, i: 0, drawn: next.drawn };
+        looking = { next: elementsIn(next.node), drawn: next.drawn };
         if (next.node.nodeType === 1) { rootOf(next.node, next.drawn); budget--; }
       }
-      while (budget > 0 && looking.i < looking.list.length) { rootOf(looking.list[looking.i++], looking.drawn); budget--; }
-      if (looking.i >= looking.list.length) looking = null;
+      while (budget > 0) {
+        const el = looking.next();
+        if (!el) { looking = null; break; }
+        rootOf(el, looking.drawn);
+        budget--;
+      }
     }
     if (looking || shadowWork.length) shadowTimer = setTimeout(lookForShadows, 0);
+  };
+  // The components seen with no root, again: one that has one now is a change that drew it.
+  const lateRoots = () => {
+    if (!mutations || disposed) return;
+    for (const el of bare) {
+      if (el.shadowRoot) rootOf(el, true);
+      else if (el.isConnected === false) bare.delete(el);
+    }
+    if (shadowWork.length && !shadowTimer) lookForShadows();
   };
   if (typeof MutationObserver === 'function') {
     mutations = new MutationObserver((records) => {
