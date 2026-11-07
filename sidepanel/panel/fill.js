@@ -15,7 +15,7 @@ import { $, aiSnapshotFieldMatches, keepReport, memory, persistAgentKeys, persis
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
-import { announce, dropReports, fillContext, fillOptions, fillProblem, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
+import { announce, dropReports, fillContext, fillOptions, fillProblem, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showOwnerNote, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
 import { aiDecisionEvent, remarkAi, runAssist, syncAiBanner } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep } from './scope.js';
@@ -27,6 +27,7 @@ import { mountRows } from './report-view.jsx';
 import { mountReportHead } from './notes-view.jsx';
 import { flushSync } from 'react-dom';
 import { defaultsHold, isOwnDefault } from './agent-defaults/store.js';
+import { bindQuoteTab, quoteOwnerIssue } from './quote-owner.js';
 /** @import { CarrierConfig, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -92,6 +93,9 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     renderSteps();
     return;
   }
+  // The tab's quote wasn't started with this intake (quote-owner.js): maybe the last client's quote,
+  // left open. Nothing fills there by itself; the agent's own Fill this page fills it for this client.
+  if (auto && state.intake && quoteOwnerIssue()) { showOwnerNote(); renderSteps(); return; }
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
@@ -166,6 +170,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
+    // And its quote is this intake's (the agent's Fill this page on another intake's quote too).
+    bindQuoteTab(tabId, ctx.intake.intakeId);
     noteMissingUnit(results, ctx);
     const frames = results.map((r) => r.result).filter(Boolean);
     const retrying = rememberFill(frames, ctx);

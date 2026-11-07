@@ -254,7 +254,7 @@ const $ = (id) => document.getElementById(id);
 // What the panel knows and shows, kept in the panel's store (state-store.js): read and assigned as
 // a plain object here, and subscribed to by the React views.
 const state = storeState({
-  intake: null, // { record, warnings, stats, fileName, done: number[] }
+  intake: null, // { record, warnings, stats, fileName, done: number[], intakeId }
   // The developer recording under way (startRecording): { store, tabId, carrier, redact, started, timer, stopping }.
   recording: null,
   active: { drivers: 0, vehicles: 0, trailers: 0 },
@@ -319,6 +319,10 @@ const state = storeState({
   layoutHold: false,
   layoutReadyTabs: new Set(),
   layoutNewTabs: new Set(), // tabs opened since then (a new quote, as Progressive opens one)
+  // The intake each quote tab's quote was started with (tab id -> intake id, quote-owner.js):
+  // automatic fills wait on a quote page whose quote wasn't started with the intake loaded.
+  quoteOwners: new Map(),
+  quoteEntries: new Set(), // tabs whose next quote starts with the intake loaded when they reach it
   viewTabs: new Map(), // tab id -> its order in this quote, for events' `view` (viewOf)
   layoutLatest: null, // the capture asked for last (waiting or queued), which later changes feed
   layoutErrors: 0,
