@@ -2,7 +2,7 @@
 // another rater's tab in front while the panel stays on the quote tab (showHeldNote),
 // then what's wrong or different about this tab's quote, above its answers: the client's current
 // insurance with this carrier (showCarrierNote), the quote's state against the intake's
-// (showStateNote), a quote that began with another intake (showOwnerNote), the carrier's stop or
+// (showStateNote), a quote not started with this intake (showOwnerNote), the carrier's stop or
 // the agent's step (showStopPage), review mode (showReviewMode) and the last fill that didn't
 // finish (renderSteps). Drawn from what those say (state.cards, each card as issueSaid in
 // coordinator.js puts it).
@@ -44,7 +44,7 @@ const NOTES = [
   { name: 'held', id: 'held-note' },
   { name: 'carrier', id: 'carrier-note' },
   { name: 'state', id: 'state-note' },
-  // The tab's quote began with another intake (coordinator.js showOwnerNote, quote-owner.js).
+  // The tab's quote wasn't started with this intake (coordinator.js showOwnerNote, quote-owner.js).
   { name: 'owner', id: 'owner-note' },
   // agent defaults: whose defaults this quote fills with (sidepanel/panel/agent-defaults/store.js).
   { name: 'defaults', id: 'defaults-note' },

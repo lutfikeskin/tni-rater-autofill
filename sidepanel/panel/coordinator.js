@@ -312,7 +312,7 @@ async function autoFill(page) {
   state.autoDrawn = null;
   // The client may have been cleared while this fill was waiting to run.
   if (state.autoPaused || state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
-  // Nor on a tab whose quote began with another intake (quote-owner.js).
+  // Nor on a tab whose quote wasn't started with this intake (quote-owner.js).
   if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue()) return;
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
@@ -1284,10 +1284,10 @@ function dockFor() {
     if (state.view !== 'page') return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Whose defaults does this quote take?', sub, button: 'dock-defaults', label: 'Show the question' };
     return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Answer the question above', sub, button: 'fill', label: 'Fill this page', disabled: true };
   }
-  // The tab's quote began with another intake (quote-owner.js): nothing fills by itself; the
+  // The tab's quote wasn't started with this intake (quote-owner.js): nothing fills by itself; the
   // agent's Fill this page fills it for this client (the card above).
   if (quoteOwnerIssue()) {
-    return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Another client’s quote?', sub: 'This tab’s quote began with another intake. Nothing fills here by itself.', button: 'fill', label: 'Fill this page' };
+    return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Another client’s quote?', sub: 'This tab’s quote wasn’t started with this intake. Nothing fills here by itself.', button: 'fill', label: 'Fill this page' };
   }
   // The carrier's portal pages outside a quote are never filled (fillPage).
   if (!onQuotePage()) return { phase: 'portal', eyebrow: 'Next', title: 'Open the client’s quote', sub: 'This is the portal. Filling starts on a quote page.' };
@@ -1529,16 +1529,17 @@ function dismissState() {
   renderSteps();
 }
 
-// The tab's quote began with another intake than the one loaded (quote-owner.js): maybe the last
-// client's quote, left open to email or print it. Said above the page's answers; pages that open,
+// The tab's quote wasn't started with the intake loaded (quote-owner.js): maybe the last client's
+// quote, left open to email or print it, or one open before this intake. Said above the page's answers; pages that open,
 // follow-ups and Continue don't fill there (fillPage, scheduleAutoFill, autoFill) until the agent
 // fills the page themselves or says the quote is this client's.
 function showOwnerNote() {
   const issue = state.intake ? quoteOwnerIssue() : null;
   if (!issue) { state.cards = { ...state.cards, owner: null }; return; }
   const name = state.tab.carrier?.name ?? 'rater';
-  state.cards = { ...state.cards, owner: issueSaid({ tone: 'warn', title: `This ${name} tab’s quote began with another intake.`,
-    text: 'It may be another client’s quote. Nothing fills here by itself: not pages as they open, follow-ups or Continue. Open a new quote for this client, or, if this quote is theirs, say so or use Fill this page.',
+  const began = issue.owner ? 'This tab’s quote was started with another intake.' : 'This tab’s quote was open before this intake was loaded.';
+  state.cards = { ...state.cards, owner: issueSaid({ tone: 'warn', title: `Is this ${name} quote this client’s?`,
+    text: `${began} It may be another client’s quote. Nothing fills here by itself: not pages as they open, follow-ups or Continue. Start this client’s quote from ${name}’s own start page, or, if this quote is theirs, say so or use Fill this page.`,
     actions: [{ label: 'It’s this client’s quote', className: 'tinted', onClick: claimQuote }] }) };
 }
 

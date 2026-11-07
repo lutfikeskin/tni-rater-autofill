@@ -93,8 +93,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     renderSteps();
     return;
   }
-  // The tab's quote began with another intake (quote-owner.js): maybe the last client's quote, left
-  // open. Nothing fills there by itself; the agent's own Fill this page fills it for this client.
+  // The tab's quote wasn't started with this intake (quote-owner.js): maybe the last client's quote,
+  // left open. Nothing fills there by itself; the agent's own Fill this page fills it for this client.
   if (auto && state.intake && quoteOwnerIssue()) { showOwnerNote(); renderSteps(); return; }
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").

@@ -15,6 +15,7 @@ import { reviewIntake } from './assistant.js';
 import { uploadNow } from './usage-panel.js';
 import { clientNote, keepPdf, workSaid } from './pdf-view.js';
 import { quoteStarting, refreshDefaults, settingsDefaults } from './agent-defaults/store.js';
+import { settleQuoteEntries } from './quote-owner.js';
 
 // ---------------------------------------------------------------------------------------------
 // Loading the intake PDF
@@ -49,6 +50,8 @@ async function loadFile(file, { reset = false } = {}) {
   if (state.intake) usage.log({ type: 'intake_closed', reason: reset ? 'reset' : 'replaced' });
   // A recording ends with its client (redacted with that client's names), as on clearing it.
   if (state.recording && !same) await stopRecording('Another client was loaded, so the recording stopped.');
+  // A tab that went into a quote while the panel was closed did so before this intake (quote-owner.js).
+  await settleQuoteEntries(async (id) => (await chrome.tabs.get(id)).url);
   clearTimeout(state.autoTimer);
   state.autoDrawn = null;
   state.autoPending = false;

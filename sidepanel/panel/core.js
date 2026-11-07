@@ -319,9 +319,10 @@ const state = storeState({
   layoutHold: false,
   layoutReadyTabs: new Set(),
   layoutNewTabs: new Set(), // tabs opened since then (a new quote, as Progressive opens one)
-  // The intake each quote tab's quote began with (tab id -> intake id, quote-owner.js): automatic
-  // fills wait on a tab whose quote began with another intake.
+  // The intake each quote tab's quote was started with (tab id -> intake id, quote-owner.js):
+  // automatic fills wait on a quote page whose quote wasn't started with the intake loaded.
   quoteOwners: new Map(),
+  quoteEntries: new Set(), // tabs whose next quote starts with the intake loaded when they reach it
   viewTabs: new Map(), // tab id -> its order in this quote, for events' `view` (viewOf)
   layoutLatest: null, // the capture asked for last (waiting or queued), which later changes feed
   layoutErrors: 0,

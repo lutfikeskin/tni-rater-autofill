@@ -85,7 +85,7 @@ async function refreshTab() {
     state.autoPending = false;
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false, windowId: tab.windowId } : null;
-  // Whose quote the tab is, as the panel finds it (a tab no intake had yet, on a quote page).
+  // Whose quote the tab is, as the panel finds it (one it saw go into a quote, or out of one).
   noteQuoteTab(state.tab?.id, state.tab?.url);
   await restoreAgentKeys(state.tab?.id);
   await restoreDoneActions(state.tab?.id);

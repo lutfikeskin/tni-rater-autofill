@@ -109,7 +109,7 @@ function extractFunction(name) {
           initialsChanged: 'async () => {}', refreshDefaults: '() => {}', quoteStarting: '() => {}', settingsDefaults: '() => undefined',
           // Whose quote a tab is (quote-owner.js) has its own tests (test/panel/quote-owner.test.jsx):
           // elsewhere every tab is this intake's, unless the harness says otherwise.
-          quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}' };
+          quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -3698,7 +3698,7 @@ test('after an intake is loaded, only a tab opened since may give its first page
   await context.pending();
   await context.state.layoutChain;
   assert.deepEqual(logged.filter((e) => e.type === 'page_layout').map((e) => e.reason), ['arrived']);
-  assert.match(SIDEPANEL, /chrome\.tabs\.onCreated\.addListener\(\(tab\) => \{ if \(state\.layoutHold\) state\.layoutNewTabs\.add\(tab\.id\); inheritQuoteState\(tab\); \}\)/);
+  assert.match(SIDEPANEL, /chrome\.tabs\.onCreated\.addListener\(\(tab\) => \{ if \(state\.layoutHold\) state\.layoutNewTabs\.add\(tab\.id\); inheritQuoteState\(tab\); noteNewTab\(tab\); \}\)/);
 });
 
 test('after Luna\'s picks go in (with the recorder paused), the page\'s layout is asked for', () => {

@@ -30,7 +30,7 @@ import { mountSiteTrack } from './panel/site-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaultsShown } from './panel/agent-defaults/store.js';
 import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
-import { forgetQuoteTab, restoreQuoteOwners } from './panel/quote-owner.js';
+import { forgetQuoteTab, noteNewTab, restoreQuoteOwners } from './panel/quote-owner.js';
 import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
@@ -184,7 +184,7 @@ function wire() {
     chrome.runtime.onMessage.addListener(noteLiveItems);
     chrome.runtime.onMessage.addListener(onPanelMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
-    chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); });
+    chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); noteNewTab(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
     chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); forgetQuoteTab(tabId); dropReports((entry) => entry.tabId === tabId); });
     chrome.windows.onFocusChanged.addListener(refreshTab);
