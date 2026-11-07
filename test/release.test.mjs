@@ -25,6 +25,8 @@ test('a merge commit reads as its pull request\'s title; a squash merge keeps it
 test('the release workflow tags only what a push to main brought, from main\'s history', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/release-tag.yml', import.meta.url), 'utf8');
   assert.doesNotMatch(workflow, /workflow_dispatch/);
+  // A concurrency group cancels a pending run when the next one queues: the bump's run would be lost.
+  assert.doesNotMatch(workflow, /^concurrency:/m);
   assert.match(workflow, /^ {2}push:\n {4}branches: \[main\]/m);
   assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /release-notes\.mjs --ref origin\/main --before "\$BEFORE"/);

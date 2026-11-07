@@ -12,10 +12,9 @@ on:
     branches: [main]
     paths: [manifest.json]
 
-# One at a time, so two pushes never race to create the same tag.
-concurrency:
-  group: release-tag
-  cancel-in-progress: false
+# No concurrency group: GitHub keeps one pending run per group and cancels the one before, which
+# would drop a version bump's run when another manifest change follows it (the review of #429).
+# Two runs never tag the same version: only the push that brought a version's commit tags it.
 
 jobs:
   tag:
