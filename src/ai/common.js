@@ -169,22 +169,26 @@ export function pseudonymizeChoices(items, record) {
   const a = record?.applicant ?? {}, g = record?.garaging ?? {};
   const drivers = record?.drivers ?? [];
   const names = redactor(redactionTerms({ applicant: { owner1: a.owner1, owner2: a.owner2 },
-    garaging: { street: g.street, unit: g.unit, city: g.city, zip: g.zip },
     drivers: drivers.map((d) => ({ first: d?.first, middle: d?.middle, last: d?.last })) }));
-  const named = (o) => typeof o === 'string' && names(o) !== o;
   const people = [
     ...drivers.map((d, i) => ({ driver: true, said: `Driver ${i + 1} (intake drivers[${i}])`, words: [...wordsOf(d?.first), ...wordsOf(d?.last)] })),
     { driver: false, said: 'Owner (intake applicant.owner1)', words: wordsOf(a.owner1) },
     { driver: false, said: 'Owner 2 (intake applicant.owner2)', words: wordsOf(a.owner2) },
   ].filter((p) => p.words.length);
+  // A garaging value as a value of its own, never part of a larger number or an amount: unit 100 is
+  // in "Suite 100", not in "$100,000/$300,000" (CodeRabbit on PR #418). A ZIP with its four more
+  // digits ("62704-1234") is the ZIP.
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const places = [['street', 'Garaging street'], ['unit', 'Garaging unit'], ['city', 'Garaging city'], ['zip', 'Garaging ZIP']]
-    .filter(([k]) => g[k]).map(([k, said]) => ({ said, hides: redactor(redactionTerms({ garaging: { [k]: g[k] } })) }));
+    .map(([k, said]) => [k, String(g[k] ?? '').replace(/\s+/g, ' ').trim(), said]).filter(([, v]) => v.length >= 2)
+    .map(([k, v, said]) => ({ said, re: new RegExp(`(?<![\\p{L}\\p{N}$.,/-])${escape(v).replace(/ /g, '\\s+')}${k === 'zip' ? '(?:-\\d{4})?' : ''}(?![\\p{L}\\p{N}]|[.,/-]\\p{N})`, 'iu') }));
+  const named = (o) => typeof o === 'string' && (names(o) !== o || places.some((p) => p.re.test(o)));
   // A choice's placeholder; the choice itself when it names no one; null when code can't tell whose.
   const placeholder = (o) => {
     if (!named(o)) return o;
     const words = new Set(wordsOf(o));
     const who = people.filter((p) => p.words.every((w) => words.has(w)));
-    const where = places.filter((p) => p.hides(o) !== o);
+    const where = places.filter((p) => p.re.test(o));
     const [drv, own] = [who.filter((p) => p.driver), who.filter((p) => !p.driver)];
     if (drv.length > 1 || own.length > 1 || (who.length && where.length)) return null;
     if (where.length) return where.length === 1 ? where[0].said : 'Garaging address';

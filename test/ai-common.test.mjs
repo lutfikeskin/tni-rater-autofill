@@ -269,6 +269,13 @@ test("choices naming the client's driver, owner or place go to Luna as placehold
   assert.equal(named.restore({ ...sent.owner, choice: null, leave: true }).choice, null, 'a question left stays left');
   const plain = { ...items[5], choice: 'Yes', autoOk: true };
   assert.equal(named.restore(plain), plain, 'any other suggestion as it is');
+  // CodeRabbit on PR #418: a numeric garaging value is a value of its own, never part of an amount
+  // or a longer number.
+  const unit = pseudonymizeChoices([q('limit', ['$100,000/$300,000', '$250,000/$500,000']), q('miles', ['100-200 miles', '1000']),
+    q('suite', ['Suite 100', 'Suite 200']), q('zip9', ['627041', '62704-1234', '62704-12'])], { garaging: { unit: '100', zip: '62704' } });
+  assert.deepEqual(unit.held, []);
+  assert.deepEqual(unit.items.map((x) => x.options), [['$100,000/$300,000', '$250,000/$500,000'], ['100-200 miles', '1000'],
+    ['Garaging unit', 'Suite 200'], ['627041', 'Garaging ZIP', '62704-12']], 'a ZIP with its four more digits is the ZIP');
   assert.deepEqual(pseudonymizeChoices(items, null).held, [], 'no intake, nothing to match');
   assert.equal(pseudonymizeChoices(items, null).items.length, items.length);
 });
