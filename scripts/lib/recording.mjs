@@ -62,6 +62,16 @@ const failed = (e) => Number.isInteger(e.status) && e.status >= 400;
 const WAITS = { answer: 'after an answer', round: 'after a round of answers', load: 'for a new view to load', 'before-load': 'before a button that loads a view',
   rated: 'for the premium', continue: 'before pressing Continue', continued: 'after pressing Continue', drawn: 'for a late question', start: 'before the fill',
   helper: 'for a lookup\'s answer' };
+// How a wait ended, and its slack, in words.
+const endedSaid = (e) => {
+  const held = e.held?.busy ? ', the page still busy' : e.held?.changing ? ', the page still changing' : e.held?.requests ? ', requests still finishing' : '';
+  return e.ended === 'quiet' ? 'the page was quiet' : e.ended === 'stopped' ? 'the fill stopped' : `at its limit of ${secs(e.maxMs ?? 0)}${held}`;
+};
+const slackSaid = (e) => (e.slack == null ? '' : e.slack >= (e.ms ?? 0) ? 'the page did nothing during it' : `${secs(e.slack)} after the page's last change`);
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+};
 // An action the page may answer: anyone's click, key or change, or the fill's answer or press.
 const isAction = (e) => ['click', 'key', 'change'].includes(e.kind) || (e.kind === 'kit' && (e.what === 'answer' || e.what === 'press'));
 
@@ -152,14 +162,15 @@ function actions(events) {
     else if (e.kind === 'visible' && (e.frame ?? 0) === 0) lines.push({ t: e.t, text: `the tab became ${e.state}` });
     else if (e.kind === 'kit' && e.what === 'answer') {
       const timing = e.timing ?? null;
-      const after = [timing?.settleMs ? `then waited ${secs(timing.settleMs)} for the page` : '', timing?.ajax ? many(timing.ajax, 'request') : '',
+      // The wait after it, with how it ended and its slack when the recording has its event.
+      const w = e.answerWait;
+      const how = w ? ` (${[endedSaid(w), slackSaid(w)].filter(Boolean).join('; ')})` : '';
+      const after = [timing?.settleMs ? `then waited ${secs(timing.settleMs)} for the page${how}` : '', timing?.ajax ? many(timing.ajax, 'request') : '',
         timing?.revealed ? `it drew ${timing.revealed}` : '', timing?.removed ? `took away ${timing.removed}` : ''].filter(Boolean).join(', ');
       lines.push({ t: e.start ?? e.t, text: `the extension answered ${fieldName(e)} in ${secs(e.applyMs ?? 0)}${after ? `, ${after}` : ''}${e.ok === false ? ' (not kept)' : ''}` });
     } else if (e.kind === 'kit' && e.what === 'wait' && e.why !== 'answer') {
-      const held = e.held?.busy ? ', the page still busy' : e.held?.changing ? ', the page still changing' : e.held?.requests ? ', requests still finishing' : '';
-      const ended = e.ended === 'quiet' ? 'the page was quiet' : `at its limit of ${secs(e.maxMs ?? 0)}${held}`;
-      const slack = e.slack == null ? '' : e.slack >= (e.ms ?? 0) ? '; the page did nothing during it' : `; ${secs(e.slack)} after the page's last change`;
-      lines.push({ t: e.start ?? e.t, text: `the extension waited ${secs(e.ms ?? 0)} ${WAITS[e.why] ?? 'for the page'} (quiet ${e.quietMs ?? '?'} ms${e.requests ? ' and its requests' : ''}): ${ended}${slack}` });
+      const slack = slackSaid(e);
+      lines.push({ t: e.start ?? e.t, text: `the extension waited ${secs(e.ms ?? 0)} ${WAITS[e.why] ?? 'for the page'} (quiet ${e.quietMs ?? '?'} ms${e.requests ? ' and its requests' : ''}): ${endedSaid(e)}${slack ? `; ${slack}` : ''}` });
     } else if (e.kind === 'kit' && e.what === 'press') lines.push({ t: e.t, text: `the extension pressed the ${quote(e.button?.text)} button` });
     else if (e.kind === 'burst' && (e.drawnCount || e.removed)) {
       const names = (e.drawn ?? []).map((d) => quote(d.label || d.key || 'a question')).join(', ');
@@ -227,6 +238,27 @@ function timeTable(ordered, told, end) {
 }
 
 /** The report, as Markdown. */
+/**
+ * **Waits by kind** (REC-12): the fill's waits grouped by what they were for, each with how many,
+ * the median and the longest, how they ended and the median slack, so a review needn't add them up
+ * by hand. Each frame's waits count (the fill runs in every frame). None without the fill's waits.
+ * @param {any[]} ordered
+ */
+function waitTable(ordered) {
+  const waits = ordered.filter((e) => e.kind === 'kit' && e.what === 'wait' && typeof e.ms === 'number');
+  if (!waits.length) return [];
+  const out = ['## Waits by kind', '', '| Wait | n | Median | Longest | Quiet | At its limit | Stopped | Median slack |', '| --- | --- | --- | --- | --- | --- | --- | --- |'];
+  const kinds = [...new Set(waits.map((e) => e.why ?? null))];
+  for (const why of kinds) {
+    const of = waits.filter((e) => (e.why ?? null) === why);
+    const count = (ended) => of.filter((e) => e.ended === ended).length;
+    const slacks = of.map((e) => e.slack).filter((s) => typeof s === 'number');
+    out.push(`| ${WAITS[why] ?? why ?? 'for the page'} | ${of.length} | ${secs(median(of.map((e) => e.ms)))} | ${secs(Math.max(...of.map((e) => e.ms)))} | ${count('quiet')} | ${count('limit')} | ${count('stopped')} | ${slacks.length ? secs(median(slacks)) : '?'} |`);
+  }
+  out.push('');
+  return out;
+}
+
 export function recordingReport({ manifest, events }) {
   const ordered = [...events].sort((a, b) => a.t - b.t || (a.frame ?? 0) - (b.frame ?? 0) || (a.seq ?? 0) - (b.seq ?? 0));
   // How long each fill ran, on its end.
@@ -250,6 +282,12 @@ export function recordingReport({ manifest, events }) {
       const last = actionTimes.reduce((m, a) => (a < e.t && (m == null || a > m) ? a : m), null);
       if (last != null) e.sinceAction = e.t - last;
     }
+  }
+  // Each answer's own wait: the frame's answer wait that ran between the answer's start and its event.
+  const answerWaits = ordered.filter((e) => e.kind === 'kit' && e.what === 'wait' && e.why === 'answer' && typeof e.start === 'number');
+  for (const e of ordered) {
+    if (e.kind !== 'kit' || e.what !== 'answer' || typeof e.start !== 'number') continue;
+    e.answerWait = answerWaits.findLast((w) => (w.frame ?? 0) === (e.frame ?? 0) && w.start >= e.start && w.start <= e.t) ?? null;
   }
   const t0 = Date.parse(manifest.started) || ordered[0]?.t || 0;
   const end = Date.parse(manifest.ended) || ordered.at(-1)?.t || t0;
@@ -283,6 +321,7 @@ export function recordingReport({ manifest, events }) {
   }
   out.push('');
   if (ordered.some((e) => e.kind === 'kit')) out.push(...timeTable(ordered, told, end));
+  out.push(...waitTable(ordered));
 
   for (const { s, lines, n } of told) {
     out.push(`## ${n}. ${s.page}${s.step ? ` · ${s.step}` : ''}`, '');

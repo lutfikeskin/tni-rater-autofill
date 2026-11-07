@@ -244,7 +244,10 @@ test('the report tells what the fill answered and waited for, what the page drew
   const report = recordingReport(readRecording(dir));
   fs.rmSync(dir, { recursive: true, force: true });
 
-  assert.match(report, /0:01\.1 \(\+0\.1 s\) the extension answered "Vehicle year" in 0\.4 s, then waited 0\.2 s for the page, 1 request, it drew 2\n/, 'by when it began, its own wait folded in');
+  // REC-12 (audit 2026-11-07): an answer's wait says how it ended and its slack, and the waits are
+  // added up by kind, which a review did by hand from events.jsonl.
+  assert.match(report, /0:01\.1 \(\+0\.1 s\) the extension answered "Vehicle year" in 0\.4 s, then waited 0\.2 s for the page \(the page was quiet; 0\.1 s after the page's last change\), 1 request, it drew 2\n/, 'by when it began, its own wait folded in');
+  assert.match(report, /## Waits by kind\n\n\| Wait \| n \| Median \| Longest \| Quiet \| At its limit \| Stopped \| Median slack \|\n\| --- [^\n]*\n\| after an answer \| 1 \| 0\.2 s \| 0\.2 s \| 1 \| 0 \| 0 \| 0\.1 s \|\n\| before pressing Continue \| 1 \| 2\.0 s \| 2\.0 s \| 1 \| 0 \| 0 \| 2\.0 s \|\n\| for the premium \| 1 \| 6\.0 s \| 6\.0 s \| 0 \| 1 \| 0 \| 5\.9 s \|\n/);
   assert.ok(!/waited 0\.2 s after an answer/.test(report), 'an answer\'s wait is on its answer\'s line');
   assert.match(report, /the page drew 3 questions \("Make", "Model", …\), 0\.5 s after the last action/);
   assert.equal(report.match(/the page (drew|took away)/g).length, 1, 'a burst that drew no question is no line');
