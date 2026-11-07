@@ -2,12 +2,18 @@
 //
 // For every quote (session) and question it works out the final answer and who gave it:
 // autofill, the agent, or the page itself. Across quotes it then proposes:
-//   standard   an unmapped question agents answer the same way nearly every time
+//   standard   an unmapped question agents answer the same way nearly every time: a question for
+//              the maintainer (is it TNI's standard?), never a ready rule
 //   byState    an unmapped question whose answer is consistent within each state
 //   mapping    an unmapped text box whose typed value matches the same intake field every time
 //   review     a mapped question whose autofill answer agents change often
 //   pageAnswer a question left to the agent where they let the page's own answer stand
-// Suggestions are for a person to review; nothing is changed automatically.
+//   pageSets   an unmapped question the page itself answers (its own cascade), the same nearly every time
+//   agent      an unmapped question agents answer the same way that is an attestation or a client
+//              fact: the agent's (or the intake's), never a TNI standard
+// Suggestions are for a person to review; nothing is changed automatically. A habit is no TNI
+// standard until the maintainer decides it is and records it (AGENTS.md), so a possible standard
+// comes with its evidence and the decision to make, never with a rule line to paste.
 
 import { isPageLayout, sessionContexts } from './events.mjs';
 import { fieldIdentities, ENTITY_PAGES } from './layouts.mjs';
@@ -19,6 +25,20 @@ const textOf = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 // Labels the recorder gives a page's own controls (AmWINS: the file button, a pager, a row's
 // Delete): no question, so no candidate (compared lower-cased, after textOf).
 const UI_CHROME = /^(browse|delete coverage|\d+ of \d+|select files?)$/;
+// A label that is only the redaction's tokens (GEICO's coverage rows read as their vehicle, which
+// the log redacts to "[client]") names no question.
+const blind = (label) => !/[a-z0-9]/.test(textOf(label).replace(/\[client\]/g, ''));
+// Answers that are never TNI's to standardise (AGENTS.md: a standard is a TNI rulebook entry;
+// attestations are the agent's): a question that reads as an attestation or consent, or as a fact
+// about the client (its filings, its identifying numbers). Read from its text and its data-model name.
+// First-person or consent wording only: "Declarations page" or "Prior authorization" asks no
+// attestation (Claude review on PR #372).
+const ATTESTATION = /\b(i agree|agrees? to|i certify|certif(ies|ication)|attest|consent|i acknowledge|acknowledge that|i declare|declare that|e-?sign|sign (here|below)|i understand|i confirm|i authori[sz]e|i warrant)/;
+const CLIENT_FACT = /\b(filings?|mcs-?90|bmc-?\d*|federal liability|usdot|dot number|mc number|fein|social security|ssn|date of birth|vin)\b/;
+const agentsOwn = (o) => {
+  const text = `${textOf(o.label)} ${String(o.field ?? '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[._]/g, ' ').toLowerCase()}`;
+  return ATTESTATION.test(text) ? 'attestation' : CLIENT_FACT.test(text) ? 'fact' : null;
+};
 
 // Which question an event answers. A question with an id (Progressive's Duck Creek fields) by its
 // data-model name, or its text on its page: Progressive reassigns the ids (2026-10-07), so an id
@@ -35,7 +55,12 @@ function identify(e, ids) {
   const named = String(e.key ?? '').match(/^ref:([^@]+)/);
   if (!e.q) {
     const page = `${e.carrier}|${e.page}${e.step ? ` › ${e.step}` : ''}`;
-    return named ? { key: `${page}|ref:${named[1]}`, unit: '', ref: named[1] } : { key: `${page}|${e.label}`, unit: '' };
+    if (named) return { key: `${page}|ref:${named[1]}`, unit: '', ref: named[1] };
+    // GEICO's coverage lists by their coverage (cov:COMP#2: the second vehicle's comprehensive, or
+    // cov:<its caption>): their labels name the vehicle, which the log redacts, so five coverages
+    // would read as one "[client]" question. A quote's vehicles merge, as without an id.
+    const coverage = String(e.key ?? '').match(/^cov:(.+?)(?:#\d+)?$/)?.[1];
+    return coverage ? { key: `${page}|cov:${coverage}`, unit: '', coverage } : { key: `${page}|${e.label}`, unit: '' };
   }
   // Its row from its own key (<q>@<row>, ref:<name>@<row>; none: the first row).
   const unit = `${String(e.view ?? '').split(':')[1] ?? ''}@${String(e.key ?? '').match(/@(\d+)$/)?.[1] ?? '1'}`;
@@ -63,9 +88,9 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
     if (!e.session || !e.carrier) return null;
     const perSession = out.get(e.session) ?? new Map();
     out.set(e.session, perSession);
-    const { key, unit, ref, layout } = identify(e, ids);
+    const { key, unit, ref, layout, coverage } = identify(e, ids);
     const k = unit ? `${key}#${unit}` : key;
-    const a = perSession.get(k) ?? { question: key, q: e.q ?? null, ref: ref ?? null, layout: layout ?? null, page: e.page, ...(e.step ? { step: e.step } : {}), label: e.label, carrier: e.carrier };
+    const a = perSession.get(k) ?? { question: key, q: e.q ?? null, ref: ref ?? null, layout: layout ?? null, page: e.page, ...(e.step ? { step: e.step } : {}), ...(coverage ? { coverage } : {}), label: e.label, carrier: e.carrier };
     perSession.set(k, a);
     if (e.label && !a.label) a.label = e.label;
     return a;
@@ -210,7 +235,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     }
   }
 
-  const suggestions = { standard: [], byState: [], mapping: [], review: [], pageAnswer: [] };
+  const suggestions = { standard: [], byState: [], mapping: [], review: [], pageAnswer: [], pageSets: [], agent: [] };
   // Support counts intake PDFs (by fingerprint; a quote without one counts as its own). Every
   // event carries its quote's fingerprint, so a log without the intake_loaded event (a capped
   // export, a slice of days) still knows it.
@@ -233,16 +258,19 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     // A question without an id (AmWINS) is known by its text alone: one with none, or one that is
     // the page's own chrome (a file button, a pager, a row's Delete), is no question to suggest a
     // rule for (the 2026-10-06 review listed "Browse" and "1 of 1").
-    if (!first.q && (!textOf(first.label) || UI_CHROME.test(textOf(first.label)))) continue;
+    // A label that is only redacted text names none either, unless its key does (a coverage row).
+    if (!first.q && !field && !first.coverage && (blind(first.label) || UI_CHROME.test(textOf(first.label)))) continue;
     const selector = `${carrier}|${target({ ...first, field })}`;
     const steps = observedSteps.get(selector) ?? new Set();
     for (const o of obs) steps.add(o.step ?? '(no step)');
     observedSteps.set(selector, steps);
     const isMapped = obs.some((o) => o.autofilled || o.ruled) || claimed({ ...first, ref: field });
-    const base = { carrier, q: first.q, field, page: first.page, ...(first.step ? { step: first.step } : {}), label: first.label ?? '', intakes: intakesOf(obs), quotes: quotesOf(obs) };
-    // Answers someone gave (autofill, the agent, the page on an answer): not one the page held
-    // when the agent left it (pageLeft), which is weaker evidence (pageAnswer below).
-    const choices = obs.filter((o) => !o.pageLeft && o.value !== undefined && o.value !== null && o.value !== '' && CHOICE.has(o.kind ?? 'select'));
+    const base = { carrier, q: first.q, field, page: first.page, ...(first.step ? { step: first.step } : {}), ...(first.coverage ? { coverage: first.coverage } : {}), label: first.label ?? '', intakes: intakesOf(obs), quotes: quotesOf(obs) };
+    // Answers someone gave (autofill or the agent): not one the page set itself (a cascade, pageSets
+    // below) or held when the agent left it (pageLeft, pageAnswer below), which say nothing about
+    // how agents answer.
+    const given = (o) => o.value !== undefined && o.value !== null && o.value !== '' && CHOICE.has(o.kind ?? 'select');
+    const choices = obs.filter((o) => !o.pageLeft && o.source !== 'page' && given(o));
 
     // A question the extension left to the agent, whose page answer they let stand in nearly
     // every quote and never changed to another: a candidate to leave as the page has it. A
@@ -278,8 +306,15 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
       const counts = new Map();
       choices.forEach((o) => counts.set(o.value, (counts.get(o.value) ?? 0) + 1));
       const ranked = share(counts, choices.length);
+      // An attestation or a client fact is never a standard, nor a per-state one: the agent's, or
+      // the intake's to map. Its line keeps it with the agent.
+      const own = agentsOwn({ ...first, field });
+      if (own) {
+        suggestions.agent.push({ ...base, ...support(choices), answers: choices.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1), why: own, rule: agentRule({ ...first, field }, own) });
+        continue;
+      }
       if (ranked[0].share >= threshold) {
-        suggestions.standard.push({ ...base, ...support(choices), answers: choices.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1), kind: first.kind, rule: ruleFor({ ...first, field }, ranked[0].value) });
+        suggestions.standard.push({ ...base, ...support(choices), answers: choices.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1), kind: first.kind, decide: decision(ranked[0].value) });
         continue;
       }
       // Consistent within each state?
@@ -299,6 +334,19 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
       continue;
     }
 
+    // What the page set on its own (a cascade from another answer), nearly always the same, where
+    // agents gave too few answers to judge: reported, never a rule (the page answers it already).
+    const pageSet = obs.filter((o) => o.source === 'page' && !o.pageLeft && given(o));
+    if (intakesOf(pageSet) >= minIntakes) {
+      const counts = new Map();
+      pageSet.forEach((o) => counts.set(o.value, (counts.get(o.value) ?? 0) + 1));
+      const ranked = share(counts, pageSet.length);
+      if (ranked[0].share >= threshold) {
+        suggestions.pageSets.push({ ...base, ...support(pageSet), answers: pageSet.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1) });
+        continue;
+      }
+    }
+
     const typed = obs.filter((o) => o.matches);
     if (intakesOf(typed) >= minIntakes) {
       const counts = new Map();
@@ -316,8 +364,14 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
   // A question known only by its text (AmWINS) gets a rule by its label, which no step constrains:
   // two observed steps' questions reading the same would get one selector, even when only one has
   // enough support for a suggestion. Such suggestions get no ready rule, only a note naming the steps.
-  const pasted = [...suggestions.standard, ...suggestions.mapping, ...suggestions.pageAnswer].filter((s) => s.rule);
+  const pasted = [...suggestions.mapping, ...suggestions.pageAnswer, ...suggestions.agent].filter((s) => s.rule);
   for (const s of pasted) {
+    // A coverage row (cov:COMP) is found by its element id, never by its label (its vehicle).
+    if (s.coverage) {
+      s.rule = null;
+      s.manualRule = `a coverage row (cov:${s.coverage}) whose label is its vehicle: write the rule by hand by its id (as GEICO's [id$="_<coverage>"] rules)`;
+      continue;
+    }
     const steps = [...(observedSteps.get(`${s.carrier}|${target(s)}`) ?? [])];
     if (steps.length < 2) continue;
     s.rule = null;
@@ -338,11 +392,18 @@ function target(o) {
   return `label: '${squash(o.label)}'`;
 }
 
-function ruleFor(o, answer) {
-  const name = quote(`${String(o.label ?? '').slice(0, 70)} (standard: ${answer})`);
-  if (/^(yes|no)$/i.test(answer)) return `{ ${target(o)}, name: ${name}, kind: 'bool', value: () => ${/^yes$/i.test(answer)} },`;
-  if (/^(checked|unchecked)$/.test(answer)) return `{ ${target(o)}, name: ${name}, kind: 'bool', value: () => ${answer === 'checked'} },`;
-  return `{ ${target(o)}, name: ${name}, kind: 'choice', value: () => ${quote(answer)} },`;
+// The maintainer's decision on a possible standard (maintainer, 2026-11-07: every suggested TNI
+// standard is decide-only). Only a recorded TNI standard may answer what the intake doesn't
+// (AGENTS.md), so the report asks; the rule is written once the answer is TNI's.
+const decision = (answer) => `Is "${answer}" TNI's standard here? If so, record it in TNI's rulebook (docs/intake-and-rules.md, src/ai/tni-rules.js) and write its rule with that entry (tni) and a concept; if it depends on the client, map it from the intake or keep it with the agent.`;
+
+// An attestation or a client fact agents answer the same way: kept with the agent (a note, never
+// filled: plan.js fills no `attestation` or `fact`), or mapped from the intake by hand.
+function agentRule(o, why) {
+  const label = String(o.label ?? '').slice(0, 70);
+  return why === 'attestation'
+    ? `{ ${target(o)}, concept: '<choose a concept>', name: ${quote(`${label} (the agent's: attestation)`)}, source: 'attestation', note: 'Yours to confirm with the client; never ticked for you.' },`
+    : `{ ${target(o)}, concept: '<choose a concept>', name: ${quote(`${label} (client fact: map it from the intake, else the agent's)`)}, source: 'fact', note: 'A fact about the client: answer it from the intake.' },`;
 }
 
 const squash = (s) => String(s ?? '').toLowerCase().replace(/['’*]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
