@@ -4,7 +4,7 @@ import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intak
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
   firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES, isLunaModel,
-  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION, citedSaid } from '../src/ai/luna.js';
+  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION, citedSaid, citedRuleFull } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { CARRIER_PARTS } from '../src/ai/tni-rules.js';
 import { settingsFrom } from '../src/ai/providers.js';
@@ -152,6 +152,18 @@ test('each cited source is said as the agent reads it: the field label with its 
   assert.ok(long.startsWith('Claims box, as written: word word') && long.endsWith('…') && long.length < 120, long);
   const rule = citedSaid({ basis: 'tni_rule', id: 'r1', rule: `No hazmat\nunless ${'the intake says so '.repeat(10)}` });
   assert.ok(rule.startsWith('TNI rule: No hazmat unless the intake') && rule.endsWith('…') && rule.length <= 'TNI rule: '.length + 120, rule);
+  // CodeRabbit on PR #393: a shortened rule stays whole for the card to open; a short one needs none.
+  const longRule = { basis: 'tni_rule', id: 'r1', rule: `No hazmat\nunless ${'the intake says so '.repeat(10)}` };
+  assert.equal(citedRuleFull(longRule), `TNI rule: No hazmat unless ${'the intake says so '.repeat(10).trim()}`);
+  assert.equal(citedRuleFull({ basis: 'tni_rule', id: 'r2', rule: 'No hazmat unless the intake says so.' }), null);
+  assert.equal(citedRuleFull({ basis: 'intake', path: 'claims.text', value: 'word '.repeat(40) }), null);
+  // Facts Luna is given that the intake has no box for, and any other path, read as words, never as a path.
+  assert.equal(citedSaid({ basis: 'intake', path: 'computed.priorPolicyExpired', value: true }), 'Prior policy expired (worked out from the intake): Yes');
+  assert.equal(citedSaid({ basis: 'intake', path: 'computed.noPriorInsurance', value: false }), 'No prior insurance (worked out from the intake): No');
+  assert.equal(citedSaid({ basis: 'intake', path: 'applicant.hasDOT', value: true }), 'Has a USDOT #: Yes');
+  assert.equal(citedSaid({ basis: 'intake', path: 'claims.aiNtl', value: true }), "NTL in the claims box or notes (Luna's review): Yes");
+  assert.equal(citedSaid({ basis: 'intake', path: 'operations.notes', value: 'No placards.' }), 'Notes: No placards.');
+  assert.equal(citedSaid({ basis: 'intake', path: 'trailers[1].someNewThing', value: 'x' }), 'Some new thing (trailer 2): x');
   // A left question cites nothing.
   const [left] = parseResponse(answer(buildRequest(items, context), { option: LEAVE, sourceIds: [], missingInformation: ['placards'] }), items, buildRequest(items, context));
   assert.deepEqual(left.cited, []);

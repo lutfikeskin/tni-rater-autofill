@@ -39,6 +39,18 @@ test('a suggestion: what the AI suggests, what it rests on, Use this answer and 
   expect([box.querySelector('.accept').disabled, box.querySelector('.accept').textContent]).toEqual([false, 'Use this answer']);
 });
 
+// CodeRabbit on PR #393: a cited rule the preview shortens opens whole, for its exceptions.
+test('a suggestion resting on a shortened TNI rule opens the whole rule under what it rests on', () => {
+  const card = { kind: 'suggest', choice: 'No', tip: null, why: 'Based on TNI rule: Hazardous material placard: the intake…',
+    rules: ['TNI rule: Hazardous material placard: the intake\'s answer, unless what they haul may need one.'], use: () => null, noThanks: () => {} };
+  const { container } = render(<AiCard card={card} />);
+  const rule = container.querySelector('details.ai-rule');
+  expect(rule.open).toBe(false);
+  expect(rule.querySelector('summary').textContent).toBe('Read the whole rule');
+  expect(rule.textContent).toBe('Read the whole ruleTNI rule: Hazardous material placard: the intake\'s answer, unless what they haul may need one.');
+  expect([...container.firstChild.children].map((c) => c.className)).toEqual(['ai-says', 'ai-why', 'ai-why ai-rule', 'ai-actions']);
+});
+
 test('Use this answer says it is going in until it ends, then is as before', async () => {
   const going = later();
   let used = 0;

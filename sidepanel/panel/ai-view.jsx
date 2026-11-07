@@ -30,7 +30,8 @@ function PutButton({ className, label, put }) {
 // - 'picked': put in by the AI, waiting for Approve / Reject (`choice`, `tip`, `notes`);
 // - 'done': put in (`text`);
 // - 'tip': left to the agent, or a tip only (`says`, `tip`, `next`: Luna's recommendation);
-// - 'suggest': an answer to put in (`choice`, `tip`, `why`, `checks`), Use this answer / No thanks.
+// - 'suggest': an answer to put in (`choice`, `tip`, `why`, `rules`: a cited TNI rule whole where `why`
+//   shortens it, to open), Use this answer / No thanks.
 function AiCard({ card }) {
   switch (card.kind) {
     case 'mine':
@@ -75,6 +76,9 @@ function AiCard({ card }) {
           <div className="ai-says">{'AI suggests '}<b>{card.choice}</b></div>
           {card.tip ? <div className="ai-tip">{card.tip}</div> : null}
           {card.why ? <div className="ai-why">{card.why}</div> : null}
+          {(card.rules ?? []).map((rule, i) => (
+            <details key={i} className="ai-why ai-rule"><summary>Read the whole rule</summary>{rule}</details>
+          ))}
           <div className="ai-actions">
             <PutButton className="primary accept" label="Use this answer" put={card.use} />
             <button type="button" className="ghost" onClick={() => card.noThanks()}>No thanks</button>
