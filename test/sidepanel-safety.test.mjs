@@ -5817,7 +5817,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   u.release([{ frameId: 0, result: { ...u.results[0].result, pageMoved: '/quote-B' } }]);
   await run;
   assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
-  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
+  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
   // (runPendingPage then runs from every end of a fill, whichever tab is in front: FLOW-07.)
   assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n\s+\}/);
@@ -8518,11 +8518,43 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   assert.deepEqual({ ...state.dock }, { ...word, hidden: false, report: '1700', busy: false, paused: '' });
   // The quote's tab in the tab strip follows the same word (tab-mark.js, test/tab-mark.test.mjs).
   assert.deepEqual(marked, [word]);
-  // While a fill runs it is about no report and holds Fill; Settings open hides it.
+  // While a fill runs it is about no report and holds Fill. Settings open hides the dock, except
+  // its Stop while a fill runs (audit 2026-11-07, UX-02: Settings was the one screen with no Stop).
   Object.assign(state, { filling: true, settingsOpen: true });
   context.dockFor = () => ({ phase: 'filling', title: 'Reading the page…', button: 'fill-stop', label: 'Stop' });
   context.renderDock();
-  assert.deepEqual([state.dock.report, state.dock.busy, state.dock.hidden], ['', true, true]);
+  assert.deepEqual([state.dock.report, state.dock.busy, state.dock.hidden], ['', true, false]);
+  context.dockFor = () => word;
+  context.renderDock();
+  assert.equal(state.dock.hidden, true, 'any other word is hidden under Settings');
+  // Settings' Filling note says a switch changed meanwhile reaches what is filled after, and the fill
+  // under way only while it gets ready (reviews of #389): each fill, a follow-up's included, reads
+  // Continue's switch again and Check answers before Continue (fillOptions' hold) as it asks the kit.
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /ctx\.settings\.autoAdvance = switchOn\('autoAdvance', 'auto-advance'\);[\s\S]*= fillOptions\(carrier, [\s\S]*?__raterKit\.fill\(p, o\), \[plan, options\]\)/, name);
+  assert.match(SIDEPANEL, /const fillOptions = [^\n]*\n(?:[^\n]*\n)*?  hold: switchOn\('checkBeforeContinue', 'check-continue'\),/);
+  // Opening or closing Settings draws the dock again (showScreen).
+  assert.match(extractFunction('showScreen'), /renderDock\(\);\n\}$/);
+});
+
+// Reviews of #389: Continue's switch was read before the page check (pageMoved), so one flipped
+// while the panel checked the page missed the fill about to begin, and GEICO's add clicks kept the
+// value read with the list. Read after the page check, right before the options go to the kit, it
+// reaches that fill, its add clicks included.
+test('a switch flipped while the fill checks the page reaches that fill, its add clicks too', async () => {
+  for (const name of ['fillPage', 'autoFill']) {
+    const t = fillHarness();
+    const advanced = [];
+    t.context.fillOptions = (carrier, extra, autoAdvance) => { advanced.push(autoAdvance); return {}; };
+    t.context.pageMoved = async () => { t.ui['auto-advance'].checked = false; return false; };
+    // An automatic fill adding the next vehicle from GEICO's list, its "+" clicked with Continue's switch on.
+    if (name === 'autoFill') t.context.pickListItem = async (carrier, page, ctx) => { ctx.adding = { list: 'vehicles', index: 1, click: true }; };
+    const run = name === 'fillPage' ? t.context.fillPage() : t.context.autoFill('/quote-A');
+    await t.started;
+    t.release(t.results);
+    await run;
+    assert.deepEqual(advanced, [false], name);
+    if (name === 'autoFill') assert.equal(t.seen.plan.active.adding?.click, false, 'the add clicks follow the switch as sent');
+  }
 });
 
 // Audit 2026-11-07, FLOW-13: after a Stop or an error, every later page on that tab stopped filling
@@ -8580,6 +8612,23 @@ test('a unit list not read as complete is said in counts in the usage log', asyn
   assert.deepEqual([...run_.blockerList], ['list: 2 rows for 2 units, 1 shown, 0 saved by a fill', 'continue: none to click']);
   assert.equal(run_.blockers, 1);
   assert.equal(run_.fields, 0);
+});
+
+// Audit 2026-11-07, LEARN-11: the fill's kept answers are logged once per usage session; a new
+// quote's session starts again.
+test('a fill logs its kept answers once per quote, and again for a new quote', () => {
+  const logged = [];
+  let session = { id: 's1' };
+  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => session }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, fillEvents, knownStep };
+  vm.runInNewContext(extractFunction('logFill'), context);
+  const fill = () => context.logFill({ carrier: { id: 'geico' }, intake: { record: {} }, page: '/quote', view: 't1', run: 'r', settings: {} },
+    [{ fields: 1, filled: [], blockers: [], kept: [{ label: 'Garaging ZIP', key: 'ref:GiveZip', controlKind: 'text', now: '20001' }] }], [{ frameId: 0, result: { stepKey: 'Vehicles' } }], Date.now());
+  const kept = () => logged.filter((e) => e.result === 'kept').length;
+  fill(); fill();
+  assert.equal(kept(), 1);
+  session = { id: 's2' };
+  fill();
+  assert.equal(kept(), 2, 'a new quote logs it again');
 });
 
 // W43-42 (Progressive, 2026-10-22): a 29-second automatic follow-up fill showed no rows until it
