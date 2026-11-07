@@ -507,6 +507,7 @@ async function applyAi(list, ctx, decision) {
     page: editScope(ctx.page, ctx.carrier), keys: state.agentKeys, epoch: state.agentKeysEpochs?.get(usage.currentSession()?.intakeId) ?? 0 };
   let dispatched = false, prepared = false, guarding = false;
   const guardToken = crypto.randomUUID();
+  state.fillingKind = 'ai';
   state.filling = true;
   await tellRecorder('pause', ctx.tabId);
   try {

@@ -111,6 +111,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     return;
   }
   if (!auto) state.autoPaused = false;
+  state.fillingKind = 'fill';
   state.filling = true;
   clearTimeout(state.autoTimer);
   state.autoDrawn = null;
@@ -1173,6 +1174,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
   let result = null;
   let guarding = false;
   let edited = [];
+  state.fillingKind = 'pick';
   state.filling = true;
   if (button) button.disabled = true;
   // Our own answer isn't the agent's change on the page: the recorder is paused, as for a fill.

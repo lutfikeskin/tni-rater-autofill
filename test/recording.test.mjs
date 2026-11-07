@@ -198,6 +198,26 @@ test('the report tells the flow and each step\'s actions: whose each is, typing 
 
 // The page's own changes and requests and the extension's account (docs/developer-recording.md):
 // what may name the client is redacted as a field's label is.
+// Audit 2026-11-07, FLOW-15: the agent's pick from a row and an AI answer applied set `filling` as
+// a fill does, and read as fills in the timeline. Each span says what went in (`what`); one with
+// none (an older recording) is a fill.
+test('the timeline says what went in while the panel was filling: a fill, the agent\'s pick, an AI answer', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0 + 100, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: t0 + 1000, frame: 0, on: true, what: 'fill' },
+    { kind: 'fill', t: t0 + 1500, frame: 0, on: false, what: 'fill' },
+    { kind: 'fill', t: t0 + 2000, frame: 0, on: true, what: 'pick' },
+    { kind: 'fill', t: t0 + 2200, frame: 0, on: false, what: 'pick' },
+    { kind: 'fill', t: t0 + 3000, frame: 0, on: true, what: 'ai' },
+    { kind: 'fill', t: t0 + 3400, frame: 0, on: false, what: 'ai' },
+    { kind: 'fill', t: t0 + 4000, frame: 0, on: true },
+    { kind: 'fill', t: t0 + 4100, frame: 0, on: false },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
+  assert.match(report, /0:01\.0 .*a fill started\n.*the fill ended \(it ran 0\.5 s\)\n.*the panel put in the agent's pick from a row\n.*the pick was in \(it ran 0\.2 s\)\n.*the panel put in an AI answer\n.*the AI answer was in \(it ran 0\.4 s\)\n.*a fill started\n.*the fill ended \(it ran 0\.1 s\)/);
+});
+
 test('the questions a page drew, a request\'s path and what the fill answered are redacted as a field is', () => {
   const redact = (s) => s.replace(/Sam Smith/g, '[client]');
   const [burst, request, answer, press] = stampEvents([

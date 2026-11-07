@@ -58,6 +58,9 @@ const whose = (e) => (e.filling ? ' (not you, during a fill)' : ' (the page)');
 const many = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 // A page request its server answered with an error (HTTP 400 and up; the trace's `status`).
 const failed = (e) => Number.isInteger(e.status) && e.status >= 400;
+// What the panel put in while it was `filling` (the panel's `fillingKind`), as it began and ended.
+const SPANS = { fill: ['a fill started', 'the fill ended'], pick: ["the panel put in the agent's pick from a row", 'the pick was in'],
+  ai: ['the panel put in an AI answer', 'the AI answer was in'] };
 // A wait's own words: what it was for (pagekit.js settle's `why`).
 const WAITS = { answer: 'after an answer', round: 'after a round of answers', load: 'for a new view to load', 'before-load': 'before a button that loads a view',
   rated: 'for the premium', continue: 'before pressing Continue', continued: 'after pressing Continue', drawn: 'for a late question', start: 'before the fill',
@@ -167,7 +170,12 @@ function actions(events) {
       const drew = e.drawnCount ? `drew ${many(e.drawnCount, 'question')}${names ? ` (${names}${more})` : ''}` : '';
       const took = e.removed ? `took away ${many(e.removed, 'question')}` : '';
       lines.push({ t: e.t, text: `the page ${[drew, took].filter(Boolean).join(' and ')}${e.sinceAction != null ? `, ${secs(e.sinceAction)} after the last action` : ''}` });
-    } else if (e.kind === 'fill') lines.push({ t: e.t, text: e.on ? 'a fill started' : `the fill ended${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
+    } else if (e.kind === 'fill') {
+      // What went in (`what`): a fill, the agent's pick from a row, an AI answer (none said: a fill,
+      // as recordings before it).
+      const [began, ended] = SPANS[e.what] ?? SPANS.fill;
+      lines.push({ t: e.t, text: e.on ? began : `${ended}${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
+    }
     // A request the carrier's server refused or failed (HTTP 400 and up): its own error, not the fill's.
     else if (e.kind === 'request' && failed(e)) lines.push({ t: e.t, text: `the page's request to ${codePath(e.path)} failed: HTTP ${e.status} after ${secs(e.ms ?? 0)}` });
     else if (e.kind === 'note') lines.push({ t: e.t, text: `NOTE: ${e.text}` });

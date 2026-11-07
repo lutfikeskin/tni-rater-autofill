@@ -1165,6 +1165,7 @@
  * @property {Map<string, Set<string>>} [agentKeys]
  * @property {Map<string, number>} [agentKeysEpochs]
  * @property {boolean} [filling]
+ * @property {'fill' | 'pick' | 'ai' | null} [fillingKind]  what goes in while `filling`: a fill, the agent's pick from a row, an AI answer
  * @property {any} [autoTimer]
  * @property {any} [autoDrawn]
  * @property {boolean} [autoPending]

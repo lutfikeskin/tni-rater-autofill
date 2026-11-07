@@ -359,6 +359,7 @@ async function autoFill(page) {
   // A fill the agent started while the list was read (Fill this page, Looks right) goes first;
   // this one follows it rather than running beside it.
   if (state.filling) { state.autoPending = true; if (drawn) state.autoDrawn = page; return; }
+  state.fillingKind = 'fill';
   state.filling = true;
   state.autoPending = false;
   const started = Date.now();
