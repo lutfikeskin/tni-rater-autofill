@@ -41,3 +41,30 @@ export function deployProblem({ fetched, head, upstream, defaultBranch, dirty })
   if (dirty.length) return `uncommitted changes to what the image is built from: ${dirty.join(', ')}. Commit them through a PR, or set them aside`;
   return null;
 }
+
+/**
+ * Asks `check` until it answers 'same', within one overall deadline: a check still waiting when the
+ * deadline passes is aborted (its signal) and not waited for, so a stalled health request can't
+ * keep the deploy past it (the review of #426).
+ * @param {(signal: AbortSignal) => Promise<{ status: string }>} check
+ * @param {{ deadlineMs: number, intervalMs: number, now?: () => number, sleep?: (ms: number) => Promise<void> }} opts
+ * @returns {Promise<boolean>} whether it answered 'same' in time
+ */
+export async function waitForSame(check, { deadlineMs, intervalMs, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  const end = now() + deadlineMs;
+  while (now() < end) {
+    const ac = new AbortController();
+    /** @type {Promise<null>} */
+    const expired = new Promise((resolve) => ac.signal.addEventListener('abort', () => resolve(null)));
+    const timer = setTimeout(() => ac.abort(), Math.max(0, end - now()));
+    let answer;
+    try {
+      answer = await Promise.race([check(ac.signal), expired]);
+    } finally { clearTimeout(timer); }
+    if (answer?.status === 'same') return true;
+    const left = end - now();
+    if (left <= 0) break;
+    await sleep(Math.min(intervalMs, left));
+  }
+  return false;
+}

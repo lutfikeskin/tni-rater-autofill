@@ -114,7 +114,7 @@ deploys only `origin/main` as merged (audit 2026-11-07, SRV-10). It fetches, ref
 checkout's commit is `origin/main`'s and the files the image is built from (`server/Dockerfile` and
 its `COPY` sources) have no uncommitted or untracked changes, then runs
 `railway up --service usage-server --ci` (`.railwayignore` keeps the upload to what the image
-needs) and waits up to 5 minutes for Railway's production `/v1/health` (never `RATER_SERVER`) to name this checkout's server. `--dry-run` only
+needs) and waits up to 5 minutes in all, a stalled request included, for Railway's production `/v1/health` (never `RATER_SERVER`) to name this checkout's server. `--dry-run` only
 checks. A failed build exits 1, and the previous deployment keeps serving.
 
 Before deploying, confirm `RATER_TOKEN` is set in the service's Variables. The server fails closed:

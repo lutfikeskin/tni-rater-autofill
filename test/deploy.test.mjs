@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { imageFiles, deployProblem, dirtyFiles } from '../scripts/lib/deploy.mjs';
+import { imageFiles, deployProblem, dirtyFiles, waitForSame } from '../scripts/lib/deploy.mjs';
 
 // Audit 2026-11-07, SRV-10: `railway up` uploads the working tree as it is, on whatever branch the
 // shared checkout is on, committed or not. `npm run deploy:server` deploys only main as merged.
@@ -29,4 +29,20 @@ test('a deploy goes ahead only from the default branch as merged, with the image
   assert.match(deployProblem({ ...ok, upstream: null }), /could not fetch origin\/main/);
   assert.match(deployProblem({ ...ok, dirty: ['server/index.mjs'] }), /uncommitted changes to what the image is built from: server\/index\.mjs/);
   assert.match(deployProblem({ ...ok, defaultBranch: 'trunk', head: 'x', upstream: 'y' }), /origin\/trunk/);
+});
+
+// The review of #426: the wait for the deployed server has one deadline, a stalled health request
+// included: it is aborted when the deadline passes, and the wait answers then.
+test('the wait for the deployed server keeps one deadline, aborting a stalled health request', async () => {
+  let signal;
+  const started = Date.now();
+  const stalled = await waitForSame((s) => { signal = s; return new Promise(() => {}); }, { deadlineMs: 50, intervalMs: 10 });
+  assert.equal(stalled, false);
+  assert.ok(Date.now() - started < 1000, 'answered at the deadline, not after the stalled request');
+  assert.equal(signal.aborted, true, 'the stalled request was aborted');
+  const answers = ['different', 'different', 'same'];
+  let asked = 0;
+  assert.equal(await waitForSame(async () => ({ status: answers[asked++] }), { deadlineMs: 1000, intervalMs: 1 }), true);
+  assert.equal(asked, 3);
+  assert.equal(await waitForSame(async () => ({ status: 'different' }), { deadlineMs: 30, intervalMs: 5 }), false);
 });

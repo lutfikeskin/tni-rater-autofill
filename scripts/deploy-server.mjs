@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { imageFiles, deployProblem, dirtyFiles } from './lib/deploy.mjs';
+import { imageFiles, deployProblem, dirtyFiles, waitForSame } from './lib/deploy.mjs';
 import { CENTRAL_SERVER, checkServer } from './lib/central.mjs';
 import { SERVER_HASH } from '../server/index.mjs';
 
@@ -55,14 +55,12 @@ if (up.status !== 0) {
 }
 // The new deployment takes over a little after its build: wait for Railway's production server
 // (never RATER_SERVER, which may name a local or test one) to answer with this server.
+// Five minutes in all, a stalled health request included.
 const base = CENTRAL_SERVER;
-for (let i = 0; i < 30; i++) {
-  const r = await checkServer(base, SERVER_HASH);
-  if (r.status === 'same') {
-    console.log(`deploy:server: ${base} runs this repository's server (${SERVER_HASH}).`);
-    process.exit(0);
-  }
-  await new Promise((resolve) => setTimeout(resolve, 10_000));
+const same = await waitForSame((signal) => checkServer(base, SERVER_HASH, (url) => fetch(url, { signal })), { deadlineMs: 5 * 60_000, intervalMs: 10_000 });
+if (same) {
+  console.log(`deploy:server: ${base} runs this repository's server (${SERVER_HASH}).`);
+  process.exit(0);
 }
-console.error(`deploy:server: after 5 minutes ${base} still doesn't run ${SERVER_HASH}: check the deployment in Railway, then node scripts/server-check.mjs.`);
+console.error(`deploy:server: after 5 minutes ${base} still doesn't run ${SERVER_HASH}: check the deployment in Railway, then ${new URL('/v1/health', base)} (its "server").`);
 process.exit(1);
