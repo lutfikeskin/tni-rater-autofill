@@ -183,7 +183,7 @@ test('the report tells the flow and each step\'s actions: whose each is, typing 
   assert.equal(recordingReport(readRecording(dir)), report);
   fs.rmSync(dir, { recursive: true, force: true });
 
-  assert.match(report, /\| 1 \| \/quote · Business Class & USDOT \| 0:00\.1 \| 6\.9 s \| 10 \| "Next" \|/);
+  assert.match(report, /\| 1 \| \/quote · Business Class & USDOT \| 0:00\.1 \| 6\.9 s \| 10 \| "Next" \(you\) \|/);
   assert.match(report, /\| 2 \| \/quote · Business & Owner Info \| 0:07\.0 \| 2\.0 s \| 1 \| — \|/);
   assert.match(report, /0:01\.0 \(\+0\.9 s\) picked "No" for "Team driving\?"\n/, 'yours, with your gesture; input and change of one pick: one line');
   assert.match(report, /0:01\.1 \(\+0\.1 s\) a fill started\n.*set "No" for "Hazmat placard\?" \(not you, during a fill\)\n.*↑ set "Business name" \(length 7\) \(not you, during a fill\)\n.*the fill ended \(it ran 0\.3 s\)/,
@@ -317,4 +317,51 @@ test('a box with no size is never marked above an answer, and the order goes on 
   assert.doesNotMatch(report, /↑ set "checked" for "Current Page Errored"/);
   assert.doesNotMatch(report, /↑ set "Lower question"/);
   assert.match(report, /↑ set "Middle question"/, 'above the lower one, the answer before it');
+});
+
+// REC-20 (audit 2026-11-07): the report showed a failed request as one that finished.
+test('a page request its server answered with an error is in the step\'s timeline, its table row and up front', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: t0 + 100, frame: 0, on: true },
+    { kind: 'kit', t: t0 + 200, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Year', label: 'Year' }, ok: true, start: t0 + 150, applyMs: 50 },
+    { kind: 'request', t: t0 + 300, seq: 3, frame: 0, path: '/api/rate', end: t0 + 1500, ms: 1200, via: 'fetch', status: 503 },
+    { kind: 'request', t: t0 + 400, seq: 4, frame: 0, path: '/api/save', end: t0 + 500, ms: 100, via: 'xhr', status: 200 },
+    { kind: 'request', t: t0 + 600, seq: 5, frame: 0, path: '/api/old', end: t0 + 700, ms: 100, via: 'xhr' },
+    { kind: 'fill', t: t0 + 2000, frame: 0, on: false },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:03.000Z' }, events });
+  assert.match(report, /the page's request to `\/api\/rate` failed: HTTP 503 after 1\.2 s/);
+  assert.equal(report.match(/failed: HTTP/g).length, 1, 'a 200 or a request with no status is no line');
+  // Review of PR #379: a decoded path holding a line break and Markdown stays code on its one line.
+  const odd = recordingReport({ manifest: manifestFor(), events: events.map((e) => (e.status === 503 ? { ...e, path: '/api/\n\n# Extra `x`' } : e)) });
+  assert.match(odd, /the page's request to `\/api\/ # Extra 'x'` failed: HTTP 503/);
+  assert.doesNotMatch(odd, /^# Extra/m);
+  assert.match(report, /\| 3 \(1\.4 s\), 1 failed \|/);
+  assert.match(report, /The page's server answered 1 request with an error \(HTTP 503 ×1\)/);
+  assert.ok(!/with an error/.test(recordingReport({ manifest: manifestFor(), events: events.filter((e) => e.status !== 503) })));
+});
+
+// REC-13 (audit 2026-11-07): "Left by" named the agent's earlier click (Add vehicle) when the fill
+// pressed Continue, and a step only the fill left showed none.
+test('a step is left by the last button pressed on it, the agent\'s or the extension\'s', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'click', t: t0 + 1000, seq: 2, frame: 0, trusted: true, button: { text: 'Add vehicle', rect: null } },
+    { kind: 'click', t: t0 + 1900, seq: 3, frame: 0, trusted: false, button: { text: 'Continue', rect: null } },
+    { kind: 'kit', t: t0 + 2000, seq: 4, frame: 0, what: 'press', button: { text: 'Continue' }, how: 'page' },
+    { kind: 'step', t: t0 + 3000, seq: 5, frame: 0, step: 'Drivers', from: 'Vehicles' },
+    { kind: 'kit', t: t0 + 4000, seq: 6, frame: 0, what: 'press', button: { text: 'Continue' }, how: 'kit' },
+    { kind: 'step', t: t0 + 5000, seq: 7, frame: 0, step: 'Coverages', from: 'Drivers' },
+    { kind: 'kit', t: t0 + 5500, seq: 8, frame: 0, what: 'press', button: { text: 'Recalculate' }, how: 'kit' },
+    { kind: 'click', t: t0 + 6000, seq: 9, frame: 0, trusted: true, button: { text: 'Next', rect: null } },
+    { kind: 'step', t: t0 + 7000, seq: 10, frame: 0, step: 'Summary', from: 'Coverages' },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:08.000Z' }, events });
+  assert.match(report, /\| 1 \| \/quote · Vehicles \|[^\n]*\| "Continue" \(extension\) \|/);
+  assert.match(report, /\| 2 \| \/quote · Drivers \|[^\n]*\| "Continue" \(extension\) \|/, 'a step only the fill left');
+  assert.match(report, /\| 3 \| \/quote · Coverages \|[^\n]*\| "Next" \(you\) \|/);
+  assert.match(report, /\| 4 \| \/quote · Summary \|[^\n]*\| — \|/);
 });

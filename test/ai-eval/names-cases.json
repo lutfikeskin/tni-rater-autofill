@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "description": "Synthetic driver first-name cases (reviewDriverNames): the guess Luna should give per name sent. Not expert-reviewed: a scaffold, not production accuracy evidence.",
+  "cases": [
+    {
+      "id": "common-names",
+      "expertReviewed": false,
+      "rationale": "Names much more common for one sex, and one commonly given to both.",
+      "record": { "drivers": [{ "first": "Maria", "last": "Driver" }, { "first": "John", "last": "Driver" }, { "first": "Jordan", "last": "Driver" }] },
+      "expected": [
+        { "driver": 0, "guess": "likely_female" },
+        { "driver": 1, "guess": "likely_male" },
+        { "driver": 2, "guess": "unclear" }
+      ]
+    },
+    {
+      "id": "short-forms",
+      "expertReviewed": false,
+      "rationale": "A short form given to both is unclear; an initial is never sent.",
+      "record": { "drivers": [{ "first": "Sam", "last": "Driver" }, { "first": "J.", "last": "Driver" }, { "first": "Robert", "last": "Driver" }] },
+      "expected": [
+        { "driver": 0, "guess": "unclear" },
+        { "driver": 2, "guess": "likely_male" }
+      ]
+    }
+  ]
+}

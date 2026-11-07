@@ -12,8 +12,9 @@
 // against its own answer key; nothing checks its text against this rulebook.
 //
 // The entries are the first sources of every page review, in this order, so each carrier's requests
-// share the same start for the provider's prompt cache: keep ids and wording stable, and bump Luna's
-// POLICY_VERSION (src/ai/luna.js) when the evidence changes.
+// share the same start for the provider's prompt cache: keep ids and wording stable. An edit changes
+// Luna's promptHash (src/ai/luna.js) by itself, which the usage log records with each review; bump
+// POLICY_VERSION only for a change to the safety contract (it retires pending approval holds).
 import { general } from './rulebook/general.js';
 import { progressive } from './rulebook/progressive.js';
 import { amwins } from './rulebook/amwins.js';
