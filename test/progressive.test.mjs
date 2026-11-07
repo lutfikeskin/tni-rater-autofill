@@ -1684,6 +1684,25 @@ test('Progressive More About Business: Snapshot Pro and Smart Haul email the age
   }
 });
 
+// TNI, 2026-11-06, W47-02 (agents' quotes on 0.9.31, 2026-11-06: More About Business without the
+// Snapshot Pro offer held these as unknown and required): agreeing to install dashcams or
+// Progressive's devices within 30 days, and the unlabelled consent box, are the client's: the agent's.
+test('Progressive More About Business: dashcam / device commitments and the consent box are the agent\'s (W47-02)', () => {
+  for (const usesEld of [true, false, null]) {
+    const p = buildPlan({ ...baseRecord(), operations: { ...baseRecord().operations, usesEld } }, progressive, {});
+    const agree = byQ(p, '14A');
+    assert.deepEqual([agree.field, agree.source, agree.value, agree.manualOnly], ['TelematicsInput.MandatoryAgreeToInstall', 'fact', null, true], String(usesEld));
+    assert.deepEqual(agree.ask, ['Does the customer agree to purchase and install qualified dashcam(s) in all their vehicle(s) within 30 days?',
+      'Does the customer agree to install devices, provided by Progressive at no charge, in all vehicle(s) within 30 days?']);
+    assert.match(agree.note, /commitment/);
+    const consent = byQ(p, '126');
+    assert.deepEqual([consent.field, consent.source, consent.value, consent.manualOnly], ['PolicyInput.ELDConsentMandatoryTelematics', 'fact', null, true], String(usesEld));
+    assert.match(consent.note, /consent/);
+    // The intake's ELD answer still answers only the telematics-devices question (W45-01).
+    assert.equal(byQ(p, '117').value, usesEld);
+  }
+});
+
 // TNI, 2026-10-26, W44-32 (KY live run: Progressive's anti-theft list was unfamiliar and required,
 // with nothing selected, and the agent picked None; the maintainer: "If not selected automatically,
 // no"): the anti-theft device is Progressive's own choice (the VIN lookup's) when it made one, and
