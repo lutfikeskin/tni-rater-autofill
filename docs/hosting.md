@@ -29,7 +29,7 @@ within hours of approval.
 | Service | `usage-server`, built from `server/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`) |
 | URL | https://usage-server-production.up.railway.app (`/v1/health`) |
 | Storage | volume `usage-data` mounted at `/data` (one JSONL file per day received) |
-| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `OPENAI_API_KEY` (TNI's key for Luna, below; without it `/v1/luna` answers 501), optional `RATER_LUNA_DAILY_LIMIT` (default 5000), `RATER_DASHBOARD_TOKEN` (the [live usage page](#live-usage-page)'s password; without it the page is off), optional `RATER_TEST_INTAKES` (intake fingerprints the page counts as test runs), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
+| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `OPENAI_API_KEY` (TNI's key for Luna, below; without it `/v1/luna` answers 501), optional `RATER_LUNA_DAILY_LIMIT` (default 5000), `RATER_DASHBOARD_TOKEN` (the [live usage page](#live-usage-page)'s password; without it the page is off), optional `RATER_TEST_INTAKES` (intake fingerprints the page counts as test runs), optional `RATER_MIN_FREE_MB` (the [disk guard](#upload-limits-and-the-disk-guard), default 500, `0` off), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787`; the image sets `RATER_CLIENT_IP_HEADER=x-real-ip` |
 
 The extension sends to this server by default (`sidepanel/usage-log.js`, `DEFAULT_SERVER` /
 `DEFAULT_TOKEN`); an agent's own Server setting (a local test server) overrides it, and a blank
@@ -73,6 +73,29 @@ For business analysis, `npm run warehouse` copies the pulled log into a DuckDB f
 maintainer's computer (`server-data/warehouse.duckdb`, git-ignored). It runs nothing on Railway and
 leaves this volume the only full copy of the log. Its tables, the richer intake profile it plans and
 optional quoted premiums are in [quoting history database](quoting-history-database.md).
+
+### Upload limits and the disk guard
+
+The upload token ships in the extension, so `/v1/events` bounds what one address can send and stops
+taking uploads before the volume fills (`UPLOAD_LIMITS` and `MIN_FREE_MB` in `server/index.mjs`).
+Each address has two token buckets in memory: 120 requests, refilled at 60 a minute, and 100 MB,
+refilled at 25 MB an hour. The panel posts at most once a minute plus a few prompt uploads, each of
+at most 500 events and a million characters, so a full queue (20,000 events) drains in 40 requests
+at once; the pilot's busiest minute was 9 requests and 4.8 MB, its busiest day 8.3 MB, all agents
+together, and an office's agents may share one address. Over either limit the answer is 429 with
+`retry-after`, and the log line names the limit and the address. The address is the socket's, or
+the last value of the header `RATER_CLIENT_IP_HEADER` names: the image sets `x-real-ip`, which
+Railway's edge sets to the client's address (without it every agent would share the edge's). The
+buckets start full again after a restart or redeploy.
+
+While `DATA_DIR` has less than `RATER_MIN_FREE_MB` free (unset or blank 500, `0` switches the guard
+off, a value that isn't a number keeps 500), every upload answers 507 and stores nothing, so the
+server and the stored log survive; the log says `DISK LOW` once when it starts and `disk ok again`
+when it ends. A free-space reading that fails is logged once and never stops uploads. The extension
+treats 429 and 507 like any other refusal: the events stay queued on the agent's computer and go on
+the next minute's upload (its queue keeps 20,000 events, then drops the oldest and logs
+`usage_lost`). On `DISK LOW`, grow the volume in Railway (or free space on it) before the agents'
+queues fill.
 
 Redeploy after a server change: `railway up --service usage-server` from the repository root
 (`.railwayignore` keeps the upload to what the image needs).

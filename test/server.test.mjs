@@ -7,7 +7,8 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom } from '../server/index.mjs';
+import { MAX_EVENTS } from '../src/usage.js';
 import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
@@ -871,4 +872,103 @@ test('an exception inside one request is a 500, logged by name, and the server k
   assert.ok(logged.some((l) => /RangeError/.test(l)), 'the error is logged by name');
   assert.ok(logged.some((l) => /TypeError/.test(l)));
   assert.ok(logged.every((l) => !/clock broke/.test(l)), 'not its message');
+});
+
+// Audit 2026-11-07, SRV-13: the upload token ships in the extension, so anyone could fill the
+// volume. Uploads are limited per address (requests and bytes), and stop while the disk is low.
+test('uploads from one address over its limit are refused with 429 and retry-after, nothing stored; another address has its own', async () => {
+  const dataDir = tmp();
+  let now = 1_000_000;
+  const uploadLimits = { requests: { size: 3, perMinute: 60 }, bytes: { size: 10 * 1024 * 1024, perMinute: 60 } };
+  await withServer({ dataDir, uploadLimits, clock: () => now, clientIpHeader: 'X-Real-IP' }, async ({ post }) => {
+    const from = (ip) => ({ 'x-real-ip': ip });
+    for (let i = 0; i < 3; i++) assert.equal((await post({ events: [ev()] }, from('203.0.113.7'))).status, 200);
+    const refused = await post({ events: [ev({ page: 'refused' })] }, from('203.0.113.7'));
+    assert.equal(refused.status, 429);
+    assert.equal(refused.headers.get('retry-after'), '1');
+    assert.match((await refused.json()).error, /too many uploads/);
+    assert.equal((await post({ events: [ev()] }, from('198.51.100.2'))).status, 200, 'another address is not held back');
+    now += 1000;
+    assert.equal((await post({ events: [ev()] }, from('203.0.113.7'))).status, 200, 'a second later the bucket has one more');
+  });
+  const rows = stored(dataDir);
+  assert.equal(rows.length, 5);
+  assert.ok(rows.every((e) => e.page !== 'refused'));
+});
+
+test('uploads over an address\'s byte allowance are refused with 429 and stored once allowed', async () => {
+  const dataDir = tmp();
+  let now = 1_000_000;
+  // 6,000 bytes at most, 6,000 a minute: 100 a second.
+  const uploadLimits = { requests: { size: 100, perMinute: 6000 }, bytes: { size: 6000, perMinute: 6000 } };
+  await withServer({ dataDir, uploadLimits, clock: () => now }, async ({ post }) => {
+    const big = () => ({ events: [ev({ type: 'page_layout', fields: [{ label: 'x'.repeat(4000) }] })] });
+    assert.equal((await post(big())).status, 200);
+    const refused = await post(big());
+    assert.equal(refused.status, 429);
+    assert.match((await refused.json()).error, /bytes/);
+    assert.ok(Number(refused.headers.get('retry-after')) >= 20, 'the wait covers the bytes missing');
+    now += 60_000;
+    assert.equal((await post(big())).status, 200);
+  });
+  assert.equal(stored(dataDir).length, 2);
+});
+
+test('the default upload limits let a full queue drain at once, well above what the pilot sent', async () => {
+  // The panel sends at most 500 events and a million characters a request (sidepanel/usage-log.js
+  // BATCH, BATCH_CHARS), and keeps at most MAX_EVENTS: a full queue is 40 requests back to back.
+  const requests = Math.ceil(MAX_EVENTS / 500);
+  assert.ok(UPLOAD_LIMITS.requests.size >= requests);
+  // The pilot's busiest minute was 9 requests and 4.8 MB, its busiest day 8.3 MB (all agents).
+  assert.ok(UPLOAD_LIMITS.requests.perMinute >= 6 * 9);
+  assert.ok(UPLOAD_LIMITS.bytes.size >= 10 * 4.8 * 1024 * 1024);
+  assert.ok(UPLOAD_LIMITS.bytes.perMinute * 60 * 24 >= 50 * 8.3 * 1024 * 1024);
+  await withServer({ dataDir: tmp() }, async ({ post }) => {
+    for (let i = 0; i < requests; i++) assert.equal((await post({ events: [ev()] })).status, 200, `request ${i + 1}`);
+  });
+});
+
+test('uploads stop with 507 while the disk is low, logged once when it starts and when it ends', async () => {
+  const dataDir = tmp();
+  let free = 400 * 1024 * 1024;
+  const logged = [];
+  const [error, log] = [console.error, console.log];
+  console.error = (...a) => { logged.push(a.join(' ')); };
+  console.log = (...a) => { logged.push(a.join(' ')); };
+  try {
+    await withServer({ dataDir, minFreeBytes: minFreeBytesFrom(''), freeSpace: () => free }, async ({ post, base }) => {
+      for (let i = 0; i < 2; i++) {
+        const res = await post({ events: [ev({ page: 'refused' })] });
+        assert.equal(res.status, 507);
+        assert.match((await res.json()).error, /out of space/);
+      }
+      assert.equal(logged.filter((l) => /DISK LOW/.test(l)).length, 1, 'said once, not per upload');
+      assert.match(logged.find((l) => /DISK LOW/.test(l)), /400 MB, the guard 500 MB/);
+      await healthy(base);
+      free = 2 * 1024 * 1024 * 1024;
+      assert.equal((await post({ events: [ev()] })).status, 200);
+      assert.equal(logged.filter((l) => /disk ok again/.test(l)).length, 1);
+    });
+    // A reading that fails never stops uploads.
+    await withServer({ dataDir, freeSpace: () => { throw new Error('ENOSYS'); } }, async ({ post }) => {
+      assert.equal((await post({ events: [ev()] })).status, 200);
+      assert.equal((await post({ events: [ev()] })).status, 200);
+    });
+  } finally { [console.error, console.log] = [error, log]; }
+  assert.equal(logged.filter((l) => /unreadable/.test(l)).length, 1);
+  assert.equal(stored(dataDir).length, 3);
+  assert.ok(stored(dataDir).every((e) => e.page !== 'refused'));
+});
+
+test('RATER_MIN_FREE_MB: blank is 500 MB, 0 switches the guard off, a mistyped value keeps the default', async () => {
+  const MB = 1024 * 1024;
+  assert.equal(minFreeBytesFrom(undefined), 500 * MB);
+  assert.equal(minFreeBytesFrom(' '), 500 * MB);
+  assert.equal(minFreeBytesFrom('1000'), 1000 * MB);
+  assert.equal(minFreeBytesFrom('0'), 0);
+  assert.equal(minFreeBytesFrom('lots'), 500 * MB);
+  assert.equal(minFreeBytesFrom('-5'), 500 * MB);
+  await withServer({ dataDir: tmp(), minFreeBytes: 0, freeSpace: () => 0 }, async ({ post }) => {
+    assert.equal((await post({ events: [ev()] })).status, 200);
+  });
 });

@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import * as usage from '../sidepanel/usage-log.js';
+import { createServer } from '../server/index.mjs';
+
+// Node's own fetch, before the tests below replace it with fake servers.
+const realFetch = globalThis.fetch;
 
 // Outside Chrome the usage log keeps its queue in memory, so the upload logic runs as is.
 test('events an older server refused as unknown types are sent again to a newer server', async () => {
@@ -270,6 +277,41 @@ test('a reply whose body never arrives is given up too, and the next upload stil
     const requests = fakeServer(stores);
     await usage.upload();
     assert.deepEqual([await usage.count(), requests.length, usage.lastUpload().state], [0, 1, 'ok'], 'the queue is not held');
+  }
+});
+
+// Audit 2026-11-07, SRV-13: the collection server refuses uploads over an address's limit (429) or
+// while its disk is low (507). The panel keeps those events and sends them once it takes them.
+test('a server that is rate limiting (429) or out of space (507) leaves the events queued, sent later', async () => {
+  let free = 0;
+  let now = 0;
+  const server = createServer({ dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'rater-usage-log-')), clock: () => now,
+    uploadLimits: { requests: { size: 1, perMinute: 1 }, bytes: { size: 1e9, perMinute: 1e9 } }, minFreeBytes: 1, freeSpace: () => free });
+  const quiet = console.log;
+  console.log = () => {};
+  const error = console.error;
+  console.error = () => {};
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    globalThis.fetch = realFetch;
+    await usage.saveSettings({ serverUrl: `http://127.0.0.1:${server.address().port}`, serverToken: '' });
+    await usage.clearLog();
+    await usage.log({ type: 'page_view', page: 'L1' }, { type: 'page_view', page: 'L2' });
+    await usage.upload();
+    assert.match(usage.lastUpload().message, /server said 507: the server is out of space/);
+    assert.deepEqual(await usage.counts(), { queued: 2, rejected: 0 }, 'kept, not refused or dropped');
+    free = 10;
+    await usage.upload();
+    assert.match(usage.lastUpload().message, /server said 429: too many uploads/, 'the 507 spent the only request of the minute');
+    assert.deepEqual(await usage.counts(), { queued: 2, rejected: 0 });
+    now += 60_000;
+    await usage.upload();
+    assert.deepEqual([usage.lastUpload().state, usage.lastUpload().sent], ['ok', 2]);
+    assert.deepEqual(await usage.counts(), { queued: 0, rejected: 0 });
+  } finally {
+    console.log = quiet;
+    console.error = error;
+    await new Promise((r) => server.close(r));
   }
 });
 
