@@ -141,7 +141,7 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
   const serverSays = server === 'skipped' ? `not checked (${serverNote || 'skipped'})` : server;
   const lastDay = quiet?.last ? quiet.last.slice(0, 10) : null;
   lines.push(`## ${today}: ${problems.length} new problem report(s), ${newQuestions.length} new question(s) without a rule, usage server ${serverSays}${quiet ? `, ${lastDay ? `no events since ${lastDay}` : 'no events at all'}` : ''}`, '');
-  lines.push(`Events received since ${since}. ${runUrl ? `The run: ${runUrl}.` : `The whole review is \`${review}\` on the computer that ran it.`}${problems.length ? ' Problem reports\' texts are not posted here (this repository is public): read them on the usage server\'s dashboard, or in a review run on your computer (`npm run daily`).' : ''}`, '');
+  lines.push(`Events received since ${since}. ${runUrl ? `The run: ${runUrl}.` : `The whole review is \`${review}\` on the computer that ran it.`}${problems.length ? ` Problem reports' texts are not posted here (this repository is public): read them on the usage server's dashboard (with "Include test runs" for one marked test run), or rebuild this review on your computer with ${rebuild(since)}.` : ''}`, '');
   if (quiet) {
     lines.push(lastDay
       ? `**No events received for ${quiet.days} day(s):** the last arrived ${quiet.last.slice(0, 16).replace('T', ' ')} UTC. Either no agent ran a quote, or uploads stopped (the extension, its upload token, or the usage server). Said once until events arrive again.`
@@ -164,7 +164,10 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
   // GitHub refuses a comment over 65,536 characters: a window with many reports says the rest is in
   // the review rather than failing to say anything (Codex on PR #52).
   const body = lines.join('\n');
-  return body.length <= MAX_COMMENT ? body : `${body.slice(0, MAX_COMMENT)}\n\n… (cut here: the whole list is in the review: ${runUrl || review})`;
+  return body.length <= MAX_COMMENT ? body : `${body.slice(0, MAX_COMMENT)}\n\n… (cut here: the whole list is in the review: ${runUrl ? `rebuild it with ${rebuild(since)}` : review})`;
 }
+// The run keeps no review (the repository is public): the command that rebuilds this window's on the
+// maintainer's computer, a dry run that posts nothing (scripts/daily.mjs).
+const rebuild = (since) => `\`npm run daily -- --since ${since}\` (a dry run: it posts nothing)`;
 const MAX_PROBLEMS = 60;
 const MAX_COMMENT = 60_000;

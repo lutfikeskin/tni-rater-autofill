@@ -116,6 +116,8 @@ test('daily: a run on this computer says where its review and log are', () => {
     /could not run\n\nIt stopped at the download: its log is `reviews\/daily\/daily\.log` on the computer that ran it\.\n\nThe usage server could not be checked/);
   const many = Array.from({ length: 50 }, (_, i) => ({ carrier: 'progressive', page: 'P', caption: 'x'.repeat(2000) + i }));
   assert.match(commentBody({ since: 's', newQuestions: many, review: 'reviews/daily/review-2026-10-19.md' }), /the whole list is in the review: reviews\/daily\/review-2026-10-19\.md\)$/);
+  // On GitHub the run keeps no review: the comment says how to rebuild it.
+  assert.match(commentBody({ since: 's', newQuestions: many, runUrl: 'https://run' }), /rebuild it with `npm run daily -- --since s`/);
 });
 
 test('daily: the comment lists the new items and links the run', () => {
@@ -125,7 +127,7 @@ test('daily: the comment lists the new items and links the run', () => {
   assert.match(body, /- 2026-10-07 15:04 · AY · CoveragesRates$/m);
   // The repository is public: a report's own text (an agent's free text) is never posted.
   assert.doesNotMatch(body, /UM limit/);
-  assert.match(body, /texts are not posted here[\s\S]*dashboard[\s\S]*npm run daily/);
+  assert.match(body, /texts are not posted here[\s\S]*dashboard[\s\S]*`npm run daily -- --since 2026-10-07T06:20:00Z` \(a dry run/);
   assert.match(body, /`RiskInput.NewThing` "A question\?" \(radio\)/);
   assert.match(body, /56 different ones in all/);
   assert.match(body, /https:\/\/run/);
