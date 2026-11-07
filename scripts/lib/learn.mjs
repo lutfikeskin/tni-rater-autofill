@@ -6,7 +6,7 @@
 //              the maintainer (is it TNI's standard?), never a ready rule
 //   byState    an unmapped question whose answer is consistent within each state
 //   mapping    an unmapped text box whose typed value matches the same intake field every time
-//   review     a mapped question whose autofill answer agents change often
+//   review     a mapped question whose autofill answer agents change often, under the current rules
 //   pageAnswer a question left to the agent where they let the page's own answer stand
 //   pageSets   an unmapped question the page itself answers (its own cascade), the same nearly every time
 //   agent      an unmapped question agents answer the same way that is an attestation or a client
@@ -84,6 +84,9 @@ export function questionOf(events) {
 // session -> answer key (question, then unit) -> { value, source, corrected, matches, label, page, q, kind }
 export function finalAnswers(events, ids = fieldIdentities(events)) {
   const out = new Map();
+  // Which rules filled an answer: its fill run's fingerprint of the rule files (`rules`, rulesHash
+  // in src/usage.js), shared with its fill_field events by `run`.
+  const rulesOf = new Map(events.filter((e) => e.type === 'fill_run' && e.run && e.rules).map((e) => [e.run, e.rules]));
   const get = (e) => {
     if (!e.session || !e.carrier) return null;
     const perSession = out.get(e.session) ?? new Map();
@@ -112,6 +115,7 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
         // Where the fill's answer came from (intake, derived, standard, fact, attestation, or the
         // agent's own default: agent-default).
         if (e.source) a.ruleSource = e.source;
+        a.rules = rulesOf.get(e.run) ?? null;
         if (e.shown !== undefined) { a.value = e.shown; a.filledValue = e.shown; }
       }
     } else if (e.type === 'field_change') {
@@ -121,11 +125,12 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
       if (e.by === 'agent') {
         // The panel knew the field was autofilled (`autofilled`, by its key), also when the fill was
         // on another page that shows the same question (Progressive's UM/UIM on More About Business
-        // and on Rates): the agent changed our answer.
-        if ((a.autofilled || e.autofilled) && e.vsAutofill === 'different') {
+        // and on Rates): the agent changed our answer, to another value or none (a text box
+        // cleared), as the review and the signals report count corrections.
+        if ((a.autofilled || e.autofilled) && ['different', 'cleared'].includes(e.vsAutofill)) {
           a.autofilled = true;
           a.corrected = true;
-          a.correction = e.kind === 'text' ? 'typed a different value' : `"${a.filledValue ?? e.from}" → "${e.to}"`;
+          a.correction = e.kind === 'text' ? (e.vsAutofill === 'cleared' ? 'cleared the value' : 'typed a different value') : `"${a.filledValue ?? e.from}" → "${e.to}"`;
         }
         a.source = 'agent';
       } else if (!a.source) {
@@ -201,13 +206,28 @@ function pageLeftAnswers(events, out, get, ids) {
 
 const share = (counts, n) => [...counts].sort((x, y) => y[1] - x[1]).map(([v, c]) => ({ value: v, count: c, share: c / n }));
 
+// The rules agents fill with now: the fingerprint of the newest fill run that names one (null: no
+// fill in the log names one, from before fingerprints). By time, not by the text of `t` (another
+// offset or precision would sort wrong; CodeRabbit on PR #373); a fill without a readable time
+// can't be the newest.
+export function newestRules(events) {
+  let newest = null;
+  let at = -Infinity;
+  for (const e of events) {
+    const t = Date.parse(e.t);
+    if (e.type === 'fill_run' && e.rules && t >= at) { newest = e; at = t; }
+  }
+  return newest?.rules ?? null;
+}
+
 /**
  * @param {object[]} events   from loadEvents()
- * @param {{carriers?: object[], minIntakes?: number, threshold?: number}} opts
+ * @param {{carriers?: object[], minIntakes?: number, threshold?: number, rules?: string | null}} opts
  *   minIntakes: how many different intake PDFs a suggestion needs (quotes of one PDF, such as a
- *   sample retried many times, count once)
+ *   sample retried many times, count once); rules: the rule files' fingerprint a rule review counts
+ *   answers of (default: the newest the log's fills name, newestRules; null: every fill's)
  */
-export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 } = {}) {
+export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9, rules = newestRules(events) } = {}) {
   const contexts = sessionContexts(events);
   const answers = finalAnswers(events);
   const byId = new Map(carriers.map((c) => [c.id, c]));
@@ -292,12 +312,21 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     if (isMapped) {
       // An answer filled with the agent's own default (agent defaults) says nothing about TNI's rule:
       // its correction is the agent overriding themselves (the weekly signals count those apart).
-      const filled = obs.filter((o) => o.autofilled && !isOwnDefault(o.ruleSource));
+      // Only answers today's rules filled (`rules`): a correction of a rule since changed says
+      // nothing about the rule now, and would keep a fixed rule on the list for good. Earlier
+      // builds' answers are shown beside it, before and after the change, apart from answers whose
+      // rules aren't known (a build from before fingerprints, or a fill on another page whose run
+      // the log doesn't hold; CodeRabbit on PR #373).
+      const all = obs.filter((o) => o.autofilled && !isOwnDefault(o.ruleSource));
+      const filled = rules ? all.filter((o) => o.rules === rules) : all;
       const corrected = filled.filter((o) => o.corrected);
       if (intakesOf(filled) >= minIntakes && corrected.length / filled.length >= 0.2) {
         const changes = new Map();
         corrected.forEach((o) => changes.set(o.correction, (changes.get(o.correction) ?? 0) + 1));
-        suggestions.review.push({ ...base, ...support(filled), filled: filled.length, corrected: corrected.length, rate: corrected.length / filled.length, changes: share(changes, corrected.length) });
+        const counts = (list) => ({ filled: list.length, corrected: list.filter((o) => o.corrected).length });
+        const others = all.filter((o) => !filled.includes(o));
+        suggestions.review.push({ ...base, ...support(filled), filled: filled.length, corrected: corrected.length, rate: corrected.length / filled.length, changes: share(changes, corrected.length),
+          earlier: counts(others.filter((o) => o.rules)), unknownRules: counts(others.filter((o) => !o.rules)) });
       }
       continue;
     }
@@ -378,7 +407,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     s.manualRule = `the same label on steps ${steps.join(', ')}: a label rule would match each step; write the rule by hand so it finds this step's question only`;
   }
   for (const list of Object.values(suggestions)) list.sort((a, b) => b.intakes - a.intakes || b.quotes - a.quotes);
-  return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, suggestions };
+  return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, rules, suggestions };
 }
 
 const quote = (s) => `'${String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
