@@ -324,6 +324,17 @@ test('a question too large even alone is left to the agent, said so, and the res
   assert.equal(calls, 0);
 });
 
+// CodeRabbit on #365: a question Luna may not review is never left as "too large", even when the row
+// it names brings more sources than one request takes (that size check used to come first).
+test('an invalid question naming a row with too many facts still stops the review, not a too-large leave', async () => {
+  const ctx = { ...context, record: { ...context.record, drivers: [{}, Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`fact${i}`, `value ${i}`]))] } };
+  const invalid = { ...items[0], id: 'f2', key: 'mvr', label: 'Order MVR?', rulePath: 'drivers[1].cdl' };
+  let calls = 0;
+  await assert.rejects(suggest([questions(1)[0], invalid], ctx, { apiKey: 'synthetic' }, { call: async () => { calls++; } }),
+    e => e instanceof AssistError && /permitted fields/.test(e.message));
+  assert.equal(calls, 0);
+});
+
 test('incomplete verification fails closed without spending again on a higher output cap', async () => {
   const bodies = [];
   await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => {
@@ -452,6 +463,17 @@ test('planned again for an older server, a question too large for its bound is l
   const result = await suggest(fields, context, { apiKey: '', proxy }, { call: (args) => callModel({ ...args, fetchImpl: oldServer(calls) }) });
   assert.ok(calls[0] > OLD_SERVER_CHARS && calls.slice(1).every(n => n <= OLD_SERVER_CHARS));
   assert.deepEqual(result.suggestions.map(x => [x.id, x.leaveWhy ?? x.choice]), [['f1', 'No'], ['f2', 'tooLarge'], ['f3', 'No']]);
+});
+
+// CodeRabbit on #365: refused by an older server with nothing reviewed yet, and nothing fits its
+// bound: the review stops with the size error, as when nothing fits at all, instead of leaves the
+// panel would keep for the next fill.
+test("when nothing fits an older server's bound, the review stops instead of leaving every question", async () => {
+  const fields = [{ ...questions(1)[0], options: ['Yes', 'No', 'x'.repeat(OLD_SERVER_CHARS)] }];
+  const calls = [];
+  const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
+  await assert.rejects(suggest(fields, context, { apiKey: '', proxy }, { call: (args) => callModel({ ...args, fetchImpl: oldServer(calls) }) }), /too much context/);
+  assert.equal(calls.length, 1, 'only the refused request');
 });
 
 test('HTTP integration sends the key only to OpenAI and hides provider errors', async () => {

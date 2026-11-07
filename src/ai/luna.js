@@ -36,15 +36,21 @@ const withRows = (items, context) => ({ ...context, rows: rowsFor(items, context
 
 // `limit`: the request's bound in characters (OLD_SERVER_CHARS for a server from before 2026-11-07).
 export function buildRequest(items, context, { limit = MAX_REQUEST_CHARS } = {}) {
+  if (!items.length || items.length > BATCH_SIZE) throw new AssistError('Luna can review up to twelve questions in one group.');
+  // Every question is checked before any size is: one Luna may not review is never "too large"
+  // (requestGroups leaves those to the agent and goes on).
+  const ids = new Set();
+  for (const item of items) {
+    if (!item.id || ids.has(item.id) || !KINDS.has(item.controlKind) || !item.options?.length
+      || item.options.length > 254 || neverReason(item)) throw new AssistError('Luna can only review permitted fields with visible choices.');
+    ids.add(item.id);
+  }
   context = withRows(items, context);
   const { sources } = evidenceFor(context);
-  if (!items.length || items.length > BATCH_SIZE) throw new AssistError('Luna can review up to twelve questions in one group.');
   const properties = {}, fields = {};
   const citations = { type: 'array', items: { type: 'string', enum: [...Object.keys(sources), LEAVE] }, maxItems: 4 };
   let enumValues = citations.items.enum.length;
   for (const item of items) {
-    if (!item.id || Object.hasOwn(properties, item.id) || !KINDS.has(item.controlKind) || !item.options?.length
-      || item.options.length > 254 || neverReason(item)) throw new AssistError('Luna can only review permitted fields with visible choices.');
     enumValues += item.options.length + 1;
     if (enumValues > MAX_SCHEMA_ENUM_VALUES) throw new RequestTooLarge('Too many choices for one Luna review. Answer it manually.');
     fields[item.id] = { label: item.label, section: item.section, current: item.current, reason: item.reason, ...fieldContext(item, context),
@@ -346,6 +352,9 @@ export async function suggest(items, context, config, { call = callModel, isStal
       if (!(error instanceof OldServerLimit) || limit === OLD_SERVER_CHARS) throw error;
       limit = OLD_SERVER_CHARS;
       const again = requestGroups(items, context, limit, at[0]);
+      // Nothing reviewed and nothing fits that server: the review stops, as when none fits at all
+      // (not cached as leaves, so the next fill asks again).
+      if (i === 0 && !again.groups.length) throw again.tooLarge[0]?.error ?? error;
       suggestions.length = at[0];
       for (const x of again.tooLarge) suggestions[x.at] = tooLargeLeave(items[x.at]);
       groups = [...groups.slice(0, i), ...again.groups];
