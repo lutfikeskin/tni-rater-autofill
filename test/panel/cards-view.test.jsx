@@ -25,7 +25,7 @@ const shown = (container) => [...$(container, 'issues').children].filter((c) => 
 test('the cards above the answers keep their places and order, each hidden while it says nothing', () => {
   const { container } = render(<Cards />);
   expect([...$(container, 'issues').children].map((c) => [c.id, c.hidden])).toEqual([
-    ['held-note', true], ['carrier-note', true], ['state-note', true], ['defaults-note', true], ['stop-note', true], ['review-note', true], ['fill-error', true]]);
+    ['held-note', true], ['carrier-note', true], ['state-note', true], ['owner-note', true], ['defaults-note', true], ['stop-note', true], ['review-note', true], ['fill-error', true]]);
   expect($(container, 'fill-waiting').hidden).toBe(true);
   act(() => {
     state.cards = { fill: card({ title: 'Filling didn’t finish', text: 'The page stopped answering.', role: 'alert' }),
@@ -37,6 +37,9 @@ test('the cards above the answers keep their places and order, each hidden while
   // Another rater's tab in front while the panel stays on the quote tab (tab.js showHeldNote): first.
   act(() => { state.cards = { ...state.cards, held: card({ tone: 'info', title: 'GEICO is in front. The panel stays on the Progressive quote.' }) }; });
   expect(shown(container)).toEqual([['held-note', 'GEICO is in front. The panel stays on the Progressive quote.'], ['fill-error', 'Filling didn’t finish']]);
+  // The tab's quote began with another intake (coordinator.js showOwnerNote): after the state's card.
+  act(() => { state.cards = { ...state.cards, held: null, owner: card({ tone: 'warn', title: 'This Progressive tab’s quote began with another intake.' }) }; });
+  expect(shown(container)).toEqual([['owner-note', 'This Progressive tab’s quote began with another intake.'], ['fill-error', 'Filling didn’t finish']]);
 });
 
 // issueCard's drawing: red with no tone, `i` on an info card, the title, what it says, its notes,

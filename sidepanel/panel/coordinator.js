@@ -28,6 +28,7 @@ import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishin
 import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
 import { markTab } from './tab-mark.js';
+import { bindQuoteTab, quoteOwnerIssue } from './quote-owner.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -297,7 +298,7 @@ function logFillError(ctx, error) {
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || stateIssue() || defaultsHold()) return;
+  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || stateIssue() || defaultsHold() || quoteOwnerIssue(ctx.tabId)) return;
   if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
@@ -311,7 +312,8 @@ async function autoFill(page) {
   state.autoDrawn = null;
   // The client may have been cleared while this fill was waiting to run.
   if (state.autoPaused || state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
-  if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold()) return;
+  // Nor on a tab whose quote began with another intake (quote-owner.js).
+  if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue()) return;
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
   // step themselves (same address, new questions). It's filled as a new page, with its report.
@@ -368,6 +370,7 @@ async function autoFill(page) {
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
+    bindQuoteTab(tabId, ctx.intake.intakeId);
     noteMissingUnit(results, ctx);
     const frames = results.map((r) => r.result).filter(Boolean);
     const retrying = rememberFill(frames, ctx);
@@ -936,6 +939,7 @@ function renderSite() {
   if (state.intake && state.checksCarrier !== checksFor) { state.checksCarrier = checksFor; renderWarnings(); }
   showStopPage();
   showStateNote();
+  showOwnerNote();
   showReviewMode();
   renderSteps();
 }
@@ -1280,6 +1284,11 @@ function dockFor() {
     if (state.view !== 'page') return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Whose defaults does this quote take?', sub, button: 'dock-defaults', label: 'Show the question' };
     return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Answer the question above', sub, button: 'fill', label: 'Fill this page', disabled: true };
   }
+  // The tab's quote began with another intake (quote-owner.js): nothing fills by itself; the
+  // agent's Fill this page fills it for this client (the card above).
+  if (quoteOwnerIssue()) {
+    return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Another client’s quote?', sub: 'This tab’s quote began with another intake. Nothing fills here by itself.', button: 'fill', label: 'Fill this page' };
+  }
   // The carrier's portal pages outside a quote are never filled (fillPage).
   if (!onQuotePage()) return { phase: 'portal', eyebrow: 'Next', title: 'Open the client’s quote', sub: 'This is the portal. Filling starts on a quote page.' };
   const report = showReport();
@@ -1520,10 +1529,31 @@ function dismissState() {
   renderSteps();
 }
 
+// The tab's quote began with another intake than the one loaded (quote-owner.js): maybe the last
+// client's quote, left open to email or print it. Said above the page's answers; pages that open,
+// follow-ups and Continue don't fill there (fillPage, scheduleAutoFill, autoFill) until the agent
+// fills the page themselves or says the quote is this client's.
+function showOwnerNote() {
+  const issue = state.intake ? quoteOwnerIssue() : null;
+  if (!issue) { state.cards = { ...state.cards, owner: null }; return; }
+  const name = state.tab.carrier?.name ?? 'rater';
+  state.cards = { ...state.cards, owner: issueSaid({ tone: 'warn', title: `This ${name} tab’s quote began with another intake.`,
+    text: 'It may be another client’s quote. Nothing fills here by itself: not pages as they open, follow-ups or Continue. Open a new quote for this client, or, if this quote is theirs, say so or use Fill this page.',
+    actions: [{ label: 'It’s this client’s quote', className: 'tinted', onClick: claimQuote }] }) };
+}
+
+// "It's this client's quote": the tab's quote is this intake's from now on, and fills as one.
+function claimQuote() {
+  if (!state.intake || !quoteOwnerIssue()) return;
+  bindQuoteTab(state.tab.id);
+  showOwnerNote();
+  renderSteps();
+}
+
 // A tab may still show the previous client's quote after an intake is loaded (or the panel
 // started): the same evidence as for layouts (a new page since, or a fill with this intake).
 function stopPageIsOurs() {
   return !state.layoutHold || state.layoutReadyTabs.has(state.tab?.id);
 }
 
-export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };
+export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };

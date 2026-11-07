@@ -7,6 +7,7 @@ import { firstUnits } from './intake.js';
 import { renderPickers } from './record.js';
 import { ensureRecorder, pageOf } from './usage.js';
 import { issueSaid, renderSite, scheduleLayout, seedQuoteState } from './coordinator.js';
+import { noteQuoteTab } from './quote-owner.js';
 
 // ---------------------------------------------------------------------------------------------
 // The current tab
@@ -15,6 +16,8 @@ import { issueSaid, renderSite, scheduleLayout, seedQuoteState } from './coordin
 // opens the quote in a new tab, which is still loading (no rater address yet) when it becomes
 // active, so the panel kept following the old portal tab in the background.
 function onTabUpdated(id, change, tab) {
+  // Any tab's new address: whose quote it is (quote-owner.js), the quote's tab or not.
+  if (change.url) noteQuoteTab(id, change.url);
   if ((id === state.tab?.id || tab?.active) && (change.url || change.status === 'complete')) refreshTab();
 }
 
@@ -82,6 +85,8 @@ async function refreshTab() {
     state.autoPending = false;
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false, windowId: tab.windowId } : null;
+  // Whose quote the tab is, as the panel finds it (a tab no intake had yet, on a quote page).
+  noteQuoteTab(state.tab?.id, state.tab?.url);
   await restoreAgentKeys(state.tab?.id);
   await restoreDoneActions(state.tab?.id);
   await restoreReports(state.tab?.id);

@@ -53,6 +53,9 @@ async function loadFile(file, { reset = false } = {}) {
   state.autoDrawn = null;
   state.autoPending = false;
   state.autoPaused = false;
+  // A page the last intake's fill left to fill next (runPendingPage, new_fields): never this one's.
+  state.pagePending = null;
+  state.drawPending = null;
   state.tabSessions.clear();
   state.autoPages = new Set();
   state.agentKeys = new Map();
@@ -69,7 +72,8 @@ async function loadFile(file, { reset = false } = {}) {
   // agentEdited: the fields the agent edited in the panel, saved with the intake so a derived one
   // among them (radius miles, years in business) stays theirs after the panel reopens.
   // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
-  state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test };
+  // intakeId: whose quote a tab is (quote-owner.js), from the moment this intake is the panel's.
+  state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test, intakeId: summary.intakeId };
   // agent defaults: nothing fills with the last quote's answer until this one is set up and asked.
   quoteStarting();
   if (same) keepWork(state.intake, same);

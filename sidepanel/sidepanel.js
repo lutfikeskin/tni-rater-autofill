@@ -30,6 +30,7 @@ import { mountSiteTrack } from './panel/site-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaultsShown } from './panel/agent-defaults/store.js';
 import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
+import { forgetQuoteTab, restoreQuoteOwners } from './panel/quote-owner.js';
 import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
@@ -185,7 +186,7 @@ function wire() {
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
-    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); dropReports((entry) => entry.tabId === tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); forgetQuoteTab(tabId); dropReports((entry) => entry.tabId === tabId); });
     chrome.windows.onFocusChanged.addListener(refreshTab);
     // Settings' Mark the quote's tab follows the tabGroups permission, given or taken back anywhere.
     watchMarkSwitch();
@@ -196,6 +197,9 @@ async function init() {
   // Stored data in this build's shape before anything reads it (migrateStoredData).
   await migrateStoredData();
   wire();
+  // Whose quote each tab is, as an earlier panel kept it (quote-owner.js), before the intake is
+  // read (nothing binds a tab without one) and any tab is followed.
+  await restoreQuoteOwners();
   mountLive($('live-root'), $('view'));
   if (inExtension && popped) keepPlace();
   // An intake saved by an earlier panel: while the panel was closed the tabs may have moved to

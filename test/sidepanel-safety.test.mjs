@@ -106,7 +106,10 @@ function extractFunction(name) {
         // no quote waits on them, no fill carries their fingerprint, and an answer is the agent's own
         // default only by its source, unless the harness gives them.
         const defaultsStubs = { defaultsHold: '() => false', fillDefaultsHash: '() => undefined', isOwnDefault: "(x) => x?.source === 'agent-default'",
-          initialsChanged: 'async () => {}', refreshDefaults: '() => {}', quoteStarting: '() => {}', settingsDefaults: '() => undefined' };
+          initialsChanged: 'async () => {}', refreshDefaults: '() => {}', quoteStarting: '() => {}', settingsDefaults: '() => undefined',
+          // Whose quote a tab is (quote-owner.js) has its own tests (test/panel/quote-owner.test.jsx):
+          // elsewhere every tab is this intake's, unless the harness says otherwise.
+          quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -5912,7 +5915,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   assert.equal(stored.record.operations.radiusMiles, 77, 'and saved that way');
   sandbox.state.intake = { record, warnings: [], done: [] };
   // A new intake starts clean: its derived values follow their source again.
-  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places, test \};/, 'a loaded intake starts with no edits');
+  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places, test, intakeId: summary\.intakeId \};/, 'a loaded intake starts with no edits');
   sandbox.renderSections();
   await edit('operations.radius', '250');
   assert.equal(record.operations.radiusMiles, 250, 'another intake: the miles follow the edit');
@@ -6842,7 +6845,7 @@ function siteHarness(carrier, step, filled = false) {
   const state = { tab: { id: 4, url: 'https://sales.geico.com/quote', carrier }, intake: { record: {} }, filling: false, reports: new Map(), autoPages: new Set(), tabSteps: new Map(step ? [[4, step]] : []),
     reportFor: filled ? { fields: 3 } : null };
   const context = { state, URL, inExtension: true, $: (id) => (ui[id] ??= el()), quoteProgress,
-    reportShown: () => filled, currentReportKey: () => '4|/quote', showCarrierNote() {}, showStopPage() {}, showStateNote() {}, showReviewMode() {}, renderSteps() {}, renderWarnings() {} };
+    reportShown: () => filled, currentReportKey: () => '4|/quote', showCarrierNote() {}, showStopPage() {}, showStateNote() {}, showOwnerNote() {}, showReviewMode() {}, renderSteps() {}, renderWarnings() {} };
   vm.runInNewContext(`${PAGE_HELPERS}\n${extractFunction('renderSite')}`, context);
   context.renderSite();
   return Object.assign(ui, { siteTrack: plain(state.siteTrack) });
