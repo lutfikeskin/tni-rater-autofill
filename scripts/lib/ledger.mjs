@@ -457,7 +457,7 @@ const LEFT = ['unfamiliar', 'leftRequired', 'noData', 'failed'];
 // decides. A ledger number counted under the old definition gets no trend (weeklyRows).
 export const NUMBERS = [
   { label: 'Quotes (any carrier · per carrier)', match: /^Quotes \(/i, show: (k) => `${k.quotes} · ${k.carrierQuotes}`, n: (k) => k.quotes, better: 0 },
-  // A printed Progressive quote is done since PR #108 (signals.mjs FINAL, FINAL_CLICK; merged
+  // A printed Progressive quote is done since PR #108 (carrier-reports.mjs finalPage, finalClick; merged
   // 2026-10-20 08:08 UTC); until then the row read "reached the carrier's final page".
   { label: "Quotes done (reached the carrier's final page or printed)", match: /^Quotes done/i, show: (k) => (k.donePercent == null ? '—' : `${k.donePercent}%`), n: (k) => k.donePercent, better: 1,
     redefined: { name: 'Quotes done', at: '2026-10-20T08:08:38Z', current: /\bprinted\b/i, change: 'a printed Progressive quote (Print/Send or its PDF) counts as done since 2026-10-20' } },
