@@ -8676,6 +8676,24 @@ test('runKit puts the kit only into frames that lack this build, and calls again
 });
 const plainResults = (results) => JSON.parse(JSON.stringify(results.map((r) => r.result)));
 
+// runKit calls again only where a frame's call gave null: a call that answers for a frame without
+// the kit (an empty list, false) would leave a document replaced meanwhile unread. Reading answers
+// back and Show on page give null there (CodeRabbit on #394).
+test('the answer read-back and Show on page give null in a frame without the kit, so runKit calls there again', async () => {
+  const funcs = [];
+  const context = {
+    state: { tab: { id: 1, url: 'Quote' } }, pageOf: (url) => url, announce() {}, drawRow() {}, checkItems() {},
+    whereTimers: new Map(), setTimeout: () => 0, clearTimeout() {}, stepOf: () => null,
+    runKit: async (tabId, carrier, func) => { funcs.push(func); return []; },
+  };
+  vm.runInNewContext(['checkAnswers', 'showOnPage'].map(extractFunction).join('\n'), context);
+  await context.checkAnswers([{ type: 'answer', key: 'limit', field: 'Limit', value: '$1,000,000' }], 1, 'Quote', { id: 'amwins' });
+  await context.showOnPage({}, { key: 'limit', label: 'Limit' }, 1, 'Quote', { id: 'amwins' });
+  assert.equal(funcs.length, 2);
+  delete globalThis.__raterKit;
+  assert.deepEqual(funcs.map((f) => f([], []) ?? null), [null, null]);
+});
+
 // Developer recording (docs/developer-recording.md): the trace goes into the recorded tab only, with
 // the recorder whose readers it uses, and not once the recording is stopping.
 test('the developer recording\'s trace is injected with the recorder, into the recorded tab only', async () => {

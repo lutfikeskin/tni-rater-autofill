@@ -630,7 +630,7 @@ async function showOnPage(rec, x, tabId, page, carrier) {
   if (!x.key || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   let found = false;
   try {
-    const frames = await runKit(tabId, carrier, (key, label) => globalThis.__raterKit?.reveal?.(key, label) === true, [x.key, x.label ?? null]);
+    const frames = await runKit(tabId, carrier, (key, label) => (globalThis.__raterKit ? globalThis.__raterKit.reveal?.(key, label) === true : null), [x.key, x.label ?? null]);
     found = frames.some((f) => f.result === true);
   } catch { /* the page is navigating */ }
   clearTimeout(whereTimers.get(rec));
@@ -844,7 +844,7 @@ async function checkAnswers(list, tabId, page, carrier, plan = []) {
   const steps = (plan ?? []).filter((s) => ids.has(String(s.id)));
   let frames;
   try {
-    frames = await runKit(tabId, carrier, (asked, filledBy) => globalThis.__raterKit?.readBack?.(asked, filledBy) ?? [], [items, steps]);
+    frames = await runKit(tabId, carrier, (asked, filledBy) => globalThis.__raterKit?.readBack?.(asked, filledBy) ?? null, [items, steps]);
   } catch { return; /* the page is navigating */ }
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   const now = new Map(frames.flatMap((f) => Array.isArray(f.result) ? f.result : []).map((x) => [`${x.key}|${x.label ?? ''}`, x]));
