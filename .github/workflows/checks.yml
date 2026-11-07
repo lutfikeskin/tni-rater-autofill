@@ -35,7 +35,8 @@ jobs:
         run: npm run package
 
   # The store ZIP and the packaged extension on the AmWINS mock, served by the replay server on
-  # port 8792 as `npm run replay` does.
+  # port 8792 as `npm run replay` does: the unpacked copy, then the store ZIP itself, as agents
+  # install it (audit 2026-11-07, QA-01).
   extension:
     name: Packaged extension
     runs-on: ubuntu-latest
@@ -68,6 +69,7 @@ jobs:
           curl --silent --fail --output /dev/null --retry 30 --retry-delay 1 --retry-connrefused \
             http://127.0.0.1:8792/test/fixtures/amwins/application.html
           npm run e2e:extension
+          E2E_EXT_DIR="$RUNNER_TEMP/rater-store-package" E2E_CHANNEL=store npm run e2e:extension
 
   # The mocks and replays, one job each; each starts its own local server where it needs one.
   browser:

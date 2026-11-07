@@ -416,7 +416,7 @@ test('the fill hands the kit the named-form check and what this tab\'s fills gav
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
   assert.match(body, /formUnit: unitNameFor\(carrier, extra\.expectPage \?\? pageOf\(state\.tab\?\.url\), active, state\.intake\?\.record\)/);
-  assert.match(body, /givenBefore: Object\.fromEntries\(\[\.\.\.\(state\.filled \?\? \[\]\)\]\.map\(\(\[key, x\]\) => \[key, \{ path: x\.path \?\? null, shown: x\.shown \?\? null \}\]\)\)/);
+  assert.ok(body.includes('givenBefore: { ...givenEarlier(state.tab?.id), ...Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },'));
 });
 
 
@@ -1413,6 +1413,25 @@ test('current Luna decisions and completed retired corrections retain their revi
   assert.equal(context.pendingAi(1, 'Quote').length, 1, 'only the unresolved Luna answer blocks');
 });
 
+// Audit 2026-11-07, AI-11: a hold is stored under the model the panel asked for (the cache signature's),
+// not the dated snapshot the provider answered as, so a reload keeps it a current Luna hold.
+test('a pick the dated snapshot answered is saved under the configured model and restored as a current hold', async () => {
+  const state = { aiCache: new Map() };
+  const saved = [];
+  const context = { state, DEFAULT_MODEL, POLICY_VERSION, aiFingerprint: JSON.stringify, aiSafeText: String, snapshotFingerprint: JSON.stringify,
+    usage: { currentSession: () => ({ intakeId: 'intake' }) }, aiPendingStore: { get: async () => saved, set: async () => {} } };
+  vm.createContext(context);
+  vm.runInContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'restoreAiPending', 'aiDecisionBlocks', 'pendingAi'].map(extractFunction).join('\n'), context);
+  const sig = context.aiCacheSignature({ tabId: 1, page: 'Quote', model: DEFAULT_MODEL, policy: POLICY_VERSION, contextHash: 'context', itemHash: 'item' });
+  const pick = { model: `${DEFAULT_MODEL}-2026-10-01`, key: 'choice', label: 'Choice', choice: 'No', controlKind: 'radio', done: 'auto', pendingScope: 'intake' };
+  saved.push(context.aiPendingRecord(sig, pick, 'intake'));
+  assert.equal(saved[0].model, DEFAULT_MODEL);
+  await context.restoreAiPending();
+  const restored = state.aiCache.get(sig);
+  assert.deepEqual([restored.retired, restored.rejected, restored.autoOk], [false, false, true]);
+  assert.equal(context.pendingAi(1, 'Quote').length, 1);
+});
+
 test('safety metadata changes invalidate cached choice fingerprints', () => {
   const context = { aiFingerprint: JSON.stringify };
   vm.runInNewContext(extractFunction('aiItemFingerprint'), context);
@@ -2049,6 +2068,16 @@ test('reloading an intake drops settled ledger entries without losing unresolved
   assert.equal(context.doneRestored.size, 0, 'the intake\'s done actions may be restored again (its records are kept now)');
 });
 
+// Audit 2026-11-07, AI-04: a decision and a pending hold say which prompt picked them.
+test('an AI decision event and a pending hold record carry the prompt hash', () => {
+  const context = { state: { intake: { record: {} } }, redactor: () => (x) => x, redactionTerms: () => [], aiFingerprint: JSON.stringify,
+    aiSafeText: String, aiOriginRecord: () => null, snapshotFingerprint: () => null };
+  vm.runInNewContext(['aiDecisionEvent', 'aiPendingRecord'].map(extractFunction).join('\n'), context);
+  const x = { key: 'k', label: 'Q', choice: 'No', controlKind: 'radio', model: 'gpt-6-luna', policy: 'luna-evidence-v6', promptHash: '0123456789ab', done: 'auto' };
+  assert.equal(context.aiDecisionEvent(x, { carrier: { id: 'progressive' }, page: 'p' }, 'approved').promptHash, '0123456789ab');
+  assert.equal(context.aiPendingRecord(['1', 'p', 'gpt-6-luna', 'luna-evidence-v6', 'ctx', 'item'].join('\n'), x, 'scope').promptHash, '0123456789ab');
+});
+
 // 2026-10-05 FL run: after the first vehicle's Add Vehicle was continued, the second and third
 // vehicles' (same headings) were taken for the agent going back, and Continue wasn't clicked.
 test('a continued step is remembered per vehicle on vehicle pages, per driver on the driver page, quote-wide elsewhere', () => {
@@ -2367,6 +2396,28 @@ test('the panel opened again makes the tab\'s kept reports again, as of their fi
   assert.match(extractFunction('refreshTab'), /await restoreDoneActions\(state\.tab\?\.id\);\n\s+await restoreReports\(state\.tab\?\.id\);/);
 });
 
+// Audit 2026-11-07 (LEARN-07): the panel closed and opened again knew nothing of what the tab's fills
+// had given, so a choice the agent changed meanwhile (no panel heard it) read as the page's own, and
+// the next fill replaced it. What those fills gave comes back from the kept reports, for this intake.
+test('the panel opened again knows what the tab\'s fills gave before, from its kept reports', async () => {
+  const memory = { 'reports:7': { scope: 'intake-a', entries: [
+    { key: '7|Drivers', page: 'Drivers', active: {}, at: 100, frames: [{ fields: 1, filled: [{ key: 'ref:Radius', path: 'operations.radius', shown: '0-50 miles' }] }] },
+    { key: '7|Drivers2', page: 'Drivers', active: {}, at: 200, frames: [{ fields: 1, filled: [{ key: 'ref:Radius', path: 'operations.radius', shown: '51-200 miles' }] }] },
+    { key: '8|Elsewhere', page: 'Elsewhere', at: 300, frames: [{ fields: 1, filled: [{ key: 'ref:Other', path: 'x', shown: 'y' }] }] },
+  ] } };
+  const { context } = keptReportsHarness(memory, { state: { givenEarlier: new Map() } });
+  await context.restoreReports(7);
+  const kept = context.state.givenEarlier.get(7);
+  assert.deepEqual(JSON.parse(JSON.stringify({ scope: kept.scope, given: [...kept.given] })),
+    { scope: 'intake-a', given: [['ref:Radius', { path: 'operations.radius', shown: '51-200 miles' }]] }, 'the newest, this tab\'s only');
+  // fillOptions passes them to the kit, under this intake only, below what this panel's fills gave.
+  const ctx = { state: { givenEarlier: context.state.givenEarlier }, usage: { currentSession: () => ({ intakeId: 'intake-a' }) } };
+  vm.runInNewContext(extractFunction('givenEarlier'), ctx);
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.givenEarlier(7))), { 'ref:Radius': { path: 'operations.radius', shown: '51-200 miles' } });
+  ctx.usage.currentSession = () => ({ intakeId: 'intake-b' });
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.givenEarlier(7))), {});
+});
+
 // GEICO live run, 2026-10-28: Quote & Coverages' report kept property damage and UMPD, which a CSL
 // limit had taken off the page, as "Needs your answer… On the page now: $25,000", and they held
 // Recalculate until the agent marked them done. A kept report is made again as the page is now: the
@@ -2575,6 +2626,8 @@ test('a page without form fields still shows what needs the agent', () => {
 
 function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
   const logged = [], rendered = [], applied = [], holders = [];
+  // The usage log's quote (usage-log.js currentSession): a test may replace it mid-review.
+  const session = { current: { id: 'quote-1', intakeId: 'intake-1' } };
   // The report's holders above the list (aiHolder in ai-view.jsx): each placed by its node, saying
   // what it was told last (`said`).
   const aiHolder = () => {
@@ -2593,14 +2646,33 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
     aiSettledOnPage: () => false, aiFingerprint: (v) => JSON.stringify(v), aiItemFingerprint: (x) => `${x.key}|${x.label}`,
     aiCacheSignature: (x) => JSON.stringify(x), runKit: async () => [{ frameId: 0, result: 'snapshot' }],
-    suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events) },
+    suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events), currentSession: () => session.current },
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
     syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
-  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('runAssist'), context);
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
-  return { state, context, ctx, report, logged, rendered, applied, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
+  return { state, context, ctx, report, logged, rendered, applied, session, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
 }
+
+// CodeRabbit on #391: an intake replaced while Luna answered moved the review's spent tokens to the
+// next quote, as log() stamps the session current when it is called.
+test("a page review's ai_suggest is logged as the quote it began in, also when the intake was replaced meanwhile", async () => {
+  const answer = { suggestions: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125', leave: true }], tokensIn: 10, tokensOut: 2, modelCalls: 1 };
+  const late = assistHarness({ suggest: async () => { late.session.current = { id: 'quote-2', intakeId: 'intake-2' }; return answer; } });
+  await late.context.runAssist([{}], late.ctx);
+  const failed = assistHarness({ suggest: async () => {
+    failed.session.current = { id: 'quote-2', intakeId: 'intake-2' };
+    throw Object.assign(new failed.context.AssistError('Luna returned an invalid decision. Nothing was applied.'), { usage: { modelCalls: 1, tokensIn: 10, tokensOut: 2 } });
+  } });
+  await failed.context.runAssist([{}], failed.ctx);
+  for (const t of [late, failed]) assert.deepEqual([t.logged[0].type, t.logged[0].session, t.logged[0].intakeId, t.logged[0].tokensIn], ['ai_suggest', 'quote-1', 'intake-1', 10]);
+  // No quote loaded when it began: logged as none, not as one loaded meanwhile.
+  const none = assistHarness({ suggest: async () => { none.session.current = { id: 'quote-2', intakeId: 'intake-2' }; return answer; } });
+  none.session.current = null;
+  await none.context.runAssist([{}], none.ctx);
+  assert.deepEqual([none.logged[0].session, none.logged[0].intakeId], [null, null]);
+});
 
 // 2026-10-05 FL run: Luna answered in 17 s, but the page had changed meanwhile; the panel kept
 // "Asking Luna about 14 questions…" on screen for minutes.
@@ -2642,6 +2714,15 @@ test('Luna without a key says so above the list, and a failed review says it fai
   await failed.context.runAssist([{}], failed.ctx);
   assert.deepEqual({ ...failed.holder().said }, { bad: 'AI assistant: Luna is rate-limited. Try again shortly.' });
   assert.equal(failed.rendered.length, 0);
+  // Audit 2026-11-07, AI-10: what a failed review spent before it stopped is logged with its error.
+  const spent = assistHarness({ suggest: async () => {
+    throw Object.assign(new spent.context.AssistError('Luna returned an invalid decision. Nothing was applied.'), { usage: { modelCalls: 2, tokensIn: 900, tokensOut: 40, reasoningTokens: 10, cachedTokens: 0, cacheWriteTokens: 0, junk: 'x' } });
+  } });
+  await spent.context.runAssist([{}], spent.ctx);
+  const { modelCalls, tokensIn, tokensOut, reasoningTokens, junk, error } = spent.logged[0];
+  assert.deepEqual({ modelCalls, tokensIn, tokensOut, reasoningTokens, junk, error },
+    { modelCalls: 2, tokensIn: 900, tokensOut: 40, reasoningTokens: 10, junk: undefined, error: 'Luna returned an invalid decision. Nothing was applied.' });
+  assert.equal(failed.logged[0].modelCalls, undefined, 'a call never answered spent nothing to log');
   const none = assistHarness({ suggest: async () => { throw new Error('never asked'); } });
   none.context.collectItems = () => ({ items: [], blocked: [] });
   await none.context.runAssist([{}], none.ctx);
@@ -2665,7 +2746,7 @@ test('Luna gets the page’s other answers from the snapshot, and the log counts
   const why = ['missing', 'unverified', 'unverified', 'chose', 'tooLarge', null];
   const t = assistHarness({ suggest: async (items, context) => {
     sent = context;
-    return { suggestions: why.map((leaveWhy, i) => ({ key: `k${i}`, label: `Q${i}`, leave: !!leaveWhy, leaveWhy })), tokensIn: 1, tokensOut: 1, modelCalls: 1 };
+    return { suggestions: why.map((leaveWhy, i) => ({ key: `k${i}`, label: `Q${i}`, leave: !!leaveWhy, leaveWhy })), tokensIn: 1, tokensOut: 1, modelCalls: 1, promptHash: '0123456789ab' };
   } });
   t.context.runKit = async () => [{ frameId: 0, result: JSON.stringify(['https://rater.test/', [
     { key: 'liab', label: 'Liability limit', kind: 'select', current: '$1,000,000 CSL' },
@@ -2677,6 +2758,23 @@ test('Luna gets the page’s other answers from the snapshot, and the log counts
   const { leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified, leaveTooLarge, leave } = t.logged[0];
   assert.deepEqual({ leave, leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified, leaveTooLarge },
     { leave: 5, leaveMissing: 1, leaveConflict: 0, leaveChose: 1, leaveNoSource: 0, leaveUnverified: 2, leaveTooLarge: 1 });
+  // Audit 2026-11-07, AI-04: which prompt the review got.
+  assert.equal(t.logged[0].promptHash, '0123456789ab');
+});
+
+test('a failed page review logs the prompt it got, and only as a hash', async () => {
+  const failing = (promptHash) => {
+    const h = assistHarness({ suggest: async () => { throw Object.assign(new h.context.AssistError('Luna returned an invalid evidence check. Nothing was applied.'), { promptHash }); } });
+    return h;
+  };
+  const t = failing('0123456789ab');
+  await t.context.runAssist([{}], t.ctx);
+  assert.deepEqual([t.logged[0].promptHash, t.logged[0].error], ['0123456789ab', 'Luna returned an invalid evidence check. Nothing was applied.']);
+  for (const odd of [undefined, 'not a hash', { x: 1 }]) {
+    const u = failing(odd);
+    await u.context.runAssist([{}], u.ctx);
+    assert.equal('promptHash' in u.logged[0], false, String(odd));
+  }
 });
 
 // 2026-10-09 to 10-26: 12 of 58 page reviews ended "The page or intake changed", most on GEICO's
@@ -2853,7 +2951,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
 function claimsHarness() {
   const logs = [], requests = [];
   const gates = [];
-  const t = { logs, requests, reply: 'ok', onRequest: null };
+  const t = { logs, requests, reply: 'ok', onRequest: null, session: { id: 'quote-1', intakeId: 'intake-1' } };
   const state = { intake: null, notesAsking: null, notesRetry: null };
   class AssistError extends Error {}
   const context = {
@@ -2866,9 +2964,9 @@ function claimsHarness() {
       if (reply === 'fail') throw new AssistError('Luna took too long. Nothing was applied.');
       return { warnings: [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }], lines: 1, flagged: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0, cachedTokens: 2, cacheWriteTokens: 1 };
     },
-    usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
+    usage: { log: (e) => logs.push(e), currentSession: () => t.session }, save: async () => {}, render: () => {},
   };
-  vm.runInNewContext(extractFunction('claimsContext') + extractFunction('supersedeClaimsItems') + extractFunction('reviewClaimsBox'), context);
+  vm.runInNewContext(extractFunction('claimsContext') + extractFunction('supersedeClaimsItems') + extractFunction('spentOf') + extractFunction('reviewClaimsBox'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
   // Lets the oldest pending request answer, then lets the panel finish with it.
   t.answer = async () => { await settle(); gates.shift()(); for (let i = 0; i < 5; i++) await settle(); };
@@ -2888,7 +2986,7 @@ test('Luna reads the claims box once per intake, visibly fails, and retries on a
   assert.equal(t.requests.length, 1, 'two triggers close together ask once');
   assert.equal(typeof t.requests[0].opts.redact, 'function', 'names are redacted before the request');
   assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
-  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
+  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'intakeId', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'session', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
   await t.review({ retry: true });
   assert.equal(t.requests.length, 1, 'once per intake');
 
@@ -2952,7 +3050,7 @@ test('reopening the panel on a reviewed intake neither re-reads the claims box n
 });
 
 // Codex on PR #22.
-test('a settings change during a review runs it again, an edit during it discards the answer, a replaced intake logs nothing', async () => {
+test('a settings change during a review runs it again, an edit during it discards the answer, a replaced intake gets nothing', async () => {
   // The key is corrected while the old-key request is still out: tried again once it fails.
   let t = claimsHarness();
   const intake = claimsIntake('Needs physical damage');
@@ -2996,7 +3094,8 @@ test('a settings change during a review runs it again, an edit during it discard
   assert.equal(untouched.requests.length, 1, 'setting NTL is not a change to what Luna read');
   assert.equal(ntlOnly.notesReview.done, true);
 
-  // A request for an intake that was replaced meanwhile: no result and nothing logged.
+  // A request for an intake that was replaced meanwhile: no result, and the usage is logged as the
+  // quote the review began in, never the new one's (CodeRabbit on PR #391).
   for (const reply of ['ok', 'fail']) {
     t = claimsHarness();
     const old = claimsIntake('NTL please');
@@ -3005,10 +3104,14 @@ test('a settings change during a review runs it again, an edit during it discard
     t.review();
     await t.settle();
     t.state.intake = claimsIntake('');
+    t.session = { id: 'quote-2', intakeId: 'intake-2' };
     await t.answer();
     assert.deepEqual(old.warnings.map((w) => w.code), ['other'], reply);
     assert.equal(old.notesReview, undefined, reply);
-    assert.equal(t.logs.length, 0, `${reply}: not attributed to the new intake`);
+    assert.equal(t.logs.length, 1, reply);
+    assert.deepEqual([t.logs[0].session, t.logs[0].intakeId], ['quote-1', 'intake-1'], `${reply}: the quote it began in`);
+    assert.equal(t.logs[0].error, reply === 'ok' ? 'Answer discarded: the intake was replaced.' : 'Luna took too long. Nothing was applied.', reply);
+    if (reply === 'ok') assert.deepEqual([t.logs[0].tokensIn, t.logs[0].modelCalls], [5, 1], 'the tokens it spent');
   }
 });
 
@@ -4427,6 +4530,26 @@ test('events name their view: the tab\'s order in the quote and the vehicle or d
   assert.equal(context.viewOf(402, 'Vehicles', carrier), 't1');
 });
 
+// Audit 2026-11-07, FLOW-12: a fill of the quote tab while the agent is on another tab (refreshTab's
+// `background`) says so on its fill_run, taken with its context as it begins.
+test('a fill of the quote tab while the agent is on another tab is logged as in the background', () => {
+  const logged = [];
+  const state = { tab: { id: 7, background: true }, intake: { record: {} }, intakeRevision: 0, active: { vehicles: 0, drivers: 0, trailers: 0 } };
+  const context = { state, crypto: { randomUUID: () => 'run-1' }, usage: { currentSession: () => ({ id: 's', intakeId: 'i' }), log: (...e) => logged.push(...e) },
+    viewOf: () => 't1', editScope: () => 'p', tabStep: () => null, switchOn: () => true, fillDefaultsHash: () => undefined,
+    redactor: () => (t) => t, redactionTerms: () => [], stepOfResults: () => null, rulesVersion: null, fillEvents };
+  vm.runInNewContext(['fillContext', 'logFill'].map((name) => extractFunction(name).split('\nfunction ')[0]).join('\n'), context);
+  const carrier = { id: 'geico', practice: false };
+  const fill = (tabId) => { const ctx = context.fillContext({ tabId, carrier, page: 'Vehicles', tabUrl: 'x' }); context.logFill(ctx, [{ fields: 1, hiddenMs: 800 }], [], Date.now()); };
+  fill(7);
+  // Another tab's fill (one the agent left running there): not this tab's background.
+  fill(8);
+  state.tab.background = false;
+  fill(7);
+  const runs = logged.filter((e) => e.type === 'fill_run');
+  assert.deepEqual(runs.map((e) => [e.background ?? false, e.hiddenMs]), [[true, 800], [false, 800], [false, 800]]);
+});
+
 test('fills take their view before waiting, stop pages log theirs, and a reopened panel keeps the quote\'s views', () => {
   for (const name of ['fillPage', 'autoFill']) {
     const body = extractFunction(name);
@@ -4531,6 +4654,24 @@ async function stateNoteHarness() {
     button: () => note()?.actions.find((a) => / is right$/.test(a.label)),
   };
 }
+
+// Audit 2026-11-07 (LEARN-07): the recorder keeps the agent's edits no panel took and sends them
+// again; the panel says which it took. Only its own tab's, with an intake loaded.
+test('the panel answers the field changes it took, and only those', async () => {
+  const t = await stateNoteHarness();
+  const answers = [];
+  const change = (tabId) => t.context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/quote', changes: [{ key: 'ref:Radius', before: '', after: '3', agent: true }] },
+    { tab: { id: tabId }, frameId: 0 }, (reply) => answers.push([tabId, reply]));
+  change(7);
+  assert.deepEqual(JSON.parse(JSON.stringify(answers)), [[7, { ok: true }]]);
+  assert.deepEqual([...(t.state.agentKeys.get([...t.state.agentKeys.keys()][0]) ?? [])], ['ref:Radius']);
+  // Another tab's (the panel follows tab 7): not taken, not answered; the recorder keeps it.
+  change(8);
+  // No intake loaded: the same.
+  t.state.intake = null;
+  change(7);
+  assert.equal(answers.length, 1);
+});
 
 test('the panel warns when the quote state picked on the carrier page is not the intake\'s, across a reload', async () => {
   const t = await stateNoteHarness();
@@ -4738,14 +4879,14 @@ test('a fill whose intake changed while the carrier worked is dropped: the new i
   assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value|clientA/, 'no client data in the error');
 });
 
-// FL live run 6, 2026-10-21 (the maintainer: "give back, then Recalculate"): GEICO put its own
-// coverage choices back over the fill's, and the agent picked each one again by hand. The agent's
-// Fill this page gives such an answer again (no `takenBack`); an automatic fill and Looks right keep
-// what the page shows (the carrier's `takenBack`, as fillOptions builds it).
-test('only the agent\'s Fill this page gives back an answer the page took back', async () => {
+// The maintainer, 2026-11-07 (LEARN-07), in place of 2026-10-21's "give back, then Recalculate": an
+// answer the page shows otherwise since the fill gave it may be the agent's, one no panel heard. The
+// agent's Fill this page, an automatic fill and Looks right all keep what the page shows (the
+// carrier's `takenBack`, as fillOptions builds it); only Replace existing answers gives it again.
+test('every fill, the agent\'s Fill this page too, keeps an answer the page took back', async () => {
   const runs = [];
   for (const args of [[], [{ auto: 'page' }], [{ confirmed: 'receipt' }]]) {
-    const t = fillHarness();
+    const t = fillHarness({ carrier: { id: 'geico', practice: false, layoutSteps: amwins.layoutSteps, keepTakenBack: ['Quote & Coverages'] } });
     t.context.fillOptions = (carrier, extra) => ({ takenBack: { steps: ['Quote & Coverages'], keys: {} }, ...extra });
     const run = t.context.fillPage(...args);
     await t.started;
@@ -4753,7 +4894,20 @@ test('only the agent\'s Fill this page gives back an answer the page took back',
     await run;
     runs.push(t.seen.options.takenBack);
   }
-  assert.deepEqual(JSON.parse(JSON.stringify(runs)), [null, { steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(runs)), [{ steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }]);
+  // Review of PR #374: the real fillOptions names the keys a fill on the tab gave before the panel
+  // was opened again (its kept reports, givenEarlier) as well as this panel's own.
+  const t = fillHarness({ carrier: { id: 'geico', practice: false, layoutSteps: amwins.layoutSteps, keepTakenBack: ['Quote & Coverages'] } });
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+  t.context.usage = { ...t.context.usage, currentSession: () => ({ intakeId: 'intake-a' }) };
+  t.state.givenEarlier = new Map([[t.state.tab.id, { scope: 'intake-a', given: [['cov:BI#1', { path: 'coverages.bi', shown: '100/300' }]] }]]);
+  t.state.filled.set('cov:PD#1', { path: 'coverages.pd', shown: '100,000' });
+  const run = t.context.fillPage();
+  await t.started;
+  t.release(t.results);
+  await run;
+  assert.deepEqual(Object.keys(t.seen.options.takenBack.keys).sort(), ['cov:BI#1', 'cov:PD#1']);
 });
 
 test('an intake correction during a fill makes its results stale too, for automatic fills as well', async () => {
@@ -5345,7 +5499,7 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
   for (const auto of [false, true]) for (const waitAt of ['pickListItem', 'retireAiOrigins']) for (const enabled of [false, true]) {
     const t = fillHarness({ carrier: { id: 'amwins', advance: amwins.advance, layoutSteps: amwins.layoutSteps } });
     const start = SIDEPANEL.indexOf('const fillOptions =');
-    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, t.context);
     t.ui['auto-advance'].checked = !enabled;
     t.context[waitAt] = async () => { await Promise.resolve(); t.ui['auto-advance'].checked = enabled; };
     const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
@@ -5357,7 +5511,7 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
   }
   const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, t.context);
   t.context.pendingAi = () => [{ approved: false }];
   const run = t.context.fillPage();
   await t.started;
@@ -5374,7 +5528,7 @@ test('a fill asks the kit to trace only while a recording runs on its tab, and n
   for (const [recording, traced] of [[{ tabId: 7, stopping: false }, true], [{ tabId: 8, stopping: false }, false], [{ tabId: 7, stopping: true }, false], [null, false]]) {
     const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
     const start = SIDEPANEL.indexOf('const fillOptions =');
-    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, t.context);
     t.context.state.recording = recording;
     const run = t.context.fillPage();
     await t.started;
@@ -5392,7 +5546,7 @@ test('a fill asks the kit to trace only while a recording runs on its tab, and n
 test('Check answers before Continue reaches the kit as hold and is never logged', async () => {
   const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, t.context);
   t.ui['check-continue'] = { checked: true };
   t.ui.overwrite.checked = true;
   let run = t.context.fillPage();
@@ -5592,7 +5746,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   // The kit found another page as it began (pagekit `pageMoved`): nothing is remembered from it.
   const u = fillHarness();
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, u.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, u.context);
   u.context.chrome = { tabs: { get: async (id) => ({ id, url: 'https://carrier.test/quote-A' }) } };
   const run = u.context.fillPage();
   await u.started;
@@ -5639,7 +5793,7 @@ test('Stop pressed before the kit is asked to fill means no fill at all', async 
   // The fill's run id goes to the kit, so a Stop that reaches a frame first still counts.
   const u = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, u.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, u.context);
   const run = u.context.fillPage();
   await u.started;
   assert.match(u.seen.options.run, /^[0-9a-f-]{36}$/);
@@ -6487,7 +6641,7 @@ test('a panel crash is still logged when the intake has no record, and never unr
 // nothing is sent and nothing changes.
 function namesHarness() {
   const logs = [], requests = [], gates = [];
-  const t = { logs, requests, reply: 'ok' };
+  const t = { logs, requests, reply: 'ok', session: { id: 'quote-1', intakeId: 'intake-1' } };
   const state = { intake: null, namesAsking: null, namesRetry: null };
   class AssistError extends Error {}
   const context = {
@@ -6501,9 +6655,9 @@ function namesHarness() {
       if (reply === 'fail') throw new AssistError('Luna returned an invalid driver-name review.');
       return { warnings: [{ code: 'ai.driver-gender', path: 'drivers[0].gender', level: 'check', msg: 'x', choices: [] }], names: 2, flagged: 1, modelCalls: 1, tokensIn: 5, tokensOut: 1, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
     },
-    usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
+    usage: { log: (e) => logs.push(e), currentSession: () => t.session }, save: async () => {}, render: () => {},
   };
-  vm.runInNewContext(extractFunction('driverNamesContext') + extractFunction('supersedeGenderItems') + extractFunction('reviewDriverGender'), context);
+  vm.runInNewContext(extractFunction('driverNamesContext') + extractFunction('supersedeGenderItems') + extractFunction('spentOf') + extractFunction('reviewDriverGender'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
   t.answer = async () => { await settle(); gates.shift()(); for (let i = 0; i < 5; i++) await settle(); };
   return Object.assign(t, { state, review: context.reviewDriverGender, settle });
@@ -6529,8 +6683,9 @@ test('Luna checks driver first names once per intake, never with the assistant o
   await t.answer();
   assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.driver-gender', 'check']]);
   assert.equal(intake.namesReview.done, true);
-  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never a name');
+  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'intakeId', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'session', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never a name');
   assert.equal(t.logs[0].page, 'DriverNames');
+  assert.deepEqual([t.logs[0].session, t.logs[0].intakeId], ['quote-1', 'intake-1']);
   await t.review({ retry: true });
   assert.equal(t.requests.length, 1, 'once per intake');
   // The agent set the gender meanwhile: that isn't a change to what Luna read.
@@ -6560,6 +6715,25 @@ test('Luna checks driver first names once per intake, never with the assistant o
   f.review({ retry: true });
   await f.answer();
   assert.deepEqual(failing.warnings.map((w) => w.code), ['other', 'ai.driver-names-reviewed', 'ai.driver-gender']);
+
+  // An intake replaced while Luna answered: nothing for it, and the usage is logged as the quote
+  // the check began in (CodeRabbit on PR #391).
+  for (const reply of ['ok', 'fail']) {
+    const r = namesHarness();
+    const old = namesIntake();
+    r.state.intake = old;
+    r.reply = reply;
+    r.review();
+    await r.settle();
+    r.state.intake = namesIntake();
+    r.session = { id: 'quote-2', intakeId: 'intake-2' };
+    await r.answer();
+    assert.deepEqual(old.warnings.map((w) => w.code), ['other'], reply);
+    assert.equal(old.namesReview, undefined, reply);
+    assert.equal(r.logs.length, 1, reply);
+    assert.deepEqual([r.logs[0].session, r.logs[0].intakeId], ['quote-1', 'intake-1'], reply);
+    assert.equal(r.logs[0].error, reply === 'ok' ? 'Answer discarded: the intake was replaced.' : 'Luna returned an invalid driver-name review.', reply);
+  }
 });
 
 test('Luna\'s GL and driver-gender check cards set the record as the agent\'s edit, or dismiss', async () => {
@@ -7275,7 +7449,7 @@ test('a GEICO unit list drawn gets a follow-up fill with either switch on', () =
 function fillOptionsOf(state, carrier, active, { autoAdvance = false, unitsListed = false } = {}) {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const context = { state, URL, knownStep, advanceFor, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
-  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('switchOn')}\nglobalThis.fillOptions = fillOptions;`, context);
+  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\n${extractFunction('switchOn')}\nglobalThis.fillOptions = fillOptions;`, context);
   return context.fillOptions(carrier, {}, autoAdvance, active, unitsListed);
 }
 

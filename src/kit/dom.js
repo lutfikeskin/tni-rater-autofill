@@ -47,7 +47,21 @@ export const CONTROL_SELECTOR = 'input:not([type=hidden]), select, textarea';
 export const drawnParent = (n) => /** @type {any} */ (n).assignedSlot ?? /** @type {any} */ (n).parentElement ?? /** @type {any} */ (n).getRootNode?.()?.host ?? null;
 
 /**
- * Recursively queries elements including through open shadow roots.
+ * An element's shadow root: an open one, or a closed one where the browser gives it to the kit
+ * (`chrome.dom.openOrClosedShadowRoot`, in an extension's isolated world, GEICO's; not in the page's
+ * own world). Asked only of a custom element (a design system's), where a closed root would be (audit
+ * 2026-11-07, ENG-14: a carrier's components switched to closed roots would hide its whole page).
+ * @param {Element | any} el
+ * @returns {ShadowRoot | null}
+ */
+export function shadowOf(el) {
+  if (el?.shadowRoot) return el.shadowRoot;
+  if (!el?.localName?.includes('-')) return null;
+  try { return globalThis.chrome?.dom?.openOrClosedShadowRoot?.(el) ?? null; } catch { return null; }
+}
+
+/**
+ * Recursively queries elements including through shadow roots (closed ones too: shadowOf).
  * @param {Document | Element | any} root
  * @param {string} selector
  * @param {Element[]} [out]
@@ -56,7 +70,8 @@ export const drawnParent = (n) => /** @type {any} */ (n).assignedSlot ?? /** @ty
 export function deepQueryAll(root, selector, out = []) {
   for (const el of root.querySelectorAll('*')) {
     if (el.matches(selector)) out.push(el);
-    if (el.shadowRoot) deepQueryAll(el.shadowRoot, selector, out);
+    const shadow = shadowOf(el);
+    if (shadow) deepQueryAll(shadow, selector, out);
   }
   return out;
 }

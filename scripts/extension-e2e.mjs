@@ -25,6 +25,14 @@
 // agent_settings.defaults logged (or an empty list). A fill on the mock (a practice page) logs no
 // fill events, so fill_run's defaultsHash is the unit tests'. Without it nothing about defaults
 // changes from the run above.
+//
+// The store ZIP agents install (audit 2026-11-07, QA-01): E2E_EXT_DIR names the folder to load (the
+// ZIP extracted, which has no key, so another extension ID, read from its service worker as here) and
+// E2E_CHANNEL=store says it is the store build. The run then also checks what only the store build
+// does: no Your defaults section or its developer switch while RELEASED_TO_AGENTS is false, no
+// developer recording card, and every usage event stamped channel 'store'. Without them it loads
+// dist/tni-rater-autofill, the unpacked copy, and checks the same of channel 'unpacked': the
+// recording card and the defaults switch shown.
 
 import { chromium } from 'playwright';
 import path from 'node:path';
@@ -32,7 +40,9 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { createServer } from '../server/index.mjs';
 const PRODUCTION_HOST = 'usage-server-production.up.railway.app';
-const ext = path.resolve('dist/tni-rater-autofill');
+const ext = path.resolve(process.env.E2E_EXT_DIR || 'dist/tni-rater-autofill');
+const CHANNEL = process.env.E2E_CHANNEL || 'unpacked';
+if (!['store', 'unpacked'].includes(CHANNEL)) throw new Error(`E2E_CHANNEL must be store or unpacked, not ${CHANNEL}`);
 const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-ext-'));
 const usageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-usage-'));
 const usageServer = createServer({ dataDir: usageDir });
@@ -50,6 +60,8 @@ const MOCK_URL = 'http://localhost:8792/test/fixtures/amwins/application.html';
 // Agents' own defaults (above): '' (none), 'mine' or 'tni'.
 const DEFAULTS = process.env.E2E_DEFAULTS ?? '';
 if (DEFAULTS && !['mine', 'tni', 'advanced'].includes(DEFAULTS)) throw new Error(`E2E_DEFAULTS must be mine, tni or advanced, not ${DEFAULTS}`);
+// The store build has no Your defaults while RELEASED_TO_AGENTS is false: nothing to ask there.
+if (DEFAULTS && CHANNEL === 'store') throw new Error('E2E_DEFAULTS needs the unpacked copy: the store build hides agents\' defaults');
 // With E2E_DEFAULTS=advanced the profile also keeps AmWINS' own UM, $500K (Settings → Your defaults →
 // Per carrier), over the basic $300K.
 const VALUES = { umCsl: { value: 300_000 }, compDeductible: { value: 500 } };
@@ -115,6 +127,18 @@ await panel.setInputFiles('#file', 'test/fixtures/sample-intake.pdf');
 await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake, null, { timeout: 15000, polling: 100 });
 await panel.locator('#details-row').waitFor({ state: 'visible', timeout: 10000 });
 console.log('site:', await panel.textContent('#site'));
+// What the build's channel shows in Settings (drawn while it is closed): the developer recording card
+// and the defaults' developer switch in the unpacked copy only, and Your defaults there (the switch
+// on, as it starts) but not in the store build while RELEASED_TO_AGENTS is false.
+const channelUi = await panel.evaluate(() => ({
+  recording: !!document.querySelector('#devrec:not([hidden])'),
+  defaults: !!document.querySelector('#tni-defaults'),
+  defaultsSwitch: !!document.querySelector('#defaults-dev-row'),
+}));
+const wantUi = CHANNEL === 'store' ? { recording: false, defaults: false, defaultsSwitch: false } : { recording: true, defaults: true, defaultsSwitch: true };
+const channelUiOk = Object.entries(wantUi).every(([k, v]) => channelUi[k] === v);
+console.log(`Channel ${CHANNEL}:`, JSON.stringify(channelUi));
+if (!channelUiOk) console.log(`CHANNEL: Settings does not show what the ${CHANNEL} build shows (want ${JSON.stringify(wantUi)}).`);
 // Agents' own defaults: the quote asks whose defaults it fills with, and nothing fills until the
 // agent answers in the panel.
 let defaultsAsked = !DEFAULTS;
@@ -534,6 +558,10 @@ const toProduction = outside.filter((r) => r.includes(`//${PRODUCTION_HOST}/`));
 console.log(`Usage: ${received.length} events to the local server (${[...new Set(received)].join(', ')}), ${outside.length} requests off this machine (${toProduction.length} to production)`);
 if (outside.length) console.log('OFF THIS MACHINE:', outside.join('; '));
 const usageOk = !outside.length && received.includes('intake_loaded') && profileWhole;
+// Every event is stamped with the build's channel: the store build's are 'store'.
+const channels = [...new Set(stored.map((e) => e.channel))];
+const channelOk = channelUiOk && channels.length === 1 && channels[0] === CHANNEL;
+if (!channelOk) console.log(`CHANNEL: events stamped ${JSON.stringify(channels)}, want only ${CHANNEL}.`);
 // Agents' own defaults: what was filled and logged.
 let defaultsOk = true;
 if (DEFAULTS) {
@@ -555,6 +583,6 @@ if (DEFAULTS) {
 }
 console.log(`Errors: ${errors.length}${errors.length ? ` (${errors.join('; ')})` : ''}`);
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = defaultsOk && usageOk && !errors.length && !docScrolled && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? `OK: ${DEFAULTS === 'advanced' ? 'the quote asked whose defaults it takes and held filling, AmWINS\' own UM $500K (Advanced, over the basic $300K) and the comprehensive $500 were filled marked as the agent\'s own and logged with the carrier, ' : DEFAULTS === 'mine' ? 'the quote asked whose defaults it takes and held filling, the agent\'s UM $300K and comprehensive $500 were filled marked as their own on the page and logged in agent_settings, ' : DEFAULTS === 'tni' ? 'the quote asked whose defaults it takes and held filling, Use TNI\'s filled TNI\'s amounts marked as standards and logged an empty list, ' : ''}manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone with the earlier steps’ reports, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.` : !defaultsOk ? 'FAILED: agents\' own defaults (above).' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: the panel’s document scrolled, manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
+const ok = channelOk && defaultsOk && usageOk && !errors.length && !docScrolled && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? `OK: ${DEFAULTS === 'advanced' ? 'the quote asked whose defaults it takes and held filling, AmWINS\' own UM $500K (Advanced, over the basic $300K) and the comprehensive $500 were filled marked as the agent\'s own and logged with the carrier, ' : DEFAULTS === 'mine' ? 'the quote asked whose defaults it takes and held filling, the agent\'s UM $300K and comprehensive $500 were filled marked as their own on the page and logged in agent_settings, ' : DEFAULTS === 'tni' ? 'the quote asked whose defaults it takes and held filling, Use TNI\'s filled TNI\'s amounts marked as standards and logged an empty list, ' : ''}manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone with the earlier steps’ reports, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.` : !channelOk ? `FAILED: the ${CHANNEL} build's channel (above).` : !defaultsOk ? 'FAILED: agents\' own defaults (above).' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: the panel’s document scrolled, manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
 process.exit(ok ? 0 : 1);
