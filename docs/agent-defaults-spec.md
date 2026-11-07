@@ -1,6 +1,6 @@
 # Spec: agents' own defaults ("My defaults")
 
-Status: **in progress**, on. Written 2026-11-05 from the code on `main` (530f86f). Done: the server (rollout step 1), the generic hooks (step 2), the module (step 3), the review tooling (step 4), the TNI defaults page with its logging (step 5), and Advanced's per-carrier amounts and "Ask me" (step 6). Not yet: carrier-only coverage standards (step 6; which ones is TNI's to list). TNI's answers to the open questions below are pending; until then the maintainer's provisional choices (recorded there) apply.
+Status: **in progress**, on in the unpacked copy and hidden from agents' store build until TNI's managers approve it (`RELEASED_TO_AGENTS`, below). Written 2026-11-05 from the code on `main` (530f86f). Done: the server (rollout step 1), the generic hooks (step 2), the module (step 3), the review tooling (step 4), the TNI defaults page with its logging (step 5), and Advanced's per-carrier amounts and "Ask me" (step 6). Not yet: carrier-only coverage standards (step 6; which ones is TNI's to list). TNI's answers to the open questions below are pending; until then the maintainer's provisional choices (recorded there) apply.
 
 ## Goal
 
@@ -58,7 +58,7 @@ Two invariants make this safe:
 
 ### TNI defaults (basic)
 
-A Settings section titled **TNI defaults** shows one row per shared coverage concept:
+A Settings row titled **Your defaults**, folded like AI's, says the profile in force and how many amounts it changes ("Jordan K. · 2 changed"); its tooltip says what the section does. Opened, it shows one row per shared coverage concept:
 
 | Row | TNI's value | Choices |
 | --- | --- | --- |
@@ -78,7 +78,7 @@ Comp and collision are split here because carriers ask them separately. Today th
 
 ### Advanced
 
-A collapsed **Advanced** section below it, with one group per carrier:
+A folded **Per carrier** row, the last of the section's rows, with one group per carrier:
 
 - **Per-carrier amounts**: the basic rows again, with "As above" as the default, offering every amount that carrier sells. Where the basic row replaces the standard, "TNI's" is offered too, so one carrier can keep TNI's amount. *Done: `Advanced` in `sidepanel/panel/agent-defaults/view.jsx` (collapsed, a group per carrier the registry lists), stored as the profile's `carriers` (the store's `setCarrier`).*
 - **Carrier-only coverage standards**: AmWINS towing; GEICO's UM deductible and UM/UIM type; Progressive's MD PIP; and so on. Each comes with TNI's value and the carrier's own options. *Not yet: each needs a registry entry and `std` on its rules, and TNI's list of which.*
@@ -157,7 +157,7 @@ Each standard rule an override may change gains a `std` field. The field names i
 - `buildPlan(record, carrier, active, { overlay } = {})`. After `fieldSteps` builds a step, and **before** its resolution is computed, it calls `overlay?.(step, rule, { record, carrier, active })` and uses the step that comes back. `plan.js` never imports the module.
 - Steps gain `tni: rule.tni ?? null`, which is generic and useful to logs anyway.
 - The overlay (in the module) acts only when `step.source === 'standard'`, the rule has `std`, and `std.applies` (if given) is true for this record and unit:
-  - with **Ask me**, the step becomes the agent's (`manualOnly`, source `fact`) with the note "You chose to answer <standard> yourself (Settings → TNI defaults)";
+  - with **Ask me**, the step becomes the agent's (`manualOnly`, source `fact`) with the note "You chose to answer <standard> yourself (Settings → Your defaults)";
   - with a **value**, the source becomes `agent-default`, the value is `std.write(amount)`, the name is `std.name(amount)`, the choice aliases are `std.aliases(amount)` (none when the rule gives none), the unoffered note says the default isn't offered, and `agentDefault` records the standard, the amount and TNI's (for the report);
   - with a **locked** standard, or no default, the step is returned unchanged.
 - **One way to build a panel plan.** A `planFor(state, carrier, active)` wrapper replaces the seven `buildPlan` calls in `coordinator.js`, `core.js`, `fill.js` and `usage.js`. It is the only place the overlay is passed in, so the plan that fills, the plan that logs and the plan Luna reads can't disagree. A test fails if a panel file calls `buildPlan` directly.
@@ -165,7 +165,8 @@ Each standard rule an override may change gains a `std` field. The field names i
 ### Failure isolation and the off switch
 
 - **A failing overlay never breaks a fill.** The overlay `overlayFor()` gives is wrapped per step in try/catch (`safeOverlay`). If it throws, that step goes to the agent with the note "Your default couldn't be applied: answer it yourself", and the error goes to `onDefaultsError` (the panel logs it as a `client_error` from step 5). It neither falls back silently to TNI's value nor stops the plan; the other steps fill as normal.
-- **Off switch:** `AGENT_DEFAULTS_ON` in `src/agent-defaults/index.js`. When it's false, `overlayFor()` and `rulebookRewriteFor()` give null, so `planFor()` passes no overlay and Luna's rulebook is TNI's; from step 5 the Settings section is hidden too, and nothing new is logged. Stored defaults are kept, so turning it back on restores them.
+- **Off switch:** `agentDefaultsOn()` in `src/agent-defaults/index.js`, off until the panel turns it on. While it's off, `overlayFor()` and `rulebookRewriteFor()` give null, so `planFor()` passes no overlay and Luna's rulebook is TNI's; the Settings row, the quote's question and its hold, and the client strip's pill are hidden too, and nothing new is logged. Stored defaults are kept, so turning it back on restores them; a quote answered while it was off is asked again.
+- **Released to agents:** `RELEASED_TO_AGENTS` in the same file, `false` until TNI's managers approve the feature. The panel's `loadDefaults` turns the switch on by build: agents' store build only once it is `true`; any other copy (the unpacked one, the repository's files) unless the developer hid it with **Your defaults (developer only)** in Settings → Advanced, for setup only (`chrome.storage.local` `agentDefaultsHidden`; the store build has no such switch and ignores the key). Approval is a release whose PR sets it to `true`.
 - **One standard off:** remove its registry entry (above).
 
 ### Removing the feature
@@ -207,7 +208,7 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 - **Confirmed for every quote.** A profile being active is never enough on its own: two agents with the same initials could share a computer, and nothing about the second one changes. So each time an intake is loaded (each new quote), before anything fills, the panel asks "Fill this quote with **Jordan K.**'s defaults?" with two buttons, **Yes, mine** and **Use TNI's**. The answer holds for that quote only. Until the agent answers, nothing fills, the same as a held page. **Use TNI's** fills TNI's everywhere and leaves the profile stored for next time.
 - **Blank initials use TNI's.** With no initials set, no profile can be active: every answer is TNI's and the question isn't asked.
 - **Changing initials** clears the active profile as well, so TNI's apply until a profile is picked again.
-- **Always visible.** While a profile is active, the panel header and the fill report name it ("Defaults: Jordan K., 2 changed"). The log carries the overrides (`agent_settings.defaults`) but not the profile's name.
+- **Always visible.** Once the quote's question is answered, a teal pill in the client strip says how many amounts are the agent's ("2 yours"; a plain "TNI's" after Use TNI's); its popover lists each one beside TNI's, with **Use TNI's for this quote** (or **Use <name>'s**). Each answer they filled is tagged **Your default** and marked teal. The log carries the overrides (`agent_settings.defaults`) but not the profile's name.
 - A new key with a "missing means TNI" reader needs no migration. A later shape change follows [storage-version.js](../src/storage-version.js).
 - No client data is stored there, only amounts and choices.
 
@@ -239,15 +240,15 @@ The registry's per-carrier `choices` prevent most of these. If the page still la
 | R12 | Touching 92 rules changes today's answers | Low | High | Rules keep their values; they only gain `std` metadata, held to them by a consistency test; phase 2 is proven identical with `npm run benchmark -- --against` |
 | R13 | Review mode (unvalidated class) is bypassed by a default | Low | Medium | `agent-default` is `reviewRequired` exactly when `standard` would be |
 | R14 | Agents' quotes drift from TNI policy unnoticed | Medium | Business, not technical | `agent_settings.defaults` lets the weekly review list who overrides what; TNI can lock |
-| R15 | A bug in the feature breaks fills, or the feature has to come out | Medium | High | Overlay failures go to the agent per step; `AGENT_DEFAULTS_ON` switches it off; the code sits in its own modules with a removal checklist and an import-boundary test |
+| R15 | A bug in the feature breaks fills, or the feature has to come out | Medium | High | Overlay failures go to the agent per step; `agentDefaultsOn()` switches it off (agents' store build until `RELEASED_TO_AGENTS`, the developer's switch elsewhere); the code sits in its own modules with a removal checklist and an import-boundary test |
 
 ## Rollout
 
 1. **Server.** Accept `agent-default` in `source`, `defaults` in `agent_settings` and `defaultsHash` on fill runs, then deploy. This changes no behaviour. *Done and deployed; see [hosting](hosting.md).*
 2. **Generic hooks, no feature.** Add the `overlay` hook in `buildPlan`, `tni` on steps, the `planFor()` wrapper, the `rulebookFor` `rewrite` hook, and `std` metadata on standard rules. Prove nothing changed: `npm test`, the carrier mocks, and `npm run benchmark -- --save` on `main` then `--against` on the branch with zero differences. *Done.*
-3. **The module, switched off.** Add `src/agent-defaults/` (registry, overlay with its cross-field checks, effective defaults, the rulebook rewrite, `isAgentDefault`, the log entries) with `test/agent-defaults.test.mjs` and `AGENT_DEFAULTS_ON = false`, and wire it into `planFor()` and `evidenceFor`. Progressive and AmWINS write a million-dollar UM the way their lists do ("$1 million CSL", "$1M"). *Done.*
+3. **The module, switched off.** Add `src/agent-defaults/` (registry, overlay with its cross-field checks, effective defaults, the rulebook rewrite, `isAgentDefault`, the log entries) with `test/agent-defaults.test.mjs`, switched off, and wire it into `planFor()` and `evidenceFor`. Progressive and AmWINS write a million-dollar UM the way their lists do ("$1 million CSL", "$1M"). *Done.*
 4. **Review tooling.** Update signals, review, benchmark and answer key for `agent-default` and the logged defaults, before any agent can switch defaults on. Otherwise the benchmark would replay those quotes with TNI's values and report false differences. *Done: one adapter, `scripts/lib/agent-defaults.mjs`, replays each quote with its logged defaults (`profileFromLog`, `replayOverlay` in the module), keeps answer-key cells and rule suggestions apart from TNI's standards, and gives the weekly signals the defaults in force and corrections of them apart ([learning](learning.md)).*
-5. **Basic UI, switched on.** Add the TNI defaults section, the profile question, the page colour, the report tag and logging, and set `AGENT_DEFAULTS_ON = true`. Requires step 4 merged. Test the e2e with an override on each carrier mock. *Done: Settings → TNI defaults (profiles, an amount per standard from `choices.all`), the quote's question as a card above the page's answers with the dock held (`defaultsHold` in the panel's store, checked where the quote-state hold is), a "Yes, mine" kept only for the profile, initials and amounts (`defaultsHash`) it was given for, so a profile changed mid-quote asks again, a hold also while a new intake's quote is set up and while the answer is saving (an answer Chrome refuses to save is cleared, so the quote asks again), a profile active only under the initials it was picked with (`activeFor`), `agent_settings.defaults` and `defaultsHash`, the "Your default" tag and the teal mark, overlay errors logged as `client_error`.*
+5. **Basic UI, switched on.** Add the TNI defaults section, the profile question, the page colour, the report tag and logging, and switch it on. Requires step 4 merged. Test the e2e with an override on each carrier mock. *Done: Settings → Your defaults (profiles, an amount per standard from `choices.all`), the quote's question as a card above the page's answers with the dock held (`defaultsHold` in the panel's store, checked where the quote-state hold is; on the intake's checks the dock's Show the question opens the card, and once answered, the page whose opening fill the question held fills as on opening, if it is still in front for the same intake: `fillAfterDefaults`; a page nothing was waiting on, such as the last client's quote left open, is never filled by it), a "Yes, mine" kept only for the profile, initials and amounts (`defaultsHash`) it was given for, so a profile changed mid-quote asks again, a hold also while a new intake's quote is set up and while the answer is saving (an answer Chrome refuses to save is cleared, so the quote asks again), a profile active only under the initials it was picked with (`activeFor`), `agent_settings.defaults` and `defaultsHash`, the "Your default" tag and the teal mark, overlay errors logged as `client_error`. Once answered, the card gives way to the client strip's pill (`DefaultsChip`, `state.defaultsChip`). Hidden from agents' store build until released (`RELEASED_TO_AGENTS`).*
 6. **Advanced.** Add per-carrier amounts, carrier-only coverage standards, and "Ask me". *Done: per-carrier amounts and "Ask me" for the five coverage amounts. A carrier's pick over the basic one is logged with its carrier where it changes what fills there (`carrierOverrides` in the module): a carrier's TNI's over a basic default is logged as TNI's amount, so the review replays each carrier as it was filled. The quote's card names each carrier's ("GEICO only: …"). Carrier-only standards are not yet done.*
 
 Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rules.md) (the provenance table and the new source), [learning.md](learning.md) (`agent_settings.defaults`, signals), [ai-assistant.md](ai-assistant.md) (the rulebook from effective values), [hosting.md](hosting.md) (the server whitelist) and [testing.md](testing.md).
@@ -270,7 +271,7 @@ Each step is its own PR. Steps 2–6 update [intake-and-rules.md](intake-and-rul
 - **Server and extension agree on `SOURCES`.**
 - **Every panel plan goes through `planFor()`.** No panel file calls `buildPlan` directly.
 - **Import boundary:** only the module's own files, `planFor()`, `src/ai/common.js` and usage logging import `src/agent-defaults/`.
-- **Off and empty are no-ops:** with `AGENT_DEFAULTS_ON = false`, or with no defaults stored, every fixture's plan deep-equals the plan without the overlay.
+- **Off and empty are no-ops:** with the switch off, or with no defaults stored, every fixture's plan deep-equals the plan without the overlay.
 - **`std` metadata matches its rule:** `std.write(TNI's amount)` equals the rule's value, and `std.name(TNI's amount)` equals its name.
 - **A throwing overlay** sends that step to the agent with its note and leaves the other steps unchanged.
 - **Rulebook:** text follows the effective values (an extension of `test/standards.test.mjs`).

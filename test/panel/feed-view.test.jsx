@@ -94,3 +94,14 @@ test('mountFeed draws before it returns', () => {
   });
   host.remove();
 });
+
+// agent defaults: the key names "Your default" (tag and mark) only where the feature is on: not in
+// agents' store build until it is released (src/agent-defaults/index.js RELEASED_TO_AGENTS).
+test('the answer key shows Your default only while the feature is on', () => {
+  const t = acts();
+  const { container } = render(<Feed act={t.act} />);
+  act(() => { state.feed = feed({ keyOpen: true }); state.defaultsOn = false; });
+  expect($(container, 'answer-key').textContent).not.toContain('Your default');
+  act(() => { state.defaultsOn = true; });
+  expect([...container.querySelectorAll('#answer-key .tag.own, #answer-key .mark.own')].length).toBe(2);
+});

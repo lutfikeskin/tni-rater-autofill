@@ -1,6 +1,6 @@
 // @ts-check
 // Agents' own defaults in the side panel (docs/agent-defaults-spec.md, "Storage"): the profiles the
-// agent keeps in Settings → TNI defaults, the question each quote asks before anything fills, and
+// agent keeps in Settings → Your defaults, the question each quote asks before anything fills, and
 // what the rest of the panel reads of them. The module's rules (src/agent-defaults/) decide what a
 // default changes; this file only keeps the agent's choices and says them.
 //
@@ -16,6 +16,8 @@
 //   new quote (usage session); a panel opened again keeps it. "Yes, mine" holds only for the profile,
 //   initials and amounts (their defaultsHash) it was given for: a profile switched, edited or deleted
 //   since asks again, so nothing fills with amounts the agent didn't approve for this quote.
+// - chrome.storage.local `agentDefaultsHidden`: true when the developer hid the feature in this
+//   unpacked copy (Settings → Advanced). The store build ignores it: there RELEASED_TO_AGENTS decides.
 // - Until the quote's question is answered nothing fills (defaultsHold: fillPage, the automatic
 //   fills and the dock wait on it, as on the quote-state hold). Nor while a new intake's quote is
 //   being set up (quoteStarting, until refreshDefaults), or while the agent's answer is being saved.
@@ -25,8 +27,8 @@
 // they're used). Removing the feature: this folder, those lines, and the TNI defaults section's mount.
 
 import {
-  AGENT_DEFAULTS_ON, REGISTRY, amountSaid, carrierOverrides, defaultsForLog, defaultsHash, effectiveDefaults,
-  isAgentDefault, onDefaultsError, setActiveDefaults,
+  RELEASED_TO_AGENTS, REGISTRY, agentDefaultsOn, amountSaid, carrierOverrides, defaultsForLog, defaultsHash, effectiveDefaults,
+  isAgentDefault, onDefaultsError, setActiveDefaults, setAgentDefaultsOn,
 } from '../../../src/agent-defaults/index.js';
 import { CARRIERS } from '../../../src/carriers.js';
 import { STANDARD_IDS } from '../../../src/standards.js';
@@ -38,7 +40,26 @@ import { logCrash, state } from '../core.js';
 
 const KEY = 'agentDefaults';
 const QUOTE_KEY = 'agentDefaultsQuote';
+const HIDDEN_KEY = 'agentDefaultsHidden';
 const memory = {};
+const hiddenStore = inExtension
+  ? { get: async () => (await chrome.storage.local.get(HIDDEN_KEY))[HIDDEN_KEY], set: (v) => chrome.storage.local.set({ [HIDDEN_KEY]: v }) }
+  : { get: async () => memory[HIDDEN_KEY], set: async (v) => { memory[HIDDEN_KEY] = v; } };
+
+/**
+ * Whether this copy of the panel has the feature: agents' store build only once TNI's managers have
+ * approved it (RELEASED_TO_AGENTS), any other copy (unpacked, the repository's files) unless the
+ * developer hid it.
+ * @param {string} channel @param {boolean} hidden
+ */
+export const defaultsShownFor = (channel, hidden) => (channel === 'store' ? RELEASED_TO_AGENTS : !hidden);
+let channel = 'source';
+// Turns the feature on or off in this copy: the module's overlay and rulebook rewrite, and what the
+// panel draws of it (state.defaultsOn: the Settings section, the question, the client strip's pill).
+function show(on) {
+  setAgentDefaultsOn(on);
+  state.defaultsOn = on;
+}
 const local = inExtension
   ? { get: async () => (await chrome.storage.local.get(KEY))[KEY], set: (v) => chrome.storage.local.set({ [KEY]: v }) }
   : { get: async () => memory[KEY], set: async (v) => { memory[KEY] = v; } };
@@ -67,7 +88,7 @@ const currentSessionId = () => usage.currentSession()?.id ?? null;
 /** The active profile, when the agent has one and initials to go with it. @returns {DefaultsProfile | null} */
 function activeProfile() {
   const stored = state.agentDefaults;
-  if (!AGENT_DEFAULTS_ON || !initials || !stored?.active || stored.activeFor !== initials) return null;
+  if (!agentDefaultsOn() || !initials || !stored?.active || stored.activeFor !== initials) return null;
   return stored.profiles[stored.active] ?? null;
 }
 // A profile replacing anything, in the basic section or a carrier's (Advanced): one that only repeats
@@ -96,7 +117,11 @@ function apply() {
 /** Reads what is stored (the panel's init) and logs an overlay error as a client_error. */
 export async function loadDefaults() {
   onDefaultsError((error) => logCrash(error));
-  const [stored, saved, kept] = await Promise.all([local.get(), usage.settings(), session.get()]);
+  const [stored, saved, kept, hidden] = await Promise.all([local.get(), usage.settings(), session.get(), hiddenStore.get()]);
+  channel = usage.build().channel;
+  // The developer's switch: in every copy but the store build.
+  state.defaultsDev = channel !== 'store';
+  show(defaultsShownFor(channel, hidden === true));
   initials = saved?.agent ?? null;
   state.defaultsInitials = initials;
   quote = kept && typeof kept === 'object' ? kept : null;
@@ -136,7 +161,7 @@ export function quoteStarting() {
 // an empty list after "Use TNI's", nothing before the agent answers.
 export function settingsDefaults() {
   const choice = choiceHere();
-  if (!choice || !AGENT_DEFAULTS_ON) return undefined;
+  if (!choice || !agentDefaultsOn()) return undefined;
   return choice === 'mine' ? defaultsForLog(activeProfile()) : [];
 }
 
@@ -169,46 +194,52 @@ let onAnswer = (_choice) => {};
 /** @param {(choice: 'mine' | 'tni') => void} fn */
 export function onDefaultsAnswer(fn) { onAnswer = fn; }
 
-// Each change from TNI's standards, as the quote's card lists them: the basic ones, then each
-// carrier's own (a carrier's TNI's over a basic default included).
-function changedSaid(profile) {
-  const said = (e, d) => {
-    const tni = STANDARD_IDS[e.id]();
-    if ('ask' in d) return `${e.label}: you answer it (TNI's: ${amountSaid(tni)})`;
-    if (JSON.stringify(d.value) === JSON.stringify(tni)) return `${e.label}: TNI's ${amountSaid(tni)}`;
-    return `${e.label}: ${amountSaid(d.value)} (TNI's: ${amountSaid(tni)})`;
+// Each change from TNI's standards: the basic ones, then each carrier's own (a carrier's TNI's over a
+// basic default included). `note` is the question card's line; label, value and tni the icon's popover.
+function changes(profile) {
+  const one = (label, e, d) => {
+    const tni = amountSaid(STANDARD_IDS[e.id]());
+    if ('ask' in d) return { label, value: 'You answer it', tni, note: `${label}: you answer it (TNI's: ${tni})` };
+    if (JSON.stringify(d.value) === JSON.stringify(STANDARD_IDS[e.id]())) return { label, value: `TNI's ${tni}`, tni: null, note: `${label}: TNI's ${tni}` };
+    const value = amountSaid(d.value);
+    return { label, value, tni, note: `${label}: ${value} (TNI's: ${tni})` };
   };
   const basic = effectiveDefaults({ values: profile.values }, null);
-  const lines = REGISTRY.filter((e) => basic[e.id]).map((e) => said(e, basic[e.id]));
+  const lines = REGISTRY.filter((e) => basic[e.id]).map((e) => one(e.label, e, basic[e.id]));
   for (const c of DEFAULTS_CARRIERS) {
     const own = carrierOverrides(profile, c.id);
-    for (const e of REGISTRY) if (own[e.id]) lines.push(`${c.name} only: ${said(e, own[e.id])}`);
+    for (const e of REGISTRY) if (own[e.id]) lines.push(one(`${c.name} only: ${e.label}`, e, own[e.id]));
   }
   return lines;
 }
 
+// Before the agent answers, the question as a card above the page's answers (cards-view.jsx
+// `defaults`): it holds the fill, so it must be seen. Once answered, a pill in the client strip
+// (client-view.jsx, state.defaultsChip) with what this quote fills in its popover.
 function say() {
   const profile = activeProfile();
   const choice = choiceHere();
   let card = null;
+  let chip = null;
   // Switching changes what fills from now on; answers already on the carrier's pages stay as they
-  // are (as with any answer the fill engine gave before), so the card says so.
+  // are (as with any answer the fill engine gave before), so the popover says so.
   const after = 'Switching changes what fills next, not answers already on the carrier\'s pages.';
   if (!starting && state.intake && currentSessionId() && replacesAny(profile)) {
     const name = profile.name || 'Your profile';
-    const changed = changedSaid(profile);
+    const changed = changes(profile);
     if (!choice) {
-      card = { tone: 'warn', role: 'alert', title: `Fill this quote with ${name}'s defaults?`, text: `Nothing fills until you answer. ${changed.length} in place of TNI's standards:`, notes: changed, compare: [],
+      card = { tone: 'warn', role: 'alert', title: `Fill this quote with ${name}'s defaults?`, text: `Nothing fills until you answer. ${changed.length} in place of TNI's standards:`, notes: changed.map((c) => c.note), compare: [],
         actions: [{ label: 'Yes, mine', className: 'tinted', onClick: () => onAnswer('mine') }, { label: 'Use TNI\'s', className: 'ghost', onClick: () => onAnswer('tni') }] };
     } else if (choice === 'mine') {
-      card = { tone: 'quiet', role: 'status', title: `Defaults: ${name}, ${changed.length} changed`, text: after, notes: changed, compare: [],
-        actions: [{ label: 'Use TNI\'s for this quote', className: 'ghost', onClick: () => onAnswer('tni') }] };
+      chip = { choice, count: changed.length, short: `${changed.length} yours`, label: `${name}'s defaults: ${changed.length} in place of TNI's`, title: `${name}'s defaults`, sub: 'On this quote, in place of TNI\'s standards',
+        lines: changed.map(({ label, value, tni }) => ({ label, value, tni })), after, action: { label: 'Use TNI\'s for this quote', onClick: () => onAnswer('tni') } };
     } else {
-      card = { tone: 'quiet', role: 'status', title: 'TNI\'s standards for this quote', text: `${name}'s defaults aren't used. ${after}`, notes: [], compare: [],
-        actions: [{ label: `Use ${name}'s`, className: 'ghost', onClick: () => onAnswer('mine') }] };
+      chip = { choice, count: 0, short: "TNI's", label: 'TNI\'s standards for this quote', title: 'TNI\'s standards for this quote', sub: `${name}'s defaults aren't used.`,
+        lines: [], after, action: { label: `Use ${name}'s`, onClick: () => onAnswer('mine') } };
     }
   }
   state.cards = { ...state.cards, defaults: card };
+  state.defaultsChip = chip;
 }
 
 /** The agent's answer for this quote. @param {'mine' | 'tni'} choice */
@@ -241,7 +272,18 @@ export function refreshDefaults() {
   apply();
 }
 
-// Settings → TNI defaults (view.jsx), as `act.defaults`.
+/**
+ * The developer's switch (Settings → Advanced, unpacked copies only): shows or hides the whole feature
+ * in this copy, as agents' store build will have it. Kept across restarts. @param {boolean} on
+ */
+export async function setDefaultsShown(on) {
+  if (channel === 'store') return;
+  await hiddenStore.set(!on).catch((error) => logCrash(error));
+  show(!!on);
+  apply();
+}
+
+// Settings → Your defaults (view.jsx), as `act.defaults`.
 export function defaultsActs() {
   const now = () => state.agentDefaults ?? empty();
   return {

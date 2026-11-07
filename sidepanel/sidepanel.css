@@ -516,7 +516,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 #assistant[open] > summary, #assistant[open] > .card:not(.warn) { border-color: var(--ai-line); }
 #ai-note { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fold .chev { transition: transform 0.15s; }
-.fold[open] .chev { transform: rotate(90deg); }
+.fold[open] > summary .chev { transform: rotate(90deg); }
 .fold[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-color: var(--border); }
 .fold[open] > .card { border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
 /* TNI defaults (agent-defaults/view.jsx): rows like Filling's, a field's select at the right, and
@@ -525,7 +525,31 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .defaults-actions { display: flex; gap: 8px; align-items: center; padding: 8px 12px; }
 .defaults-actions input { flex: 1; min-width: 0; min-height: 28px; padding: 2px 8px; font-size: 12.5px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
 .card-note { padding: 8px 12px; }
-#defaults-advanced { margin-top: 4px; }
+#defaults-fold .fold-icon { width: 16px; height: 16px; color: var(--mark-own); }
+.sub-fold > summary .chev { color: var(--ink-muted); font-size: 17px; line-height: 1; }
+.sub-fold > summary .fold-note { flex: 0 1 auto; }
+.defaults-carriers { border-top: 1px solid var(--border-faint); }
+/* The quote's defaults in the client strip: a pill that says it ("2 yours" teal, "TNI's" plain); its
+   popover hangs from the strip (.client-head), at its right edge. */
+.client-head { position: relative; }
+.defaults-chip { display: inline-flex; }
+.defaults-pill { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; height: 24px; padding: 0 8px 0 6px; border: 1px solid transparent; border-radius: 12px; background: var(--surface-hover); color: var(--ink-secondary); font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap; }
+.defaults-pill svg { width: 14px; height: 14px; }
+.defaults-pill:hover { border-color: var(--border-strong); }
+.defaults-pill.own { background: var(--own-soft); color: var(--own-ink); }
+.defaults-pill.own svg { color: var(--mark-own); }
+.defaults-pill.own:hover { border-color: var(--mark-own); }
+.defaults-pop { position: absolute; z-index: 30; top: calc(100% + 4px); right: 12px; width: 300px; max-width: calc(100vw - 24px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(16, 24, 40, 0.14); font-size: 13px; text-align: left; max-height: calc(100dvh - 140px); overflow-y: auto; }
+.defaults-pop > * + * { border-top: 1px solid var(--border-faint); }
+.pop-head { display: grid; padding: 10px 12px 8px; }
+.pop-head b { color: var(--own-ink); }
+.pop-head span { font-size: 12px; color: var(--ink-muted); }
+.pop-line { display: flex; justify-content: space-between; gap: 8px; padding: 7px 12px; color: var(--ink-strong); }
+.pop-value { display: grid; text-align: right; font-weight: 600; white-space: nowrap; }
+.pop-value small { font-size: 11.5px; font-weight: 400; color: var(--ink-muted); }
+.pop-note { margin: 0; padding: 7px 12px; }
+.pop-actions { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
+.pop-actions .fine { margin-left: auto; }
 .fold-note { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; color: var(--ink-muted); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .defaults-carrier { display: grid; }
 .defaults-carrier > * + * { border-top: 1px solid var(--border-faint); }
@@ -637,6 +661,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .row-body { padding-left: 39px; padding-right: 10px; }
   .intake-btn { padding: 0 6px; }
   .client-tools { gap: 1px; }
+  .defaults-pill { padding: 0 6px; }
+  .defaults-pill > span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::after { animation: none !important; transition: none !important; }

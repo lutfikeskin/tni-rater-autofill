@@ -1,21 +1,31 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
 import * as usage from '../../sidepanel/usage-log.js';
 import { state as panelState } from '../../sidepanel/panel/core.js';
-import { TniDefaults } from '../../sidepanel/panel/agent-defaults/view.jsx';
+import { DefaultsChip, DefaultsDevSwitch, TniDefaults } from '../../sidepanel/panel/agent-defaults/view.jsx';
 import {
-  answerDefaults, defaultsActs, defaultsHold, fillDefaultsHash, initialsChanged, isOwnDefault, loadDefaults, onDefaultsAnswer, refreshDefaults, settingsDefaults,
+  answerDefaults, defaultsActs, defaultsHold, defaultsShownFor, fillDefaultsHash, setDefaultsShown, initialsChanged, isOwnDefault, loadDefaults, onDefaultsAnswer, refreshDefaults, settingsDefaults,
 } from '../../sidepanel/panel/agent-defaults/store.js';
-import { AGENT_DEFAULTS_ON, overlayFor } from '../../src/agent-defaults/index.js';
+import { RELEASED_TO_AGENTS, agentDefaultsOn, overlayFor } from '../../src/agent-defaults/index.js';
 
-// Agents' own defaults in the panel (docs/agent-defaults-spec.md, phase 5): Settings → TNI defaults
+// Agents' own defaults in the panel (docs/agent-defaults-spec.md, phase 5): Settings → Your defaults
 // keeps the agent's profiles, and each quote asks whose defaults it fills with before anything fills.
 
 afterEach(cleanup);
 
-test('the feature is on', () => {
-  expect(AGENT_DEFAULTS_ON).toBe(true);
+// Agents' store build has the feature only once TNI's managers approve it (RELEASED_TO_AGENTS); every
+// other copy has it unless the developer hid it. These tests run as the repository's files ('source').
+test('the feature: in the store build only once released, elsewhere unless the developer hid it', () => {
+  expect(RELEASED_TO_AGENTS).toBe(false);
+  expect(defaultsShownFor('store', false)).toBe(RELEASED_TO_AGENTS);
+  expect(defaultsShownFor('store', true)).toBe(RELEASED_TO_AGENTS);
+  expect(defaultsShownFor('unpacked', false)).toBe(true);
+  expect(defaultsShownFor('unpacked', true)).toBe(false);
+  expect(defaultsShownFor('source', false)).toBe(true);
+  expect(agentDefaultsOn()).toBe(true);
+  expect(panelState.defaultsOn).toBe(true);
+  expect(panelState.defaultsDev).toBe(true);
 });
 
 // The section, drawn from the store.
@@ -23,19 +33,24 @@ const PROFILE = { v: 1, active: 'p1', profiles: { p1: { name: 'Jordan K.', value
 const actsOf = (calls) => Object.fromEntries(['create', 'pick', 'remove', 'set', 'setCarrier'].map((name) => [name, (...a) => calls.push([name, ...a])]));
 
 test('without initials the section asks for them, and offers no profile', () => {
-  storeState({ agentDefaults: PROFILE, defaultsInitials: null });
+  storeState({ defaultsOn: true, agentDefaults: PROFILE, defaultsInitials: null });
   const { container } = render(<TniDefaults act={actsOf([])} />);
   expect(container.textContent).toMatch(/Set your initials above/);
+  expect(container.querySelector('#defaults-summary').textContent).toBe('Set your initials first');
   expect(container.querySelector('#defaults-profile')).toBeNull();
 });
 
 test('with initials: the profile, each standard with TNI\'s amount first, and the agent\'s picks', () => {
-  storeState({ agentDefaults: PROFILE, defaultsInitials: 'JK' });
+  storeState({ defaultsOn: true, agentDefaults: PROFILE, defaultsInitials: 'JK' });
   const calls = [];
   const { container } = render(<TniDefaults act={actsOf(calls)} />);
   const profile = container.querySelector('#defaults-profile');
   expect([...profile.options].map((o) => o.textContent)).toEqual(['None: TNI\'s everywhere', 'Jordan K.', 'Sam']);
   expect(profile.value).toBe('p1');
+  // One folded row, as AI's: the profile in force and how many amounts it changes.
+  expect(container.querySelector('#defaults-fold').open).toBe(false);
+  expect(container.querySelector('#defaults-summary').textContent).toBe('Jordan K. · 1 changed');
+  expect(container.querySelector('#defaults-fold > summary').title).toMatch(/Each quote asks first\. Client requests on the intake always win\./);
   const med = container.querySelector('#default-medPay');
   expect([...med.options].map((o) => o.textContent)).toEqual(['TNI\'s ($5,000)', '$500', '$1,000', '$2,000']);
   expect(med.selectedOptions[0].textContent).toBe('$1,000');
@@ -53,7 +68,7 @@ test('with initials: the profile, each standard with TNI\'s amount first, and th
 // Advanced: each carrier's own row, "As above" first, TNI's there only when the basic row
 // replaces it, that carrier's other amounts, then "Ask me".
 test('Advanced: a row per carrier and standard, from that carrier\'s list', () => {
-  storeState({ agentDefaults: { ...PROFILE, profiles: { ...PROFILE.profiles, p1: { ...PROFILE.profiles.p1, carriers: { geico: { umCsl: { ask: true } } } } } }, defaultsInitials: 'JK' });
+  storeState({ defaultsOn: true, agentDefaults: { ...PROFILE, profiles: { ...PROFILE.profiles, p1: { ...PROFILE.profiles.p1, carriers: { geico: { umCsl: { ask: true } } } } } }, defaultsInitials: 'JK' });
   const calls = [];
   const { container } = render(<TniDefaults act={actsOf(calls)} />);
   expect(container.querySelector('#defaults-advanced').open).toBe(false);
@@ -76,7 +91,7 @@ test('Advanced: a row per carrier and standard, from that carrier\'s list', () =
 });
 
 test('a new profile is named, then created', () => {
-  storeState({ agentDefaults: { v: 1, active: null, profiles: {} }, defaultsInitials: 'JK' });
+  storeState({ defaultsOn: true, agentDefaults: { v: 1, active: null, profiles: {} }, defaultsInitials: 'JK' });
   const calls = [];
   const { container, getByText } = render(<TniDefaults act={actsOf(calls)} />);
   expect(container.querySelector('#default-medPay')).toBeNull();
@@ -92,6 +107,7 @@ beforeEach(async () => {
   storeState({ cards: {}, agentDefaults: null, defaultsInitials: null, intake: null });
   usage.restoreSession(null);
   await usage.saveSettings({ agent: 'JK' });
+  await setDefaultsShown(true);
   await loadDefaults();
   // Each test starts with no profile (outside the extension the store keeps them in memory).
   for (const id of Object.keys(panelState.agentDefaults.profiles)) await defaultsActs().remove(id);
@@ -127,13 +143,20 @@ test('a quote waits for the agent to say whose defaults it takes, then fills and
   expect(settingsDefaults()).toEqual([{ id: 'medPay', value: 2_000 }]);
   expect(fillDefaultsHash()).toMatch(/^[0-9a-f]{12}$/);
   expect(overlayFor('geico')).toBeTypeOf('function');
-  expect(panelState.cards.defaults.title).toBe('Defaults: Jordan K., 1 changed');
+  // Answered: no card above the answers; the client strip's pill says it.
+  expect(panelState.cards.defaults).toBeNull();
+  expect(panelState.defaultsChip.label).toBe('Jordan K.\'s defaults: 1 in place of TNI\'s');
+  expect(panelState.defaultsChip.short).toBe('1 yours');
+  expect(panelState.defaultsChip.lines).toEqual([{ label: 'Medical payments', value: '$2,000', tni: '$5,000' }]);
   // Use TNI's for this quote: TNI's everywhere, logged as an empty list.
   await answerDefaults('tni');
   expect(settingsDefaults()).toEqual([]);
   expect(fillDefaultsHash()).toBeUndefined();
   expect(overlayFor('geico')).toBeNull();
-  expect(panelState.cards.defaults.title).toBe('TNI\'s standards for this quote');
+  expect(panelState.cards.defaults).toBeNull();
+  expect(panelState.defaultsChip.title).toBe('TNI\'s standards for this quote');
+  expect(panelState.defaultsChip.action.label).toBe('Use Jordan K.\'s');
+  expect(panelState.defaultsChip.short).toBe('TNI\'s');
   // The next quote asks again.
   loadQuote();
   expect(defaultsHold()).toBe(true);
@@ -259,7 +282,8 @@ test('Advanced picks alone ask the quote too, and the card and the log name thei
   // Changed after the answer: asked again, then filled and logged with the new picks.
   expect(panelState.cards.defaults.title).toBe('Fill this quote with Jordan K.\'s defaults?');
   await answerDefaults('mine');
-  expect(panelState.cards.defaults.title).toBe('Defaults: Jordan K., 4 changed');
+  expect(panelState.defaultsChip.count).toBe(4);
+  expect(panelState.defaultsChip.lines.map((l) => l.value)).toEqual(['$2,000', 'You answer it', '$500,000', 'TNI\'s $5,000']);
   // The log: basic first, then each carrier's own, carriers in a fixed (alphabetical) order.
   expect(settingsDefaults()).toEqual([{ id: 'medPay', value: 2_000 }, { id: 'umCsl', value: 500_000, carrier: 'geico' },
     { id: 'medPay', value: 5_000, carrier: 'geico' }, { id: 'medPay', value: 'ask', carrier: 'progressive' }]);
@@ -283,4 +307,74 @@ test('a report row from the agent\'s own default is its own kind', async () => {
   expect(answerRecord({ label: 'Medical payments', value: '$2,000', own: true, standard: false }).kind).toBe('own');
   expect(answerRecord({ label: 'Medical payments', value: '$5,000', standard: true }).kind).toBe('standard');
   expect(answerRecord({ label: 'Medical payments', value: '$2,000', own: true, edited: true }).kind).toBe('edited');
+});
+
+// Once answered, the quote's defaults are a pill in the client strip that says it ("2 yours"), and on
+// a click what fills and the switch to TNI's; nothing with the feature off.
+test('the client strip\'s pill: 2 yours, then what fills and Use TNI\'s in its popover', () => {
+  const calls = [];
+  const chip = { choice: 'mine', count: 2, short: '2 yours', label: 'Jordan K.\'s defaults: 2 in place of TNI\'s', title: 'Jordan K.\'s defaults', sub: 'On this quote, in place of TNI\'s standards',
+    lines: [{ label: 'Medical payments', value: '$2,000', tni: '$5,000' }, { label: 'Progressive only: Medical payments', value: 'You answer it', tni: '$5,000' }],
+    after: 'Switching changes what fills next.', action: { label: 'Use TNI\'s for this quote', onClick: () => calls.push('tni') } };
+  storeState({ defaultsOn: true, defaultsChip: chip });
+  const { container, getByText } = render(<DefaultsChip />);
+  const button = container.querySelector('#defaults-chip');
+  expect(button.getAttribute('aria-label')).toBe(chip.label);
+  expect(button.className).toContain('own');
+  expect(button.textContent).toBe('2 yours');
+  const pop = container.querySelector('#defaults-pop');
+  expect(pop.hidden).toBe(true);
+  fireEvent.click(button);
+  expect(pop.hidden).toBe(false);
+  expect([...pop.querySelectorAll('.pop-line')].map((l) => l.textContent)).toEqual(['Medical payments$2,000TNI\'s $5,000', 'Progressive only: Medical paymentsYou answer itTNI\'s $5,000']);
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(pop.hidden).toBe(true);
+  fireEvent.click(button);
+  fireEvent.click(getByText('Use TNI\'s for this quote'));
+  expect(calls).toEqual(['tni']);
+  expect(pop.hidden).toBe(true);
+  // Gone with the pill (a new quote): it comes back closed, not open by itself.
+  fireEvent.click(button);
+  expect(pop.hidden).toBe(false);
+  act(() => { panelState.defaultsChip = null; });
+  expect(container.querySelector('#defaults-chip')).toBeNull();
+  act(() => { panelState.defaultsChip = chip; });
+  expect(container.querySelector('#defaults-pop').hidden).toBe(true);
+  cleanup();
+  storeState({ defaultsOn: false, defaultsChip: chip });
+  expect(render(<DefaultsChip />).container.querySelector('#defaults-chip')).toBeNull();
+});
+
+// The developer's switch hides the whole feature in this copy: no section, no question, no hold, no
+// overlay, nothing logged; on again, the quote asks. Kept for the next panel opened.
+test('the developer\'s switch hides the whole feature, and shows it again', async () => {
+  await profileWithMedPay();
+  loadQuote();
+  expect(defaultsHold()).toBe(true);
+  await setDefaultsShown(false);
+  expect(panelState.defaultsOn).toBe(false);
+  expect(defaultsHold()).toBe(false);
+  expect(panelState.cards.defaults).toBeNull();
+  expect(panelState.defaultsChip).toBeNull();
+  expect(settingsDefaults()).toBeUndefined();
+  await answerDefaults('mine');
+  expect(overlayFor('geico')).toBeNull();
+  expect(settingsDefaults()).toBeUndefined();
+  expect(render(<TniDefaults act={actsOf([])} />).container.querySelector('#tni-defaults')).toBeNull();
+  await loadDefaults();
+  expect(panelState.defaultsOn).toBe(false);
+  // The switch itself, in Advanced.
+  const calls = [];
+  const box = render(<DefaultsDevSwitch act={(on) => calls.push(on)} />).container.querySelector('#defaults-shown');
+  expect(box.checked).toBe(false);
+  fireEvent.click(box);
+  expect(calls).toEqual([true]);
+  // On again: an answer given while hidden doesn't count, so the quote asks before anything fills.
+  await setDefaultsShown(true);
+  expect(panelState.defaultsOn).toBe(true);
+  expect(defaultsHold()).toBe(true);
+  expect(overlayFor('geico')).toBeNull();
+  await answerDefaults('mine');
+  expect(overlayFor('geico')).toBeTypeOf('function');
+  expect(panelState.defaultsChip.count).toBe(1);
 });

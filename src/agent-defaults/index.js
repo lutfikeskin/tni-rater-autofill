@@ -5,8 +5,8 @@
 // Luna's evidence passes rulebookRewriteFor's rewrite to rulebookFor. test/agent-defaults.test.mjs
 // checks that nothing else imports it.
 //
-// Off switch: AGENT_DEFAULTS_ON. While false, overlayFor and rulebookRewriteFor give nothing, so
-// every plan and rulebook is the rules' own, whatever is stored.
+// Off switch: agentDefaultsOn() (RELEASED_TO_AGENTS, below). While off, overlayFor and
+// rulebookRewriteFor give nothing, so every plan and rulebook is the rules' own, whatever is stored.
 //
 // Removing the feature: delete this folder and sidepanel/panel/agent-defaults/, the wiring lines in
 // sidepanel/panel/plan-for.js and src/ai/common.js, server/agent-defaults.mjs (its header lists the
@@ -23,8 +23,17 @@ import { AGENT_DEFAULT_SOURCE, makeOverlay, safeOverlay, amountSaid } from './ov
 
 export { AGENT_DEFAULT_SOURCE, REGISTRY, amountSaid };
 
-// The feature's switch. Phase 5 turns it on with the TNI defaults page (docs/agent-defaults-spec.md).
-export const AGENT_DEFAULTS_ON = true;
+// Released to agents: false until TNI's managers approve the feature. Until then the store build
+// (what agents install) has none of it: no Settings section, no question, no overlay, nothing logged.
+// The unpacked copy has it on, with the developer's switch in Settings → Advanced to hide it
+// (the panel's loadDefaults decides, by build channel, and calls setAgentDefaultsOn).
+export const RELEASED_TO_AGENTS = false;
+
+// The feature's switch in this copy: off, as agents' store build has it, until the panel turns it on.
+let on = RELEASED_TO_AGENTS;
+/** @param {boolean} value */
+export function setAgentDefaultsOn(value) { on = !!value; }
+export const agentDefaultsOn = () => on;
 
 // The profile whose defaults this quote fills with: set by the panel once the agent confirms it for
 // the quote (phase 5), null otherwise. No profile, no change.
@@ -77,7 +86,7 @@ export function effectiveDefaults(profile, carrierId) {
  * @param {string | null | undefined} carrierId @returns {StepOverlay | null}
  */
 export function overlayFor(carrierId) {
-  if (!AGENT_DEFAULTS_ON || !active || !carrierId) return null;
+  if (!on || !active || !carrierId) return null;
   const effective = effectiveDefaults(active, carrierId);
   if (!Object.keys(effective).length) return null;
   return safeOverlay(makeOverlay(effective, carrierId), (error) => reportError(error));
@@ -95,7 +104,7 @@ const entriesFor = (carrierId, id) => new Set((CARRIERS.find((c) => c.id === car
  * @param {string | null | undefined} carrierId @returns {((entry: RulebookEntry) => RulebookEntry) | null}
  */
 export function rulebookRewriteFor(carrierId) {
-  if (!AGENT_DEFAULTS_ON || !active || !carrierId) return null;
+  if (!on || !active || !carrierId) return null;
   return makeRulebookRewrite(effectiveDefaults(active, carrierId), carrierId);
 }
 
@@ -193,7 +202,7 @@ export function profileFromLog(defaults) {
 
 /**
  * The overlay a recorded quote was filled with on this carrier, from its logged defaults; null when it
- * logged none. Not behind AGENT_DEFAULTS_ON: it replays what a build with the feature on did.
+ * logged none. Not behind the switch (agentDefaultsOn): it replays what a build with the feature on did.
  * @param {unknown} defaults @param {string | null | undefined} carrierId @returns {StepOverlay | null}
  */
 export function replayOverlay(defaults, carrierId) {

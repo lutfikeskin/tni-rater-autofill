@@ -67,7 +67,7 @@ export function makeOverlay(effective, carrierId) {
       if (std.applies && !std.applies(record, active)) {
         return { ...step, defaultInfo: `${String(record.garaging?.state ?? '').toUpperCase() || 'Here'}: TNI's ${step.value} applies here (its own exception), not your default.` };
       }
-      if ('ask' in mine) return { ...agents(step, `You chose to answer ${label.toLowerCase()} yourself (Settings → TNI defaults).`), agentDefault: { id: std.id, ask: true } };
+      if ('ask' in mine) return { ...agents(step, `You chose to answer ${label.toLowerCase()} yourself (Settings → Your defaults).`), agentDefault: { id: std.id, ask: true } };
       const tni = STANDARD_IDS[std.id]();
       const amount = mine.value;
       if (same(amount, tni)) return step;

@@ -1272,9 +1272,12 @@ function dockFor() {
     return { phase: 'hold', tone: 'bad', eyebrow: 'Check first', title: 'Sort out the state above', sub: `${issue.intake} answers fail on a ${issue.picked} quote.`,
       button: 'fill', label: 'Fill this page', disabled: true, alt: 'fill-anyway', altLabel: 'Fill anyway' };
   }
-  // agent defaults: no fill until the agent says whose defaults this quote takes (the card above).
+  // agent defaults: no fill until the agent says whose defaults this quote takes (the card above
+  // the page's answers). Elsewhere (the intake's checks) the card isn't drawn: the dock opens it.
   if (state.intake && defaultsHold()) {
-    return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Answer the question above', sub: 'Your own defaults, or TNI\'s standards, for this quote.', button: 'fill', label: 'Fill this page', disabled: true };
+    const sub = 'Your own defaults, or TNI\'s standards, for this quote.';
+    if (state.view !== 'page') return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Whose defaults does this quote take?', sub, button: 'dock-defaults', label: 'Show the question' };
+    return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Answer the question above', sub, button: 'fill', label: 'Fill this page', disabled: true };
   }
   // The carrier's portal pages outside a quote are never filled (fillPage).
   if (!onQuotePage()) return { phase: 'portal', eyebrow: 'Next', title: 'Open the client’s quote', sub: 'This is the portal. Filling starts on a quote page.' };

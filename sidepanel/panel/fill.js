@@ -58,6 +58,24 @@ async function runKit(tabId, carrier, func, args = [], frameIds) {
   return chrome.scripting.executeScript({ target: { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) }, world: worldFor(carrier), func, args });
 }
 
+// agent defaults: the page whose opening fill the quote's question held (fillPage), with the intake
+// it was held for. Only that page fills once the hold lifts: never another page that happens to be in
+// front, such as the last client's quote left open when a new intake loads.
+/** @type {{ key: string, intake: any } | null} */
+let heldForDefaults = null;
+
+// agent defaults: the quote's question answered, or the feature hidden (its hold lifted). The page
+// whose own fill waited on it is filled as on opening, while it is still in front for the same intake,
+// "Fill pages when they open" is on and nothing has filled it since. A page filled before keeps its
+// answers until the agent fills it again.
+function fillAfterDefaults() {
+  const held = heldForDefaults;
+  if (!held || !state.intake || defaultsHold() || state.filling || !state.tab?.carrier || !switchOn('autoPages', 'auto-pages') || !onQuotePage()) return;
+  heldForDefaults = null;
+  if (held.intake !== state.intake || held.key !== currentReportKey() || state.reports.has(held.key)) return;
+  fillPage({ auto: 'page' });
+}
+
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
 /** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean }} [options] */
@@ -68,7 +86,12 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // the state is right (or Fill anyway), on request or automatically (stateIssue).
   if (state.intake && stateIssue()) { showStateNote(); renderSteps(); return; }
   // agent defaults: nothing fills until the agent says whose defaults this quote takes (the card above).
-  if (state.intake && defaultsHold()) { renderSteps(); return; }
+  if (state.intake && defaultsHold()) {
+    // A page's opening fill: kept for fillAfterDefaults, to run once the agent answers.
+    if (auto === 'page') heldForDefaults = { key: currentReportKey(), intake: state.intake };
+    renderSteps();
+    return;
+  }
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
@@ -980,7 +1003,7 @@ function answerSource(rec) {
     intake: { kind: 'intake', text: `Intake${place ? pdfPageSaid(place.page, ' p.') : ''}`, title: 'From the intake' },
     derived: { kind: 'derived', text: 'Worked out', title: 'Worked out from intake answers' },
     standard: { kind: 'standard', text: 'TNI standard', title: 'A TNI standard answer, not a fact from the intake' },
-    own: { kind: 'own', text: 'Your default', title: 'Your own default in place of TNI\'s standard (Settings → TNI defaults)' },
+    own: { kind: 'own', text: 'Your default', title: 'Your own default in place of TNI\'s standard (Settings → Your defaults)' },
     edited: { kind: 'you', text: 'Your edit', title: 'From your correction in the panel' },
     page: rec.standard ? { kind: 'standard', text: 'TNI standard', title: 'The page already had the TNI standard answer' } : { kind: 'page', text: 'On the page', title: 'The page already had it' },
     clicked: { kind: 'clicked', text: 'Clicked', title: 'Clicked for you' },
@@ -993,7 +1016,7 @@ function answerSource(rec) {
     intake: [`Intake${place ? pdfPageSaid(place.page, ', page ') : ''}`, rec.path ? said(rec.path) : `Answer: ${rec.value}`],
     derived: ['Worked out from the intake', (rec.from ?? []).map(said).join(' · ')],
     standard: ['TNI standard answer', `Answer: ${rec.value}`],
-    own: ['Your own default', `Answer: ${rec.value}. In place of TNI's standard, from Settings → TNI defaults.`],
+    own: ['Your own default', `Answer: ${rec.value}. In place of TNI's standard, from Settings → Your defaults.`],
     edited: ['Your correction in the panel', rec.path ? said(rec.path) : `Answer: ${rec.value}`],
     page: ['Already on the page', 'The fill left it as the page had it.'],
     clicked: ['Clicked for you', `“${rec.value}”`],
@@ -1357,4 +1380,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };
+export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillAfterDefaults, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };

@@ -16,7 +16,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
-import { TniDefaults } from './agent-defaults/view.jsx';
+import { DefaultsDevSwitch, TniDefaults } from './agent-defaults/view.jsx';
 
 // A checkbox the panel reads by id. It shows `checked` whenever that changes, or whenever `said`
 // (what it was said in) is said again, and the agent's click is passed on as the box's own change
@@ -158,7 +158,7 @@ function Settings({ act }) {
         <p className="fine">Never Binds or Submits.</p>
       </div>
 
-      {/* agent defaults: Settings → TNI defaults, hidden while the feature is off. */}
+      {/* agent defaults: Settings → Your defaults, hidden while the feature is off. */}
       {act.defaults ? <TniDefaults act={act.defaults} /> : null}
 
       <Assistant act={act} />
@@ -190,6 +190,8 @@ function Settings({ act }) {
           </div>
           <p id="capture-status" className="fine" role="status" hidden={!captureStatus}>{captureStatus ?? ''}</p>
           <DevRecording act={act.devrec} />
+          {/* agent defaults: the developer's switch for the whole feature, in every copy but agents' store build. */}
+          {act.defaults ? <DefaultsDevSwitch act={act.defaultsShown} /> : null}
         </div>
       </details>
       <p id="version" className="eyebrow">{health?.version ?? ''}</p>
