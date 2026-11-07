@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError } from '../server/index.mjs';
@@ -781,4 +782,68 @@ test('/v1/luna: OpenAI out of quota for the server\'s key is 424, a rate limit s
     assert.equal(limited.headers.get('retry-after'), '2');
     assert.doesNotMatch(await limited.text(), /private/);
   });
+});
+
+// Audit 2026-11-07, SRV-01: one request took the whole server down. A malformed request target
+// (no token needed) threw from new URL before any check; an event typed as an Object.prototype
+// member (constructor, __proto__) read an inherited function as its field list and threw in the
+// upload's 'end' handler. Each is a 4xx now, and the server keeps serving.
+const raw = (base, text) => new Promise((resolve, reject) => {
+  const socket = net.connect(Number(new URL(base).port), '127.0.0.1', () => socket.write(text));
+  let got = '';
+  socket.on('data', (c) => { got += c; });
+  socket.on('close', () => resolve(got));
+  socket.on('error', reject);
+  socket.setTimeout(5000, () => socket.destroy());
+});
+// A crashed request never answers: the test fails in time instead of hanging.
+const crashTest = { timeout: 15000 };
+const healthy = async (base) => assert.equal((await fetch(`${base}/v1/health`)).status, 200, 'the server still answers');
+
+test('a malformed request target is a 400 before any check, and the server keeps serving', crashTest, async () => {
+  await withServer({ dataDir: tmp(), token: 'upload' }, async ({ base }) => {
+    const reply = await raw(base, 'GET http://[::1/ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    assert.match(reply, /^HTTP\/1\.1 400 /);
+    await healthy(base);
+  });
+});
+
+test('an event typed as an Object.prototype member is refused as unknown, not a crash', crashTest, async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ base, post }) => {
+    const types = ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf'];
+    const res = await post({ events: [...types.map((type) => ev({ type })), ev()] });
+    assert.equal(res.status, 200);
+    const r = await res.json();
+    assert.equal(r.accepted, 1, 'the good event in the same upload is still stored');
+    assert.deepEqual(r.rejected.map((x) => x.error), types.map((t) => `unknown event type "${t}"`));
+    await healthy(base);
+  });
+  assert.equal(stored(dataDir).length, 1);
+});
+
+test('an exception inside one request is a 500, logged by name, and the server keeps serving', crashTest, async () => {
+  const logged = [];
+  const error = console.error;
+  console.error = (...a) => { logged.push(a.join(' ')); };
+  try {
+    // A throw in the listener itself: the dashboard reads the clock outside its own try.
+    const dashboardToken = 'd'.repeat(32);
+    await withServer({ dataDir: tmp(), dashboardToken, clock: () => { throw new RangeError('clock broke'); } }, async ({ base }) => {
+      const res = await fetch(`${base}/dashboard`, { headers: { authorization: `Bearer ${dashboardToken}` } });
+      assert.equal(res.status, 500);
+      assert.deepEqual(await res.json(), { error: 'server error' });
+      await healthy(base);
+    });
+    // A rejection after the body arrived (Luna's async path): an upstream answer without headers.
+    const fetchImpl = async () => ({ ok: false, status: 500, json: async () => ({}) });
+    await withServer({ dataDir: tmp(), openaiKey: 'sk-server', fetchImpl }, async ({ base }) => {
+      const res = await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
+      assert.equal(res.status, 500);
+      await healthy(base);
+    });
+  } finally { console.error = error; }
+  assert.ok(logged.some((l) => /RangeError/.test(l)), 'the error is logged by name');
+  assert.ok(logged.some((l) => /TypeError/.test(l)));
+  assert.ok(logged.every((l) => !/clock broke/.test(l)), 'not its message');
 });

@@ -84,6 +84,12 @@ deployment an open write endpoint). On Railway that is a failed deployment in th
 the previous one keeps serving. `npm run server` on this computer still needs no token.
 `/v1/health` answers `{ ok, server }` to anyone (what the daily server check and the panel's
 "is it there" probe read); `events`, how many are stored, only comes with the admin token.
+One request never stops the server for everyone else. A request target that isn't a URL answers
+400 before any token check, an event whose type isn't one of the server's own (`constructor` or
+`__proto__` included) is refused in the reply's `rejected`, and an exception inside a request
+answers 500 (the log names the error and where it was thrown, not its message). Anything that
+fails outside a request still stops the process, with a timestamped log line and a non-zero exit,
+so Railway's restart policy applies.
 
 The container runs as root, the image's default. Running it as the image's `node` user is the
 intended hardening, held until the volume's ownership is verified: Railway mounts `/data`
