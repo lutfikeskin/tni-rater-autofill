@@ -7,8 +7,8 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError } from '../server/index.mjs';
-import { buildRequest } from '../src/ai/luna.js';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS } from '../server/index.mjs';
+import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
 
@@ -710,7 +710,7 @@ test('/v1/luna adds the server\'s OpenAI key to a Luna request and returns the a
     assert.deepEqual(sent, [{ url: 'https://openai.test/v1/responses', auth: 'Bearer sk-server', body }]);
     assert.equal((await luna(body, 'wrong')).status, 401, 'the upload token is required');
     for (const bad of [{ ...body, model: 'gpt-5' }, { ...body, tools: [] }, { ...body, store: true }, { ...body, max_output_tokens: 100_000 },
-      { ...body, input: [...body.input, { role: 'user', content: 'more' }] }, { ...body, instructions: 'x'.repeat(50_000) }]) {
+      { ...body, input: [...body.input, { role: 'user', content: 'more' }] }, { ...body, instructions: 'x'.repeat(LUNA_MAX_CHARS) }]) {
       assert.equal((await luna(bad)).status, 400, JSON.stringify(Object.keys(bad)));
     }
     assert.equal(sent.length, 1, 'nothing else reached OpenAI');
@@ -737,6 +737,25 @@ test('/v1/luna: 501 without a key, a daily limit, and OpenAI refusing the server
     assert.equal(limited.headers.get('retry-after'), '3600');
   });
   assert.equal(lunaRequestError(lunaBody()), null);
+});
+
+// Audit 2026-11-07, AI-01: the server's bound is above the panel's, so the largest request the panel
+// may send passes both the check and the body limit; one over the server's own bound is refused.
+test('/v1/luna takes the largest request the panel may send', async () => {
+  assert.ok(LUNA_MAX_CHARS > MAX_REQUEST_CHARS);
+  const body = lunaBody(), pad = (n) => ({ ...body, instructions: body.instructions + 'x'.repeat(n - JSON.stringify(body).length) });
+  const largest = pad(MAX_REQUEST_CHARS), over = pad(LUNA_MAX_CHARS + 1);
+  assert.equal(JSON.stringify(largest).length, MAX_REQUEST_CHARS);
+  assert.equal(lunaRequestError(largest), null);
+  assert.equal(lunaRequestError(over), 'request too large');
+  const sent = [];
+  const fetchImpl = async (url, init) => { sent.push(init.body.length); return new Response('{"status":"completed"}', { status: 200 }); };
+  await withServer({ dataDir: tmp(), openaiKey: 'sk-server', fetchImpl }, async ({ base }) => {
+    const luna = (b) => fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+    assert.equal((await luna(largest)).status, 200);
+    assert.equal((await luna(over)).status, 400);
+  });
+  assert.deepEqual(sent, [MAX_REQUEST_CHARS]);
 });
 
 // Review of PR 179: RATER_LUNA_DAILY_LIMIT=0 started the server with the default 3000 a day

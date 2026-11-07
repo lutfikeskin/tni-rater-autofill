@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intakePathOf } from '../src/ai/common.js';
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
-  firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES } from '../src/ai/luna.js';
+  firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES,
+  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit } from '../src/ai/luna.js';
 import { settingsFrom } from '../src/ai/providers.js';
 import { NTL_RATES } from '../src/normalize.js';
 
@@ -197,7 +198,7 @@ test('twelve questions need two calls with complete facts and deduplicated verif
   for (const term of ['inactive-person', 'private-identifier', 'Zorvald', 'Quenby', '02/02/1982', 'Sampleton', '75001', '12 Synthetic Way']) {
     assert.equal(JSON.stringify(calls).includes(term), false, `${term} must not reach the model`);
   }
-  assert.ok(calls.every(body => JSON.stringify(body).length <= 48000));
+  assert.ok(calls.every(body => JSON.stringify(body).length <= MAX_REQUEST_CHARS));
 });
 
 test('more than twelve questions are grouped and abstention skips verification calls', async () => {
@@ -215,12 +216,12 @@ test('more than twelve questions are grouped and abstention skips verification c
 });
 
 test('oversized groups split without truncating any source or visible option', async () => {
-  const options = Array.from({ length: 10 }, (_, i) => `Option ${i}: ${'x'.repeat(1000)}`);
+  const options = Array.from({ length: 10 }, (_, i) => `Option ${i}: ${'x'.repeat(2500)}`);
   const fields = questions(12).map(x => ({ ...x, options })), bodies = [];
   const result = await suggest(fields, context, { apiKey: 'synthetic' }, { call: async ({ body }) => {
     bodies.push(body);
     const state = JSON.parse(body.input[0].content);
-    assert.ok(JSON.stringify(body).length <= 48000);
+    assert.ok(JSON.stringify(body).length <= MAX_REQUEST_CHARS);
     for (const field of Object.values(state.fields)) assert.deepEqual(Object.values(field.options), options);
     assert.equal(Object.values(state.sources).find(x => x.path === 'operations.hazPlacard').value, false);
     return groupAnswer(body, true);
@@ -251,7 +252,7 @@ test('shared citation definitions retain exact choices and split at the API tota
 });
 
 test('verification size is checked before paying for proposals', async () => {
-  const ctx = { ...context, record: { operations: { hazPlacard: false, notes: 'x'.repeat(25000) } } };
+  const ctx = { ...context, record: { operations: { hazPlacard: false, notes: 'x'.repeat(MAX_REQUEST_CHARS / 2 + 1000) } } };
   const body = buildRequest(items, ctx), parsed = parseResponse(answer(body), items, body);
   // The actual selected citation is small, but a legal four-citation answer could be too large.
   assert.ok(buildVerification(parsed, ctx));
@@ -261,15 +262,15 @@ test('verification size is checked before paying for proposals', async () => {
 });
 
 test('groups also split for the largest legal verification while every request stays bounded', async () => {
-  const notes = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`note${i}`, 'x'.repeat(1000)]));
+  const notes = Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`note${i}`, 'x'.repeat(1000)]));
   // A carrier with no TNI rules: they go in the first request only (GEICO's take about 13,000
   // characters), and this checks that the verification's size alone splits the group.
   const ctx = { ...context, carrier: 'test', record: { operations: { hazPlacard: false, ...notes } } };
-  const fields = questions(12).map(x => ({ ...x, label: `${x.label} ${'x'.repeat(1000)}` }));
-  assert.ok(JSON.stringify(buildRequest(fields, ctx)).length <= 48000, 'the first request alone would fit all twelve');
+  const fields = questions(12).map(x => ({ ...x, label: `${x.label} ${'x'.repeat(2000)}` }));
+  assert.ok(JSON.stringify(buildRequest(fields, ctx)).length <= MAX_REQUEST_CHARS, 'the first request alone would fit all twelve');
   const sizes = [];
   const result = await suggest(fields, ctx, { apiKey: 'synthetic' }, { call: async ({ body }) => {
-    assert.ok(JSON.stringify(body).length <= 48000);
+    assert.ok(JSON.stringify(body).length <= MAX_REQUEST_CHARS);
     const state = JSON.parse(body.input[0].content);
     if (state.proposed) return groupCheck(body);
     sizes.push(Object.keys(state.fields).length);
@@ -289,7 +290,7 @@ test('groups also split for the largest legal verification while every request s
 
 test('an invalid or individually oversized later question stops before all paid calls', async () => {
   for (const last of [{ ...items[0], id: 'f13', label: 'Order MVR?' },
-    { ...items[0], id: 'f13', options: ['x'.repeat(48000)] }]) {
+    { ...items[0], id: 'f13', options: ['x'.repeat(MAX_REQUEST_CHARS)] }]) {
     let calls = 0;
     await assert.rejects(suggest([...questions(12), last], context, { apiKey: 'synthetic' }, {
       call: async () => { calls++; },
@@ -361,6 +362,54 @@ test("without a key of the agent's own, the request goes to the server with its 
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(501) }), /isn't set up on TNI's server/);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(424) }), /TNI's server right now/);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(401) }), error => /TNI's server refused/.test(error.message) && !/OpenAI API key/.test(error.message));
+});
+
+// Audit 2026-11-07, AI-01: the panel's bound went from 48,000 characters to MAX_REQUEST_CHARS, and
+// TNI's server's above it. A server from before then refuses more than 48,000 (400 "request too
+// large", or 413 with the connection cut over twice that) before OpenAI or the daily count.
+const oldServer = (calls) => async (url, init) => {
+  calls.push(init.body.length);
+  if (init.body.length > 2 * OLD_SERVER_CHARS) throw new TypeError('connection reset');
+  if (init.body.length > OLD_SERVER_CHARS) return { ok: false, status: 400, json: async () => ({ error: 'request too large' }) };
+  const body = JSON.parse(init.body), state = JSON.parse(body.input[0].content);
+  return { ok: true, status: 200, json: async () => (state.proposed ? groupCheck(body) : groupAnswer(body)) };
+};
+
+test("a server from before the larger bound refuses a request over its own: that alone says so, not another 400", async () => {
+  const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
+  const big = buildRequest(questions(1).map(x => ({ ...x, label: 'x'.repeat(OLD_SERVER_CHARS) })), context);
+  const huge = buildRequest(questions(1).map(x => ({ ...x, label: 'x'.repeat(2 * OLD_SERVER_CHARS) })), context);
+  const small = buildRequest(items, context);
+  const calls = [];
+  await assert.rejects(callModel({ proxy, body: big, fetchImpl: oldServer(calls) }), OldServerLimit);
+  await assert.rejects(callModel({ proxy, body: huge, fetchImpl: oldServer(calls) }), OldServerLimit);
+  await assert.rejects(callModel({ proxy, body: big, fetchImpl: async () => ({ ok: false, status: 413, json: async () => ({}) }) }), OldServerLimit);
+  // Any other 400, a small request refused, or the agent's own key: as before.
+  const other = async () => ({ ok: false, status: 400, json: async () => ({ error: 'model must be gpt-6-luna' }) });
+  await assert.rejects(callModel({ proxy, body: big, fetchImpl: other }), e => !(e instanceof OldServerLimit) && /could not review this page context/.test(e.message));
+  await assert.rejects(callModel({ proxy, body: small, fetchImpl: async () => ({ ok: false, status: 413, json: async () => ({}) }) }), e => !(e instanceof OldServerLimit));
+  await assert.rejects(callModel({ apiKey: 'own', body: big, fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: 'request too large' }) }) }), e => !(e instanceof OldServerLimit));
+});
+
+test('against a server from before the larger bound, the page is planned again at its bound and every question is still reviewed', async () => {
+  const options = Array.from({ length: 6 }, (_, i) => `Option ${i}: ${'x'.repeat(1500)}`);
+  const fields = questions(12).map(x => ({ ...x, options: ['Yes', 'No', ...options] }));
+  const calls = [];
+  const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
+  const result = await suggest(fields, context, { apiKey: '', proxy }, { call: (args) => callModel({ ...args, fetchImpl: oldServer(calls) }) });
+  assert.ok(calls[0] > OLD_SERVER_CHARS, 'planned first at the larger bound');
+  assert.ok(calls.slice(1).every(n => n <= OLD_SERVER_CHARS), "then at the old server's");
+  assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id));
+  assert.ok(result.suggestions.every(x => !x.leave && x.choice === 'No'));
+  assert.equal(result.modelCalls, calls.length - 1, 'the refused request was never a model call');
+  // The current server takes the larger groups: fewer calls.
+  const current = [];
+  await suggest(fields, context, { apiKey: '', proxy }, { call: async ({ body }) => {
+    current.push(JSON.stringify(body).length);
+    const state = JSON.parse(body.input[0].content);
+    return state.proposed ? groupCheck(body) : groupAnswer(body);
+  } });
+  assert.ok(current.length < calls.length - 1);
 });
 
 test('HTTP integration sends the key only to OpenAI and hides provider errors', async () => {
