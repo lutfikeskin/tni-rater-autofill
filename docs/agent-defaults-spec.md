@@ -78,7 +78,7 @@ Comp and collision are split here because carriers ask them separately. Today th
 
 ### Advanced
 
-A folded **Per carrier** row, the last of the section's rows, with one group per carrier:
+A folded **Per carrier** row, the last of the section's rows. Opened, its first line says which answers it makes the agent's (not a tooltip, which keyboard users never see), then one group per carrier:
 
 - **Per-carrier amounts**: the basic rows again, with "As above" as the default, offering every amount that carrier sells. Where the basic row replaces the standard, "TNI's" is offered too, so one carrier can keep TNI's amount. *Done: `Advanced` in `sidepanel/panel/agent-defaults/view.jsx` (collapsed, a group per carrier the registry lists), stored as the profile's `carriers` (the store's `setCarrier`).*
 - **Carrier-only coverage standards**: AmWINS towing; GEICO's UM deductible and UM/UIM type; Progressive's MD PIP; and so on. Each comes with TNI's value and the carrier's own options. *Not yet: each needs a registry entry and `std` on its rules, and TNI's list of which.*

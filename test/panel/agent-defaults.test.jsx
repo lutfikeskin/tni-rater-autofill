@@ -50,7 +50,7 @@ test('with initials: the profile, each standard with TNI\'s amount first, and th
   // One folded row, as AI's: the profile in force and how many amounts it changes.
   expect(container.querySelector('#defaults-fold').open).toBe(false);
   expect(container.querySelector('#defaults-summary').textContent).toBe('Jordan K. · 1 changed');
-  expect(container.querySelector('#defaults-fold > summary').title).toMatch(/Each quote asks first\. Client requests on the intake always win\./);
+  expect(container.querySelector('#defaults-fold > summary').title).toMatch(/When your profile changes any, each quote asks first\. Client requests on the intake always win\./);
   const med = container.querySelector('#default-medPay');
   expect([...med.options].map((o) => o.textContent)).toEqual(['TNI\'s ($5,000)', '$500', '$1,000', '$2,000']);
   expect(med.selectedOptions[0].textContent).toBe('$1,000');
@@ -73,6 +73,9 @@ test('Advanced: a row per carrier and standard, from that carrier\'s list', () =
   const { container } = render(<TniDefaults act={actsOf(calls)} />);
   expect(container.querySelector('#defaults-advanced').open).toBe(false);
   expect(container.querySelector('#defaults-advanced .fold-note').textContent).toBe('1 carrier pick');
+  // What it does is a line inside it, not a tooltip keyboard users never see.
+  expect(container.querySelector('#defaults-advanced > summary').title).toBe('');
+  expect(container.querySelector('#defaults-advanced-about').textContent).toMatch(/Answers that rest on it .* become yours too\./);
   expect([...container.querySelectorAll('.defaults-carrier .eyebrow')].map((e) => e.textContent)).toEqual(['Progressive', 'AmWINS', 'GEICO']);
   expect(container.querySelectorAll('select[id^="advanced-"]').length).toBe(15);
   const med = container.querySelector('#advanced-geico-medPay');

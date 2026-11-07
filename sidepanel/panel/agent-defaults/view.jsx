@@ -55,7 +55,8 @@ function CarrierRow({ carrier, entry, basic, pick, onPick }) {
   );
 }
 
-// What Per carrier does, on its row's tooltip: the design system keeps explanations off the list.
+// What Per carrier does, as the first line inside it once opened: it says which answers become the
+// agent's, so it can't live in a tooltip that keyboard users never see (review of #305).
 const ABOUT_ADVANCED = "A carrier's own amount, or Ask me to answer it yourself on that carrier. Answers that rest on it (PIP beside Medical payments, GEICO's rental beside the deductibles) become yours too.";
 
 // Per carrier: the card's last row, folded until the agent opens it; the row says how many carrier
@@ -65,8 +66,9 @@ function Advanced({ profile, act }) {
   const picks = Object.values(profile.carriers ?? {}).reduce((n, own) => n + Object.keys(own).length, 0);
   return (
     <details id="defaults-advanced" className="fold sub-fold">
-      <summary className="opt" title={ABOUT_ADVANCED}><span className="opt-text"><b>Per carrier</b></span><span className="fold-note">{picks ? `${picks} carrier ${picks === 1 ? 'pick' : 'picks'}` : 'Same everywhere'}</span><span className="chev" aria-hidden="true">›</span></summary>
+      <summary className="opt"><span className="opt-text"><b>Per carrier</b></span><span className="fold-note">{picks ? `${picks} carrier ${picks === 1 ? 'pick' : 'picks'}` : 'Same everywhere'}</span><span className="chev" aria-hidden="true">›</span></summary>
       <div className="defaults-carriers">
+        <p id="defaults-advanced-about" className="fine card-note">{ABOUT_ADVANCED}</p>
         {DEFAULTS_CARRIERS.map((carrier) => (
           <div key={carrier.id} className="defaults-carrier" id={`defaults-${carrier.id}`}>
             <div className="eyebrow">{carrier.name}</div>
@@ -81,8 +83,9 @@ function Advanced({ profile, act }) {
   );
 }
 
-// What the section does, on its row's tooltip.
-const ABOUT_DEFAULTS = "Your own amounts in place of TNI's standards. Each quote asks first. Client requests on the intake always win.";
+// What the section does, on its row's tooltip. A profile that changes nothing asks nothing (store.js
+// replacesAny), so the question is promised only when it changes something (review of #305).
+const ABOUT_DEFAULTS = "Your own amounts in place of TNI's standards. When your profile changes any, each quote asks first. Client requests on the intake always win.";
 
 // The row's note: the profile in force and how many amounts it changes, or why there is none.
 function summaryOf(initials, active) {
