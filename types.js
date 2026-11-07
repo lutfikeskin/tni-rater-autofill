@@ -935,7 +935,7 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap
+ *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
  * @property {number} t  wall-clock ms when it happened, on the page's own clock (a fraction kept)
  * @property {number} [seq]  the frame's counter: the order of two events in one millisecond
@@ -974,6 +974,11 @@
  * @property {string | null} [why]  visible: pageshow or pagehide, when it came from one; kit wait: what for (answer, round, load, rated, continue, drawn, start, before-load; null: another)
  * @property {number} [ms]  request: how long it took; kit wait: how long it waited; fill, in the report only: how long the fill ran (on its end)
  * @property {number} [end]  burst, request: wall-clock ms when it ended (`t` is when it began)
+ * @property {number} [injectedAt]  page, the first of a document the trace is in from its load: wall-clock ms when the trace was put in
+ *   (`t` is the document's navigation start)
+ * @property {number | null} [response]  load: wall-clock ms when its server's answer ended (`t`: its navigation start)
+ * @property {number | null} [ready]  load: wall-clock ms when it was ready (DOMContentLoaded ended); null while not yet
+ * @property {number | null} [loaded]  load: wall-clock ms when it loaded (load ended); null while not yet
  * @property {number} [records]  burst: how many DOM mutation records it was
  * @property {{ key: string | null, kind: string | null, label: string }[]} [drawn]  burst: the questions it drew, at most 12 (labels redacted)
  * @property {number} [drawnCount]  burst: how many questions it drew in all
@@ -998,7 +1003,7 @@
  * @property {boolean} [ok]  kit answer: the page kept it
  * @property {number} [applyMs]  kit answer: ms to give it, a list's wait for its options included
  * @property {{ ms: number, settleMs: number, ajax: number, revealed: number, removed: number, changed: number, batch?: boolean }} [timing]  kit answer: the usage log's fill_field timing
- * @property {'page' | 'kit'} [how]  kit press: clicked from the page's own world, or by the kit
+ * @property {'page' | 'kit' | 'navigate' | 'reload' | 'back_forward' | 'prerender' | null} [how]  kit press: clicked from the page's own world, or by the kit; load: how the document came (its navigation entry's type)
  * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
  * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
  */
