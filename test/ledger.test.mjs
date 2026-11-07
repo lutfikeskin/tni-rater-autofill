@@ -128,6 +128,9 @@ test('a text condition no event ever met is marked, a code condition is not', ()
   assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~"did not keep"').unmatchedText, false);
   assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~"didn\'t stick"').unmatchedText, true, 'the message reads otherwise now');
   assert.equal(judge('symptom fill_field page=AddDriver result=failed code=answer.not-kept').unmatchedText, false);
+  // Its `when` scenario's text conditions too (CodeRabbit on PR #402).
+  assert.equal(judge('symptom fill_field page=AddDriver result=filled when fill_field reason~"did not keep"').unmatchedText, false);
+  assert.equal(judge('symptom fill_field page=AddDriver result=filled when fill_field reason~"didn\'t stick"').unmatchedText, true, 'a scenario that reads otherwise now');
 });
 
 test('a condition on a field the server never keeps for that event is refused, not counted', () => {

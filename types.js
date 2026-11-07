@@ -651,8 +651,10 @@
  *   clicked with no sign it worked (Recalculate with no premium)
  * - `address.no-suggestion`: no address suggestion to pick; `widget.unavailable`: a list's search
  *   box or remove button isn't there; `widget.unsupported`: no page code for the control
- * - `kit.exception`: the kit threw (its message is the reason): a defect, not a refusal
- * @typedef {'option.no-match' | 'option.ambiguous' | 'answer.not-kept' | 'answer.refused' | 'answer.cleared' | 'answer.too-long' | 'answer.invalid' | 'answer.changed' | 'answer.agent-edited' | 'field.read-only' | 'field.vanished' | 'field.missing' | 'field.changed' | 'page.unsettled' | 'page.changed' | 'page.stop-step' | 'fill.interrupted' | 'lookup.differs' | 'action.unverified' | 'address.no-suggestion' | 'widget.unavailable' | 'widget.unsupported' | 'kit.exception'} FailCode
+ * - `kit.exception`: the kit threw (its message is the reason): a defect, not a refusal;
+ *   `kit.uncoded`: a failure that came back without a code (a write path that names none: the
+ *   source test should have caught it)
+ * @typedef {'option.no-match' | 'option.ambiguous' | 'answer.not-kept' | 'answer.refused' | 'answer.cleared' | 'answer.too-long' | 'answer.invalid' | 'answer.changed' | 'answer.agent-edited' | 'field.read-only' | 'field.vanished' | 'field.missing' | 'field.changed' | 'page.unsettled' | 'page.changed' | 'page.stop-step' | 'fill.interrupted' | 'lookup.differs' | 'action.unverified' | 'address.no-suggestion' | 'widget.unavailable' | 'widget.unsupported' | 'kit.exception' | 'kit.uncoded'} FailCode
  */
 
 /**

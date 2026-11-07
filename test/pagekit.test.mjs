@@ -8619,6 +8619,11 @@ test('every failure the fill engine gives carries a code beside its reason', () 
   }
   assert.deepEqual(missing, [], 'a failure without a code');
   assert.deepEqual([...used].filter((c) => !codes.includes(c)), [], 'a code types.js FailCode does not list');
+  // A failure that still comes back without a code is `kit.uncoded`, never the kit's own error
+  // (`kit.exception`), so it isn't counted as a defect (Claude on PR #402).
+  const kit = ['src/kit/cursor.js', 'src/kit/pagekit.js'].map((f) => fs.readFileSync(new URL(f, root), 'utf8')).join('\n');
+  assert.equal(/code \?\? 'kit\.exception'/.test(kit), false);
+  assert.equal((kit.match(/code \?\? 'kit\.uncoded'/g) ?? []).length, 2);
 });
 
 // FL live run 5, 2026-10-21 (W43-21): GEICO cleared the business description when the agent

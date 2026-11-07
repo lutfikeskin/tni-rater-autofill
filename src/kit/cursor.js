@@ -1158,7 +1158,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           state.report.checks.push({ ...item, note, ...describe(c) });
           state.handled.set(step.id, { status: 'needs', note });
         } else {
-          state.report.failed.push({ ...item, code: result.code ?? 'kit.exception', reason: result.reason, ...describe(c), ...(result.vanished ? { vanished: true } : {}) });
+          state.report.failed.push({ ...item, code: result.code ?? 'kit.uncoded', reason: result.reason, ...describe(c), ...(result.vanished ? { vanished: true } : {}) });
           state.handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
           thisRound.retry = true;
           if (state.report.halted) { thisRound.stopAt = Math.min(thisRound.stopAt, at + 1); break; }

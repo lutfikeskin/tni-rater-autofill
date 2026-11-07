@@ -355,8 +355,13 @@ export function judgePattern(p, events, containsOf, testSessions = new Set(), hi
   // A text condition (`~`) no event of its type met in the whole history, before the fix too: the
   // message it names may have been reworded, so a "verified" may only mean the words changed
   // (audit 2026-11-07, LEARN-09). A `code=` condition doesn't depend on the wording.
-  const texts = p.conds.filter((c) => c.op === '~');
-  const unmatchedText = texts.length > 0 && !history.some((e) => (p.type === '*' || e.type === p.type) && texts.every((c) => holds(c, e)));
+  // Its `when` scenario's text conditions too: a reworded scenario reads as never reached
+  // (CodeRabbit on PR #402).
+  const neverMet = (type, conds) => {
+    const texts = conds.filter((c) => c.op === '~');
+    return texts.length > 0 && !history.some((e) => (type === '*' || e.type === type) && texts.every((c) => holds(c, e)));
+  };
+  const unmatchedText = neverMet(p.type, p.conds) || (!!p.when && neverMet(p.when.type, p.when.conds));
   const missing = p.kind === 'expect' && p.when ? [...reached].filter((s) => !fixed.has(s)).length : 0;
   let status;
   if (p.kind === 'symptom') status = fixed.size ? 'recurred' : reached.size ? 'verified' : 'not exercised';

@@ -87,7 +87,7 @@ import { fill, progress, stop } from './cursor.js';
           else mark(fresh, agent ? 'agent' : 'ai', a.note ?? (agent ? 'your answer, from the side panel' : 'answer suggested by the AI assistant — check it'));
         }
         if (!result.ok && !edited(a.key)) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `${agent ? 'Your answer' : 'AI answer'} not accepted: ${result.reason}`); }
-        results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, ...(result.ok ? {} : { code: result.code ?? 'kit.exception' }), reason: result.reason ?? null });
+        results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, ...(result.ok ? {} : { code: result.code ?? 'kit.uncoded' }), reason: result.reason ?? null });
       }
       for (const r of results) if (edited(r.key)) r.protected = true;
       for (const [key, label] of editedQuestions) {
