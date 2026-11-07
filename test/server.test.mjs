@@ -518,6 +518,20 @@ test('keeps the install id, the platform and a lost-events count, in their shape
   assert.deepEqual([odd.install, odd.platform], [undefined, undefined]);
 });
 
+// Audit 2026-11-07, LEARN-09: why an answer failed, as a code (types.js FailCode), never text.
+test('keeps a failed answer\'s code in its shape only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'fill_field', filled: undefined, result: 'failed', q: '2B9D', code: 'option.no-match', reason: 'no option matches "…"' }),
+      ev({ type: 'fill_field', filled: undefined, result: 'failed', q: '2B9E', code: 'No option for John Smith' }),
+    ] });
+  });
+  const [ok, odd] = stored(dataDir);
+  assert.deepEqual([ok.code, ok.reason], ['option.no-match', 'no option matches "…"']);
+  assert.deepEqual([odd.code, odd.dropped], [undefined, ['code']]);
+});
+
 test('keeps why an answer was given, and a dismissed check, in their shapes only', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {

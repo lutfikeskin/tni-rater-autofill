@@ -212,7 +212,13 @@ function holds(c, e) {
   switch (c.op) {
     case '=': return vals.some((x) => asText(x) === c.value);
     case '!=': return !vals.some((x) => asText(x) === c.value);
-    case '~': return vals.some((x) => (c.re ? c.re.test(asText(x)) : asText(x).toLowerCase().includes(c.value.toLowerCase())));
+    // A sticky (y) regex is tested from the start each time: the last test doesn't move it along
+    // (CodeRabbit on PR #402).
+    case '~': return vals.some((x) => {
+      if (!c.re) return asText(x).toLowerCase().includes(c.value.toLowerCase());
+      c.re.lastIndex = 0;
+      return c.re.test(asText(x));
+    });
     case '>': return vals.some((x) => isNumber(x) && Number(x) > Number(c.value));
     case '<': return vals.some((x) => isNumber(x) && Number(x) < Number(c.value));
     default: return false;
@@ -352,6 +358,14 @@ export function judgePattern(p, events, containsOf, testSessions = new Set(), hi
     for (const e of history) if (e.session && period.has(e.session) && containsOf(e) === 'yes' && matches(scenario, e)) reached.add(e.session);
   }
   const fixed = hit.yes;
+  // A text condition (`~`) no event of its type met in the whole history, before the fix too: the
+  // message it names may have been reworded, so a "verified" may only mean the words changed
+  // (audit 2026-11-07, LEARN-09). A `code=` condition doesn't depend on the wording.
+  // Its `when` scenario's text conditions too: a reworded scenario reads as never reached. Each text
+  // condition on its own: two that met different events were each met (CodeRabbit on PR #402).
+  const neverMet = (type, conds) => conds.some((c) => c.op === '~'
+    && !history.some((e) => (type === '*' || e.type === type) && holds(c, e)));
+  const unmatchedText = neverMet(p.type, p.conds) || (!!p.when && neverMet(p.when.type, p.when.conds));
   const missing = p.kind === 'expect' && p.when ? [...reached].filter((s) => !fixed.has(s)).length : 0;
   let status;
   if (p.kind === 'symptom') status = fixed.size ? 'recurred' : reached.size ? 'verified' : 'not exercised';
@@ -373,6 +387,7 @@ export function judgePattern(p, events, containsOf, testSessions = new Set(), hi
     missing,
     older: hit.no.size,
     unplaced: hit.unknown.size,
+    unmatchedText,
   };
 }
 
@@ -537,7 +552,7 @@ function evidence(r) {
   if (r.builds?.length) parts.push(`fixed builds: ${r.builds.join(', ')} (${n(r.fixedQuotes, 'quote')})`);
   const other = (p) => `${p.older ? `; ${p.older} on older builds` : ''}${p.unplaced ? `; ${p.unplaced} on builds that can't be placed` : ''}`;
   for (const p of r.patterns ?? []) {
-    const only = p.testOnly ? ' (test runs only)' : '';
+    const only = `${p.testOnly ? ' (test runs only)' : ''}${p.unmatchedText ? ' (its text never matched an event, on any build: reworded? match on `code=`)' : ''}`;
     if (p.kind === 'symptom') parts.push(`\`${p.text}\`: ${p.quotes} of ${n(p.reached, 'quote')} that reached it${p.reachedTests ? `, ${p.reachedTests} test` : ''}${only}${other(p)}`);
     else if (p.missing) parts.push(`\`${p.text}\`: missing on ${p.missing} of ${n(p.reached, 'quote')}${only}${other(p)}`);
     else parts.push(`\`${p.text}\`: ${n(p.quotes, 'quote')}${p.tests ? `, ${p.tests} test` : ''}${only}${other(p)}`);
