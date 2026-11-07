@@ -6,6 +6,7 @@ import { amwins } from '../src/carriers/amwins.js';
 import { priorPolicyExpired, sameCarrier, quotedCarrierPolicy, quotedCarriersOf } from '../src/util.js';
 
 const record = () => ({
+  loadedOn: '10/02/2026', // loaded on the application date: these cases compare with that date
   applicant: { name: 'Sample Test LLC', owner1: 'Alex Example', applicationDate: '10/02/2026' },
   operations: { businessClass: 'Expediter' }, garaging: {}, coverage: {}, claims: {}, trailers: [],
   drivers: [{ first: 'Alex', last: 'Example', licenseNumber: 'SYNTHETIC-ONE' },
