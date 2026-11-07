@@ -229,7 +229,7 @@ Updates reach agents through the Chrome Web Store; their usage logs go to TNI's 
 | `src/content/carriers/` | Each carrier's page adapter, injected before pagekit on that carrier's tabs: how its own widgets and pages work (Progressive's ExtJS, GEICO's gds-* components, AmWINS' step tabs) |
 | `src/content/page-press.js` | On GEICO, presses the buttons the fill clicks from the page's own world, as a mouse click would (not Print Quote Proposal, which the fill clicks itself) |
 | `src/ai/` | AI assistant: Luna request/response checks and TNI's rules as the model reads them (`tni-rules.js`: a general part and one part per carrier, in `rulebook/`) |
-| `captures/<carrier>/generated/` | Layouts `npm run layouts` builds from usage logs (git-ignored: review before committing any); raw captures stay in ignored `layouts/` |
+| `captures/<carrier>/generated/` | Layouts `npm run layouts` builds from usage logs (git-ignored, never committed: they are built from agents' logs); raw captures stay in ignored `layouts/` |
 | `src/usage.js`, `sidepanel/usage-log.js`, `src/content/recorder.js` | Usage log: event building, local storage/export, page recorder |
 | `server/` | Usage collection server |
 | `scripts/` | The tools behind the `npm run` scripts in `package.json`: review, learning, layouts, mocks, fixtures, packaging, the warehouse and the daily review (shared code in `scripts/lib/`) |

@@ -259,7 +259,29 @@ const NOT_TRACKED = {
   'docs/kesif-plani.md': 'a local file outside the repository, named as such',
   'src/content/page-watch.js': "developer-recording.md's proposal, not built",
   'test/fixtures/recording': "developer-recording.md's proposal, not built",
+  'summary.json': "a file inside a developer recording's zip",
 };
+// A document's paths that aren't in the repository: backticked ones under its own folders, backticked
+// file names with no folder (a root file, or a tracked file's own name), and relative links.
+function unknownPaths(text, doc, tracked, names) {
+  const ticked = [...text.matchAll(/`([^`\s]+)`/g)].map((m) => m[1].replace(/[),.;:]+$/, '').replace(/#L?\d.*$/, '').replace(/:\d+(-\d+)?$/, ''))
+    .filter((p) => !/[<>*{}$|]/.test(p));
+  const named = ticked.filter((p) => /^(src|scripts|test|docs|server|sidepanel|lib|icons|captures|\.github|\.claude)\//.test(p));
+  // A file name: one of the repository's extensions, or a root file's stem with another one
+  // (`manifest.jso`), never a property like `state.aiAsking`.
+  const stems = new Set([...tracked].filter((f) => !f.includes('/') && f.includes('.')).map((n) => n.replace(/\.[^.]+$/, '')));
+  const bare = ticked.filter((p) => /^[\w-]+(\.[\w-]+)*\.\w+$/.test(p) && !tracked.has(p) && !names.has(p)
+    && (/\.(?:js|mjs|cjs|jsx|json|md|ya?ml|html|toml|txt)$/.test(p) || stems.has(p.replace(/\.[^.]+$/, ''))));
+  const linked = [...text.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]).filter((l) => !/^[a-z]+:|^#/.test(l))
+    .map((l) => path.posix.normalize(path.posix.join(path.posix.dirname(doc), decodeURIComponent(l.replace(/#.*$/, '')))));
+  return [...named, ...linked, ...bare].map((x) => x.replace(/\/$/, '')).filter((p) => !tracked.has(p) && !NOT_TRACKED[p]);
+}
+test('a misspelled path is found, in a folder, at the root or in a link', () => {
+  const tracked = new Set(['manifest.json', 'src', 'src/usage.js', 'docs', 'docs/testing.md']);
+  const names = new Set(['manifest.json', 'usage.js', 'testing.md']);
+  const text = '`src/usag.js`, `manifest.jso`, `usage.js`, `manifest.json`, `fill_run`, `README.md` [x](testng.md) [y](testing.md)';
+  assert.deepEqual(unknownPaths(text, 'docs/a.md', tracked, names), ['src/usag.js', 'docs/testng.md', 'manifest.jso', 'README.md']);
+});
 test('paths the README, AGENTS.md and docs/ name are in the repository', (t) => {
   let files;
   try {
@@ -270,15 +292,8 @@ test('paths the README, AGENTS.md and docs/ name are in the repository', (t) => 
   }
   const tracked = new Set(files);
   for (const f of files) for (let i = f.indexOf('/'); i > 0; i = f.indexOf('/', i + 1)) tracked.add(f.slice(0, i));
+  const names = new Set(files.map((f) => path.posix.basename(f)));
   const docs = ['README.md', 'AGENTS.md', ...files.filter((f) => /^docs\/[^/]+\.md$/.test(f))];
-  const missing = [];
-  for (const doc of docs) {
-    const text = read(doc);
-    const named = [...text.matchAll(/`([^`\s]+)`/g)].map((m) => m[1].replace(/[),.;:]+$/, '').replace(/#L?\d.*$/, '').replace(/:\d+(-\d+)?$/, ''))
-      .filter((p) => /^(src|scripts|test|docs|server|sidepanel|lib|icons|captures|\.github|\.claude)\//.test(p) && !/[<>*{}$|]/.test(p));
-    const linked = [...text.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]).filter((l) => !/^[a-z]+:|^#/.test(l))
-      .map((l) => path.posix.normalize(path.posix.join(path.posix.dirname(doc), decodeURIComponent(l.replace(/#.*$/, '')))));
-    for (const p of [...named, ...linked].map((x) => x.replace(/\/$/, ''))) if (!tracked.has(p) && !NOT_TRACKED[p]) missing.push(`${doc}: ${p}`);
-  }
+  const missing = docs.flatMap((doc) => unknownPaths(read(doc), doc, tracked, names).map((p) => `${doc}: ${p}`));
   assert.deepEqual([...new Set(missing)], [], 'not in the repository: fix the path, or say it is local or built and add it to NOT_TRACKED');
 });

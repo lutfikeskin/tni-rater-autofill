@@ -284,8 +284,10 @@ own), on the default branch, level with `origin` after a fetch: the server check
 deployed server with that checkout, and the review uses its rules: switch the main checkout to
 `main` and `git pull` before a real run.
 
-The first real run needs `--since`, once: where the last comment on the issue stopped. That was
-2026-10-20T01:12:33Z (comment 6280982877 on #50, the last before this runner). After it,
+A real run here that takes over from the workflow needs `--since`, once: where the workflow's last
+review stopped, which `node scripts/daily-issue.mjs since` prints (the last successful run's
+download start). Without it, a `reviews/daily/state.json` left from earlier local runs is older
+than the workflow's reviews, and the run would post what they already said. After it,
 `reviews/daily/state.json` (git-ignored) says where each run starts: when the last real run's
 download began. It's written whole (a temporary file, then a rename) and only after the post step
 succeeded (a comment, or nothing new to say). A run that fails leaves it, so the next one reviews
@@ -302,7 +304,8 @@ finish says so on the issue with the step that stopped and exits 1; one that can
 all only writes `daily.log`.
 
 **Scheduling it on Windows**, only while the workflow can't run (both would post). After the first
-real run has written the state, use Task Scheduler,
+real run here, with `--since` from `node scripts/daily-issue.mjs since` (above), has written the
+state, use Task Scheduler,
 from PowerShell in the main checkout. `-At` is this computer's local time. The workflow ran at 06:00
 UTC, after US agents' day; the first line turns that into local time (02:00 at UTC-4). Any hour
 works, as each run starts where the last stopped: pick one when the computer is usually on.
