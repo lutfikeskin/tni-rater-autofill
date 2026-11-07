@@ -1163,9 +1163,9 @@ export const geico = {
   // quote each time, losing the agent's choices). On Quote & Coverages: no follow-up fill (only the
   // step's first fill and Fill this page), the pay plan and Print only once nothing is left for the
   // agent (`whenClear`, W43-18), and an answer the fill gave that the page shows otherwise since is
-  // kept and flagged by an automatic fill (pagekit `takenBack`), and given again by the agent's Fill
-  // this page (the maintainer, FL live run 6, 2026-10-21: GEICO's own choices put back over the
-  // fill's, and the agent picked each one again by hand).
+  // kept and flagged by every fill, the agent's Fill this page too (pagekit `takenBack`; the
+  // maintainer, 2026-11-07: it may be the agent's, LEARN-07; until then Fill this page gave it again,
+  // 2026-10-21), and given again only with Replace existing answers.
   // Its follow-up fills run only for questions it draws (FL live run 2, 2026-10-21: each cargo
   // question waited for the agent's Fill, and GEICO's own No to cargo stood until then), never after
   // an answer or a redraw.

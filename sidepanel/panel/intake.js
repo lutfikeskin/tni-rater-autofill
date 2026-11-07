@@ -107,6 +107,7 @@ async function loadFile(file, { reset = false } = {}) {
     state.active = firstUnits();
     state.activeTab = null;
     state.filled = new Map();
+    state.givenEarlier = new Map();
     state.doneActions = new Set();
     state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
     state.unitNamed = null;

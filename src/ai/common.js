@@ -20,8 +20,14 @@ export function stableJson(value) {
   return JSON.stringify(sorted(value));
 }
 
-export function assistContextKey(record, active) {
-  return stableJson([record, active]);
+// What decides Luna's answers on a carrier, as one key: the intake as Luna can see it (every row,
+// with scopedIntake's identifier removal and redaction), the active rows, and the carrier's TNI rules
+// as they are sent, an agent's own defaults included (evidenceFor). Suggestions are cached on it, and
+// an answer asked under another key is not used: a defaults or rulebook change asks again, an edit
+// Luna never sees (a phone number) does not (audit 2026-11-07, AI-05).
+export function assistContextKey(record, active, carrier = null) {
+  const rules = carrier ? rulesSent(carrier).map((rule) => [rule.id, rule.text]) : null;
+  return stableJson([record ? visibleIntake(record) : null, active, rules]);
 }
 
 const NEVER = [
@@ -183,15 +189,7 @@ export function pageAnswers(snapshots, items, record) {
 // (audit 2026-10-08: names, DOB, address and claims text went verbatim). Numbers and booleans
 // stay; the prior carrier's name and the garaging state are not terms and are still sent.
 export function scopedIntake(record, active, rows = {}) {
-  const privateKey = /^(vin|licenseNumber|licensePlate|fein|ssn|socialSecurity|phone|email|policyNumber|accountNumber|routingNumber|password)$/i;
-  const redact = redactor(redactionTerms(record));
-  const clean = (obj) => {
-    if (Array.isArray(obj)) return obj.map(clean);
-    if (typeof obj === 'string') return redact(obj);
-    if (!obj || typeof obj !== 'object') return obj;
-    return Object.fromEntries(Object.entries(obj).filter(([k]) => !privateKey.test(k)).map(([k, v]) =>
-      ['dot', 'mc'].includes(k) ? [`has${k.toUpperCase()}`, !!v] : [k, clean(v)]));
-  };
+  const clean = cleaner(record);
   const out = {};
   for (const key of SECTION_KEYS) {
     if (record[key]) out[key] = clean(record[key]);
@@ -205,13 +203,43 @@ export function scopedIntake(record, active, rows = {}) {
   return out;
 }
 
+// A copy of an intake value as Luna may see it: identifiers dropped (DOT and MC as present or not),
+// client terms redacted.
+function cleaner(record) {
+  const privateKey = /^(vin|licenseNumber|licensePlate|fein|ssn|socialSecurity|phone|email|policyNumber|accountNumber|routingNumber|password)$/i;
+  const redact = redactor(redactionTerms(record));
+  const clean = (obj) => {
+    if (Array.isArray(obj)) return obj.map(clean);
+    if (typeof obj === 'string') return redact(obj);
+    if (!obj || typeof obj !== 'object') return obj;
+    return Object.fromEntries(Object.entries(obj).filter(([k]) => !privateKey.test(k)).map(([k, v]) =>
+      ['dot', 'mc'].includes(k) ? [`has${k.toUpperCase()}`, !!v] : [k, clean(v)]));
+  };
+  return clean;
+}
+
+// All Luna could see of an intake: scopedIntake with every driver, vehicle and trailer row.
+function visibleIntake(record) {
+  const clean = cleaner(record);
+  const out = {};
+  for (const key of SECTION_KEYS) if (record[key]) out[key] = clean(record[key]);
+  for (const key of UNIT_LISTS) (record[key] ?? []).forEach((row, i) => { if (row) out[`${key}[${i}]`] = clean(row); });
+  if (record.priorInsurance?.length) out.computed = { priorPolicyExpired: priorPolicyExpired(record), noPriorInsurance: noPriorInsurance(record.priorInsurance[0]) };
+  return out;
+}
+
+// The carrier's TNI rules as Luna gets them: an agent's own default rewrites the entries stating the
+// standard it replaces (src/agent-defaults/).
+export function rulesSent(carrier) {
+  return rulebookFor(carrier, { rewrite: rulebookRewriteFor(carrier) });
+}
+
 export function evidenceFor(context) {
   const facts = scopedIntake(context.record, context.active ?? {}, context.rows ?? {});
   // TNI's rules first, keyed by their ids: the general part and this carrier's (none for a carrier
   // without a part), the same for every request on that carrier, so its requests share one start.
   const sources = {};
-  // An agent's own default rewrites the entries stating the standard it replaces (src/agent-defaults/).
-  for (const rule of rulebookFor(context.carrier, { rewrite: rulebookRewriteFor(context.carrier) })) sources[rule.id] = { basis: 'tni_rule', rule: rule.text };
+  for (const rule of rulesSent(context.carrier)) sources[rule.id] = { basis: 'tni_rule', rule: rule.text };
   let n = 0;
   const flatten = (obj, path = '') => {
     for (const [key, value] of Object.entries(obj ?? {})) {

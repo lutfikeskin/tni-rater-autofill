@@ -75,7 +75,7 @@ const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 
   // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
   // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only. The
   // agent's Fill this page passes none (fillPage): it gives the answer again.
-  takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: Object.fromEntries([...(state.filled?.keys() ?? [])].map((key) => [key, true])) } : null,
+  takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: Object.fromEntries([...Object.keys(givenEarlier(state.tab?.id)), ...(state.filled?.keys() ?? [])].map((key) => [key, true])) } : null,
   // The field keys this tab's fills answered: one the page has reset since is given again only on a
   // quiet page (W43-21). Keys only.
   filledBefore: [...(state.filled?.keys() ?? [])],
@@ -114,8 +114,9 @@ const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 
   // filled only for the driver the plan is for (W43-37).
   formUnit: unitNameFor(carrier, extra.expectPage ?? pageOf(state.tab?.url), active, state.intake?.record),
   // What this tab's fills gave, by field key, with the unit each was for: a field still showing
-  // another unit's answer gets this unit's (W43-38).
-  givenBefore: Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])),
+  // another unit's answer gets this unit's (W43-38), and one showing otherwise now is kept (pagekit
+  // `changedSince`). Those given before the panel opened too (givenEarlier), from the tab's kept reports.
+  givenBefore: { ...givenEarlier(state.tab?.id), ...Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },
   // A page that shows a few units' rows at a time (Progressive's Rates): the kit pages through them.
   pager: carrier.unitPager ?? null,
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
@@ -125,6 +126,12 @@ const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 
   ...(state.recording && !state.recording.stopping && state.recording.tabId === state.tab?.id ? { trace: true } : {}),
   ...extra,
 });
+
+// What the tab's fills gave before the panel opened (state.givenEarlier), for this intake only.
+function givenEarlier(tabId) {
+  const kept = state.givenEarlier?.get(tabId);
+  return kept && kept.scope === usage.currentSession()?.intakeId ? Object.fromEntries(kept.given) : {};
+}
 
 // Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
 // from the extension's own package when the panel starts, on every fill_run. Null outside the
@@ -149,6 +156,8 @@ function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = f
   const session = usage.currentSession();
   return {
     run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite, asked,
+    // The quote tab filled while the agent is on another one (refreshTab's `background`).
+    background: !!state.tab?.background && state.tab.id === tabId,
     intake: state.intake, revision: state.intakeRevision, ids: { session: session?.id ?? null, intakeId: session?.intakeId ?? null },
     view: viewOf(tabId, page, carrier), scope: editScope(page, carrier, tabStep(carrier, tabId)), active: { ...state.active },
     settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages'), overwrite: !!overwrite },
@@ -304,7 +313,7 @@ function logFill(ctx, frames, results, started) {
   usage.log(...fillEvents(ctx.listNote ? [...frames, { blockers: [ctx.listNote] }] : frames, {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
-    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash,
+    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background,
   }));
 }
 // A rejected fill has no fill_run result to carry its rule version and switches.
