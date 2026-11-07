@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // Weekly learning report: what the usage logs say the carrier rules should be.
 //
-//   node scripts/learn-rules.mjs server-data [more logs...] [--min 5] [--threshold 0.9] [--json] [--out report.md]
+//   node scripts/learn-rules.mjs server-data [more logs...] [--min 5] [--threshold 0.9] [--tests reviews/test-intakes.txt] [--json] [--out report.md]
 //
+// Test runs are left out, as in every other report (readTestList and testSessionsOf in
+// scripts/lib/signals.mjs: intakes marked as a test, fixture and synthetic intakes, and the
+// fingerprints in --tests, default this repository's reviews/test-intakes.txt).
 // Proposes rule changes (standard answers, per-state answers, new intake mappings, and rules
 // agents keep correcting) with ready-to-paste rule lines for src/carriers/<carrier>.js.
 // Review every suggestion before adding it: a consistent answer is not always a correct one.
@@ -10,6 +13,7 @@
 import fs from 'node:fs';
 import { loadEvents } from './lib/events.mjs';
 import { learn } from './lib/learn.mjs';
+import { readTestList, testSessionsOf } from './lib/signals.mjs';
 import { CARRIERS } from '../src/carriers.js';
 
 const args = process.argv.slice(2);
@@ -18,15 +22,22 @@ const opt = (name, fallback) => {
   return i >= 0 ? args[i + 1] : fallback;
 };
 const flags = new Set(['--json']);
-const valued = new Set(['--min', '--threshold', '--out']);
+const valued = new Set(['--min', '--threshold', '--out', '--tests']);
 const inputs = args.filter((a, i) => !flags.has(a) && !valued.has(a) && !valued.has(args[i - 1]));
 if (!inputs.length) {
-  console.error('usage: node scripts/learn-rules.mjs <server-data folder | usage logs>... [--min 5] [--threshold 0.9] [--json] [--out file.md]');
+  console.error('usage: node scripts/learn-rules.mjs <server-data folder | usage logs>... [--min 5] [--threshold 0.9] [--tests file] [--json] [--out file.md]');
   process.exit(1);
 }
+if (args.includes('--tests') && (opt('tests') === undefined || opt('tests').startsWith('--'))) {
+  console.error('--tests needs a value.');
+  process.exit(1);
+}
+let testList;
+try { testList = readTestList({ tests: opt('tests', null) }); } catch (err) { console.error(err.message); process.exit(1); }
+if (testList.warning) console.error(`Warning: ${testList.warning}`);
 
 const events = loadEvents(inputs);
-const result = learn(events, { carriers: CARRIERS, minIntakes: Number(opt('min', 5)), threshold: Number(opt('threshold', 0.9)) });
+const result = learn(events, { carriers: CARRIERS, minIntakes: Number(opt('min', 5)), threshold: Number(opt('threshold', 0.9)), excludeSessions: testSessionsOf(events, testList.intakes) });
 
 if (args.includes('--json')) {
   console.log(JSON.stringify(result, null, 2));
@@ -38,7 +49,7 @@ const { standard, byState, mapping, review, pageAnswer } = result.suggestions;
 const lines = [
   `# Rule suggestions from ${result.quotes} quote${result.quotes === 1 ? '' : 's'} of ${result.intakes} intake PDF${result.intakes === 1 ? '' : 's'}`,
   '',
-  `Generated ${new Date().toISOString().slice(0, 10)} from ${events.length} events. Minimum ${opt('min', 5)} different intake PDFs per suggestion (quotes of one PDF count once). Review before adding anything.`,
+  `Generated ${new Date().toISOString().slice(0, 10)} from ${events.length} events. Minimum ${opt('min', 5)} different intake PDFs per suggestion (quotes of one PDF count once). ${result.testRunsLeftOut} test run${result.testRunsLeftOut === 1 ? '' : 's'} left out${testList.warning ? ' (no test-run list: the maintainer\'s test quotes count)' : ''}. Review before adding anything.`,
   '',
   `## Standard answers (${standard.length})`,
   'Unmapped questions agents answer the same way nearly every time.',

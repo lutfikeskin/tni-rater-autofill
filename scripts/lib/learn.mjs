@@ -171,11 +171,15 @@ const share = (counts, n) => [...counts].sort((x, y) => y[1] - x[1]).map(([v, c]
 
 /**
  * @param {object[]} events   from loadEvents()
- * @param {{carriers?: object[], minIntakes?: number, threshold?: number}} opts
+ * @param {{carriers?: object[], minIntakes?: number, threshold?: number, excludeSessions?: Set<string> | null}} opts
  *   minIntakes: how many different intake PDFs a suggestion needs (quotes of one PDF, such as a
- *   sample retried many times, count once)
+ *   sample retried many times, count once); excludeSessions: the test runs (testSessionsOf in
+ *   signals.mjs), left out as every other report leaves them out: a fixture or synthetic intake's
+ *   answers were chosen on purpose and are no agents' habit
  */
-export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 } = {}) {
+export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, excludeSessions = null } = {}) {
+  const events = excludeSessions?.size ? all.filter((e) => !excludeSessions.has(e.session)) : all;
+  const testRunsLeftOut = events === all ? 0 : new Set(all.filter((e) => e.session && excludeSessions.has(e.session)).map((e) => e.session)).size;
   const contexts = sessionContexts(events);
   const answers = finalAnswers(events);
   const byId = new Map(carriers.map((c) => [c.id, c]));
@@ -314,7 +318,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     s.manualRule = `the same label on steps ${steps.join(', ')}: a label rule would match each step; write the rule by hand so it finds this step's question only`;
   }
   for (const list of Object.values(suggestions)) list.sort((a, b) => b.intakes - a.intakes || b.quotes - a.quotes);
-  return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, suggestions };
+  return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, testRunsLeftOut, suggestions };
 }
 
 const quote = (s) => `'${String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
