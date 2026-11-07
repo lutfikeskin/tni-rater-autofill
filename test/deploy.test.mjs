@@ -31,12 +31,16 @@ test('the deploy workflow runs on main for every file the image is built from, a
     assert.ok(paths.some((p) => p === f || (p.endsWith('/**') && f.startsWith(p.slice(0, -2)))), `a change to ${f} deploys`);
   }
   assert.ok(paths.includes('.railwayignore'), 'and to what the upload leaves out');
-  assert.match(workflow, /RAILWAY_TOKEN: \$\{\{ secrets\.RAILWAY_TOKEN \}\}/);
   // Every step after the check runs only when the secret is there.
   const steps = workflow.split(/\n {6}- /).slice(1);
   const check = steps.findIndex((s) => /id: token/.test(s));
   assert.ok(check >= 0, 'a step checks for the secret');
   for (const s of steps.slice(check + 1)) assert.match(s, /if: steps\.token\.outputs\.present == 'true'/, s.split('\n')[0]);
+  // The review of #438: the token reaches only the check and the deploy, never the job or the
+  // CLI's install, whose packages' scripts could read it.
+  const withToken = steps.filter((s) => /RAILWAY_TOKEN: \$\{\{ secrets\.RAILWAY_TOKEN \}\}/.test(s)).map((s) => /name: (.*)/.exec(s)?.[1]);
+  assert.deepEqual(withToken, ['Check for the Railway token', 'Deploy and wait for the new server']);
+  assert.equal(workflow.match(/secrets\.RAILWAY_TOKEN/g)?.length, 2, 'nowhere else, the job\'s env included');
   assert.match(workflow, /node scripts\/deploy-server\.mjs/, 'the same checks and wait as npm run deploy:server');
   assert.match(workflow, /ref: main\n/, 'main as it is when the job starts: the script refuses any other commit');
 });

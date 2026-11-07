@@ -121,7 +121,8 @@ After a merge to `main` that changes what the image is built from (`server/`, `s
 or `.railwayignore`), [deploy-server.yml](../.github/workflows/deploy-server.yml) runs the same
 script on GitHub, one deploy at a time (the maintainer, 2026-11-07). It needs the repository secret
 `RAILWAY_TOKEN`, a Railway project token for the production environment; without it the job says
-`RAILWAY_TOKEN is not set: nothing deployed` and succeeds, so deploy by hand as above. It checks
+`RAILWAY_TOKEN is not set: nothing deployed` and succeeds, so deploy by hand as above. Only the
+step that checks for the token and the deploy step get it, not the install of Railway's CLI. It checks
 out `main` as it is when the job starts, not the pushed commit, so a later merge that changes no
 server file and starts no run of its own doesn't stop the deploy. Actions → Deploy usage server →
 Run workflow deploys `main` again on demand.
