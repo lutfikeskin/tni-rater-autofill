@@ -142,9 +142,10 @@ export const setComponentPrefix = (prefix) => { componentPrefix = prefix; };
 
 /**
  * Checks whether custom carrier web-components are still undefined.
+ * @param {boolean} [onlyLook] Look without starting a component's 3 s (a recording's look).
  * @returns {boolean}
  */
-export function partsUndefined() {
+export function partsUndefined(onlyLook = false) {
   if (!componentPrefix) return false;
   let parts;
   try {
@@ -155,7 +156,10 @@ export function partsUndefined() {
   const now = Date.now();
   let waiting = false;
   for (const el of parts) {
-    if (!undefinedSince.has(el)) undefinedSince.set(el, now);
+    if (!undefinedSince.has(el)) {
+      if (onlyLook) { waiting = true; continue; }
+      undefinedSince.set(el, now);
+    }
     if (now - undefinedSince.get(el) < UNDEFINED_MS) waiting = true;
   }
   return waiting;
@@ -252,25 +256,33 @@ export async function settle({ quietMs = 250, maxMs = 15000, requests = null, wh
   // While a recording runs, the wait says what it saw itself (REC-02, 2026-11-07): the trace sees
   // only the page's child lists, not the attributes this one watches (a radio's `checked`, GEICO's
   // `active-index`) nor a busy page or an undefined component. `lastChange`: its last change seen;
-  // `lastHeld`: the last moment it saw the page busy, a component undefined or a request going;
-  // each its start when it saw none.
+  // `lastHeld`: the last moment it saw the page busy or a component undefined, or the end of the
+  // last request it waited after; each its start when it saw none. The look starts no component's
+  // 3 s, so a recorded fill waits as long as one not recorded.
   let lastHeld = start;
   const told = (ended, more = {}) => {
     if (isTracing()) kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms: Date.now() - start, ended, lastChange: Math.max(last, start), lastHeld, ...more });
   };
+  const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
+  const held = (now) => {
+    if (pageBusy() || partsUndefined(true)) lastHeld = now;
+    else if (requested()) lastHeld = Math.max(lastHeld, now - (perfNow() - lastRequestEnd()));
+  };
   try {
-    const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
     for (let now = Date.now(); now - start < maxMs; now = Date.now()) {
       if (abort?.()) { told('stopped'); return false; }
       if (mo.takeRecords?.().length) last = now;
-      if (isTracing() && (pageBusy() || partsUndefined() || requested())) lastHeld = now;
+      if (isTracing()) held(now);
       const quietFor = now - last;
       if (quietFor >= quietMs && !pageBusy() && !partsUndefined() && !requested()) { told('quiet'); return true; }
       await sleep(Math.max(1, Math.min(quietFor < quietMs ? quietMs - quietFor : WAKE_MS, abort ? WAKE_MS : Infinity, maxMs - (now - start))));
     }
     if (abort?.()) { told('stopped'); return false; }
     const settled = !pageBusy() && Date.now() - last >= quietMs;
-    if (isTracing()) told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
+    if (isTracing()) {
+      held(Date.now());
+      told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
+    }
     return settled;
   } finally {
     mo.disconnect();
