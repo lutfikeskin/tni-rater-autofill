@@ -137,30 +137,58 @@ function settingsActs() {
   };
 }
 
+// What the footer says once a problem report is saved (audit 2026-11-07, UX-11: the box closed with
+// no word but the screen reader's): whether it reached TNI, as the upload right after it went
+// (usage.lastUpload: `ok`, `error`, `off`), and whether the page's last fill goes with it (`withFill`:
+// problemContext found one). `at`: the time to say.
+function problemSaid(status, withFill, at = new Date()) {
+  const fill = withFill ? ", with this page's last fill" : '';
+  if (status?.state === 'ok') return `Report saved and sent to TNI at ${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${fill}.`;
+  if (status?.state === 'off') return `Report saved on this computer${fill}. No usage server is set, so it isn't sent.`;
+  return `Report saved on this computer${fill}. It goes to TNI with the next upload.`;
+}
+// The footer's line about the report just saved, for a while (PROBLEM_SAID_MS), and gone when the box
+// opens again.
+const PROBLEM_SAID_MS = 10_000;
+let problemSaidTimer = null;
+function sayProblem(text) {
+  clearTimeout(problemSaidTimer);
+  const line = $('problem-said');
+  if (!line) return;
+  line.textContent = text ?? '';
+  line.hidden = !text;
+  if (text) problemSaidTimer = setTimeout(() => sayProblem(null), PROBLEM_SAID_MS);
+}
+
 function wireUsage() {
   document.addEventListener('pointerdown', unlockAudio, { once: true, capture: true });
   setInterval(uploadNow, 60_000);
   // Report a problem opens its box above the footer, and says so (aria-expanded).
   const problemOpen = (open) => { $('problem-form').hidden = !open; $('report-problem').setAttribute('aria-expanded', String(open)); };
   $('report-problem').addEventListener('click', () => {
+    sayProblem(null);
     problemOpen($('problem-form').hidden);
     if (!$('problem-form').hidden) $('problem-text').focus();
   });
   $('cancel-problem').addEventListener('click', () => { $('problem-text').value = ''; problemOpen(false); $('report-problem').focus(); });
-  $('send-problem').addEventListener('click', () => {
+  $('send-problem').addEventListener('click', async () => {
     const text = $('problem-text').value.trim();
     if (!text) return;
     const redact = state.intake ? redactor(redactionTerms(state.intake.record)) : (x) => x;
     const page = state.tab?.url ? pageOf(state.tab.url) : null;
-    usage.log({ type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, text: redact(text).slice(0, 1000), ...problemContext(state.tab, page) });
+    const context = problemContext(state.tab, page);
+    usage.log({ type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, text: redact(text).slice(0, 1000), ...context });
     $('problem-text').value = '';
     problemOpen(false);
     announce('Thanks — saved with the usage log.');
     state.usageNote = 'Thanks — saved with the usage log.';
+    sayProblem('Report saved. Sending it to TNI…');
     // Sent now rather than on the minute: the panel is often closed right after (audit 2026-10-08).
-    uploadNow();
+    await uploadNow();
+    // Said in the footer, where the box was, as that upload went (and to a screen reader, role=status).
+    sayProblem(problemSaid(usage.lastUpload(), !!context.run));
   });
   setInterval(renderUsage, 5000);
 }
 
-export { renderUsage, settingsActs, uploadNow, wireUsage };
+export { problemSaid, renderUsage, settingsActs, uploadNow, wireUsage };

@@ -5191,7 +5191,26 @@ test('a Continue on a carrier without the retry is never clicked again: waited f
 // panel was often closed before.
 test('a problem report is uploaded as soon as it is logged', () => {
   // The line under the usage card is said as data (state.usageNote; settings-view.jsx draws it).
-  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,400}state\.usageNote = 'Thanks — saved with the usage log\.';\s+\/\/[^\n]*\n\s+uploadNow\(\);/);
+  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,400}state\.usageNote = 'Thanks — saved with the usage log\.';\s+sayProblem\([^\n]*\);\s+\/\/[^\n]*\n\s+await uploadNow\(\);/);
+});
+
+// Audit 2026-11-07, UX-11: Save report closed the box with no word but the screen reader's. The
+// footer says it was saved, then whether it reached TNI as the upload right after it went, and
+// whether the page's last fill goes with it; the line goes when the box opens again.
+test('a saved problem report says in the footer whether it reached TNI', () => {
+  const context = {};
+  vm.runInNewContext(extractFunction('problemSaid'), context);
+  const at = new Date(2026, 10, 7, 15, 42);
+  const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  assert.equal(context.problemSaid({ state: 'ok' }, true, at), `Report saved and sent to TNI at ${time}, with this page's last fill.`);
+  assert.equal(context.problemSaid({ state: 'ok' }, false, at), `Report saved and sent to TNI at ${time}.`);
+  assert.equal(context.problemSaid({ state: 'error' }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
+  assert.equal(context.problemSaid({ state: 'off' }, true, at), "Report saved on this computer, with this page's last fill. No usage server is set, so it isn't sent.");
+  const wire = extractFunction('wireUsage');
+  assert.match(wire, /const context = problemContext\(state\.tab, page\);[\s\S]*await uploadNow\(\);[\s\S]*sayProblem\(problemSaid\(usage\.lastUpload\(\), !!context\.run\)\);/);
+  assert.match(wire, /\$\('report-problem'\)\.addEventListener\('click', \(\) => \{\n\s+sayProblem\(null\);/);
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.match(html, /<div id="problem-form"[\s\S]*?<\/div>\n\s+<\/div>\n\s+<!--[^\n]*-->\n\s+<p id="problem-said" class="problem-said" role="status" hidden><\/p>/);
 });
 
 // Contract 1 (audit 2026-10-08): a field change on a one-address application names its step.
@@ -6555,7 +6574,7 @@ test('a problem report names the fill it is about: view, run, step and what held
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), { view: 't1' });
   state.intake = null;
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
-  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
+  assert.match(extractFunction('wireUsage'), /const context = problemContext\(state\.tab, page\);\n\s+usage\.log\(\{ type: 'problem_report'[^\n]*\.\.\.context \}\);/);
 });
 
 test('the agent\'s own button clicks are logged redacted, with a known step only', () => {
