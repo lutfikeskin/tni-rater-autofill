@@ -1,8 +1,8 @@
 // @ts-check
 // Control matching, value application orchestration, driver registry, and agreement checks.
 
-import { oneLine, squash, humanize, sleep, loose, multiValue, isPlaceholderOption, STATE_NAMES } from './text.js';
-import { adapter, withAdapter, stepKey, stepIs, currentPage, settle, setAdapterHooks } from './adapter.js';
+import { oneLine, squash, humanize, loose, multiValue, isPlaceholderOption, STATE_NAMES } from './text.js';
+import { adapter, withAdapter, stepKey, stepIs, currentPage, settle, setAdapterHooks, pause, waitsStopped, INTERRUPTED } from './adapter.js';
 import { deepQueryAll, optionsOf, selectedText, hasValue, optionOn, setNativeValue, textFor, safeMatches, shownControl, hasOptions, labelFor } from './dom.js';
 import { unitFormsOf } from './units.js';
 import { createLocator } from './locator.js';
@@ -89,7 +89,9 @@ export const {
 // Configure adapter create() hooks
 setAdapterHooks({ matchOption, noMatch, textFor, hasOptions, labelFor });
 
-const driverKit = { adapter, withAdapter, deepQueryAll, oneLine, squash, sleep, settle, hasValue, unpicked, optionsOf, matchOption, noMatch, selectedText, multiValue };
+// `sleep` ends early once the running fill stops (`halted`): a driver checks it before it writes.
+const interrupted = () => ({ ok: /** @type {false} */ (false), reason: INTERRUPTED });
+const driverKit = { adapter, withAdapter, deepQueryAll, oneLine, squash, sleep: pause, halted: waitsStopped, interrupted, settle, hasValue, unpicked, optionsOf, matchOption, noMatch, selectedText, multiValue };
 const { select2, searchSelect } = createSelect2Drivers(driverKit);
 
 export const drivers = [
@@ -107,6 +109,8 @@ export const drivers = [
  * @returns {Promise<{ ok: boolean, shown?: string | null, reason?: string, options?: string[] }>}
  */
 export async function apply(step, c) {
+  // Stopped (the agent's Stop, or their edit): nothing more is written.
+  if (waitsStopped()) return interrupted();
   const driver = drivers.find((d) => d.writes(step, c));
   if (driver) return driver.write(step, c);
 
@@ -141,11 +145,12 @@ export async function apply(step, c) {
   let options = optionsOf(c);
   let opt = matchOption(options, step);
   const loading = () => new Set(options.map((o) => oneLine(o.text)).filter(Boolean)).size <= 1;
-  for (const start = Date.now(); !opt && c.kind === 'select' && loading() && Date.now() - start < 6000;) {
-    await sleep(250);
+  for (const start = Date.now(); !opt && c.kind === 'select' && loading() && Date.now() - start < 6000 && !waitsStopped();) {
+    await pause(250);
     options = optionsOf(c);
     opt = matchOption(options, step);
   }
+  if (waitsStopped()) return interrupted();
   if (!opt) return noMatch(step, options);
   if (c.kind === 'select') setNativeValue(c.el, opt.value);
   else if (!optionOn(opt)) {

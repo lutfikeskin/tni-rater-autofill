@@ -6,7 +6,7 @@
 
 /** @param {any} kit */
 export function createSelect2Drivers(kit) {
-  const { deepQueryAll, oneLine, squash, sleep, settle, optionsOf, matchOption, noMatch, selectedText, multiValue } = kit;
+  const { deepQueryAll, oneLine, squash, sleep, settle, optionsOf, matchOption, noMatch, selectedText, multiValue, halted, interrupted } = kit;
 
   // Type-ahead dropdowns (select2: a hidden <select> with the box select2 draws after it, and a
   // search box that lists what matches the typed text). select2 opens on a left-button mousedown
@@ -35,22 +35,25 @@ export function createSelect2Drivers(kit) {
     const listed = () => (own() ? [...own().querySelectorAll('.select2-results__option')] : deepQueryAll(document, '.select2-results__option'))
       .filter((n) => n.getClientRects().length && !/loading|message/.test(String(n.className)));
     let box = null;
-    for (const start = Date.now(); !box && Date.now() - start < 3000;) {
+    for (const start = Date.now(); !box && Date.now() - start < 3000 && !halted();) {
       await sleep(100);
       box = inline() ?? dropdownBox();
       if (!box && !select.multiple && own() && listed().length && Date.now() - start >= 1000) break;
     }
+    // Stopped meanwhile (the agent's Stop, or their edit): nothing is typed or picked.
+    if (halted()) return interrupted();
     if (!box && !(own() && listed().length)) return { reason: "the list's search box didn't open; pick it yourself" };
     if (box) {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, String(text));
       for (const type of ['input', 'keyup']) box.dispatchEvent(new Event(type, { bubbles: true }));
     }
     let results = [];
-    for (const start = Date.now(); Date.now() - start < 6000;) {
+    for (const start = Date.now(); Date.now() - start < 6000 && !halted();) {
       await sleep(200);
       results = listed();
       if (results.length) break;
     }
+    if (halted()) return interrupted();
     return { box, results };
   }
 
@@ -145,10 +148,12 @@ export function createSelect2Drivers(kit) {
       const picks = wanted.map((w) => options.find((o) => !o.el.disabled && o.text.toLowerCase() === w.toLowerCase()));
       if (!wanted.length || picks.some((o) => !o)) return noMatch({ ...step, value: wanted.filter((w, i) => !picks[i]).join('; ') || step.value }, options);
       for (const o of options.filter((x) => x.el.selected && !picks.includes(x))) {
+        if (halted()) return interrupted();
         const off = await unpickSelect2(c.el, o.text);
         if (!off.ok) return off;
       }
       for (const o of picks.filter((x) => !x.el.selected)) {
+        if (halted()) return interrupted();
         const on = await pickSelect2(c.el, o.text);
         if (!on.ok) return on;
       }
@@ -156,11 +161,12 @@ export function createSelect2Drivers(kit) {
       return { ok: true, shown: picks.map((o) => o.text).join('; ') };
     }
     let opt = matchOption(options, step);
-    for (const start = Date.now(); !opt && new Set(options.map((o) => oneLine(o.text)).filter(Boolean)).size <= 1 && Date.now() - start < 6000;) {
+    for (const start = Date.now(); !opt && new Set(options.map((o) => oneLine(o.text)).filter(Boolean)).size <= 1 && Date.now() - start < 6000 && !halted();) {
       await sleep(250);
       options = optionsOf(c);
       opt = matchOption(options, step);
     }
+    if (halted()) return interrupted();
     if (!opt) return noMatch(step, options);
     const on = await pickSelect2(c.el, opt.text);
     if (!on.ok) return on;
