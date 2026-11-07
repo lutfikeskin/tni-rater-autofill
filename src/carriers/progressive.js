@@ -36,6 +36,7 @@ import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
 import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 import { HAZ_HAUL } from '../util.js';
+import { filingsIntent } from '../answers/filings.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreightHauler } from '../answers/classes.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingIs } from '../answers/state.js';
@@ -230,10 +231,32 @@ const cargoSource = (r) => (r.coverage.cargo !== false && noCargoDeductible(r) ?
 // (cargoCommodity in util.js: car or auto parts, then general freight), else the agent's.
 const commodity = cargoCommodity;
 
-// Filings: Yes when the intake says so. On the Filings page the standard answers are "all
-// vehicles on this quote" = Yes and the Federal filing; ticking Federal makes Progressive tick
-// MCS-90 itself, so MCS-90 is left as the page sets it.
+// Filings: Yes when the intake says so. On the Filings page the standard answer is "all vehicles on
+// this quote" = Yes; ticking Federal makes Progressive tick MCS-90 itself, so MCS-90 is left as the
+// page sets it.
 const filings = (r) => (r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
+// The Filings page's Federal (a federal liability filing: MCS-90 comes with it) from the intake's
+// "which filings", read as every carrier reads them (filingsIntent, src/answers/filings.js; TNI,
+// 2026-11-07, the maintainer, audit CARR-01): ticked for a federal liability filing, unticked for
+// state filings only. A cargo-only request ("Federal BMC-34"), a box that doesn't say which, or one
+// naming only an SR-22 or FR-44 leaves it to the agent (`fact`), with a note. The page shows only
+// after filings required Yes, so a blank or No keeps `filings`.
+const federalIntent = (r) => (filings(r) === true && !ntlNoDotFilings(r) ? filingsIntent(r.operations.filingsWhich) : null);
+const federalFiling = (r) => (ntlNoDotFilings(r) ? false : federalIntent(r) ? federalIntent(r)?.liability ?? null : filings(r));
+const filingsQuoted = (r) => `"${String(r.operations.filingsWhich ?? '').trim().slice(0, 40)}"`;
+const federalFilingNote = (r) => {
+  const intent = federalIntent(r);
+  if (!intent || intent.liability != null) return null;
+  if (intent.open === 'cargo-conflict') return `The intake's filings (${filingsQuoted(r)}) both ask for a cargo filing and rule one out, so whether "federal" means a liability filing is yours to answer.`;
+  if (intent.open === 'cargo') return `The intake's filings (${filingsQuoted(r)}) name a cargo filing, which isn't a liability filing: whether the Federal filing (with MCS-90) is needed is yours to answer.`;
+  if (intent.open === 'sr-fr-only') return `The intake names only ${filingsQuoted(r)}, which isn't a federal filing: answer it yourself.`;
+  return String(r.operations.filingsWhich ?? '').trim() ? `The intake's filings (${filingsQuoted(r)}) don't say state or federal: answer it yourself.`
+    : 'The intake says filings are required but not which: answer it yourself.';
+};
+// State filings only: Federal is unticked, and the State box is left as the page has it (TNI's
+// Filings page standard), so the agent is told to tick it.
+const stateOnlyWarn = (r) => (federalIntent(r)?.liability === false && federalIntent(r)?.state
+  ? `The intake's filings (${filingsQuoted(r)}) name only a state filing: Federal is left unticked, and Progressive's State box is yours to tick.` : null);
 // A blank "filings required" with filings named, or an SR-22 needed (a state filing), is the agent's.
 const filingsHint = (r) => (r.operations.filingsRequired != null ? null
   : r.operations.filingsWhich ? `names filings ("${String(r.operations.filingsWhich).slice(0, 40)}")`
@@ -973,7 +996,7 @@ export const progressive = {
     ...onPage('Filings', [
       // TNI's 2026-10-01 decision, kept as a standard: the quote covers all the customer's vehicles.
       { concept: 'quote.all-vehicles', q: 'F11', tni: 'progressive.filings-page', source: 'standard', field: 'FilingsInput.AllVehiclesUsedOwned', ask: 'Will this quote include all the customer\'s commercially owned and operated vehicles?', name: 'All commercially owned vehicles on this quote (standard: Yes)', kind: 'bool', value: filings },
-      { concept: 'filings.which', tni: 'progressive.ntl-usdot-filings', source: held((r) => (ntlNoFilings(r) ? 'standard' : 'derived')), field: 'FilingsInput.FederalOpAuthorityIndicator', label: '^federal( liability)?( filing)?$', name: 'Federal filing', kind: 'bool', value: (r) => (ntlNoDotFilings(r) ? false : filings(r)), note: holdOr() },
+      { concept: 'filings.which', tni: 'progressive.ntl-usdot-filings', source: held((r) => (ntlNoFilings(r) ? 'standard' : federalFilingNote(r) ? 'fact' : 'derived')), field: 'FilingsInput.FederalOpAuthorityIndicator', label: '^federal( liability)?( filing)?$', name: 'Federal filing', kind: 'bool', value: federalFiling, note: holdOr(federalFilingNote), warn: (r) => (ntlDotFilingsHold(r) ? null : stateOnlyWarn(r)) },
       { concept: 'filings.which', field: 'FilingsInput.MCS90Indicator', label: '^mcs ?-?90$', name: 'MCS-90 (ticked by the page with Federal)', kind: 'bool', ignore: true },
       { concept: 'filings.which', field: 'FilingsInput.StateIndicator', label: '^state( filing)?$', name: 'State filing', kind: 'bool', ignore: true },
     ]),

@@ -1,14 +1,15 @@
 // Federal filings by name, one reading for every carrier (src/answers/filings.js; TNI, 2026-11-07,
 // the maintainer, audit CARR-01: GEICO's stricter reading, shared by the carriers). The same "which
-// filings" texts go through GEICO and AmWINS, and each carrier's boxes give the same answer: a
-// federal liability filing (GEICO's filing type and Federal Liability box, AmWINS' BMC-91 and
-// MCS-90) and a federal cargo filing (AmWINS' BMC-32; GEICO has no cargo box). Null is the agent's,
-// with a note, never filled.
+// filings" texts go through GEICO, AmWINS and Progressive, and each carrier's boxes give the same
+// answer: a federal liability filing (GEICO's filing type and Federal Liability box, AmWINS' BMC-91
+// and MCS-90, Progressive's Federal filing) and a federal cargo filing (AmWINS' BMC-32; GEICO and
+// Progressive have no cargo box). Null is the agent's, with a note, never filled.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPlan } from '../src/plan.js';
 import { geico } from '../src/carriers/geico.js';
 import { amwins } from '../src/carriers/amwins.js';
+import { progressive } from '../src/carriers/progressive.js';
 import { filingsIntent } from '../src/answers/filings.js';
 
 const record = (filingsWhich) => ({
@@ -50,6 +51,16 @@ const amwinsAnswers = (text) => {
   assert.equal(read(mcs90), liability, `${text}: MCS-90 comes with BMC-91`);
   return { liability, cargo: read(bmc32) };
 };
+// Progressive's Filings page: Federal (MCS-90 is ticked by the page with it); State is left as the
+// page has it.
+const progressiveFederal = (p) => p.find((s) => s.field === 'FilingsInput.FederalOpAuthorityIndicator');
+const progressiveLiability = (text) => {
+  const s = progressiveFederal(buildPlan(record(text), progressive, {}));
+  assert.ok(s, 'Progressive\'s Federal filing');
+  if (s.value == null) { assert.equal(s.source, 'fact', `${text}: Progressive's Federal filing`); return agents(s, text); }
+  assert.equal(s.source, 'derived', `${text}: Progressive's Federal filing`);
+  return s.value;
+};
 
 // [which filings, federal liability, federal cargo]
 const CASES = [
@@ -68,6 +79,10 @@ const CASES = [
   ['State and federal cargo', null, true],
   ['Federal cargo liability', null, true],
   ['BMC-34', null, true],
+  // Beside a state filing too: the cargo filing doesn't say whether a federal liability filing is
+  // needed, so it isn't a state-only request (CodeRabbit on #363).
+  ['State filing and BMC-34', null, true],
+  ['Intrastate, cargo filing', null, true],
   // A cargo filing ruled out is a cargo No; asked for elsewhere in the text, it stays a request; both
   // asked for and ruled out is the agent's (CodeRabbit on #355).
   ['Federal liability only, no cargo filing', true, false],
@@ -89,12 +104,35 @@ const CASES = [
   [null, null, null],
 ];
 
-test('the same which-filings text gives the same federal filings on GEICO and AmWINS', () => {
+test('the same which-filings text gives the same federal filings on GEICO, AmWINS and Progressive', () => {
   for (const [text, liability, cargo] of CASES) {
     const intent = filingsIntent(text);
     assert.deepEqual([intent.liability, intent.cargo], [liability, cargo], `${text}: the shared reading`);
     assert.equal(geicoLiability(text), liability, `${text}: GEICO`);
     assert.deepEqual(amwinsAnswers(text), { liability, cargo }, `${text}: AmWINS`);
+    assert.equal(progressiveLiability(text), liability, `${text}: Progressive`);
+  }
+});
+
+test('Progressive: a cargo-only request leaves the Federal filing to the agent, and state filings only untick it with a warning to tick State', () => {
+  const federal = (text) => progressiveFederal(buildPlan(record(text), progressive, {}));
+  assert.match(federal('Federal BMC-34').note, /"Federal BMC-34".*cargo filing.*Federal filing/);
+  assert.match(federal('SR-22').note, /only "SR-22"/);
+  assert.match(federal('Federal, BMC-34, no cargo filing').note, /both ask for a cargo filing and rule one out/);
+  const state = federal('State filing');
+  assert.deepEqual([state.value, state.note ?? null], [false, null]);
+  assert.match(state.warn ?? '', /"State filing".*State box is yours/);
+  assert.equal(federal('Federal and state').warn ?? null, null, 'a federal filing beside the state one: no warning');
+  // A cargo filing beside the state one isn't state filings only: the agent's, with the cargo note, no warning.
+  const stateCargo = federal('State filing and BMC-34');
+  assert.deepEqual([stateCargo.value, stateCargo.warn ?? null], [null, null]);
+  assert.match(stateCargo.note ?? '', /"State filing and BMC-34".*cargo filing/);
+  // No filing required, or left blank: the page doesn't show, and Federal keeps the intake's answer.
+  for (const [required, value] of [[false, false], [null, null]]) {
+    const r = record('Federal BMC-34');
+    r.operations.filingsRequired = required;
+    const s = progressiveFederal(buildPlan(r, progressive, {}));
+    assert.deepEqual([s.value, s.manualOnly, s.warn ?? null], [value, false, null], `filings required ${required}`);
   }
 });
 

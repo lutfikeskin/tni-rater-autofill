@@ -63,7 +63,8 @@ export const progressive = {
       { id: 'progressive.eld', kind: 'intake', text: 'ELD required: from the intake.' },
     ] },
     { heading: 'Filings', rules: [
-      { id: 'progressive.filings-page', kind: 'standard', text: 'All commercially owned and operated vehicles on this quote: Yes. Tick Federal (MCS-90 comes with it), except on a non-trucking liability quote (Federal unticked). Leave State unticked.' },
+      { id: 'progressive.filings-page', kind: 'standard', text: 'All commercially owned and operated vehicles on this quote: Yes. Leave State as the page has it.' },
+      { id: 'progressive.filings', kind: 'intake', text: 'Federal (MCS-90 comes with it), from the intake\'s which filings: ticked for a federal liability filing (the intake names BMC-91, MCS-90 or federal liability, or "federal" with no cargo filing); unticked for state or intrastate filings only, and then the agent ticks State. A cargo-only request ("Federal BMC-34", "Federal cargo filing", "BMC-34") leaves whether a federal liability filing is needed to the agent; filings that don\'t say which, or name only an SR-22 or FR-44: the agent\'s (TNI, 2026-11-07, the maintainer: GEICO\'s reading, shared by the carriers). On a non-trucking liability quote Federal is unticked (above).' },
     ] },
     { heading: 'Coverages and rates (CoveragesRates)', rules: [
       { id: 'progressive.liability-limit', kind: 'intake', text: 'Bodily injury and property damage liability: the intake\'s requested limit ("$1M CSL" is "$1 million CSL"); on a non-trucking liability quote, Not selected.' },
