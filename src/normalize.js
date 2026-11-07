@@ -1629,6 +1629,12 @@ const BOX_CHECKS = [
     if (!toDate(prior.expiration)) return [chk('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`)];
     return noPriorInsurance(prior) ? [] : priorExpiredChecks(r, prior);
   } },
+  // The application date: a current policy expired before it is expired too (priorExpiredChecks),
+  // and the check names the date (review of PR #367, CodeRabbit).
+  { match: /^applicant\.applicationDate$/, codes: ['prior-expiration.expired'], at: () => 'priorInsurance[0].expiration', run: (r) => {
+    const prior = r.priorInsurance?.[0];
+    return !prior || !toDate(prior.expiration) || noPriorInsurance(prior) ? [] : priorExpiredChecks(r, prior);
+  } },
 ];
 
 /** The check for a current policy expired by today's date or the application date. */

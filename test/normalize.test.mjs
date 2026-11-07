@@ -2410,6 +2410,10 @@ test('the edit-time box checks say what load-time normalization says, for the sa
     [['prior-expiration.invalid', 'prior-expiration.expired'], 'priorInsurance[0].expiration',
       [[{ ins_exp_1: '13/45/2026' }, [['priorInsurance[0].expiration', '13/45/2026']]], [{ ins_exp_1: '01/15/2026' }, [['priorInsurance[0].expiration', '01/15/2026']]]],
       [[{ ins_exp_1: '01/15/2027' }, [['priorInsurance[0].expiration', '01/15/2027']]]]],
+    // The application date moved past the expiration (review of PR #367, CodeRabbit), and back.
+    [['prior-expiration.expired'], 'priorInsurance[0].expiration',
+      [[{ ins_exp_1: '01/15/2027', date_of_application: '02/01/2027' }, [['applicant.applicationDate', '02/01/2027']]]],
+      [[{ ins_exp_1: '01/15/2027', date_of_application: '09/15/2026' }, [['applicant.applicationDate', '09/15/2026']]]]],
   ];
   for (const [codes, at, bad, good] of cases) {
     const owns = box(codes, at);
