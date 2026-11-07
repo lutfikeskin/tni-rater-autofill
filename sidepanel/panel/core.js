@@ -835,7 +835,7 @@ async function restoreReports(tabId) {
 // intake (state.quoteStates). The tab's step and stop screen aren't kept: the page is read for them
 // as the panel opens (scheduleLayout, noteStep), and one kept could be one the agent has left.
 const JOURNAL_PREFIX = 'journal:';
-const journalWritten = new Map(); // tab id -> the journal last written (once stored), as JSON
+const journalWritten = new Map(); // tab id -> the journal as last stored (merged, before its read-back), as JSON
 const journalRestored = new Set();
 // tab id -> what this copy took out of the tab's journal before reading it back (keepJournal's
 // `dropped`: 'quoteState', 'autoPaused', or `step:<doneSteps key>`), so the stored copy doesn't
@@ -868,13 +868,16 @@ function keepJournal(tabId, { dropped = [] } = {}) {
   if (!Number.isInteger(tabId)) return journalQueue;
   const journal = journalOf(tabId);
   const restored = journalRestored.has(`${journal.scope}|${tabId}`);
+  // A removal is always written: what is stored may still hold it.
+  if (dropped.length) journalWritten.delete(tabId);
   if (!restored && dropped.length) journalDropped.set(tabId, new Set([...(journalDropped.get(tabId) ?? []), ...dropped]));
   const json = JSON.stringify(journal);
   if (journalWritten.get(tabId) === json) return journalQueue;
   const key = `${JOURNAL_PREFIX}${tabId}`;
   journalQueue = journalQueue.then(async () => {
-    await store.set(key, restored ? journal : journalMerged(await store.get(key), journal, journalDropped.get(tabId)));
-    journalWritten.set(tabId, json);
+    const out = restored ? journal : journalMerged(await store.get(key), journal, journalDropped.get(tabId));
+    await store.set(key, out);
+    journalWritten.set(tabId, JSON.stringify(out));
   }).catch(() => { journalWritten.delete(tabId); }); // not stored: the next call writes it again
   return journalQueue;
 }

@@ -2496,6 +2496,19 @@ test('what the panel takes out of a tab’s journal before reading it back stays
   await later.context.keepJournal(7, { dropped: ['quoteState', 'autoPaused', 'step:Drivers|d0|next'] });
   await later.context.restoreJournal(7);
   assert.deepEqual([later.state.quoteStates.has(7), later.state.autoPaused, later.state.doneSteps.size], [false, false, 0]);
+  // #401 review: a write before the read-back merged the stored pick in, but cached the copy's own
+  // journal, so forgetting the pick, which leaves that journal as it was, wrote nothing, and a panel
+  // opened later brought the pick back. The cache holds what was stored.
+  memory['journal:7'] = { scope: 'intake-a', doneSteps: [], autoPages: [], autoPaused: false, advanceRetried: [], quoteState: pick };
+  const cached = journalHarness(memory);
+  await cached.context.keepJournal(7);
+  assert.deepEqual(plain(memory['journal:7'].quoteState), pick, 'a fill ending first keeps the stored pick');
+  await cached.context.keepJournal(7, { dropped: ['quoteState'] });
+  assert.equal(memory['journal:7'].quoteState, null, 'the pick forgotten is written out');
+  await cached.context.restoreJournal(7);
+  const reopened = journalHarness(memory);
+  await reopened.context.restoreJournal(7);
+  assert.equal(reopened.state.quoteStates.has(7), false, 'and a panel opened later has none');
   // Where they are taken out.
   assert.match(extractFunction('noteQuoteState'), /else state\.quoteStates\.delete\(tabId\);\n\s*keepJournal\(tabId, code \? \{\} : \{ dropped: \['quoteState'\] \}\);/);
   assert.match(extractFunction('stateIssue'), /state\.quoteStates\.delete\(tabId\); pick = null; keepJournal\(tabId, \{ dropped: \['quoteState'\] \}\);/);
