@@ -13,28 +13,30 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { imageFiles, deployProblem } from './lib/deploy.mjs';
-import { serverUrl, checkServer } from './lib/central.mjs';
+import { imageFiles, deployProblem, dirtyFiles } from './lib/deploy.mjs';
+import { CENTRAL_SERVER, checkServer } from './lib/central.mjs';
 import { SERVER_HASH } from '../server/index.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dryRun = process.argv.includes('--dry-run');
-/** @param {...string} a */
-const git = (...a) => {
+/** git's output as printed (porcelain status lines start with a space), or null when it fails. @param {...string} a */
+const gitRaw = (...a) => {
   const r = spawnSync('git', a, { cwd: root, encoding: 'utf8' });
-  return r.status === 0 ? r.stdout.trim() : null;
+  return r.status === 0 ? r.stdout : null;
 };
+/** @param {...string} a */
+const git = (...a) => gitRaw(...a)?.trim() ?? null;
 
 const defaultBranch = (git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD') ?? '').replace(/^origin\//, '') || 'main';
 const fetched = git('fetch', '--quiet', 'origin', defaultBranch) !== null;
 const files = imageFiles(fs.readFileSync(path.join(root, 'server', 'Dockerfile'), 'utf8'));
-const status = git('status', '--porcelain', '--untracked-files=all', '--', ...files);
+const status = gitRaw('status', '--porcelain', '--untracked-files=all', '--', ...files);
 const facts = {
   fetched: fetched && status !== null,
   head: git('rev-parse', 'HEAD'),
   upstream: git('rev-parse', `origin/${defaultBranch}`),
   defaultBranch,
-  dirty: (status ?? '').split('\n').filter(Boolean).map((l) => l.slice(3)),
+  dirty: dirtyFiles(status ?? ''),
 };
 const problem = deployProblem(facts);
 if (problem) {
@@ -51,8 +53,9 @@ if (up.status !== 0) {
   console.error(`deploy:server: railway up failed (${up.error ? up.error.message : `exit ${up.status}`}); the previous deployment keeps serving.`);
   process.exit(1);
 }
-// The new deployment takes over a little after its build: wait for it to answer with this server.
-const base = serverUrl();
+// The new deployment takes over a little after its build: wait for Railway's production server
+// (never RATER_SERVER, which may name a local or test one) to answer with this server.
+const base = CENTRAL_SERVER;
 for (let i = 0; i < 30; i++) {
   const r = await checkServer(base, SERVER_HASH);
   if (r.status === 'same') {

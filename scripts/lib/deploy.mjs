@@ -18,6 +18,16 @@ export function imageFiles(dockerfile) {
 }
 
 /**
+ * The files `git status --porcelain` names, from its output as printed (untrimmed: an unstaged
+ * change's line starts with a space). A rename names its new path.
+ * @param {string} porcelain
+ * @returns {string[]}
+ */
+export function dirtyFiles(porcelain) {
+  return porcelain.split('\n').filter((l) => l.length > 3).map((l) => l.slice(3).replace(/^.* -> /, ''));
+}
+
+/**
  * Why this checkout must not be deployed, or null when it may.
  * @param {{ fetched: boolean, head: string | null, upstream: string | null, defaultBranch: string, dirty: string[] }} facts
  *   head: this checkout's commit; upstream: origin/<defaultBranch>'s after a fetch; dirty: the

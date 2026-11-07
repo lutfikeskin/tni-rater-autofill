@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { imageFiles, deployProblem } from '../scripts/lib/deploy.mjs';
+import { imageFiles, deployProblem, dirtyFiles } from '../scripts/lib/deploy.mjs';
 
 // Audit 2026-11-07, SRV-10: `railway up` uploads the working tree as it is, on whatever branch the
 // shared checkout is on, committed or not. `npm run deploy:server` deploys only main as merged.
@@ -11,6 +11,14 @@ test('the files the server image is built from are the Dockerfile\'s COPY source
   const real = imageFiles(fs.readFileSync(new URL('../server/Dockerfile', import.meta.url), 'utf8'));
   assert.ok(real.includes('server/index.mjs'), 'the real Dockerfile copies the server');
   for (const f of real) assert.ok(fs.existsSync(new URL(`../${f}`, import.meta.url)), `${f} exists`);
+});
+
+// The review of #426: git's porcelain line starts with a space for a change not staged (` M`), so
+// the file name is what follows the two status letters and their space, read from the whole output.
+test('the dirty files are read from git status --porcelain as it prints them', () => {
+  assert.deepEqual(dirtyFiles(' M server/index.mjs\n?? server/new.mjs\nM  server/Dockerfile\nR  server/a.mjs -> server/b.mjs\n'),
+    ['server/index.mjs', 'server/new.mjs', 'server/Dockerfile', 'server/b.mjs']);
+  assert.deepEqual(dirtyFiles(''), []);
 });
 
 test('a deploy goes ahead only from the default branch as merged, with the image\'s files committed', () => {
