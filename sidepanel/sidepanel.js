@@ -15,7 +15,7 @@ import { captureFromShortcut, capturePage, checkItems, clearMarks, fillAfterDefa
 import { noteRecording, onTraceMessage, recoverRecording, renderUnfinished, startRecording, stopRecording } from './panel/dev-recording.js';
 import { aiActs, renderAiSettings, reviewIntake } from './panel/assistant.js';
 import { renderUsage, settingsActs, uploadNow, wireUsage } from './panel/usage-panel.js';
-import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, closeDetails, closePdf, drawPdf, newQuote, noteStep, openDetails, openPdf, openPdfInTab, pdfPage, pdfPan, pdfZoom, workSaid } from './panel/pdf-view.js';
+import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, clientNote, closeDetails, closePdf, drawPdf, newQuote, noteStep, openDetails, openPdf, openPdfInTab, pdfPage, pdfPan, pdfZoom, workSaid } from './panel/pdf-view.js';
 import { announceCopy, dock, keepPlace, onPanelMessage, popOut } from './panel/window.js';
 import { mountLive } from './panel/live-view.jsx';
 import { mountDock, mountSteps } from './panel/steps-view.jsx';
@@ -31,6 +31,7 @@ import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaultsShown } from './panel/agent-defaults/store.js';
 import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
 import { forgetQuoteTab, noteNewTab, restoreQuoteOwners } from './panel/quote-owner.js';
+import { fileReplacer } from './panel/file-drop.js';
 import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
@@ -70,17 +71,16 @@ function wire() {
     fill: () => setView('page'),
     confirm: () => { setView('page'); refreshAnswers(); checkItems(); },
   });
-  // The client's name opens or closes client details; the intake PDF; the file tools. Change file:
-  // straight to the file picker, unless the agent has corrected or checked this intake (a different
-  // file starts over). Clear, and New quote: always asked first.
+  // The client's name opens or closes client details; the intake PDF; the file tools. Change file,
+  // and a PDF dropped on the panel (below): straight to the file picker or loaded, unless the agent
+  // has corrected or checked this intake (a different file starts over), and a PDF dropped while
+  // answers go in is refused (file-drop.js). Clear, and New quote: always asked first.
+  const replacing = fileReplacer({ state, load: (file) => loadFile(file), pick: () => $('file').click(), ask: (text, yes) => askFile('replace', text, yes),
+    note: (text) => clientNote(text), work: workSaid });
   mountClient($('client-root'), {
     details: () => (state.detailsOpen ? closeDetails() : openDetails()),
     pdf: () => openPdf(),
-    replace: () => {
-      const work = workSaid(state.intake?.agentEdited?.length ?? 0, state.intake?.done?.length ?? 0);
-      if (!work) { $('file').click(); return; }
-      askFile('replace', `You ${work}. A different file starts over; the same file keeps it.`, 'Choose a file');
-    },
+    replace: () => replacing.replace(),
     newQuote: () => {
       if (state.filling) return;
       askFile('new-quote', 'Start another quote with this intake? This quote’s fills, marks and clicks are forgotten; the intake, your corrections and checks stay. The carrier’s site isn’t changed.', 'New quote');
@@ -89,12 +89,12 @@ function wire() {
       const name = state.intake?.record.applicant.name || state.intake?.record.applicant.owner1 || 'this client';
       askFile('clear', `Clear ${name}? Your corrections, checks and reports go. The carrier's site isn't changed.`, 'Clear this client');
     },
-    cancel: () => { state.fileConfirm = null; render(); $(state.fileConfirmFrom ?? 'replace')?.focus(); },
+    cancel: () => { state.fileConfirm = null; replacing.answered(false); render(); $(state.fileConfirmFrom ?? 'replace')?.focus(); },
     yes: () => {
       const what = state.fileConfirm;
       state.fileConfirm = null;
       render();
-      if (what === 'replace') $('file').click();
+      if (what === 'replace') replacing.answered(true);
       if (what === 'clear') clearClient();
       if (what === 'new-quote') newQuote();
     },
@@ -152,7 +152,7 @@ function wire() {
   for (const t of [document.body]) {
     t.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
     t.addEventListener('dragleave', (e) => { if (!e.relatedTarget) drop.classList.remove('over'); });
-    t.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+    t.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) replacing.replace(e.dataTransfer.files[0]); });
     t.addEventListener('dragover', () => { if (!state.intake) $('load-error').hidden = true; });
   }
   // The dock: its one button and its alternative.
