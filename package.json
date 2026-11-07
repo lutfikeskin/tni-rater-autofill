@@ -17,6 +17,7 @@
     "typecheck": "tsc -p . && tsc -p tsconfig.node.json",
     "server": "node server/index.mjs",
     "learn": "node scripts/learn-rules.mjs server-data",
+    "proposals": "node scripts/rule-proposals.mjs server-data",
     "layouts": "node scripts/build-layouts.mjs server-data",
     "transitions": "node scripts/transitions.mjs server-data",
     "captures": "node scripts/captures.mjs layouts",
