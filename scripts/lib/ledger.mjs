@@ -148,7 +148,7 @@ function condition(token, src) {
   const [, path, op, value] = m;
   if ((op === '>' || op === '<') && !Number.isFinite(Number(value))) throw new Error(`"${token}" in "${src}" compares with a number`);
   const re = op === '~' ? /^\/(.+)\/([a-z]*)$/.exec(value) : null;
-  return { path, op, value, re: re ? new RegExp(re[1], re[2].replace(/[gy]/g, '') || 'i') : null };
+  return { path, op, value, re: re ? new RegExp(re[1], re[2].replace(/g/g, '') || 'i') : null };
 }
 
 function clause(tokens, src) {
@@ -212,7 +212,13 @@ function holds(c, e) {
   switch (c.op) {
     case '=': return vals.some((x) => asText(x) === c.value);
     case '!=': return !vals.some((x) => asText(x) === c.value);
-    case '~': return vals.some((x) => (c.re ? c.re.test(asText(x)) : asText(x).toLowerCase().includes(c.value.toLowerCase())));
+    // A sticky (y) regex is tested from the start each time: the last test doesn't move it along
+    // (CodeRabbit on PR #402).
+    case '~': return vals.some((x) => {
+      if (!c.re) return asText(x).toLowerCase().includes(c.value.toLowerCase());
+      c.re.lastIndex = 0;
+      return c.re.test(asText(x));
+    });
     case '>': return vals.some((x) => isNumber(x) && Number(x) > Number(c.value));
     case '<': return vals.some((x) => isNumber(x) && Number(x) < Number(c.value));
     default: return false;
