@@ -50,8 +50,9 @@ tokens a day (OpenAI's `usage`: input plus output, reasoning included; read the 
 blank is 10,000,000, over 30 times the pilot's busiest day; then 429 `daily Luna token budget
 reached`). A request is counted before it goes to OpenAI, so one OpenAI refuses or doesn't answer
 still counts; its tokens are added when the answer comes, so a request begun under the budget may
-end over it. An answer without usage counts is counted at the most it could have cost (a token per 4
-characters of the request plus its output bound) and marked `estimated`. The day's counts (requests,
+end over it. An answer without usage counts is counted at the most it could have cost (a token for
+each byte of the request as sent, since no token is shorter than a byte, plus 64 for the message
+framing, plus its output bound) and marked `estimated`. The day's counts (requests,
 input and output tokens, how many were estimated) are kept in `DATA_DIR/luna/<day>.json` on the
 volume, counts only, so a restart or redeploy goes on from them; a file that can't be read is
 logged and the day counts from 0, and one that can't be written is logged and the count goes on in

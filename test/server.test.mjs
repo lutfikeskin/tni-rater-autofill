@@ -834,7 +834,9 @@ test('/v1/luna: a daily token budget refuses requests once the day\'s tokens rea
     usage = { input_tokens: 'many', output_tokens: -1 };
     assert.equal((await askLuna(base)).status, 200, 'below the budget when it started');
     const body = lunaBody();
-    assert.deepEqual(lunaUsage(dataDir), { day: lunaUsage(dataDir).day, requests: 2, inputTokens: 4000 + Math.ceil(JSON.stringify(body).length / 4),
+    // At its most (CodeRabbit on #375): a token is at least one byte of the request as sent, plus the
+    // message framing; a token per 4 characters undercounted text in other scripts and punctuation.
+    assert.deepEqual(lunaUsage(dataDir), { day: lunaUsage(dataDir).day, requests: 2, inputTokens: 4000 + Buffer.byteLength(JSON.stringify(body)) + 64,
       outputTokens: 1000 + body.max_output_tokens, estimated: 1 });
     const refused = await askLuna(base);
     assert.equal(refused.status, 429);
@@ -842,6 +844,14 @@ test('/v1/luna: a daily token budget refuses requests once the day\'s tokens rea
     assert.deepEqual(await refused.json(), { error: 'daily Luna token budget reached' });
     assert.equal(asked.length, 2, 'OpenAI was not asked once the budget was spent');
   });
+  // Text that takes more than a byte a character (Turkish, punctuation-dense JSON) counts by its bytes.
+  const wide = tmp();
+  const body = { ...lunaBody(), instructions: `${lunaBody().instructions} ${'şğü…'.repeat(500)}` };
+  await withServer({ dataDir: wide, openaiKey: 'sk-server', fetchImpl: async () => new Response('{"output":[]}', { status: 200 }) }, async ({ base }) => {
+    assert.equal((await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).status, 200);
+  });
+  assert.equal(lunaUsage(wide).inputTokens, Buffer.byteLength(JSON.stringify(body)) + 64);
+  assert.ok(lunaUsage(wide).inputTokens > JSON.stringify(body).length);
 });
 
 test('/v1/luna: a day file that cannot be read or written is logged and the count goes on in memory', async () => {

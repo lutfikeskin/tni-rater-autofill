@@ -123,6 +123,9 @@ export function lunaDailyLimitFrom(raw, fallback = LUNA_DAILY_LIMIT) {
 // refuses every request. A request that starts under the budget may end over it.
 export const LUNA_DAILY_TOKENS = 10_000_000;
 export const lunaDailyTokensFrom = (raw) => lunaDailyLimitFrom(raw, LUNA_DAILY_TOKENS);
+// The tokens a request's framing may add beyond its own bytes (roles, message separators), for an
+// answer counted at its most.
+const LUNA_FRAME_TOKENS = 64;
 
 // Why this body may not go to OpenAI: null when it may.
 export function lunaRequestError(b) {
@@ -588,10 +591,12 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     let json;
     try { json = await upstream.json(); } catch { return done(502, { error: 'OpenAI sent an unreadable answer' }, 'luna unreadable'); }
     // What it cost: OpenAI's usage counts (never the answer). An answer without them is counted at
-    // the most it could have cost, a token per 4 characters of the request plus the output bound.
+    // the most it could have cost: a token is at least one byte of the request as sent (a token per
+    // 4 characters undercounted other scripts and punctuation: CodeRabbit on #375), plus the
+    // message framing, and the output bound.
     const used = { input: tokenCount(json?.usage?.input_tokens), output: tokenCount(json?.usage?.output_tokens) };
     const estimated = used.input === null || used.output === null;
-    if (estimated) Object.assign(used, { input: Math.ceil(JSON.stringify(body).length / 4), output: body.max_output_tokens });
+    if (estimated) Object.assign(used, { input: Buffer.byteLength(JSON.stringify(body)) + LUNA_FRAME_TOKENS, output: body.max_output_tokens });
     // The day may have turned during the call: the tokens go on the day it is now.
     const now = lunaToday();
     now.inputTokens += used.input;
