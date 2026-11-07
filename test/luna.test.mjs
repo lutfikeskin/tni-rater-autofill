@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intakePathOf } from '../src/ai/common.js';
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
-  firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES,
+  firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES, isLunaModel,
   MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { CARRIER_PARTS } from '../src/ai/tni-rules.js';
@@ -149,6 +149,26 @@ test('incomplete, refused, wrong-model and tool-call responses never yield an an
     { ...good, output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'invalid' }] }] }]) {
     assert.throws(() => responseData(json), AssistError);
   }
+});
+
+// Audit 2026-11-07, AI-11: the alias may come back as the provider's dated snapshot of it. That is
+// Luna (answers and automatic picks as before); any other model, or a near miss, still fails closed.
+test("the configured model's dated snapshot is Luna; any other model still fails closed", async () => {
+  const dated = `${DEFAULT_MODEL}-2026-10-01`;
+  assert.equal(isLunaModel(DEFAULT_MODEL), true);
+  assert.equal(isLunaModel(dated), true);
+  for (const other of ['gpt-6', 'gpt-6-luna-mini', 'gpt-6-luna-2026-10', 'gpt-6-luna-2026-10-01-preview', 'xgpt-6-luna-2026-10-01', 'gpt-6-lunar-2026-10-01', `${DEFAULT_MODEL} `, null, 7]) {
+    assert.equal(isLunaModel(other), false, String(other));
+  }
+  const body = buildRequest(items, context);
+  const [x] = parseResponse({ ...answer(body), model: dated }, items, body);
+  assert.equal(x.choice, 'No');
+  assert.throws(() => responseData({ ...answer(body), model: 'gpt-6-luna-mini' }), AssistError);
+  const result = await suggest(items, { ...context, active: { drivers: 0, vehicles: 0 } }, { apiKey: 'synthetic' }, { call: async ({ body: b }) => ({
+    ...(JSON.parse(b.input[0].content).proposed ? groupCheck(b) : answer(b)), model: dated }) });
+  assert.equal(result.suggestions[0].model, dated);
+  assert.equal(result.suggestions[0].verified, true);
+  assert.equal(result.suggestions[0].autoOk, true, 'still eligible for an automatic pick');
 });
 
 test('restricted fields cannot be submitted directly to Luna', () => {
