@@ -293,6 +293,9 @@ async function applyCheckChoice(i, choice) {
 
 // ctx: { tabId, page, carrier } of the fill these frames came from.
 async function runAssist(frames, ctx) {
+  // The quote the review is for: its ai_suggest is logged as that quote's, also when the intake was
+  // replaced while Luna answered (usage-log.js log keeps an event's own session and intakeId).
+  const origin = usage.currentSession();
   const record = state.intake?.record;
   const active = { ...state.active };
   // What Luna's answers rest on (assistContextKey): the intake as Luna sees it, the driver/vehicle,
@@ -371,7 +374,8 @@ async function runAssist(frames, ctx) {
     // The page's other choice questions and their answers go along as context (redacted, bounded,
     // never typed values): what the agent sees beside the questions left to them.
     const context = { record, carrier: ctx.carrier.id, page: ctx.page, active, pageAnswers: pageAnswers(ctx.snapshots, missing, record) };
-    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
+    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length,
+      session: origin?.id ?? null, intakeId: origin?.intakeId ?? null };
     let answered = () => {};
     const sigs = missing.map(sigOf);
     const pending = new Promise((resolve) => { answered = resolve; });

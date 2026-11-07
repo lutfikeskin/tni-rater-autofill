@@ -2607,6 +2607,8 @@ test('a page without form fields still shows what needs the agent', () => {
 
 function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
   const logged = [], rendered = [], applied = [], holders = [];
+  // The usage log's quote (usage-log.js currentSession): a test may replace it mid-review.
+  const session = { current: { id: 'quote-1', intakeId: 'intake-1' } };
   // The report's holders above the list (aiHolder in ai-view.jsx): each placed by its node, saying
   // what it was told last (`said`).
   const aiHolder = () => {
@@ -2625,14 +2627,33 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
     aiSettledOnPage: () => false, aiFingerprint: (v) => JSON.stringify(v), aiItemFingerprint: (x) => `${x.key}|${x.label}`,
     aiCacheSignature: (x) => JSON.stringify(x), runKit: async () => [{ frameId: 0, result: 'snapshot' }],
-    suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events) },
+    suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events), currentSession: () => session.current },
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
     syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
   vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
-  return { state, context, ctx, report, logged, rendered, applied, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
+  return { state, context, ctx, report, logged, rendered, applied, session, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
 }
+
+// CodeRabbit on #391: an intake replaced while Luna answered moved the review's spent tokens to the
+// next quote, as log() stamps the session current when it is called.
+test("a page review's ai_suggest is logged as the quote it began in, also when the intake was replaced meanwhile", async () => {
+  const answer = { suggestions: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125', leave: true }], tokensIn: 10, tokensOut: 2, modelCalls: 1 };
+  const late = assistHarness({ suggest: async () => { late.session.current = { id: 'quote-2', intakeId: 'intake-2' }; return answer; } });
+  await late.context.runAssist([{}], late.ctx);
+  const failed = assistHarness({ suggest: async () => {
+    failed.session.current = { id: 'quote-2', intakeId: 'intake-2' };
+    throw Object.assign(new failed.context.AssistError('Luna returned an invalid decision. Nothing was applied.'), { usage: { modelCalls: 1, tokensIn: 10, tokensOut: 2 } });
+  } });
+  await failed.context.runAssist([{}], failed.ctx);
+  for (const t of [late, failed]) assert.deepEqual([t.logged[0].type, t.logged[0].session, t.logged[0].intakeId, t.logged[0].tokensIn], ['ai_suggest', 'quote-1', 'intake-1', 10]);
+  // No quote loaded when it began: logged as none, not as one loaded meanwhile.
+  const none = assistHarness({ suggest: async () => { none.session.current = { id: 'quote-2', intakeId: 'intake-2' }; return answer; } });
+  none.session.current = null;
+  await none.context.runAssist([{}], none.ctx);
+  assert.deepEqual([none.logged[0].session, none.logged[0].intakeId], [null, null]);
+});
 
 // 2026-10-05 FL run: Luna answered in 17 s, but the page had changed meanwhile; the panel kept
 // "Asking Luna about 14 questions…" on screen for minutes.
