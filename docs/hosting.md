@@ -87,7 +87,9 @@ the previous one keeps serving. `npm run server` on this computer still needs no
 One request never stops the server for everyone else. A request target that isn't a URL answers
 400 before any token check, an event whose type isn't one of the server's own (`constructor` or
 `__proto__` included) is refused in the reply's `rejected`, and an exception inside a request
-answers 500 (the log names the error and where it was thrown, not its message). Anything that
+answers 500 (the log names the error and where it was thrown, not its message), or, when the
+answer had already begun (an export streaming out), closes the connection, so the client sees a
+cut-off answer rather than a 500: an export that ends early has failed. Anything that
 fails outside a request still stops the process, with a timestamped log line and a non-zero exit,
 so Railway's restart policy applies.
 
