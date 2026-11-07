@@ -266,6 +266,11 @@ const state = storeState({
   // What autofill put in each field on the current tab (field key -> { path, shown }), so the
   // usage log can tell the agent's corrections apart from agreement.
   filled: new Map(),
+  // What the fills of a quote tab gave before the panel opened (tab id -> { scope: the intake, given:
+  // field key -> { path, shown } }), read from its kept reports (restoreReports): a later fill keeps an
+  // answer that shows otherwise now as changed since (pagekit `changedSince`), which no recorder may
+  // have seen while the panel was closed.
+  givenEarlier: new Map(),
   // Question text per field key, from the fill engine (better than the recorder's guess).
   labels: new Map(),
   // Each combo's choices seen by the fill engine (field key -> Set), so the usage log keeps a
@@ -789,6 +794,13 @@ async function restoreReports(tabId) {
   if (reportsRestored.has(done) || state.tab?.id !== tabId || !carrier || !state.intake || usage.currentSession()?.intakeId !== scope) return;
   reportsRestored.add(done);
   if (was?.scope !== scope || !Array.isArray(was.entries)) return;
+  // What those fills gave, the newest last: a fill since the panel opened knows its own (state.filled).
+  const given = new Map();
+  for (const e of was.entries) {
+    if (!String(e?.key ?? '').startsWith(`${tabId}|`)) continue;
+    for (const f of Array.isArray(e.frames) ? e.frames : []) for (const x of Array.isArray(f?.filled) ? f.filled : []) if (x?.key) given.set(x.key, { path: x.path ?? null, shown: x.shown ?? null });
+  }
+  state.givenEarlier?.set(tabId, { scope, given });
   // A report a fill made since the panel opened is newer: kept. Each keeps its key, which holds
   // its step on a one-address application (GEICO, AmWINS): the tab's step may not be known yet.
   // Each is made again as the page is now (liveFrames): the page in front's read once for all its
