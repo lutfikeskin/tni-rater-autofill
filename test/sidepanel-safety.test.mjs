@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { assistContextKey, clientNamedChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
+import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
@@ -2640,7 +2640,7 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
   const state = { intake: { record }, active: { drivers: 0, vehicles: 0 }, tab: { id: 1, url: 'https://rater.test/Default.aspx?pageName=CoveragesRates' },
     aiRun: 0, aiCache: new Map(), aiSettingsRun: 0, aiAsking: new Map(), agentKeys: new Map(), filling: false };
   const context = {
-    state, assistContextKey, clientNamedChoices, pageOf: (url) => new URL(url).searchParams.get('pageName'), aiHolder, $: () => report,
+    state, assistContextKey, pseudonymizeChoices, pageOf: (url) => new URL(url).searchParams.get('pageName'), aiHolder, $: () => report,
     aiSettings: async () => ({ on: true, apiKey: 'synthetic', ready: true, model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
     PROVIDERS: { luna: { name: 'Luna', policy: 'synthetic-policy' } },
     collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
@@ -2739,23 +2739,34 @@ test('Luna without a key says so above the list, and a failed review says it fai
   assert.deepEqual([...waiting.rendered[0][1]], [pick], 'the waiting pick is what renderAi draws again');
 });
 
-// 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions
-// were left, as counts.
-// Audit 2026-11-07, AI-13: a question whose choices name the client's people or place is never asked.
-test("a question whose choices name a driver is kept from Luna and counted as blocked", async () => {
+// Audit 2026-11-07, AI-13 (the maintainer, 2026-11-07: pseudonymize): a question whose choices name
+// the client goes to Luna with placeholders and its pick comes back as the page's choice, never as an
+// automatic one; one code can't map stays with the agent.
+test("a question whose choices name a driver goes to Luna with placeholders and its pick comes back as the page's", async () => {
   let asked = null;
-  const t = assistHarness({ record: { vehicles: [], drivers: [{ first: 'Maria', last: 'Lopez' }] },
-    suggest: async (items) => { asked = items.map((x) => x.key); return { suggestions: [], tokensIn: 1, tokensOut: 1, modelCalls: 1 }; } });
+  const t = assistHarness({ record: { vehicles: [], drivers: [{ first: 'Maria', last: 'Lopez' }, { first: 'Juan', last: 'Lopez' }] }, cfg: { auto: true },
+    suggest: async (items) => {
+      asked = items.map((x) => [x.key, x.options]);
+      return { suggestions: items.filter((x) => x.key !== 'haz').map((x) => ({ ...x, choice: x.options[1], leave: false, autoOk: true })), tokensIn: 1, tokensOut: 1, modelCalls: 1 };
+    } });
   t.context.collectItems = () => ({ blocked: [], items: [
-    { key: 'operator', label: 'Principal operator', controlKind: 'select', options: ['Maria Lopez', 'Other'] },
-    { key: 'haz', label: 'Hazmat', controlKind: 'radio', options: ['Yes', 'No'] },
+    { id: 'f1', key: 'operator', label: 'Principal operator', controlKind: 'select', options: ['Maria Lopez', 'Juan Lopez', 'Other'] },
+    { id: 'f2', key: 'haz', label: 'Hazmat', controlKind: 'radio', options: ['Yes', 'No'] },
+    { id: 'f3', key: 'part', label: 'Who signs', controlKind: 'select', options: ['Maria', 'Other'] },
   ] });
   await t.context.runAssist([{}], t.ctx);
-  assert.deepEqual(asked, ['haz']);
+  assert.deepEqual(asked, [['operator', ['Driver 1 (intake drivers[0])', 'Driver 2 (intake drivers[1])', 'Other']], ['haz', ['Yes', 'No']]],
+    'no driver name is sent; a question code cannot map is not asked');
   assert.equal(t.logged[0].blocked, 1);
-  assert.equal(t.logged[0].items, 1);
+  assert.equal(t.logged[0].items, 2);
+  const [, shown] = t.rendered[0];
+  const operator = shown.find((x) => x.key === 'operator');
+  assert.deepEqual([operator.choice, [...operator.options], operator.autoOk], ['Juan Lopez', ['Maria Lopez', 'Juan Lopez', 'Other'], false]);
+  assert.equal(t.applied.length, 0, 'never put in automatically: picking a person is an identity match');
 });
 
+// 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions
+// were left, as counts.
 test('Luna gets the page’s other answers from the snapshot, and the log counts why questions were left', async () => {
   let sent;
   const why = ['missing', 'unverified', 'unverified', 'chose', 'tooLarge', null];

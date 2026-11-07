@@ -4,7 +4,7 @@ import {
   AssistError,
   LEAVE,
   assistContextKey,
-  clientNamedChoices,
+  pseudonymizeChoices,
   collectItems,
   evidenceFor,
   manualOnlyReason,
@@ -229,16 +229,46 @@ test('common errors remain typed for callers', () => {
   assert.equal(typeof LEAVE, 'string');
 });
 
-// Audit 2026-11-07, AI-13: Luna gets the client's people and place as [client] but the choices as
-// the page shows them, so a choice naming them could only be guessed.
-test("a question whose choices name the client's driver, owner or place stays with the agent; a business word does not", () => {
-  const record = { applicant: { name: 'Reefer Express LLC', owner1: 'Dana Q Sample' },
-    garaging: { street: '12 Elm Road', city: 'Springfield', zip: '62704' }, drivers: [{ first: 'Maria', last: 'Lopez' }] };
-  const q = (key, options) => ({ key, options });
-  const items = [q('driver', ['Maria Lopez', 'Dana Sample']), q('owner', ['Sample', 'Other']), q('city', ['Springfield', 'Chicago']),
-    q('zip', ['62704', '60601']), q('class', ['Reefer', 'Dry Van']), q('yes', ['Yes', 'No']), q('none', undefined)];
-  const { kept, named } = clientNamedChoices(items, record);
-  assert.deepEqual(named.map((x) => x.key), ['driver', 'owner', 'city', 'zip']);
-  assert.deepEqual(kept.map((x) => x.key), ['class', 'yes', 'none'], "the business's own name is no reason: its words are often a class or cargo");
-  assert.deepEqual(clientNamedChoices(items, null).named, [], 'no intake, nothing to match');
+// Audit 2026-11-07, AI-13 (the maintainer, 2026-11-07: pseudonymize): Luna gets the client's people
+// and place as [client], so a choice naming them goes as a placeholder saying whose it is, and the pick
+// comes back as the page's own choice. No name or address is sent.
+test("choices naming the client's driver, owner or place go to Luna as placeholders and come back as the page's", () => {
+  const record = { applicant: { name: 'Reefer Express LLC', owner1: 'Dana Q Sample', owner2: 'Lee Sample' },
+    garaging: { street: '12 Elm Road', city: 'Springfield', zip: '62704' },
+    drivers: [{ first: 'Maria', last: 'Lopez' }, { first: 'Juan', last: 'Lopez' }, { first: 'Dana', last: 'Sample' }] };
+  const q = (id, options, current = null) => ({ id, key: id, label: id, options, current });
+  const items = [
+    q('operator', ['Lopez, Maria', 'JUAN LOPEZ', 'Other'], 'Other'),
+    q('owner', ['Dana Q. Sample', 'Lee Sample', 'Someone else'], 'Lee Sample'),
+    q('city', ['Springfield', 'Chicago']), q('zip', ['62704', '60601']),
+    q('class', ['Reefer', 'Dry Van']), q('yes', ['Yes', 'No']), q('none', undefined),
+    // Code can't tell whose: part of a name, two drivers in one choice, a person and the address,
+    // two choices for one placeholder, a current answer naming the client that isn't a choice.
+    q('part', ['Maria', 'Other']), q('both', ['Maria and Juan Lopez', 'Other']), q('mixed', ['Maria Lopez, Springfield', 'Other']),
+    q('twice', ['Maria Lopez', 'M. Lopez (Maria)']), q('typed', ['Yes', 'No'], 'Maria Lopez'),
+  ];
+  const named = pseudonymizeChoices(items, record);
+  const sent = Object.fromEntries(named.items.map((x) => [x.id, x]));
+  assert.deepEqual(sent.operator.options, ['Driver 1 (intake drivers[0])', 'Driver 2 (intake drivers[1])', 'Other']);
+  assert.equal(sent.operator.current, 'Other');
+  assert.deepEqual(sent.owner.options, ['Driver 3 (intake drivers[2]), also Owner (intake applicant.owner1)', 'Owner 2 (intake applicant.owner2)', 'Someone else'],
+    'a driver who is also the owner says both');
+  assert.equal(sent.owner.current, 'Owner 2 (intake applicant.owner2)', 'the current answer as its placeholder');
+  assert.deepEqual([sent.city.options, sent.zip.options], [['Garaging city', 'Chicago'], ['Garaging ZIP', '60601']]);
+  for (const id of ['class', 'yes', 'none']) assert.equal(sent[id], items.find((x) => x.id === id), `${id}: as it is`);
+  assert.deepEqual(named.held.map((x) => x.id), ['part', 'both', 'mixed', 'twice', 'typed']);
+  const json = JSON.stringify(named.items);
+  for (const leak of ['Maria', 'Juan', 'Lopez', 'Dana', 'Lee', 'Springfield', '62704']) assert.ok(!json.includes(leak), `${leak} is sent`);
+  assert.equal(named.toSend(items[0]), sent.operator);
+  assert.equal(named.toSend(items[4]), items[4]);
+
+  // Luna's pick back: the page's own choice, never automatic (picking a person is an identity match).
+  const back = named.restore({ ...sent.operator, choice: 'Driver 2 (intake drivers[1])', leave: false, autoOk: true });
+  assert.deepEqual([back.choice, back.options, back.current, back.autoOk, back.pseudonymized], ['JUAN LOPEZ', items[0].options, 'Other', false, true]);
+  assert.equal(named.restore({ ...sent.city, choice: 'Chicago', autoOk: true }).choice, 'Chicago');
+  assert.equal(named.restore({ ...sent.owner, choice: null, leave: true }).choice, null, 'a question left stays left');
+  const plain = { ...items[5], choice: 'Yes', autoOk: true };
+  assert.equal(named.restore(plain), plain, 'any other suggestion as it is');
+  assert.deepEqual(pseudonymizeChoices(items, null).held, [], 'no intake, nothing to match');
+  assert.equal(pseudonymizeChoices(items, null).items.length, items.length);
 });

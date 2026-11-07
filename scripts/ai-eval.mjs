@@ -17,7 +17,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { collectItems, clientNamedChoices } from '../src/ai/common.js';
+import { collectItems, pseudonymizeChoices } from '../src/ai/common.js';
 import { DEFAULT_MODEL, suggest as suggestLuna, callModel, buildNotesReview, parseNotesReview, buildNameReview, parseNameReview, NAME_GUESSES, noteLines } from '../src/ai/luna.js';
 import { intakeNotes } from '../src/normalize.js';
 
@@ -146,13 +146,13 @@ export async function runProvider(entries, { env = process.env, clock = performa
     const started = clock.now();
     try {
       const collected = collectItems([{ unknown: providerItems(entry) }]);
-      // As the panel does: a question whose choices name the client is never asked.
-      const { kept, named } = clientNamedChoices(collected.items, entry.context?.record);
-      const blocked = [...collected.blocked, ...named].map(item => ({ ...item, choice: null, leave: true, basis: 'none', intakePath: null }));
-      const result = kept.length
-        ? await suggestLuna(kept, providerContext(entry), config, { call })
+      // As the panel does: choices naming the client go as placeholders and come back as the page's.
+      const named = pseudonymizeChoices(collected.items, entry.context?.record);
+      const blocked = [...collected.blocked, ...named.held].map(item => ({ ...item, choice: null, leave: true, basis: 'none', intakePath: null }));
+      const result = named.items.length
+        ? await suggestLuna(named.items, providerContext(entry), config, { call })
         : { suggestions: [], tokensIn: 0, tokensOut: 0 };
-      const suggestions = [...blocked, ...(Array.isArray(result?.suggestions) ? result.suggestions : [])];
+      const suggestions = [...blocked, ...(Array.isArray(result?.suggestions) ? result.suggestions.map(named.restore) : [])];
       runs.push({
         suggestions,
         timingMs: clock.now() - started,
