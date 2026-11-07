@@ -432,12 +432,15 @@ test('a fill\'s timeline is kept on fill_run and fill_error in its own shape, an
       ev({ type: 'fill_error', filled: undefined, error: 'safe error', timeline: [{ what: 'answer', at: 1, value: 'client name' }] }),
       ev({ type: 'fill_error', filled: undefined, error: 'safe error', timeline: Array.from({ length: 41 }, (_, at) => ({ what: 'wait', at })) }),
       ev({ type: 'fill_error', filled: undefined, error: 'safe error', timeline: 'client name' }),
+      // An event without its time, or of a kind the kit doesn't keep (CodeRabbit on #431).
+      ev({ type: 'fill_error', filled: undefined, error: 'safe error', timeline: [{ what: 'answer' }] }),
+      ev({ type: 'fill_error', filled: undefined, error: 'safe error', timeline: [{ what: 'client name', at: 1 }] }),
     ] })).json();
-    assert.equal(result.accepted, 5);
+    assert.equal(result.accepted, 7);
   });
   const rows = stored(dataDir);
   assert.deepEqual([rows[0].timeline, rows[1].timeline], [timeline, timeline]);
-  assert.deepEqual(rows.slice(2).map((r) => [r.timeline, r.dropped]), [[undefined, ['timeline']], [undefined, ['timeline']], [undefined, ['timeline']]]);
+  assert.deepEqual(rows.slice(2).map((r) => [r.timeline, r.dropped]), Array.from({ length: 5 }, () => [undefined, ['timeline']]));
   assert.doesNotMatch(JSON.stringify(rows), /client name/);
 });
 

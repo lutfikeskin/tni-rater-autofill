@@ -235,9 +235,10 @@ export const RUN_FIELDS = {
 const TIMELINE_TEXT = { what: 20, why: 40, ended: 20, button: 60, how: 10, key: 256, label: 120, kind: 30 };
 const TIMELINE_NUMBER = ['at', 'ms'];
 const TIMELINE_FLAG = ['ok', 'on'];
+const TIMELINE_WHAT = ['wait', 'press', 'answer', 'run'];
 export function validTimeline(v) {
   return Array.isArray(v) && v.length <= 40 && v.every((e) => !!e && typeof e === 'object' && !Array.isArray(e)
-    && typeof e.what === 'string' && Object.entries(e).every(([k, x]) => (Object.hasOwn(TIMELINE_TEXT, k) ? x === null || (typeof x === 'string' && x.length <= TIMELINE_TEXT[k])
+    && TIMELINE_WHAT.includes(e.what) && Number.isFinite(e.at) && Object.entries(e).every(([k, x]) => (Object.hasOwn(TIMELINE_TEXT, k) ? x === null || (typeof x === 'string' && x.length <= TIMELINE_TEXT[k])
       : TIMELINE_NUMBER.includes(k) ? Number.isFinite(x)
         : TIMELINE_FLAG.includes(k) ? typeof x === 'boolean'
           : k === 'held' && Array.isArray(x) && x.length <= 4 && x.every((h) => typeof h === 'string' && h.length <= 20))));
