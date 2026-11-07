@@ -7,6 +7,7 @@ import os from 'node:os';
 import http from 'node:http';
 import { chromium } from 'playwright';
 import { STORAGE_VERSION } from '../src/storage-version.js';
+import { MAX_REQUEST_CHARS } from '../src/ai/luna.js';
 
 const root = path.resolve(import.meta.dirname, '..');
 const out = path.resolve(process.argv[2] || path.join(os.tmpdir(), `luna-mock-${Date.now()}`));
@@ -82,7 +83,7 @@ try {
       assert.equal(body.text.verbosity, 'low');
       assert.equal(body.temperature, undefined);
       assert.equal(body.top_p, undefined);
-      assert.ok(JSON.stringify(body).length <= 48000);
+      assert.ok(JSON.stringify(body).length <= MAX_REQUEST_CHARS);
       assert.equal(body.max_output_tokens, state.proposed ? 2048 : 4096);
       assert.ok(Object.keys(state.proposed ?? state.fields).length <= 12);
       if (!state.proposed) assert.equal(state.intake, undefined);

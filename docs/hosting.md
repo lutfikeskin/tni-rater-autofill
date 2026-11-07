@@ -42,7 +42,8 @@ and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
 Agents use Luna without an OpenAI key of their own: with no key saved, the panel sends its Luna
 requests to `/v1/luna` with the upload token, and the server adds `OPENAI_API_KEY` and passes them
 to OpenAI. It passes on only a request shaped like the panel's (`lunaRequestError`: the fixed
-`gpt-6-luna` model, `store: false`, no tools, at most 4,096 output tokens and 48,000 characters), at
+`gpt-6-luna` model, `store: false`, no tools, at most 4,096 output tokens and 160,000 characters,
+above the panel's own 120,000, so a server is deployed with a raised bound before the panel), at
 most `RATER_LUNA_DAILY_LIMIT` a day (UTC, then 429; unset or blank is 5000, `0` refuses every
 request, and a value that isn't a whole number counts as 0), and neither stores nor logs the request
 or OpenAI's answer. OpenAI's own errors come back as their status only (the log adds OpenAI's error
@@ -55,7 +56,7 @@ balance stops it (429 `insufficient_quota`, which the panel shows as 424). An Op
 the project only sends an email; check in OpenAI's settings whether a limit there also stops
 requests before relying on it. The pilot's Luna calls (2026-10-01 to 23, opt-in with agents' own
 keys) were at most 84 a day, about 3,100 input and 350 output tokens each; a request is at most
-48,000 characters and 4,096 output tokens, so the limit times that is the most a day can cost. The
+160,000 characters and 4,096 output tokens, so the limit times that is the most a day can cost. The
 check fixes the model and the request's size, not its instructions or schema, so a leaked token can
 still ask questions of its own and use up the day's limit for every agent; the count is kept in
 memory, so a restart or redeploy starts it again. To stop Luna at once, set the limit to 0 or remove

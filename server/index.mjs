@@ -71,7 +71,9 @@ const MAX_DROPPED = 20;
 // limit for every agent. Kept here: the deployed server has no src/.
 export const LUNA_MODEL = 'gpt-6-luna';
 const LUNA_FIELDS = new Set(['model', 'store', 'reasoning', 'max_output_tokens', 'instructions', 'input', 'text']);
-const LUNA_MAX_CHARS = 48_000;
+// Above the panel's own bound (MAX_REQUEST_CHARS in src/ai/luna.js, 120,000), so whatever it sends
+// passes; 48,000 until 2026-11-07 (audit AI-01). Raise it here, and deploy, before the panel's.
+export const LUNA_MAX_CHARS = 160_000;
 const LUNA_MAX_OUTPUT = 4096;
 const LUNA_TIMEOUT_MS = 60_000;
 export const LUNA_DAILY_LIMIT = 5000;
@@ -563,7 +565,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) return done(415, { error: 'send application/json' });
     const luna = url.pathname === '/v1/luna';
     if (luna && !openaiKey) return done(501, { error: 'Luna is not set up on this server' });
-    const maxBody = luna ? LUNA_MAX_CHARS * 2 : MAX_BODY;
+    // In bytes: UTF-8 takes up to 3 per character of the check's count (JSON's length).
+    const maxBody = luna ? LUNA_MAX_CHARS * 3 : MAX_BODY;
 
     let size = 0;
     const chunks = [];
