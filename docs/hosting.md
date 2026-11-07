@@ -107,8 +107,15 @@ the next minute's upload (its queue keeps 20,000 events, then drops the oldest a
 `usage_lost`). On `DISK LOW`, grow the volume in Railway (or free space on it) before the agents'
 queues fill.
 
-Redeploy after a server change: `railway up --service usage-server` from the repository root
-(`.railwayignore` keeps the upload to what the image needs).
+Redeploy after a server change is merged: `npm run deploy:server` (`scripts/deploy-server.mjs`),
+with Railway's CLI signed in and linked to the project. `railway up` uploads the working tree as it
+is, on whatever branch it is (other sessions switch branches in the main checkout), so the script
+deploys only `origin/main` as merged (audit 2026-11-07, SRV-10). It fetches, refuses unless this
+checkout's commit is `origin/main`'s and the files the image is built from (`server/Dockerfile` and
+its `COPY` sources) have no uncommitted or untracked changes, then runs
+`railway up --service usage-server --ci` (`.railwayignore` keeps the upload to what the image
+needs) and waits up to 5 minutes for `/v1/health` to name this checkout's server. `--dry-run` only
+checks. A failed build exits 1, and the previous deployment keeps serving.
 
 Before deploying, confirm `RATER_TOKEN` is set in the service's Variables. The server fails closed:
 bound to anything but loopback (`127.0.0.1`, `localhost`, `::1`) without `RATER_TOKEN`, it exits
@@ -197,7 +204,7 @@ state, business class, unit counts, redacted labels and report texts.
 
 **Its password.** Set `RATER_DASHBOARD_TOKEN` in the `usage-server` service's Variables (a random
 value of at least 16 characters, for example from `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`),
-keep it in your password manager, and redeploy (`railway up --service usage-server`). Unset, or
+keep it in your password manager, and redeploy (`npm run deploy:server`). Unset, or
 shorter than 16 characters, the page is off and `/dashboard` answers 404 (a short one also prints a
 warning at startup); the startup line says `(dashboard on: /dashboard)` when it is on. The browser
 asks for a user name and password: any user name, the token as the password (HTTP Basic, over
