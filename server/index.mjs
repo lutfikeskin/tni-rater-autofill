@@ -184,7 +184,9 @@ export const EVENT_FIELDS = {
   // run: one fill invocation, shared with its fill_field events; rules: the rule files'
   // fingerprint; settings: the panel's filling switches; step: a one-address application's step
   // (AmWINS). Their shapes are checked below (RUN_FIELDS): a malformed value refuses the event.
-  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
+  // background: the quote tab filled while the agent was on another; hiddenMs: how long its page was
+  // hidden meanwhile (Chrome slows a hidden tab's timers).
+  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
   // source: where the answer comes from (plan.js; FIELD_SOURCES below); standard, manualOnly,
   // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
@@ -470,6 +472,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     }
     if (out.source !== undefined && !FIELD_SOURCES.includes(out.source)) drop('source');
     for (const k of ['standard', 'manualOnly', 'review']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
+    if (out.background !== undefined && out.background !== true) drop('background');
+    if (out.hiddenMs !== undefined && !(Number.isSafeInteger(out.hiddenMs) && out.hiddenMs > 0 && out.hiddenMs <= 86_400_000)) drop('hiddenMs');
     if (out.type === 'check_dismissed' && out.mark !== undefined && !(out.mark === null || (typeof out.mark === 'string' && /^[a-z-]{1,20}$/.test(out.mark)))) drop('mark');
     if (out.install !== undefined && !(typeof out.install === 'string' && /^[0-9a-f-]{36}$/.test(out.install))) drop('install');
     if (out.platform !== undefined && !(out.platform && typeof out.platform === 'object' && !Array.isArray(out.platform) && Object.keys(out.platform).every((k) => ['os', 'chrome'].includes(k))

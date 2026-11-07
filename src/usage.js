@@ -418,19 +418,25 @@ function fieldWhy(x, list) {
 //   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep).
 /**
  * @param {Partial<FillReport>[]} frames  the page kit's fill reports, one per frame (a stop page's: its blockers only)
- * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string }} ctx
+ * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean }} ctx
  * @returns {UsageEvent[]}
  */
-export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash }) {
+export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false }) {
   // Typed for the report list it reads (the body takes any key).
   /** @type {<K extends keyof FillReport>(k: K) => NonNullable<FillReport[K]>} */
   const all = /** @param {any} k @returns {any} */ (k) => frames.flatMap((f) => f[k] ?? []);
   const isChoice = (x) => x.controlKind && x.controlKind !== 'text';
   const stepField = stepOf(step, redact);
+  // The longest a frame's page was hidden during the fill (pagekit tracedFill).
+  const hiddenMs = Math.max(0, ...frames.map((f) => (Number.isFinite(f.hiddenMs) ? f.hiddenMs : 0)));
   /** @type {UsageEvent[]} */
   const events = [{
     type: 'fill_run', carrier, page, view, overwrite, auto, ms,
     ...(run ? { run } : {}), ...(rules ? { rules } : {}), ...(settings ? { settings } : {}), ...(defaultsHash ? { defaultsHash } : {}), ...stepField,
+    // A fill of the quote tab while the agent was on another (`background`), and how long its page
+    // was hidden meanwhile (`hiddenMs`): Chrome slows a hidden tab's timers, so the weekly review can
+    // tell those fills from slow carriers (audit 2026-11-07, FLOW-12).
+    ...(background ? { background: true } : {}), ...(hiddenMs ? { hiddenMs } : {}),
     fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0),
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,

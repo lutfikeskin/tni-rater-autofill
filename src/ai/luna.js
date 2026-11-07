@@ -5,6 +5,11 @@ import { fieldInfo } from '../schema.js';
 import { ntlMention, intakeNotes, NTL_WORDS, NTL_RATES } from '../normalize.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
+// The model an answer may come from: the one asked for, or the provider's dated snapshot of it
+// (gpt-6-luna-2026-10-01), which an alias may be reported as. Any other model fails closed
+// (audit 2026-11-07, AI-11: an exact match would turn Luna off for everyone on a rename).
+export const isLunaModel = name => name === DEFAULT_MODEL || typeof name === 'string'
+  && name.startsWith(`${DEFAULT_MODEL}-`) && /^\d{4}-\d{2}-\d{2}$/.test(name.slice(DEFAULT_MODEL.length + 1));
 export const API_URL = 'https://api.openai.com/v1/responses';
 // The safety contract's version, set by hand: the schema's shape, what may be picked automatically and
 // what counts as evidence. Changing it retires every pending approval hold (restoreAiPending). The
@@ -106,7 +111,7 @@ function blankFieldStep(field) {
 
 // Parse the HTTP envelope ourselves; output_text is an SDK convenience, not the wire contract.
 export function responseData(json) {
-  if (json?.status !== 'completed' || json.model !== DEFAULT_MODEL || !Array.isArray(json.output)) {
+  if (json?.status !== 'completed' || !isLunaModel(json.model) || !Array.isArray(json.output)) {
     throw new AssistError('Luna returned an incomplete response or an unexpected model. Nothing was applied.');
   }
   const parts = [];
@@ -282,7 +287,7 @@ export function restsOnClientText(sources) {
 // The second model judgment checks support, not measured accuracy. Every automatic
 // pick still needs agent approval before Continue; safety semantics are shared with the fill engine.
 function automaticChoiceAllowed(x) {
-  return x.model === DEFAULT_MODEL && x.applyable === true && KINDS.has(x.controlKind)
+  return isLunaModel(x.model) && x.applyable === true && KINDS.has(x.controlKind)
     && x.options.includes(x.choice) && !neverReason(x) && !manualOnlyReason(x)
     && x.evidenceSources.length > 0 && !restsOnClientText(x.evidenceSources)
     && String(x.choice).trim().toLowerCase() !== String(x.current ?? '').trim().toLowerCase();
@@ -352,18 +357,32 @@ export async function suggest(items, context, config, options = {}) {
 }
 
 async function reviewPage(items, context, config, { call = callModel, isStale = () => false }, prompt) {
-  const suggestions = [];
   const counters = { tokensIn: 0, tokensOut: 0, modelCalls: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
   const fresh = () => { if (isStale()) throw new AssistError('The page or intake changed. Run Fill again for fresh suggestions.'); };
+  // Counted as soon as a call returns, before it is checked or found stale: its tokens were spent.
+  const usage = json => addUsage(counters, json);
+  try {
+    return await reviewGroups(items, context, config, { call, fresh, usage, counters, prompt });
+  } catch (error) {
+    // A review that fails or is dropped still says what it spent (the panel logs it with the error).
+    if (error && typeof error === 'object') error.usage = { ...counters };
+    throw error;
+  }
+}
+
+// One call's usage added to `counters` (the same fields as suggest's result).
+function addUsage(counters, json) {
   const count = value => Number.isFinite(value) && value >= 0 ? value : 0;
-  const usage = json => {
-    counters.modelCalls++;
-    counters.tokensIn += count(json.usage?.input_tokens);
-    counters.tokensOut += count(json.usage?.output_tokens);
-    counters.reasoningTokens += count(json.usage?.output_tokens_details?.reasoning_tokens);
-    counters.cachedTokens += count(json.usage?.input_tokens_details?.cached_tokens);
-    counters.cacheWriteTokens += count(json.usage?.input_tokens_details?.cache_write_tokens);
-  };
+  counters.modelCalls++;
+  counters.tokensIn += count(json?.usage?.input_tokens);
+  counters.tokensOut += count(json?.usage?.output_tokens);
+  counters.reasoningTokens += count(json?.usage?.output_tokens_details?.reasoning_tokens);
+  counters.cachedTokens += count(json?.usage?.input_tokens_details?.cached_tokens);
+  counters.cacheWriteTokens += count(json?.usage?.input_tokens_details?.cache_write_tokens);
+}
+
+async function reviewGroups(items, context, config, { call, fresh, usage, counters, prompt }) {
+  const suggestions = [];
   let limit = MAX_REQUEST_CHARS, { groups, tooLarge } = requestGroups(items, context, limit);
   // None fits: the review stops before any paid call.
   if (!groups.length && tooLarge.length) throw tooLarge[0].error;
@@ -374,14 +393,14 @@ async function reviewPage(items, context, config, { call = callModel, isStale = 
     try {
       fresh();
       const json = await call({ apiKey: config.apiKey, proxy: config.proxy, body });
+      usage(json);
       fresh();
       parsed = parseResponse(json, batch, body);
-      usage(json);
       if (parsed.some(x => !x.leave)) {
         const checked = await call({ apiKey: config.apiKey, proxy: config.proxy, body: buildVerification(parsed, context, { limit }) });
+        usage(checked);
         fresh();
         parsed = verifyResponse(checked, parsed);
-        usage(checked);
       }
     } catch (error) {
       // TNI's server from before 2026-11-07: the questions not yet reviewed are planned again at its
@@ -540,18 +559,18 @@ export async function reviewNotes(record, config, { call = callModel, redact, to
   const review = buildNotesReview(record, { redact, today });
   if (!review) return { warnings: [], lines: 0, flagged: 0, tokensIn: 0, tokensOut: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, modelCalls: 0 };
   const json = await call({ apiKey: config.apiKey, proxy: config.proxy, body: review.body });
-  const results = parseNotesReview(json, review);
+  const spent = { tokensIn: 0, tokensOut: 0, modelCalls: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
+  addUsage(spent, json);
+  let results;
+  try { results = parseNotesReview(json, review); } catch (error) { error.usage = spent; throw error; }
   const warnings = notesWarnings(results, review);
   // Lines that got an item (one line can get an NTL and a coverage item), for the usage counts.
   const flagged = new Set(warnings.map(w => w.line)).size;
   for (const w of warnings) delete w.line;
   // Past the first lines nothing was read: the agent reads the rest.
   if (review.truncated) warnings.push({ code: 'ai.claims-truncated', path: 'claims.text', level: 'check', msg: `Luna read only the first ${MAX_NOTE_LINES} lines of the notes. Check the rest.` });
-  const count = value => Number.isFinite(value) && value >= 0 ? value : 0;
   // The same usage counters as page reviews (suggest), cache included.
-  return { warnings, lines: review.lines.length, flagged, modelCalls: 1, tokensIn: count(json.usage?.input_tokens), tokensOut: count(json.usage?.output_tokens),
-    reasoningTokens: count(json.usage?.output_tokens_details?.reasoning_tokens), cachedTokens: count(json.usage?.input_tokens_details?.cached_tokens),
-    cacheWriteTokens: count(json.usage?.input_tokens_details?.cache_write_tokens) };
+  return { warnings, lines: review.lines.length, flagged, ...spent };
 }
 
 // Driver gender (TNI standard: MALE unless drivers[i].gender is set). A sibling call to the
@@ -619,11 +638,11 @@ export function nameWarnings(results, { names }, record) {
 
 export async function reviewDriverNames(record, config, { call = callModel } = {}) {
   const review = buildNameReview(record);
-  const count = value => Number.isFinite(value) && value >= 0 ? value : 0;
   if (!review) return { warnings: [], names: 0, flagged: 0, modelCalls: 0, tokensIn: 0, tokensOut: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
   const json = await call({ apiKey: config.apiKey, proxy: config.proxy, body: review.body });
-  const warnings = nameWarnings(parseNameReview(json, review), review, record);
-  return { warnings, names: review.ids.length, flagged: warnings.length, modelCalls: 1, tokensIn: count(json.usage?.input_tokens), tokensOut: count(json.usage?.output_tokens),
-    reasoningTokens: count(json.usage?.output_tokens_details?.reasoning_tokens), cachedTokens: count(json.usage?.input_tokens_details?.cached_tokens),
-    cacheWriteTokens: count(json.usage?.input_tokens_details?.cache_write_tokens) };
+  const spent = { tokensIn: 0, tokensOut: 0, modelCalls: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
+  addUsage(spent, json);
+  let warnings;
+  try { warnings = nameWarnings(parseNameReview(json, review), review, record); } catch (error) { error.usage = spent; throw error; }
+  return { warnings, names: review.ids.length, flagged: warnings.length, ...spent };
 }

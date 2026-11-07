@@ -730,6 +730,7 @@
  * @property {string} [pageMoved]
  * @property {string} [navigatedTo]
  * @property {boolean} [pageChanged]
+ * @property {number} [hiddenMs]  how long the page was hidden while it filled (pagekit tracedFill), only when it was
  * @property {[string, string][]} [labels]  field key, question text
  * @property {[string, string[]][]} [choices]  field key, a combo's options
  * @property {{ label: string | null, key: string | null }[]} [skipped]
@@ -837,6 +838,8 @@
  * @property {string} [rules]
  * @property {object} [settings]
  * @property {string} [step]
+ * @property {boolean} [background]  the panel filled the quote tab while the agent was on another tab
+ * @property {number} [hiddenMs]  how long the quote tab's page was hidden during the fill, only when it was
  * @property {number} fields
  * @property {number} rounds
  * @property {number} filled

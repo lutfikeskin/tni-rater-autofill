@@ -270,11 +270,16 @@ export function recordingReport({ manifest, events }) {
     const next = segs[i + 1]?.start ?? end;
     // In time order: a wait moved here from a later step is logged after this step's own lines.
     const lines = actions(s.events).sort((x, y) => x.t - y.t);
-    const lastClick = [...s.events].reverse().find((e) => e.kind === 'click' && e.button && e.trusted !== false);
-    return { s, lines, next, lastClick, n: i + 1 };
+    // Left by the last button pressed on it: the agent's (a trusted click) or the extension's (the
+    // kit's press), whichever came last (REC-13, 2026-11-07: the agent's earlier click was named when
+    // the fill pressed Continue, and a step only the fill left showed none).
+    const leftBy = s.events.filter((e) => e.button && ((e.kind === 'click' && e.trusted !== false) || (e.kind === 'kit' && e.what === 'press')))
+      .reduce((last, e) => (!last || e.t >= last.t ? e : last), null);
+    return { s, lines, next, leftBy, n: i + 1 };
   });
-  for (const { s, lines, next, lastClick, n } of told) {
-    out.push(`| ${n} | ${s.page}${s.step ? ` · ${s.step}` : ''} | ${clock(s.start - t0)} | ${secs(next - s.start)} | ${lines.length} | ${lastClick ? quote(lastClick.button.text) : '—'} |`);
+  for (const { s, lines, next, leftBy, n } of told) {
+    const by = leftBy ? `${quote(leftBy.button.text)} (${leftBy.kind === 'kit' ? 'extension' : 'you'})` : '—';
+    out.push(`| ${n} | ${s.page}${s.step ? ` · ${s.step}` : ''} | ${clock(s.start - t0)} | ${secs(next - s.start)} | ${lines.length} | ${by} |`);
   }
   out.push('');
   if (ordered.some((e) => e.kind === 'kit')) out.push(...timeTable(ordered, told, end));
