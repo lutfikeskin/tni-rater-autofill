@@ -26,15 +26,19 @@ const UI_CHROME = /^(browse|delete coverage|\d+ of \d+|select files?)$/;
 // (ref:<name>, since 0.9.9), else from the quote's own layout of the page (fieldIdentities: a
 // field recorded before names joins the named field with its text), else from the event's text.
 // Its unit too: which vehicle, driver or trailer (`view`) and Rates row (`@<row>` in the key), so
-// one quote's vehicles stay apart (events before 0.9.9 carry neither). Other questions (AmWINS)
-// by their page and text, as before, and by their step when the event names one (a one-address
-// application's visible step, `step`, as built layouts name its pages: `<page> › <step>`), so two
-// steps' rows reading the same (Browse, a row's Delete) stay apart; events without it merge as before.
+// one quote's vehicles stay apart (events before 0.9.9 carry neither). Other questions (AmWINS,
+// GEICO) by their page, and by their step when the event names one (a one-address application's
+// visible step, `step`, as built layouts name its pages: `<page> › <step>`), so two steps' rows
+// reading the same (Browse, a row's Delete) stay apart; events without it merge as before. There
+// a question goes by the data-model name its key carries (GEICO's `ref:<name>`), else by its text.
 function identify(e, ids) {
-  if (!e.q) return { key: `${e.carrier}|${e.page}${e.step ? ` › ${e.step}` : ''}|${e.label}`, unit: '' };
+  const named = String(e.key ?? '').match(/^ref:([^@]+)/);
+  if (!e.q) {
+    const page = `${e.carrier}|${e.page}${e.step ? ` › ${e.step}` : ''}`;
+    return named ? { key: `${page}|ref:${named[1]}`, unit: '', ref: named[1] } : { key: `${page}|${e.label}`, unit: '' };
+  }
   // Its row from its own key (<q>@<row>, ref:<name>@<row>; none: the first row).
   const unit = `${String(e.view ?? '').split(':')[1] ?? ''}@${String(e.key ?? '').match(/@(\d+)$/)?.[1] ?? '1'}`;
-  const named = String(e.key ?? '').match(/^ref:([^@]+)/);
   if (named) return { key: `${e.carrier}|${e.page}|ref:${named[1]}`, unit, ref: named[1], layout: ids.byField.get(`${e.session}|${e.page}|${e.q}`) };
   const caption = `${e.carrier}|${e.page}|${textOf(e.label)}`;
   const found = ids.byField.get(`${e.session}|${e.page}|${e.q}`) ?? ids.byCaption.get(caption);
@@ -74,6 +78,9 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
       a.mappedPath = e.path ?? a.mappedPath;
       // Left to the agent: a question no rule knew, or a required one the fill couldn't answer.
       if (e.result === 'unfamiliar' || e.result === 'leftRequired') a.leftToAgent = true;
+      // A rule matched it even without filling it: it kept the page's answer, had no intake value,
+      // or couldn't set it (leftRequired is a required question no rule matched).
+      if (['kept', 'noData', 'failed'].includes(e.result)) a.ruled = true;
       if (e.result === 'filled') {
         a.source = 'autofill';
         a.autofilled = true;
@@ -179,14 +186,17 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
   const contexts = sessionContexts(events);
   const answers = finalAnswers(events);
   const byId = new Map(carriers.map((c) => [c.id, c]));
-  // A question with an id is mapped when a current rule claims it, as the fill engine and the
-  // coverage report pair them (fieldStatus: by data-model name, else its text on its page); 'unsure'
-  // counts too, so an existing rule's question isn't suggested again.
+  // A question is mapped when a current rule claims it, as the fill engine and the coverage report
+  // pair them (fieldStatus: by data-model name, else its text on its page). With an id, 'unsure'
+  // counts too, so an existing rule's question isn't suggested again. Without one (AmWINS, GEICO)
+  // it doesn't: the event names no element id, so every selector rule of the page reads 'unsure'
+  // and no question would ever be new; the fill's own results (`ruled`) say when a rule matched.
   const claimed = (o) => {
     const carrier = byId.get(o.carrier);
-    if (!carrier || !o.q) return false;
+    if (!carrier) return false;
     const f = { ref: o.ref ?? o.layout?.ref ?? undefined, caption: o.layout?.caption ?? o.label, kind: o.layout?.kind ?? o.kind };
-    return fieldStatus(f, carrier, o.page).status !== 'none';
+    const { status } = fieldStatus(f, carrier, o.page);
+    return status !== 'none' && (!!o.q || status !== 'unsure');
   };
 
   // question -> observations across quotes (one per quote and unit: a quote's vehicles each count)
@@ -228,7 +238,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     const steps = observedSteps.get(selector) ?? new Set();
     for (const o of obs) steps.add(o.step ?? '(no step)');
     observedSteps.set(selector, steps);
-    const isMapped = obs.some((o) => o.autofilled) || claimed({ ...first, ref: field });
+    const isMapped = obs.some((o) => o.autofilled || o.ruled) || claimed({ ...first, ref: field });
     const base = { carrier, q: first.q, field, page: first.page, ...(first.step ? { step: first.step } : {}), label: first.label ?? '', intakes: intakesOf(obs), quotes: quotesOf(obs) };
     // Answers someone gave (autofill, the agent, the page on an answer): not one the page held
     // when the agent left it (pageLeft), which is weaker evidence (pageAnswer below).
