@@ -434,9 +434,12 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     blockers: all('blockers').length,
     // Why the page wasn't continued: "differs: Zip code", "button: recalculate", … (no values); and
     // where nothing on the page held it (W43-40), "continue: none to click" or "continue: page
-    // busy" (pagekit advanceDue), or "continue: held for your check" (Let me look before Continue).
+    // busy" (pagekit advanceDue), "continue: held for your check" (Let me look before Continue), or
+    // "continue: page not listed" (a page or step the carrier's advance doesn't list, pagekit
+    // `unlisted`: a new or renamed page for the weekly review).
     blockerList: [...all('blockers'), ...frames.flatMap((f) => [
       ...(f.advanceDue ? [`continue: ${f.advanceDue === 'busy' ? 'page busy' : 'none to click'}`] : []),
+      ...(f.unlisted ? ['continue: page not listed'] : []),
       ...(f.held ? ['continue: held for your check'] : []),
     ])].slice(0, 12).map((b) => redact(String(b)).slice(0, 120)),
     advanced: frames.find((f) => f.advanced)?.advanced ?? null,

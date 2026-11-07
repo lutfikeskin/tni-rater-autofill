@@ -100,8 +100,14 @@ test('owner drives No: the owner\'s row is never added, and GEICO\'s driver list
 
 test('a carrier\'s Continue for one fill: its list button only once the list is complete', () => {
   assert.equal(advanceFor({ id: 'none' }), null);
-  const amwins = { advance: { text: '^save & continue$' } };
+  const amwins = { advance: { text: '^save & continue$', steps: ['Drivers'] } };
   assert.deepEqual([advanceFor(amwins), advanceFor(amwins, true)], [amwins.advance, amwins.advance]);
+  // Fail closed (the maintainer, 2026-11-07, audit ENG-01): an advance that lists no page or step
+  // it may continue on continues nowhere.
+  for (const advance of [{ text: '^continue$' }, { text: '^continue$', pages: [], steps: [] }, { text: '^continue$', exceptPages: ['Quote'] }]) {
+    assert.equal(advanceFor({ advance }), null, JSON.stringify(advance));
+  }
+  assert.deepEqual(advanceFor({ advance: { text: '^continue$', pages: ['Drivers'] } }), { text: '^continue$', pages: ['Drivers'] });
   const { listed, ...rest } = geico.advance;
   assert.deepEqual(advanceFor(geico), rest);
   assert.deepEqual(advanceFor(geico, true), { ...rest, text: `(?:${rest.text})|(?:${listed})` });

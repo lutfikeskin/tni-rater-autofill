@@ -5248,7 +5248,7 @@ test('failed session expiry blocks reads and writes and retries initialization s
 // change while list verification or AI retirement was pending. AI approval remains a hold.
 test('manual and automatic fills log the Auto-advance switch used after async preparation', async () => {
   for (const auto of [false, true]) for (const waitAt of ['pickListItem', 'retireAiOrigins']) for (const enabled of [false, true]) {
-    const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/, layoutSteps: amwins.layoutSteps } });
+    const t = fillHarness({ carrier: { id: 'amwins', advance: amwins.advance, layoutSteps: amwins.layoutSteps } });
     const start = SIDEPANEL.indexOf('const fillOptions =');
     vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
     t.ui['auto-advance'].checked = !enabled;
@@ -5568,7 +5568,7 @@ function continueHarness(switches = {}) {
   const state = { tab: { id: 7, url: 'Quote' }, tabSteps: new Map() };
   const context = { state, $: (id) => ui[id] };
   vm.runInNewContext(extractFunction('continueSaid'), context);
-  const carrier = { advance: { text: 'Continue' } };
+  const carrier = { advance: { text: 'Continue', pages: ['Quote'] } };
   const said = (entry, c = carrier) => {
     const d = context.continueSaid({ page: 'Quote', tabId: 7, left: 0, waiting: 0, ...entry }, c);
     return { phase: d.phase, title: d.title, sub: d.sub, button: d.button ?? null, label: d.label ?? null, go: d.go ?? null, alt: d.alt ?? null, altLabel: d.altLabel ?? null };
@@ -5657,6 +5657,33 @@ test('Continue\'s word leaves Continue to the agent where the panel may not clic
   assert.equal(said({ held: null, settled: true }).button, null);
 });
 
+// Audit ENG-01 (the maintainer, 2026-11-07: automatic Continue only on recognized pages): a page the
+// carrier's advance doesn't list, or a step the fill found it doesn't (`unlisted`), is answered and
+// left: the word says the page isn't one the extension continues on, and offers no Continue.
+test('Continue\'s word on a page the carrier doesn\'t list: the agent clicks Continue', () => {
+  const { said, ui, state } = continueHarness({ 'check-continue': { checked: true } });
+  const listed = { advance: { text: 'Continue', pages: ['Quote'] } };
+  for (const entry of [{ page: 'PaymentDetails' }, { page: 'Quote', unlisted: true }, { page: 'PaymentDetails', settled: true }]) {
+    const d = said(entry, listed);
+    assert.deepEqual([d.phase, d.title, d.button, d.alt], ['yours', 'Click Continue yourself', null, 'fill-again'], JSON.stringify(entry));
+    assert.equal(d.sub, 'This page isn’t one the extension continues on. Never Binds or Submits.');
+  }
+  assert.equal(said({ page: 'PaymentDetails', left: 1 }, listed).sub, 'Then click Continue yourself: this page isn’t one the extension continues on.');
+  // An advance that lists no page or step continues nowhere (advanceFor).
+  assert.equal(said({ settled: true }, { advance: { text: 'Continue' } }).title, 'Click Continue yourself');
+  // A listed page is unchanged: Looks right with the hold on.
+  assert.equal(said({ settled: true }, listed).button, 'look-right');
+  // A one-address application's step the fill found unlisted (AmWINS: the panel's step lags on a
+  // heading it doesn't know): the same word.
+  const amwins = { layoutSteps: ['Drivers'], advance: { text: 'Save & Continue', steps: ['Drivers'] } };
+  state.tabSteps.set(7, 'Drivers');
+  assert.equal(said({ unlisted: true }, amwins).title, 'Click Continue yourself');
+  assert.equal(said({ settled: true }, amwins).button, 'look-right');
+  // The setting off: the agent's Continue as before, whatever the list.
+  ui['auto-advance'].checked = false;
+  assert.equal(said({ page: 'PaymentDetails' }, listed).sub, 'Click Continue, then fill the next page.');
+});
+
 // The dock before a fill: what the fill will and won't do here. Continue is said to be clicked for
 // the agent only while that setting is on and the carrier has an advance pattern.
 function dockHarness({ carrier, switches = {}, background = false, issue = null, url = 'Quote', step = null, extra = {} } = {}) {
@@ -5725,6 +5752,10 @@ test('the fill hint says Continue is clicked for the agent only while that setti
   const sub = (o) => dockHarness(o).dock().sub;
   assert.equal(sub({ carrier: geico }), 'Adds missing vehicles, trailers and drivers, and clicks Next up to Quote & Coverages. Never submits or binds.');
   assert.equal(sub({ carrier: prog }), 'Clicks Continue once nothing is left for you. Never submits or binds.');
+  // A page the carrier's advance doesn't list (audit ENG-01): Continue is the agent's.
+  const listed = { ...prog, advance: { text: 'Continue', pages: ['Quote'] } };
+  assert.equal(sub({ carrier: listed }), 'Clicks Continue once nothing is left for you. Never submits or binds.');
+  assert.equal(sub({ carrier: listed, url: 'PaymentDetails' }), 'Fills what it can. This page isn’t one the extension continues on: Continue is yours.');
   for (const carrier of [geico, prog]) assert.equal(sub({ carrier, switches: { 'auto-advance': { checked: false } } }), 'Nothing is submitted. Review, then click Next yourself.');
   assert.equal(sub({ carrier: plain }), 'Nothing is submitted. Review, then click Next yourself.');
   assert.equal(sub({ carrier: prog, background: true }), 'Fills the quote tab in the background. Go back to it to review.');

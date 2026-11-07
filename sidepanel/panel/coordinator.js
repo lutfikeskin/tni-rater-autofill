@@ -408,7 +408,7 @@ async function autoFill(page) {
         announce(`Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically.`);
       }
       if (current) recordLayout(page);
-    } else if (ctx.listNote || frames.some((f) => f.advanceDue || f.held)) logFill(ctx, frames, results, started);
+    } else if (ctx.listNote || frames.some((f) => f.advanceDue || f.held || f.unlisted)) logFill(ctx, frames, results, started);
   } catch (e) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
@@ -1130,11 +1130,18 @@ function renderSteps() {
 // done but held Continue for the agent's check ('check'), or the page changed after they clicked
 // Looks right ('changed'). With "Let me look before Continue" on, Looks right takes the place of
 // Fill again and continue.
-function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0, page, settled, held, tabId }, carrier = state.tab?.carrier) {
+function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0, page, settled, held, unlisted, tabId }, carrier = state.tab?.carrier) {
   const holding = left || waiting;
+  const advance = carrier?.advance;
   // A step the carrier's Continue is never clicked on (GEICO's Quote & Coverages: advance `steps`).
-  const offSteps = !!carrier?.advance?.steps?.length && !carrier.advance.steps.includes(tabStep(carrier, tabId ?? state.tab?.id));
-  const autoAdvance = !!carrier?.advance && switchOn('autoAdvance', 'auto-advance') && !carrier.advance.exceptPages?.includes(page) && !offSteps;
+  const offSteps = !!advance?.steps?.length && !advance.steps.includes(tabStep(carrier, tabId ?? state.tab?.id));
+  const exceptPage = !!advance?.exceptPages?.includes(page);
+  // A page the carrier's advance doesn't list (`pages`, else the fill found a step it doesn't list,
+  // `unlisted`), or an advance that lists none: no Continue is clicked there, and the agent is told
+  // the page isn't one the extension continues on (the maintainer, 2026-11-07, audit ENG-01).
+  const offList = !!advance && !offSteps && !exceptPage && switchOn('autoAdvance', 'auto-advance')
+    && (!!unlisted || (!!advance.pages?.length && !advance.pages.includes(page)) || (!advance.pages?.length && !advance.steps?.length));
+  const autoAdvance = !!advance && switchOn('autoAdvance', 'auto-advance') && !exceptPage && !offSteps && !offList;
   const check = autoAdvance && switchOn('checkBeforeContinue', 'check-continue');
   const looks = { button: 'look-right', label: 'Looks right, continue' };
   const again = { alt: 'fill-again', altLabel: 'Fill this page again' };
@@ -1144,6 +1151,7 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
   if (holding) {
     const then = check ? 'Then check the answers and click Looks right. Never Bind or Submit.'
       : offSteps ? 'Then moving on is yours: nothing on this step is clicked for you.'
+      : offList ? 'Then click Continue yourself: this page isn’t one the extension continues on.'
       : !autoAdvance ? (carrier?.advance && switchOn('autoAdvance', 'auto-advance')
         ? 'Then click Continue on this page yourself. Nothing is submitted or bound.'
         : 'Then click Continue yourself, and Fill this page on the next one.')
@@ -1169,6 +1177,7 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
   if (held === 'changed') return { phase: 'check', tone: 'warn', eyebrow: 'The page changed', title: 'Check the answers again', sub: 'The page changed. Check it, then continue.', ...looks };
   if (held || (check && settled)) return { phase: 'check', tone: 'good', eyebrow: 'All answered', title: 'Look over the answers, then continue', sub: 'Never Binds or Submits.', ...looks };
   if (offSteps) return { phase: 'yours', tone: 'good', eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing here is clicked for you. Never Binds or Submits.', ...again };
+  if (offList) return { phase: 'yours', tone: 'good', eyebrow: 'All answered', title: 'Click Continue yourself', sub: 'This page isn’t one the extension continues on. Never Binds or Submits.', ...again };
   if (!autoAdvance) {
     return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', ...again,
       sub: carrier?.advance && switchOn('autoAdvance', 'auto-advance') ? 'Click Continue on this page yourself. Never Binds or Submits.' : 'Click Continue, then fill the next page.' };
@@ -1322,6 +1331,8 @@ function dockFor() {
     // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd), and Next only up to
     // Additional Business Info (advance `steps`).
     : switchOn('autoAdvance', 'auto-advance') && carrier.advance && carrier.unitLists ? 'Adds missing vehicles, trailers and drivers, and clicks Next up to Quote & Coverages. Never submits or binds.'
+    // A page the carrier's advance doesn't list (audit ENG-01): its Continue is the agent's.
+    : switchOn('autoAdvance', 'auto-advance') && carrier.advance?.pages?.length && !carrier.advance.pages.includes(page) ? 'Fills what it can. This page isn’t one the extension continues on: Continue is yours.'
     : switchOn('autoAdvance', 'auto-advance') && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
     : 'Nothing is submitted. Review, then click Next yourself.';
   const progress = quoteProgress(carrier, page, state.tabSteps.get(state.tab.id));

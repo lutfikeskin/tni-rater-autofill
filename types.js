@@ -274,8 +274,9 @@
  * @typedef {object} CarrierAdvance
  * @property {string} text  a pattern on the button's words
  * @property {string} [listed]  a unit list's Continue, once every intake unit is on it (GEICO's Looks Good)
- * @property {string[]} [steps]  only on these steps
- * @property {string[]} [exceptPages]  never on these pages
+ * @property {string[]} [pages]  only on these pages (by page name); a carrier lists these or `steps`, else no Continue anywhere (advanceFor)
+ * @property {string[]} [steps]  only on these steps (one-address applications)
+ * @property {string[]} [exceptPages]  never on these pages (a second fence beside `pages`)
  * @property {string} [notWithin]  never a button inside this
  * @property {boolean} [byForm]  continued per form and button
  * @property {number} [quietMs]  how long the page is quiet first; a fill that gave answers waits for that before it ends and answers what was drawn meanwhile
@@ -732,6 +733,7 @@
  * @property {number} [repeatsHeld]  the agent's clicks on a Continue not passed to the page while the fill's own was under way (server-backed pages)
  * @property {string} [advanceKey]
  * @property {'busy' | 'none'} [advanceDue]
+ * @property {boolean} [unlisted]  done, but not a page or step the carrier's `advance` lists (`pages`, `steps`): Continue is the agent's
  * @property {'check' | 'changed'} [held]
  * @property {boolean} [agentPressed]
  * @property {string[]} [paged]  the unit group buttons the fill pressed, in order (`pager`)
