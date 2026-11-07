@@ -3,7 +3,7 @@
 // next thing to do and its button (state.dock, renderDock from dockFor). What their buttons do is the
 // panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountSteps, mountDock).
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
@@ -56,13 +56,39 @@ function DockButton({ id, className, label, shown, disabled, go, onClick }) {
   );
 }
 
+// Focus the browser takes away itself, from a button that was disabled or hidden (Stop once
+// pressed), not focus the agent moved elsewhere.
+const lostBy = (el) => !!el && (el.disabled || el.hidden);
+
 // The dock: the one next thing to do, always in the same place under the panel, and its button.
 // #dock[data-phase] names it, and data-report the fill it is about (the panel harness reads both).
 // Hidden until the panel first says it, and while Settings is open.
+// Keyboard focus stays in the dock as its button changes (audit 2026-11-07, UX-08: Fill this page
+// hid as Stop showed, and focus fell to the page, at the moment Stop mattered most): when the button
+// that had it is hidden, or disabled, the button shown now takes it (its alternative when it has
+// none). Only when focus was in the dock: the dock never takes it from elsewhere.
 function Dock({ act }) {
   const d = useStore(panelStore, (s) => s.dock);
+  const dock = useRef(null);
+  const focused = useRef(false);
+  // Focus that went anywhere outside the dock (the agent's, after the browser dropped it from Stop
+  // once pressed) is no longer the dock's (review of #390).
+  useEffect(() => {
+    const away = (e) => { if (!dock.current?.contains(e.target)) focused.current = false; };
+    document.addEventListener('focusin', away);
+    return () => document.removeEventListener('focusin', away);
+  }, []);
+  useLayoutEffect(() => {
+    const root = dock.current;
+    if (!root || !focused.current || root.hidden) return;
+    const usable = (el) => !!el && root.contains(el) && !el.hidden && !el.disabled;
+    if (usable(document.activeElement)) return;
+    const next = [d?.button ? root.querySelector(`#${d.button}`) : null, root.querySelector('#dock-alt')].find(usable);
+    next?.focus();
+  });
   return (
-    <div id="dock" className="dock" hidden={!d || d.hidden} data-phase={d?.phase} data-report={d?.report}>
+    <div id="dock" ref={dock} className="dock" hidden={!d || d.hidden} data-phase={d?.phase} data-report={d?.report}
+      onFocus={() => { focused.current = true; }} onBlur={(e) => { if (!dock.current?.contains(e.relatedTarget) && !lostBy(e.target)) focused.current = false; }}>
       <div id="fill-progress" className="progress" hidden={!d?.progress}><span /></div>
       <div className="dock-body">
         <div className="dock-text">
