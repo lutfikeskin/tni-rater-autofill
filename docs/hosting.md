@@ -307,8 +307,8 @@ finish says so on the issue with the step that stopped and exits 1; one that can
 all only writes `daily.log`.
 
 **Scheduling it on Windows**, only while the workflow can't run (both would post). After the first
-real run here, with `--since` from `node scripts/daily-issue.mjs since` (above), has written the
-state, use Task Scheduler,
+real run here has written the state (with `--since` from `node scripts/daily-issue.mjs since` when
+the workflow has a successful run, else from its state file, as above), use Task Scheduler,
 from PowerShell in the main checkout. `-At` is this computer's local time. The workflow ran at 06:00
 UTC, after US agents' day; the first line turns that into local time (02:00 at UTC-4). Any hour
 works, as each run starts where the last stopped: pick one when the computer is usually on.
