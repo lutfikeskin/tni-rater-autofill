@@ -3662,6 +3662,63 @@ test('Stop halts a running fill after the answer going in; progress counts what 
   assert.equal(h.kit.progress(), null, 'the fill is over');
 });
 
+// Audit 2026-11-07 (ENG-02, LIVE-05): after Stop, the kit kept waiting for a quiet page for up to
+// the wait's limit (15 s after an answer, 60 s around a helper), the dock saying it was stopping
+// after the answer going in. Every wait of the kit's ends at its next wake once the fill stops.
+test('Stop during a wait on a page that stays busy ends the fill within one wake, and nothing more is written', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  // The first answer's request never ends: the wait after it would run its whole 15 s.
+  let busy = false;
+  h.context.Ext.Ajax.isLoading = () => busy;
+  let stoppedAt = null;
+  addExtText(h, 'a', '2BA1', { onSet: () => {
+    busy = true;
+    setTimeout(() => { stoppedAt = clock.Date.now(); assert.equal(h.kit.stop(), true); }, 1000);
+  } });
+  const { input: second } = addExtText(h, 'b', '2BA2');
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const report = await h.kit.fill([
+    { id: 'one', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'First', kind: 'text', value: 'Yes' },
+    { id: 'two', q: '2BA2', field: fieldOf('2BA2'), path: 'progressive.q2BA2', name: 'Second', kind: 'text', value: 'No' },
+  ], { maxRounds: 3, advance: { text: '^continue$' } });
+  const after = clock.Date.now() - stoppedAt;
+  assert.ok(stoppedAt != null);
+  assert.ok(after <= 100, `the fill ended ${after} ms after Stop`);
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.equal(second.value, '', 'nothing after Stop is written');
+  assert.ok(!next._clicked, 'Continue is not clicked');
+  assert.equal(h.kit.progress(), null, 'the fill is over');
+});
+
+test('Stop while the fill waits for a busy page to begin keeps its reason and ends at once', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  h.context.Ext.Ajax.isLoading = () => true;
+  const { input } = addExtText(h, 'a', '2BA1');
+  const t0 = clock.Date.now();
+  setTimeout(() => h.kit.stop(), 500);
+  const report = await h.kit.fill([{ id: 'one', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'First', kind: 'text', value: 'Yes' }], { maxRounds: 3 });
+  assert.ok(clock.Date.now() - t0 <= 600, `the fill ended ${clock.Date.now() - t0} ms after it began`);
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/, 'not "still waiting on its server"');
+  assert.equal(input.value, '');
+});
+
+test('Stop while an address box waits for its suggestions: nothing is picked and no fallback is written', async () => {
+  const h = harness();
+  const address = makeInput({ id: 'addr', ariaLabel: 'Home Address' });
+  h.document.body.append(address);
+  // The page never offers a suggestion: the driver would wait 4 s, then type the street back.
+  const t0 = clock.Date.now();
+  setTimeout(() => h.kit.stop(), 500);
+  const report = await h.kit.fill([{ id: 'addr', selector: '#addr', path: 'x.addr', kind: 'address-suggest', value: '125 Maple Leaf Dr, Springfield IL 62704', fallback: '125 Maple Leaf Dr' }], { maxRounds: 3 });
+  assert.ok(clock.Date.now() - t0 <= 600, `the fill ended ${clock.Date.now() - t0} ms after it began`);
+  assert.equal(report.halted, true);
+  assert.notEqual(address.value, '125 Maple Leaf Dr', 'the fallback is not written after Stop');
+  assert.equal(report.filled.length, 0);
+});
+
 // Bitwarden comparison (2026-10-22): the page the panel asked to fill is checked as the fill starts.
 // Another one in the top frame is left alone: nothing filled, and the marks of an earlier fill stay.
 test('a fill meant for another page than the top frame shows fills nothing and names the page found', async () => {

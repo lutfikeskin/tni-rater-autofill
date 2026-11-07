@@ -1020,7 +1020,9 @@
  * matches options, words its misses and waits the way the engine does.
  * @typedef {object} PageAdapterKit
  * @property {(s: any) => string} oneLine  one line of text, spaces squashed
- * @property {(ms: number) => Promise<void>} sleep
+ * @property {(ms: number) => Promise<void>} sleep  ends early once the running fill stops (halted)
+ * @property {() => boolean} [halted]  the running fill stopped (the agent's Stop, or their edit): a wait ends, and nothing more is written
+ * @property {() => { ok: false, reason: string }} [interrupted]  the result of an answer the fill stopped during, nothing written
  * @property {(options: any[], step: FieldStep) => any} matchOption  the option a step's answer picks, or null
  * @property {(step: FieldStep, options: any[]) => { ok: false, reason: string, options?: string[] }} noMatch  the result for an answer none of the options takes
  * @property {(step: FieldStep, control: any) => string} textFor  the text a step types into a field
