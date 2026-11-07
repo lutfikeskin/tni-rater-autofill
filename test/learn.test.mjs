@@ -761,3 +761,36 @@ test('learning: a GEICO question its rule claims by name, or whose rule kept the
   }
   assert.equal(Object.values(learn(amwins, { carriers: noRules, minIntakes: 5 }).suggestions).flat().length, 0);
 });
+
+// Audit 2026-11-07 LEARN-03: a TNI standard is only one TNI records (AGENTS.md). The learner never
+// proposes one for an attestation or a client fact, never counts the page's own cascade as agents'
+// answers, never merges coverage rows under their redacted vehicle, and a standard's line can't pass
+// the concept and rulebook tests until the maintainer fills in its entry.
+test('learning: no standard for attestations, client facts or the page\'s cascades; a standard\'s line awaits TNI\'s decision', async () => {
+  const { CONCEPTS } = await import('../src/concepts.js');
+  const { GENERAL, CARRIER_PARTS } = await import('../src/ai/tni-rules.js');
+  const events = [];
+  for (let i = 0; i < 5; i++) {
+    const base = { session: `s${i}`, intakeId: `pdf${i}`, carrier: 'amwins', page: '/application/businessauto', type: 'field_change', q: null };
+    const e = (x) => events.push({ id: `${i}-${events.length}`, t: at(events.length), ...base, ...x });
+    e({ step: 'Drivers', key: 'emancipation', label: 'I agree to having proof of emancipation and will provide it', kind: 'checkbox', by: 'agent', to: 'unchecked' });
+    e({ step: 'Underwriting', key: 'fedLiab', label: 'Federal Liability (includes MCS-90)', kind: 'checkbox', by: 'agent', to: 'unchecked' });
+    e({ step: 'Coverage', key: 'hired', label: 'Hired auto?', kind: 'select', by: 'agent', to: 'No' });
+    // GEICO's per-vehicle coverages, each labelled by its (redacted) vehicle, set by the page.
+    for (const cov of ['COLL', 'COMP']) e({ carrier: 'geico', page: '/quote', step: 'Quote & Coverages', key: `cov:${cov}#1`, label: '[client]', kind: 'select', by: 'page', to: 'Not Included' });
+    e({ carrier: 'geico', page: '/quote', step: 'Quote & Coverages', key: 'Id_x', label: '[client] [client]', kind: 'select', by: 'agent', to: 'Yes' });
+  }
+  const { suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
+  assert.deepEqual(suggestions.standard.map((s) => s.label), ['Hired auto?'], 'only the question that can be TNI\'s');
+  assert.deepEqual(suggestions.byState, []);
+  assert.deepEqual(suggestions.agent.map((s) => [s.label, s.why]).sort(), [['Federal Liability (includes MCS-90)', 'fact'], ['I agree to having proof of emancipation and will provide it', 'attestation']]);
+  assert.match(suggestions.agent.find((s) => s.why === 'attestation').rule, /source: 'attestation', note: /);
+  assert.match(suggestions.agent.find((s) => s.why === 'fact').rule, /source: 'fact', note: /);
+  assert.deepEqual(suggestions.pageSets.map((s) => [s.coverage, s.answer, s.rule]), [['COLL', 'Not Included', undefined], ['COMP', 'Not Included', undefined]], 'two coverages, the page\'s own answer, no rule');
+  // The standard's line names its decision's placeholders: pasted as it is, it fails the tests.
+  const rule = new Function(`return ${suggestions.standard[0].rule.replace(/,$/, '')}`)();
+  assert.equal(rule.source, 'standard');
+  assert.ok(!Object.hasOwn(CONCEPTS, rule.concept), 'no concept yet');
+  const entries = [GENERAL, ...Object.values(CARRIER_PARTS)].flatMap((p) => p.sections.flatMap((x) => x.rules)).map((x) => x.id);
+  assert.ok(!entries.includes(rule.tni), 'no rulebook entry yet');
+});
