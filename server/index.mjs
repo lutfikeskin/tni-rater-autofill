@@ -37,6 +37,10 @@
 // /dashboard is for the maintainer only: RATER_DASHBOARD_TOKEN (at least 16 characters) is its
 // password, with any user name; unset or shorter, the page is off (404). RATER_TEST_INTAKES
 // (optional, intake fingerprints) names test runs the panel didn't mark, as reviews/test-intakes.txt.
+//
+// /v1/events takes at most UPLOAD_LIMITS from one address (429 with retry-after), by the socket's
+// address or RATER_CLIENT_IP_HEADER's (x-real-ip on Railway), and none while DATA_DIR has less than
+// RATER_MIN_FREE_MB free (default 500; 507, logged when it starts and ends).
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -60,6 +64,31 @@ const DASHBOARD_CACHE_MS = 30_000;
 export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url)))
   .update(fs.readFileSync(new URL('./dashboard.mjs', import.meta.url)))
   .update(fs.readFileSync(new URL('./agent-defaults.mjs', import.meta.url))).digest('hex').slice(0, 12);
+// Uploads from one address (audit 2026-11-07, SRV-13: the upload token ships in the extension, so
+// anyone could fill the volume). Two token buckets per address, in memory: requests and bytes. An
+// agent's panel posts at most once a minute plus a few prompt uploads (an intake loaded, a problem
+// report), each of at most 500 events and a million characters (sidepanel/usage-log.js), and a
+// backlog drains in back-to-back requests. The pilot's log (2026-10 to 11-06) peaked at 9 requests
+// and 4.8 MB in a minute, 111 requests in an hour and 8.3 MB in a day, all agents together; an
+// office's agents may share one address. Refused with 429 and retry-after; the extension keeps
+// the events queued and tries again the next minute.
+const MB = 1024 * 1024;
+export const UPLOAD_LIMITS = {
+  requests: { size: 120, perMinute: 60 },
+  bytes: { size: 100 * MB, perMinute: (25 * MB) / 60 },
+};
+// At most this many addresses remembered; the longest idle is forgotten first (a full bucket again).
+const LIMIT_ADDRESSES = 10_000;
+// Uploads stop (507) while DATA_DIR has less free space than this, so the server, the stored log and
+// the volume's other files survive a flood; RATER_MIN_FREE_MB sets it, 0 switches the guard off.
+export const MIN_FREE_MB = 500;
+// RATER_MIN_FREE_MB: unset or blank is MIN_FREE_MB; a number of megabytes from 0 is the threshold.
+// Anything else keeps the default, so a mistyped value never switches the guard off.
+export function minFreeBytesFrom(raw) {
+  if (raw == null || String(raw).trim() === '') return MIN_FREE_MB * MB;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n * MB : MIN_FREE_MB * MB;
+}
 // Names of dropped fields kept on an event: field-like names only, at most this many.
 const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
 const MAX_DROPPED = 20;
@@ -261,10 +290,63 @@ function keepShape(v, spec) {
   return { value, trimmed: Object.keys(value).length !== Object.keys(v).length };
 }
 
+// One token bucket per key: `size` at most, refilled at `perMinute`. take(key, n) spends n and
+// answers 0, or, when the bucket holds less than n, spends nothing and answers the seconds to wait.
+function rateLimiter({ size, perMinute }, clock) {
+  const perMs = perMinute / 60_000;
+  const buckets = new Map();
+  return (key, n) => {
+    const now = clock();
+    const b = buckets.get(key) ?? { tokens: size, at: now };
+    b.tokens = Math.min(size, b.tokens + Math.max(0, now - b.at) * perMs);
+    b.at = now;
+    // Most recently used last, so the first is the longest idle.
+    buckets.delete(key);
+    buckets.set(key, b);
+    if (buckets.size > LIMIT_ADDRESSES) buckets.delete(buckets.keys().next().value);
+    if (b.tokens >= n) { b.tokens -= n; return 0; }
+    return Math.max(1, Math.ceil((n - b.tokens) / perMs / 1000));
+  };
+}
+
+// Free bytes on the file system holding `dir`.
+const freeSpaceOf = (dir) => () => {
+  const s = fs.statfsSync(dir);
+  return s.bavail * s.bsize;
+};
+
 export function createServer({ dataDir, token = '', adminToken = '', openaiKey = '', openaiUrl = 'https://api.openai.com/v1/responses',
-  lunaDailyLimit = LUNA_DAILY_LIMIT, fetchImpl = globalThis.fetch, dashboardToken = '', testIntakes = [], dashboardCacheMs = DASHBOARD_CACHE_MS, clock = Date.now } = {}) {
+  lunaDailyLimit = LUNA_DAILY_LIMIT, fetchImpl = globalThis.fetch, dashboardToken = '', testIntakes = [], dashboardCacheMs = DASHBOARD_CACHE_MS, clock = Date.now,
+  uploadLimits = UPLOAD_LIMITS, clientIpHeader = '', minFreeBytes = MIN_FREE_MB * MB, freeSpace = freeSpaceOf(dataDir) } = {}) {
   const eventsDir = path.join(dataDir, 'events');
   fs.mkdirSync(eventsDir, { recursive: true });
+  const requestLimit = rateLimiter(uploadLimits.requests, clock);
+  const byteLimit = rateLimiter(uploadLimits.bytes, clock);
+  // Who is uploading: behind a proxy that names the client (Railway's edge sets X-Real-IP, so the
+  // image sets RATER_CLIENT_IP_HEADER=x-real-ip), that header's last value; otherwise the socket's.
+  const ipHeader = clientIpHeader.toLowerCase();
+  const clientIp = (req) => (ipHeader && String(req.headers[ipHeader] ?? '').split(',').at(-1)?.trim()) || req.socket.remoteAddress || '-';
+  // Whether DATA_DIR is too full to take uploads: logged when it starts and when it ends. A free-space
+  // reading that fails never stops uploads (the guard is a safeguard, the append still reports).
+  let diskLow = false;
+  let unreadableSaid = false;
+  const tooFull = () => {
+    if (!minFreeBytes) return false;
+    let free;
+    try { free = freeSpace(); } catch (e) {
+      if (!unreadableSaid) console.error(`${new Date().toISOString()} free space on ${dataDir} unreadable (${e?.name ?? 'error'}): uploads go on without the disk guard`);
+      unreadableSaid = true;
+      return false;
+    }
+    const low = free < minFreeBytes;
+    if (low !== diskLow) {
+      const said = `free space on ${dataDir} is ${Math.round(free / MB)} MB, the guard ${Math.round(minFreeBytes / MB)} MB (RATER_MIN_FREE_MB)`;
+      if (low) console.error(`${new Date().toISOString()} DISK LOW: ${said}: refusing uploads (507) until space is freed`);
+      else console.log(`${new Date().toISOString()} disk ok again: ${said}: taking uploads`);
+      diskLow = low;
+    }
+    return low;
+  };
 
   // Ids already stored, so retried uploads are ignored. Fine at pilot scale (a few million ids).
   const seen = new Set();
@@ -567,6 +649,21 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (luna && !openaiKey) return done(501, { error: 'Luna is not set up on this server' });
     // In bytes: UTF-8 takes up to 3 per character of the check's count (JSON's length).
     const maxBody = luna ? LUNA_MAX_CHARS * 3 : MAX_BODY;
+    // Uploads: at most so many requests and bytes from one address, and none while the disk is too
+    // full. The extension keeps refused events queued (any answer but 200 and a receipt).
+    const ip = clientIp(req);
+    const tooMany = (wait, what) => {
+      res.setHeader('retry-after', String(wait));
+      return done(429, { error: `too many uploads from this address (${what}); try again in ${wait} s` }, `rate limit ${what} ${ip}`);
+    };
+    if (!luna) {
+      const wait = requestLimit(ip, 1);
+      if (wait) return tooMany(wait, 'requests');
+      if (tooFull()) {
+        res.setHeader('retry-after', '3600');
+        return done(507, { error: 'the server is out of space for uploads; the events stay queued' }, 'disk low');
+      }
+    }
 
     let size = 0;
     const chunks = [];
@@ -577,6 +674,10 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     }));
     req.on('end', guarded(req, res, () => {
       if (res.writableEnded) return;
+      if (!luna) {
+        const wait = byteLimit(ip, size);
+        if (wait) return tooMany(wait, 'bytes');
+      }
       let body;
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return done(400, { error: 'body is not valid JSON' }); }
       if (luna) return askLuna(body, done, res);
@@ -618,7 +719,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const dashboardToken = process.env.RATER_DASHBOARD_TOKEN || '';
   if (dashboardToken && dashboardToken.length < MIN_DASHBOARD_TOKEN) console.error(`RATER_DASHBOARD_TOKEN is shorter than ${MIN_DASHBOARD_TOKEN} characters: the dashboard stays off.`);
   const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '', openaiKey: process.env.OPENAI_API_KEY || '', lunaDailyLimit,
-    dashboardToken, testIntakes: testIntakesFrom(process.env.RATER_TEST_INTAKES) });
+    dashboardToken, testIntakes: testIntakesFrom(process.env.RATER_TEST_INTAKES),
+    clientIpHeader: process.env.RATER_CLIENT_IP_HEADER || '', minFreeBytes: minFreeBytesFrom(process.env.RATER_MIN_FREE_MB) });
   server.listen(port, host, () => {
     console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit}/day)` : ''}${dashboardToken.length >= MIN_DASHBOARD_TOKEN ? '  (dashboard on: /dashboard)' : ''}`);
   });

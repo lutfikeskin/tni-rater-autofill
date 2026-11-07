@@ -12,5 +12,7 @@
 FROM node:22-alpine
 WORKDIR /app
 COPY server/index.mjs server/dashboard.mjs server/agent-defaults.mjs server/privacy.html server/
-ENV HOST=0.0.0.0 DATA_DIR=/data NODE_ENV=production
+# Railway's edge names the client in X-Real-IP: the upload rate limit counts by that address
+# (otherwise every agent would share the edge's).
+ENV HOST=0.0.0.0 DATA_DIR=/data NODE_ENV=production RATER_CLIENT_IP_HEADER=x-real-ip
 CMD ["node", "server/index.mjs"]
