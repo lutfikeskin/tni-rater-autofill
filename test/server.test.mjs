@@ -431,10 +431,13 @@ test('keeps a panel crash with its bounded message and extension frames only', a
     const r = await (await post({ events: [
       ev({ type: 'client_error', filled: undefined, where: 'panel', error: 'Cannot read properties of null', stack: ['sidepanel/sidepanel.js:12:5'] }),
       ev({ type: 'client_error', filled: undefined, where: 'carrier page', error: 'x'.repeat(301), stack: ['https://carrier.example/app.js:1:1'] }),
+      // The page's recorder's own exception (LEARN-10).
+      ev({ type: 'client_error', filled: undefined, where: 'recorder', error: 'Cannot read properties of undefined', stack: ['src/content/recorder.js:120:9'] }),
     ] })).json();
-    assert.equal(r.accepted, 2);
+    assert.equal(r.accepted, 3);
   });
-  const [ok, bad] = stored(dataDir);
+  const [ok, bad, recorder] = stored(dataDir);
+  assert.deepEqual([recorder.where, recorder.stack], ['recorder', ['src/content/recorder.js:120:9']]);
   assert.deepEqual([ok.where, ok.error, ok.stack], ['panel', 'Cannot read properties of null', ['sidepanel/sidepanel.js:12:5']]);
   assert.deepEqual([bad.where, bad.error, bad.stack], [undefined, undefined, undefined]);
   assert.deepEqual(bad.dropped.sort(), ['error', 'stack', 'where']);

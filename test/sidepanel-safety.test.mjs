@@ -6317,6 +6317,13 @@ test('a panel crash is logged once per message, at most 20, never on a practice 
   sandbox.usage.log = () => { throw new Error('storage full'); };
   state.tab.carrier.practice = false;
   assert.doesNotThrow(() => sandbox.logCrash(new Error('again')), 'logging a crash never throws');
+  // The page's recorder's exception (LEARN-10): logged where 'recorder', apart from the panel's own.
+  const recorder = [];
+  sandbox.usage.log = (e) => recorder.push(e);
+  sandbox.loggedCrashes.clear();
+  sandbox.logCrash(new Error('boom'));
+  sandbox.logCrash({ message: 'boom' }, 'recorder');
+  assert.deepEqual(recorder.map((e) => [e.where, e.error]), [['panel', 'boom'], ['recorder', 'boom']]);
 });
 
 test('a layout carries the page\'s messages, and a new message logs the page again', async () => {

@@ -241,6 +241,25 @@ function changes(h) {
   return h.sent.filter((message) => message.event === 'field_changes').flatMap((message) => message.changes);
 }
 
+// Audit 2026-11-07, LEARN-10: an exception in the recorder's poll (a carrier's markup it can't read)
+// left it quiet with no report. It is told to the panel once per message, and the recorder goes on.
+test('an exception in the recorder poll is told to the panel once, and the recorder goes on', () => {
+  const h = harness();
+  const field = new Control('input', { id: 'notes', value: 'before' });
+  h.append(field);
+  h.context.__raterRecorder.rebaseline();
+  let broken = true;
+  Object.defineProperty(field, 'value', { get() { if (broken) throw new TypeError("Cannot read properties of undefined (reading 'x')"); return 'after'; }, configurable: true });
+  assert.doesNotThrow(() => { h.tick(); h.tick(); });
+  const told = h.sent.filter((m) => m.event === 'recorder_error');
+  assert.equal(told.length, 1, 'once per message');
+  assert.equal(told[0].message, "Cannot read properties of undefined (reading 'x')");
+  assert.match(told[0].stack, /recorder\.js/);
+  broken = false;
+  h.tick();
+  assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after]), [['field:notes', 'before', 'after']], 'the recorder still reports changes');
+});
+
 test('coalesces multi-keystroke text input into one final manual event', async () => {
   const h = harness();
   const field = new Control('input', { id: 'notes', value: 'before' });
@@ -433,7 +452,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 12);
+  assert.equal(h.context.__raterRecorder.version, 13);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -501,7 +520,7 @@ test('an older recorder is replaced, so changes carry what the current one repor
   h.context.__raterRecorder = { version: 7, rebaseline() {}, dispose() { disposed.push(7); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
   assert.deepEqual(disposed, [7]);
-  assert.equal(h.context.__raterRecorder.version, 12);
+  assert.equal(h.context.__raterRecorder.version, 13);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {

@@ -7,7 +7,7 @@ import { fieldChangeEvent, fillEvents, redactor, knownStep } from '../../src/usa
 import { quoteStatePick } from '../../src/quote-state.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn } from './core.js';
+import { logCrash, persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn } from './core.js';
 import { releaseDiscardedForms } from './record.js';
 import { noteChangedAfterDone, noteQuoteDone, noteQuoteState, onQuotePage, renderSteps, scheduleAutoFill, scheduleLayout, seedQuoteState, showStopPage, stopPageIsOurs, viewOf } from './coordinator.js';
 import { answeredOnPage, fillPage, unitArrival } from './fill.js';
@@ -194,6 +194,9 @@ function onRecorderMessage(msg, sender) {
   }
   // An error or validation message appeared (a refused Continue): the layout carries the messages.
   if (msg.event === 'new_messages') scheduleLayout(layoutPage, 'messages');
+  // The recorder's own exception (recorder.js guarded): logged as the panel logs its own, redacted,
+  // with the frames inside the extension's files only (audit 2026-11-07, LEARN-10).
+  if (msg.event === 'recorder_error') logCrash({ message: String(msg.message ?? ''), stack: String(msg.stack ?? '') }, 'recorder');
 }
 
 // A helper the agent clicked themselves is done, as one a fill clicked: a later fill doesn't click

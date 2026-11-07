@@ -14,7 +14,7 @@
 // at the shadow host it reaches the window as.
 
 (() => {
-  const VERSION = 12;
+  const VERSION = 13;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
@@ -113,9 +113,29 @@
   const trustedPending = new Map();
   const trustedImmediate = new Set();
   const eventListeners = [];
+  // An exception in the recorder's poll or its listeners (a carrier's new markup it can't read)
+  // would leave it quiet: the poll throws again each tick before its baseline moves, and no agent
+  // edit is reported. Each one is told to the panel, which logs it as a `client_error` where
+  // 'recorder', at most once per message and five in all, and the recorder goes on (audit
+  // 2026-11-07, LEARN-10). Only the message and the stack, never the page's values.
+  const reported = new Set();
+  const guarded = (fn) => (...args) => {
+    try {
+      return fn(...args);
+    } catch (e) {
+      try {
+        const message = String(e?.message ?? e).slice(0, 300);
+        if (reported.has(message) || reported.size >= 5) return undefined;
+        reported.add(message);
+        send({ event: 'recorder_error', message, stack: String(e?.stack ?? '').slice(0, 2000) });
+      } catch { /* reporting must never throw */ }
+      return undefined;
+    }
+  };
   const listen = (type, listener) => {
-    addEventListener(type, listener, true);
-    eventListeners.push([type, listener]);
+    const own = guarded(listener);
+    addEventListener(type, own, true);
+    eventListeners.push([type, own]);
   };
   const isControl = (el) => {
     const tag = el?.tagName?.toUpperCase();
@@ -592,13 +612,13 @@
     if (text) send({ event: 'agent_click', page, step: stepKey(), text, forms: unitForms() });
   });
 
-  const timer = setInterval(tick, TICK_MS);
+  const timer = setInterval(guarded(tick), TICK_MS);
 
-  const onMessage = (msg) => {
+  const onMessage = guarded((msg) => {
     if (!isCurrent() || msg?.ra !== 'recorder') return;
     if (msg.cmd === 'pause') paused = true;
     if (msg.cmd === 'resume') resume();
-  };
+  });
   chrome.runtime.onMessage.addListener(onMessage);
 
   function dispose() {
