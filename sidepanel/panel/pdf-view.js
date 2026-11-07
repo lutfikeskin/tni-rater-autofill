@@ -374,11 +374,23 @@ async function newQuote() {
     if (!bytes) { clientNote('The PDF isn’t kept here: load it again with Change file to start a new quote.'); return; }
     const scope = usage.currentSession()?.intakeId;
     if (inExtension && state.tab?.carrier) await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit?.clear?.()).catch(() => {});
+    const kept = { tabSessions: new Map(state.tabSessions), agentKeys: state.agentKeys, doneActions: state.doneActions, unitForms: state.unitForms };
     state.tabSessions.clear();
     state.agentKeys = new Map();
     state.doneActions = new Set();
     state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
-    await clearAgentKeys(scope);
+    try {
+      await clearAgentKeys(scope);
+    } catch (err) {
+      // The records couldn't be removed, so this quote goes on (no new one is loaded): its fills must
+      // still keep the agent's edits on the page and not add a vehicle or click a helper again, so
+      // the panel's own records come back, with anything noted meanwhile (CodeRabbit on PR #395).
+      state.tabSessions = new Map([...kept.tabSessions, ...state.tabSessions]);
+      state.agentKeys = new Map([...kept.agentKeys, ...state.agentKeys]);
+      state.doneActions = new Set([...kept.doneActions, ...state.doneActions]);
+      state.unitForms = Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...kept.unitForms[list], ...state.unitForms[list] }]));
+      throw err;
+    }
     state.intake.ntlAdded = false;
     await loadFile(new File([bytes], state.intake.fileName || 'intake.pdf', { type: 'application/pdf' }), { reset: true });
   } finally {
