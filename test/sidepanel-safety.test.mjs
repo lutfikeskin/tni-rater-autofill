@@ -116,7 +116,9 @@ function extractFunction(name) {
           stopFillFirst: 'async () => {}',
           // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
           // elsewhere none is running.
-          noteFollowed: '() => {}' };
+          noteFollowed: '() => {}',
+          // A page a hold kept back (resumeHeldFill) has its own test: elsewhere none waits.
+          resumeHeldFill: '() => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -147,6 +149,8 @@ function extractFunction(name) {
         // a draw before the focus that follows (flushSync) is the draw itself.
         if (/\browIds\b/.test(source) && !/let rowIds =/.test(source)) source += '\nvar rowIds = globalThis.rowIds ?? 0;';
         if (/\bflushSync\(/.test(source)) source += '\nvar flushSync = globalThis.flushSync ?? ((fn) => fn());';
+        // refreshTab's count of its calls (the latest wins), module-level in tab.js.
+        if (/\btabRefreshes\b/.test(source) && !/let tabRefreshes =/.test(source)) source += '\nvar tabRefreshes = 0;';
         for (const map of ['rowNodes', 'whereTimers']) {
           if (new RegExp(`\\b${map}\\b`).test(source) && !new RegExp(`const ${map} =`).test(source)) source += `\nvar ${map} = globalThis.${map} ?? new WeakMap();`;
         }
@@ -325,6 +329,41 @@ test('combo choices from every fill are kept per tab, for the usage log', async 
   assert.deepEqual([...h.state.choices.get('2C1A')], ['Transit 150', 'Transit 250', 'Transit 350']);
 });
 
+// Audit 2026-11-07, FLOW-14: overlapping calls (a tab switch, an address change and its load, a
+// window's focus) each asked for the tab in front, and one whose answer came late put the panel
+// back on a tab no longer in front. The latest call wins; one overtaken stops where it waited.
+test('overlapping tab refreshes: the latest wins, and one overtaken stops where it waited', async () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1), carrier: { id: 'progressive' } };
+  const answers = [];
+  h.context.chrome.tabs.query = () => new Promise((resolve) => answers.push(resolve));
+  const drawn = h.rendered.length;
+  // The agent goes to tab 2, then straight to tab 3: tab 3's answer comes first, tab 2's late.
+  const first = h.refreshTab();
+  const second = h.refreshTab();
+  answers[1]([quoteTab(3)]);
+  await second;
+  answers[0]([quoteTab(2)]);
+  await first;
+  assert.equal(h.state.tab.id, 3, 'the tab in front, not the late answer\'s');
+  assert.ok(!h.state.tabSessions.has(3), 'tab 3 is the one in front');
+  assert.deepEqual(h.rendered.slice(drawn), [3], 'drawn once, for the tab in front');
+  // A later call overtaking one past the swap: the earlier stops before drawing, the later draws.
+  h.context.chrome.tabs.query = async () => [quoteTab(3)];
+  let release;
+  h.context.restoreReports = () => new Promise((resolve) => { release = resolve; });
+  const slow = h.refreshTab();
+  await new Promise((r) => setImmediate(r));
+  h.context.restoreReports = async () => {};
+  await h.refreshTab();
+  release();
+  await slow;
+  assert.deepEqual(h.rendered.slice(drawn), [3, 3]);
+  // A closed tab's session and quote state go with it (its view number stays: viewOf counts them).
+  assert.match(SIDEPANEL, /chrome\.tabs\.onRemoved\.addListener\(\(tabId\) => \{[^\n]*state\.tabSessions\.delete\(tabId\); state\.quoteStates\.delete\(tabId\);/);
+  assert.doesNotMatch(SIDEPANEL.match(/chrome\.tabs\.onRemoved\.addListener[^\n]*/)[0], /viewTabs/);
+});
+
 test('switching tabs stores and restores agent keys and the persistent pause', async () => {
   const h = harness();
   h.state.tab = { ...quoteTab(1, 'BusinessOwnerInfo'), carrier: { id: 'progressive' } };
@@ -400,6 +439,33 @@ test('the driver a form named is the one entered once the list comes back; a for
   // A blank form named no one: the selected driver, as before.
   context.unitArrival(progressive, 'AddDriver', 'DriverSummary');
   assert.deepEqual([...h.state.doneActions].sort(), ['driverEntered:0', 'driverEntered:1']);
+});
+
+// Audit 2026-11-07, QA-03: the kit is injected by one executeScript and called by a second, so a
+// tab that navigates between them has no kit; `globalThis.__raterKit.fill(...)` then threw on the
+// carrier's page. Every call the panel makes is optional, so a frame without the kit answers null,
+// and a fill whose top frame had none is a page that moved (kitGone).
+test('every kit call the panel makes is guarded: a frame without the kit answers null, never throws', async () => {
+  const unguarded = [...SIDEPANEL.matchAll(/__raterKit\.[A-Za-z]+/g)].map((m) => SIDEPANEL.slice(Math.max(0, m.index - 60), m.index + 40));
+  assert.deepEqual(unguarded, [], 'no __raterKit.<name> outside a guard (__raterKit?.<name>)');
+  const guarded = SIDEPANEL.match(/__raterKit\?\.[A-Za-z]+\(/g).length;
+  assert.ok(guarded >= 20, `the panel's kit calls, each guarded (${guarded})`);
+  // The fill's own call, in a page without the kit and in one with it.
+  const fillCall = SIDEPANEL.match(/runKit\(tabId, carrier, (\(p, o\) => globalThis\.__raterKit\?\.fill\(p, o\)), \[plan, options\]\)/)[1];
+  const page = {};
+  vm.createContext(page);
+  const fill = vm.runInContext(fillCall, page);
+  assert.equal(fill('plan', 'options') ?? null, null, 'no kit in the page');
+  page.__raterKit = { fill: (p, o) => ({ filled: [p, o] }) };
+  assert.deepEqual(JSON.parse(JSON.stringify(fill('plan', 'options'))), { filled: ['plan', 'options'] });
+  // Both fills take a top frame without the kit as a page that moved on.
+  const gone = /results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| (results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\))\)/;
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), gone, name);
+  const kitGone = vm.runInNewContext(`(results) => ${extractFunction('fillPage').match(gone)[1]}`);
+  assert.equal(kitGone([{ frameId: 0, result: { filled: [] } }]), false);
+  assert.equal(kitGone([{ frameId: 0, result: null }, { frameId: 3, result: { filled: [] } }]), true, 'the top frame had no kit');
+  assert.equal(kitGone([{ frameId: 0 }]), true, 'no result at all');
+  assert.equal(kitGone([{ frameId: 3, result: null }]), false, 'a child frame only');
 });
 
 test('the fill hands the kit the named-form check and what this tab\'s fills gave', () => {
@@ -3731,7 +3797,7 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   // Fills ready their tab once they went through (tested with autoFill below; fillPage the same).
   // (After the stale check: a fill whose intake changed meanwhile proves nothing for the new one;
   // nor does one whose page had moved on, which filled nothing.)
-  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
+  assert.equal((extractFunction('fillPage').match(/__raterKit\?\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\)\) \{ notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
 });
 
 test('a queued capture is dropped for a later change on its page, which gets its reasons', async () => {
@@ -5757,10 +5823,10 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   u.release([{ frameId: 0, result: { ...u.results[0].result, pageMoved: '/quote-B' } }]);
   await run;
   assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
-  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
+  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
   // (runPendingPage then runs from every end of a fill, whichever tab is in front: FLOW-07.)
-  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n\s+\}/);
+  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n[^\n]*\n\s+resumeHeldFill\(\);\n\s+\}/);
 });
 
 // Review 2026-10-22: rows a follow-up fill added had no source or group, so a worked-out answer or
@@ -5969,33 +6035,78 @@ test('the defaults hold opens the quote\'s question from the intake\'s checks, a
 // pages when they open is on; never while still held, with that switch off, or over a page filled.
 // Only the page whose opening fill the question held fills after it, once, for the same intake: never
 // a page nothing was waiting on, such as the last client's quote left in front when a new intake loads.
-test('after the defaults question, the page whose opening fill it held fills as on opening, once', () => {
+// Audit 2026-11-07, FLOW-16: the tab's quote-state hold keeps a page's opening fill the same way, and
+// "<state> is right" fills it; one that lifted while something went in (a fill, a pick from a row,
+// an AI answer) fills as that ends.
+test('after a hold lifts, the page whose opening fill it held fills as on opening, once', () => {
   const intake = {};
-  const run = ({ held = { key: 'key', intake }, hold = false, autoPages = true, report = false, filling = false, front = 'key', now = intake, twice = false } = {}) => {
+  const run = ({ held = { key: 'key', intake }, hold = false, stateHeld = false, autoPages = true, report = false, filling = false, front = 'key', now = intake, twice = false } = {}) => {
     const fills = [];
     const state = { intake: now, filling, tab: { id: 7, url: 'Quote', carrier: { name: 'AmWINS' } }, reports: new Map(report ? [['key', {}]] : []), switches: { autoPages } };
-    const context = { state, heldForDefaults: held, $: () => null, defaultsHold: () => hold, onQuotePage: () => true, currentReportKey: () => front, fillPage: (o) => fills.push(o) };
-    vm.runInNewContext(extractFunction('fillAfterDefaults'), context);
-    context.fillAfterDefaults();
-    if (twice) context.fillAfterDefaults();
-    return { fills: JSON.parse(JSON.stringify(fills)), kept: context.heldForDefaults };
+    const context = { state, heldFill: held, $: () => null, defaultsHold: () => hold, stateIssue: () => (stateHeld ? { picked: 'Texas' } : null), onQuotePage: () => true, currentReportKey: () => front, fillPage: (o) => fills.push(o) };
+    vm.runInNewContext(extractFunction('resumeHeldFill'), context);
+    context.resumeHeldFill();
+    if (twice) context.resumeHeldFill();
+    return { fills: JSON.parse(JSON.stringify(fills)), kept: context.heldFill, context };
   };
   assert.deepEqual(run().fills, [{ auto: 'page' }]);
   assert.deepEqual(run({ twice: true }).fills, [{ auto: 'page' }], 'once');
-  assert.deepEqual(run({ held: null }).fills, [], 'no fill waited on the question: the page in front is not filled');
+  assert.deepEqual(run({ held: null }).fills, [], 'no fill waited on a hold: the page in front is not filled');
   assert.deepEqual(run({ now: {} }).fills, [], 'held for another intake');
   assert.deepEqual(run({ front: 'other' }).fills, [], 'another page in front');
   assert.deepEqual(run({ report: true }).fills, [], 'a page filled since keeps its answers');
-  const still = run({ hold: true });
-  assert.deepEqual(still.fills, []);
-  assert.ok(still.kept, 'still held: kept for the answer');
+  for (const still of [run({ hold: true }), run({ stateHeld: true })]) {
+    assert.deepEqual(still.fills, []);
+    assert.ok(still.kept, 'still held (the defaults question, or the quote state): kept for the hold to lift');
+  }
   assert.deepEqual(run({ autoPages: false }).fills, []);
-  assert.deepEqual(run({ filling: true }).fills, []);
-  // Recorded only by a page's own opening fill the hold stopped.
-  assert.match(extractFunction('fillPage'), /if \(state\.intake && defaultsHold\(\)\) \{\s*\/\/[^\n]*\n\s*if \(auto === 'page'\) heldForDefaults = \{ key: currentReportKey\(\), intake: state\.intake \};/);
-  assert.match(SIDEPANEL, /onDefaultsAnswer\(async \(choice\) => \{ await answerDefaults\(choice\); logSettings\('changed', 'defaults'\); renderSteps\(\); fillAfterDefaults\(\); \}\);/);
+  // Something going in as the hold lifted: kept, and filled once that ends.
+  const busy = run({ filling: true });
+  assert.deepEqual([busy.fills, !!busy.kept], [[], true]);
+  busy.context.state.filling = false;
+  busy.context.resumeHeldFill();
+  assert.equal(busy.context.heldFill, null);
+  // Recorded only by a page's own opening fill a hold stopped: the quote state's, the question's.
+  const fillPage = extractFunction('fillPage');
+  assert.match(fillPage, /if \(state\.intake && stateIssue\(\)\) \{\n\s*if \(auto === 'page'\) heldFill = \{ key: currentReportKey\(\), intake: state\.intake \};/);
+  assert.match(fillPage, /if \(state\.intake && defaultsHold\(\)\) \{\s*\/\/[^\n]*\n\s*if \(auto === 'page'\) heldFill = \{ key: currentReportKey\(\), intake: state\.intake \};/);
+  assert.match(SIDEPANEL, /onDefaultsAnswer\(async \(choice\) => \{ await answerDefaults\(choice\); logSettings\('changed', 'defaults'\); renderSteps\(\); resumeHeldFill\(\); \}\);/);
   // The developer hiding the feature lifts the hold too: the held page fills as in the store build.
-  assert.match(SIDEPANEL, /defaultsShown: async \(on\) => \{ await setDefaultsShown\(on\); renderSteps\(\); fillAfterDefaults\(\); \}/);
+  assert.match(SIDEPANEL, /defaultsShown: async \(on\) => \{ await setDefaultsShown\(on\); renderSteps\(\); resumeHeldFill\(\); \}/);
+  // "<state> is right" fills it; the dock's Fill anyway fills the page as the agent's, as before.
+  assert.match(extractFunction('showStateNote'), /\{ label: `\$\{picked\} is right`, className: 'tinted', onClick: \(\) => \{ dismissState\(\); resumeHeldFill\(\); \} \}/);
+  assert.doesNotMatch(extractFunction('dismissState'), /resumeHeldFill/);
+  // Tried as each thing that goes in ends: a fill, an automatic one, a pick from a row, an AI answer.
+  assert.match(fillPage, /\} finally \{[\s\S]*?state\.filling = false;[\s\S]*?resumeHeldFill\(\);\n\s*\}/);
+  assert.match(extractFunction('autoFill'), /\} finally \{[\s\S]*?state\.filling = false;[\s\S]*?resumeHeldFill\(\);\n\s*\}/);
+  assert.match(extractFunction('agentAnswer'), /state\.filling = false;\n\s*if \(button\) button\.disabled = false;\n[^\n]*\n\s*resumeHeldFill\(\);/);
+  assert.match(extractFunction('applyAi'), /state\.filling = false;\n[^\n]*\n\s*resumeHeldFill\(\);/);
+});
+
+// #414 review: AmWINS' next step opens at the same address (new_fields -> scheduleAutoFill ->
+// autoFill, which fills a step without a report as a new page). Under a state or defaults hold
+// scheduleAutoFill dropped it before fillPage could keep it for resumeHeldFill. A step with no
+// report yet goes to fillPage, which keeps it; a follow-up on a step already filled still waits for
+// nothing.
+test('a new step at the same address opened under a hold is kept for when the hold lifts', () => {
+  const run = ({ hold = 'state', report = false, front = 7 } = {}) => {
+    const fills = [];
+    const timers = [];
+    const state = { tab: { id: 7, url: 'Quote', carrier: { name: 'AmWINS' } }, intake: {}, intakeRevision: 0, autoPages: new Set(['Quote']), autoPaused: false, filling: false,
+      reports: new Map(report ? [['7|Quote|Coverages', {}]] : []) };
+    const context = { state, $: () => ({ checked: true }), switchOn: () => true, onQuotePage: () => true, stopNoteFor: () => null, quoteOwnerIssue: () => null,
+      stateIssue: () => (hold === 'state' ? { picked: 'Texas' } : null), defaultsHold: () => hold === 'defaults', pageOf: (u) => u,
+      reportKey: (tabId, page) => `${tabId}|${page}|Coverages`, fillPage: (o) => fills.push(o), fillCurrent: () => true, autoFill: () => fills.push('autoFill'),
+      setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout: () => {} };
+    vm.runInNewContext(extractFunction('scheduleAutoFill'), context);
+    context.scheduleAutoFill('Quote', { tabId: front, intake: state.intake, revision: 0 }, true);
+    return { fills: JSON.parse(JSON.stringify(fills)), timers: timers.length };
+  };
+  assert.deepEqual(run(), { fills: [{ auto: 'page' }], timers: 0 }, 'a state hold: the new step goes to fillPage, which keeps it');
+  assert.deepEqual(run({ hold: 'defaults' }), { fills: [{ auto: 'page' }], timers: 0 }, 'a defaults hold: the same');
+  assert.deepEqual(run({ report: true }), { fills: [], timers: 0 }, 'a follow-up on a step filled: nothing waits');
+  assert.deepEqual(run({ front: 8 }), { fills: [], timers: 0 }, 'another tab\'s: nothing');
+  assert.deepEqual(run({ hold: null }), { fills: [], timers: 1 }, 'no hold: scheduled as before');
 });
 
 test('the fill hint says Continue is clicked for the agent only while that setting is on and the carrier has an advance pattern', () => {
@@ -6474,6 +6585,13 @@ test('a panel crash is logged once per message, at most 20, never on a practice 
   sandbox.usage.log = () => { throw new Error('storage full'); };
   state.tab.carrier.practice = false;
   assert.doesNotThrow(() => sandbox.logCrash(new Error('again')), 'logging a crash never throws');
+  // The page's recorder's exception (LEARN-10): logged where 'recorder', apart from the panel's own.
+  const recorder = [];
+  sandbox.usage.log = (e) => recorder.push(e);
+  sandbox.loggedCrashes.clear();
+  sandbox.logCrash(new Error('boom'));
+  sandbox.logCrash({ message: 'boom' }, 'recorder');
+  assert.deepEqual(recorder.map((e) => [e.where, e.error]), [['panel', 'boom'], ['recorder', 'boom']]);
 });
 
 test('a layout carries the page\'s messages, and a new message logs the page again', async () => {
@@ -6556,6 +6674,22 @@ test('a problem report names the fill it is about: view, run, step and what held
   state.intake = null;
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
   assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
+});
+
+// CodeRabbit on PR #403: the recorder tells its exception again until the panel says it logged
+// it; a panel with no intake, or another tab's, says nothing, so it is told again later.
+test('the panel logs a recorder exception where recorder and says it took it', () => {
+  const crashes = [], replies = [];
+  const state = { intake: { record: {} }, tab: { id: 1, url: 'https://synthetic.example/quote', carrier: null } };
+  const sandbox = { state, usage: { log() {} }, samePage: (p) => p, pageOf: (u) => u, logCrash: (e, where) => crashes.push([e.message, where]) };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('onRecorderMessage'), sandbox);
+  const tell = (tab) => sandbox.onRecorderMessage({ ra: 'usage', event: 'recorder_error', message: 'boom', stack: 'at recorder.js' }, { tab: { id: tab } }, (r) => replies.push(r));
+  tell(2);
+  assert.deepEqual([crashes, replies], [[], []], 'another tab\'s: nothing logged, no reply');
+  tell(1);
+  assert.deepEqual(crashes, [['boom', 'recorder']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(replies)), [{ logged: true }]);
 });
 
 test('the agent\'s own button clicks are logged redacted, with a known step only', () => {
@@ -8354,6 +8488,8 @@ test('no fill, follow-up or scheduled fill while the quote state differs from th
   const t = fillHarness({ carrier: { id: 'progressive', advance: /Continue/ } });
   let notes = 0;
   t.context.showStateNote = () => { notes++; };
+  // The opening fill it holds is kept by its page's report key (resumeHeldFill, FLOW-16).
+  t.context.currentReportKey = () => '7|/quote-A';
   t.context.stateIssue = () => issue;
   await t.context.fillPage();
   await t.context.fillPage({ auto: 'page' });
@@ -8367,10 +8503,11 @@ test('no fill, follow-up or scheduled fill while the quote state differs from th
   t.release(t.results);
   await run;
   assert.equal(t.seen.rendered, 1);
-  // A follow-up isn't scheduled either.
+  // A follow-up (its page filled, with a report) isn't scheduled either.
   const timers = [];
-  const state = { autoPaused: false, autoPages: new Set(['Quote']), tab: { id: 1, url: 'Quote', carrier: { id: 'progressive' } }, filling: false, intake: {}, tabSteps: new Map() };
-  const context = { state, $: () => ({ checked: true }), onQuotePage: () => true, setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {}, pageOf: (u) => u, stateIssue: () => issue };
+  const state = { autoPaused: false, autoPages: new Set(['Quote']), tab: { id: 1, url: 'Quote', carrier: { id: 'progressive' } }, filling: false, intake: {}, tabSteps: new Map(), reports: new Map([['1|Quote', {}]]) };
+  const context = { state, $: () => ({ checked: true }), onQuotePage: () => true, setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {}, pageOf: (u) => u, stateIssue: () => issue,
+    reportKey: (tabId, page) => `${tabId}|${page}`, fillPage: () => timers.push('fillPage') };
   vm.runInNewContext(extractFunction('scheduleAutoFill'), context);
   context.scheduleAutoFill('Quote');
   assert.equal(timers.length, 0);
@@ -8470,7 +8607,7 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   // Settings' Filling note says a switch changed meanwhile reaches what is filled after, and the fill
   // under way only while it gets ready (reviews of #389): each fill, a follow-up's included, reads
   // Continue's switch again and Check answers before Continue (fillOptions' hold) as it asks the kit.
-  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /ctx\.settings\.autoAdvance = switchOn\('autoAdvance', 'auto-advance'\);[\s\S]*= fillOptions\(carrier, [\s\S]*?__raterKit\.fill\(p, o\), \[plan, options\]\)/, name);
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /ctx\.settings\.autoAdvance = switchOn\('autoAdvance', 'auto-advance'\);[\s\S]*= fillOptions\(carrier, [\s\S]*?__raterKit\?\.fill\(p, o\), \[plan, options\]\)/, name);
   assert.match(SIDEPANEL, /const fillOptions = [^\n]*\n(?:[^\n]*\n)*?  hold: switchOn\('checkBeforeContinue', 'check-continue'\),/);
   // Opening or closing Settings draws the dock again (showScreen).
   assert.match(extractFunction('showScreen'), /renderDock\(\);\n\}$/);
@@ -8767,7 +8904,7 @@ test('the recording\'s manifest names the trace and recorder its top frame\'s fi
 
 test('a recording started during a fill begins with that fill, so its end isn\'t one without a start', async () => {
   const added = [];
-  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: true };
+  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: true, fillingKind: 'pick' };
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
     usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => ({ add: (events) => added.push(...events) }) },
     setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => {}, Date,
@@ -8775,8 +8912,9 @@ test('a recording started during a fill begins with that fill, so its end isn\'t
     chrome: { tabs: { sendMessage: async () => {} } } };
   vm.runInNewContext(extractFunction('startRecording'), context);
   await context.startRecording();
-  assert.deepEqual(added.map((e) => [e.kind, e.on, e.t, e.frame]), [['fill', true, state.recording.started, 0]]);
-  assert.deepEqual(JSON.parse(JSON.stringify(state.recording.fills)), [{ start: state.recording.started, end: null }]);
+  // What went in, on the store's span and the recording's own entry alike (#412 review).
+  assert.deepEqual(added.map((e) => [e.kind, e.on, e.t, e.frame, e.what]), [['fill', true, state.recording.started, 0, 'pick']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.recording.fills)), [{ start: state.recording.started, end: null, what: 'pick' }]);
 });
 
 test('a recording kept in memory only that could not be saved is said to be lost, not kept', async () => {

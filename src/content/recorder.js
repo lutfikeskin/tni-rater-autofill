@@ -14,10 +14,11 @@
 // at the shadow host it reaches the window as.
 
 (() => {
-  const VERSION = 13;
+  const VERSION = 14;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
+  let inheritedError;
   // The agent's edits a replaced recorder still held for a panel (`unheard`): this one keeps them.
   let inherited = [];
   if (previous) {
@@ -26,7 +27,9 @@
     // panel reinjects on every tab update, and an ExtJS combo pick fires no input/change event
     // (2026-10-20: a General Liability limit picked just before "Done with this coverage" was never
     // logged). A version-8 recorder has no poll: it flushes its trusted edits and rebaselines.
-    if (!orphaned) (previous.poll ?? previous.rebaseline)?.();
+    // An older recorder whose poll throws (it reports nothing) is still replaced: its error is told
+    // once this one is in place (CodeRabbit on PR #403).
+    if (!orphaned) try { (previous.poll ?? previous.rebaseline)?.(); } catch (e) { inheritedError = e; }
     // Reusing the current recorder avoids resetting its listeners on every fill. Older versions
     // have no dispose hook, so rebaseline and leave the sole installed recorder in place rather
     // than starting a second timer that would duplicate usage events.
@@ -123,9 +126,44 @@
   const trustedPending = new Map();
   const trustedImmediate = new Set();
   const eventListeners = [];
+  // An exception in the recorder's poll, its listeners or what they schedule (a carrier's new markup
+  // it can't read) would leave it quiet: the poll throws again each tick before its baseline moves,
+  // and no agent edit is reported. Each one is told to the panel, which logs it as a `client_error`
+  // where 'recorder', and the recorder goes on (audit 2026-11-07, LEARN-10). Only the message and the
+  // stack, never the page's values. At most five messages, each told again on the later polls until
+  // the panel says it took it (`logged` in its reply: a closed panel, or one with no intake, doesn't),
+  // and at most 40 times (a minute) (CodeRabbit on PR #403).
+  const errors = new Map();
+  const tellErrors = () => {
+    if (!isCurrent() || !chrome.runtime?.id) return;
+    for (const told of errors.values()) {
+      if (told.logged || told.sending || told.tries >= 40) continue;
+      told.tries++;
+      told.sending = true;
+      Promise.resolve(chrome.runtime.sendMessage({ ra: 'usage', ...told.msg }))
+        .then((reply) => { if (reply?.logged) told.logged = true; }, () => {})
+        .finally(() => { told.sending = false; });
+    }
+  };
+  const report = (e) => {
+    try {
+      const message = String(e?.message ?? e).slice(0, 300);
+      if (!errors.has(message) && errors.size < 5) errors.set(message, { msg: { event: 'recorder_error', message, stack: String(e?.stack ?? '').slice(0, 2000) }, tries: 0, logged: false, sending: false });
+      tellErrors();
+    } catch { /* reporting must never throw */ }
+  };
+  const guarded = (fn) => (...args) => {
+    try {
+      return fn(...args);
+    } catch (e) {
+      report(e);
+      return undefined;
+    }
+  };
   const listen = (type, listener) => {
-    addEventListener(type, listener, true);
-    eventListeners.push([type, listener]);
+    const own = guarded(listener);
+    addEventListener(type, own, true);
+    eventListeners.push([type, own]);
   };
   const isControl = (el) => {
     const tag = el?.tagName?.toUpperCase();
@@ -251,7 +289,7 @@
     lastTrusted = 0;
     lastTrustedControl = null;
     if (!discrete) return;
-    const flush = () => flushTrusted({ immediateOnly: true });
+    const flush = guarded(() => flushTrusted({ immediateOnly: true }));
     // A design-system option shows the pick on its host only once the page has handled the event,
     // after this capture listener: flushed in a later task, or the snapshot reads the old pick and
     // the agent's change is lost.
@@ -414,8 +452,9 @@
 
   let paused = false;
   let page = pageKey();
-  let prev = snapshot();
-  let prevMessages = messages();
+  // Read guarded: a page the recorder can't read yet still gets a recorder, which says why.
+  let prev = guarded(snapshot)() ?? new Map();
+  let prevMessages = guarded(messages)() ?? [];
   // The unit lists last seen. Not taken again on rebaseline: a list a fill's own Next drew while
   // the recorder was paused is news to the panel, which adds the next unit to it.
   let shownLists = unitLists();
@@ -642,14 +681,14 @@
     if (text) send({ event: 'agent_click', page, step: stepKey(), text, forms: unitForms() });
   });
 
-  const timer = setInterval(tick, TICK_MS);
+  const timer = setInterval(guarded(() => { tellErrors(); tick(); }), TICK_MS);
 
-  const onMessage = (msg) => {
+  const onMessage = guarded((msg) => {
     if (!isCurrent() || msg?.ra !== 'recorder') return;
     // The agent's edits no panel took go first, so the fill about to begin leaves them alone.
     if (msg.cmd === 'pause') { sendUnheard(); paused = true; }
     if (msg.cmd === 'resume') resume();
-  };
+  });
   chrome.runtime.onMessage.addListener(onMessage);
 
   function dispose() {
@@ -689,7 +728,7 @@
     version: VERSION,
     rebaseline,
     // A poll now, as the timer's (nothing while paused: resume reports the agent's edits then).
-    poll: tick,
+    poll: guarded(tick),
     dispose,
     alive: () => !!chrome.runtime?.id,
     // The agent's edits no panel took yet, for a recorder that replaces this one.
@@ -698,6 +737,7 @@
     read: { controlForEvent, describe, choiceText, stepKey, pageKey, buttonText, buttons },
   };
   globalThis.__raterRecorder = api;
+  if (inheritedError) report(inheritedError);
 
   if (isTop) send({ event: 'page_view', page, from: null, step: stepKey(), fields: prev.size, title: document.title });
 })();

@@ -634,6 +634,40 @@
  */
 
 /**
+ * Why an answer didn't go in, as a stable code: the kit branches on it, the usage log keeps it
+ * (`fill_field`'s `code`), and the reviews count by it, so rewording the `reason` people read changes
+ * none of them. Set by the kit where it gives up (src/kit/apply.js, cursor.js, pagekit.js, guard.js,
+ * drivers/, the carriers' page code); a test checks every failure there carries one.
+ * - `option.no-match`: the list has no option for the answer; `option.ambiguous`: a searched list
+ *   showed several or no confident match
+ * - `answer.not-kept`: the page took it and then didn't keep it (tried again once); `answer.refused`:
+ *   a widget didn't take the choice (Progressive's lists); `answer.cleared`: the page emptied
+ *   it (format); `answer.too-long`; `answer.invalid`: the page marks it invalid, or a yes/no field got
+ *   another answer; `answer.changed`: the page or the carrier changed it after the fill (a server
+ *   response, Recalculate); `answer.agent-edited`: the agent changed that question meanwhile
+ * - `field.read-only`; `field.vanished`: the field went away on the answer; `field.missing`: the
+ *   question is no longer on the page; `field.changed`: it changed since the AI read it
+ * - `page.unsettled`: the page didn't settle after the answer; `page.changed`: the page or frame
+ *   changed since the AI read it; `page.stop-step`: a step that is the agent's
+ * - `fill.interrupted`: the agent stopped the fill or edited the page
+ * - `lookup.differs`: a looked-up value isn't the intake's (VIN); `action.unverified`: a button
+ *   clicked with no sign it worked (Recalculate with no premium)
+ * - `address.no-suggestion`: no address suggestion to pick; `widget.unavailable`: a list's search
+ *   box or remove button isn't there; `widget.unsupported`: no page code for the control
+ * - `kit.exception`: the kit threw (its message is the reason): a defect, not a refusal;
+ *   `kit.uncoded`: a failure that came back without a code (a write path that names none: the
+ *   source test should have caught it)
+ * @typedef {'option.no-match' | 'option.ambiguous' | 'answer.not-kept' | 'answer.refused' | 'answer.cleared' | 'answer.too-long' | 'answer.invalid' | 'answer.changed' | 'answer.agent-edited' | 'field.read-only' | 'field.vanished' | 'field.missing' | 'field.changed' | 'page.unsettled' | 'page.changed' | 'page.stop-step' | 'fill.interrupted' | 'lookup.differs' | 'action.unverified' | 'address.no-suggestion' | 'widget.unavailable' | 'widget.unsupported' | 'kit.exception' | 'kit.uncoded'} FailCode
+ */
+
+/**
+ * What writing one answer did (src/kit/apply.js apply, a driver's or page code's write): `shown`, what
+ * the field shows; on failure its `code` (FailCode) and `reason`, and a list's `options` without the
+ * answer.
+ * @typedef {{ ok: boolean, shown?: string | null, code?: FailCode, reason?: string, options?: string[] }} WriteResult
+ */
+
+/**
  * One question in a fill report: its field, the plan step that answered it (when one did), and
  * what happened. Which keys are set depends on the list it is in.
  * @typedef {object} FillItem
@@ -652,7 +686,8 @@
  * @property {boolean} [otherStep]
  * @property {string} [note]  why it is the agent's
  * @property {string | null} [action]  a markable helper's reminder: the helper's id as the fill tracks it (scoped: `vehicleTile:0`), for the tab's done actions
- * @property {string} [reason]  why it failed
+ * @property {string} [reason]  why it failed, for people
+ * @property {FailCode} [code]  failed: why, as a code (FailCode)
  * @property {string} [shown]  what the page shows (a choice's text)
  * @property {string} [said]
  * @property {'prefix' | 'contains'} [matched]  filled or check: its option was matched only by a fallback, the one beginning with the answer's words or having them (none reading exactly so), so it is also a check item (apply.js looseMatch)
@@ -877,6 +912,7 @@
  * @property {true} [manualOnly]
  * @property {true} [review]
  * @property {string} [shown]
+ * @property {FailCode} [code]  failed: why, as a code (FailCode)
  * @property {string} [reason]
  * @property {string[]} [options]
  * @property {object} [timing]
@@ -935,7 +971,7 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel
+ *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
  * @property {boolean} [away]  panel: the panel follows another tab than the recorded one (true), or is back on it
  * @property {number | null} [followed]  panel: the tab the panel follows (a tab number)
@@ -978,6 +1014,11 @@
  * @property {string | null} [why]  visible: pageshow or pagehide, when it came from one; kit wait: what for (answer, round, load, rated, continue, drawn, start, before-load; null: another)
  * @property {number} [ms]  request: how long it took; kit wait: how long it waited; fill, in the report only: how long the fill ran (on its end)
  * @property {number} [end]  burst, request: wall-clock ms when it ended (`t` is when it began)
+ * @property {number} [injectedAt]  page, the first of a document the trace is in from its load: wall-clock ms when the trace was put in
+ *   (`t` is the document's navigation start)
+ * @property {number | null} [response]  load: wall-clock ms when its server's answer ended (`t`: its navigation start)
+ * @property {number | null} [ready]  load: wall-clock ms when it was ready (DOMContentLoaded ended); null while not yet
+ * @property {number | null} [loaded]  load: wall-clock ms when it loaded (load ended); null while not yet
  * @property {number} [records]  burst: how many DOM mutation records it was
  * @property {{ key: string | null, kind: string | null, label: string }[]} [drawn]  burst: the questions it drew, at most 12 (labels redacted)
  * @property {number} [drawnCount]  burst: how many questions it drew in all
@@ -1002,7 +1043,7 @@
  * @property {boolean} [ok]  kit answer: the page kept it
  * @property {number} [applyMs]  kit answer: ms to give it, a list's wait for its options included
  * @property {{ ms: number, settleMs: number, ajax: number, revealed: number, removed: number, changed: number, batch?: boolean }} [timing]  kit answer: the usage log's fill_field timing
- * @property {'page' | 'kit'} [how]  kit press: clicked from the page's own world, or by the kit
+ * @property {'page' | 'kit' | 'navigate' | 'reload' | 'back_forward' | 'prerender' | null} [how]  kit press: clicked from the page's own world, or by the kit; load: how the document came (its navigation entry's type)
  * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
  * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
  */
@@ -1041,9 +1082,9 @@
  * @property {(s: any) => string} oneLine  one line of text, spaces squashed
  * @property {(ms: number) => Promise<void>} sleep  ends early once the running fill stops (halted)
  * @property {() => boolean} [halted]  the running fill stopped (the agent's Stop, or their edit): a wait ends, and nothing more is written
- * @property {() => { ok: false, reason: string }} [interrupted]  the result of an answer the fill stopped during, nothing written
+ * @property {() => { ok: false, code?: FailCode, reason: string }} [interrupted]  the result of an answer the fill stopped during, nothing written
  * @property {(options: any[], step: FieldStep) => any} matchOption  the option a step's answer picks, or null
- * @property {(step: FieldStep, options: any[]) => { ok: false, reason: string, options?: string[] }} noMatch  the result for an answer none of the options takes
+ * @property {(step: FieldStep, options: any[]) => { ok: false, code?: FailCode, reason: string, options?: string[] }} noMatch  the result for an answer none of the options takes
  * @property {(step: FieldStep, control: any) => string} textFor  the text a step types into a field
  * @property {(options: any[]) => boolean} hasOptions  a list offers a real choice, not only its placeholder
  * @property {(el: Element) => string | null} labelFor  a field's label as the page shows it
@@ -1105,7 +1146,7 @@
  * @property {(option: any) => any} groupOf  a radio option's group widget, for its validity
  * @property {(widget: any, text: string) => void} setText  an address typed into a widget's box
  * @property {(widget: any, text: string) => void} changed  after the typing events: the widget's own change
- * @property {(step: FieldStep, control: any) => Promise<{ ok: boolean, shown?: string, reason?: string }>} apply  puts an answer into a widget's field
+ * @property {(step: FieldStep, control: any) => Promise<WriteResult>} apply  puts an answer into a widget's field
  * @property {(widget: any, el: Element) => void} reselect  picks a widget's answer again (a nudge that makes the page show what follows it)
  * @property {(widget: any) => Element | null} highlight  the element to mark for a widget's field
  * @property {(widget: any) => string | null} typeName  the widget's type, for captures
@@ -1175,6 +1216,7 @@
  * @property {Map<string, Set<string>>} [agentKeys]
  * @property {Map<string, number>} [agentKeysEpochs]
  * @property {boolean} [filling]
+ * @property {'fill' | 'pick' | 'ai' | null} [fillingKind]  what goes in while `filling`: a fill, the agent's pick from a row, an AI answer
  * @property {any} [autoTimer]
  * @property {any} [autoDrawn]
  * @property {boolean} [autoPending]
