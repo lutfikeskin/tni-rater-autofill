@@ -442,7 +442,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     // was hidden meanwhile (`hiddenMs`): Chrome slows a hidden tab's timers, so the weekly review can
     // tell those fills from slow carriers (audit 2026-11-07, FLOW-12).
     ...(background ? { background: true } : {}), ...(hiddenMs ? { hiddenMs } : {}),
-    // The second click of a Continue that didn't take (the panel's watchNextStep, audit 2026-11-07,
+    // The second click of a Continue whose page stayed unchanged (the panel's watchNextStep, audit 2026-11-07,
     // FLOW-11): the weekly review counts them to judge whether the retry is still needed.
     ...(retried ? { retried: true } : {}),
     fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0),

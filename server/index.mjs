@@ -184,7 +184,7 @@ export const EVENT_FIELDS = {
   // run: one fill invocation, shared with its fill_field events; rules: the rule files'
   // fingerprint; settings: the panel's filling switches; step: a one-address application's step
   // (AmWINS). Their shapes are checked below (RUN_FIELDS): a malformed value refuses the event.
-  // retried: the second click of a Continue that didn't take (true only), on its fill_run or fill_error.
+  // retried: the second click of a Continue whose page stayed unchanged (true only), on its fill_run or fill_error.
   // background: the quote tab filled while the agent was on another; hiddenMs: how long its page was
   // hidden meanwhile (Chrome slows a hidden tab's timers).
   fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'retried', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],

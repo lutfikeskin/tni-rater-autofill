@@ -87,7 +87,7 @@ function resumeHeldFill() {
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
-// `retried`: the second click of a Continue that didn't take (watchNextStep), logged as such.
+// `retried`: the second click of a Continue whose page stayed unchanged (watchNextStep), logged as such.
 /** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean, retried?: boolean }} [options] */
 async function fillPage({ auto = false, confirmed = null, continuing = false, retried = false } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
