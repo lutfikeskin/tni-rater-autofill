@@ -726,3 +726,38 @@ test('learning never suggests reviewing a rule for corrections of the agent\'s o
   const standard = week(10).map((e) => (e.type === 'fill_field' && e.q === '2B9D' ? { ...e, source: 'standard' } : e));
   assert.equal(learn(standard, { carriers: CARRIERS, minIntakes: 5 }).suggestions.review.find((s) => s.q === '2B9D').corrected, 6);
 });
+
+// Audit 2026-11-07 LEARN-01: GEICO's questions have no id; their key names them (`ref:<name>`). The
+// learner groups them by it on their step and finds today's rule by that name, and a rule that kept
+// the page's answer (or had no intake value) still matched: no suggestion for a rule that exists.
+test('learning: a GEICO question its rule claims by name, or whose rule kept the page\'s answer, gets no suggestion', () => {
+  const events = [];
+  for (let i = 0; i < 5; i++) {
+    const base = { session: `g${i}`, intakeId: `pdf${i}`, carrier: 'geico', page: '/quote', view: 't1' };
+    const e = (x) => events.push({ id: `${i}-${events.length}`, t: `2026-10-06T10:0${i}:${String(events.length % 60).padStart(2, '0')}Z`, ...base, ...x });
+    e({ type: 'intake_loaded', carrier: undefined, state: 'TX', businessClass: 'Expediter' });
+    // The business ZIP: GEICO's own ZIP already there, the rule kept it; the page re-sets it and
+    // the agent types the intake's.
+    e({ type: 'fill_field', step: 'Business & Owner Info', q: null, key: 'ref:GiveZip', label: '5-Digit ZIP Code', controlKind: 'text', result: 'kept', path: 'garaging.zip' });
+    e({ type: 'field_change', step: 'Business & Owner Info', q: null, key: 'ref:GiveZip', label: '5-Digit ZIP Code', kind: 'text', by: 'page', change: 'edited', matchesIntake: ['garaging.zip'] });
+    e({ type: 'field_change', step: 'Business & Owner Info', q: null, key: 'ref:GiveZip', label: '5-Digit ZIP Code', kind: 'text', by: 'agent', change: 'edited', matchesIntake: ['garaging.zip'] });
+    // TNI's standard (No), answered by the agent before any fill reached it: claimed by its name.
+    e({ type: 'field_change', step: 'Quote & Coverages', q: null, key: 'ref:GiveHasContractForBlanketAiEndorsement', label: 'Does the customer have a contract that requires a blanket additional insured endorsement?', kind: 'radio', by: 'agent', to: 'No' });
+    // A question no rule knows: still a candidate.
+    e({ type: 'field_change', step: 'Quote & Coverages', q: null, key: 'ref:GiveBrandNewQuestion', label: 'A question GEICO just added?', kind: 'radio', by: 'agent', to: 'No' });
+  }
+  const { suggestions } = learn(events, { carriers: CARRIERS, minIntakes: 5 });
+  const all = Object.values(suggestions).flat();
+  assert.deepEqual(all.filter((s) => s.carrier === 'geico').map((s) => [s.field, s.answer]), [['GiveBrandNewQuestion', 'No']], 'only the new question');
+  assert.equal(suggestions.standard[0].step, 'Quote & Coverages');
+  assert.match(suggestions.standard[0].rule, /^\{ field: 'GiveBrandNewQuestion'/, 'its rule finds it by name');
+  assert.equal(questionOf([])({ carrier: 'geico', page: '/quote', step: 'Vehicles', q: null, key: 'ref:GiveZip', label: '5-Digit ZIP Code' }), 'geico|/quote › Vehicles|ref:GiveZip', 'by name on its step');
+  // An AmWINS question whose rule had no intake value (noData) is mapped too.
+  const amwins = [];
+  for (let i = 0; i < 5; i++) {
+    const base = { session: `a${i}`, intakeId: `apdf${i}`, carrier: 'amwins', page: '/application/businessauto', step: 'Underwriting', label: 'Disclosure Details' };
+    amwins.push({ id: `a${i}-1`, t: `2026-10-06T11:0${i}:00Z`, ...base, type: 'fill_field', q: null, key: 'disclosure', controlKind: 'select', result: 'noData' });
+    amwins.push({ id: `a${i}-2`, t: `2026-10-06T11:0${i}:01Z`, ...base, type: 'field_change', q: null, key: 'disclosure', kind: 'select', by: 'agent', to: 'None' });
+  }
+  assert.equal(Object.values(learn(amwins, { carriers: noRules, minIntakes: 5 }).suggestions).flat().length, 0);
+});
