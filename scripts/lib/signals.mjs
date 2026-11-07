@@ -354,12 +354,22 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   const aiDecisions = events.filter((e) => e.type === 'ai_decision');
   const decided = aiDecisions.filter((e) => ['accepted', 'approved', 'dismissed', 'rejected'].includes(e.decision));
   // An answer Luna put in (the agent's Use, or an automatic pick) that the agent changed afterwards
-  // on the same quote, page and question: an upper bound on wrong answers, since a client may also
-  // have changed their mind. Each answer once.
-  const aiOnce = (e) => `${e.session}|${e.page}|${e.view ?? ''}|${e.q}`;
+  // on the same quote, page, view (tab, and vehicle or driver) and question: a signal for review,
+  // not a count of wrong answers, since a wrong answer the agent left in place isn't counted and a
+  // client may have changed their mind. Each answer once. A decision from a build that logged no
+  // view (before 2026-11-07) matches a change in any view of its page (CodeRabbit on PR #413).
+  const aiOnce = (e, view = e.view ?? '') => `${e.session}|${e.page}|${view}|${e.q}`;
   const putIn = new Map();
-  for (const e of aiDecisions.filter((x) => (x.decision === 'accepted' || x.decision === 'auto') && x.q)) if (!putIn.has(aiOnce(e))) putIn.set(aiOnce(e), e.t);
-  const changedAfter = new Set(events.filter((e) => e.type === 'field_change' && e.by === 'agent' && e.q && putIn.has(aiOnce(e)) && e.t > putIn.get(aiOnce(e))).map(aiOnce));
+  for (const e of aiDecisions.filter((x) => (x.decision === 'accepted' || x.decision === 'auto') && x.q)) {
+    const k = aiOnce(e, e.view ?? '*');
+    if (!putIn.has(k)) putIn.set(k, e.t);
+  }
+  const changedAfter = new Set();
+  for (const e of events) {
+    if (e.type !== 'field_change' || e.by !== 'agent' || !e.q) continue;
+    const k = [aiOnce(e), aiOnce(e, '*')].find((x) => putIn.has(x));
+    if (k && e.t > putIn.get(k)) changedAfter.add(k);
+  }
   const allDone = Object.values(outcomes).reduce((a, o) => a + o.done, 0);
   const carrierQuotes = Object.values(outcomes).reduce((a, o) => a + o.quotes, 0);
   const kpis = {
@@ -511,7 +521,7 @@ export function markdown(s, { noTestList = false } = {}) {
     `| Left to the agent per quote: ${Object.keys(k.leftPerQuote).join(' / ') || '—'} | ${Object.values(k.leftPerQuote).join(' / ') || '—'} |`,
     `| Problem reports per 10 quotes (plus ${k.problemReportsInTestRuns} in test runs) | ${k.problemReportsPer10Quotes ?? '—'} |`,
     `| AI requests · error rate | ${k.aiRequests} · ${k.aiErrorPercent ?? '—'}% |`,
-    `| AI: questions suggested · suggestions accepted or approved | ${k.aiSuggestedPercent ?? '—'}% · ${k.aiAcceptedPercent ?? '—'}% |`,
+    `| AI: questions suggested · decisions accepted or approved | ${k.aiSuggestedPercent ?? '—'}% · ${k.aiAcceptedPercent ?? '—'}% |`,
     `| AI answers put in that the agent changed later | ${k.aiChangedLater} of ${k.aiPutIn} |`,
     `| Restricted actions by the extension (must be 0) | ${k.restrictedActions} |`,
     ...(k.answerKey ? [keyLine(k.answerKey)] : []), '');

@@ -12,7 +12,7 @@ import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPr
 import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
-import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout } from './coordinator.js';
+import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout, viewOf } from './coordinator.js';
 import { drawRow, fillPage, resumeHeldFill, runKit } from './fill.js';
 import { aiHolder } from './ai-view.jsx';
 import { needId, setHead } from './report-rows.js';
@@ -677,7 +677,8 @@ async function applyAi(list, ctx, decision) {
 function aiDecisionEvent(x, ctx, decision) {
   const redact = redactor(redactionTerms(state.intake.record));
   return {
-    type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
+    // Its view (tab, vehicle or driver), as the field changes after it have (CodeRabbit on PR #413).
+    type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, view: viewOf(ctx.tabId, ctx.page, ctx.carrier), q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
     decision, choice: x.controlKind !== 'text' && x.choice ? redact(x.choice) : undefined,
     model: x.model, policy: x.policy, promptHash: x.promptHash ?? undefined, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
     // Which TNI rules the pick cites, by id (audit 2026-11-07, AI-07).

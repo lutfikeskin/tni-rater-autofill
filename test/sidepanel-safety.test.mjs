@@ -2209,7 +2209,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
 
 // Audit 2026-11-07, AI-04: a decision and a pending hold say which prompt picked them.
 test('an AI decision event and a pending hold record carry the prompt hash', () => {
-  const context = { state: { intake: { record: {} } }, redactor: () => (x) => x, redactionTerms: () => [], aiFingerprint: JSON.stringify,
+  const context = { state: { intake: { record: {} } }, redactor: () => (x) => x, redactionTerms: () => [], viewOf: () => 't1', aiFingerprint: JSON.stringify,
     aiSafeText: String, aiOriginRecord: () => null, snapshotFingerprint: () => null };
   vm.runInNewContext(['aiDecisionEvent', 'aiPendingRecord'].map(extractFunction).join('\n'), context);
   const x = { key: 'k', label: 'Q', choice: 'No', controlKind: 'radio', model: 'gpt-6-luna', policy: 'luna-evidence-v6', promptHash: '0123456789ab', done: 'auto' };
@@ -3114,11 +3114,12 @@ test('each question Luna left is logged with its code and why, and a decision li
   assert.deepEqual(t.logged.map((e) => e.type), ['ai_suggest', 'ai_leave', 'ai_leave']);
   assert.deepEqual({ ...t.logged[1] }, { type: 'ai_leave', carrier: 'progressive', page: 'CoveragesRates', q: '7Z', label: 'Years with [client]', controlKind: 'radio', leaveWhy: 'missing', intakePath: 'priorInsurance.years' });
   assert.deepEqual([t.logged[2].q, t.logged[2].leaveWhy, t.logged[2].intakePath], [null, 'chose', null]);
-  const context = { state: { intake: { record: {} } }, redactor: () => (s) => s, redactionTerms: () => [] };
+  const context = { state: { intake: { record: {} } }, redactor: () => (s) => s, redactionTerms: () => [], viewOf: (tabId, page) => (tabId === 4 && page === 'Quote' ? 't2:v1' : null) };
   vm.runInNewContext(extractFunction('aiDecisionEvent'), context);
-  const ctx = { carrier: { id: 'progressive' }, page: 'Quote' };
+  const ctx = { tabId: 4, carrier: { id: 'progressive' }, page: 'Quote' };
   assert.deepEqual(context.aiDecisionEvent({ label: 'Hazmat', choice: 'No', ruleIds: ['general.hazmat-blank'] }, ctx, 'accepted').ruleIds, ['general.hazmat-blank']);
   assert.equal(context.aiDecisionEvent({ label: 'Hazmat', choice: 'No', ruleIds: [] }, ctx, 'accepted').ruleIds, undefined);
+  assert.equal(context.aiDecisionEvent({ label: 'Hazmat', choice: 'No' }, ctx, 'accepted').view, 't2:v1', 'its view, as its field changes have (CodeRabbit on PR #413)');
 });
 
 // 2026-10-09 to 10-26: 12 of 58 page reviews ended "The page or intake changed", most on GEICO's
