@@ -881,3 +881,23 @@ test('learning leaves test runs out: a test-only intake PDF adds no support', as
   assert.equal(learn(builds).rules, 'bbbbbbbbbbbb');
   assert.equal(learn(builds, { excludeSessions: testSessionsOf(builds, ['aaaaaaaa']) }).rules, 'aaaaaaaaaaaa');
 });
+
+// Audit 2026-11-07 LEARN-04: label hygiene. Page chrome with trailing dots, the carrier's portal
+// pages and page markup in an older event's label make no suggestion and split no question.
+test('learning: "Browse …", portal pages and labels with markup make no suggestion or second question', () => {
+  const events = [];
+  for (let i = 0; i < 5; i++) {
+    const base = { session: `h${i}`, intakeId: `pdf${i}`, type: 'field_change', q: null, by: 'agent', kind: 'select' };
+    const e = (x) => events.push({ id: `${i}-${events.length}`, t: at(events.length), ...base, ...x });
+    e({ carrier: 'amwins', page: '/application/businessauto', step: 'Underwriting', key: 'file', label: 'Browse …', kind: 'checkbox', to: 'unchecked' });
+    e({ carrier: 'geico', page: '/', key: 'header-search-type', label: 'header-search-type', to: 'Policy' });
+    e({ carrier: 'progressive', page: '/home', key: 'search', label: 'Search by', to: 'Name' });
+    // One question, logged with and without the page's markup.
+    e({ carrier: 'amwins', page: '/application/businessauto', step: 'Drivers', key: 'lic', label: i % 2 ? "<span data-qm-encrypt='true'>[client]</span>'s License State" : "[client]'s License State", to: 'TX' });
+    // A Progressive question by its text, its id renumbered and no layout to name it (CodeRabbit on PR #392).
+    e({ carrier: 'progressive', page: 'AddDriver', q: `5L0${i}`, key: `5L0${i}`, label: i % 2 ? '<b>License</b> State' : 'License State', to: 'TX' });
+  }
+  const { suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
+  assert.deepEqual(Object.values(suggestions).flat().map((s) => [s.carrier, s.label]).sort(), [['amwins', "[client]'s License State"], ['progressive', 'License State']]);
+  assert.deepEqual(suggestions.standard.map((s) => s.intakes), [5, 5], 'one question each, all five quotes');
+});

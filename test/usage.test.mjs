@@ -64,6 +64,16 @@ test('agent edits to text boxes are logged without the text', () => {
   assertNoClientData(typed);
 });
 
+// Audit 2026-11-07 LEARN-04: GEICO wraps a driver's name in an analytics <span> inside the label; the
+// change and the fill name the field with the same text.
+test('change and fill events log a question\'s text without the page\'s markup', () => {
+  const label = "<span data-qm-encrypt='true'>Jordan</span>'s   Driver License State";
+  const change = fieldChangeEvent({ key: 'ref:GiveLicenseState', label, kind: 'select', before: '', after: 'TX', agent: true }, { record, filled: new Map(), redact });
+  const [, fill] = fillEvents([{ filled: [{ key: 'ref:GiveLicenseState', label: "[client]'s Driver License State", controlKind: 'select', shown: 'TX' }] }], { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact });
+  assert.equal(change.label, "[client]'s Driver License State");
+  assert.equal(change.label, fill.label);
+});
+
 test('change and fill events name the control, so repeated vehicle rows stay apart', () => {
   const second = fieldChangeEvent({ key: '2B9D@2', q: '2B9D', label: 'Farthest distance', kind: 'select', before: '', after: '500 miles', agent: true }, { record, filled: new Map(), redact });
   assert.deepEqual([second.q, second.key], ['2B9D', '2B9D@2']);
