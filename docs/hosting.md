@@ -229,7 +229,8 @@ opens one titled "Daily review" when none is open. New means:
 
 - problem reports, each with its time, agent, page and the build that logged it, marked when it
   came from a test run. Never the report's text: the repository is public, so the text is read on
-  the usage server's dashboard or in a review run on the maintainer's computer;
+  the usage server's dashboard or in a review run on the maintainer's computer (the server keeps
+  at most the panel's 1,000 characters of it);
 - questions without a rule (or AmWINS fields the mock lacks) first seen in a layout of the period,
   one per question whatever its row, number, product or step (`scripts/lib/daily.mjs`);
 - a deployed usage server that isn't the repository's (`scripts/server-check.mjs`, checked first
@@ -240,7 +241,14 @@ opens one titled "Daily review" when none is open. New means:
 Nothing new, no comment. Two quiet days get one comment, with the day the last event arrived, from
 the run whose window holds the moment the quiet reached 48 hours. From 2026-10-11 to 10-18 no events
 arrived and every run stayed silent, so a week without quotes looked the same as broken uploads.
-A long list is cut to fit a GitHub comment and points to the review. Closing the issue is how a
+Anyone with the extension's upload token can write what the comment quotes (an agent's initials, a
+page, a carrier, a build, a question's caption, data-model name and kind), so each is posted in inline code (no
+markdown, link or image), its backticks and line breaks taken out, every `@` broken by a zero-width
+space (no one is mentioned, and the comment never starts the Claude workflow, which answers an
+at-mention of Claude from the maintainer's login, the one `npm run daily -- --post` posts as), and
+bounded (a caption at 200 characters, others at 120 or fewer) (`untrusted` in
+`scripts/lib/daily.mjs`). A report's time is written only when it is a real date and minute, else `?`. A list too long anyway is cut to fit
+a GitHub comment and points to the review. Closing the issue is how a
 reviewer says it's been read; the next new item opens another. The review does not implement or deploy
 corrections.
 
