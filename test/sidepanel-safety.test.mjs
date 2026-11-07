@@ -1460,6 +1460,34 @@ test('ordinary manual keys survive reload and remain scoped to the intake, tab a
   assert.deepEqual(Object.keys(records[0]).sort(), ['keys', 'page', 'scope', 'tabId']);
 });
 
+// Audit 2026-11-07, LEARN-08: a store that can't be written (full, broken) was silent, and the
+// panel reopened would add units again or refill answers the agent changed. Now each failed write
+// says so where the agent works (state.notes.storage) and is logged as the panel's error, and its
+// queue goes on to the next write.
+test('a write the panel cannot save on this computer is said and logged, and the next write still runs', async () => {
+  const state = { tab: { id: 1 }, agentKeys: new Map([['Quote', new Set(['manual-choice'])]]), doneActions: new Set(['addVehicle:0']), notes: { usage: null, window: null, storage: null } };
+  const crashes = [];
+  let broken = true;
+  const writes = [];
+  const set = (what) => async (...args) => { if (broken) { const e = new Error('QUOTA_BYTES quota exceeded'); e.name = 'QuotaExceededError'; throw e; } writes.push([what, args]); };
+  const context = { state, agentKeysQueue: Promise.resolve(), doneActionsQueue: Promise.resolve(), usage: { currentSession: () => ({ intakeId: 'intake-a' }) },
+    agentKeysStore: { get: async () => [], set: set('keys') }, doneActionsStore: { set: set('done') }, logCrash: (err) => crashes.push(err.message) };
+  vm.createContext(context);
+  vm.runInContext(['persistFailed', 'persistAgentKeys', 'persistDoneActions'].map(extractFunction).join('\n'), context);
+  await context.persistAgentKeys();
+  await context.persistDoneActions();
+  assert.equal(state.notes.storage?.tone, 'warn');
+  assert.equal(state.notes.storage.role, 'alert');
+  assert.match(state.notes.storage.title, /may not be remembered/);
+  assert.match(state.notes.storage.text, /the buttons and vehicles already done/);
+  assert.deepEqual(crashes, ['storage: which answers you changed not saved: QuotaExceededError', 'storage: the buttons and vehicles already done not saved: QuotaExceededError']);
+  assert.equal(state.notes.usage, null, 'the other notes are kept');
+  broken = false;
+  await context.persistAgentKeys();
+  await context.persistDoneActions();
+  assert.deepEqual(writes.map(([what]) => what), ['keys', 'done'], 'each queue still writes after a failure');
+});
+
 test('canonical AI snapshots ignore Chromium metadata and frame ordering but retain identity', () => {
   const context = { aiFingerprint: JSON.stringify };
   vm.runInNewContext([
@@ -6056,7 +6084,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
         startSession: fingerprint => { scope = fingerprint; return { intakeId: fingerprint }; } },
       agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => structuredClone(records),
         set: async value => { records = structuredClone(value); } },
-      doneActionsQueue: Promise.resolve(), doneActionsStore: { clear: async () => {} },
+      doneActionsQueue: Promise.resolve(), doneActionsStore: { clear: async () => {} }, unitFormsStore: { clear: async () => {} },
       tellRecorder: async () => {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
       aiRetiredSignatures: new Set(),
       runKit: async (tabId, c, func, args = []) => {

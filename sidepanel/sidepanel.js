@@ -48,6 +48,7 @@ function wire() {
   // that didn't work, and a PDF that couldn't be read.
   mountSiteTrack($('site-track'));
   mountNote($('notices'), 'usage');
+  mountNote($('storage-note'), 'storage');
   mountNote($('window-note'), 'window');
   mountLoadError($('load-error'));
   // Settings: Done, the switches and boxes (settingsActs), the AI's (aiActs), the test-run mark,
