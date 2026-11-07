@@ -21,6 +21,26 @@ test('the dirty files are read from git status --porcelain as it prints them', (
   assert.deepEqual(dirtyFiles(''), []);
 });
 
+// The maintainer, 2026-11-07: a merge to main that changes what the image is built from deploys it,
+// with a RAILWAY_TOKEN secret; without that secret the job says so and succeeds, deploying nothing.
+test('the deploy workflow runs on main for every file the image is built from, and skips without its secret', () => {
+  const workflow = fs.readFileSync(new URL('../.github/workflows/deploy-server.yml', import.meta.url), 'utf8');
+  const paths = [...(/^ {4}paths:\n((?: {6}- .*\n)+)/m.exec(workflow)?.[1] ?? '').matchAll(/- '?([^'\n]+)'?/g)].map((m) => m[1]);
+  assert.ok(/^ {2}push:\n {4}branches: \[main\]/m.test(workflow), 'on pushes to main only');
+  for (const f of imageFiles(fs.readFileSync(new URL('../server/Dockerfile', import.meta.url), 'utf8'))) {
+    assert.ok(paths.some((p) => p === f || (p.endsWith('/**') && f.startsWith(p.slice(0, -2)))), `a change to ${f} deploys`);
+  }
+  assert.ok(paths.includes('.railwayignore'), 'and to what the upload leaves out');
+  assert.match(workflow, /RAILWAY_TOKEN: \$\{\{ secrets\.RAILWAY_TOKEN \}\}/);
+  // Every step after the check runs only when the secret is there.
+  const steps = workflow.split(/\n {6}- /).slice(1);
+  const check = steps.findIndex((s) => /id: token/.test(s));
+  assert.ok(check >= 0, 'a step checks for the secret');
+  for (const s of steps.slice(check + 1)) assert.match(s, /if: steps\.token\.outputs\.present == 'true'/, s.split('\n')[0]);
+  assert.match(workflow, /node scripts\/deploy-server\.mjs/, 'the same checks and wait as npm run deploy:server');
+  assert.match(workflow, /ref: main\n/, 'main as it is when the job starts: the script refuses any other commit');
+});
+
 test('a deploy goes ahead only from the default branch as merged, with the image\'s files committed', () => {
   const ok = { fetched: true, head: 'abc', upstream: 'abc', defaultBranch: 'main', dirty: [] };
   assert.equal(deployProblem(ok), null);

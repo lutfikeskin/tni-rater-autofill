@@ -1,0 +1,59 @@
+# Deploys the usage server to Railway after a merge to main that changes what its image is built
+# from (the maintainer, 2026-11-07; audit 2026-11-07, SRV-10). It runs scripts/deploy-server.mjs,
+# the same as `npm run deploy:server`: it refuses unless the checkout is origin/main as merged, runs
+# `railway up --service usage-server --ci`, then waits for Railway's /v1/health to name this server.
+# Needs the repository secret RAILWAY_TOKEN, a Railway project token for the production
+# environment. Without it the job says so and succeeds, deploying nothing.
+# test/deploy.test.mjs keeps `paths` to every file server/Dockerfile copies.
+name: Deploy usage server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'src/usage-schema.js'
+      - '.railwayignore'
+  workflow_dispatch:
+
+# One deploy at a time, the newest last: a deploy is never cut off halfway.
+concurrency:
+  group: deploy-usage-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+    steps:
+      - id: token
+        name: Check for the Railway token
+        run: |
+          if [ -n "$RAILWAY_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::RAILWAY_TOKEN is not set: nothing deployed. Deploy with npm run deploy:server (docs/hosting.md)."
+          fi
+      - if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@v4
+        with:
+          # main as it is now, not the pushed commit: a later merge that changes no server file
+          # starts no run of its own, and the script deploys only origin/main.
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - if: steps.token.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - if: steps.token.outputs.present == 'true'
+        name: Install Railway's CLI
+        run: npm install --global @railway/cli@5.71.0
+      - if: steps.token.outputs.present == 'true'
+        name: Deploy and wait for the new server
+        run: node scripts/deploy-server.mjs
