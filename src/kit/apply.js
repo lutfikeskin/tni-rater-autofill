@@ -140,7 +140,7 @@ const TYPING_POLL_MS = 250;
  * Writes a plan step's value into control c with the driver that writes it, or the plain controls' own way.
  * @param {any} step
  * @param {PageControl} c
- * @returns {Promise<{ ok: boolean, shown?: string | null, reason?: string, options?: string[] }>}
+ * @returns {Promise<WriteResult>}
  */
 async function write(step, c) {
   const driver = drivers.find((d) => d.writes(step, c));
