@@ -60,7 +60,8 @@
     buffer = [];
     dropped = 0;
     // The panel answers a batch it took; none (no panel, or one not recording this tab) keeps it.
-    chrome.runtime.sendMessage({ ra: 'trace', events, dropped: lost }).then((reply) => {
+    // `v`, `recorder`: which trace and recorder wrote them, for the recording's manifest.
+    chrome.runtime.sendMessage({ ra: 'trace', events, dropped: lost, v: VERSION, recorder: globalThis.__raterRecorder?.version ?? null }).then((reply) => {
       if (!reply?.ok) throw new Error('not taken');
       failingSince = 0;
     }).catch(() => {

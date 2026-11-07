@@ -133,6 +133,14 @@ function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.examp
   };
 }
 
+// REC-10 (audit 2026-11-07): the recording's manifest names the trace and recorder that wrote it.
+test('each batch says which trace and recorder wrote it', async () => {
+  const h = harness();
+  await h.advance(1000);
+  const [batch] = h.trace();
+  assert.deepEqual([batch.v, batch.recorder], [Number(TRACE.match(/const VERSION = (\d+);/)[1]), Number(RECORDER.match(/const VERSION = (\d+);/)[1])]);
+});
+
 test('a change is stamped with the page clock, its question named as the recorder names it, a choice by its words', async () => {
   const h = harness();
   const hazmat = new Control('select', { name: 'hazmat', label: 'Hauls hazmat', options: [{ text: 'Select', value: '' }, { text: 'No', value: 'N' }], top: 300 });

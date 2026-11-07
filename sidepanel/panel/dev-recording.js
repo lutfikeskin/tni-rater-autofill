@@ -5,7 +5,9 @@ import { redactor, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { recordingId, stampEvents, newManifest } from '../../src/recording.js';
 import { RecordingStore } from '../recording.js';
-import { $, state } from './core.js';
+import { $, state, switchOn } from './core.js';
+import { rulesFingerprint } from './coordinator.js';
+import { fillDefaultsHash } from './agent-defaults/store.js';
 import { ensureRecorder } from './usage.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -41,8 +43,13 @@ async function startRecording() {
   const redact = redactor(redactionTerms(state.intake.record));
   const scenario = redact($('capture-scenario').value.trim()).slice(0, 60) || 'unnamed';
   const started = new Date();
+  // What the run needs to be reproduced (REC-10): the session to join the usage log by, the rules
+  // and the agent's defaults it fills with, the filling switches, the platform.
   const manifest = newManifest({ id: recordingId(carrier.id, scenario, started), carrier: carrier.id, scenario, started,
-    build: usage.build(), intake: usage.currentSession()?.intakeId ?? null, test: !!state.intake.test });
+    build: usage.build(), intake: usage.currentSession()?.intakeId ?? null, test: !!state.intake.test,
+    session: usage.currentSession()?.id ?? null, rules: rulesFingerprint(), defaultsHash: fillDefaultsHash() ?? null,
+    settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages') },
+    platform: navigator.userAgentData?.platform || navigator.platform || null });
   const store = await RecordingStore.start(manifest);
   // `fills`: when fills ran ({ start, end }), noted by state.filling's setter.
   state.recording = { store, tabId, carrier, redact, fills: state.filling ? [{ start: started.getTime(), end: null }] : [], started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false };
@@ -62,6 +69,12 @@ function onTraceMessage(msg, sender, sendResponse) {
   const events = stampEvents(msg.events, { frame, fillingAt, redact: rec.redact, stepName: (s) => knownStep(rec.carrier, s) ?? null });
   // What the trace couldn't keep while no panel took its events (closed, reloading).
   if (msg.dropped > 0) events.push({ kind: 'gap', t: Date.now(), frame, dropped: msg.dropped });
+  // Which trace and recorder wrote them (REC-10), the top frame's first word on it kept.
+  const versions = rec.store.manifest?.versions;
+  if (versions && frame === 0 && versions.trace == null && Number.isInteger(msg.v)) {
+    versions.trace = msg.v;
+    versions.recorder = Number.isInteger(msg.recorder) ? msg.recorder : null;
+  }
   rec.store.add(events);
   sendResponse({ ok: true });
 }

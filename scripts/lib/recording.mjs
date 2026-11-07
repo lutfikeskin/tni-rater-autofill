@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { unzipSync, strFromU8 } from 'fflate';
+import { RECORDING_VERSION } from '../../src/recording.js';
 
 const PAUSE_MS = 3000;
 
@@ -257,6 +258,13 @@ export function recordingReport({ manifest, events }) {
   const out = [`# Recording ${manifest.id}`, ''];
   out.push(`${manifest.carrier} · scenario ${quote(manifest.scenario)} · ${new Date(t0).toISOString()} · ${clock(end - t0)} long · ${ordered.length} events${manifest.dropped ? ` (${manifest.dropped} lost)` : ''}`);
   out.push(`Build ${manifest.build?.version ?? '?'} (${manifest.build?.channel ?? '?'}${manifest.build?.commit ? `, ${manifest.build.commit}` : ''})${manifest.test ? ' · a test run' : ''}${manifest.ended ? '' : ' · cut short (no end)'}`, '');
+  // What the run needs to be reproduced (format 2 on, REC-10), and a format newer than this report.
+  if ((manifest.version ?? 1) > RECORDING_VERSION) out.push(`**This recording's format is version ${manifest.version}; this report reads up to ${RECORDING_VERSION}: what it says may be incomplete or wrong. Update the repository first.**`, '');
+  if ((manifest.version ?? 1) >= 2) {
+    const s = manifest.settings;
+    const on = s ? Object.entries({ 'auto-advance': s.autoAdvance, 'follow-ups': s.autoFollowUps, 'automatic pages': s.autoPages }).map(([k, v]) => `${k} ${v ? 'on' : 'off'}`).join(', ') : '?';
+    out.push(`Rules ${manifest.rules ?? '?'} · defaults ${manifest.defaultsHash ?? "TNI's"} · ${on} · trace ${manifest.versions?.trace ?? '?'}, recorder ${manifest.versions?.recorder ?? '?'} · ${manifest.platform ?? '?'} · session ${manifest.session ?? '?'}`, '');
+  }
   out.push('Times are from the start (m:ss.s). ↑: an answer above the previous one on the step. Typed text is never kept.', '');
   // The carrier's own server errors, said up front: a step that failed on them isn't the fill's.
   const errors = ordered.filter((e) => e.kind === 'request' && failed(e));
