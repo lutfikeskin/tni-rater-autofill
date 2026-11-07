@@ -4,17 +4,31 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { collectItems } from '../src/ai/common.js';
 import { buildRequest } from '../src/ai/luna.js';
 import {
   DEFAULT_CASES_PATH,
+  DEFAULT_NOTES_PATH,
+  DEFAULT_NAMES_PATH,
   parseArgs,
   providerItems,
   providerContext,
   readCases,
+  readNotesCases,
+  readNamesCases,
+  replayCall,
+  runNames,
+  runNotes,
+  runProvider,
   safeLiveResult,
+  savingCall,
+  scoreNames,
+  scoreNotes,
   scoreResult,
 } from '../scripts/ai-eval.mjs';
+import { DEFAULT_MODEL } from '../src/ai/luna.js';
+import { LEAVE } from '../src/ai/common.js';
 
 const cases = readCases(DEFAULT_CASES_PATH);
 
@@ -283,18 +297,26 @@ test('scoring flags false positives and evidence mismatches without exposing cas
 });
 
 test('live mode is explicit and Luna is the only evaluator', () => {
+  const sets = { casesPath: DEFAULT_CASES_PATH, notesPath: DEFAULT_NOTES_PATH, namesPath: DEFAULT_NAMES_PATH };
   assert.deepEqual(parseArgs(['--score', 'saved.json']), {
     live: false,
     scorePath: 'saved.json',
-    casesPath: DEFAULT_CASES_PATH,
+    replayPath: null,
+    ...sets,
     outPath: null,
+    responsesPath: null,
   });
-  assert.deepEqual(parseArgs(['--live', '--out', 'safe.json']), {
+  assert.deepEqual(parseArgs(['--live', '--out', 'safe.json', '--responses', 'answers.json']), {
     live: true,
     scorePath: null,
-    casesPath: DEFAULT_CASES_PATH,
+    replayPath: null,
+    ...sets,
     outPath: 'safe.json',
+    responsesPath: 'answers.json',
   });
+  assert.equal(parseArgs(['--replay', 'answers.json']).replayPath, 'answers.json');
+  assert.throws(() => parseArgs(['--live', '--replay', 'answers.json']), /exactly one mode/);
+  assert.throws(() => parseArgs(['--replay', 'answers.json', '--responses', 'again.json']), /only valid with --live/);
   assert.throws(() => parseArgs(['--provider', 'legacy']), /no longer supported/i);
   assert.throws(() => parseArgs(['--live', '--provider', 'legacy']), /no longer supported/i);
 });
@@ -322,4 +344,102 @@ test('safe result output omits provider explanations, prompts and credentials', 
   assert.doesNotMatch(serialized, /raw intake prompt|OPENAI_API_KEY|secret/i);
   assert.deepEqual(Object.keys(safe.cases[0]).sort(), ['id', 'status', 'suggestions', 'timingMs', 'usage']);
   assert.deepEqual(Object.keys(safe.cases[0].suggestions[0]).sort(), ['basis', 'choice', 'key']);
+});
+
+// Audit 2026-11-07, AI-06: the claims-box review and the driver-name check had no evaluation, and a
+// live run couldn't be checked again offline.
+const notesCases = readNotesCases(DEFAULT_NOTES_PATH);
+const namesCases = readNamesCases(DEFAULT_NAMES_PATH);
+const envelope = (data) => ({ status: 'completed', model: DEFAULT_MODEL, usage: { input_tokens: 10, output_tokens: 2 },
+  output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify(data) }] }] });
+// A stand-in model that answers as the cases expect (page questions all left).
+const byLine = new Map(notesCases.flatMap((c) => c.expected.map((x) => [x.line, x])));
+const byName = new Map(namesCases.flatMap((c) => c.expected.map((x) => [c.record.drivers[x.driver].first, x.guess])));
+function expectedModel(calls = []) {
+  return async ({ body }) => {
+    calls.push(body);
+    const state = JSON.parse(body.input[0].content);
+    if (state.claimsBox) return envelope({ lines: Object.fromEntries(Object.entries(state.claimsBox).map(([id, line]) => {
+      const x = byLine.get(line) ?? {};
+      return [id, { ntl: !!x.ntl, coverageChange: !!x.coverageChange, generalLiability: !!x.generalLiability, businessYears: x.businessYears ?? null, businessSince: x.businessSince ?? null }];
+    })) });
+    if (state.firstNames) return envelope({ drivers: Object.fromEntries(Object.entries(state.firstNames).map(([id, name]) => [id, byName.get(name) ?? 'unclear'])) });
+    return envelope({ decisions: Object.fromEntries(Object.keys(state.fields).map((id) => [id, { option: LEAVE, sourceIds: [], explanation: '', missingInformation: ['synthetic'], conflicts: [], nextStep: '' }])) });
+  };
+}
+
+test('claims-box and driver-name cases are synthetic, unreviewed, and only name lines and drivers the checks send', () => {
+  assert.ok(notesCases.length >= 5 && notesCases.every((c) => c.expertReviewed === false));
+  assert.ok(namesCases.length >= 2 && namesCases.every((c) => c.expertReviewed === false));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-eval-sets-'));
+  try {
+    const write = (name, value) => { const file = path.join(dir, name); fs.writeFileSync(file, JSON.stringify(value)); return file; };
+    const notes = structuredClone(notesCases[0]);
+    notes.expected[0].line = 'A line the box does not have.';
+    assert.throws(() => readNotesCases(write('notes.json', { version: 1, cases: [notes] })), /would not send/);
+    const names = structuredClone(namesCases[1]);
+    names.expected.push({ driver: 1, guess: 'likely_male' });
+    assert.throws(() => readNamesCases(write('names.json', { version: 1, cases: [names] })), /would not send/, 'an initial is never sent');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('claims-box and driver-name runs keep flags and guesses only, and score them', async () => {
+  const config = { apiKey: 'synthetic' };
+  const notes = await runNotes(notesCases, { call: expectedModel(), config });
+  assert.ok(notes.cases.every((c) => c.status === 'ok'));
+  assert.doesNotMatch(JSON.stringify(notes), /bobtail|Agent note/, 'no line text in the result');
+  const right = scoreNotes(notes, notesCases);
+  assert.equal(right.aggregate.lineAccuracy, 1);
+  assert.equal(right.aggregate.flags.ntl.truePositives, 1);
+  // A flag said where none was expected, and one missed.
+  const wrong = structuredClone(notes);
+  wrong.cases.find((c) => c.id === 'instruction-in-the-box').lines[0].ntl = true;
+  wrong.cases.find((c) => c.id === 'has-general-liability').lines[0].generalLiability = false;
+  const scored = scoreNotes(wrong, notesCases);
+  assert.deepEqual([scored.aggregate.flags.ntl.falsePositives, scored.aggregate.flags.generalLiability.falseNegatives], [1, 1]);
+  assert.equal(scored.cases.find((c) => c.id === 'instruction-in-the-box').status, 'fail');
+  const names = await runNames(namesCases, { call: expectedModel(), config });
+  assert.equal(scoreNames(names, namesCases).aggregate.accuracy, 1);
+  const swapped = structuredClone(names);
+  swapped.cases[0].guesses.find((g) => g.driver === 0).guess = 'likely_male';
+  swapped.cases[0].guesses.find((g) => g.driver === 2).guess = 'likely_female';
+  const swappedScore = scoreNames(swapped, namesCases).aggregate;
+  assert.deepEqual([swappedScore.opposite, swappedScore.guessedWhenUnclear], [1, 1]);
+  const failed = await runNames(namesCases, { call: async () => { throw new Error('provider said private things'); }, config });
+  assert.ok(failed.cases.every((c) => c.status === 'error') && !JSON.stringify(failed).includes('private'));
+  assert.equal(scoreNames(failed, namesCases).aggregate.serviceErrors, namesCases.length);
+});
+
+test('a live run saved with its responses replays offline to the same result, and a changed request has none', async () => {
+  const store = {}, calls = [];
+  const config = { apiKey: 'synthetic' };
+  const live = savingCall(expectedModel(calls), store);
+  const first = { pages: await runProvider(cases, { call: live, config }), notes: await runNotes(notesCases, { call: live, config }), names: await runNames(namesCases, { call: live, config }) };
+  assert.equal(Object.keys(store).length, calls.length);
+  assert.ok(Object.values(store).every((x) => Object.keys(x).sort().join() === 'model,output,status,usage'));
+  const replay = replayCall(JSON.parse(JSON.stringify(store)));
+  const again = { pages: await runProvider(cases, { call: replay, config }), notes: await runNotes(notesCases, { call: replay, config }), names: await runNames(namesCases, { call: replay, config }) };
+  const stable = (x) => JSON.stringify(x, (k, v) => (k === 'timingMs' ? 0 : v));
+  assert.equal(stable(again), stable(first));
+  assert.equal(scoreNotes(again.notes, notesCases).aggregate.lineAccuracy, 1);
+  // A request today's code builds differently (here: the claims box changed) has no saved answer.
+  const changed = structuredClone(notesCases);
+  changed[0].record.claims.text += ' Also wants cargo.';
+  const missing = await runNotes(changed, { call: replay, config });
+  assert.equal(missing.cases[0].status, 'error');
+  assert.ok(missing.cases.slice(1).every((c) => c.status === 'ok'));
+  // The command, offline and with no key: `--replay` scores all three sets.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-eval-replay-'));
+  try {
+    const file = path.join(dir, 'responses.json');
+    fs.writeFileSync(file, JSON.stringify(store));
+    const env = { ...process.env };
+    delete env.OPENAI_API_KEY;
+    const output = JSON.parse(execFileSync(process.execPath, [fileURLToPath(new URL('../scripts/ai-eval.mjs', import.meta.url)), '--replay', file], { encoding: 'utf8', env }));
+    assert.deepEqual([output.aggregate.serviceErrors, output.notes.aggregate.lineAccuracy, output.names.aggregate.accuracy], [0, 1, 1]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
