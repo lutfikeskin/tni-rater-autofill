@@ -726,31 +726,51 @@ function clearAgentKeys(scope) {
 }
 const STORAGE_SAID = 'StorageSaid';
 
-// The intakes whose New quote couldn't remove the last quote's records (newQuote): the quote on
-// screen lost them, so no fill runs for that intake, after a Clear, another intake or the panel
-// opening again too, until a New quote for it finishes (the maintainer, 2026-11-07). Kept in
-// chrome.storage.session (`store`), and in this panel's memory should that write fail.
+// The intakes whose New quote may have removed some of the last quote's records and not all
+// (newQuote): the quote on screen lost them, so no fill runs for that intake, after a Clear, another
+// intake or the panel opening again too, until a New quote for it finishes (the maintainer,
+// 2026-11-07). Kept in chrome.storage.session (`store`), and in this panel's memory. New quote holds
+// its intake before it removes anything and doesn't start if that can't be saved, so a hold is never
+// only in memory; it lets go once the records are gone. A list that can't be read holds every intake
+// (fail closed), and is never written from a guess (CodeRabbit on PR #395).
 const FILLS_HELD_KEY = 'fillsHeld';
 const FILLS_HELD_NOTE = 'The new quote didn’t start: this computer couldn’t let go of the last quote’s records. Nothing fills until it does: press New quote again.';
 const heldIntakes = new Set();
+// The stored list; a read that fails throws.
 async function storedHeld() {
-  const held = await store.get(FILLS_HELD_KEY).catch((err) => { logCrash(err); return []; });
+  const held = await store.get(FILLS_HELD_KEY);
   return Array.isArray(held) ? held : [];
 }
+// Held, saved: true; false when it couldn't be saved (said, and logged).
 async function holdFills(intakeId) {
-  if (!intakeId) return;
+  if (!intakeId) return true;
   heldIntakes.add(intakeId);
-  await store.set(FILLS_HELD_KEY, [...new Set([...(await storedHeld()), intakeId])])
-    .catch((err) => persistFailed('keep that this quote waits for New quote', err));
+  try {
+    await store.set(FILLS_HELD_KEY, [...new Set([...(await storedHeld()), intakeId])]);
+    return true;
+  } catch (err) {
+    persistFailed('keep that this quote waits for New quote', err);
+    return false;
+  }
 }
 async function releaseFills(intakeId) {
   if (!intakeId) return;
   heldIntakes.delete(intakeId);
-  await store.set(FILLS_HELD_KEY, (await storedHeld()).filter((id) => id !== intakeId))
-    .catch((err) => persistFailed('forget that this quote waited for New quote', err));
+  try {
+    await store.set(FILLS_HELD_KEY, (await storedHeld()).filter((id) => id !== intakeId));
+  } catch (err) {
+    persistFailed('forget that this quote waited for New quote', err);
+  }
 }
 async function fillsHeld(intakeId) {
-  return !!intakeId && (heldIntakes.has(intakeId) || (await storedHeld()).includes(intakeId));
+  if (!intakeId) return false;
+  if (heldIntakes.has(intakeId)) return true;
+  try {
+    return (await storedHeld()).includes(intakeId);
+  } catch (err) {
+    logCrash(err);
+    return true;
+  }
 }
 // A Clear's or New quote's catch: a failure persistFailed already said goes no further; any other
 // is thrown again (a crash, logged as one).

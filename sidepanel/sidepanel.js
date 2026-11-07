@@ -208,9 +208,7 @@ async function init() {
   holdLayouts();
   state.intake = (await store.get('intake')) ?? null;
   if (state.intake) state.view = firstView(state.intake);
-  // An intake whose New quote failed still holds its fills (fillsHeld), said again.
-  state.newQuoteFailed = await fillsHeld(state.intake?.intakeId);
-  if (state.newQuoteFailed) state.clientNote = FILLS_HELD_NOTE;
+  await restoreHold();
   state.active = (await store.get('active')) ?? state.active;
   // The selection saved for that tab, kept should the panel reach another tab first.
   state.savedActive = state.active;
@@ -243,6 +241,13 @@ async function init() {
   renderAiSettings();
   reviewIntake();
   await refreshTab();
+}
+
+// The panel opened again: an intake whose New quote failed still holds its fills (fillsHeld, also
+// when the list can't be read), said again.
+async function restoreHold() {
+  state.newQuoteFailed = await fillsHeld(state.intake?.intakeId);
+  if (state.newQuoteFailed) state.clientNote = FILLS_HELD_NOTE;
 }
 
 init();

@@ -373,6 +373,14 @@ async function newQuote() {
     const bytes = await intakePdfBytes();
     if (!bytes) { clientNote('The PDF isn’t kept here: load it again with Change file to start a new quote.'); return; }
     const scope = usage.currentSession()?.intakeId;
+    // Held first (holdFills): should the records go only in part, or the panel close meanwhile, this
+    // intake fills nothing until a New quote for it finishes. Not saved: nothing is let go, and the
+    // quote on screen keeps its records (CodeRabbit on PR #395).
+    if (!(await holdFills(scope))) {
+      clientNote('The new quote didn’t start: this computer couldn’t save that it was starting. Nothing was changed: try New quote again.');
+      render();
+      return;
+    }
     if (inExtension && state.tab?.carrier) await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit?.clear?.()).catch(() => {});
     state.tabSessions.clear();
     state.agentKeys = new Map();
@@ -385,10 +393,9 @@ async function newQuote() {
       // lost the panel's records of it (edits on the page, helpers clicked, unit forms), some of the
       // stored ones too. No fill runs for this intake, by itself or asked, until a New quote for it
       // finishes, so none refills a changed answer or adds a vehicle again (CodeRabbit on PR #395):
-      // kept apart from the panel (holdFills), so a Clear, another intake or the panel opening again
-      // doesn't lift it.
+      // held before anything went (holdFills above), so a Clear, another intake or the panel opening
+      // again doesn't lift it.
       state.newQuoteFailed = true;
-      await holdFills(scope);
       clientNote(FILLS_HELD_NOTE);
       render();
       throw err;

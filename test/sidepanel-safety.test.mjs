@@ -8636,7 +8636,7 @@ function intakeChangeHarness({ fillEndMs = 15000 } = {}) {
     normalizeIntake: () => ({ record: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] }, warnings: [] }), intakeSummary: async () => ({ intakeId: 'b' }),
     store: { set: async () => {}, remove: async () => {} }, pruneAgentRecords: async () => [], clearAgentKeys: async () => {}, testIntakes: { get: async () => [] }, logSettings: async () => {},
     platformOf: () => ({ os: null, chrome: null }), uploadNow() {}, save: async () => {}, render() {}, renderSite() {}, renderSteps() {}, refreshTab() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
-    profileTimer: null, logProfile() {}, stopRecording: async () => {}, worldFor: () => 'ISOLATED', fillsHeld: async () => false, holdFills: async () => {}, releaseFills: async () => {}, FILLS_HELD_NOTE: 'held',
+    profileTimer: null, logProfile() {}, stopRecording: async () => {}, worldFor: () => 'ISOLATED', fillsHeld: async () => false, holdFills: async () => true, releaseFills: async () => {}, FILLS_HELD_NOTE: 'held',
     chrome: { scripting: { executeScript: async ({ target }, ...rest) => { seen.stops.push([target.tabId, target.allFrames, state.intake === intakeA, state.resetting]); ends(); return []; } } } };
   // The stop goes with its run id (`args`), as Stop's does.
   context.chrome.scripting.executeScript = async (spec) => { seen.stops.push([spec.target.tabId, spec.args, state.intake === intakeA, state.resetting]); if (spec.args) ends(); return []; };
@@ -8719,34 +8719,52 @@ test('a failed New quote holds its intake\'s fills through any load of it but Ne
   t.state.newQuoteFailed = true;
   await t.context.loadFile(pdf);
   assert.equal(t.state.newQuoteFailed, false, 'another intake, not held');
-  // The panel opened again on that intake: still held, and said.
+  // The panel opened again reads the hold once the saved intake is (restoreHold, below).
   const init = extractFunction('init');
-  assert.match(init, /state\.newQuoteFailed = await fillsHeld\(state\.intake\?\.intakeId\);\s+if \(state\.newQuoteFailed\) state\.clientNote = FILLS_HELD_NOTE;/);
-  assert.ok(init.indexOf('fillsHeld') > init.indexOf("state.intake = (await store.get('intake'))"), 'read once the saved intake is');
+  assert.ok(init.indexOf('await restoreHold();') > init.indexOf("state.intake = (await store.get('intake'))"), 'read once the saved intake is');
 });
 
-// The held intakes (core.js): kept in the session store, and in this panel's memory should that
-// write fail; a New quote that finishes lets its intake go.
-test('the intakes whose fills are held are kept in the session store, and in memory when it fails', async () => {
+// The held intakes (core.js), as a panel and a panel opened again (its memory new) read them: kept
+// in the session store; a hold that can't be saved says so (and New quote doesn't start); a list
+// that can't be read holds every intake and is never written from a guess (CodeRabbit on PR #395).
+test('the intakes whose fills are held are kept in the session store; a list that can\'t be read holds them all', async () => {
   const kept = {};
   const failed = [];
-  const store = { get: async (k) => kept[k], set: async (k, v) => { if (store.broken) throw new Error('QUOTA_BYTES quota exceeded'); kept[k] = v; } };
-  const context = { store, Set, Array, logCrash: () => {}, persistFailed: (what) => failed.push(what) };
-  vm.createContext(context);
-  vm.runInContext(`const FILLS_HELD_KEY = 'fillsHeld'; const heldIntakes = new Set();\n${['storedHeld', 'holdFills', 'releaseFills', 'fillsHeld'].map(extractFunction).join('\n')}`, context);
-  await context.holdFills('a');
+  const store = { get: async (k) => { if (store.unreadable) throw new Error('storage read failed'); return kept[k]; },
+    set: async (k, v) => { if (store.broken) throw new Error('QUOTA_BYTES quota exceeded'); kept[k] = v; } };
+  // A panel: core.js's held intakes, and sidepanel.js's restoreHold on opening.
+  const panel = () => {
+    const context = { store, Set, Array, logCrash: () => {}, persistFailed: (what) => failed.push(what), state: { intake: null }, FILLS_HELD_NOTE: 'held' };
+    vm.createContext(context);
+    vm.runInContext(`const FILLS_HELD_KEY = 'fillsHeld'; const heldIntakes = new Set();\n${['storedHeld', 'holdFills', 'releaseFills', 'fillsHeld', 'restoreHold'].map(extractFunction).join('\n')}`, context);
+    return context;
+  };
+  const opened = async (intakeId) => { const p = panel(); p.state.intake = { intakeId }; await p.restoreHold(); return [p.state.newQuoteFailed, p.state.clientNote ?? null]; };
+  let p = panel();
+  assert.equal(await p.holdFills('a'), true);
   assert.deepEqual([...kept.fillsHeld], ['a']);
-  assert.equal(await context.fillsHeld('a'), true);
-  assert.equal(await context.fillsHeld('b'), false);
-  assert.equal(await context.fillsHeld(undefined), false);
+  assert.deepEqual([await p.fillsHeld('a'), await p.fillsHeld('b'), await p.fillsHeld(undefined)], [true, false, false]);
+  // Opened again: held for that intake, said; not for another.
+  assert.deepEqual(await opened('a'), [true, 'held']);
+  assert.deepEqual(await opened('b'), [false, null]);
+  // A hold that can't be saved: false, said; held in this panel's memory only (New quote doesn't start).
   store.broken = true;
-  await context.holdFills('b');
+  assert.equal(await p.holdFills('b'), false);
   assert.deepEqual(failed, ['keep that this quote waits for New quote'], 'said');
-  assert.equal(await context.fillsHeld('b'), true, 'held in memory');
+  assert.equal(await p.fillsHeld('b'), true, 'held in memory');
   store.broken = false;
-  await context.releaseFills('a');
+  // A list that can't be read: every intake held, also on opening; nothing written from a guess.
+  store.unreadable = true;
+  assert.deepEqual(await opened('b'), [true, 'held'], 'held when it can\'t be read');
+  assert.equal(await p.holdFills('c'), false);
+  await p.releaseFills('a');
+  store.unreadable = false;
+  assert.deepEqual([...kept.fillsHeld], ['a'], 'a and nothing lost or guessed');
+  // Released, saved: not held, also on opening.
+  p = panel();
+  await p.releaseFills('a');
   assert.deepEqual([...kept.fillsHeld], []);
-  assert.equal(await context.fillsHeld('a'), false);
+  assert.deepEqual(await opened('a'), [false, null]);
 });
 
 test('a fill that only gets its tab\'s word while the intake waits is stopped then; one that never ends doesn\'t hold the intake', async () => {
@@ -9038,10 +9056,11 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
     intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
     runKit: async (tabId) => { calls.push(['clear', tabId]); return []; }, clearAgentKeys: async (scope) => { calls.push(['keys', scope]); },
     loadFile: async (file, opts) => { calls.push(['load', file.name, file.type, opts]); }, clientNote: (t) => calls.push(['note', t]),
-    holdFills: async (scope) => { calls.push(['hold', scope]); }, releaseFills: async (scope) => { calls.push(['release', scope]); }, FILLS_HELD_NOTE: 'Nothing fills until it does' };
+    holdFills: async (scope) => { calls.push(['hold', scope]); return true; }, releaseFills: async (scope) => { calls.push(['release', scope]); }, FILLS_HELD_NOTE: 'Nothing fills until it does' };
   vm.runInNewContext(extractFunction('newQuote'), context);
   await context.newQuote();
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['clear', 4], ['keys', 'abc'], ['release', 'abc'], ['load', 'client.pdf', 'application/pdf', { reset: true }]], 'a New quote that finishes lets its intake go');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['hold', 'abc'], ['clear', 4], ['keys', 'abc'], ['release', 'abc'], ['load', 'client.pdf', 'application/pdf', { reset: true }]],
+    'held before anything goes, and let go once a New quote finishes');
   assert.equal(state.intake.ntlAdded, false, 'NTL is added again on the new quote');
   // While answers go in, or without the PDF kept: said, nothing done.
   calls.length = 0;
@@ -9060,7 +9079,15 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
   await assert.rejects(context.newQuote(), { name: 'StorageSaid' });
   assert.equal(calls.some((c) => c[0] === 'load'), false, 'no new quote loaded');
   assert.equal(state.newQuoteFailed, true);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['clear', 4], ['hold', 'abc'], ['note', 'Nothing fills until it does'], ['render']], 'held for its intake, said, and drawn');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['hold', 'abc'], ['clear', 4], ['note', 'Nothing fills until it does'], ['render']], 'still held for its intake, said, and drawn');
+  // A hold that can't be saved: the New quote doesn't start, and nothing is let go.
+  calls.length = 0;
+  state.newQuoteFailed = false;
+  context.holdFills = async (scope) => { calls.push(['hold', scope]); return false; };
+  await context.newQuote();
+  assert.deepEqual(calls.map((c) => c[0]), ['hold', 'note', 'render'], 'nothing cleared, said');
+  assert.match(calls[1][1], /couldn’t save that it was starting\. Nothing was changed/);
+  assert.equal(state.newQuoteFailed, false);
   assert.match(extractFunction('fillPage'), /state\.resetting \|\| state\.newQuoteFailed \|\| !state\.intake/);
   assert.match(extractFunction('autoFill'), /state\.resetting \|\| state\.newQuoteFailed \|\| !state\.intake/);
   state.newQuoteFailed = false;
@@ -9473,7 +9500,7 @@ test('New quote lets go of the panel\'s own records before the stored ones, star
   const notes = [];
   const context = { state, inExtension: true, File: class { constructor(parts, name, opts) { Object.assign(this, { parts, name, type: opts?.type }); } },
     intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
-    runKit: async () => [], clearAgentKeys: async () => snapshot('keys'), loadFile: async () => snapshot('load'), clientNote: (t) => notes.push(t), releaseFills: async () => {} };
+    runKit: async () => [], clearAgentKeys: async () => snapshot('keys'), loadFile: async () => snapshot('load'), clientNote: (t) => notes.push(t), holdFills: async () => true, releaseFills: async () => {} };
   vm.runInNewContext(extractFunction('newQuote'), context);
   await context.newQuote();
   assert.deepEqual(JSON.parse(JSON.stringify(seen)), [['keys', [], 0, 0, 0, true], ['load', [], 0, 0, 0, true]]);
