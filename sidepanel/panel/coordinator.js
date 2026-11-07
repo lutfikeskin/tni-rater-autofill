@@ -1381,12 +1381,13 @@ function dockFor() {
 }
 
 // What the dock says now (state.dock, drawn by steps-view.jsx): dockFor's word, hidden while Settings
-// is open, with the fill it is about (`report`: none while one runs) and whether a fill runs, which
+// is open unless it offers Stop (a fill running stays stoppable from Settings: audit 2026-11-07,
+// UX-02), with the fill it is about (`report`: none while one runs) and whether a fill runs, which
 // holds its Fill (`busy`), and `paused` (pausedSaid). The quote's tab in the tab strip and its toolbar
 // badge follow it (markTab).
 function renderDock() {
   const d = dockFor();
-  state.dock = { ...d, hidden: state.settingsOpen, report: state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '', busy: !!state.filling, paused: pausedSaid(d) };
+  state.dock = { ...d, hidden: state.settingsOpen && d.button !== 'fill-stop', report: state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '', busy: !!state.filling, paused: pausedSaid(d) };
   markTab(d);
 }
 

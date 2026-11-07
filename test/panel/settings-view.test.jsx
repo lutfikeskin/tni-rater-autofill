@@ -204,3 +204,19 @@ test('mountSettings and mountRecordingLine draw before they return', () => {
   host.remove();
   foot.remove();
 });
+
+// Audit 2026-11-07, UX-02: a switch flipped in Settings while a fill ran had no effect on that fill
+// (its options went to the kit as it began), and nothing said so.
+test('while answers go in, the Filling switches say a change applies from the next fill', () => {
+  const calls = [];
+  const { container } = render(<Settings act={acts(calls)} />);
+  const note = $(container, '#filling-now-note');
+  expect([note.hidden, note.getAttribute('role')]).toEqual([true, 'status']);
+  act(() => { state.filling = true; });
+  expect([note.hidden, note.textContent]).toEqual([false, 'Answers are going in. A change here applies from the next fill, not this one; Stop is below.']);
+  // The switches still work: the change is the next fill's.
+  fireEvent.click($(container, '#auto-advance'));
+  expect(calls.at(-1)).toEqual(['switch', 'autoAdvance', false]);
+  act(() => { state.filling = false; });
+  expect(note.hidden).toBe(true);
+});

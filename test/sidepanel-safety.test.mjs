@@ -8455,11 +8455,17 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   assert.deepEqual({ ...state.dock }, { ...word, hidden: false, report: '1700', busy: false, paused: '' });
   // The quote's tab in the tab strip follows the same word (tab-mark.js, test/tab-mark.test.mjs).
   assert.deepEqual(marked, [word]);
-  // While a fill runs it is about no report and holds Fill; Settings open hides it.
+  // While a fill runs it is about no report and holds Fill. Settings open hides the dock, except
+  // its Stop while a fill runs (audit 2026-11-07, UX-02: Settings was the one screen with no Stop).
   Object.assign(state, { filling: true, settingsOpen: true });
   context.dockFor = () => ({ phase: 'filling', title: 'Reading the page…', button: 'fill-stop', label: 'Stop' });
   context.renderDock();
-  assert.deepEqual([state.dock.report, state.dock.busy, state.dock.hidden], ['', true, true]);
+  assert.deepEqual([state.dock.report, state.dock.busy, state.dock.hidden], ['', true, false]);
+  context.dockFor = () => word;
+  context.renderDock();
+  assert.equal(state.dock.hidden, true, 'any other word is hidden under Settings');
+  // Opening or closing Settings draws the dock again (showScreen).
+  assert.match(extractFunction('showScreen'), /renderDock\(\);\n\}$/);
 });
 
 // Audit 2026-11-07, FLOW-13: after a Stop or an error, every later page on that tab stopped filling
