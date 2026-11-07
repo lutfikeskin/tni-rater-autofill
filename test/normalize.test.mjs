@@ -2306,6 +2306,19 @@ test('correcting the radius recomputes its check with the miles; the time with t
   assert.ok(retired(notes, 'prior.tenure') && !open(notes, 'prior.tenure'));
   // Positions never move: the panel marks checks done by position.
   assert.equal(notes.warnings.length, normalizeIntake({ ...raw, claims_details: 'No', additional_notes: 'Insured with Synthetic Mutual for 6 years' }, DATA04).warnings.length);
+  // Review of PR #367 (CodeRabbit): the tenure check says who answers the time with the insurer from
+  // the current policy too (expired, or not auto: the agent's, T6, V8), so it follows that policy's
+  // corrections, as load-time normalization of the same values would say it.
+  const tenure = (intake) => intake.warnings.find((w) => w.code === 'prior.tenure').msg;
+  const policy = loaded({ claims_details: 'No', additional_notes: 'Insured with Synthetic Mutual for 6 years', ins_exp_1: '01/15/2027' });
+  assert.match(tenure(policy), /Its band is filled/);
+  correct(policy, 'priorInsurance[0].expiration', '01/15/2026');
+  assert.equal(tenure(policy), tenure(loaded({ claims_details: 'No', additional_notes: 'Insured with Synthetic Mutual for 6 years', ins_exp_1: '01/15/2026' })));
+  assert.match(tenure(policy), /has expired, so time with the insurer is yours/);
+  assert.ok(open(policy, 'prior.tenure'), 'asked again in its new words');
+  correct(policy, 'priorInsurance[0].expiration', '01/15/2027');
+  correct(policy, 'priorInsurance[0].type', 'General Liability');
+  assert.match(tenure(policy), /isn't auto, so time with the insurer is yours/);
 });
 
 // The maintainer, 2026-11-07 (answer 2 on PR #367): correcting a box runs that box's own checks again

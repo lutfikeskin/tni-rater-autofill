@@ -1465,8 +1465,10 @@ const DERIVATIONS = [
     };
   } },
   // The time with the current insurer a line of the notes gives: its check (the carriers read the
-  // notes as they fill).
-  { from: ['claims.text', 'notes.text'], codes: ['prior.tenure'], run: (r) => ({ values: {}, checks: tenureChecks(r) }) },
+  // notes as they fill). It also reads the current policy (its carrier, in a line; expired or not
+  // auto, the agent's: T6, V8) and the application date (the time from a start date).
+  { from: ['claims.text', 'notes.text', 'priorInsurance[0].expiration', 'priorInsurance[0].type', 'priorInsurance[0].carrier', 'applicant.applicationDate'],
+    codes: ['prior.tenure'], run: (r) => ({ values: {}, checks: tenureChecks(r) }) },
   // "No", "None" or "N/A" in the USDOT or MC box: the client has none, which a number doesn't say.
   // An emptied box says nothing new: its No, if any, stays (an agent's typed No is saved as an empty
   // box with the No).
