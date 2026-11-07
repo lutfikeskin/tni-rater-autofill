@@ -5,6 +5,11 @@ import { fieldInfo } from '../schema.js';
 import { ntlMention, intakeNotes, NTL_WORDS, NTL_RATES } from '../normalize.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
+// The model an answer may come from: the one asked for, or the provider's dated snapshot of it
+// (gpt-6-luna-2026-10-01), which an alias may be reported as. Any other model fails closed
+// (audit 2026-11-07, AI-11: an exact match would turn Luna off for everyone on a rename).
+export const isLunaModel = name => name === DEFAULT_MODEL || typeof name === 'string'
+  && name.startsWith(`${DEFAULT_MODEL}-`) && /^\d{4}-\d{2}-\d{2}$/.test(name.slice(DEFAULT_MODEL.length + 1));
 export const API_URL = 'https://api.openai.com/v1/responses';
 // The safety contract's version, set by hand: the schema's shape, what may be picked automatically and
 // what counts as evidence. Changing it retires every pending approval hold (restoreAiPending). The
@@ -106,7 +111,7 @@ function blankFieldStep(field) {
 
 // Parse the HTTP envelope ourselves; output_text is an SDK convenience, not the wire contract.
 export function responseData(json) {
-  if (json?.status !== 'completed' || json.model !== DEFAULT_MODEL || !Array.isArray(json.output)) {
+  if (json?.status !== 'completed' || !isLunaModel(json.model) || !Array.isArray(json.output)) {
     throw new AssistError('Luna returned an incomplete response or an unexpected model. Nothing was applied.');
   }
   const parts = [];
@@ -282,7 +287,7 @@ export function restsOnClientText(sources) {
 // The second model judgment checks support, not measured accuracy. Every automatic
 // pick still needs agent approval before Continue; safety semantics are shared with the fill engine.
 function automaticChoiceAllowed(x) {
-  return x.model === DEFAULT_MODEL && x.applyable === true && KINDS.has(x.controlKind)
+  return isLunaModel(x.model) && x.applyable === true && KINDS.has(x.controlKind)
     && x.options.includes(x.choice) && !neverReason(x) && !manualOnlyReason(x)
     && x.evidenceSources.length > 0 && !restsOnClientText(x.evidenceSources)
     && String(x.choice).trim().toLowerCase() !== String(x.current ?? '').trim().toLowerCase();
