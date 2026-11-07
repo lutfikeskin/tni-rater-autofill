@@ -25,8 +25,44 @@ function renderDevrec() {
   // Its buttons follow it, and Advanced's title says it, seen with Advanced folded too.
   state.devrec = { ...state.devrec, on: !!rec };
   if (!rec || rec.stopping) return;
+  noteFollowed(rec);
   const s = Math.floor((Date.now() - rec.started) / 1000);
-  devrecSaid(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} · ${rec.store.count} events${rec.store.durable ? '' : '. Kept in memory only: closing the panel loses it'}.`);
+  const away = rec.away ? ' The panel is on another tab: only the tab the recording began on is recorded, and what the quote does here is not.' : '';
+  devrecSaid(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} · ${rec.store.count} events${rec.store.durable ? '' : '. Kept in memory only: closing the panel loses it'}.${away}`);
+}
+
+// The recording follows the one tab it began on (rec.tabId), whatever tab the panel follows (REC-04,
+// 2026-11-07; W44-23: 4 of 10 recordings held nothing of the quote, which had moved to another tab).
+// When the panel follows another tab, or comes back, the timeline says so (`panel`: `away`, and the
+// tab followed, a tab number only), once each time, and the panel's line above says it while it lasts.
+// Noted as the panel changes tab (refreshTab), so a move away and back between two of the line's
+// renders is in the timeline too (review of PR #383).
+function noteFollowed(rec = state.recording) {
+  if (!rec || rec.stopping) return;
+  const away = state.tab?.id !== rec.tabId;
+  if (away === !!rec.away) return;
+  rec.away = away;
+  rec.store.add([{ kind: 'panel', t: Date.now(), frame: 0, away, followed: Number.isInteger(state.tab?.id) ? state.tab.id : null, recorded: rec.tabId }]);
+}
+
+// The recorded tab loaded a new document while the panel follows another one: the panel's own
+// reinjection (ensureRecorder) is only for the tab it follows, so the trace goes in here, with the
+// recorder whose readers it uses and the carrier's page adapter. It only watches (trace.js).
+async function recordedTabUpdated(tabId, change) {
+  const rec = state.recording;
+  if (!rec || rec.stopping || tabId !== rec.tabId || change?.status !== 'complete' || state.tab?.id === tabId) return;
+  const adapter = rec.carrier?.pageAdapter ? [rec.carrier.pageAdapter] : [];
+  try {
+    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: [...adapter, 'src/content/field-key.js', 'src/content/recorder.js', 'src/content/trace.js'] });
+  } catch { /* not a page the extension may read now; the next load tries again */ }
+}
+
+// The recorded tab was closed: nothing more can be recorded, so the recording is saved, saying why.
+function recordedTabRemoved(tabId) {
+  const rec = state.recording;
+  if (!rec || rec.stopping || tabId !== rec.tabId) return;
+  rec.store.add([{ kind: 'panel', t: Date.now(), frame: 0, closed: true, recorded: rec.tabId }]);
+  stopRecording('The recorded tab was closed.');
 }
 
 async function startRecording() {
@@ -127,4 +163,4 @@ async function recoverRecording() {
   }
 }
 
-export { noteRecording, onTraceMessage, recoverRecording, renderUnfinished, startRecording, stopRecording };
+export { noteFollowed, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording };

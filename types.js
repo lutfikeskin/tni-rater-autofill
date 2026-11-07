@@ -935,8 +935,12 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap
+ *   burst, request; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
+ * @property {boolean} [away]  panel: the panel follows another tab than the recorded one (true), or is back on it
+ * @property {number | null} [followed]  panel: the tab the panel follows (a tab number)
+ * @property {number} [recorded]  panel: the recorded tab (a tab number)
+ * @property {true} [closed]  panel: the recorded tab was closed, which ends the recording
  * @property {number} t  wall-clock ms when it happened, on the page's own clock (a fraction kept)
  * @property {number} [seq]  the frame's counter: the order of two events in one millisecond
  * @property {number} [frame]  the frame it came from (0: the top frame)

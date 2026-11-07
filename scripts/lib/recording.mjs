@@ -172,6 +172,9 @@ function actions(events) {
     else if (e.kind === 'request' && failed(e)) lines.push({ t: e.t, text: `the page's request to ${codePath(e.path)} failed: HTTP ${e.status} after ${secs(e.ms ?? 0)}` });
     else if (e.kind === 'note') lines.push({ t: e.t, text: `NOTE: ${e.text}` });
     else if (e.kind === 'gap') lines.push({ t: e.t, text: `GAP: ${e.dropped} event(s) lost while no panel took them` });
+    // The panel following another tab than the recorded one (REC-04): the quote may go on there, unrecorded.
+    else if (e.kind === 'panel') lines.push({ t: e.t, text: e.closed ? 'THE RECORDED TAB WAS CLOSED: the recording ends here'
+      : e.away ? 'THE PANEL MOVED TO ANOTHER TAB: what the quote does there is not in this recording' : 'the panel is back on the recorded tab' });
     else if (e.kind === 'page' && (e.frame ?? 0) !== 0) lines.push({ t: e.t, text: `a frame loaded ${quote(e.page)}` });
   }
   endTyping();
@@ -264,6 +267,17 @@ export function recordingReport({ manifest, events }) {
     const byStatus = [...new Set(errors.map((e) => e.status))].sort((a, b) => a - b).map((s) => `HTTP ${s} ×${errors.filter((e) => e.status === s).length}`).join(', ');
     out.push(`The page's server answered ${many(errors.length, 'request')} with an error (${byStatus}): each is in its step's timeline.`, '');
   }
+  // The panel away from the recorded tab (REC-04): said up front, with how long, since the quote may
+  // have gone on in the tab the panel followed.
+  let awayMs = 0;
+  let awayFrom = null;
+  for (const e of ordered.filter((x) => x.kind === 'panel' && !x.closed)) {
+    if (e.away && awayFrom == null) awayFrom = e.t;
+    else if (!e.away && awayFrom != null) { awayMs += e.t - awayFrom; awayFrom = null; }
+  }
+  if (awayFrom != null) awayMs += end - awayFrom;
+  if (awayMs > 0) out.push(`The panel followed another tab for ${secs(awayMs)}: what the quote did there is not in this recording, which follows only the tab it began on.`, '');
+  if (ordered.some((e) => e.kind === 'panel' && e.closed)) out.push('The recorded tab was closed, which ended the recording.', '');
 
   out.push('## Flow', '', '| # | Page · step | Arrived | On screen | Actions | Left by |', '| --- | --- | --- | --- | --- | --- |');
   const told = segs.map((s, i) => {

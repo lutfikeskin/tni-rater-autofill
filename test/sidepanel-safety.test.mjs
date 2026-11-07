@@ -113,7 +113,10 @@ function extractFunction(name) {
           quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
-          stopFillFirst: 'async () => {}' };
+          stopFillFirst: 'async () => {}',
+          // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
+          // elsewhere none is running.
+          noteFollowed: '() => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -10205,4 +10208,60 @@ test('a unit missing from the list with no helper for it is left for the agent i
   const none = [{ frameId: 0, result: { noData: [], blockers: [] } }];
   context.noteMissingUnit(none, { ...ctx, unitMissing: null });
   assert.equal(none[0].result.noData.length, 0);
+});
+
+// REC-04 (audit 2026-11-07; W44-23): with the panel on another tab, each new document of the recorded
+// tab lost the trace, nothing said so, and a closed recorded tab left the recording running empty.
+test('the recording follows its own tab whatever tab the panel follows, says when the panel is away, and ends with the tab', async () => {
+  const added = [];
+  const injected = [];
+  const said = [];
+  const stops = [];
+  const store = { count: 0, durable: true, add: (events) => added.push(...events) };
+  const state = { tab: { id: 4 }, recording: { tabId: 4, started: 0, stopping: false, carrier: { pageAdapter: 'src/content/carriers/progressive.js' }, store }, devrec: {} };
+  const context = { state, Date, Number,
+    devrecSaid: (s) => said.push(s), stopRecording: (why) => { stops.push(why); state.recording.stopping = true; },
+    chrome: { scripting: { executeScript: async ({ target, files }) => { injected.push([target.tabId, target.allFrames, files.map((f) => f.split('/').pop())]); } } } };
+  vm.runInNewContext(['renderDevrec', 'noteFollowed', 'recordedTabUpdated', 'recordedTabRemoved'].map(extractFunction).join('\n'), context);
+  context.renderDevrec();
+  assert.deepEqual(added, [], 'on the recorded tab: nothing to say');
+  // The panel follows another tab: said once in the timeline, and on the panel's line while it lasts.
+  state.tab = { id: 9 };
+  context.renderDevrec();
+  context.renderDevrec();
+  assert.deepEqual(JSON.parse(JSON.stringify(added)).map((e) => [e.kind, e.away, e.followed, e.recorded]), [['panel', true, 9, 4]]);
+  assert.match(said.at(-1), /The panel is on another tab: only the tab the recording began on is recorded/);
+  // A new document in the recorded tab gets the trace, with the recorder and the carrier's adapter.
+  await context.recordedTabUpdated(4, { status: 'loading' });
+  await context.recordedTabUpdated(7, { status: 'complete' });
+  await context.recordedTabUpdated(4, { status: 'complete' });
+  assert.deepEqual(JSON.parse(JSON.stringify(injected)), [[4, true, ['progressive.js', 'field-key.js', 'recorder.js', 'trace.js']]]);
+  // Back on it: said, and the panel's own reinjection (ensureRecorder) does it again.
+  state.tab = { id: 4 };
+  context.renderDevrec();
+  assert.deepEqual(added.map((e) => e.away), [true, false]);
+  assert.doesNotMatch(said.at(-1), /another tab/);
+  await context.recordedTabUpdated(4, { status: 'complete' });
+  assert.equal(injected.length, 1);
+  // Another tab closed: nothing; the recorded one: the recording is saved, saying why.
+  context.recordedTabRemoved(9);
+  assert.deepEqual(stops, []);
+  context.recordedTabRemoved(4);
+  assert.deepEqual(stops, ['The recorded tab was closed.']);
+  assert.equal(added.at(-1).closed, true);
+  const wire = extractFunction('wire');
+  assert.match(wire, /chrome\.tabs\.onUpdated\.addListener\(recordedTabUpdated\);\s+chrome\.tabs\.onRemoved\.addListener\(recordedTabRemoved\);/);
+  // Review of PR #383: noted as the panel changes tab, not only at the line's next render, so a
+  // move away and back within a second is in the timeline too.
+  const marks = added.length;
+  state.recording.stopping = false;
+  state.tab = { id: 9 };
+  context.noteFollowed();
+  state.tab = { id: 4 };
+  context.noteFollowed();
+  assert.deepEqual(added.slice(marks).map((e) => e.away), [true, false]);
+  const refresh = extractFunction('refreshTab');
+  const sets = [...refresh.matchAll(/^\s*state\.tab = (?!null; return).*$/gm)];
+  assert.equal(sets.length, 2);
+  for (const m of sets) assert.match(refresh.slice(m.index + m[0].length), /^\s*(?:\/\/.*\s*)*noteFollowed\(\);/, 'each tab the panel follows is noted as it is set');
 });
