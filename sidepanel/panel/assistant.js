@@ -386,7 +386,7 @@ async function runAssist(frames, ctx) {
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length, ...leaveCounts(fresh),
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
         reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
-        ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
+        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
       if (why) { dropped(`it answered after ${why}, so nothing was applied`); return; }
       fresh.forEach(x => state.aiCache.set(sigOf(x), {
         ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),
@@ -648,7 +648,7 @@ function aiDecisionEvent(x, ctx, decision) {
   return {
     type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
     decision, choice: x.controlKind !== 'text' && x.choice ? redact(x.choice) : undefined,
-    model: x.model, policy: x.policy, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
+    model: x.model, policy: x.policy, promptHash: x.promptHash ?? undefined, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
   };
 }
 

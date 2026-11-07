@@ -2049,6 +2049,16 @@ test('reloading an intake drops settled ledger entries without losing unresolved
   assert.equal(context.doneRestored.size, 0, 'the intake\'s done actions may be restored again (its records are kept now)');
 });
 
+// Audit 2026-11-07, AI-04: a decision and a pending hold say which prompt picked them.
+test('an AI decision event and a pending hold record carry the prompt hash', () => {
+  const context = { state: { intake: { record: {} } }, redactor: () => (x) => x, redactionTerms: () => [], aiFingerprint: JSON.stringify,
+    aiSafeText: String, aiOriginRecord: () => null, snapshotFingerprint: () => null };
+  vm.runInNewContext(['aiDecisionEvent', 'aiPendingRecord'].map(extractFunction).join('\n'), context);
+  const x = { key: 'k', label: 'Q', choice: 'No', controlKind: 'radio', model: 'gpt-6-luna', policy: 'luna-evidence-v6', promptHash: '0123456789ab', done: 'auto' };
+  assert.equal(context.aiDecisionEvent(x, { carrier: { id: 'progressive' }, page: 'p' }, 'approved').promptHash, '0123456789ab');
+  assert.equal(context.aiPendingRecord(['1', 'p', 'gpt-6-luna', 'luna-evidence-v6', 'ctx', 'item'].join('\n'), x, 'scope').promptHash, '0123456789ab');
+});
+
 // 2026-10-05 FL run: after the first vehicle's Add Vehicle was continued, the second and third
 // vehicles' (same headings) were taken for the agent going back, and Continue wasn't clicked.
 test('a continued step is remembered per vehicle on vehicle pages, per driver on the driver page, quote-wide elsewhere', () => {
@@ -2665,7 +2675,7 @@ test('Luna gets the page’s other answers from the snapshot, and the log counts
   const why = ['missing', 'unverified', 'unverified', 'chose', 'tooLarge', null];
   const t = assistHarness({ suggest: async (items, context) => {
     sent = context;
-    return { suggestions: why.map((leaveWhy, i) => ({ key: `k${i}`, label: `Q${i}`, leave: !!leaveWhy, leaveWhy })), tokensIn: 1, tokensOut: 1, modelCalls: 1 };
+    return { suggestions: why.map((leaveWhy, i) => ({ key: `k${i}`, label: `Q${i}`, leave: !!leaveWhy, leaveWhy })), tokensIn: 1, tokensOut: 1, modelCalls: 1, promptHash: '0123456789ab' };
   } });
   t.context.runKit = async () => [{ frameId: 0, result: JSON.stringify(['https://rater.test/', [
     { key: 'liab', label: 'Liability limit', kind: 'select', current: '$1,000,000 CSL' },
@@ -2677,6 +2687,8 @@ test('Luna gets the page’s other answers from the snapshot, and the log counts
   const { leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified, leaveTooLarge, leave } = t.logged[0];
   assert.deepEqual({ leave, leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified, leaveTooLarge },
     { leave: 5, leaveMissing: 1, leaveConflict: 0, leaveChose: 1, leaveNoSource: 0, leaveUnverified: 2, leaveTooLarge: 1 });
+  // Audit 2026-11-07, AI-04: which prompt the review got.
+  assert.equal(t.logged[0].promptHash, '0123456789ab');
 });
 
 // 2026-10-09 to 10-26: 12 of 58 page reviews ended "The page or intake changed", most on GEICO's

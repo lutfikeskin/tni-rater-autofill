@@ -906,6 +906,7 @@
  * @property {number} [leaveNoSource]  it answered but cited nothing usable
  * @property {number} [leaveUnverified]  the evidence check refused its answer
  * @property {number} [leaveTooLarge]  too large for one request even alone: not asked
+ * @property {string} [promptHash]  the instructions and rules it got (src/ai/luna.js promptHash)
  * @property {number} [tokensIn]
  * @property {number} [tokensOut]
  * @property {number} [modelCalls]
