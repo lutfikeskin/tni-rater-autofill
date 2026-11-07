@@ -181,9 +181,11 @@ export function untrusted(v, max = 120) {
   return `\`${s || '?'}\``;
 }
 // An event's time to the minute, written only when it is one (digits, a dash and a colon can't
-// make a link or a mention); anything else is `?`.
+// make a link or a mention) on the calendar and the clock; anything else is `?`.
 const minute = (t) => {
   const m = /^(\d{4}-\d\d-\d\d)T(\d\d:\d\d)/.exec(String(t ?? ''));
-  return m ? `${m[1]} ${m[2]}` : '?';
+  const ms = m ? Date.parse(`${m[1]}T${m[2]}:00Z`) : NaN;
+  const real = m && !Number.isNaN(ms) && new Date(ms).toISOString().startsWith(`${m[1]}T${m[2]}`);
+  return real ? `${m[1]} ${m[2]}` : '?';
 };
 const MAX_COMMENT = 60_000;

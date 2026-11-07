@@ -237,7 +237,7 @@ markdown, link or image), its backticks and line breaks taken out, every `@` bro
 space (no one is mentioned, and the comment never starts the Claude workflow, which answers an
 at-mention of Claude from the maintainer's login, the one `npm run daily -- --post` posts as), and
 bounded (a caption at 200 characters, others at 120 or fewer) (`untrusted` in
-`scripts/lib/daily.mjs`). A report's time is written only when it is a date and a minute, else `?`. A list too long anyway is cut to fit
+`scripts/lib/daily.mjs`). A report's time is written only when it is a real date and minute, else `?`. A list too long anyway is cut to fit
 a GitHub comment and points to the review. Closing the issue is how a
 reviewer says it's been read; the next new item opens another. The review does not implement or deploy
 corrections.

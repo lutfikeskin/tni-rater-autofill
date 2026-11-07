@@ -218,4 +218,11 @@ test('a build, a kind or a time from the usage log is never a link outside a cod
   assert.equal(lines.length, 2);
   for (const l of lines) assert.doesNotMatch(l.replace(/`[^`\n]*`/g, ''), /evil|www|http/, l);
   assert.match(lines[0], /^- \? · `AY` · `www\.evil\.example` · `Quote`$/);
+  // A time that isn't on the calendar or the clock is no time either.
+  const at = (t) => commentBody({ since: 's', runUrl: 'https://run', server: 'same', problems: [{ t, agent: 'AY', page: 'Quote', text: 'x' }] }, '2026-10-08')
+    .split('\n').find((l) => l.startsWith('- '));
+  assert.equal(at('2026-99-99T99:99Z'), '- ? · `AY` · `Quote`');
+  assert.equal(at('2025-02-30T10:00:00Z'), '- ? · `AY` · `Quote`');
+  assert.equal(at('2026-10-07T24:00:00Z'), '- ? · `AY` · `Quote`');
+  assert.equal(at('2024-02-29T23:59:00.000Z'), '- 2024-02-29 23:59 · `AY` · `Quote`');
 });
