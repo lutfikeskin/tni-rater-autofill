@@ -254,12 +254,22 @@ export function verifyResponse(json, suggestions) {
       tip: data.decisions[x.id].gap.trim() ? `Luna could not verify an answer: ${data.decisions[x.id].gap.trim()}` : 'Luna could not verify this answer against the supplied facts. Review it on the page.' });
 }
 
+// A pick resting on intake text only as the client wrote it: every intake source it cites is a free-text
+// box (the claims box, its other notes, the additional notes: kind 'textarea' in the schema). TNI rules
+// cited beside it don't count, as rules can defer to what the notes say. That text is the client's, and
+// a line in it could steer both calls, so such a pick stays a suggestion the agent approves on its row
+// (audit 2026-11-07, AI-14).
+export function restsOnClientText(sources) {
+  const intake = (sources ?? []).filter(s => s?.basis === 'intake');
+  return intake.length > 0 && intake.every(s => fieldInfo(String(s.path ?? '')).kind === 'textarea');
+}
+
 // The second model judgment checks support, not measured accuracy. Every automatic
 // pick still needs agent approval before Continue; safety semantics are shared with the fill engine.
 function automaticChoiceAllowed(x) {
   return x.model === DEFAULT_MODEL && x.applyable === true && KINDS.has(x.controlKind)
     && x.options.includes(x.choice) && !neverReason(x) && !manualOnlyReason(x)
-    && x.evidenceSources.length > 0
+    && x.evidenceSources.length > 0 && !restsOnClientText(x.evidenceSources)
     && String(x.choice).trim().toLowerCase() !== String(x.current ?? '').trim().toLowerCase();
 }
 
