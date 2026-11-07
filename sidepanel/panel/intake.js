@@ -45,9 +45,10 @@ async function loadFile(file, { reset = false } = {}) {
   // pdf.js reads the fields of but not their places just has no "See in PDF".
   const places = await readIntakePlaces(pdfjs, bytes.slice()).catch(() => null);
   // The intake changes from here: a fill running on any tab is stopped first and waited for
-  // (stopFillFirst), and none starts until this intake is the panel's (`resetting`, which New quote
-  // holds already).
-  const resetting = state.resetting;
+  // (stopFillFirst), and none starts until this intake is the panel's (`resetting`). Changes that
+  // overlap (a Clear or another file during the wait, New quote's own load) each hold it
+  // (`resetDepth`), so it lifts only when the last is done.
+  state.resetDepth = (state.resetDepth ?? 0) + 1;
   state.resetting = true;
   try {
     await stopFillFirst();
@@ -127,7 +128,8 @@ async function loadFile(file, { reset = false } = {}) {
     // agent defaults: a new quote, asked again whose defaults it fills with.
     refreshDefaults();
   } finally {
-    state.resetting = resetting;
+    state.resetDepth -= 1;
+    state.resetting = state.resetDepth > 0;
   }
 }
 

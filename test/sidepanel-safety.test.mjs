@@ -8505,6 +8505,38 @@ test('Change file and Clear stop a fill running on any tab first, and no fill st
   }
 });
 
+// Review of PR #368 (Claude, CodeRabbit): each change saved and restored `resetting` itself, so a
+// Clear confirmed while Change file waited on the fill (or the other way round) lifted it while the
+// other was still swapping, then left it set for good, and no fill started until the panel reloaded.
+test('overlapping Change file and Clear hold resetting until the last is done, then lift it', async () => {
+  for (const first of ['change file', 'clear']) {
+    const t = intakeChangeHarness();
+    const seen = [];
+    const watch = setInterval(() => seen.push(t.state.resetting), 2);
+    const pdf = { name: 'next-client.pdf', arrayBuffer: async () => new ArrayBuffer(1) };
+    const load = () => t.context.loadFile(pdf);
+    const clear = () => t.context.clearClient();
+    const done = [false, false];
+    // Whichever ends first finds it still held for the other.
+    const held = [];
+    const runs = (first === 'clear' ? [clear, load] : [load, clear]).map((change, i) => change().then(() => { done[i] = true; held.push(done.every(Boolean) ? null : t.state.resetting); }));
+    await Promise.all(runs);
+    clearInterval(watch);
+    assert.deepEqual(held, [true, null], `${first}: still held for the other change`);
+    assert.equal(seen.every(Boolean), true, `${first}: never lifted while either ran`);
+    assert.deepEqual([t.state.resetting, t.state.resetDepth], [false, 0], `${first}: lifted once both are done`);
+  }
+  // New quote holds it over its own load, and lifts it after.
+  const t = intakeChangeHarness();
+  t.state.filling = false;
+  t.state.fillingFor = null;
+  Object.assign(t.context, { inExtension: false, intakePdfBytes: async () => new Uint8Array([1]), File: class { constructor(parts, name, opts) { Object.assign(this, { name, type: opts?.type, arrayBuffer: async () => new ArrayBuffer(1) }); } } });
+  t.state.intake.fileName = 'client.pdf';
+  vm.runInNewContext(extractFunction('newQuote'), t.context);
+  await t.context.newQuote();
+  assert.deepEqual([t.state.resetting, t.state.resetDepth], [false, 0]);
+});
+
 test('a fill that only gets its tab\'s word while the intake waits is stopped then; one that never ends doesn\'t hold the intake', async () => {
   // Getting ready (no fillingFor yet): stopped once it has one.
   let t = intakeChangeHarness();

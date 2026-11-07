@@ -414,8 +414,10 @@ const state = storeState({
   // All client details, as details-view.jsx draws it (renderSections: the sections and their rows,
   // the empty fields' button): null until an intake is said.
   details: null,
-  // New quote with this intake under way (newQuote): no fill starts.
+  // An intake change under way (New quote, Change file, Clear: newQuote, loadFile, clearClient): no fill starts.
   resetting: false,
+  // How many intake changes hold `resetting` (loadFile, clearClient, newQuote), so overlapping ones lift it only once all are done.
+  resetDepth: 0,
   // The quote-done chime's audio element (noteQuoteDone).
   audio: null,
   // Client details: whether fields the intake leaves blank are listed (showEmpty; the flagged ones

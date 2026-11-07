@@ -367,6 +367,7 @@ function askFile(what, text, yes, from = what === 'replace' ? 'replace' : what =
 async function newQuote() {
   if (!state.intake) return;
   if (state.filling) { clientNote('Wait for the answers going in to finish, then start the new quote.'); return; }
+  state.resetDepth = (state.resetDepth ?? 0) + 1;
   state.resetting = true;
   try {
     const bytes = await intakePdfBytes();
@@ -381,7 +382,8 @@ async function newQuote() {
     state.intake.ntlAdded = false;
     await loadFile(new File([bytes], state.intake.fileName || 'intake.pdf', { type: 'application/pdf' }), { reset: true });
   } finally {
-    state.resetting = false;
+    state.resetDepth -= 1;
+    state.resetting = state.resetDepth > 0;
   }
 }
 
@@ -393,8 +395,8 @@ function clientNote(text) {
 async function clearClient() {
   const scope = usage.currentSession()?.intakeId;
   // A fill running on any tab is stopped first and waited for (stopFillFirst), and none starts
-  // until the client is gone (`resetting`).
-  const resetting = state.resetting;
+  // until the client is gone (`resetting`, held with any other change under way: `resetDepth`).
+  state.resetDepth = (state.resetDepth ?? 0) + 1;
   state.resetting = true;
   try {
     await stopFillFirst();
@@ -425,7 +427,8 @@ async function clearClient() {
     render();
     renderSite();
   } finally {
-    state.resetting = resetting;
+    state.resetDepth -= 1;
+    state.resetting = state.resetDepth > 0;
   }
 }
 
