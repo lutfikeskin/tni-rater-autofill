@@ -29,7 +29,7 @@ within hours of approval.
 | Service | `usage-server`, built from `server/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`) |
 | URL | https://usage-server-production.up.railway.app (`/v1/health`) |
 | Storage | volume `usage-data` mounted at `/data` (one JSONL file per day received) |
-| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `OPENAI_API_KEY` (TNI's key for Luna, below; without it `/v1/luna` answers 501), optional `RATER_LUNA_DAILY_LIMIT` (default 5000), `RATER_DASHBOARD_TOKEN` (the [live usage page](#live-usage-page)'s password; without it the page is off), optional `RATER_TEST_INTAKES` (intake fingerprints the page counts as test runs), optional `RATER_MIN_FREE_MB` (the [disk guard](#upload-limits-and-the-disk-guard), default 500, `0` off), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787`; the image sets `RATER_CLIENT_IP_HEADER=x-real-ip` |
+| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `OPENAI_API_KEY` (TNI's key for Luna, below; without it `/v1/luna` answers 501), optional `RATER_LUNA_DAILY_LIMIT` (default 5000), optional `RATER_LUNA_DAILY_TOKENS` (default 10,000,000), `RATER_DASHBOARD_TOKEN` (the [live usage page](#live-usage-page)'s password; without it the page is off), optional `RATER_TEST_INTAKES` (intake fingerprints the page counts as test runs), optional `RATER_MIN_FREE_MB` (the [disk guard](#upload-limits-and-the-disk-guard), default 500, `0` off), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787`; the image sets `RATER_CLIENT_IP_HEADER=x-real-ip` |
 
 The extension sends to this server by default (`sidepanel/usage-log.js`, `DEFAULT_SERVER` /
 `DEFAULT_TOKEN`); an agent's own Server setting (a local test server) overrides it, and a blank
@@ -44,22 +44,31 @@ requests to `/v1/luna` with the upload token, and the server adds `OPENAI_API_KE
 to OpenAI. It passes on only a request shaped like the panel's (`lunaRequestError`: the fixed
 `gpt-6-luna` model, `store: false`, no tools, at most 4,096 output tokens and 160,000 characters,
 above the panel's own 120,000, so a server is deployed with a raised bound before the panel), at
-most `RATER_LUNA_DAILY_LIMIT` a day (UTC, then 429; unset or blank is 5000, `0` refuses every
-request, and a value that isn't a whole number counts as 0), and neither stores nor logs the request
-or OpenAI's answer. OpenAI's own errors come back as their status only (the log adds OpenAI's error
+most `RATER_LUNA_DAILY_LIMIT` requests a day (UTC, then 429; unset or blank is 5000, `0` refuses every
+request, and a value that isn't a whole number counts as 0) and at most `RATER_LUNA_DAILY_TOKENS`
+tokens a day (OpenAI's `usage`: input plus output, reasoning included; read the same way, unset or
+blank is 10,000,000, over 30 times the pilot's busiest day; then 429 `daily Luna token budget
+reached`). A request is counted before it goes to OpenAI, so one OpenAI refuses or doesn't answer
+still counts; its tokens are added when the answer comes, so a request begun under the budget may
+end over it. An answer without usage counts is counted at the most it could have cost (a token per 4
+characters of the request plus its output bound) and marked `estimated`. The day's counts (requests,
+input and output tokens, how many were estimated) are kept in `DATA_DIR/luna/<day>.json` on the
+volume, counts only, so a restart or redeploy goes on from them; a file that can't be read is
+logged and the day counts from 0, and one that can't be written is logged and the count goes on in
+memory. The server neither stores nor logs the request or OpenAI's answer. OpenAI's own errors come back as their status only (the log adds OpenAI's error
 code, such as `insufficient_quota`); the server's key refused (401, 403, 404) or out of credit or
 over its budget (429 `insufficient_quota`) is 424, so the panel says to tell TNI rather than to
 check a key or try again. The upload token ships in the extension, so it is not a secret. What
-bounds the spending is the daily limit (requests, counted here) and the money the key can reach:
+bounds the spending is the daily limit and token budget (counted here) and the money the key can reach:
 give the key its own OpenAI project, and on prepaid credit keep auto-recharge off, so an empty
 balance stops it (429 `insufficient_quota`, which the panel shows as 424). An OpenAI spend alert on
 the project only sends an email; check in OpenAI's settings whether a limit there also stops
 requests before relying on it. The pilot's Luna calls (2026-10-01 to 23, opt-in with agents' own
 keys) were at most 84 a day, about 3,100 input and 350 output tokens each; a request is at most
-160,000 characters and 4,096 output tokens, so the limit times that is the most a day can cost. The
-check fixes the model and the request's size, not its instructions or schema, so a leaked token can
-still ask questions of its own and use up the day's limit for every agent; the count is kept in
-memory, so a restart or redeploy starts it again. To stop Luna at once, set the limit to 0 or remove
+160,000 characters and 4,096 output tokens, so the token budget (plus the requests in flight when it
+is reached) is the most a day can cost. The check fixes the model and the request's size, not its
+instructions or schema, and the limits are for all agents together (the token is shared), so a leaked
+token can still ask questions of its own and use up the day's limit for every agent. To stop Luna at once, set the limit to 0 or remove
 `OPENAI_API_KEY` (then `/v1/luna` answers 501 and the panel says Luna isn't set up). Rotating the
 key is a variable change and a redeploy, with no extension release.
 
