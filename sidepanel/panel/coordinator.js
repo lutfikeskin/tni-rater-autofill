@@ -156,6 +156,8 @@ function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = f
   const session = usage.currentSession();
   return {
     run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite, asked,
+    // The quote tab filled while the agent is on another one (refreshTab's `background`).
+    background: !!state.tab?.background && state.tab.id === tabId,
     intake: state.intake, revision: state.intakeRevision, ids: { session: session?.id ?? null, intakeId: session?.intakeId ?? null },
     view: viewOf(tabId, page, carrier), scope: editScope(page, carrier, tabStep(carrier, tabId)), active: { ...state.active },
     settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages'), overwrite: !!overwrite },
@@ -311,7 +313,7 @@ function logFill(ctx, frames, results, started) {
   usage.log(...fillEvents(ctx.listNote ? [...frames, { blockers: [ctx.listNote] }] : frames, {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
-    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash,
+    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background,
   }));
 }
 // A rejected fill has no fill_run result to carry its rule version and switches.
