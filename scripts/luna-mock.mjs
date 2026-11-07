@@ -300,7 +300,7 @@ try {
       scripting.executeScript = async function (...args) {
         const fn = String(args[0]?.func ?? '');
         const result = await original.apply(this, args);
-        if (!fn.includes('globalThis.__raterKit.decisionSnapshot')) return result;
+        if (!fn.includes('globalThis.__raterKit?.decisionSnapshot')) return result;
         interceptions++;
         const reverse = reverseFirst ? interceptions % 2 === 1 : interceptions % 2 === 0;
         if (!reverse || !Array.isArray(result)) return result;
