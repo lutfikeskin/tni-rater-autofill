@@ -1233,6 +1233,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // Another group of units (`pager`), before any helper: Recalculate or the bill plan must not
     // go before every unit's rows were answered.
     const turn = !thisRound.changed && !thisRound.retry && !thisRound.waited && unitGroups.on && window === window.top && !state.agentPressed ? unitGroups.next() : null;
+    // Its time spent while the round chose: no other group is shown.
+    if (turn && thisFill.timeUp()) break;
     if (turn) {
       state.report.paged = unitGroups.paged;
       phase('helper', turn.text);
@@ -1965,6 +1967,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       if (!button && a.nudge && !state.nudged.has(a.action) && a.after.every(has) && a.afterActions.every((id) => state.clicked.has(id))) {
         const pair = pairs.find(({ step }) => step.path === a.nudge && step.value != null);
         if (pair && agreesWith(pair.step, pair.control)) {
+          // Its time spent meanwhile: nothing more is written.
+          if (thisFill.timeUp()) return false;
           state.nudged.add(a.action);
           // A widget is picked again its own way (the page adapter's reselect), a field set again.
           const { widget } = pair.control;
@@ -2020,6 +2024,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         if (!opener) continue;
         // Something open over it (a dialog, a message): not clicked through it.
         if (coveredBy(opener)) { holdCovered(a, opener); continue; }
+        // Its time spent meanwhile: nothing more is clicked.
+        if (thisFill.timeUp()) return false;
         state.openersTried.add(a.action);
         state.report.actions.push({ id: `${a.action}:menu`, text: buttonText(opener).slice(0, 60) });
         pressButton(opener);

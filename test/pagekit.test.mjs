@@ -3932,6 +3932,16 @@ test('a batch round gives no answer more once the page held it past the fill\'s 
   assert.equal(report.outOfTime, true);
 });
 
+// CodeRabbit on #398: every click and write the cursor makes outside an answer (a unit group, a
+// helper's menu, a helper, a nudge, Continue) reads the deadline just before it, as apply does for
+// answers, so a choice that ran past it presses nothing more.
+test('every press and nudge of the cursor reads the fill\'s deadline just before it', () => {
+  const lines = CURSOR_SOURCE.split('\n');
+  const acts = lines.map((l, i) => [l, i]).filter(([l]) => /pressButton\(|adapter\(\)\.reselect\(widget|setNativeValue\(pair\.control/.test(l) && !/^\s*\/\//.test(l));
+  assert.ok(acts.length >= 6, `${acts.length} sites`);
+  for (const [l, i] of acts) assert.ok(lines.slice(Math.max(0, i - 14), i + 1).some((x) => x.includes('thisFill.timeUp()')), `line ${i + 1}: ${l.trim()}`);
+});
+
 test('a batch round keeps the order its rules are written in', async () => {
   const h = harness();
   const gender = makeInput({ id: 'gender', ariaLabel: 'Gender' });
