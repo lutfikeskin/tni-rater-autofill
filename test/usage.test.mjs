@@ -214,6 +214,26 @@ test('a failed answer is logged with its code beside its reason', () => {
   assert.deepEqual([failed.code, failed.reason], ['option.no-match', 'no option matches "Unlimited"']);
 });
 
+// Audit 2026-11-07, LEARN-11: every fill run of a page logged each kept answer again (59% of fill
+// events). A kept answer is logged once per quote, tab, page, step, question and what it shows; the
+// run still counts them all.
+test('a kept answer is logged once per quote and what it shows, and counted on every run', () => {
+  const kept = (now, extra = {}) => ({ label: 'Garaging ZIP', key: 'ref:GiveZip', q: null, controlKind: 'text', now, ...extra });
+  const run = (items, opts = {}) => fillEvents([{ fields: items.length, filled: [], failed: [], noData: [], leftRequired: [], kept: items }],
+    { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact, step: 'Vehicles', ...opts });
+  const keptOf = (events) => events.filter((e) => e.type === 'fill_field' && e.result === 'kept').length;
+  const keptLogged = new Set();
+  const first = run([kept('20001'), kept('20001', { label: 'Business ZIP', key: 'ref:BizZip' })], { keptLogged });
+  assert.deepEqual([keptOf(first), first[0].kept], [2, 2]);
+  const again = run([kept('20001'), kept('20001', { label: 'Business ZIP', key: 'ref:BizZip' })], { keptLogged });
+  assert.deepEqual([keptOf(again), again[0].kept], [0, 2], 'the same answers kept again: counted, not logged');
+  assert.equal(keptOf(run([kept('20002')], { keptLogged })), 1, 'what the field shows changed');
+  assert.equal(keptOf(run([kept('20002')], { keptLogged, view: 't2' })), 1, 'another tab');
+  assert.equal(keptOf(run([kept('20002')], { keptLogged, step: 'Drivers' })), 1, 'another step');
+  assert.equal(keptOf(run([kept('20002', { differs: true })], { keptLogged })), 1, 'one that differs from the rule always');
+  assert.equal(keptOf(run([kept('20001')])), 1, 'without the quote\'s set, every one');
+});
+
 test('summary script turns a log into corrections and mapping candidates', async () => {
   const s = await intakeSummary(bytes, raw, result);
   const base = { v: '0.1.0', agent: 'LK', session: 's1', intakeId: s.intakeId };
