@@ -3200,6 +3200,70 @@ test('with the business type popup open, the page\'s Continue behind it is never
   assert.equal(popup.cont._clicked, 1);
 });
 
+// Audit ENG-01 (the maintainer, 2026-11-07: automatic Continue only on recognized pages). Progressive's
+// advance was a denylist: a page it added or renamed, with a button reading Continue, was continued.
+// Now only the pages its advance lists are; any other is answered and its Continue left to the agent,
+// and the report says so (`unlisted`).
+test('Progressive: Continue only on the pages its advance lists, never on a page it doesn\'t know', async () => {
+  const run = async (page) => {
+    const h = harness({ progressive: true, search: `?pageName=${page}` });
+    const next = addButton(h, 'Continue');
+    next.onclick = () => { next._clicked = true; };
+    const report = await h.kit.fill([], { maxRounds: 2, advance: advanceFor(progressive) });
+    return { clicked: !!next._clicked, report };
+  };
+  assert.ok(progressive.advance.pages.length >= 12);
+  for (const page of progressive.advance.pages) {
+    const { clicked, report } = await run(page);
+    assert.equal(clicked, true, `${page}: a known page is still continued`);
+    assert.equal(report.unlisted, undefined, page);
+  }
+  for (const page of ['PaymentDetails', 'AdditionalDetailsNew', 'BindConfirm', 'Synthetic']) {
+    const { clicked, report } = await run(page);
+    assert.equal(clicked, false, `${page}: an unknown page is never continued`);
+    assert.equal(report.unlisted, true, `${page}: the report says the page isn't listed`);
+    assert.equal(report.advanced, undefined, page);
+    assert.equal(report.advanceDue, undefined, `${page}: no retry of the fill to continue`);
+  }
+  // The known exceptions stay fenced, and aren't reported as unknown.
+  for (const page of progressive.advance.exceptPages) {
+    const { clicked, report } = await run(page);
+    assert.deepEqual([clicked, report.unlisted], [false, undefined], page);
+  }
+  // An unknown page with nothing that would be clicked: nothing to say.
+  const bare = harness({ progressive: true, search: '?pageName=PaymentDetails' });
+  assert.equal((await bare.kit.fill([], { maxRounds: 2, advance: advanceFor(progressive) })).unlisted, undefined);
+});
+
+// The same for AmWINS' one-address application: Save & Continue only on the steps its advance lists.
+test('AmWINS: Save & Continue only on the steps its advance lists, never on a step it doesn\'t know', async () => {
+  const run = async (step) => {
+    const h = harness({ adapter: 'amwins', pathname: '/application/businessauto' });
+    h.document.body.append(new FakeNode('h3', { textContent: step }));
+    const next = addButton(h, 'Save & Continue');
+    next.onclick = () => { next._clicked = true; };
+    const report = await h.kit.fill([], { maxRounds: 2, advance: advanceFor(amwins) });
+    return { clicked: !!next._clicked, report };
+  };
+  assert.deepEqual(amwins.advance.steps, ['Insured Info', 'Drivers', 'Vehicles', 'Coverages']);
+  for (const step of amwins.advance.steps) {
+    const { clicked, report } = await run(step);
+    assert.equal(clicked, true, `${step}: a known step is still continued`);
+    assert.equal(report.unlisted, undefined, step);
+  }
+  for (const step of ['Underwriting', 'Loss History', 'Payment']) {
+    const { clicked, report } = await run(step);
+    assert.equal(clicked, false, `${step}: never continued`);
+    assert.equal(report.unlisted, true, step);
+  }
+  // No step heading read: not continued either.
+  const blank = harness({ adapter: 'amwins', pathname: '/application/businessauto' });
+  const next = addButton(blank, 'Save & Continue');
+  next.onclick = () => { next._clicked = true; };
+  await blank.kit.fill([], { maxRounds: 2, advance: advanceFor(amwins) });
+  assert.equal(!!next._clicked, false);
+});
+
 // LA live run, 2026-10-28: New Customer's business description (q93) is a list of some 1,200
 // business names; the agent typed a word and picked from the narrowed list. Now the fill searches
 // for "Trucking" and picks General Freight Trucking, else For Hire Trucking, among the results only.
@@ -4935,6 +4999,8 @@ test('AmWINS\' copy-to-another-product box after Submit is left as the page has 
 test('AmWINS review mode confirms differing retained standard choices before Continue', async () => {
   const run = async (businessClass) => {
     const h = harness({ pathname: '/application/businessauto' });
+    // A step Save & Continue is clicked on (advance `steps`).
+    h.document.body.append(new FakeNode('h3', { textContent: 'Insured Info' }));
     const nonprofit = radioGroup('Is non profit', ...['Yes', 'No'].map((value) => makeInput({ name: 'isNonProfit', type: 'radio', value, checked: value === 'Yes' })));
     const waiver = new SelectNode(['', 'NONE', 'BROAD'], { id: 'waiverType', ariaLabel: 'Waiver type', value: 'BROAD' });
     h.document.body.append(nonprofit, waiver);

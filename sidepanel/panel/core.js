@@ -746,7 +746,7 @@ const REPORTS_PREFIX = 'reports:';
 const REPORTS_KEPT = 30;
 const REPORTS_BYTES = 512 * 1024;
 const REPORT_PARTS = ['fields', 'filled', 'kept', 'failed', 'noData', 'leftRequired', 'unknown', 'checks', 'actions', 'blocked', 'skipped',
-  'halted', 'reason', 'stepUnread', 'stepKey', 'notDrawn', 'advanced', 'advanceDue', 'held', 'covered', 'coveredHelpers', 'renamed', 'pageChanged'];
+  'halted', 'reason', 'stepUnread', 'stepKey', 'notDrawn', 'advanced', 'advanceDue', 'unlisted', 'held', 'covered', 'coveredHelpers', 'renamed', 'pageChanged'];
 const reportsRestored = new Set();
 let reportsQueue = Promise.resolve();
 function keepReport(tabId, saved) {

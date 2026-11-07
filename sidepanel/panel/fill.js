@@ -877,7 +877,7 @@ function renderReport(frames, ctx = {}) {
       // A panel opened again doesn't keep the pause: a report made again doesn't say it.
       ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
       : frames.some((f) => f.notDrawn) && !judged ? { notice: 'No questions found on this page.' }
-        : { notice: 'Nothing to fill on this page.', empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null,
+        : { notice: 'Nothing to fill on this page.', empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null, unlisted: frames.some((f) => f.unlisted),
           held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
     renderSteps();
     return;
@@ -933,7 +933,7 @@ function renderReport(frames, ctx = {}) {
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
   // `halted`: the fill stopped short ("Filling stopped" above the list, or the agent's Stop).
-  const entry = { key, tabId, page, step: step ?? null, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, otherLeft: needs.filter((x) => !finishLeftOk(carrier, x)).length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
+  const entry = { key, tabId, page, step: step ?? null, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, otherLeft: needs.filter((x) => !finishLeftOk(carrier, x)).length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, unlisted: frames.some((f) => f.unlisted), at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
     halted: frames.some((f) => !!f.halted),
     ...(ctx.restoredAt ? { restored: true } : {}),
     list: /** @type {any[]} */ ([]) };

@@ -106,10 +106,12 @@ export function resolveItems(report, plan) {
 // `replaceChoices`: a dropdown/radio/checkbox answer the page pre-selected (not the agent) is
 // replaced when it differs from ours; agent changes are protected by `skip`.
 // `visitedPages`: pages already seen in this quote (for actions that wait on a page).
-// `advance`: { text, exceptPages, steps, notWithin, byForm, quietMs } — when the page ends with nothing for
+// `advance`: { text, pages, exceptPages, steps, notWithin, byForm, quietMs } — when the page ends with nothing for
 // the agent to look at (no unfamiliar required fields, nothing missing, nothing failed), click its
-// Continue button. `steps`: on a one-address application, only on these steps (GEICO's, up to
-// Additional Business Info). `notWithin`: no button inside this. `byForm`: a step that shows
+// Continue button. `pages`: only on these pages (Progressive's). `steps`: on a one-address
+// application, only on these steps (GEICO's, up to Additional Business Info; AmWINS' before
+// Underwriting). A carrier's advance always has one or the other (src/units.js advanceFor: without
+// either, no Continue). `notWithin`: no button inside this. `byForm`: a step that shows
 // several forms and lists in turn (GEICO's Vehicles: each unit's form, then the list) is continued
 // per form and button, not once a step: `report.advanceKey` is the step, the button's words and the
 // unit form on screen ("Vehicles@next@Id_YesNoPreQuoteHaveFullVinActivity_63452"), which
@@ -2185,9 +2187,17 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     const notDrawn = !state.report.fields && !state.report.actions.length && (state.topPage == null || state.topPage === startPage) && plan.some((s) => s.pages?.includes(startPage));
     // The panel tries such a page again in a moment, and says nothing of it yet (W43-42).
     if (notDrawn && !state.report.halted) state.report.notDrawn = true;
-    if (advance && window === window.top && !state.report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
-      && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(state.report.stepKey)
-      && (!advance.steps?.length || (!!state.report.stepKey && stepIs(advance.steps, state.report.stepKey)))) {
+    // Continue only on a page or step the carrier lists (`pages`, `steps`: the maintainer,
+    // 2026-11-07, audit ENG-01): one it doesn't list, a page the carrier added or renamed, is
+    // answered and left for the agent. Done there with a Continue showing that would have been
+    // clicked, the report says so (`unlisted`): the panel tells the agent, and the log names it.
+    const listed = !advance || ((!advance.pages?.length || advance.pages.includes(currentPage()))
+      && (!advance.steps?.length || (!!state.report.stepKey && stepIs(advance.steps, state.report.stepKey))));
+    if (advance && !listed && window === window.top && !state.report.blockers.length && !notDrawn && !state.report.halted
+      && currentPage() === startPage && !stepChanged() && !(advance.exceptPages ?? []).includes(currentPage())
+      && findAdvanceButton(advance.text, advance)) state.report.unlisted = true;
+    if (advance && listed && window === window.top && !state.report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
+      && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(state.report.stepKey)) {
       // The last answer may still be redrawing part of the page (a new payment method reloads the
       // plan list): a Continue clicked meanwhile is lost. Let it finish first. `quietMs`: a page that
       // draws a question a moment after an answer (GEICO's USDOT record check) is waited for too,

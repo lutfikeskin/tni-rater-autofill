@@ -165,6 +165,33 @@ test('the manifest allows every carrier site and the usage server', () => {
   assert.ok(hosts.includes(new URL(DEFAULT_SERVER).hostname), 'the usage server needs a host permission');
 });
 
+// Audit ENG-01 (the maintainer, 2026-11-07): automatic Continue only on pages the carrier knows. Every
+// carrier's advance lists where it may continue (`pages` or `steps`), each a page or step its config
+// knows already (its quote strip or layout steps), and none is a page where the carrier stops the
+// quote, a step that is the agent's, or one of its fenced pages. The fill log names a page that wasn't.
+test('every carrier\'s Continue lists the known pages or steps it may continue on, and no stop or fenced one', () => {
+  for (const c of CARRIERS.filter((x) => x.advance)) {
+    const { pages = [], steps = [], exceptPages = [] } = c.advance;
+    assert.ok(pages.length || steps.length, `${c.id}: advance lists no page or step`);
+    const knownPages = new Set((c.quoteSteps ?? []).flatMap((s) => s.pages ?? []));
+    for (const p of pages) {
+      assert.ok(knownPages.has(p), `${c.id}: ${p} isn't a page of its quote strip`);
+      assert.ok(!exceptPages.includes(p) && !c.stopPages?.[p], `${c.id}: ${p} is fenced or a stop page`);
+    }
+    for (const s of steps) {
+      assert.ok((c.layoutSteps ?? []).includes(s), `${c.id}: ${s} isn't one of its steps`);
+      assert.ok(!c.stopSteps?.[s], `${c.id}: ${s} is the agent's step`);
+    }
+    for (const s of c.finishedAt?.steps ?? []) assert.ok(!steps.includes(s), `${c.id}: ${s} ends the quote`);
+  }
+  const progressive = CARRIERS.find((c) => c.id === 'progressive');
+  for (const p of ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFax', 'PrintEmailFaxConfirm', 'NoHit', 'BECAPopup', 'DeclinationNotice']) {
+    assert.ok(!progressive.advance.pages.includes(p), p);
+  }
+  const blockers = fillEvents([{ fields: 0, filled: [], blockers: [], unlisted: true }], { carrier: 'progressive', page: 'PaymentDetails', view: 't1', overwrite: false, ms: 1, redact: (s) => s })[0].blockerList;
+  assert.deepEqual(blockers, ['continue: page not listed']);
+});
+
 test('the manifest fits the Chrome Web Store limits', () => {
   const manifest = JSON.parse(read('manifest.json'));
   assert.ok(manifest.description.length <= 132, `description is ${manifest.description.length} characters; the store allows 132`);

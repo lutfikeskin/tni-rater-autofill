@@ -109,7 +109,10 @@ export function unitMissingItem(carrier, record, { list, index }) {
 // list on screen holding every intake unit (unitToAdd `complete`).
 export function advanceFor(carrier, unitsListed = false) {
   const advance = carrier?.advance ?? null;
-  if (!advance?.listed) return advance;
+  // Continue only where the carrier lists it may (`pages` or `steps`: the maintainer, 2026-11-07,
+  // audit ENG-01): a carrier that lists neither gets no automatic Continue anywhere.
+  if (!advance?.pages?.length && !advance?.steps?.length) return null;
+  if (!advance.listed) return advance;
   const { listed, ...rest } = advance;
   return unitsListed ? { ...rest, text: `(?:${rest.text})|(?:${listed})` } : rest;
 }

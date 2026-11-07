@@ -523,8 +523,10 @@ export const amwins = {
     { id: 'defaultNo', text: '^default all answers to\\W*no\\W*$', immediate: true, skipIfProtected: true },
   ],
   // Each step ends with Save & Continue (saves the draft, opens the next step) once nothing is
-  // left for the agent. The declaration step never gets there: the declaration is the agent's.
-  advance: { text: '^save\\s*(&|and)\\s*continue$' },
+  // left for the agent, only on the steps listed (the maintainer, 2026-11-07, audit ENG-01): a step
+  // AmWINS adds or renames is answered and its Save & Continue left to the agent. Underwriting, the
+  // declaration step, isn't one: it ends with Submit, and the declaration is the agent's.
+  advance: { text: '^save\\s*(&|and)\\s*continue$', steps: ['Insured Info', 'Drivers', 'Vehicles', 'Coverages'] },
   // Where the quote ends (the maintainer, 2026-10-25: "on AmWINS that's when we count it done"): a
   // fill on Underwriting that leaves the agent nothing but the declaration. The panel then says Quote
   // done, the declaration and Submit are the agent's, and chimes once (sidepanel quoteFinished,

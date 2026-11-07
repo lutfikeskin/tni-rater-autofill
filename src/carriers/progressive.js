@@ -764,12 +764,20 @@ export const progressive = {
     DeclinationNotice: 'Progressive says this client already has a commercial auto policy with Progressive. The quote stops here: nothing on this page is filled or clicked. Let the client know; what to do next is yours.',
   },
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is
-  // clicked. Never on the finish/buy pages.
+  // clicked, only on the pages listed in `pages` (the maintainer, 2026-11-07, audit ENG-01): the
+  // quote's pages up to Rates and its bill plan, as the configs, fixtures and recordings know them.
+  // A page Progressive adds or renames is answered and its Continue left to the agent.
+  // Never on the finish/buy pages.
   // Never on NoHit either: the agent adjusts the owner's details there (agentPages), nor on the
   // Print page, whose next step is the agent's Print/Send. Nor while the business type popup is open
   // (BECAPopup): the page's Continue is behind it, and the popup's own is a helper's
-  // (businessTypePopupContinue).
-  advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFax', 'PrintEmailFaxConfirm', 'NoHit', 'BECAPopup'] },
+  // (businessTypePopupContinue). `exceptPages` stays as a second fence: none of them is in `pages`.
+  advance: {
+    text: '^(continue|ok,? start quote\\.?)\\W*$',
+    pages: ['BusinessOwnerInfo', 'MostCommonVehicles', 'AddVehicle', 'VehicleSummary', ...TRAILER_PAGES, 'AddDriver', 'DriverSummary',
+      'MoreAboutBusiness', 'Filings', 'CoveragesRates', 'ChangePaymentPlan'],
+    exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFax', 'PrintEmailFaxConfirm', 'NoHit', 'BECAPopup'],
+  },
   rules: [
     ...SAFE_LABEL_RULES,
     // --- Named Insured and Business Overview (pageName=BusinessOwnerInfo) ---------------------
