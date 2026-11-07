@@ -4821,6 +4821,19 @@ test('every fill, the agent\'s Fill this page too, keeps an answer the page took
     runs.push(t.seen.options.takenBack);
   }
   assert.deepEqual(JSON.parse(JSON.stringify(runs)), [{ steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }]);
+  // Review of PR #374: the real fillOptions names the keys a fill on the tab gave before the panel
+  // was opened again (its kept reports, givenEarlier) as well as this panel's own.
+  const t = fillHarness({ carrier: { id: 'geico', practice: false, layoutSteps: amwins.layoutSteps, keepTakenBack: ['Quote & Coverages'] } });
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+  t.context.usage = { ...t.context.usage, currentSession: () => ({ intakeId: 'intake-a' }) };
+  t.state.givenEarlier = new Map([[t.state.tab.id, { scope: 'intake-a', given: [['cov:BI#1', { path: 'coverages.bi', shown: '100/300' }]] }]]);
+  t.state.filled.set('cov:PD#1', { path: 'coverages.pd', shown: '100,000' });
+  const run = t.context.fillPage();
+  await t.started;
+  t.release(t.results);
+  await run;
+  assert.deepEqual(Object.keys(t.seen.options.takenBack.keys).sort(), ['cov:BI#1', 'cov:PD#1']);
 });
 
 test('an intake correction during a fill makes its results stale too, for automatic fills as well', async () => {
