@@ -9,7 +9,7 @@ import { $, clearAgentKeys, persistAiPending, state, store } from './core.js';
 import { loadFile, logProfile, profileTimer } from './intake.js';
 import { render, showScreen } from './record.js';
 import { pageOf, samePage } from './usage.js';
-import { cancelLayouts, dropReports, holdLayouts, renderSite, resetViews, stopPageIsOurs, viewOf } from './coordinator.js';
+import { cancelLayouts, dropReports, holdLayouts, renderSite, resetViews, stopFillFirst, stopPageIsOurs, viewOf } from './coordinator.js';
 import { refreshAnswers, runKit } from './fill.js';
 import { stopRecording } from './dev-recording.js';
 import { flushSync } from 'react-dom';
@@ -367,6 +367,7 @@ function askFile(what, text, yes, from = what === 'replace' ? 'replace' : what =
 async function newQuote() {
   if (!state.intake) return;
   if (state.filling) { clientNote('Wait for the answers going in to finish, then start the new quote.'); return; }
+  state.resetDepth = (state.resetDepth ?? 0) + 1;
   state.resetting = true;
   try {
     const bytes = await intakePdfBytes();
@@ -381,7 +382,8 @@ async function newQuote() {
     state.intake.ntlAdded = false;
     await loadFile(new File([bytes], state.intake.fileName || 'intake.pdf', { type: 'application/pdf' }), { reset: true });
   } finally {
-    state.resetting = false;
+    state.resetDepth -= 1;
+    state.resetting = state.resetDepth > 0;
   }
 }
 
@@ -392,32 +394,42 @@ function clientNote(text) {
 
 async function clearClient() {
   const scope = usage.currentSession()?.intakeId;
-  // A recording ends with its client, saved as it is.
-  if (state.recording) await stopRecording('The client was cleared, so the recording stopped.');
-  if (profileTimer) logProfile();
-  usage.log({ type: 'intake_closed', reason: 'cleared' });
-  cancelLayouts();
-  holdLayouts();
-  resetViews();
-  state.intake = null;
-  state.fileConfirm = null;
-  state.view = 'check';
-  state.filter = 'all';
-  state.aiDocks = new Map();
-  state.pastKey = null;
-  state.detailsOpen = false;
-  dropReports();
-  clientNote(null);
-  usage.restoreSession(null);
-  await store.remove('intake');
-  await store.remove('session');
-  await forgetPdf();
-  await persistAiPending();
-  await clearAgentKeys(scope);
-  // agent defaults: no client, no question.
-  refreshDefaults();
-  render();
-  renderSite();
+  // A fill running on any tab is stopped first and waited for (stopFillFirst), and none starts
+  // until the client is gone (`resetting`, held with any other change under way: `resetDepth`).
+  state.resetDepth = (state.resetDepth ?? 0) + 1;
+  state.resetting = true;
+  try {
+    await stopFillFirst();
+    // A recording ends with its client, saved as it is.
+    if (state.recording) await stopRecording('The client was cleared, so the recording stopped.');
+    if (profileTimer) logProfile();
+    usage.log({ type: 'intake_closed', reason: 'cleared' });
+    cancelLayouts();
+    holdLayouts();
+    resetViews();
+    state.intake = null;
+    state.fileConfirm = null;
+    state.view = 'check';
+    state.filter = 'all';
+    state.aiDocks = new Map();
+    state.pastKey = null;
+    state.detailsOpen = false;
+    dropReports();
+    clientNote(null);
+    usage.restoreSession(null);
+    await store.remove('intake');
+    await store.remove('session');
+    await forgetPdf();
+    await persistAiPending();
+    await clearAgentKeys(scope);
+    // agent defaults: no client, no question.
+    refreshDefaults();
+    render();
+    renderSite();
+  } finally {
+    state.resetDepth -= 1;
+    state.resetting = state.resetDepth > 0;
+  }
 }
 
 export { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, clientNote, closeDetails, closePdf, drawPdf, keepPdf, newQuote, noteStep, openDetails, openPdf, openPdfInTab, pdfAvailable, pdfPage, pdfPageSaid, pdfPan, pdfZoom, workSaid };

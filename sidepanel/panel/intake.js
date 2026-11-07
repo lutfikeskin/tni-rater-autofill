@@ -9,7 +9,7 @@ import * as usage from '../usage-log.js';
 import { $, discardAiSuggestions, doneRestored, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes } from './core.js';
 import { firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
-import { cancelLayouts, dropReports, holdLayouts, resetViews, viewOf } from './coordinator.js';
+import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
 import { stopRecording } from './dev-recording.js';
 import { reviewIntake } from './assistant.js';
 import { uploadNow } from './usage-panel.js';
@@ -44,81 +44,93 @@ async function loadFile(file, { reset = false } = {}) {
   // Where each answer is on the PDF, so check items and filled answers can be shown on it. A PDF
   // pdf.js reads the fields of but not their places just has no "See in PDF".
   const places = await readIntakePlaces(pdfjs, bytes.slice()).catch(() => null);
-  // The same PDF again (to see it in the panel again, or by mistake): the agent's work on it stays.
-  const same = state.intake && usage.currentSession()?.intakeId === summary.intakeId ? state.intake : null;
-  if (profileTimer) logProfile();
-  if (state.intake) usage.log({ type: 'intake_closed', reason: reset ? 'reset' : 'replaced' });
-  // A recording ends with its client (redacted with that client's names), as on clearing it.
-  if (state.recording && !same) await stopRecording('Another client was loaded, so the recording stopped.');
-  // A tab that went into a quote while the panel was closed did so before this intake (quote-owner.js).
-  await settleQuoteEntries(async (id) => (await chrome.tabs.get(id)).url);
-  clearTimeout(state.autoTimer);
-  state.autoDrawn = null;
-  state.autoPending = false;
-  state.autoPaused = false;
-  // A page the last intake's fill left to fill next (runPendingPage, new_fields): never this one's.
-  state.pagePending = null;
-  state.drawPending = null;
-  state.tabSessions.clear();
-  state.autoPages = new Set();
-  state.agentKeys = new Map();
-  state.labels = new Map();
-  state.choices = new Map();
-  state.visitedPages = new Set();
-  state.doneSteps = new Set();
-  state.advanceRetried = new Set();
-  state.assistPage = null;
-  state.layoutErrors = 0;
-  cancelLayouts();
-  holdLayouts();
-  resetViews();
-  // agentEdited: the fields the agent edited in the panel, saved with the intake so a derived one
-  // among them (radius miles, years in business) stays theirs after the panel reopens.
-  // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
-  // intakeId: whose quote a tab is (quote-owner.js), from the moment this intake is the panel's.
-  state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test, intakeId: summary.intakeId };
-  // agent defaults: nothing fills with the last quote's answer until this one is set up and asked.
-  quoteStarting();
-  if (same) keepWork(state.intake, same);
-  state.view = firstView(state.intake);
-  state.filter = 'all';
-  state.aiDocks = new Map();
-  state.pastKey = null;
-  state.detailsOpen = false;
-  state.settingsOpen = false;
-  state.fileConfirm = null;
-  state.pdf = null;
-  dropReports();
-  const work = same ? workSaid(same.agentEdited?.length ?? 0, same.done?.length ?? 0) : '';
-  clientNote(same ? `${reset ? 'New quote with the same intake' : 'Same intake'}${work ? `: you ${work}, and that stays` : ''}.` : null);
-  await keepPdf(bytes);
-  state.active = firstUnits();
-  state.activeTab = null;
-  state.filled = new Map();
-  state.doneActions = new Set();
-  state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
-  state.unitNamed = null;
-  state.unitShown = null;
-  state.unreadRetried = false;
-  state.triedAgain = null;
-  doneRestored.clear(); // every tab set was reset; retained helpers must rehydrate for this intake
-  discardAiSuggestions();
-  await store.set('session', usage.startSession(summary.intakeId));
-  await persistAiPending();
-  await restoreAiPending();
-  // This intake's edit keys and helper records (also a PDF dropped again) are restored per tab by
-  // refreshTab; the panel's own sets and restoration markers were reset above.
-  await pruneAgentRecords(summary.intakeId);
-  usage.log({ type: 'intake_loaded', ...summary, ...(test ? { test: true } : {}), platform: platformOf() });
-  await logSettings('intake');
-  logProfile();
-  uploadNow();
-  await save();
-  render();
-  refreshTab();
-  reviewIntake();
-  // agent defaults: a new quote, asked again whose defaults it fills with.
-  refreshDefaults();
+  // The intake changes from here: a fill running on any tab is stopped first and waited for
+  // (stopFillFirst), and none starts until this intake is the panel's (`resetting`). Changes that
+  // overlap (a Clear or another file during the wait, New quote's own load) each hold it
+  // (`resetDepth`), so it lifts only when the last is done.
+  state.resetDepth = (state.resetDepth ?? 0) + 1;
+  state.resetting = true;
+  try {
+    await stopFillFirst();
+    // The same PDF again (to see it in the panel again, or by mistake): the agent's work on it stays.
+    const same = state.intake && usage.currentSession()?.intakeId === summary.intakeId ? state.intake : null;
+    if (profileTimer) logProfile();
+    if (state.intake) usage.log({ type: 'intake_closed', reason: reset ? 'reset' : 'replaced' });
+    // A recording ends with its client (redacted with that client's names), as on clearing it.
+    if (state.recording && !same) await stopRecording('Another client was loaded, so the recording stopped.');
+    // A tab that went into a quote while the panel was closed did so before this intake (quote-owner.js).
+    await settleQuoteEntries(async (id) => (await chrome.tabs.get(id)).url);
+    clearTimeout(state.autoTimer);
+    state.autoDrawn = null;
+    state.autoPending = false;
+    state.autoPaused = false;
+    // A page the last intake's fill left to fill next (runPendingPage, new_fields): never this one's.
+    state.pagePending = null;
+    state.drawPending = null;
+    state.tabSessions.clear();
+    state.autoPages = new Set();
+    state.agentKeys = new Map();
+    state.labels = new Map();
+    state.choices = new Map();
+    state.visitedPages = new Set();
+    state.doneSteps = new Set();
+    state.advanceRetried = new Set();
+    state.assistPage = null;
+    state.layoutErrors = 0;
+    cancelLayouts();
+    holdLayouts();
+    resetViews();
+    // agentEdited: the fields the agent edited in the panel, saved with the intake so a derived one
+    // among them (radius miles, years in business) stays theirs after the panel reopens.
+    // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
+    // intakeId: whose quote a tab is (quote-owner.js), from the moment this intake is the panel's.
+    state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test, intakeId: summary.intakeId };
+    // agent defaults: nothing fills with the last quote's answer until this one is set up and asked.
+    quoteStarting();
+    if (same) keepWork(state.intake, same);
+    state.view = firstView(state.intake);
+    state.filter = 'all';
+    state.aiDocks = new Map();
+    state.pastKey = null;
+    state.detailsOpen = false;
+    state.settingsOpen = false;
+    state.fileConfirm = null;
+    state.pdf = null;
+    dropReports();
+    const work = same ? workSaid(same.agentEdited?.length ?? 0, same.done?.length ?? 0) : '';
+    clientNote(same ? `${reset ? 'New quote with the same intake' : 'Same intake'}${work ? `: you ${work}, and that stays` : ''}.` : null);
+    await keepPdf(bytes);
+    state.active = firstUnits();
+    state.activeTab = null;
+    state.filled = new Map();
+    state.doneActions = new Set();
+    state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
+    state.unitNamed = null;
+    state.unitShown = null;
+    state.unreadRetried = false;
+    state.triedAgain = null;
+    doneRestored.clear(); // every tab set was reset; retained helpers must rehydrate for this intake
+    discardAiSuggestions();
+    await store.set('session', usage.startSession(summary.intakeId));
+    await persistAiPending();
+    await restoreAiPending();
+    // This intake's edit keys and helper records (also a PDF dropped again) are restored per tab by
+    // refreshTab; the panel's own sets and restoration markers were reset above.
+    await pruneAgentRecords(summary.intakeId);
+    usage.log({ type: 'intake_loaded', ...summary, ...(test ? { test: true } : {}), platform: platformOf() });
+    await logSettings('intake');
+    logProfile();
+    uploadNow();
+    await save();
+    render();
+    refreshTab();
+    reviewIntake();
+    // agent defaults: a new quote, asked again whose defaults it fills with.
+    refreshDefaults();
+  } finally {
+    state.resetDepth -= 1;
+    state.resetting = state.resetDepth > 0;
+  }
 }
 
 // What a problem report is about: the tab's vehicle, driver or trailer (`view`), and the last fill

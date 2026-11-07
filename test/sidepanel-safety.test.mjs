@@ -109,7 +109,10 @@ function extractFunction(name) {
           initialsChanged: 'async () => {}', refreshDefaults: '() => {}', quoteStarting: '() => {}', settingsDefaults: '() => undefined',
           // Whose quote a tab is (quote-owner.js) has its own tests (test/panel/quote-owner.test.jsx):
           // elsewhere every tab is this intake's, unless the harness says otherwise.
-          quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}' };
+          quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
+          // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
+          // elsewhere none is running.
+          stopFillFirst: 'async () => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -4876,7 +4879,7 @@ test('loading another intake keeps the first intake\'s edit keys and helper reco
   assert.match(extractFunction('loadFile'), /doneRestored\.clear\(\);/);
   assert.match(extractFunction('loadFile'), /await pruneAgentRecords\(summary\.intakeId\);/);
   assert.doesNotMatch(SIDEPANEL, /clearAgentKeys\(\)/);
-  assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,600}usage\.restoreSession\(null\);[\s\S]{0,300}await clearAgentKeys\(scope\);/);
+  assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,900}usage\.restoreSession\(null\);[\s\S]{0,300}await clearAgentKeys\(scope\);/);
   assert.match(SIDEPANEL, /if \(what === 'clear'\) clearClient\(\);/, 'Clear runs once the agent confirms it');
 });
 
@@ -5111,7 +5114,8 @@ test('manual and automatic fill rejections after intake replacement or correctio
     assert.equal(t.state.tabSessions.size, 0);
     assert.deepEqual(t.seen.logged.map((e) => [e.error, e.session, e.intakeId]), [['stale: intake changed during the fill', 'session-intake-A', 'intake-A']]);
     assert.equal(t.seen.problems.length, 1);
-    assert.match(t.seen.problems[0].text, /intake changed during the fill/);
+    // A correction: the page may hold the answers from before it (the fill went on with them).
+    assert.match(t.seen.problems[0].text, change === 'replacement' ? /intake changed during the fill/ : /corrected the intake during the fill: this page may hold answers from before the correction/);
     assert.doesNotMatch(JSON.stringify([t.seen.problems, t.seen.logged]), /Old carrier error|A value/);
   }
 });
@@ -8454,6 +8458,141 @@ test('loading another client\'s intake stops and saves the recording, redacted w
   assert.equal(stopped.length, 1);
   assert.match(stopped[0][0], /recording stopped/);
   assert.equal(stopped[0][1], 'TX', 'stopped while the first client was still the intake');
+});
+
+// Audit 2026-11-07, FLOW-02: Clear and Change file let a running fill go on entering the earlier
+// intake's answers for the rest of its rounds. Now the fill, on any tab, gets Stop's stop first and
+// is waited for, with no fill starting meanwhile (`resetting`), before the intake changes.
+function intakeChangeHarness({ fillEndMs = 15000 } = {}) {
+  const seen = { stops: [], order: [] };
+  const intakeA = { record: { garaging: { state: 'TX' }, drivers: [], vehicles: [], trailers: [], applicant: { name: 'A' } }, done: [], agentEdited: [], warnings: [] };
+  let session = { id: 's1', intakeId: 'a' };
+  // A fill on tab 9 while the panel shows tab 4: it ends a little after its stop reaches the page.
+  const state = { intake: intakeA, tab: { id: 4 }, filling: true, resetting: false, fillingFor: { run: 'run-1', tabId: 9, carrier: { id: 'progressive' }, stopping: false },
+    tabSessions: new Map(), layoutPending: null, aiCache: new Map(), recording: null };
+  const ends = () => setTimeout(() => { seen.order.push(['fill ended', state.intake === intakeA]); state.filling = false; state.fillingFor = null; }, 20);
+  const context = { state, Date, Promise, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)), clearTimeout, FILL_END_MS: fillEndMs, doneRestored: new Set(),
+    DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy', aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
+    aiPendingStore: { get: async () => [], set: async () => {} },
+    usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: 's2', intakeId }), restoreSession: (s) => { session = s; }, log: (e) => seen.order.push([e.type, state.resetting]) },
+    $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, forgetPdf: async () => {},
+    normalizeIntake: () => ({ record: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] }, warnings: [] }), intakeSummary: async () => ({ intakeId: 'b' }),
+    store: { set: async () => {}, remove: async () => {} }, pruneAgentRecords: async () => [], clearAgentKeys: async () => {}, testIntakes: { get: async () => [] }, logSettings: async () => {},
+    platformOf: () => ({ os: null, chrome: null }), uploadNow() {}, save: async () => {}, render() {}, renderSite() {}, renderSteps() {}, refreshTab() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
+    profileTimer: null, logProfile() {}, stopRecording: async () => {}, worldFor: () => 'ISOLATED',
+    chrome: { scripting: { executeScript: async ({ target }, ...rest) => { seen.stops.push([target.tabId, target.allFrames, state.intake === intakeA, state.resetting]); ends(); return []; } } } };
+  // The stop goes with its run id (`args`), as Stop's does.
+  context.chrome.scripting.executeScript = async (spec) => { seen.stops.push([spec.target.tabId, spec.args, state.intake === intakeA, state.resetting]); if (spec.args) ends(); return []; };
+  vm.runInNewContext(['stopFill', 'stopFillFirst', 'aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks', 'persistAiPending', 'restoreAiPending',
+    'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid', 'firstView', 'clearClient'].map(extractFunction).join('\n'), context);
+  return { state, seen, context, intakeA };
+}
+
+test('Change file and Clear stop a fill running on any tab first, and no fill starts until the intake has changed', async () => {
+  for (const change of ['change file', 'clear']) {
+    const t = intakeChangeHarness();
+    const pdf = { name: 'next-client.pdf', arrayBuffer: async () => new ArrayBuffer(1) };
+    await (change === 'clear' ? t.context.clearClient() : t.context.loadFile(pdf));
+    // Stop's stop, on the fill's own tab (9, not the one in front), while the first intake was still
+    // the panel's and nothing new could start (`resetting`).
+    assert.deepEqual(JSON.parse(JSON.stringify(t.seen.stops)), [[9, ['run-1'], true, true]], change);
+    // The intake changed only after the fill ended, its results coming back for the intake it filled from.
+    const closed = t.seen.order.findIndex(([what]) => what === 'intake_closed');
+    assert.deepEqual(JSON.parse(JSON.stringify(t.seen.order.slice(0, closed + 1))), [['fill ended', true], ['intake_closed', true]], change);
+    assert.equal(t.state.resetting, false, `${change}: fills may start again once it is done`);
+    assert.equal(t.state.intake === t.intakeA, false);
+    if (change === 'clear') assert.equal(t.state.intake, null);
+  }
+});
+
+// Review of PR #368 (Claude, CodeRabbit): each change saved and restored `resetting` itself, so a
+// Clear confirmed while Change file waited on the fill (or the other way round) lifted it while the
+// other was still swapping, then left it set for good, and no fill started until the panel reloaded.
+test('overlapping Change file and Clear hold resetting until the last is done, then lift it', async () => {
+  for (const first of ['change file', 'clear']) {
+    const t = intakeChangeHarness();
+    const seen = [];
+    const watch = setInterval(() => seen.push(t.state.resetting), 2);
+    const pdf = { name: 'next-client.pdf', arrayBuffer: async () => new ArrayBuffer(1) };
+    const load = () => t.context.loadFile(pdf);
+    const clear = () => t.context.clearClient();
+    const done = [false, false];
+    // Whichever ends first finds it still held for the other.
+    const held = [];
+    const runs = (first === 'clear' ? [clear, load] : [load, clear]).map((change, i) => change().then(() => { done[i] = true; held.push(done.every(Boolean) ? null : t.state.resetting); }));
+    await Promise.all(runs);
+    clearInterval(watch);
+    assert.deepEqual(held, [true, null], `${first}: still held for the other change`);
+    assert.equal(seen.every(Boolean), true, `${first}: never lifted while either ran`);
+    assert.deepEqual([t.state.resetting, t.state.resetDepth], [false, 0], `${first}: lifted once both are done`);
+  }
+  // New quote holds it over its own load, and lifts it after.
+  const t = intakeChangeHarness();
+  t.state.filling = false;
+  t.state.fillingFor = null;
+  Object.assign(t.context, { inExtension: false, intakePdfBytes: async () => new Uint8Array([1]), File: class { constructor(parts, name, opts) { Object.assign(this, { name, type: opts?.type, arrayBuffer: async () => new ArrayBuffer(1) }); } } });
+  t.state.intake.fileName = 'client.pdf';
+  vm.runInNewContext(extractFunction('newQuote'), t.context);
+  await t.context.newQuote();
+  assert.deepEqual([t.state.resetting, t.state.resetDepth], [false, 0]);
+});
+
+test('a fill that only gets its tab\'s word while the intake waits is stopped then; one that never ends doesn\'t hold the intake', async () => {
+  // Getting ready (no fillingFor yet): stopped once it has one.
+  let t = intakeChangeHarness();
+  const fill = t.state.fillingFor;
+  t.state.fillingFor = null;
+  setTimeout(() => { t.state.fillingFor = fill; }, 10);
+  await t.context.loadFile({ name: 'next-client.pdf', arrayBuffer: async () => new ArrayBuffer(1) });
+  assert.deepEqual(JSON.parse(JSON.stringify(t.seen.stops)), [[9, ['run-1'], true, true]]);
+  // A fill that doesn't end: the intake changes after FILL_END_MS, and its late results are dropped
+  // as stale (staleFill: the intake it filled from isn't the panel's).
+  t = intakeChangeHarness({ fillEndMs: 40 });
+  t.context.chrome.scripting.executeScript = async (spec) => { t.seen.stops.push(spec.target.tabId); return []; };
+  await t.context.clearClient();
+  assert.deepEqual(t.seen.stops, [9], 'stopped once');
+  assert.equal(t.state.intake, null);
+  assert.equal(t.state.filling, true, 'still running, now stale');
+  assert.equal(t.state.resetting, false);
+  // A bad file stops nothing: the intake doesn't change.
+  t = intakeChangeHarness();
+  await t.context.loadFile({ name: 'notes.txt', type: 'text/plain', arrayBuffer: async () => new ArrayBuffer(1) }).catch(() => {});
+  assert.deepEqual(t.seen.stops, []);
+  assert.equal(t.state.intake, t.intakeA);
+});
+
+// An intake correction while a fill runs doesn't stop it: the fill goes on with the answers it
+// started with (its plan was taken before the kit was asked), and its results are dropped as stale
+// with a note that the page may hold the answers from before the correction.
+test('a correction during a fill: the fill keeps the answers it started with, and the page is said to hold them', async () => {
+  for (const auto of [false, true]) {
+    const t = fillHarness();
+    const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
+    await t.started;
+    // agentEdit: the record changed in place, then intakeEdited.
+    t.state.intake.record.client = 'A, corrected';
+    t.state.intakeRevision++;
+    t.release(t.results);
+    await run;
+    assert.equal(t.seen.plan.client, 'A', 'the kit was given the answers from before the correction');
+    assert.equal(t.state.filling, false);
+    assert.deepEqual([t.state.filled.size, t.state.tabSessions.size, t.seen.rendered, t.seen.afterFill.length], [0, 0, 0, 0], 'nothing remembered or shown as the corrected intake\'s');
+    assert.deepEqual(t.seen.problems.map((p) => p.tabId), [7]);
+    assert.match(t.seen.problems[0].text, /^You corrected the intake during the fill: this page may hold answers from before the correction\./);
+  }
+});
+
+// The automatic fill carries its run id too, so a stop sent before it begins in a frame halts it
+// there (the kit's stoppedRuns), as the agent's own fill does.
+test('an automatic fill gives the kit its run id, for a stop sent before it begins', async () => {
+  const t = fillHarness();
+  t.context.fillOptions = (carrier, extra) => extra;
+  const run = t.context.autoFill('/quote-A');
+  await t.started;
+  t.release(t.results);
+  await run;
+  assert.match(String(t.seen.options.run), /^[0-9a-f]{8}-[0-9a-f-]{27}$/);
+  assert.equal(t.seen.options.run, t.seen.logged.find((e) => e.type === 'fill_run')?.run, 'the fill\'s own run');
 });
 
 // Live recording, 2026-10-23 (Progressive): the agent clicked View bill plan options themselves, the
