@@ -41,11 +41,34 @@ export function guardEdits(onEdit) {
   const gestureTypes = ['pointerdown', 'keydown', 'paste', 'drop'];
   const realTarget = (event) => event.composedPath?.()[0] ?? event.target ?? null;
 
+  // A pick in a detached list sets its box with no input or change event (an ExtJS combo's: a
+  // General Liability limit, 2026-10-20), so protectEdit never hears it. The box the pointer's option
+  // belongs to is read as the gesture happens and again within its 2 s: a change there is the agent's
+  // (LEARN-07, 2026-11-07: the fill gave its own choice over such a pick).
+  let watch = null;
+  const stopWatch = () => {
+    for (const t of watch?.timers ?? []) clearTimeout(t);
+    watch = null;
+  };
+  const watchPick = (control) => {
+    stopWatch();
+    if (!control) return;
+    const was = control.value;
+    const check = () => {
+      if (watch?.el !== control || control.value === was) return;
+      stopWatch();
+      const c = collectControls().find((x) => x.el === control);
+      if (c) onEdit(fieldKey(c), c);
+    };
+    watch = { el: control, timers: [50, 250, 600, 1200, 2000].map((ms) => setTimeout(check, ms)) };
+  };
+
   const trackGesture = (event) => {
     if (!event.isTrusted) return;
     lastGesture = Date.now();
     gestureTarget = realTarget(event);
     gestureControl = popupControl(gestureTarget);
+    if (event.type === 'pointerdown') watchPick(gestureControl);
   };
 
   const sameGroup = (a, b) => a === b || (!!a && !!b && a.type === 'radio' && b.type === 'radio'
@@ -82,6 +105,7 @@ export function guardEdits(onEdit) {
   document.addEventListener('input', protectEdit, true);
   document.addEventListener('change', protectEdit, true);
   return () => {
+    stopWatch();
     for (const type of gestureTypes) document.removeEventListener(type, trackGesture, true);
     document.removeEventListener('input', protectEdit, true);
     document.removeEventListener('change', protectEdit, true);

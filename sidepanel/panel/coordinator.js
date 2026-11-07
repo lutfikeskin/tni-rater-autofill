@@ -114,8 +114,9 @@ const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 
   // filled only for the driver the plan is for (W43-37).
   formUnit: unitNameFor(carrier, extra.expectPage ?? pageOf(state.tab?.url), active, state.intake?.record),
   // What this tab's fills gave, by field key, with the unit each was for: a field still showing
-  // another unit's answer gets this unit's (W43-38).
-  givenBefore: Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])),
+  // another unit's answer gets this unit's (W43-38), and one showing otherwise now is kept (pagekit
+  // `changedSince`). Those given before the panel opened too (givenEarlier), from the tab's kept reports.
+  givenBefore: { ...givenEarlier(state.tab?.id), ...Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },
   // A page that shows a few units' rows at a time (Progressive's Rates): the kit pages through them.
   pager: carrier.unitPager ?? null,
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
@@ -125,6 +126,12 @@ const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 
   ...(state.recording && !state.recording.stopping && state.recording.tabId === state.tab?.id ? { trace: true } : {}),
   ...extra,
 });
+
+// What the tab's fills gave before the panel opened (state.givenEarlier), for this intake only.
+function givenEarlier(tabId) {
+  const kept = state.givenEarlier?.get(tabId);
+  return kept && kept.scope === usage.currentSession()?.intakeId ? Object.fromEntries(kept.given) : {};
+}
 
 // Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
 // from the extension's own package when the panel starts, on every fill_run. Null outside the
