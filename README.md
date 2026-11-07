@@ -121,7 +121,7 @@ npm run ledger    # the open weekly-review issue's items: which builds carry eac
 node scripts/find-intake.mjs <folder of intake PDFs> server-data   # which intake a session used
 ```
 
-`signals` and `ledger` aren't part of `npm run review`; the weekly review reads all three (see the `weekly-review` and `apply-review-fixes` skills in `.claude/skills/`). `learn` prints rule lines ready to paste into `src/carriers/<carrier>.js`. **Review each one**: a consistent answer isn't always a correct one. Generated layouts are git-ignored; review them before committing any.
+`signals` and `ledger` aren't part of `npm run review`; the weekly review reads all three (see the `weekly-review` and `apply-review-fixes` skills in `.claude/skills/`). `learn` prints rule lines ready to paste into `src/carriers/<carrier>.js` for mappings, page answers and the attestations and client facts it keeps with the agent; a possible TNI standard comes with its evidence and a decision for the maintainer, never a rule line. **Review each one**: a consistent answer isn't always a correct one. Generated layouts are git-ignored; review them before committing any.
 
 To measure a rule change on recorded quotes before release, replay them through the rules, given a folder with their intake PDFs (matched by fingerprint, never copied). It isn't part of `npm run review`:
 
