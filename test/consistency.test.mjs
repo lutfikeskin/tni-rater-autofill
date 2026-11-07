@@ -249,3 +249,36 @@ test('commands named in AGENTS.md and the README exist', () => {
     for (const [, name] of read(doc).matchAll(/npm run ([a-z][\w:-]*)/g)) assert.ok(scripts[name], `${doc} names "npm run ${name}", which package.json doesn't have`);
   }
 });
+
+// Audit 2026-11-07, ORG-12: the README named capture folders that were never committed. A
+// repository path a document names in backticks (one under the repository's own folders, with no
+// placeholder) or links to is a tracked file or folder, or one of these, each named as what it is.
+const NOT_TRACKED = {
+  'src/content/pagekit.js': 'built from src/kit/ by scripts/lib/kit.mjs',
+  'docs/HANDOFF.md': 'a local note, named as local',
+  'docs/kesif-plani.md': 'a local file outside the repository, named as such',
+  'src/content/page-watch.js': "developer-recording.md's proposal, not built",
+  'test/fixtures/recording': "developer-recording.md's proposal, not built",
+};
+test('paths the README, AGENTS.md and docs/ name are in the repository', (t) => {
+  let files;
+  try {
+    files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\0').filter(Boolean);
+  } catch {
+    t.skip('git is not available here (a packaged copy, or no repository)');
+    return;
+  }
+  const tracked = new Set(files);
+  for (const f of files) for (let i = f.indexOf('/'); i > 0; i = f.indexOf('/', i + 1)) tracked.add(f.slice(0, i));
+  const docs = ['README.md', 'AGENTS.md', ...files.filter((f) => /^docs\/[^/]+\.md$/.test(f))];
+  const missing = [];
+  for (const doc of docs) {
+    const text = read(doc);
+    const named = [...text.matchAll(/`([^`\s]+)`/g)].map((m) => m[1].replace(/[),.;:]+$/, '').replace(/#L?\d.*$/, '').replace(/:\d+(-\d+)?$/, ''))
+      .filter((p) => /^(src|scripts|test|docs|server|sidepanel|lib|icons|captures|\.github|\.claude)\//.test(p) && !/[<>*{}$|]/.test(p));
+    const linked = [...text.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]).filter((l) => !/^[a-z]+:|^#/.test(l))
+      .map((l) => path.posix.normalize(path.posix.join(path.posix.dirname(doc), decodeURIComponent(l.replace(/#.*$/, '')))));
+    for (const p of [...named, ...linked].map((x) => x.replace(/\/$/, ''))) if (!tracked.has(p) && !NOT_TRACKED[p]) missing.push(`${doc}: ${p}`);
+  }
+  assert.deepEqual([...new Set(missing)], [], 'not in the repository: fix the path, or say it is local or built and add it to NOT_TRACKED');
+});

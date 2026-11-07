@@ -37,7 +37,7 @@ one turns uploads off. Harnesses that load the packaged extension must set that 
 server first (`npm run e2e:extension` does, and fails on any request that leaves the machine), so test runs
 stay out of the pilot's usage data. The upload token can only add events, which the server cleans; reading
 them back needs the admin token, kept in Railway, in the repository secret `RATER_ADMIN_TOKEN`,
-and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
+and on the maintainer's computer in `~/.config/tni-rater/admin-token`.
 
 Agents use Luna without an OpenAI key of their own: with no key saved, the panel sends its Luna
 requests to `/v1/luna` with the upload token, and the server adds `OPENAI_API_KEY` and passes them
@@ -263,9 +263,9 @@ corrections.
 
 ### On the maintainer's computer: `npm run daily`
 
-Since 2026-10-19 GitHub doesn't start Actions jobs on this account (billing), so the workflow below
-fails before it starts. `npm run daily` (`scripts/daily.mjs`) does the same steps on a Windows (or
-any) computer: the server check, `npm run pull`, `scripts/review.mjs --since <start> --summary`,
+The workflow below runs the review every day. From 2026-10-19 until the repository went public on
+2026-10-27, GitHub didn't start Actions jobs on this account (billing), and this stood in for it.
+`npm run daily` (`scripts/daily.mjs`) does the same steps on a Windows (or any) computer: the server check, `npm run pull`, `scripts/review.mjs --since <start> --summary`,
 then `scripts/daily-issue.mjs post`. It needs Node 22, the admin token (`RATER_ADMIN_TOKEN` or
 `~/.config/tni-rater/admin-token`), and `gh auth login` as an account that can comment on the
 repository's issues.
@@ -281,8 +281,8 @@ It posts only with `--post`, and so does `scripts/daily-issue.mjs post` (the wor
 trying it out never comments by accident. A dry run may run anywhere. `--post` refuses, and says
 what to do, unless it runs in the main checkout (not a linked worktree, whose state would be its
 own), on the default branch, level with `origin` after a fetch: the server check compares the
-deployed server with that checkout, and the review uses its rules. The main checkout was on
-`claude/release-0.9.10` on 2026-10-20; switch it to `main` and `git pull` before the first real run.
+deployed server with that checkout, and the review uses its rules: switch the main checkout to
+`main` and `git pull` before a real run.
 
 The first real run needs `--since`, once: where the last comment on the issue stopped. That was
 2026-10-20T01:12:33Z (comment 6280982877 on #50, the last before this runner). After it,
@@ -301,7 +301,8 @@ by UTC day and minute, not next to the weekly `reviews/review-<date>.md` files. 
 finish says so on the issue with the step that stopped and exits 1; one that can't reach GitHub at
 all only writes `daily.log`.
 
-**Scheduling it on Windows.** After the first real run has written the state, use Task Scheduler,
+**Scheduling it on Windows**, only while the workflow can't run (both would post). After the first
+real run has written the state, use Task Scheduler,
 from PowerShell in the main checkout. `-At` is this computer's local time. The workflow ran at 06:00
 UTC, after US agents' day; the first line turns that into local time (02:00 at UTC-4). Any hour
 works, as each run starts where the last stopped: pick one when the computer is usually on.
@@ -324,8 +325,7 @@ files." It runs only while the app is open and the computer awake. Use one sched
 
 ### On GitHub: the workflow
 
-`.github/workflows/daily-review.yml` stays in the repository for when Actions works again. It runs
-every day at 06:00 UTC, which GitHub often starts hours late (and on demand: Actions → Daily
+`.github/workflows/daily-review.yml` runs every day at 06:00 UTC, which GitHub often starts hours late (and on demand: Actions → Daily
 review → Run workflow, optionally with a start date or time). Its window starts when the last
 successful run on the default branch began downloading (`scripts/daily-issue.mjs since`, from that
 run's steps; a day when there is none; a run that can't tell fails rather than guess). The review
@@ -334,8 +334,8 @@ only, and nothing is kept as an artifact. The runner has no local test-run list
 (`reviews/test-intakes.txt` is ignored by git), so its review carries the "No test-run list"
 warning: the maintainer's own test quotes count as agents' work there, while fixture intakes and
 intakes marked as a test are still left out ([learning](learning.md)). When the script that
-comments is what broke, the workflow says so with `gh` alone. Its cron is still set, so GitHub
-still tries it each day and the run fails at start. Before using it again, stop the local
-schedule and start its first run by hand, with the `since` in the local `reviews/daily/state.json`
-as its start. Its own last successful run is older, so its window would repeat what the local runs
-already said.
+comments is what broke, the workflow says so with `gh` alone. A local schedule set up while it
+couldn't run should be removed (`Unregister-ScheduledTask -TaskName 'TNI daily review'`), so only
+one review posts. When the workflow takes over from local runs, start its first run by hand with
+the `since` in the local `reviews/daily/state.json`: its own last successful run is older, so its
+window would repeat what the local runs already said.
