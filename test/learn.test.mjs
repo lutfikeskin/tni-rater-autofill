@@ -726,3 +726,45 @@ test('learning never suggests reviewing a rule for corrections of the agent\'s o
   const standard = week(10).map((e) => (e.type === 'fill_field' && e.q === '2B9D' ? { ...e, source: 'standard' } : e));
   assert.equal(learn(standard, { carriers: CARRIERS, minIntakes: 5 }).suggestions.review.find((s) => s.q === '2B9D').corrected, 6);
 });
+
+// Audit 2026-11-07 LEARN-02: a test run's answers were chosen on purpose, so they add no support to
+// a suggestion, as every other report leaves them out (readTestList, testSessionsOf).
+test('learning leaves test runs out: a test-only intake PDF adds no support', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const { testSessionsOf } = await import('../scripts/lib/signals.mjs');
+  // Five quotes of five PDFs answer "Trailer interchange?" No; the fifth is the maintainer's test.
+  const events = week(5).map((e) => (e.type === 'intake_loaded' && e.session === 's4' ? { ...e, intakeId: 'aaaaaaaa0001' } : e));
+  const standardOf = (r) => r.suggestions.standard.find((s) => s.q === '9A01');
+  assert.equal(standardOf(learn(events, { carriers: CARRIERS, minIntakes: 5 })).intakes, 5, 'with the test run: five PDFs');
+  const left = learn(events, { carriers: CARRIERS, minIntakes: 5, excludeSessions: testSessionsOf(events, ['aaaaaaaa']) });
+  assert.equal(standardOf(left), undefined, 'four agents\' PDFs: below the threshold');
+  assert.deepEqual([left.quotes, left.testRunsLeftOut], [4, 1]);
+  // The report, as the review runs it: with the review's --tests list.
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-learn-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const log = path.join(dir, 'usage.jsonl');
+  fs.writeFileSync(log, events.map((e) => JSON.stringify(e)).join('\n'));
+  const list = path.join(dir, 'tests.txt');
+  fs.writeFileSync(list, 'aaaaaaaa\n');
+  const report = (...args) => spawnSync(process.execPath, [path.join(root, 'scripts', 'learn-rules.mjs'), log, '--json', ...args], { encoding: 'utf8' });
+  const listed = report('--tests', list);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.equal(standardOf(JSON.parse(listed.stdout)), undefined);
+  assert.equal(JSON.parse(listed.stdout).testRunsLeftOut, 1);
+  assert.equal(report('--tests').status, 1, '--tests needs a value');
+  // A slice of the log without the test quote's intake_loaded: its other events name the PDF
+  // (CodeRabbit on PR #369).
+  const slice = path.join(dir, 'slice.jsonl');
+  fs.writeFileSync(slice, events.filter((e) => !(e.session === 's4' && e.type === 'intake_loaded')).map((e) => JSON.stringify(e.session === 's4' ? { ...e, intakeId: 'aaaaaaaa0001' } : e)).join('\n'));
+  const sliced = spawnSync(process.execPath, [path.join(root, 'scripts', 'learn-rules.mjs'), slice, '--json', '--tests', list], { encoding: 'utf8' });
+  assert.equal(sliced.status, 0, sliced.stderr);
+  assert.deepEqual([standardOf(JSON.parse(sliced.stdout)), JSON.parse(sliced.stdout).testRunsLeftOut], [undefined, 1]);
+  // The review, run from another folder with the list by a relative path, passes that list on.
+  const data = path.join(dir, 'data');
+  fs.mkdirSync(data);
+  fs.copyFileSync(log, path.join(data, '2026-10-05.jsonl'));
+  const reviewed = spawnSync(process.execPath, [path.join(root, 'scripts', 'review.mjs'), data, '--all', '--tests', 'tests.txt', '--out', path.join(dir, 'review.md')], { encoding: 'utf8', cwd: dir });
+  assert.equal(reviewed.status, 0, reviewed.stderr);
+  assert.match(fs.readFileSync(path.join(dir, 'review.md'), 'utf8'), /1 test run left out\./);
+});
