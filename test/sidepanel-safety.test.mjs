@@ -5191,7 +5191,7 @@ test('a Continue on a carrier without the retry is never clicked again: waited f
 // panel was often closed before.
 test('a problem report is uploaded as soon as it is logged', () => {
   // The line under the usage card is said as data (state.usageNote; settings-view.jsx draws it).
-  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,900}state\.usageNote = 'Thanks — saved with the usage log\.';\s+sayProblem\([^\n]*\);\s+\/\/[^\n]*\n\s+await uploadNow\(\);/);
+  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,900}state\.usageNote = 'Thanks — saved with the usage log\.';\s+sayProblem\([^\n]*\);\s+\}\s+\/\/[^\n]*\n\s+await uploadNow\(\);/);
 });
 
 // Audit 2026-11-07, UX-11: Save report closed the box with no word but the screen reader's. The
@@ -5212,9 +5212,10 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   assert.equal(said.problemSaid('queued', { state: 'ok', sent: 0 }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
   assert.equal(said.problemSaid('queued', { state: 'error' }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
   assert.equal(said.problemSaid('queued', { state: 'off' }, true, at), "Report saved on this computer, with this page's last fill. No usage server is set, so it isn't sent.");
+  assert.equal(said.problemSaid('unknown', { state: 'ok' }, false, at), "Report saved. Whether it reached TNI couldn't be confirmed.");
 
   // The handlers, as wired.
-  const make = ({ saved = true, fate = 'sent' } = {}) => {
+  const make = ({ saved = true, fate = 'sent', logGate = null } = {}) => {
     const handlers = {};
     const el = (id) => ({ id, value: '', hidden: true, disabled: false, textContent: '', attrs: {}, focus() {}, setAttribute(k, v) { this.attrs[k] = v; }, addEventListener: (type, fn) => { handlers[id] = fn; } });
     const els = Object.fromEntries(['report-problem', 'problem-form', 'problem-text', 'cancel-problem', 'send-problem', 'problem-said'].map((id) => [id, el(id)]));
@@ -5224,7 +5225,8 @@ test('a saved problem report says in the footer whether it reached TNI', async (
       unlockAudio() {}, renderUsage() {}, announce() {}, redactor: () => (x) => x, redactionTerms: () => [], pageOf: (u) => u, problemContext: () => ({}),
       crypto: { randomUUID: () => `id-${logged.length}` }, problemSaidTimer: null, PROBLEM_SAID_MS: 10_000, problemRun: 0,
       uploadNow: () => new Promise((r) => { release = r; }),
-      usage: { log: async (e) => { logged.push(e); }, lastSave: () => (saved ? { state: 'ok' } : { state: 'error', message: 'quota' }), lastUpload: () => ({ state: 'ok', sent: 0 }), eventFate: async () => fate } };
+      usage: { log: async (e) => { logged.push(e); await logGate; }, lastSave: () => (saved ? { state: 'ok' } : { state: 'error', message: 'quota' }), lastUpload: () => ({ state: 'ok', sent: 0 }),
+        eventFate: async () => { if (fate instanceof Error) throw fate; return fate; } } };
     vm.runInNewContext(['problemSaid', 'sayProblem', 'wireUsage'].map(extractFunction).join('\n'), context);
     context.wireUsage();
     return { els, handlers, logged, release: () => release?.(), context };
@@ -5255,6 +5257,29 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   reopened.release();
   await going;
   assert.deepEqual([reopened.els['problem-said'].textContent, reopened.els['problem-said'].hidden], ['', true]);
+  // Where the report is couldn't be read: not said as sent, nor as waiting.
+  const unread = make({ fate: new Error('storage') });
+  unread.els['problem-text'].value = 'The vehicle page froze';
+  const reading = unread.handlers['send-problem']();
+  await new Promise((r) => setImmediate(r));
+  unread.release();
+  await reading;
+  assert.equal(unread.els['problem-said'].textContent, "Report saved. Whether it reached TNI couldn't be confirmed.");
+  // The box opened again while the report was still being saved: what the agent types there stays.
+  let saveDone;
+  const slow = make({ logGate: new Promise((r) => { saveDone = r; }) });
+  slow.els['problem-text'].value = 'The vehicle page froze';
+  slow.els['problem-form'].hidden = false;
+  const saving = slow.handlers['send-problem']();
+  slow.handlers['report-problem']();
+  slow.handlers['report-problem']();
+  slow.els['problem-text'].value = 'And the drivers page';
+  saveDone();
+  await new Promise((r) => setImmediate(r));
+  slow.release();
+  await saving;
+  assert.deepEqual([slow.els['problem-text'].value, slow.els['problem-form'].hidden, slow.els['problem-said'].textContent], ['And the drivers page', false, '']);
+  assert.equal(slow.logged.length, 1, 'the first report is still saved, and sent');
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
   assert.match(html, /<div id="problem-form"[\s\S]*?<\/div>\n\s+<\/div>\n\s+<!--[^\n]*-->\n\s+<p id="problem-said" class="problem-said" role="status" hidden><\/p>/);
 });

@@ -424,5 +424,8 @@ test('an event is found waiting, set aside as refused, or sent', async () => {
   await usage.log({ id: 'report-2', type: 'problem_report', text: 'y' });
   await usage.upload();
   assert.equal(await usage.eventFate('report-2'), 'sent');
+  // Gone from this computer with no receipt for it (Clear, or the queue's cap): not known to be sent.
+  await usage.log({ id: 'report-3', type: 'problem_report', text: 'z' });
   await usage.clearLog();
+  assert.equal(await usage.eventFate('report-3'), 'unknown');
 });
