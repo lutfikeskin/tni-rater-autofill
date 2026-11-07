@@ -122,12 +122,15 @@ test('a structured signature names kind, event, conditions and scenario; free te
 // "verified" on it is marked; a code condition doesn't depend on the wording.
 test('a text condition no event ever met is marked, a code condition is not', () => {
   const ev = (i, x) => ({ id: `e${i}`, t: `2026-10-0${i}T00:00:00Z`, session: `s${i}`, type: 'fill_field', page: 'AddDriver', result: 'failed', ...x });
-  const history = [ev(1, { code: 'answer.not-kept', reason: 'the page did not keep the answer; check it' }), ev(2, { result: 'filled' })];
+  const history = [ev(1, { code: 'answer.not-kept', reason: 'the page did not keep the answer; check it' }), ev(2, { result: 'filled', label: 'Driver license number' })];
   const yes = () => 'yes';
   const judge = (sig) => judgePattern(parsePattern(sig), history, yes, new Set(), history);
   assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~"did not keep"').unmatchedText, false);
   assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~"didn\'t stick"').unmatchedText, true, 'the message reads otherwise now');
   assert.equal(judge('symptom fill_field page=AddDriver result=failed code=answer.not-kept').unmatchedText, false);
+  // Each text condition on its own: two met by different events were both met (CodeRabbit on PR #402).
+  assert.equal(judge('symptom fill_field reason~"did not keep" label~"license"').unmatchedText, false);
+  assert.equal(judge('symptom fill_field reason~"did not keep" label~"licence"').unmatchedText, true, 'one of them never met');
   // Its `when` scenario's text conditions too (CodeRabbit on PR #402).
   assert.equal(judge('symptom fill_field page=AddDriver result=filled when fill_field reason~"did not keep"').unmatchedText, false);
   assert.equal(judge('symptom fill_field page=AddDriver result=filled when fill_field reason~"didn\'t stick"').unmatchedText, true, 'a scenario that reads otherwise now');
