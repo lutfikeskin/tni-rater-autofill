@@ -207,7 +207,7 @@ The intake runner reads the actual PDFs in `dist/synthetic-intakes` (or `--pool 
 
 AmWINS exercises the five application steps, including repeated drivers/vehicles and save/reload. A review stop is recorded before the runner continues to inspect later pages; it is not counted as automatic progress. FAO rebuilds captured pages individually. It does **not** establish full quote navigation, backend acceptance, or real lookup reliability. Missing questions and truncated business-type search results are reported as unsupported, alongside existing replay failures such as address autocomplete. Passing the selected assertions is not complete carrier coverage.
 
-The AI runner uses the packaged extension with controlled Luna responses. It checks suggestion acceptance, approval before Continue, preservation of manual edits, and response reuse. It blocks live AI requests and central uploads; it does not measure Luna's live accuracy or latency. Suggestions are cached per intake and active driver/vehicle, and late responses after a context change are discarded.
+The AI runner uses the packaged extension with controlled Luna responses. It checks suggestion acceptance, approval before Continue, preservation of manual edits, and response reuse. It blocks live AI requests and central uploads; it does not measure Luna's live accuracy or latency. Suggestions are cached per intake (as Luna sees it), active driver/vehicle and the carrier's rules with the agent's own defaults, and late responses after a context change are discarded.
 
 ## Hosting
 

@@ -10,6 +10,7 @@ import {
   neverReason,
   scopedIntake,
 } from '../src/ai/common.js';
+import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 
 // These records are synthetic. The two entity rows make sure common context
 // helpers keep only the active driver and vehicle.
@@ -57,6 +58,27 @@ test('context keys include the intake and active rows', () => {
   assert.equal(key, assistContextKey(reversed(record), reversed(context.active)));
   assert.notEqual(key, assistContextKey(record, { ...context.active, vehicles: 0 }));
   assert.notEqual(key, assistContextKey({ ...record, coverage: { reeferBreakdown: true } }, context.active));
+});
+
+// Audit 2026-11-07, AI-05: the key is what Luna's answers rest on. An edit Luna never sees keeps the
+// cached answers; one it sees, in any row, a rulebook change or an agent's own default asks again.
+test("context keys follow what Luna sees, rows and the carrier's rules with the agent's defaults included", (t) => {
+  const key = (r = record, carrier = 'progressive') => assistContextKey(r, context.active, carrier);
+  const edit = (path, value) => { const r = structuredClone(record); path.reduce((o, k, i) => (i === path.length - 1 ? (o[k] = value) : o[k]), r); return r; };
+  for (const unseen of [['applicant', 'phone'], ['drivers', 1, 'phone'], ['vehicles', 1, 'vin'], ['extraPrivateValue']]) {
+    assert.equal(key(edit(unseen, 'changed-value')), key(), `${unseen.join('.')} is never sent`);
+  }
+  for (const seen of [['claims', 'text'], ['vehicles', 0, 'value'], ['drivers', 0, 'cdl'], ['operations', 'radius']]) {
+    assert.notEqual(key(edit(seen, 'changed-value')), key(), `${seen.join('.')} is sent (a row other than the active one too)`);
+  }
+  assert.notEqual(key(record, 'geico'), key(), "another carrier's rules");
+  setAgentDefaultsOn(true);
+  t.after(() => { setActiveDefaults(null); setAgentDefaultsOn(RELEASED_TO_AGENTS); });
+  const before = key();
+  setActiveDefaults({ values: { umCsl: { value: 300_000 }, medPay: { value: 2_000 }, compDeductible: { value: 500 }, collDeductible: { value: 500 } } });
+  assert.notEqual(key(), before, "the agent's own defaults rewrite the rules Luna gets");
+  setActiveDefaults(null);
+  assert.equal(key(), before);
 });
 
 test('payment and billing choices stay agent-owned while Medical Payments coverage remains eligible', () => {
