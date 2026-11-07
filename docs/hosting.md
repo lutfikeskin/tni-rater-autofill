@@ -85,8 +85,9 @@ leaves this volume the only full copy of the log. Its tables, the richer intake 
 optional quoted premiums are in [quoting history database](quoting-history-database.md).
 
 The extension deletes its copy of an upload once the server answers 200, so `store` in
-`server/index.mjs` flushes the day file to the volume (`fsync`) before that answer, and on a day's
-first upload, which creates the file, the events folder too (on Linux; Windows opens no folder). A write or flush
+`server/index.mjs` flushes the day file to the volume (`fsync`) before that answer, and then the events folder,
+which holds a new day file's name (on Linux; Windows opens no folder). It flushes the folder on
+every upload, so the retry of one whose folder flush failed flushes it too. A write or flush
 that fails answers 500 (`could not store events`), and the extension keeps the events and sends
 them again, so a line written before a failed flush can be in the file twice (readers de-duplicate
 by id).

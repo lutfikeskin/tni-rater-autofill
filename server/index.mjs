@@ -541,13 +541,14 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     // answer, so a crash between the write and the disk would lose the events for good. A day's
     // first upload creates its file, whose name is in the folder: the folder is flushed too, or the
     // file could be gone after a crash (on Linux, where the server runs; Windows opens no folder).
-    const created = !fs.existsSync(file);
+    // On every upload, not only the one that created the file: one whose folder flush failed was a
+    // 500, and its retry finds the file there already (the review of #425).
     const fd = fs.openSync(file, 'a');
     try {
       fs.appendFileSync(fd, `${lines}\n`);
       fs.fsyncSync(fd);
     } finally { fs.closeSync(fd); }
-    if (created && process.platform !== 'win32') {
+    if (process.platform !== 'win32') {
       const dir = fs.openSync(eventsDir, 'r');
       try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
     }
