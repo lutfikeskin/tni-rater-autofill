@@ -242,8 +242,9 @@
   const CONTROLS = 'input, select, textarea';
   let burst = null;
   let burstTimer = null;
+  // In an element, or in a shadow root a change brought (11).
   const controlsIn = (node) => {
-    if (node?.nodeType !== 1) return [];
+    if (node?.nodeType !== 1 && node?.nodeType !== 11) return [];
     let inside = [];
     try { inside = [...(node.querySelectorAll?.(CONTROLS) ?? [])]; } catch { /* not queryable */ }
     return node.matches?.(CONTROLS) ? [node, ...inside] : inside;
@@ -293,45 +294,76 @@
     push('burst', { end: b.end, records: b.records, ...(drawnCount ? { drawn, drawnCount } : {}), ...(removed ? { removed } : {}) }, { timeStamp: b.start });
   }
   let mutations = null;
+  // A change now (`records` of them): the burst it is part of, begun or carried on.
+  const changeNow = (records) => {
+    const now = performance.now();
+    burst ??= { start: now, records: 0, added: new Set(), removed: new Set(), created: new Set() };
+    burst.end = round(performance.timeOrigin + now);
+    burst.records += records;
+    clearTimeout(burstTimer);
+    burstTimer = setTimeout(endBurst, BURST_QUIET_MS);
+  };
+  // The open shadow roots in and under the page as the trace starts and each node a change adds
+  // (theirs too), each observed once. Looked through in turns of at most SHADOW_SCAN elements, the
+  // rest on the next tick, so a large page or redraw never stalls the page and none is left unlooked
+  // (review of PR #377). A node added under one still waiting its turn waits on that one's look.
+  // A root a change brought is part of that change: its controls, drawn before it was watched,
+  // count as drawn (`drawn`).
   const watchedRoots = new WeakSet();
   const SHADOW_SCAN = 5000;
-  // The open shadow roots in and under `node` (its own, its descendants', theirs), each observed once.
-  const watchShadows = (node) => {
-    if (!mutations || !node) return;
-    const todo = [node];
-    let looked = 0;
-    while (todo.length && looked < SHADOW_SCAN) {
-      const at = todo.pop();
-      let inside = [];
-      try { inside = [...(at.querySelectorAll?.('*') ?? [])]; } catch { /* not queryable */ }
-      looked += inside.length;
-      for (const el of at.nodeType === 1 ? [at, ...inside] : inside) {
-        const root = el.shadowRoot;
-        if (!root || watchedRoots.has(root)) continue;
-        watchedRoots.add(root);
-        try { mutations.observe(root, { childList: true, subtree: true }); } catch { continue; }
-        todo.push(root);
-      }
+  const shadowWork = [];
+  const waiting = new Set();
+  let looking = null;
+  let shadowTimer = null;
+  const toLook = (node, drawn) => { shadowWork.push({ node, drawn }); waiting.add(node); };
+  const waitsAbove = (node) => {
+    for (let p = node.parentNode ?? node.host; p; p = p.parentNode ?? p.host) if (waiting.has(p)) return true;
+    return false;
+  };
+  const rootOf = (el, drawn) => {
+    const root = el?.shadowRoot;
+    if (!root || watchedRoots.has(root)) return;
+    watchedRoots.add(root);
+    try { mutations.observe(root, { childList: true, subtree: true }); } catch { return; }
+    if (drawn) {
+      changeNow(0);
+      if (burst.added.size < MAX_NODES) { burst.added.add(root); burst.created.add(root); }
     }
+    toLook(root, drawn);
+  };
+  const lookForShadows = () => {
+    shadowTimer = null;
+    if (!mutations || disposed) return;
+    let budget = SHADOW_SCAN;
+    while (budget > 0) {
+      if (!looking) {
+        const next = shadowWork.shift();
+        if (!next) break;
+        waiting.delete(next.node);
+        let list = [];
+        try { list = next.node.querySelectorAll?.('*') ?? []; } catch { /* not queryable */ }
+        looking = { list, i: 0, drawn: next.drawn };
+        if (next.node.nodeType === 1) { rootOf(next.node, next.drawn); budget--; }
+      }
+      while (budget > 0 && looking.i < looking.list.length) { rootOf(looking.list[looking.i++], looking.drawn); budget--; }
+      if (looking.i >= looking.list.length) looking = null;
+    }
+    if (looking || shadowWork.length) shadowTimer = setTimeout(lookForShadows, 0);
   };
   if (typeof MutationObserver === 'function') {
     mutations = new MutationObserver((records) => {
-      const now = performance.now();
-      burst ??= { start: now, records: 0, added: new Set(), removed: new Set(), created: new Set() };
-      burst.end = round(performance.timeOrigin + now);
-      burst.records += records.length;
+      changeNow(records.length);
       for (const r of records) {
         // Added before this burst took it away: made in this burst, not moved (`created`).
         for (const n of r.addedNodes ?? []) if (burst.added.size < MAX_NODES) { burst.added.add(n); if (!burst.removed.has(n)) burst.created.add(n); }
         for (const n of r.removedNodes ?? []) if (burst.removed.size < MAX_NODES) burst.removed.add(n);
         // A component drawn in this change attaches its shadow root as it is put in the page.
-        for (const n of r.addedNodes ?? []) watchShadows(n);
+        for (const n of r.addedNodes ?? []) if (n?.nodeType === 1 && !waiting.has(n) && !waitsAbove(n)) toLook(n, true);
       }
-      clearTimeout(burstTimer);
-      burstTimer = setTimeout(endBurst, BURST_QUIET_MS);
+      if (!shadowTimer) lookForShadows();
     });
     try { mutations.observe(document.documentElement ?? document, { childList: true, subtree: true }); } catch { mutations = null; }
-    watchShadows(document);
+    if (mutations) { toLook(document, false); lookForShadows(); }
   }
 
   // The page's own requests (fetch or XHR to its origin), each as it finishes: its path without the
@@ -415,6 +447,7 @@
     clearTimeout(timer);
     clearTimeout(resizing);
     clearTimeout(burstTimer);
+    clearTimeout(shadowTimer);
     mutations?.disconnect();
     requests?.disconnect();
     for (const t of scrolling.values()) clearTimeout(t);

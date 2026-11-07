@@ -481,3 +481,40 @@ test('open shadow roots are watched too: those on the page as it starts, and tho
   await h.advance(1000);
   assert.equal(h.events().filter((e) => e.kind === 'burst').length, 1);
 });
+
+// Review of PR #377: the cap on the look for shadow roots didn't bound the work (the whole page was
+// listed and looked through first), and the roots found past it were never looked in.
+test('a large page is looked through for shadow roots in bounded turns, to the end, nested roots too', async () => {
+  const plainEl = () => ({ nodeType: 1, shadowRoot: null });
+  const nested = { tagName: 'GDS-INPUT', nodeType: 1, shadowRoot: { nodeType: 11, querySelectorAll: () => [] } };
+  const host = { tagName: 'GDS-CARD', nodeType: 1, shadowRoot: { nodeType: 11, querySelectorAll: (sel) => (sel === '*' ? [nested] : []) } };
+  const h = harness({ elements: [...Array.from({ length: 6000 }, plainEl), host] });
+  assert.equal(h.observers.observed.includes(host.shadowRoot), false, 'past the first turn as the trace starts');
+  await h.advance(10);
+  assert.equal(h.observers.observed.includes(host.shadowRoot), true, 'a later turn reaches it');
+  assert.equal(h.observers.observed.includes(nested.shadowRoot), true, 'the root found inside a root is looked in too');
+});
+
+test('a node added inside another added in the same change is looked through once, with it', async () => {
+  const h = harness();
+  const looks = { child: 0 };
+  const child = { tagName: 'DIV', nodeType: 1, querySelectorAll: (sel) => { if (sel === '*') looks.child++; return []; } };
+  const parent = { tagName: 'SECTION', nodeType: 1, querySelectorAll: (sel) => (sel === '*' ? [child] : []) };
+  child.parentNode = parent;
+  h.mutate([{ addedNodes: [parent], removedNodes: [] }, { addedNodes: [child], removedNodes: [] }]);
+  await h.advance(10);
+  assert.equal(looks.child, 0, 'the parent\'s look took it in');
+});
+
+test('a component a change adds with its question already drawn in its shadow root counts it as drawn', async () => {
+  const h = harness();
+  const trailer = new Control('select', { name: 'trailer', label: 'Trailer type', options: [{ text: 'Flatbed', value: 'F' }] });
+  const root = { nodeType: 11, querySelectorAll: (sel) => (sel === '*' ? [] : [trailer]) };
+  const host = { tagName: 'GDS-SELECT', nodeType: 1, shadowRoot: root, querySelectorAll: () => [], matches: () => false };
+  h.now = 1000;
+  h.mutate([{ addedNodes: [host], removedNodes: [] }]);
+  await h.advance(400);
+  const bursts = h.events().filter((e) => e.kind === 'burst');
+  assert.equal(bursts.length, 1);
+  assert.deepEqual([bursts[0].drawnCount, bursts[0].drawn.map((d) => d.label)], [1, ['Trailer type']]);
+});
