@@ -1,7 +1,7 @@
 // @ts-check
 // Trusted user gesture tracking, keystroke edit protection against rater overwrite, multi-frame AI answer edit sessions, and halt reasons.
 
-import { radioHost, deepQueryAll, collectControls, fieldKey } from './dom.js';
+import { radioHost, deepQueryAll, collectControls, fieldKey, shadowOf } from './dom.js';
 import { closestOwn, withAdapter } from './adapter.js';
 
 /** @import { PageControl } from './dom.js' */
@@ -79,7 +79,7 @@ export function guardEdits(onEdit) {
     if (!target || !el) return false;
     if (sameGroup(target, el) || sameGroup(gestureControl, el)) return true;
     for (let n = target, i = 0; n && i < 8; n = n.parentElement ?? /** @type {any} */ (n.getRootNode?.())?.host, i++) {
-      const input = n.shadowRoot?.querySelector?.('input[type=radio]');
+      const input = /** @type {HTMLInputElement | null | undefined} */ (shadowOf(n)?.querySelector?.('input[type=radio]'));
       if (input && radioHost(input) === n) return sameGroup(input, el);
     }
     const label = target.closest?.('label');

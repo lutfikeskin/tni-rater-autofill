@@ -183,9 +183,13 @@ class FakeNode {
 
   // An open shadow root (GEICO draws its radios and buttons in them): reached through shadowRoot,
   // never by a querySelectorAll of the page.
-  attachShadow() {
-    this.shadowRoot = new FakeShadowRoot(this);
-    return this.shadowRoot;
+  attachShadow({ mode = 'open' } = {}) {
+    const root = new FakeShadowRoot(this);
+    // A closed one: no shadowRoot, reached only through chrome.dom.openOrClosedShadowRoot (a test's
+    // context gives it as `chrome.dom`).
+    if (mode === 'closed') this._closedRoot = root;
+    else this.shadowRoot = root;
+    return root;
   }
 
   get classList() { return { contains: (name) => this.className.split(/\s+/).includes(name) }; }
@@ -201,7 +205,7 @@ class FakeNode {
       node.parentElement = this;
       // The whole subtree joins this document (a radio group appended with its radios), shadow
       // roots included.
-      const adopt = (n) => { n.ownerDocument = this.ownerDocument; for (const c of n.children ?? []) adopt(c); if (n.shadowRoot) adopt(n.shadowRoot); };
+      const adopt = (n) => { n.ownerDocument = this.ownerDocument; for (const c of n.children ?? []) adopt(c); if (n.shadowRoot) adopt(n.shadowRoot); if (n._closedRoot) adopt(n._closedRoot); };
       adopt(node);
       this.children.push(node);
     }
@@ -9717,6 +9721,30 @@ test('a control in a shadow root is labelled by the page element its aria-labell
   h.document.body.append(label, host);
   const c = h.kit.capture(null, []).controls.find((x) => x.id === 'limitBox');
   assert.match(String(c?.label ?? ''), /Cargo limit/);
+});
+
+// Audit 2026-11-07 (ENG-14): a design system's components switched to closed shadow roots would
+// hide the whole page from the kit. In an extension's isolated world (GEICO's kit) Chrome hands
+// the kit a closed root (chrome.dom.openOrClosedShadowRoot): its controls are read and filled.
+test('a control in a closed shadow root is read and filled where Chrome gives the kit the root', async () => {
+  const page = (dom) => {
+    const h = harness();
+    if (dom) h.context.chrome = { dom: { openOrClosedShadowRoot: (el) => el.shadowRoot ?? el._closedRoot ?? null } };
+    const box = new SelectNode(['', '$50,000', '$100,000'], { id: 'limitBox', ariaLabel: 'Cargo limit' });
+    const host = new FakeNode('gds-select');
+    host.attachShadow({ mode: 'closed' }).append(box);
+    h.document.body.append(host);
+    return { h, box };
+  };
+  const step = { id: 'cargo', selector: '#limitBox', path: 'coverage.cargoLimit', name: 'Cargo limit', kind: 'choice', value: '$100,000' };
+  const { h, box } = page(true);
+  assert.ok(h.kit.capture(null, []).controls.some((x) => x.id === 'limitBox'), 'read through the closed root');
+  const report = await h.kit.fill([step], { maxRounds: 3 });
+  assert.equal(box.value, '$100,000');
+  assert.equal(report.filled.length, 1);
+  // Without chrome.dom (the page's own world) a closed root stays closed: nothing is read there.
+  const closed = page(false);
+  assert.ok(!closed.h.kit.capture(null, []).controls.some((x) => x.id === 'limitBox'));
 });
 
 // Review of PR #282 (an independent pass): while a fill runs in the frame, present() reads the
