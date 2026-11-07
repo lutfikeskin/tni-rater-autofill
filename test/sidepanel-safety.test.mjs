@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { assistContextKey, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
+import { assistContextKey, clientNamedChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
@@ -2640,7 +2640,7 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
   const state = { intake: { record }, active: { drivers: 0, vehicles: 0 }, tab: { id: 1, url: 'https://rater.test/Default.aspx?pageName=CoveragesRates' },
     aiRun: 0, aiCache: new Map(), aiSettingsRun: 0, aiAsking: new Map(), agentKeys: new Map(), filling: false };
   const context = {
-    state, assistContextKey, pageOf: (url) => new URL(url).searchParams.get('pageName'), aiHolder, $: () => report,
+    state, assistContextKey, clientNamedChoices, pageOf: (url) => new URL(url).searchParams.get('pageName'), aiHolder, $: () => report,
     aiSettings: async () => ({ on: true, apiKey: 'synthetic', ready: true, model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
     PROVIDERS: { luna: { name: 'Luna', policy: 'synthetic-policy' } },
     collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
@@ -2741,6 +2741,21 @@ test('Luna without a key says so above the list, and a failed review says it fai
 
 // 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions
 // were left, as counts.
+// Audit 2026-11-07, AI-13: a question whose choices name the client's people or place is never asked.
+test("a question whose choices name a driver is kept from Luna and counted as blocked", async () => {
+  let asked = null;
+  const t = assistHarness({ record: { vehicles: [], drivers: [{ first: 'Maria', last: 'Lopez' }] },
+    suggest: async (items) => { asked = items.map((x) => x.key); return { suggestions: [], tokensIn: 1, tokensOut: 1, modelCalls: 1 }; } });
+  t.context.collectItems = () => ({ blocked: [], items: [
+    { key: 'operator', label: 'Principal operator', controlKind: 'select', options: ['Maria Lopez', 'Other'] },
+    { key: 'haz', label: 'Hazmat', controlKind: 'radio', options: ['Yes', 'No'] },
+  ] });
+  await t.context.runAssist([{}], t.ctx);
+  assert.deepEqual(asked, ['haz']);
+  assert.equal(t.logged[0].blocked, 1);
+  assert.equal(t.logged[0].items, 1);
+});
+
 test('Luna gets the page’s other answers from the snapshot, and the log counts why questions were left', async () => {
   let sent;
   const why = ['missing', 'unverified', 'unverified', 'chose', 'tooLarge', null];

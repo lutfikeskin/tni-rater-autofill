@@ -5,7 +5,7 @@ import { redactionTerms } from '../../src/plan.js';
 import { get } from '../../src/util.js';
 import { redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { collectItems, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
+import { collectItems, clientNamedChoices, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
 import { claimsTruncated, firstNameOf } from '../../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../../src/ai/providers.js';
 import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
@@ -314,8 +314,10 @@ async function runAssist(frames, ctx) {
   const provider = PROVIDERS[cfg.provider];
   // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
-  const items = collected.items.filter(x => !agentEdited(ctx.page, x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
-  const blocked = collected.blocked;
+  // A question whose choices name the client stays with the agent (clientNamedChoices, common.js).
+  const { kept, named } = clientNamedChoices(collected.items, record);
+  const items = kept.filter(x => !agentEdited(ctx.page, x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
+  const blocked = [...collected.blocked, ...named];
   // Messages, the approval card and suggestions without a list item go above "Needs you", in the
   // report's holder (aiHolder in ai-view.jsx), which draws what it is told (`say`).
   const head = $('report').querySelector('.needs-head');

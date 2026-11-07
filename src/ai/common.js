@@ -153,7 +153,22 @@ export function rowsFor(items, record, active = {}) {
 // consistency, never evidence. From the panel's decision snapshot (pagekit decisionSnapshot, one JSON
 // string per frame). Never a typed value, nor a question on the never-list or about identifiers,
 // names or addresses; labels and answers are redacted like the intake.
-const PAGE_LABEL_PRIVATE = /\b(name|names|address|street|city|zip|phone|e-?mail|birth|dob|vin|licen[cs]e|plate|ssn|fein|ein|policy (number|no|#)|account|routing|usdot|dot (number|no|#)|mc (number|no|#)|suffix)\b/i;
+// Questions whose choices name the client's people or place: a driver, an owner, the garaging street,
+// unit, city or ZIP, as the redactor replaces them (redactionTerms). Luna gets those facts redacted,
+// as [client], and the choices as the page shows them, so it could only guess which choice is whose:
+// they stay with the agent, never asked (audit 2026-11-07, AI-13). The business's own name is left
+// out: its words are often a business class or cargo ("Reefer Express"), which a choice may be.
+// `named` are kept from Luna, the rest are `kept`.
+export function clientNamedChoices(items, record) {
+  const a = record?.applicant ?? {}, g = record?.garaging ?? {};
+  const redact = redactor(redactionTerms({ applicant: { owner1: a.owner1, owner2: a.owner2 },
+    garaging: { street: g.street, unit: g.unit, city: g.city, zip: g.zip },
+    drivers: (record?.drivers ?? []).map((d) => ({ first: d?.first, middle: d?.middle, last: d?.last })) }));
+  const names = (x) => (x.options ?? []).some((o) => typeof o === 'string' && redact(o) !== o);
+  return { kept: items.filter((x) => !names(x)), named: items.filter(names) };
+}
+
+const PAGE_LABEL_PRIVATE =/\b(name|names|address|street|city|zip|phone|e-?mail|birth|dob|vin|licen[cs]e|plate|ssn|fein|ein|policy (number|no|#)|account|routing|usdot|dot (number|no|#)|mc (number|no|#)|suffix)\b/i;
 const MAX_PAGE_ANSWERS = 40;
 const MAX_PAGE_CHARS = 6000;
 export function pageAnswers(snapshots, items, record) {

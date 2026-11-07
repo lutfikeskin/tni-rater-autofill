@@ -4,6 +4,7 @@ import {
   AssistError,
   LEAVE,
   assistContextKey,
+  clientNamedChoices,
   collectItems,
   evidenceFor,
   manualOnlyReason,
@@ -226,4 +227,18 @@ test('a USDOT "belongs" question the fill could not answer stays off the assista
 test('common errors remain typed for callers', () => {
   assert.equal(typeof AssistError, 'function');
   assert.equal(typeof LEAVE, 'string');
+});
+
+// Audit 2026-11-07, AI-13: Luna gets the client's people and place as [client] but the choices as
+// the page shows them, so a choice naming them could only be guessed.
+test("a question whose choices name the client's driver, owner or place stays with the agent; a business word does not", () => {
+  const record = { applicant: { name: 'Reefer Express LLC', owner1: 'Dana Q Sample' },
+    garaging: { street: '12 Elm Road', city: 'Springfield', zip: '62704' }, drivers: [{ first: 'Maria', last: 'Lopez' }] };
+  const q = (key, options) => ({ key, options });
+  const items = [q('driver', ['Maria Lopez', 'Dana Sample']), q('owner', ['Sample', 'Other']), q('city', ['Springfield', 'Chicago']),
+    q('zip', ['62704', '60601']), q('class', ['Reefer', 'Dry Van']), q('yes', ['Yes', 'No']), q('none', undefined)];
+  const { kept, named } = clientNamedChoices(items, record);
+  assert.deepEqual(named.map((x) => x.key), ['driver', 'owner', 'city', 'zip']);
+  assert.deepEqual(kept.map((x) => x.key), ['class', 'yes', 'none'], "the business's own name is no reason: its words are often a class or cargo");
+  assert.deepEqual(clientNamedChoices(items, null).named, [], 'no intake, nothing to match');
 });
