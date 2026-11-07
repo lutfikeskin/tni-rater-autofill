@@ -41,7 +41,8 @@ class Button {
   getBoundingClientRect() { return { left: 10, top: 700, width: 80, height: 30 }; }
 }
 
-function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.example/quote', pathname = '/quote' } = {}) {
+// `elements`: the page's other elements (a design-system host with its shadow root), as `*` finds them.
+function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.example/quote', pathname = '/quote', elements = [] } = {}) {
   const controls = [];
   const listeners = new Map();
   const on = (target) => (type, fn) => { const key = `${target}:${type}`; (listeners.get(key) ?? (listeners.set(key, new Set()), listeners.get(key))).add(fn); };
@@ -55,20 +56,21 @@ function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.examp
     title: 'Synthetic quote',
     visibilityState: 'visible',
     documentElement: { scrollHeight: 2400 },
-    querySelectorAll: (selector) => (/input|select|textarea/.test(selector) ? [...controls] : []),
+    querySelectorAll: (selector) => (/input|select|textarea/.test(selector) ? [...controls] : selector === '*' ? [...elements] : []),
     getElementById: () => null,
     createTreeWalker: () => ({ currentNode: null, previousNode: () => false }),
     addEventListener: on('document'),
     removeEventListener: off('document'),
   };
   // The page's own changes and requests, handed to the trace by the test (mutate, resource).
-  const observers = { mutation: null, resource: null };
+  // `observed`: what the mutation observer was asked to watch, in order.
+  const observers = { mutation: null, resource: null, observed: [] };
   const context = {
     document,
     location: { href, pathname, search: '', origin: 'https://synthetic.example' },
     URL,
     URLSearchParams,
-    MutationObserver: class { constructor(fn) { this.fn = fn; observers.mutation = this; } observe() {} disconnect() { observers.mutation = null; } },
+    MutationObserver: class { constructor(fn) { this.fn = fn; observers.mutation = this; } observe(target) { observers.observed.push(target); } disconnect() { observers.mutation = null; } },
     // `queued`: entries the browser finished but hasn't handed the callback yet (takeRecords).
     PerformanceObserver: class { constructor(fn) { this.fn = fn; this.queued = []; observers.resource = this; } observe() {} takeRecords() { const q = this.queued; this.queued = []; return q; } disconnect() { this.queued = []; observers.resource = null; } },
     NodeFilter: { SHOW_TEXT: 4 },
@@ -443,4 +445,27 @@ test('every wait the fill engine names is kept by the trace and said by the repo
     assert.ok(kept.has(why), `the trace keeps "${why}"`);
     assert.ok(said.has(why), `the report says "${why}"`);
   }
+});
+
+// REC-19 (audit 2026-11-07): GEICO draws its controls inside open shadow roots (gds-*), and the
+// trace watched only the light DOM: a control redrawn there left no change in the recording.
+test('open shadow roots are watched too: those on the page as it starts, and those a change brings, once each', async () => {
+  const shadowHost = (name) => {
+    const root = { nodeType: 11, querySelectorAll: () => [] };
+    return { tagName: 'GDS-RADIO-BUTTON', nodeType: 1, name, shadowRoot: root, querySelectorAll: () => [], matches: () => false };
+  };
+  const first = shadowHost('first');
+  const h = harness({ elements: [first] });
+  assert.equal(h.observers.observed.includes(first.shadowRoot), true, 'one on the page as the trace starts');
+  // A component drawn later, inside a new section.
+  const later = shadowHost('later');
+  const section = { tagName: 'DIV', nodeType: 1, querySelectorAll: (sel) => (sel === '*' ? [later] : []), matches: () => false };
+  h.mutate([{ addedNodes: [section], removedNodes: [] }]);
+  h.mutate([{ addedNodes: [section], removedNodes: [] }]);
+  assert.equal(h.observers.observed.filter((x) => x === later.shadowRoot).length, 1, 'one a change brings, once');
+  assert.equal(h.observers.observed.filter((x) => x === first.shadowRoot).length, 1);
+  // A change inside a shadow root is a burst as any other.
+  h.mutate([{ target: later.shadowRoot, addedNodes: [], removedNodes: [] }]);
+  await h.advance(1000);
+  assert.equal(h.events().filter((e) => e.kind === 'burst').length, 1);
 });
