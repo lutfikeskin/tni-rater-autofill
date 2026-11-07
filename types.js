@@ -605,7 +605,9 @@
  * @property {string[]} [stopSteps]
  * @property {any} [units]
  * @property {{ steps?: { [step: string]: string[] }, stepUnits?: { [step: string]: any }, units?: { [list: string]: string[] }, forms?: { [id: string]: string[] } } | null} [skipBy]
- * @property {{ steps: string[], keys: { [key: string]: true } } | null} [takenBack]
+ * @property {{ steps: string[], keys: { [key: string]: true } | null } | null} [takenBack]  the steps where the page takes
+ *   answers back (carrier `keepTakenBack`) and the keys earlier fills answered; keys null on the agent's
+ *   Fill this page, which gives such answers again
  * @property {boolean} [hold]
  * @property {any} [confirmed]  the page's receipt as the agent approved it
  * @property {string | null} [run]
@@ -614,7 +616,9 @@
  * @property {string | null} [expectPage]
  * @property {{ list: UnitList, text: string, names: string[][], active: number, label: string } | null} [formUnit]
  *   a form that names its unit (carrier `unitNames`): each intake unit's name words, and the plan's unit
- * @property {{ [key: string]: any }} [givenBefore]
+ * @property {{ [key: string]: { path: string | null, shown: string | null } }} [givenBefore]  what this tab's fills
+ *   gave, by field key: one now showing otherwise is kept (pagekit `changedSince`), or replaced when it
+ *   shows another unit's answer (`givenForOtherUnit`)
  * @property {UnitPager | null} [pager]  the carrier's `unitPager`
  * @property {boolean} [restarted]  the kit's own: a frame's fill begun again on the page it turned into (pagekit fill)
  * @property {boolean} [trace]  a developer recording runs on the tab: the kit says what it waits

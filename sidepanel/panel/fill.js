@@ -162,8 +162,9 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // The agent's Fill this page gives back an answer the page took back (keepTakenBack): GEICO's
     // own coverage choice put back over the fill's, on a question the agent didn't answer
-    // themselves (their answers are in `skip`). An automatic fill keeps and flags it.
-    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), ...(ctx.asked ? { takenBack: null } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    // themselves (their answers are in `skip`). An automatic fill keeps and flags it. Its steps go
+    // without keys, so the kit leaves those answers to that rule (pagekit `changedSince`).
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), ...(ctx.asked ? { takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: null } : null } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
