@@ -563,6 +563,8 @@ function aiPendingRecord(sig, x, scope) {
   const [tabId, page, model, policy, contextHash, itemHash] = sig.split('\n');
   return {
     version: 1, scope: x.pendingScope ?? x.scope ?? scope, quoteHash: x.quoteHash ?? null, tabId: Number(tabId), page, model, policy, contextHash, itemHash,
+    // Which prompt picked it (luna.js promptHash): told apart, never retired for it.
+    promptHash: x.promptHash ?? null,
     key: x.key, label: x.pendingLabel ?? aiSafeText(x.label), choice: x.pendingChoice ?? aiSafeText(x.choice), controlKind: x.controlKind,
     done: x.done, approved: !!x.approved, rejected: !!x.rejected, manual: !!x.manual, confirmed: !!x.confirmed,
     fieldHash: x.fieldHash ?? (x.restored ? null : aiFingerprint([x.key, x.label, x.choice])),

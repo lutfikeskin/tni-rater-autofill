@@ -4,7 +4,9 @@ import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intak
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
   firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES,
-  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit } from '../src/ai/luna.js';
+  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION } from '../src/ai/luna.js';
+import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
+import { CARRIER_PARTS } from '../src/ai/tni-rules.js';
 import { settingsFrom } from '../src/ai/providers.js';
 import { NTL_RATES } from '../src/normalize.js';
 
@@ -353,6 +355,39 @@ test('an invalid question naming a row with too many facts still stops the revie
   await assert.rejects(suggest([questions(1)[0], invalid], ctx, { apiKey: 'synthetic' }, { call: async () => { calls++; } }),
     e => e instanceof AssistError && /permitted fields/.test(e.message));
   assert.equal(calls, 0);
+});
+
+// Audit 2026-11-07, AI-04: which prompt a review got is worked out, not hand-bumped. A rule edit or an
+// agent's own default changes it; nothing else does, and POLICY_VERSION stays as it is.
+test('promptHash follows the instructions and the rules as sent, and each review and suggestion carries it', async (t) => {
+  const base = await promptHash('progressive');
+  assert.match(base, /^[0-9a-f]{12}$/);
+  assert.equal(await promptHash('progressive'), base, 'stable');
+  assert.notEqual(await promptHash('geico'), base, "another carrier's rules");
+  const entry = CARRIER_PARTS.progressive.sections[0].rules[0], text = entry.text;
+  t.after(() => { entry.text = text; });
+  entry.text = `${text} (edited)`;
+  assert.notEqual(await promptHash('progressive'), base, 'a rule edit, with POLICY_VERSION unchanged');
+  entry.text = text;
+  setAgentDefaultsOn(true);
+  t.after(() => { setActiveDefaults(null); setAgentDefaultsOn(RELEASED_TO_AGENTS); });
+  setActiveDefaults({ values: { umCsl: { value: 300_000 }, medPay: { value: 2_000 } } });
+  assert.notEqual(await promptHash('progressive'), base, "an agent's own defaults");
+  setActiveDefaults(null);
+  assert.equal(POLICY_VERSION, 'luna-evidence-v6');
+  const result = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => (JSON.parse(body.input[0].content).proposed ? groupCheck(body) : answer(body)) });
+  assert.equal(result.promptHash, await promptHash('geico'));
+  assert.ok(result.suggestions.every(x => x.promptHash === result.promptHash));
+  // A review that fails after its calls, or is dropped between them, says which prompt it got too.
+  const failed = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => (JSON.parse(body.input[0].content).proposed ? envelope({}) : answer(body)) })
+    .then(() => null, (error) => error);
+  assert.match(failed.message, /invalid evidence check/);
+  assert.equal(failed.promptHash, result.promptHash);
+  let calls = 0;
+  const dropped = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => { calls++; return answer(body); }, isStale: () => calls > 0 })
+    .then(() => null, (error) => error);
+  assert.match(dropped.message, /page or intake changed/);
+  assert.equal(dropped.promptHash, result.promptHash);
 });
 
 test('incomplete verification fails closed without spending again on a higher output cap', async () => {

@@ -205,10 +205,11 @@ export const EVENT_FIELDS = {
   // setting) acted on. Choices are option texts; typed text suggestions are never logged.
   // leave*: why questions were left, as counts (missing information, a conflict, Luna's own leave,
   // no usable citation, an answer the evidence check refused, a question too large to ask).
-  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens',
+  // promptHash: which instructions and rules the review got (src/ai/luna.js promptHash).
+  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens', 'promptHash',
     'leaveMissing', 'leaveConflict', 'leaveChose', 'leaveNoSource', 'leaveUnverified', 'leaveTooLarge'],
   // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
-  ai_decision: ['model', 'policy', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
+  ai_decision: ['model', 'policy', 'promptHash', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
 };
 // agent defaults: their fields on agent_settings, fill_run and fill_error.
 for (const [type, fields] of Object.entries(AGENT_DEFAULT_FIELDS)) EVENT_FIELDS[type].push(...fields);

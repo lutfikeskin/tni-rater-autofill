@@ -26,7 +26,7 @@ export function stableJson(value) {
 // an answer asked under another key is not used: a defaults or rulebook change asks again, an edit
 // Luna never sees (a phone number) does not (audit 2026-11-07, AI-05).
 export function assistContextKey(record, active, carrier = null) {
-  const rules = carrier ? rulebookFor(carrier, { rewrite: rulebookRewriteFor(carrier) }).map((rule) => [rule.id, rule.text]) : null;
+  const rules = carrier ? rulesSent(carrier).map((rule) => [rule.id, rule.text]) : null;
   return stableJson([record ? visibleIntake(record) : null, active, rules]);
 }
 
@@ -228,13 +228,18 @@ function visibleIntake(record) {
   return out;
 }
 
+// The carrier's TNI rules as Luna gets them: an agent's own default rewrites the entries stating the
+// standard it replaces (src/agent-defaults/).
+export function rulesSent(carrier) {
+  return rulebookFor(carrier, { rewrite: rulebookRewriteFor(carrier) });
+}
+
 export function evidenceFor(context) {
   const facts = scopedIntake(context.record, context.active ?? {}, context.rows ?? {});
   // TNI's rules first, keyed by their ids: the general part and this carrier's (none for a carrier
   // without a part), the same for every request on that carrier, so its requests share one start.
   const sources = {};
-  // An agent's own default rewrites the entries stating the standard it replaces (src/agent-defaults/).
-  for (const rule of rulebookFor(context.carrier, { rewrite: rulebookRewriteFor(context.carrier) })) sources[rule.id] = { basis: 'tni_rule', rule: rule.text };
+  for (const rule of rulesSent(context.carrier)) sources[rule.id] = { basis: 'tni_rule', rule: rule.text };
   let n = 0;
   const flatten = (obj, path = '') => {
     for (const [key, value] of Object.entries(obj ?? {})) {
