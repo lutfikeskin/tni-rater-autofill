@@ -122,7 +122,10 @@ test('daily: the comment lists the new items and links the run', () => {
   const body = commentBody({ since: '2026-10-07T06:20:00Z', problems: [{ t: '2026-10-07T15:04:00Z', agent: 'AY', page: 'CoveragesRates', text: 'UM limit\nwrong' }],
     newQuestions: [{ carrier: 'progressive', page: 'MoreAboutBusiness', ref: 'RiskInput.NewThing', caption: 'A question?', kind: 'radio' }], uncoveredTotal: 56, server: 'same', runUrl: 'https://run' }, '2026-10-08');
   assert.match(body, /^## 2026-10-08: 1 new problem report\(s\), 1 new question\(s\) without a rule, usage server same/);
-  assert.match(body, /- 2026-10-07 15:04 · AY · CoveragesRates: UM limit wrong/);
+  assert.match(body, /- 2026-10-07 15:04 · AY · CoveragesRates$/m);
+  // The repository is public: a report's own text (an agent's free text) is never posted.
+  assert.doesNotMatch(body, /UM limit/);
+  assert.match(body, /texts are not posted here[\s\S]*dashboard[\s\S]*npm run daily/);
   assert.match(body, /`RiskInput.NewThing` "A question\?" \(radio\)/);
   assert.match(body, /56 different ones in all/);
   assert.match(body, /https:\/\/run/);
@@ -162,6 +165,10 @@ test('daily: a field seen before steps had names is not new under its step', () 
     questionId('amwins', '/commerciallines › My Incomplete Submissions 4', { kind: 'combo', caption: 'Please select a Risk State:' }));
   const workflow = fs.readFileSync(new URL('../.github/workflows/daily-review.yml', import.meta.url), 'utf8');
   assert.match(workflow, /concurrency:\s*\n\s*group: daily-review\s*\n\s*cancel-in-progress: false/);
+  // The repository is public: the review (problem reports' texts) is neither the run's summary nor
+  // an artifact (audit 2026-11-07, SRV-02/ORG-01).
+  assert.doesNotMatch(workflow, /upload-artifact/);
+  assert.doesNotMatch(workflow, /\$FILE"? >> "?\$GITHUB_STEP_SUMMARY/);
 });
 
 test('a problem report in the daily comment names the build that logged it, and a test run as one', () => {
@@ -169,6 +176,7 @@ test('a problem report in the daily comment names the build that logged it, and 
     { t: '2026-10-07T15:04:00Z', agent: 'AY', page: 'CoveragesRates', build: '0.9.8', text: 'Print not clicked' },
     { t: '2026-10-08T15:04:00Z', agent: 'AY', page: 'Quote', build: '0.9.9 unpacked cfae2bf933', test: true, text: 'trying something' },
   ] }, '2026-10-08');
-  assert.match(body, /- 2026-10-07 15:04 · AY · 0\.9\.8 · CoveragesRates: Print not clicked/);
-  assert.match(body, /- 2026-10-08 15:04 · AY · 0\.9\.9 unpacked cfae2bf933 · test run · Quote: trying something/);
+  assert.match(body, /- 2026-10-07 15:04 · AY · 0\.9\.8 · CoveragesRates$/m);
+  assert.match(body, /- 2026-10-08 15:04 · AY · 0\.9\.9 unpacked cfae2bf933 · test run · Quote$/m);
+  assert.doesNotMatch(body, /Print not clicked|trying something/);
 });

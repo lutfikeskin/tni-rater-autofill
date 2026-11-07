@@ -185,7 +185,9 @@ the last successful run began downloading. An upload that arrives late is in the
 none is in two. When something is new, it comments on the open issue labelled `daily-review`, or
 opens one titled "Daily review" when none is open. New means:
 
-- problem reports, each with the build that logged it, marked when it came from a test run;
+- problem reports, each with its time, agent, page and the build that logged it, marked when it
+  came from a test run. Never the report's text: the repository is public, so the text is read on
+  the usage server's dashboard or in a review run on the maintainer's computer;
 - questions without a rule (or AmWINS fields the mock lacks) first seen in a layout of the period,
   one per question whatever its row, number, product or step (`scripts/lib/daily.mjs`);
 - a deployed usage server that isn't the repository's (`scripts/server-check.mjs`, checked first
@@ -267,8 +269,9 @@ files." It runs only while the app is open and the computer awake. Use one sched
 every day at 06:00 UTC, which GitHub often starts hours late (and on demand: Actions → Daily
 review → Run workflow, optionally with a start date or time). Its window starts when the last
 successful run on the default branch began downloading (`scripts/daily-issue.mjs since`, from that
-run's steps; a day when there is none; a run that can't tell fails rather than guess). It keeps the
-review as an artifact for 90 days and shows it as the run summary. The runner has no local test-run list
+run's steps; a day when there is none; a run that can't tell fails rather than guess). The review
+itself stays on the runner, since the repository is public: the run's summary shows its counts
+only, and nothing is kept as an artifact. The runner has no local test-run list
 (`reviews/test-intakes.txt` is ignored by git), so its review carries the "No test-run list"
 warning: the maintainer's own test quotes count as agents' work there, while fixture intakes and
 intakes marked as a test are still left out ([learning](learning.md)). When the script that
