@@ -147,7 +147,7 @@ const NOT_MAPPED = {
     'operations.needSr22': 'not asked on the Business Auto application; an SR-22 alone is a state filing, so federal filing required stays No (TNI, 2026-10-26)',
     'operations.movingState': 'not asked on the Business Auto application',
     'operations.teamDriving': 'on the intake since 2026-10-02; no AmWINS question for it has been mapped',
-    'operations.canadaLoads': 'on the intake since 2026-10; no AmWINS question for it has been mapped',
+    'operations.canadaLoads': 'loads to Canada are not foreign operations on AmWINS: foreign operations stays TNI\'s No whatever the intake says (amwins.foreign-operations; the maintainer, 2026-11-07; tested below)',
     'operations.licensePlate': 'not asked on the Business Auto application',
     'drivers[].cdl': 'AmWINS has no CDL question; the license year is TNI\'s birth year + 17',
     'drivers[].cdlYear': 'AmWINS has no CDL question; the license year is TNI\'s birth year + 17',
@@ -276,6 +276,16 @@ test('a leased or financed vehicle: AmWINS ownership questions stay No (TNI), Pr
   }
   assert.equal(byQ(buildPlan(with_({ 'operations.vehicleOwnership': 'Leased' }), progressive, {}), '2CA7').value, 'Yes - Lease');
   assert.equal(byQ(buildPlan(with_({ 'operations.vehicleOwnership': 'Financed' }), progressive, {}), '2CA7').value, 'Yes - Loan');
+});
+
+test('loads to Canada: AmWINS foreign operations stays TNI\'s No, naming its own rulebook entry', () => {
+  // The maintainer, 2026-11-07 (audit DATA-01): hauling loads to Canada is not foreign operations on
+  // AmWINS, so the intake's Yes, No or blank to "Do you take loads to Canada?" all answer No.
+  for (const canadaLoads of [true, false, null]) {
+    const step = named(buildPlan(with_({ 'operations.canadaLoads': canadaLoads }), amwins, {}), /^Underwriting: foreign operations/);
+    assert.ok(step, `${canadaLoads}: the foreign operations step`);
+    assert.deepEqual([step.value, step.source, step.standard, step.manualOnly, step.note ?? null, step.tni], [false, 'standard', true, false, null, 'amwins.foreign-operations'], `${canadaLoads}: ${step.name}`);
+  }
 });
 
 test('convictions are TNI\'s standard No whatever the claims answer; prior loss follows the intake', () => {
