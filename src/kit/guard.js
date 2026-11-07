@@ -29,14 +29,23 @@ export function watchTyping() {
 }
 
 /**
+ * The element focus is in now, through open shadow roots; null when it is on nothing (the body).
+ * @returns {HTMLElement | null}
+ */
+export function activeNow() {
+  let el = /** @type {any} */ (document.activeElement);
+  for (let i = 0; el?.shadowRoot?.activeElement && i < 8; i++) el = el.shadowRoot.activeElement;
+  return !el || el === document.body || el === document.documentElement ? null : el;
+}
+
+/**
  * The control the agent's focus is in (through open shadow roots), when it is one they type or pick
  * in: a text box, a list, a text area or an editable element. Null otherwise.
  * @returns {HTMLElement | null}
  */
 export function focusedControl() {
-  let el = /** @type {any} */ (document.activeElement);
-  for (let i = 0; el?.shadowRoot?.activeElement && i < 8; i++) el = el.shadowRoot.activeElement;
-  if (!el || el === document.body || el === document.documentElement) return null;
+  const el = /** @type {any} */ (activeNow());
+  if (!el) return null;
   const tag = String(el.tagName ?? '').toUpperCase();
   const typed = tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true
     || (tag === 'INPUT' && !/^(button|submit|reset|image|checkbox|radio|file|hidden)$/i.test(el.type ?? ''));

@@ -8,7 +8,7 @@ import { unitFormsOf } from './units.js';
 import { createLocator } from './locator.js';
 import { createAddressDriver } from './drivers/address.js';
 import { createSelect2Drivers } from './drivers/select2.js';
-import { typingElsewhere, focusedControl } from './guard.js';
+import { typingElsewhere, focusedControl, activeNow } from './guard.js';
 
 /** @import { PageControl } from './dom.js' */
 /** @import { FailCode, PlanStep, WriteResult } from '../../types.js' */
@@ -122,7 +122,11 @@ export async function apply(step, c) {
   try {
     return await write(step, c);
   } finally {
-    if (theirs && theirs !== c.el && theirs.isConnected !== false && focusedControl() !== theirs) {
+    // Only where the write left the focus (on its field, in its widget, or on nothing): a field the
+    // agent moved to meanwhile keeps it (CodeRabbit on #435).
+    const now = activeNow();
+    const writes = !now || now === c.el || !!c.el.contains?.(now) || !!c.widget?.contains?.(now);
+    if (theirs && theirs !== c.el && theirs.isConnected !== false && now !== theirs && writes) {
       try { theirs.focus({ preventScroll: true }); } catch { /* gone */ }
     }
   }

@@ -10022,5 +10022,27 @@ test('a write waits while the agent types in another field, and gives that field
   box.addEventListener('change', () => { at ??= clock.Date.now(); });
   const t0 = clock.Date.now();
   await quiet.kit.fill([{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: '3', name: 'Years in business' }], { maxRounds: 3 });
+  assert.equal(box.value, '3');
+  assert.notEqual(at, null, 'the quiet write dispatched change');
   assert.ok(at - t0 < 1000, `${at - t0} ms`);
+});
+
+// CodeRabbit on #435: the agent moves to another field while a write is under way. That field keeps
+// the focus: it is given back only where the write left it.
+test('a field the agent moved to during a write keeps the focus', async () => {
+  const h = harness();
+  const notes = makeInput({ id: 'notes', ariaLabel: 'Notes' });
+  const other = makeInput({ id: 'other', ariaLabel: 'Other' });
+  const years = new SelectNode([{ text: '', value: '' }, { text: '3', value: '3' }], { id: 'yrsInBusiness', ariaLabel: 'Years in Business' });
+  h.document.body.append(years, notes, other);
+  for (const el of [notes, other, years]) {
+    el.focus = () => { h.document.activeElement = el; };
+    el.blur = () => { if (h.document.activeElement === el) h.document.activeElement = h.document.body; };
+  }
+  notes.focus();
+  // As the answer goes in, the agent clicks into Other.
+  years.addEventListener('change', () => { other.focus(); });
+  await h.kit.fill([{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: '3', name: 'Years in business' }], { maxRounds: 3 });
+  assert.equal(years.value, '3');
+  assert.equal(h.document.activeElement, other, 'the field they moved to keeps it');
 });
