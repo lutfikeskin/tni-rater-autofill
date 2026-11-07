@@ -200,7 +200,7 @@ export const EVENT_FIELDS = {
   // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
   // many seconds before the report).
   problem_report: ['text', 'run', 'step', 'blockerList', 'since'],
-  // An error nothing in the panel caught: where (panel), its message (redacted, 300 characters)
+  // An error nothing in the panel or the page's recorder caught: where (panel, recorder), its message (redacted, 300 characters)
   // and up to four frames inside the extension's own files.
   client_error: ['where', 'error', 'stack'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
@@ -496,7 +496,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (out.messages !== undefined && !(Array.isArray(out.messages) && out.messages.length <= 40 && out.messages.every((m) => typeof m === 'string' && m.length <= 200))) drop('messages');
     // A crash: where, a bounded message, and frames inside the extension's files only.
     if (out.type === 'client_error') {
-      if (out.where !== undefined && out.where !== 'panel') drop('where');
+      if (out.where !== undefined && !['panel', 'recorder'].includes(out.where)) drop('where');
       if (out.error !== undefined && !(typeof out.error === 'string' && out.error.length <= 300)) drop('error');
       if (out.stack !== undefined && !(Array.isArray(out.stack) && out.stack.length <= 4 && out.stack.every((x) => typeof x === 'string' && x.length <= 160 && /^[\w./-]+:\d+:\d+$/.test(x)))) drop('stack');
     }

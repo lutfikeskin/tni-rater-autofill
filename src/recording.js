@@ -6,7 +6,9 @@
 
 /** @import { TraceEvent, RecordingManifest } from '../types.js' */
 
-export const RECORDING_VERSION = 1;
+// 2 (REC-10, 2026-11-07): the manifest says what a run needs to be reproduced (session, rules,
+// agent defaults, filling switches, platform, the trace's and recorder's versions).
+export const RECORDING_VERSION = 2;
 
 /**
  * Developer mode only where the build isn't the store's: the repository loaded as it is
@@ -67,13 +69,18 @@ export function stampEvents(events, { frame = 0, fillingAt = () => false, redact
 }
 
 /**
- * @param {{ id: string, carrier: string, scenario: string, started: Date | string, build: RecordingManifest['build'], intake?: string | null, test?: boolean }} start
+ * What a run needs to be reproduced, beside the build: the usage session (to join the usage
+ * log's events), the rules' and the agent's defaults' fingerprints, the filling switches as the
+ * recording began, the platform, and the trace's and recorder's versions (as the trace says them).
+ * @param {{ id: string, carrier: string, scenario: string, started: Date | string, build: RecordingManifest['build'], intake?: string | null, test?: boolean,
+ *   session?: string | null, rules?: string | null, defaultsHash?: string | null, settings?: RecordingManifest['settings'], platform?: string | null }} start
  * @returns {RecordingManifest}
  */
-export function newManifest({ id, carrier, scenario, started, build, intake = null, test = false }) {
+export function newManifest({ id, carrier, scenario, started, build, intake = null, test = false, session = null, rules = null, defaultsHash = null, settings = null, platform = null }) {
   return {
     tool: 'tni-rater-autofill', kind: 'recording', version: RECORDING_VERSION, id, carrier, scenario,
     started: new Date(started).toISOString(), ended: null, build, intake, test, events: 0, dropped: 0,
+    session, rules, defaultsHash, settings, platform, versions: { trace: null, recorder: null },
   };
 }
 

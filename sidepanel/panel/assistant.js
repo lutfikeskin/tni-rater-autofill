@@ -339,7 +339,7 @@ async function runAssist(frames, ctx) {
   const run = ++state.aiRun;
   ctx.run = run;
   try {
-    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
   } catch { return; }
   // Why this request's answer can't be used at all: its settings, tab, page, intake or
   // driver/vehicle are no longer the panel's. Null while they are.
@@ -514,9 +514,9 @@ async function applyAi(list, ctx, decision) {
     // Watch every frame before the snapshot and pending-hold writes. An idle frame stays
     // guarded while another waits on its server, until the full apply finishes.
     guarding = true;
-    await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [guardToken]);
+    await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit?.answerEdits('begin', t), [guardToken]);
     if (!isCurrent()) return false;
-    const current = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+    const current = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
     if (!isCurrent()) return false;
     if (!snapshotsEqual(current, ctx.snapshots)) {
       for (const x of list) x.error = 'the page changed; click Fill this page for fresh suggestions';
@@ -555,7 +555,7 @@ async function applyAi(list, ctx, decision) {
     // including later answers in the active frame.
     const results = [];
     const readEdits = async (command = 'read') => {
-      const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit.answerEdits(c, t), [command, guardToken]);
+      const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit?.answerEdits(c, t), [command, guardToken]);
       for (const frame of frames) for (const item of frame.result ?? []) {
         if (item?.protected) results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
       }
@@ -580,7 +580,7 @@ async function applyAi(list, ctx, decision) {
       startedFrames.add(frameId);
       dispatched = true;
       // The carrier's stop steps go along: after a reload no fill has told this document about them.
-      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit.answer(a, snapshots, t, o),
+      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit?.answer(a, snapshots, t, o),
         [[a], expected, guardToken, { stopSteps: Object.keys(ctx.carrier.stopSteps ?? {}) }], [frameId]);
       for (const frame of answerFrames) for (const item of frame.result ?? []) {
         if (item && typeof item === 'object') results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
@@ -621,7 +621,7 @@ async function applyAi(list, ctx, decision) {
     if (list.some((x) => x.done) || protectedKeys.length) noteChangedAfterDone(ctx.carrier, ctx.page, tabStep(ctx.carrier, ctx.tabId), ctx.tabId);
     await persistGuardedEdits(editOrigin, protectedKeys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
-    const after = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+    const after = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
     for (const x of list) if (x.done) {
       x.snapshots = after;
       x.snapshotHash = snapshotFingerprint(after);
@@ -637,7 +637,7 @@ async function applyAi(list, ctx, decision) {
   } finally {
     if (guarding) {
       try {
-        const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('end', t), [guardToken]);
+        const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit?.answerEdits('end', t), [guardToken]);
         // Even a failed answer transport must preserve edits the still-live guards caught.
         const edited = frames.flatMap(frame => frame.result ?? []).filter(item => item?.protected);
         await persistGuardedEdits(editOrigin, edited.map(item => item.key));
@@ -706,7 +706,7 @@ function renderAi(holder, suggestions, ctx) {
       // Approve only what the page still shows as the AI left it; a pick whose page changed since
       // is rejected so the agent reviews it after a fresh fill.
       let now;
-      try { now = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); }
+      try { now = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null)); }
       catch {
         if (!aiActionCurrent(ctx, list)) return;
         for (const x of list) x.error = 'the page is unavailable; return to it and run Fill again';
@@ -756,7 +756,7 @@ function renderAi(holder, suggestions, ctx) {
     for (const x of list) {
       let present = false;
       try {
-        const result = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+        const result = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
         present = aiCurrentAnswerPresent(result, x);
       } catch { /* page navigating */ }
       if (!aiActionCurrent(ctx, list)) return;

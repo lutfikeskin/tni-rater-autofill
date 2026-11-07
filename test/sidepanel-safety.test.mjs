@@ -113,7 +113,10 @@ function extractFunction(name) {
           quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
-          stopFillFirst: 'async () => {}' };
+          stopFillFirst: 'async () => {}',
+          // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
+          // elsewhere none is running.
+          noteFollowed: '() => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -397,6 +400,33 @@ test('the driver a form named is the one entered once the list comes back; a for
   // A blank form named no one: the selected driver, as before.
   context.unitArrival(progressive, 'AddDriver', 'DriverSummary');
   assert.deepEqual([...h.state.doneActions].sort(), ['driverEntered:0', 'driverEntered:1']);
+});
+
+// Audit 2026-11-07, QA-03: the kit is injected by one executeScript and called by a second, so a
+// tab that navigates between them has no kit; `globalThis.__raterKit.fill(...)` then threw on the
+// carrier's page. Every call the panel makes is optional, so a frame without the kit answers null,
+// and a fill whose top frame had none is a page that moved (kitGone).
+test('every kit call the panel makes is guarded: a frame without the kit answers null, never throws', async () => {
+  const unguarded = [...SIDEPANEL.matchAll(/__raterKit\.[A-Za-z]+/g)].map((m) => SIDEPANEL.slice(Math.max(0, m.index - 60), m.index + 40));
+  assert.deepEqual(unguarded, [], 'no __raterKit.<name> outside a guard (__raterKit?.<name>)');
+  const guarded = SIDEPANEL.match(/__raterKit\?\.[A-Za-z]+\(/g).length;
+  assert.ok(guarded >= 20, `the panel's kit calls, each guarded (${guarded})`);
+  // The fill's own call, in a page without the kit and in one with it.
+  const fillCall = SIDEPANEL.match(/runKit\(tabId, carrier, (\(p, o\) => globalThis\.__raterKit\?\.fill\(p, o\)), \[plan, options\]\)/)[1];
+  const page = {};
+  vm.createContext(page);
+  const fill = vm.runInContext(fillCall, page);
+  assert.equal(fill('plan', 'options') ?? null, null, 'no kit in the page');
+  page.__raterKit = { fill: (p, o) => ({ filled: [p, o] }) };
+  assert.deepEqual(JSON.parse(JSON.stringify(fill('plan', 'options'))), { filled: ['plan', 'options'] });
+  // Both fills take a top frame without the kit as a page that moved on.
+  const gone = /results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| (results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\))\)/;
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), gone, name);
+  const kitGone = vm.runInNewContext(`(results) => ${extractFunction('fillPage').match(gone)[1]}`);
+  assert.equal(kitGone([{ frameId: 0, result: { filled: [] } }]), false);
+  assert.equal(kitGone([{ frameId: 0, result: null }, { frameId: 3, result: { filled: [] } }]), true, 'the top frame had no kit');
+  assert.equal(kitGone([{ frameId: 0 }]), true, 'no result at all');
+  assert.equal(kitGone([{ frameId: 3, result: null }]), false, 'a child frame only');
 });
 
 test('the fill hands the kit the named-form check and what this tab\'s fills gave', () => {
@@ -3728,7 +3758,7 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   // Fills ready their tab once they went through (tested with autoFill below; fillPage the same).
   // (After the stale check: a fill whose intake changed meanwhile proves nothing for the new one;
   // nor does one whose page had moved on, which filled nothing.)
-  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
+  assert.equal((extractFunction('fillPage').match(/__raterKit\?\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\)\) \{ notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
 });
 
 test('a queued capture is dropped for a later change on its page, which gets its reasons', async () => {
@@ -5754,7 +5784,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   u.release([{ frameId: 0, result: { ...u.results[0].result, pageMoved: '/quote-B' } }]);
   await run;
   assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
-  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
+  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
   // (runPendingPage then runs from every end of a fill, whichever tab is in front: FLOW-07.)
   assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n\s+\}/);
@@ -6471,6 +6501,13 @@ test('a panel crash is logged once per message, at most 20, never on a practice 
   sandbox.usage.log = () => { throw new Error('storage full'); };
   state.tab.carrier.practice = false;
   assert.doesNotThrow(() => sandbox.logCrash(new Error('again')), 'logging a crash never throws');
+  // The page's recorder's exception (LEARN-10): logged where 'recorder', apart from the panel's own.
+  const recorder = [];
+  sandbox.usage.log = (e) => recorder.push(e);
+  sandbox.loggedCrashes.clear();
+  sandbox.logCrash(new Error('boom'));
+  sandbox.logCrash({ message: 'boom' }, 'recorder');
+  assert.deepEqual(recorder.map((e) => [e.where, e.error]), [['panel', 'boom'], ['recorder', 'boom']]);
 });
 
 test('a layout carries the page\'s messages, and a new message logs the page again', async () => {
@@ -6553,6 +6590,22 @@ test('a problem report names the fill it is about: view, run, step and what held
   state.intake = null;
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
   assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
+});
+
+// CodeRabbit on PR #403: the recorder tells its exception again until the panel says it logged
+// it; a panel with no intake, or another tab's, says nothing, so it is told again later.
+test('the panel logs a recorder exception where recorder and says it took it', () => {
+  const crashes = [], replies = [];
+  const state = { intake: { record: {} }, tab: { id: 1, url: 'https://synthetic.example/quote', carrier: null } };
+  const sandbox = { state, usage: { log() {} }, samePage: (p) => p, pageOf: (u) => u, logCrash: (e, where) => crashes.push([e.message, where]) };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('onRecorderMessage'), sandbox);
+  const tell = (tab) => sandbox.onRecorderMessage({ ra: 'usage', event: 'recorder_error', message: 'boom', stack: 'at recorder.js' }, { tab: { id: tab } }, (r) => replies.push(r));
+  tell(2);
+  assert.deepEqual([crashes, replies], [[], []], 'another tab\'s: nothing logged, no reply');
+  tell(1);
+  assert.deepEqual(crashes, [['boom', 'recorder']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(replies)), [{ logged: true }]);
 });
 
 test('the agent\'s own button clicks are logged redacted, with a known step only', () => {
@@ -8467,7 +8520,7 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   // Settings' Filling note says a switch changed meanwhile reaches what is filled after, and the fill
   // under way only while it gets ready (reviews of #389): each fill, a follow-up's included, reads
   // Continue's switch again and Check answers before Continue (fillOptions' hold) as it asks the kit.
-  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /ctx\.settings\.autoAdvance = switchOn\('autoAdvance', 'auto-advance'\);[\s\S]*= fillOptions\(carrier, [\s\S]*?__raterKit\.fill\(p, o\), \[plan, options\]\)/, name);
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /ctx\.settings\.autoAdvance = switchOn\('autoAdvance', 'auto-advance'\);[\s\S]*= fillOptions\(carrier, [\s\S]*?__raterKit\?\.fill\(p, o\), \[plan, options\]\)/, name);
   assert.match(SIDEPANEL, /const fillOptions = [^\n]*\n(?:[^\n]*\n)*?  hold: switchOn\('checkBeforeContinue', 'check-continue'\),/);
   // Opening or closing Settings draws the dock again (showScreen).
   assert.match(extractFunction('showScreen'), /renderDock\(\);\n\}$/);
@@ -8734,14 +8787,32 @@ test('a panel that pops out or docks stops and saves its recording first', async
 
 test('a new recording first stops a trace a closed panel left in the tab', async () => {
   const done = [];
-  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: false };
+  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: false, switches: { autoPages: false, checkBeforeContinue: false } };
+  let manifest = null;
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
-    usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => { done.push('store'); return {}; } },
+    usage: { build: () => ({}), currentSession: () => ({ id: 'session-1', intakeId: 'intake-1' }) }, RecordingStore: { start: async (m) => { manifest = m; done.push('store'); return {}; } },
     setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => { done.push('inject'); },
+    rulesFingerprint: () => 'rules-1', fillDefaultsHash: () => null, navigator: { platform: 'Win32', userAgentData: { platform: 'Windows' } },
     chrome: { tabs: { sendMessage: async (tabId, msg) => { done.push(`${msg.ra}:${msg.cmd}:${tabId}`); } } } };
   vm.runInNewContext(extractFunction('startRecording'), context);
   await context.startRecording();
   assert.deepEqual(done, ['trace:stop:4', 'store', 'inject']);
+  // REC-10 (audit 2026-11-07): what the run needs to be reproduced, beside the build.
+  assert.deepEqual(JSON.parse(JSON.stringify([manifest.session, manifest.intake, manifest.rules, manifest.defaultsHash, manifest.settings, manifest.platform])),
+    ['session-1', 'intake-1', 'rules-1', null, { autoAdvance: true, autoFollowUps: true, autoPages: false, checkBeforeContinue: false }, 'Windows']);
+});
+
+test('the recording\'s manifest names the trace and recorder its top frame\'s first batch came from', () => {
+  const manifest = { versions: { trace: null, recorder: null } };
+  const store = { manifest, add() {} };
+  const state = { recording: { tabId: 4, store, fills: [], redact: (s) => s, carrier: {} } };
+  const context = { state, stampEvents: (events) => events, knownStep: () => null };
+  vm.runInNewContext(extractFunction('onTraceMessage'), context);
+  context.onTraceMessage({ ra: 'trace', events: [], v: 2, recorder: 12 }, { tab: { id: 4 }, frameId: 3 }, () => {});
+  assert.deepEqual({ ...manifest.versions }, { trace: null, recorder: null }, 'a frame\'s is not the page\'s');
+  context.onTraceMessage({ ra: 'trace', events: [], v: 2, recorder: 12 }, { tab: { id: 4 }, frameId: 0 }, () => {});
+  context.onTraceMessage({ ra: 'trace', events: [], v: 3, recorder: 13 }, { tab: { id: 4 }, frameId: 0 }, () => {});
+  assert.deepEqual({ ...manifest.versions }, { trace: 2, recorder: 12 });
 });
 
 test('a recording started during a fill begins with that fill, so its end isn\'t one without a start', async () => {
@@ -8750,6 +8821,7 @@ test('a recording started during a fill begins with that fill, so its end isn\'t
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
     usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => ({ add: (events) => added.push(...events) }) },
     setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => {}, Date,
+    rulesFingerprint: () => null, fillDefaultsHash: () => null, navigator: {},
     chrome: { tabs: { sendMessage: async () => {} } } };
   vm.runInNewContext(extractFunction('startRecording'), context);
   await context.startRecording();
@@ -10205,4 +10277,60 @@ test('a unit missing from the list with no helper for it is left for the agent i
   const none = [{ frameId: 0, result: { noData: [], blockers: [] } }];
   context.noteMissingUnit(none, { ...ctx, unitMissing: null });
   assert.equal(none[0].result.noData.length, 0);
+});
+
+// REC-04 (audit 2026-11-07; W44-23): with the panel on another tab, each new document of the recorded
+// tab lost the trace, nothing said so, and a closed recorded tab left the recording running empty.
+test('the recording follows its own tab whatever tab the panel follows, says when the panel is away, and ends with the tab', async () => {
+  const added = [];
+  const injected = [];
+  const said = [];
+  const stops = [];
+  const store = { count: 0, durable: true, add: (events) => added.push(...events) };
+  const state = { tab: { id: 4 }, recording: { tabId: 4, started: 0, stopping: false, carrier: { pageAdapter: 'src/content/carriers/progressive.js' }, store }, devrec: {} };
+  const context = { state, Date, Number,
+    devrecSaid: (s) => said.push(s), stopRecording: (why) => { stops.push(why); state.recording.stopping = true; },
+    chrome: { scripting: { executeScript: async ({ target, files }) => { injected.push([target.tabId, target.allFrames, files.map((f) => f.split('/').pop())]); } } } };
+  vm.runInNewContext(['renderDevrec', 'noteFollowed', 'recordedTabUpdated', 'recordedTabRemoved'].map(extractFunction).join('\n'), context);
+  context.renderDevrec();
+  assert.deepEqual(added, [], 'on the recorded tab: nothing to say');
+  // The panel follows another tab: said once in the timeline, and on the panel's line while it lasts.
+  state.tab = { id: 9 };
+  context.renderDevrec();
+  context.renderDevrec();
+  assert.deepEqual(JSON.parse(JSON.stringify(added)).map((e) => [e.kind, e.away, e.followed, e.recorded]), [['panel', true, 9, 4]]);
+  assert.match(said.at(-1), /The panel is on another tab: only the tab the recording began on is recorded/);
+  // A new document in the recorded tab gets the trace, with the recorder and the carrier's adapter.
+  await context.recordedTabUpdated(4, { status: 'loading' });
+  await context.recordedTabUpdated(7, { status: 'complete' });
+  await context.recordedTabUpdated(4, { status: 'complete' });
+  assert.deepEqual(JSON.parse(JSON.stringify(injected)), [[4, true, ['progressive.js', 'field-key.js', 'recorder.js', 'trace.js']]]);
+  // Back on it: said, and the panel's own reinjection (ensureRecorder) does it again.
+  state.tab = { id: 4 };
+  context.renderDevrec();
+  assert.deepEqual(added.map((e) => e.away), [true, false]);
+  assert.doesNotMatch(said.at(-1), /another tab/);
+  await context.recordedTabUpdated(4, { status: 'complete' });
+  assert.equal(injected.length, 1);
+  // Another tab closed: nothing; the recorded one: the recording is saved, saying why.
+  context.recordedTabRemoved(9);
+  assert.deepEqual(stops, []);
+  context.recordedTabRemoved(4);
+  assert.deepEqual(stops, ['The recorded tab was closed.']);
+  assert.equal(added.at(-1).closed, true);
+  const wire = extractFunction('wire');
+  assert.match(wire, /chrome\.tabs\.onUpdated\.addListener\(recordedTabUpdated\);\s+chrome\.tabs\.onRemoved\.addListener\(recordedTabRemoved\);/);
+  // Review of PR #383: noted as the panel changes tab, not only at the line's next render, so a
+  // move away and back within a second is in the timeline too.
+  const marks = added.length;
+  state.recording.stopping = false;
+  state.tab = { id: 9 };
+  context.noteFollowed();
+  state.tab = { id: 4 };
+  context.noteFollowed();
+  assert.deepEqual(added.slice(marks).map((e) => e.away), [true, false]);
+  const refresh = extractFunction('refreshTab');
+  const sets = [...refresh.matchAll(/^\s*state\.tab = (?!null; return).*$/gm)];
+  assert.equal(sets.length, 2);
+  for (const m of sets) assert.match(refresh.slice(m.index + m[0].length), /^\s*(?:\/\/.*\s*)*noteFollowed\(\);/, 'each tab the panel follows is noted as it is set');
 });
