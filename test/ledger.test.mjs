@@ -128,6 +128,9 @@ test('a text condition no event ever met is marked, a code condition is not', ()
   assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~"did not keep"').unmatchedText, false);
   assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~"didn\'t stick"').unmatchedText, true, 'the message reads otherwise now');
   assert.equal(judge('symptom fill_field page=AddDriver result=failed code=answer.not-kept').unmatchedText, false);
+  // A regex is stateless: a sticky (y) or global (g) one tested on one event isn't moved along for
+  // the next (CodeRabbit on PR #402).
+  assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~/the.page/y').unmatchedText, false);
   // Each text condition on its own: two met by different events were both met (CodeRabbit on PR #402).
   assert.equal(judge('symptom fill_field reason~"did not keep" label~"license"').unmatchedText, false);
   assert.equal(judge('symptom fill_field reason~"did not keep" label~"licence"').unmatchedText, true, 'one of them never met');

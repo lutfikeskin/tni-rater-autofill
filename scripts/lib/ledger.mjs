@@ -148,7 +148,7 @@ function condition(token, src) {
   const [, path, op, value] = m;
   if ((op === '>' || op === '<') && !Number.isFinite(Number(value))) throw new Error(`"${token}" in "${src}" compares with a number`);
   const re = op === '~' ? /^\/(.+)\/([a-z]*)$/.exec(value) : null;
-  return { path, op, value, re: re ? new RegExp(re[1], re[2].replace(/g/g, '') || 'i') : null };
+  return { path, op, value, re: re ? new RegExp(re[1], re[2].replace(/[gy]/g, '') || 'i') : null };
 }
 
 function clause(tokens, src) {
