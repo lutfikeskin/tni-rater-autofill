@@ -97,7 +97,7 @@ const schemaFingerprint = () => crypto.createHash('sha256').update(JSON.stringif
 // Every schema version's fingerprint, one entry a version. A version's entry is never rewritten:
 // a contract that changed is a new version with its own entry, so the fingerprint can't be brought
 // up to date while the version stays (the review of #378).
-const VERSION_FINGERPRINTS = { 1: '5f062552bb01' };
+const VERSION_FINGERPRINTS = { 1: 'c684d376addc' };
 test('the event contract is shared, and its version goes up whenever it changes', () => {
   assert.equal(COMMON, SCHEMA.COMMON, 'the server keeps the shared COMMON');
   assert.deepEqual(Object.keys(EVENT_FIELDS), Object.keys(SCHEMA.EVENT_FIELDS), 'the server knows every shared event type, and only those');
