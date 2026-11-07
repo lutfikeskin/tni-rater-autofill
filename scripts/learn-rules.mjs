@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Weekly learning report: what the usage logs say the carrier rules should be.
 //
-//   node scripts/learn-rules.mjs server-data [more logs...] [--min 5] [--threshold 0.9] [--rules <fingerprint>|all] [--json] [--out report.md]
+//   node scripts/learn-rules.mjs server-data [more logs...] [--min 5] [--threshold 0.9] [--rules <fingerprint>|all] [--tests reviews/test-intakes.txt] [--json] [--out report.md]
 //
 // Proposes rule changes (per-state answers, new intake mappings, rules agents keep correcting,
 // attestations and client facts kept with the agent) with ready-to-paste rule lines for
@@ -10,10 +10,14 @@
 // not always a correct one.
 // Rules agents keep correcting counts the answers the current rules filled: those of the newest
 // rule files' fingerprint the log's fills name (`rules` on fill_run), or --rules (all: every build).
+// Test runs are left out, as in every other report (readTestList and testSessionsOf in
+// scripts/lib/signals.mjs: intakes marked as a test, fixture and synthetic intakes, and the
+// fingerprints in --tests, default this repository's reviews/test-intakes.txt).
 
 import fs from 'node:fs';
 import { loadEvents } from './lib/events.mjs';
 import { learn } from './lib/learn.mjs';
+import { readTestList, testSessionsOf } from './lib/signals.mjs';
 import { CARRIERS } from '../src/carriers.js';
 
 const args = process.argv.slice(2);
@@ -22,20 +26,38 @@ const opt = (name, fallback) => {
   return i >= 0 ? args[i + 1] : fallback;
 };
 const flags = new Set(['--json']);
-const valued = new Set(['--min', '--threshold', '--out', '--rules']);
+const valued = new Set(['--min', '--threshold', '--out', '--rules', '--tests']);
 const inputs = args.filter((a, i) => !flags.has(a) && !valued.has(a) && !valued.has(args[i - 1]));
 if (!inputs.length) {
-  console.error('usage: node scripts/learn-rules.mjs <server-data folder | usage logs>... [--min 5] [--threshold 0.9] [--rules <fingerprint>|all] [--json] [--out file.md]');
+  console.error('usage: node scripts/learn-rules.mjs <server-data folder | usage logs>... [--min 5] [--threshold 0.9] [--rules <fingerprint>|all] [--tests file] [--json] [--out file.md]');
   process.exit(1);
 }
+if (args.includes('--tests') && (opt('tests') === undefined || opt('tests').startsWith('--'))) {
+  console.error('--tests needs a value.');
+  process.exit(1);
+}
+let testList;
+try { testList = readTestList({ tests: opt('tests', null) }); } catch (err) { console.error(err.message); process.exit(1); }
+if (testList.warning) console.error(`Warning: ${testList.warning}`);
 
 const events = loadEvents(inputs);
+// A capped export or a slice of days can lack a quote's intake_loaded, which testSessionsOf reads,
+// while its other events still carry the intake's fingerprint (learn() counts support by it): a
+// listed fingerprint is matched on those too, unless the agent's latest mark in the panel says the
+// quote is no test (CodeRabbit on PR #369).
+const tests = testSessionsOf(events, testList.intakes);
+const marks = new Map();
+for (const e of events) if (e.type === 'intake_marked' && e.session) marks.set(e.session, e.test === true);
+for (const e of events) {
+  if (!e.session || !e.intakeId || marks.get(e.session) === false) continue;
+  if (testList.intakes.some((id) => String(e.intakeId).toLowerCase().startsWith(id))) tests.add(e.session);
+}
 const rulesOpt = opt('rules');
 if (args.includes('--rules') && (!rulesOpt || rulesOpt.startsWith('--'))) {
   console.error('--rules needs a fingerprint, or all.');
   process.exit(1);
 }
-const result = learn(events, { carriers: CARRIERS, minIntakes: Number(opt('min', 5)), threshold: Number(opt('threshold', 0.9)),
+const result = learn(events, { carriers: CARRIERS, minIntakes: Number(opt('min', 5)), threshold: Number(opt('threshold', 0.9)), excludeSessions: tests,
   ...(rulesOpt ? { rules: rulesOpt === 'all' ? null : rulesOpt } : {}) });
 
 if (args.includes('--json')) {
@@ -49,7 +71,7 @@ const where = (s) => `${s.carrier} ${s.page}${s.step ? ` › ${s.step}` : ''}${s
 const lines = [
   `# Rule suggestions from ${result.quotes} quote${result.quotes === 1 ? '' : 's'} of ${result.intakes} intake PDF${result.intakes === 1 ? '' : 's'}`,
   '',
-  `Generated ${new Date().toISOString().slice(0, 10)} from ${events.length} events. Minimum ${opt('min', 5)} different intake PDFs per suggestion (quotes of one PDF count once). Review before adding anything.`,
+  `Generated ${new Date().toISOString().slice(0, 10)} from ${events.length} events. Minimum ${opt('min', 5)} different intake PDFs per suggestion (quotes of one PDF count once). ${result.testRunsLeftOut} test run${result.testRunsLeftOut === 1 ? '' : 's'} left out${testList.warning ? ' (no test-run list: the maintainer\'s test quotes count)' : ''}. Review before adding anything.`,
   '',
   `## Possible standards: questions for the maintainer (${standard.length})`,
   'Unmapped questions agents answer the same way nearly every time. A habit is not a TNI standard, so none comes with a rule: decide each one, with its evidence.',
