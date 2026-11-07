@@ -1072,8 +1072,16 @@ test('Clear always asks first, and Change file asks once the agent has done work
   // The header's buttons (client-view.jsx) ask the panel (mountClient's `act`).
   const wire = extractFunction('wire');
   assert.match(wire, /\n    clear: \(\) => \{[\s\S]{0,300}askFile\('clear'/);
-  assert.match(wire, /\n    replace: \(\) => \{\s+const work = workSaid\([\s\S]{0,200}if \(!work\) \{[\s\S]{0,120}\$\('file'\)\.click\(\); return; \}\s+askFile\('replace'/);
-  assert.match(wire, /\n    cancel: \(\) => \{ state\.fileConfirm = null;/);
+  // Change file, and a PDF dropped on the panel, go through file-drop.js (test/panel/file-drop.test.jsx)
+  // with the panel's own picker, question, note and loadFile; Yes and Cancel answer it.
+  assert.match(wire, /const replacing = fileReplacer\(\{ state, load: \(file\) => loadFile\(file\), pick: \(\) => \$\('file'\)\.click\(\), ask: \(text, yes\) => askFile\('replace', text, yes\),\s+note: \(text\) => clientNote\(text\), work: workSaid \}\);/);
+  assert.match(wire, /\n    replace: \(\) => replacing\.replace\(\),/);
+  assert.match(wire, /\n    cancel: \(\) => \{ state\.fileConfirm = null; replacing\.answered\(false\);/);
+  assert.match(wire, /if \(what === 'replace'\) replacing\.answered\(true\);/);
+  // Audit 2026-11-07, UX-01: a PDF dropped anywhere on the panel was loaded at once, even while
+  // answers went in and over the agent's corrections and checks.
+  assert.match(wire, /t\.addEventListener\('drop', \(e\) => \{ e\.preventDefault\(\); drop\.classList\.remove\('over'\); if \(e\.dataTransfer\.files\[0\]\) replacing\.replace\(e\.dataTransfer\.files\[0\]\); \}\);/);
+  assert.equal((wire.match(/\bloadFile\(/g) ?? []).length, 2, 'loadFile only from the file picker and through file-drop.js');
   const view = fs.readFileSync(new URL('../sidepanel/panel/client-view.jsx', import.meta.url), 'utf8');
   for (const [id, act] of [['clear-client', 'clear'], ['replace', 'replace'], ['file-confirm-no', 'cancel']]) {
     assert.match(view, new RegExp(`id="${id}"[^>]*onClick=\\{\\(\\) => act\\.${act}\\(\\)\\}`), id);
