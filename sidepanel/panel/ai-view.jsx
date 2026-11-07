@@ -74,8 +74,7 @@ function AiCard({ card }) {
         <div className="ai-box">
           <div className="ai-says">{'AI suggests '}<b>{card.choice}</b></div>
           {card.tip ? <div className="ai-tip">{card.tip}</div> : null}
-          <div className="ai-why">{card.why}</div>
-          {card.checks.map((check, i) => <div key={i} className="ai-check">{`Checked by the extension: ${check}`}</div>)}
+          {card.why ? <div className="ai-why">{card.why}</div> : null}
           <div className="ai-actions">
             <PutButton className="primary accept" label="Use this answer" put={card.use} />
             <button type="button" className="ghost" onClick={() => card.noThanks()}>No thanks</button>

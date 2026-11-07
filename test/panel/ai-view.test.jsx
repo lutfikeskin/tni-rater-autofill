@@ -18,17 +18,16 @@ const later = () => {
   return { promise, settle };
 };
 
-test('a suggestion: what the AI suggests, why, the extension’s checks, Use this answer and No thanks', () => {
+test('a suggestion: what the AI suggests, what it rests on, Use this answer and No thanks', () => {
   const asked = [];
-  const card = { kind: 'suggest', choice: 'No', tip: 'The intake says no hazmat.', why: 'cited evidence: operations.hazmat · Evidence checked · needs your review',
-    checks: ['"No" is one of the page’s choices'], use: () => { asked.push('use'); return null; }, noThanks: () => asked.push('no thanks') };
+  const card = { kind: 'suggest', choice: 'No', tip: 'The intake says no hazmat.', why: 'Based on Hazmat placards: No',
+    use: () => { asked.push('use'); return null; }, noThanks: () => asked.push('no thanks') };
   const { container } = render(<AiCard card={card} />);
   const box = container.firstChild;
   expect(box.className).toBe('ai-box');
   expect([...box.children].map((c) => [c.className, c.textContent])).toEqual([
     ['ai-says', 'AI suggests No'], ['ai-tip', 'The intake says no hazmat.'],
-    ['ai-why', 'cited evidence: operations.hazmat · Evidence checked · needs your review'],
-    ['ai-check', 'Checked by the extension: "No" is one of the page’s choices'],
+    ['ai-why', 'Based on Hazmat placards: No'],
     ['ai-actions', 'Use this answerNo thanks'],
   ]);
   expect(box.querySelector('.ai-says b').textContent).toBe('No');
@@ -43,9 +42,10 @@ test('a suggestion: what the AI suggests, why, the extension’s checks, Use thi
 test('Use this answer says it is going in until it ends, then is as before', async () => {
   const going = later();
   let used = 0;
-  const card = { kind: 'suggest', choice: 'typing “7”', tip: null, why: 'Evidence checked · needs your review', checks: [], use: () => { used++; return going.promise; }, noThanks: () => {} };
+  const card = { kind: 'suggest', choice: 'typing “7”', tip: null, why: null, use: () => { used++; return going.promise; }, noThanks: () => {} };
   const { container } = render(<AiCard card={card} />);
   expect(container.querySelector('.ai-tip')).toBe(null);
+  expect(container.querySelector('.ai-why')).toBe(null, 'nothing cited, no line for it');
   const use = container.querySelector('.accept');
   act(() => { use.click(); });
   expect([used, use.disabled, use.textContent]).toEqual([1, true, 'Putting it in…']);

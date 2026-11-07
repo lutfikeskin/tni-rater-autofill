@@ -1792,7 +1792,8 @@ test('renderAi puts each suggestion\'s card on its question\'s row, and the rest
     aiDecisionEvent: (x, c, decision) => ({ type: 'ai_decision', decision }) };
   vm.runInNewContext(AI_ACTION_FUNCTIONS, context, { filename: 'sidepanel/sidepanel.js' });
   const ctx = { tabId: 1, page: '/quote', carrier: { id: 'synthetic' } };
-  const base = { controlKind: 'radio', options: ['Yes', 'No'], applyable: true, autoOk: false, checks: ['"Yes" is one of the page\'s choices'], evidenceSources: [{ basis: 'intake', path: 'operations.hazmat' }] };
+  const base = { controlKind: 'radio', options: ['Yes', 'No'], applyable: true, autoOk: false, checks: ['"Yes" is one of the page\'s choices'], evidenceSources: [{ basis: 'intake', path: 'operations.hazmat' }],
+    cited: ['Hazmat placards: No', 'TNI rule: No hazmat unless the intake says so.'] };
   const sure = { ...base, key: 'k1', label: 'Hazmat', choice: 'No', tip: 'The intake says no hazmat.', autoOk: true };
   const typed = { ...base, key: 'k2', label: 'Years', controlKind: 'text', choice: '7', autoOk: true, tip: '' };
   const done = { ...base, key: 'k3', label: 'Placards', choice: 'No', done: 'accepted' };
@@ -1806,9 +1807,9 @@ test('renderAi puts each suggestion\'s card on its question\'s row, and the rest
   assert.deepEqual(rows.map((r) => r.aiCard.kind), ['suggest', 'suggest', 'done', 'error', 'mine'], 'each on its row');
   // Each row drawn again (drawRow, report-view.jsx): its record's draw count.
   assert.deepEqual([rows.map((r) => r.v), state.rowsDrawn], [[1, 1, 1, 1, 1], 5], 'each row drawn again');
-  const { use, noThanks, checks, ...said } = rows[0].aiCard;
-  assert.deepEqual(said, { kind: 'suggest', choice: 'No', tip: 'The intake says no hazmat.', why: 'cited evidence: operations.hazmat · Evidence checked · needs your review' });
-  assert.deepEqual([...checks], ['"Yes" is one of the page\'s choices']);
+  const { use, noThanks, ...said } = rows[0].aiCard;
+  // Audit 2026-11-07, AI-12: what the pick rests on, as the agent reads it; no raw paths or fixed "checked" lines.
+  assert.deepEqual(said, { kind: 'suggest', choice: 'No', tip: 'The intake says no hazmat.', why: 'Based on Hazmat placards: No · TNI rule: No hazmat unless the intake says so.' });
   assert.deepEqual([rows[1].aiCard.choice, rows[1].aiCard.tip], ['typing “7”', null], 'a typed answer says so');
   assert.equal(rows[2].aiCard.text, 'Put in “No” (purple on the page).');
   assert.equal(rows[3].aiCard.text, 'The page didn\'t take the AI answer (the page changed). Answer it on the page.');

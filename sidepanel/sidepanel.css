@@ -456,7 +456,6 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .ai-says b { color: var(--ai-ink); }
 .ai-tip { color: var(--ink-secondary); text-wrap: pretty; }
 .ai-why { color: var(--ink-secondary); font-size: 11.5px; }
-.ai-check { color: var(--warning); font-size: 11px; }
 .ai-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .ai-actions .accept, .primary.ai { color: #fff; background: var(--ai); border-color: var(--ai); }
 .ai-actions .accept:hover:not(:disabled), .primary.ai:hover:not(:disabled) { background: var(--ai-dark); border-color: var(--ai-dark); }
