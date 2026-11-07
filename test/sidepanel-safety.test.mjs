@@ -2650,7 +2650,7 @@ test('Luna without a key says so above the list, and a failed review says it fai
 // were left, as counts.
 test('Luna gets the page’s other answers from the snapshot, and the log counts why questions were left', async () => {
   let sent;
-  const why = ['missing', 'unverified', 'unverified', 'chose', null];
+  const why = ['missing', 'unverified', 'unverified', 'chose', 'tooLarge', null];
   const t = assistHarness({ suggest: async (items, context) => {
     sent = context;
     return { suggestions: why.map((leaveWhy, i) => ({ key: `k${i}`, label: `Q${i}`, leave: !!leaveWhy, leaveWhy })), tokensIn: 1, tokensOut: 1, modelCalls: 1 };
@@ -2662,9 +2662,9 @@ test('Luna gets the page’s other answers from the snapshot, and the log counts
   ]]) }];
   await t.context.runAssist([{}], t.ctx);
   assert.deepEqual(sent.pageAnswers, [{ label: 'Liability limit', answer: '$1,000,000 CSL' }], 'choice answers only, not the questions asked or typed values');
-  const { leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified, leave } = t.logged[0];
-  assert.deepEqual({ leave, leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified },
-    { leave: 4, leaveMissing: 1, leaveConflict: 0, leaveChose: 1, leaveNoSource: 0, leaveUnverified: 2 });
+  const { leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified, leaveTooLarge, leave } = t.logged[0];
+  assert.deepEqual({ leave, leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified, leaveTooLarge },
+    { leave: 5, leaveMissing: 1, leaveConflict: 0, leaveChose: 1, leaveNoSource: 0, leaveUnverified: 2, leaveTooLarge: 1 });
 });
 
 // 2026-10-09 to 10-26: 12 of 58 page reviews ended "The page or intake changed", most on GEICO's

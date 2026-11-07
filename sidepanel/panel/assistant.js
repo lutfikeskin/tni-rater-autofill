@@ -415,9 +415,10 @@ async function runAssist(frames, ctx) {
 }
 
 // Why Luna left questions, as counts (luna.js leaveWhy): it said information is missing, saw a
-// conflict, chose to leave, cited nothing usable, or its answer failed the evidence check.
+// conflict, chose to leave, cited nothing usable, its answer failed the evidence check, or the
+// question was too large to ask at all.
 function leaveCounts(suggestions) {
-  const field = { missing: 'leaveMissing', conflict: 'leaveConflict', chose: 'leaveChose', noSource: 'leaveNoSource', unverified: 'leaveUnverified' };
+  const field = { missing: 'leaveMissing', conflict: 'leaveConflict', chose: 'leaveChose', noSource: 'leaveNoSource', unverified: 'leaveUnverified', tooLarge: 'leaveTooLarge' };
   const out = Object.fromEntries(Object.values(field).map((k) => [k, 0]));
   for (const x of suggestions) if (x.leave && field[x.leaveWhy]) out[field[x.leaveWhy]]++;
   return out;

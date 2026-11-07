@@ -905,6 +905,7 @@
  * @property {number} [leaveChose]  Luna left it without either
  * @property {number} [leaveNoSource]  it answered but cited nothing usable
  * @property {number} [leaveUnverified]  the evidence check refused its answer
+ * @property {number} [leaveTooLarge]  too large for one request even alone: not asked
  * @property {number} [tokensIn]
  * @property {number} [tokensOut]
  * @property {number} [modelCalls]

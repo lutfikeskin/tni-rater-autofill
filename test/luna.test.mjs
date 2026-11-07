@@ -288,15 +288,51 @@ test('groups also split for the largest legal verification while every request s
   assert.equal(result.suggestions.length, 12);
 });
 
-test('an invalid or individually oversized later question stops before all paid calls', async () => {
-  for (const last of [{ ...items[0], id: 'f13', label: 'Order MVR?' },
-    { ...items[0], id: 'f13', options: ['x'.repeat(MAX_REQUEST_CHARS)] }]) {
-    let calls = 0;
-    await assert.rejects(suggest([...questions(12), last], context, { apiKey: 'synthetic' }, {
-      call: async () => { calls++; },
-    }), AssistError);
-    assert.equal(calls, 0);
+test('an invalid later question stops before all paid calls', async () => {
+  let calls = 0;
+  await assert.rejects(suggest([...questions(12), { ...items[0], id: 'f13', label: 'Order MVR?' }], context, { apiKey: 'synthetic' }, {
+    call: async () => { calls++; },
+  }), AssistError);
+  assert.equal(calls, 0);
+});
+
+// Audit 2026-11-07, AI-02: one question too large for a request even alone (a long option list)
+// took Luna's review away from every other question on the page.
+test('a question too large even alone is left to the agent, said so, and the rest of the page is still reviewed', async () => {
+  const fields = questions(5);
+  const tooLong = [{ ...fields[1], options: ['x'.repeat(MAX_REQUEST_CHARS)] }, { ...fields[3], options: Array.from({ length: 60 }, (_, i) => `Option ${i}: ${'x'.repeat(2500)}`) }];
+  fields.splice(1, 1, tooLong[0]);
+  fields.splice(3, 1, tooLong[1]);
+  const asked = [];
+  const result = await suggest(fields, context, { apiKey: 'synthetic' }, { call: async ({ body }) => {
+    const state = JSON.parse(body.input[0].content);
+    if (state.proposed) return groupCheck(body);
+    asked.push(...Object.keys(state.fields));
+    return groupAnswer(body);
+  } });
+  assert.deepEqual(asked, ['f1', 'f3', 'f5'], 'the others are asked, in one group');
+  assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id), "in the page's order");
+  for (const x of result.suggestions.filter(x => ['f2', 'f4'].includes(x.id))) {
+    assert.deepEqual([x.leave, x.leaveWhy, x.choice, x.autoOk, x.nextStep], [true, 'tooLarge', null, false, null]);
+    assert.match(x.tip, /Too long for Luna.*Answer it on the page/);
   }
+  assert.ok(result.suggestions.filter(x => ['f1', 'f3', 'f5'].includes(x.id)).every(x => x.choice === 'No'));
+  assert.equal(result.modelCalls, 2, 'one proposal and one evidence check; nothing for the questions left');
+  // None that fits: the review stops before any paid call, as before.
+  let calls = 0;
+  await assert.rejects(suggest(tooLong, context, { apiKey: 'synthetic' }, { call: async () => { calls++; } }), /too much context/);
+  assert.equal(calls, 0);
+});
+
+// CodeRabbit on #365: a question Luna may not review is never left as "too large", even when the row
+// it names brings more sources than one request takes (that size check used to come first).
+test('an invalid question naming a row with too many facts still stops the review, not a too-large leave', async () => {
+  const ctx = { ...context, record: { ...context.record, drivers: [{}, Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`fact${i}`, `value ${i}`]))] } };
+  const invalid = { ...items[0], id: 'f2', key: 'mvr', label: 'Order MVR?', rulePath: 'drivers[1].cdl' };
+  let calls = 0;
+  await assert.rejects(suggest([questions(1)[0], invalid], ctx, { apiKey: 'synthetic' }, { call: async () => { calls++; } }),
+    e => e instanceof AssistError && /permitted fields/.test(e.message));
+  assert.equal(calls, 0);
 });
 
 test('incomplete verification fails closed without spending again on a higher output cap', async () => {
@@ -417,6 +453,27 @@ test('against a server from before the larger bound, the page is planned again a
     return state.proposed ? groupCheck(body) : groupAnswer(body);
   } });
   assert.ok(current.length < calls.length - 1);
+});
+
+test('planned again for an older server, a question too large for its bound is left and the others are still reviewed', async () => {
+  const fields = questions(3);
+  fields[1] = { ...fields[1], options: ['Yes', 'No', 'x'.repeat(OLD_SERVER_CHARS)] };
+  const calls = [];
+  const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
+  const result = await suggest(fields, context, { apiKey: '', proxy }, { call: (args) => callModel({ ...args, fetchImpl: oldServer(calls) }) });
+  assert.ok(calls[0] > OLD_SERVER_CHARS && calls.slice(1).every(n => n <= OLD_SERVER_CHARS));
+  assert.deepEqual(result.suggestions.map(x => [x.id, x.leaveWhy ?? x.choice]), [['f1', 'No'], ['f2', 'tooLarge'], ['f3', 'No']]);
+});
+
+// CodeRabbit on #365: refused by an older server with nothing reviewed yet, and nothing fits its
+// bound: the review stops with the size error, as when nothing fits at all, instead of leaves the
+// panel would keep for the next fill.
+test("when nothing fits an older server's bound, the review stops instead of leaving every question", async () => {
+  const fields = [{ ...questions(1)[0], options: ['Yes', 'No', 'x'.repeat(OLD_SERVER_CHARS)] }];
+  const calls = [];
+  const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
+  await assert.rejects(suggest(fields, context, { apiKey: '', proxy }, { call: (args) => callModel({ ...args, fetchImpl: oldServer(calls) }) }), /too much context/);
+  assert.equal(calls.length, 1, 'only the refused request');
 });
 
 test('HTTP integration sends the key only to OpenAI and hides provider errors', async () => {
