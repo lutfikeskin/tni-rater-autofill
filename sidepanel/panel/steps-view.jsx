@@ -69,6 +69,8 @@ function Dock({ act }) {
           <span id="dock-eyebrow" className="dock-eyebrow" data-tone={d?.tone ?? ''}>{d?.eyebrow ?? ''}</span>
           <span id="dock-title" className="dock-title">{d?.title}</span>
           <span id="dock-sub" className="dock-sub" hidden={!d?.sub}>{d?.sub ?? ''}</span>
+          {/* Automatic filling paused on this tab (renderDock's `paused`). */}
+          <span id="dock-paused" className="dock-paused" role="status" hidden={!d?.paused}>{d?.paused ?? ''}</span>
         </div>
         {DOCK_BUTTONS.map(({ id, className, text, act: does }) => {
           const shown = !!d && d.button === id;
