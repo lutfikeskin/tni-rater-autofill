@@ -412,7 +412,7 @@ test('the fill hands the kit the named-form check and what this tab\'s fills gav
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
   assert.match(body, /formUnit: unitNameFor\(carrier, extra\.expectPage \?\? pageOf\(state\.tab\?\.url\), active, state\.intake\?\.record\)/);
-  assert.match(body, /givenBefore: Object\.fromEntries\(\[\.\.\.\(state\.filled \?\? \[\]\)\]\.map\(\(\[key, x\]\) => \[key, \{ path: x\.path \?\? null, shown: x\.shown \?\? null \}\]\)\)/);
+  assert.ok(body.includes('givenBefore: { ...givenEarlier(state.tab?.id), ...Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },'));
 });
 
 
@@ -2353,6 +2353,28 @@ test('the panel opened again makes the tab\'s kept reports again, as of their fi
   assert.equal(later.rendered.length, 4, 'all three reports, then the check against the page');
   // The panel's tab switch makes them again after the tab's other records.
   assert.match(extractFunction('refreshTab'), /await restoreDoneActions\(state\.tab\?\.id\);\n\s+await restoreReports\(state\.tab\?\.id\);/);
+});
+
+// Audit 2026-11-07 (LEARN-07): the panel closed and opened again knew nothing of what the tab's fills
+// had given, so a choice the agent changed meanwhile (no panel heard it) read as the page's own, and
+// the next fill replaced it. What those fills gave comes back from the kept reports, for this intake.
+test('the panel opened again knows what the tab\'s fills gave before, from its kept reports', async () => {
+  const memory = { 'reports:7': { scope: 'intake-a', entries: [
+    { key: '7|Drivers', page: 'Drivers', active: {}, at: 100, frames: [{ fields: 1, filled: [{ key: 'ref:Radius', path: 'operations.radius', shown: '0-50 miles' }] }] },
+    { key: '7|Drivers2', page: 'Drivers', active: {}, at: 200, frames: [{ fields: 1, filled: [{ key: 'ref:Radius', path: 'operations.radius', shown: '51-200 miles' }] }] },
+    { key: '8|Elsewhere', page: 'Elsewhere', at: 300, frames: [{ fields: 1, filled: [{ key: 'ref:Other', path: 'x', shown: 'y' }] }] },
+  ] } };
+  const { context } = keptReportsHarness(memory, { state: { givenEarlier: new Map() } });
+  await context.restoreReports(7);
+  const kept = context.state.givenEarlier.get(7);
+  assert.deepEqual(JSON.parse(JSON.stringify({ scope: kept.scope, given: [...kept.given] })),
+    { scope: 'intake-a', given: [['ref:Radius', { path: 'operations.radius', shown: '51-200 miles' }]] }, 'the newest, this tab\'s only');
+  // fillOptions passes them to the kit, under this intake only, below what this panel's fills gave.
+  const ctx = { state: { givenEarlier: context.state.givenEarlier }, usage: { currentSession: () => ({ intakeId: 'intake-a' }) } };
+  vm.runInNewContext(extractFunction('givenEarlier'), ctx);
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.givenEarlier(7))), { 'ref:Radius': { path: 'operations.radius', shown: '51-200 miles' } });
+  ctx.usage.currentSession = () => ({ intakeId: 'intake-b' });
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.givenEarlier(7))), {});
 });
 
 // GEICO live run, 2026-10-28: Quote & Coverages' report kept property damage and UMPD, which a CSL
@@ -4498,6 +4520,24 @@ async function stateNoteHarness() {
   };
 }
 
+// Audit 2026-11-07 (LEARN-07): the recorder keeps the agent's edits no panel took and sends them
+// again; the panel says which it took. Only its own tab's, with an intake loaded.
+test('the panel answers the field changes it took, and only those', async () => {
+  const t = await stateNoteHarness();
+  const answers = [];
+  const change = (tabId) => t.context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/quote', changes: [{ key: 'ref:Radius', before: '', after: '3', agent: true }] },
+    { tab: { id: tabId }, frameId: 0 }, (reply) => answers.push([tabId, reply]));
+  change(7);
+  assert.deepEqual(JSON.parse(JSON.stringify(answers)), [[7, { ok: true }]]);
+  assert.deepEqual([...(t.state.agentKeys.get([...t.state.agentKeys.keys()][0]) ?? [])], ['ref:Radius']);
+  // Another tab's (the panel follows tab 7): not taken, not answered; the recorder keeps it.
+  change(8);
+  // No intake loaded: the same.
+  t.state.intake = null;
+  change(7);
+  assert.equal(answers.length, 1);
+});
+
 test('the panel warns when the quote state picked on the carrier page is not the intake\'s, across a reload', async () => {
   const t = await stateNoteHarness();
   t.pick('Utah');
@@ -4704,14 +4744,14 @@ test('a fill whose intake changed while the carrier worked is dropped: the new i
   assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value|clientA/, 'no client data in the error');
 });
 
-// FL live run 6, 2026-10-21 (the maintainer: "give back, then Recalculate"): GEICO put its own
-// coverage choices back over the fill's, and the agent picked each one again by hand. The agent's
-// Fill this page gives such an answer again (no `takenBack`); an automatic fill and Looks right keep
-// what the page shows (the carrier's `takenBack`, as fillOptions builds it).
-test('only the agent\'s Fill this page gives back an answer the page took back', async () => {
+// The maintainer, 2026-11-07 (LEARN-07), in place of 2026-10-21's "give back, then Recalculate": an
+// answer the page shows otherwise since the fill gave it may be the agent's, one no panel heard. The
+// agent's Fill this page, an automatic fill and Looks right all keep what the page shows (the
+// carrier's `takenBack`, as fillOptions builds it); only Replace existing answers gives it again.
+test('every fill, the agent\'s Fill this page too, keeps an answer the page took back', async () => {
   const runs = [];
   for (const args of [[], [{ auto: 'page' }], [{ confirmed: 'receipt' }]]) {
-    const t = fillHarness();
+    const t = fillHarness({ carrier: { id: 'geico', practice: false, layoutSteps: amwins.layoutSteps, keepTakenBack: ['Quote & Coverages'] } });
     t.context.fillOptions = (carrier, extra) => ({ takenBack: { steps: ['Quote & Coverages'], keys: {} }, ...extra });
     const run = t.context.fillPage(...args);
     await t.started;
@@ -4719,7 +4759,7 @@ test('only the agent\'s Fill this page gives back an answer the page took back',
     await run;
     runs.push(t.seen.options.takenBack);
   }
-  assert.deepEqual(JSON.parse(JSON.stringify(runs)), [null, { steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(runs)), [{ steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }]);
 });
 
 test('an intake correction during a fill makes its results stale too, for automatic fills as well', async () => {
@@ -5253,7 +5293,7 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
   for (const auto of [false, true]) for (const waitAt of ['pickListItem', 'retireAiOrigins']) for (const enabled of [false, true]) {
     const t = fillHarness({ carrier: { id: 'amwins', advance: amwins.advance, layoutSteps: amwins.layoutSteps } });
     const start = SIDEPANEL.indexOf('const fillOptions =');
-    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, t.context);
     t.ui['auto-advance'].checked = !enabled;
     t.context[waitAt] = async () => { await Promise.resolve(); t.ui['auto-advance'].checked = enabled; };
     const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
@@ -5265,7 +5305,7 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
   }
   const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, t.context);
   t.context.pendingAi = () => [{ approved: false }];
   const run = t.context.fillPage();
   await t.started;
@@ -5282,7 +5322,7 @@ test('a fill asks the kit to trace only while a recording runs on its tab, and n
   for (const [recording, traced] of [[{ tabId: 7, stopping: false }, true], [{ tabId: 8, stopping: false }, false], [{ tabId: 7, stopping: true }, false], [null, false]]) {
     const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
     const start = SIDEPANEL.indexOf('const fillOptions =');
-    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, t.context);
     t.context.state.recording = recording;
     const run = t.context.fillPage();
     await t.started;
@@ -5300,7 +5340,7 @@ test('a fill asks the kit to trace only while a recording runs on its tab, and n
 test('Check answers before Continue reaches the kit as hold and is never logged', async () => {
   const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, t.context);
   t.ui['check-continue'] = { checked: true };
   t.ui.overwrite.checked = true;
   let run = t.context.fillPage();
@@ -5500,7 +5540,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   // The kit found another page as it began (pagekit `pageMoved`): nothing is remembered from it.
   const u = fillHarness();
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, u.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, u.context);
   u.context.chrome = { tabs: { get: async (id) => ({ id, url: 'https://carrier.test/quote-A' }) } };
   const run = u.context.fillPage();
   await u.started;
@@ -5546,7 +5586,7 @@ test('Stop pressed before the kit is asked to fill means no fill at all', async 
   // The fill's run id goes to the kit, so a Stop that reaches a frame first still counts.
   const u = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, u.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, u.context);
   const run = u.context.fillPage();
   await u.started;
   assert.match(u.seen.options.run, /^[0-9a-f-]{36}$/);
@@ -7182,7 +7222,7 @@ test('a GEICO unit list drawn gets a follow-up fill with either switch on', () =
 function fillOptionsOf(state, carrier, active, { autoAdvance = false, unitsListed = false } = {}) {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const context = { state, URL, knownStep, advanceFor, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
-  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('switchOn')}\nglobalThis.fillOptions = fillOptions;`, context);
+  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\n${extractFunction('switchOn')}\nglobalThis.fillOptions = fillOptions;`, context);
   return context.fillOptions(carrier, {}, autoAdvance, active, unitsListed);
 }
 

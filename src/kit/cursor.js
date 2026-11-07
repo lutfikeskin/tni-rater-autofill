@@ -468,12 +468,25 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   running = thisFill;
   // Stopped by the agent before it began (the panel was still preparing): nothing is done.
   if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
+  // A real user edit during a fill must survive even while the recorder is paused: its field is
+  // protected (also from this fill's later rounds) and the fill stops. The guard is on from before
+  // the fill's first wait for the page, as the recorder is paused already then: an edit in that
+  // wait (seconds, on a page waiting on its server) was neither the recorder's nor the guard's, and
+  // the fill put its own choice over it (LEARN-07, 2026-11-07). It stays on until the fill returns,
+  // so an edit during the wait before Continue stops that too.
+  const releaseEditGuard = guardEdits((key) => {
+    state.skipKeys.add(key);
+    if (!state.report.protectedKeys.includes(key)) state.report.protectedKeys.push(key);
+    halt(EDIT_HALT);
+  });
   phase('reading');
   const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
-  const settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' });
+  let settled;
+  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); throw e; }
   phase(null);
   // Stopped while the page settled: nothing was done.
   if (!settled || state.report.halted) {
+    releaseEditGuard();
     if (!settled) halt('The page is still waiting on its server. Review and retry.');
     state.report.stepKey = stepKey();
     if (running === thisFill) running = null;
@@ -486,6 +499,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // now, once.
   if (!restarted && window !== window.top && currentPage() !== startPage && currentPage() === topPageNow()) {
     adapter().offRequest(countAjax);
+    releaseEditGuard();
     if (running === thisFill) running = null;
     return fill(givenPlan, { ...arguments[1], restarted: true });
   }
@@ -499,14 +513,6 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // A plan kept to steps on a page whose step bar can't be read (STEP_UNREAD_HALT): the same.
   const steppedPlan = plan.some((s) => s.steps?.length);
   state.unreadStep = false;
-  // A real user edit during a fill must survive even while the recorder is paused: its field is
-  // protected (also from this fill's later rounds) and the fill stops. The guard stays on until
-  // the fill returns, so an edit during the wait before Continue stops that too.
-  const releaseEditGuard = guardEdits((key) => {
-    state.skipKeys.add(key);
-    if (!state.report.protectedKeys.includes(key)) state.report.protectedKeys.push(key);
-    halt(EDIT_HALT);
-  });
   // A button the agent clicks during the fill (Next, "+", Looks Good) moves the page on their
   // click: this fill clicks no Continue and no helper after it (FL live run 4, 2026-10-21: the
   // agent's Next, then a fill's, while GEICO still worked on the first).
@@ -911,6 +917,16 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         // An unticked box that should stay unticked already has its answer (live run 2026-10-09:
         // every unticked box was "filled" again on each pass).
         const answered = hasValue(c) || (c.kind === 'checkbox' && step.value === false && !c.el.checked);
+        // An answer a fill on this tab gave here (`givenBefore`: this field, for this rule's path)
+        // that the field now shows otherwise, and that this fill hasn't given: the extension didn't
+        // write what is there, so it is the agent's (an edit the panel never heard: closed, on
+        // another tab, a page no recorder was in) or the page's. Kept and flagged, never replaced
+        // (LEARN-07, 2026-11-07), unless the agent asks to replace answers (`overwrite`). One the
+        // page took back (`tookBack`) is kept as that, with its own note.
+        const givenHere = answered && !overwrite ? givenBefore?.[fieldKey(c)] : null;
+        const changedSince = !!givenHere && givenHere.path != null && givenHere.path === step.path && givenHere.shown != null
+          && loose(givenHere.shown) !== loose(answerShown(c)) && !agreesWith(step, c) && !tookBack
+          && !state.refill.has(step.id) && !state.report.filled.some((x) => x.stepId === step.id);
         // A street an earlier fill left without a suggestion is not answered while the box holds
         // what that fill left: it stays the agent's, never taken as the page's.
         if (step.checkNumber && unpicked.has(c.el) && unpicked.get(c.el) === c.el.value) {
@@ -935,7 +951,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         // replaced with this unit's answer (W43-38, Progressive Add Driver, 2026-10-22: another
         // driver's name and date of birth were kept as differing and left to the agent).
         const otherUnits = answered && !agreesWith(step, c) && givenForOtherUnit(step, c);
-        if (legacyHold || sameAnswer || presetKept || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !state.refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+        if (legacyHold || sameAnswer || presetKept || changedSince || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !state.refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           if (notYet()) continue;
           state.report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
@@ -944,6 +960,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             state.handled.set(step.id, { status: 'needs', note });
           } else if (tookBack) {
             const note = `The page changed this back after it was filled (${step.name}): left as it is. Check it.`;
+            state.report.checks.push({ ...item, note, ...describe(c) });
+            state.handled.set(step.id, { status: 'needs', note });
+          } else if (changedSince) {
+            const note = `This was changed after it was filled (${step.name}): left as it is. Check it.`;
             state.report.checks.push({ ...item, note, ...describe(c) });
             state.handled.set(step.id, { status: 'needs', note });
           } else if (step.keepChoice && isChoice && !agreesWith(step, c)) {
