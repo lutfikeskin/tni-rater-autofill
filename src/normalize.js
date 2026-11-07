@@ -1338,6 +1338,26 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   return { record, warnings, stats: { fields: Object.keys(raw).length, filled }, rows, readFrom };
 }
 
+// "No", "None" or "N/A" the agent typed into the USDOT or MC box (any case, with or without a dot
+// or slash, as on the form: R14) is no number, saved as the intake's own No is (the maintainer,
+// 2026-11-07, answer 1 on PR #367): the box empty and `noDot` (`noMc`) true, with the intake's note
+// saying so, so the carriers' has-a-USDOT-number questions answer No instead of reading "No" as a
+// number. Before, the box kept "No", and Progressive answered that the customer has a USDOT number.
+// True when the edit was one.
+const TYPED_NO_NUMBER = /^(?:no|none|n\s*[./]?\s*a)\.?$/i;
+export function noNumberEdit(intake, path) {
+  const box = { 'applicant.dot': ['noDot', 'dot.none', 'USDOT'], 'applicant.mc': ['noMc', 'mc.none', 'MC'] }[path];
+  const typed = intake.record.applicant?.[path.slice('applicant.'.length)];
+  if (!box || typeof typed !== 'string' || !TYPED_NO_NUMBER.test(typed.replace(/\s+/g, ' ').trim())) return false;
+  const [flag, code, name] = box;
+  set(intake.record, path, null);
+  intake.record.applicant[flag] = true;
+  if (!intake.warnings.some((w) => w.code === code)) {
+    intake.warnings.push({ code, path, level: 'info', msg: `${name} # "${typed.trim()}": the client has no ${name} number.` });
+  }
+  return true;
+}
+
 // Parses a value typed into the review panel, according to the field's kind. A state is saved as
 // its code ("Florida" → "FL"; TNI, 2026-11-03: the carriers' state rules read only the code); text
 // that isn't a state stays, upper-cased, like an unreadable date or amount.
