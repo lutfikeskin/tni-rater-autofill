@@ -277,15 +277,19 @@ async function agentEdit(path, after, kind) {
   // The agent's own Owner drives answers "Does the owner drive?" (W46-02: answers/owner.js ownerNoPending), and
   // its check is done (answers/owner.js ownerDrivesAnswered).
   if (path === 'applicant.ownerDrives') { ownerDrivesAnswered(state.intake, { edit: path }); renderWarnings(); }
-  // A value derived from this one (radius → miles, year established → years in business)
-  // follows the edit, unless the agent set it here themselves; its row in the client details
-  // shows the new value, shown as it fills in. One that empties stays until the drawer is said
-  // again without it (it would go under the agent's eyes as they typed).
-  const derived = [...rederive(state.intake.record, path, { keep: edited })];
+  // Whether it was flagged, for the log: before the checks follow the edit.
+  const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
+  // A value derived from this one (radius → miles, claims box → any claims, notes → ownership and
+  // years in business, USDOT box → no USDOT) follows the edit, unless the agent set it here
+  // themselves, and so do the checks that came with it (normalize.js rederive); its row in the
+  // client details shows the new value, shown as it fills in. One that empties stays until the
+  // drawer is said again without it (it would go under the agent's eyes as they typed).
+  const checks = [...state.intake.warnings];
+  const derived = [...rederive(state.intake.record, path, { keep: edited, intake: state.intake })];
   if (derived.length) renderSections({ keep: derived });
+  if (state.intake.warnings.length !== checks.length || state.intake.warnings.some((w, i) => w !== checks[i])) renderWarnings();
   intakeEdited();
   // Log that the agent corrected the intake here (and whether it was flagged), not the value.
-  const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
   usage.log({ type: 'intake_edit', path, kind, change: before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
   profileLater();
   await save();

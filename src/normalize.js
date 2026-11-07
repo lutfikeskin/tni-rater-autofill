@@ -818,6 +818,136 @@ const KNOWN_FIELDS = new Set([
   ]),
 ]);
 
+// --- Readings normalizeIntake and rederive share -----------------------------------------------
+// Each reads the record as it stands, the intake's or as the agent corrected it, so an answer
+// derived from another one and the checks that come with it are the same at load and after an edit.
+
+// "No" in the USDOT or MC box, and "None" or "N/A" (any case, with or without a dot or slash: n/a,
+// NA, N.A.), read as written: the client has none (TNI, 2026-10-26: answer to PR question, R14).
+const NO_NUMBER = /^(?:no|none|n\s*[./]?\s*a)\.?$/i;
+const numberBoxAsWritten = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
+const numberBoxSaysNo = (v) => NO_NUMBER.test(numberBoxAsWritten(v));
+/** The info note for a USDOT (`dot`) or MC (`mc`) box saying the client has none. */
+function noNumberNotes(which, box) {
+  if (!numberBoxSaysNo(box)) return [];
+  const [path, label, name] = which === 'dot' ? ['applicant.dot', 'USDOT #', 'USDOT'] : ['applicant.mc', 'MC #', 'MC'];
+  return [{ code: `${which}.none`, path, level: 'info', msg: `${label} "${numberBoxAsWritten(box)}": the client has no ${name} number.` }];
+}
+
+/** The claims box's first line as the claims question's answer (Yes; No, None, No claim(s) or a
+ * clean record: CLAIMS_CLEAN; else unset), and its other lines as notes. */
+function claimsAnswer(text) {
+  if (!text) return { hasClaims: null, notes: null };
+  const lines = text.split('\n');
+  const hasClaims = /^(no|none|no claims?)\.?$/i.test(lines[0]) || CLAIMS_CLEAN.test(lines[0]) ? false
+    : /^yes\b/i.test(lines[0]) ? true : null;
+  const notes = (hasClaims == null ? lines : lines.slice(1)).filter(Boolean);
+  return { hasClaims, notes: notes.length ? notes.join('\n') : null };
+}
+
+/** The ownership the claims box's other answers and the Additional Notes box give a blank ownership
+ * box, when unambiguous (ownershipFromNotes), and the box it was read from; else the check quoting
+ * the lines. Null when the notes say nothing about ownership. */
+function ownershipReading(record) {
+  const own = ownershipFromNotes(otherNotes(record));
+  if (!own) return null;
+  const word = new RegExp(OWNERSHIP_WORDS.source, 'i');
+  const fields = own.value ? [['claims_details', record.claims?.notes], ['additional_notes', record.notes?.text]]
+    .filter(([, text]) => word.test(text ?? '')).map(([field]) => field) : [];
+  return { value: own.value, fields, warnings: own.value ? [] : [{ code: 'ownership.notes', path: 'operations.vehicleOwnership', level: 'check', msg: `Notes mention ownership ("${own.lines}"). Set it yourself.` }] };
+}
+// No ownership, and no other item about it: the check for a blank box.
+const ownershipMissing = (record, warnings) => (record.vehicles?.length && !record.operations?.vehicleOwnership
+  && !warnings.some((w) => w.path === 'operations.vehicleOwnership')
+  ? [{ code: 'ownership.missing', path: 'operations.vehicleOwnership', level: 'check', msg: 'Not selected.' }] : []);
+
+/** The radius box's miles (parseRadius) and the check for a radius that gives none. */
+function radiusReading(radius) {
+  const { miles, kind } = parseRadius(radius);
+  const warning = {
+    missing: ['radius.missing', 'operations.radius', 'No radius of operations.'],
+    range: ['radius.range', 'operations.radiusMiles', `"${radius}" is a range. Enter the farthest one-way miles.`],
+    unit: ['radius.unit', 'operations.radiusMiles', `"${radius}" isn't in miles. Enter the miles.`],
+    text: ['radius.not-miles', 'operations.radius', `"${radius}" isn't miles. Enter miles or a band (e.g. 500+).`],
+  }[kind];
+  return { miles, warnings: warning ? [{ code: warning[0], path: warning[1], level: 'check', msg: warning[2] }] : [] };
+}
+
+/**
+ * Years in business the notes state, when the year established gives none, and its check; else the
+ * blank standard's check. The record's applicant (its years in business from the year established,
+ * and the years under own authority) is read, not changed.
+ * @returns {{ values: Record<string, unknown>, readFrom: Record<string, string[]>, warnings: object[] }}
+ */
+function yearsInBusinessReading(a, claimsText, notesText, year) {
+  const values = {};
+  const readFrom = {};
+  const warnings = [];
+  const check = (code, path, msg) => warnings.push({ code, path, level: 'check', msg });
+  // No year established on the form: the years in business the claims box or Additional Notes state,
+  // with a check quoting them (TNI, 2026-10-26, W44-09). They win over years under own authority
+  // for years in business (TNI, 2026-10-26: answer to PR question); the authority years are another
+  // fact and stay as the form gives them, for their own questions. Never read from a business phrase.
+  const stated = a.yearsInBusiness == null
+    ? yearsInBusinessFromNotes([['claims_details', claimsText], ['additional_notes', notesText]], year) : null;
+  if (stated) {
+    readFrom['applicant.yearsInBusiness'] = stated.fields;
+    const boxName = (field) => (field === 'additional_notes' ? 'Additional Notes box' : 'claims box');
+    const box = boxName(stated.fields[0]);
+    const short = (q) => (q.length > 80 ? `${q.slice(0, 79).trimEnd()}…` : q);
+    const quote = short(stated.quote);
+    const authority = a.yearsExperience == null ? '' : ` The years under own authority (${a.yearsExperience}) stay apart.`;
+    if (stated.range) {
+      // A range whose ends differ (TNI, 2026-10-27: answer to PR question V7): the agent's on every
+      // carrier, neither the blank standard nor the authority years; the check names the line.
+      values.yearsInBusinessRange = true;
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${box} says "${quote}", a range ("${stated.reading}"), so years in business is left to you.${authority}`);
+    } else if (stated.unread) {
+      // A statement it doesn't read, or figures that disagree (TNI, 2026-10-27: round-6 answer 4):
+      // the agent's like a range, neither the blank standard nor the authority years.
+      values.yearsInBusinessUnread = true;
+      const boxes = stated.fields.map(boxName).join(' and the ');
+      const said = (stated.quotes ?? [stated.quote]).map((q) => `"${short(q)}"`).join(' and ');
+      const why = { disagree: 'figures that disagree', mixed: 'not all read as a number of years' }[stated.kind ?? ''] ?? 'not read as a number of years';
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${boxes} ${stated.fields.length > 1 ? 'say' : 'says'} ${said}: ${why}, so years in business is left to you.${authority}`);
+    } else {
+      values.yearsInBusiness = stated.years;
+      if (stated.established != null) { values.yearEstablished = stated.established; readFrom['applicant.yearEstablished'] = stated.fields; }
+      // How a figure that isn't plain years was read: "over 3 years" as 3, "18 months" as 1 (R11).
+      const reading = stated.reading ? ` ("${stated.reading}" read as ${stated.years})` : '';
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${box} says "${quote}": years in business is ${stated.years}${reading}${stated.established != null ? `, established ${stated.established}` : ''}. Confirm.${authority}`);
+    }
+  }
+  // TNI's standard for a blank (2026-10-09): 0 years, established this year (AmWINS' rules fill
+  // it, GEICO's leave it to the agent; the record stays blank, so a later answer here replaces it).
+  // Not for a range in the notes (V7) or a statement of years in business they don't settle
+  // (round-6 answer 4), which are the agent's: only for notes that say nothing of the business's time.
+  if ((values.yearsInBusiness ?? a.yearsInBusiness) == null && a.yearsExperience == null && !values.yearsInBusinessRange && !values.yearsInBusinessUnread) {
+    check('years-in-business.default', 'applicant.yearsInBusiness', `Blank. AmWINS gets 0 years (New Venture), established ${year}; GEICO's question is yours.`);
+  }
+  return { values, readFrom, warnings };
+}
+
+/** The time with the current insurer a line of the notes gives, beyond the 1-3 years standard. */
+function tenureChecks(record) {
+  // A time with the current insurer beyond the 1-3 years standard (AmWINS' 1 TO 2 YEARS): the
+  // carriers' how-long questions take its band, the line shown here, where it was read (TNI,
+  // 2026-10-26: answer to PR question, W44-29). From 2 years: AmWINS' 1 TO 2 and 2 TO 3 YEARS share
+  // 2, and a time on a band edge takes the upper band (TNI, 2026-10-26: answer to PR question, round 2, R5).
+  // An expired policy: both carriers leave the question to the agent (TNI, 2026-10-26: answer to PR
+  // question, round 3, T6), so the check says that instead of a band. So does a General Liability,
+  // Cargo or Other policy (TNI, 2026-10-27: answer to PR question, round 5, V8).
+  const tenure = insurerTenure(record);
+  if (!tenure || tenure.years < 2) return [];
+  const inNotes = String(record.notes?.text ?? '').split('\n').map((s) => s.trim()).includes(tenure.line);
+  const then = priorPolicyExpired(record)
+    ? 'The policy has expired, so time with the insurer is yours (TNI).'
+    : priorPolicyNotAuto(record.priorInsurance?.[0])
+      ? 'The policy isn\'t auto, so time with the insurer is yours (TNI).'
+      : 'Its band is filled, at least 1-3 years (TNI); between two bands, yours.';
+  return [{ code: 'prior.tenure', path: inNotes ? 'notes.text' : 'claims.text', level: 'check', msg: `Time with insurer: "${tenure.line.slice(0, 160)}". ${then}` }];
+}
+
 /**
  * @param {Record<string, string|boolean>} raw  field name -> value, from readIntakeFields()
  * @param {{ today?: Date }} [opts]
@@ -845,8 +975,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // N.A.) are an explicit No too, exactly like "no" (TNI, 2026-10-26: answer to PR question, R14).
   // `txt` reads "N/A", "NA" and "None" as blank, so the box is read as written. A cut-off "N/" is
   // not one of them (W44-08, not decided): it stays a malformed number, as before.
-  const asWritten = (k) => (typeof raw[k] === 'string' ? raw[k].replace(/\s+/g, ' ').trim() : '');
-  const saysNoNumber = (k) => /^(?:no|none|n\s*[./]?\s*a)\.?$/i.test(asWritten(k));
+  const saysNoNumber = (k) => numberBoxSaysNo(raw[k]);
   // Numbers that should be digits only: note when stray characters were dropped.
   const idNumber = (k, path, label, pattern) => {
     const s = txt(k);
@@ -971,51 +1100,14 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (!a.dot && !a.mc && a.mcDotWithin60Days === true) {
     info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
   }
-  if (a.noDot) info('dot.none', 'applicant.dot', `USDOT # "${asWritten('dot_number')}": the client has no USDOT number.`);
-  if (a.noMc) info('mc.none', 'applicant.mc', `MC # "${asWritten('mc_number')}": the client has no MC number.`);
+  warnings.push(...noNumberNotes('dot', raw.dot_number), ...noNumberNotes('mc', raw.mc_number));
   if (NEW_AUTHORITY.test(txt('years_experience') ?? '')) info('years-experience.new', 'applicant.yearsExperience', `Years under own authority "${txt('years_experience')}": 0 years, a new authority.`);
   else if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `"${txt('years_experience')}" isn't a number.`);
-  // No year established on the form: the years in business the claims box or Additional Notes state,
-  // with a check quoting them (TNI, 2026-10-26, W44-09). They win over years under own authority
-  // for years in business (TNI, 2026-10-26: answer to PR question); the authority years are another
-  // fact and stay as the form gives them, for their own questions. Never read from a business phrase.
-  const stated = a.yearsInBusiness == null
-    ? yearsInBusinessFromNotes([['claims_details', record.claims.text], ['additional_notes', record.notes.text]], year) : null;
-  if (stated) {
-    readFrom['applicant.yearsInBusiness'] = stated.fields;
-    const boxName = (field) => (field === 'additional_notes' ? 'Additional Notes box' : 'claims box');
-    const box = boxName(stated.fields[0]);
-    const short = (q) => (q.length > 80 ? `${q.slice(0, 79).trimEnd()}…` : q);
-    const quote = short(stated.quote);
-    const authority = a.yearsExperience == null ? '' : ` The years under own authority (${a.yearsExperience}) stay apart.`;
-        if (stated.range) {
-      // A range whose ends differ (TNI, 2026-10-27: answer to PR question V7): the agent's on every
-      // carrier, neither the blank standard nor the authority years; the check names the line.
-      a.yearsInBusinessRange = true;
-      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${box} says "${quote}", a range ("${stated.reading}"), so years in business is left to you.${authority}`);
-    } else if (stated.unread) {
-      // A statement it doesn't read, or figures that disagree (TNI, 2026-10-27: round-6 answer 4):
-      // the agent's like a range, neither the blank standard nor the authority years.
-      a.yearsInBusinessUnread = true;
-      const boxes = stated.fields.map(boxName).join(' and the ');
-      const said = (stated.quotes ?? [stated.quote]).map((q) => `"${short(q)}"`).join(' and ');
-      const why = { disagree: 'figures that disagree', mixed: 'not all read as a number of years' }[stated.kind ?? ''] ?? 'not read as a number of years';
-      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${boxes} ${stated.fields.length > 1 ? 'say' : 'says'} ${said}: ${why}, so years in business is left to you.${authority}`);
-    } else {
-      a.yearsInBusiness = stated.years;
-      if (stated.established != null) { a.yearEstablished = stated.established; readFrom['applicant.yearEstablished'] = stated.fields; }
-      // How a figure that isn't plain years was read: "over 3 years" as 3, "18 months" as 1 (R11).
-      const reading = stated.reading ? ` ("${stated.reading}" read as ${stated.years})` : '';
-      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${box} says "${quote}": years in business is ${stated.years}${reading}${stated.established != null ? `, established ${stated.established}` : ''}. Confirm.${authority}`);
-    }
-  }
-  // TNI's standard for a blank (2026-10-09): 0 years, established this year (AmWINS' rules fill
-  // it, GEICO's leave it to the agent; the record stays blank, so a later answer here replaces it).
-  // Not for a range in the notes (V7) or a statement of years in business they don't settle
-  // (round-6 answer 4), which are the agent's: only for notes that say nothing of the business's time.
-  if (a.yearsInBusiness == null && a.yearsExperience == null && !a.yearsInBusinessRange && !a.yearsInBusinessUnread) {
-    check('years-in-business.default', 'applicant.yearsInBusiness', `Blank. AmWINS gets 0 years (New Venture), established ${year}; GEICO's question is yours.`);
-  }
+  // No year established on the form: the years in business the notes state (yearsInBusinessReading).
+  const years = yearsInBusinessReading(a, record.claims.text, record.notes.text, year);
+  Object.assign(a, years.values);
+  Object.assign(readFrom, years.readFrom);
+  warnings.push(...years.warnings);
 
   // --- Garaging address -----------------------------------------------------------------------
   const addr = parseAddress(raw.garaging_address);
@@ -1196,12 +1288,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
 
   // --- Operations -----------------------------------------------------------------------------
   // "Unlimited", long haul, OTR, 48 states: no mileage; the carrier rules pick their widest band.
-  const radius = parseRadius(ops.radius);
+  const radius = radiusReading(ops.radius);
   ops.radiusMiles = radius.miles;
-  if (radius.kind === 'missing') check('radius.missing', 'operations.radius', 'No radius of operations.');
-  else if (radius.kind === 'range') check('radius.range', 'operations.radiusMiles', `"${ops.radius}" is a range. Enter the farthest one-way miles.`);
-  else if (radius.kind === 'unit') check('radius.unit', 'operations.radiusMiles', `"${ops.radius}" isn't in miles. Enter the miles.`);
-  else if (radius.kind === 'text') check('radius.not-miles', 'operations.radius', `"${ops.radius}" isn't miles. Enter miles or a band (e.g. 500+).`);
+  warnings.push(...radius.warnings);
   if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.');
   // (TNI, 2026-10-26: answer to PR question) Neither check on an NTL quote, which gets no filings:
   // the `coverage.ntl-filings` info item below says why the carriers answer No instead.
@@ -1276,24 +1365,13 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // Clients use this box for answers to other questions too. A leading yes/no answers the claims
   // question ("CLEAN" is a No: CLAIMS_CLEAN); everything else is kept as notes (no warning) for
   // the agent and the AI assistant.
-  const claims = record.claims.text;
-  if (claims) {
-    const lines = claims.split('\n');
-    if (/^(no|none|no claims?)\.?$/i.test(lines[0]) || CLAIMS_CLEAN.test(lines[0])) record.claims.hasClaims = false;
-    else if (/^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
-    const notes = (record.claims.hasClaims == null ? lines : lines.slice(1)).filter(Boolean);
-    record.claims.notes = notes.length ? notes.join('\n') : null;
-  } else check('claims.blank', 'claims.text', 'Claims question left blank.');
-  // The claims box's other answers and the Additional Notes box are read alike.
-  const notes = otherNotes(record);
-  if (notes) {
-    // A blank ownership answer that turns up in the notes ("Financed") is the ownership answer,
-    // when the note is unambiguous (ownershipFromNotes); otherwise the agent reads it. The box
-    // itself always wins over the notes.
-    const own = ops.vehicleOwnership ? null : ownershipFromNotes(notes);
-    if (own?.value) ops.vehicleOwnership = own.value;
-    else if (own) check('ownership.notes', 'operations.vehicleOwnership', `Notes mention ownership ("${own.lines}"). Set it yourself.`);
-  }
+  Object.assign(record.claims, claimsAnswer(record.claims.text));
+  if (!record.claims.text) check('claims.blank', 'claims.text', 'Claims question left blank.');
+  // The claims box's other answers and the Additional Notes box are read alike: a blank ownership
+  // answer that turns up there is read from them (ownershipReading). The box itself always wins.
+  const ownership = ops.vehicleOwnership ? null : ownershipReading(record);
+  if (ownership?.value) { ops.vehicleOwnership = ownership.value; readFrom['operations.vehicleOwnership'] = ownership.fields; }
+  if (ownership) warnings.push(...ownership.warnings);
   // A time with the current insurer beyond the 1-3 years standard (AmWINS' 1 TO 2 YEARS): the
   // carriers' how-long questions take its band, the line shown here, where it was read (TNI,
   // 2026-10-26: answer to PR question, W44-29). From 2 years: AmWINS' 1 TO 2 and 2 TO 3 YEARS share
@@ -1301,16 +1379,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // An expired policy: both carriers leave the question to the agent (TNI, 2026-10-26: answer to PR
   // question, round 3, T6), so the check says that instead of a band. So does a General Liability,
   // Cargo or Other policy (TNI, 2026-10-27: answer to PR question, round 5, V8).
-  const tenure = insurerTenure(record);
-  if (tenure && tenure.years >= 2) {
-    const inNotes = String(record.notes?.text ?? '').split('\n').map((s) => s.trim()).includes(tenure.line);
-    const then = priorPolicyExpired(record)
-      ? 'The policy has expired, so time with the insurer is yours (TNI).'
-      : priorPolicyNotAuto(record.priorInsurance?.[0])
-        ? 'The policy isn\'t auto, so time with the insurer is yours (TNI).'
-        : 'Its band is filled, at least 1-3 years (TNI); between two bands, yours.';
-    check('prior.tenure', inNotes ? 'notes.text' : 'claims.text', `Time with insurer: "${tenure.line.slice(0, 160)}". ${then}`);
-  }
+  warnings.push(...tenureChecks(record));
   // Non-trucking liability (NTL) is named only in the notes: "NTL", "non-trucking" (also written
   // "non tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the
   // agent decides, and nothing is added until they set it to Yes.
@@ -1327,9 +1396,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (ntlNoDotFilings(record) && (ops.filingsRequired === true || record.applicant.dot)) {
     info('coverage.ntl-filings', ops.filingsRequired === true ? 'operations.filingsRequired' : 'applicant.dot', ntlFilingsMessage(record));
   }
-  if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
-    check('ownership.missing', 'operations.vehicleOwnership', 'Not selected.');
-  }
+  warnings.push(...ownershipMissing(record, warnings));
 
   const unknown = Object.keys(raw).filter((k) => !KNOWN_FIELDS.has(k) && clean(raw[k]) != null && raw[k] !== false);
   if (unknown.length) info('form.unknown-fields', '', `Fields not read yet: ${unknown.join(', ')}.`);
@@ -1354,32 +1421,136 @@ export function parseEdit(kind, text) {
   }
 }
 
-// The scalars normalizeIntake derives from another field, recomputed after the agent corrects
-// the source in the panel (set first, then rederive). Only the source triggers it: an edit to
-// the derived field itself ("Radius (miles)") is the agent's value and is left as typed, also
-// when the source is edited afterwards (the panel passes the paths the agent edited as `keep`).
-const DERIVED = {
-  // Non-Trucking on auto liability is an NTL request; another answer leaves NTL to the agent.
-  'coverage.autoLiability': ['coverage.ntl', (record) => (nonTruckingAnswer(record.coverage?.autoLiability) ? true : null)],
-  'operations.radius': ['operations.radiusMiles', (record) => parseRadius(record.operations?.radius).miles],
-  'applicant.yearEstablished': ['applicant.yearsInBusiness', (record, year) => {
-    const est = record.applicant?.yearEstablished;
-    return Number.isInteger(est) && est >= 1900 && est <= year ? year - est : null;
-  }],
-};
+// What normalizeIntake derives from another answer, recomputed from the record as the agent
+// corrected it in the panel (set first, then rederive), with the checks that come with it (audit
+// 2026-11-07, DATA-04). The agent's own values always win: an answer the agent set ("Radius
+// (miles)", "Any claims / violations") is never recomputed, also when its source is edited
+// afterwards (the panel passes the paths the agent edited as `keep`). Each derivation names the
+// answers it reads (`from`) and gives, for the record as it stands, the `values` it derives by path,
+// where an answer was read when not from its own box (`readFrom`, null for its own box), and the
+// `checks` it makes, in place of the ones of its `codes`; null leaves everything as it is.
+/** @type {{ from: string[], codes?: string[], run: (record: any, ctx: { mine: (path: string) => boolean, readFrom: Record<string, string[]> | null, year: number }) => null | { values: Record<string, unknown>, readFrom?: Record<string, string[] | null>, checks?: object[] } }[]} */
+const DERIVATIONS = [
+  // The claims box's first line answers the claims question; its other lines are its notes.
+  { from: ['claims.text'], run: (r) => {
+    if (!r.claims) return null;
+    const { hasClaims, notes } = claimsAnswer(cleanMultiline(r.claims.text));
+    return { values: { 'claims.hasClaims': hasClaims, 'claims.notes': notes } };
+  } },
+  // The ownership the notes give an ownership box the form left blank (also one read from them
+  // before); a box the form filled wins over the notes.
+  { from: ['claims.notes', 'notes.text'], codes: ['ownership.notes', 'ownership.missing'], run: (r, { mine, readFrom }) => {
+    const ops = r.operations;
+    if (!ops || mine('operations.vehicleOwnership')) return null;
+    if (ops.vehicleOwnership != null && !readFrom?.['operations.vehicleOwnership']) return null;
+    const own = ownershipReading(r);
+    const value = own?.value ?? null;
+    const checks = own?.warnings ?? [];
+    return { values: { 'operations.vehicleOwnership': value }, readFrom: { 'operations.vehicleOwnership': value ? own.fields : null },
+      checks: [...checks, ...ownershipMissing({ ...r, operations: { ...ops, vehicleOwnership: value } }, checks)] };
+  } },
+  // Years in business: from the year established the form or the agent gave, else what the notes
+  // state (yearsInBusinessReading), else the blank standard's check. A year established read from
+  // the notes follows them.
+  { from: ['applicant.yearEstablished', 'applicant.yearsExperience', 'claims.text', 'notes.text'], codes: ['years-in-business.notes', 'years-in-business.default'], run: (r, { mine, readFrom, year }) => {
+    const a = r.applicant;
+    if (!a || mine('applicant.yearsInBusiness')) return null;
+    const estRead = !mine('applicant.yearEstablished') && (a.yearEstablished == null || !!readFrom?.['applicant.yearEstablished']);
+    const est = estRead ? null : a.yearEstablished;
+    const fromYear = Number.isInteger(est) && est >= 1900 && est <= year ? year - est : null;
+    const years = yearsInBusinessReading({ yearsInBusiness: fromYear, yearsExperience: a.yearsExperience }, r.claims?.text, r.notes?.text, year);
+    // A range or a statement not read as years: said again, never kept from the old notes.
+    delete a.yearsInBusinessRange;
+    delete a.yearsInBusinessUnread;
+    if (years.values.yearsInBusinessRange) a.yearsInBusinessRange = true;
+    if (years.values.yearsInBusinessUnread) a.yearsInBusinessUnread = true;
+    const established = estRead ? { 'applicant.yearEstablished': years.values.yearEstablished ?? null } : {};
+    return {
+      values: { 'applicant.yearsInBusiness': years.values.yearsInBusiness ?? fromYear, ...established },
+      readFrom: { 'applicant.yearsInBusiness': years.readFrom['applicant.yearsInBusiness'] ?? null,
+        ...(estRead ? { 'applicant.yearEstablished': years.readFrom['applicant.yearEstablished'] ?? null } : {}) },
+      checks: years.warnings,
+    };
+  } },
+  // The time with the current insurer a line of the notes gives: its check (the carriers read the
+  // notes as they fill).
+  { from: ['claims.text', 'notes.text'], codes: ['prior.tenure'], run: (r) => ({ values: {}, checks: tenureChecks(r) }) },
+  // "No", "None" or "N/A" in the USDOT or MC box: the client has none, which a number or a blank
+  // box doesn't say.
+  { from: ['applicant.dot'], codes: ['dot.none'], run: (r) => (r.applicant
+    ? { values: { 'applicant.noDot': numberBoxSaysNo(r.applicant.dot) || null }, checks: noNumberNotes('dot', r.applicant.dot) } : null) },
+  { from: ['applicant.mc'], codes: ['mc.none'], run: (r) => (r.applicant
+    ? { values: { 'applicant.noMc': numberBoxSaysNo(r.applicant.mc) || null }, checks: noNumberNotes('mc', r.applicant.mc) } : null) },
+  // The radius box's miles, and its check when it gives none.
+  { from: ['operations.radius'], codes: ['radius.missing', 'radius.range', 'radius.unit', 'radius.not-miles'], run: (r, { mine }) => {
+    if (!r.operations || mine('operations.radiusMiles')) return null;
+    const radius = radiusReading(r.operations.radius);
+    return { values: { 'operations.radiusMiles': radius.miles }, checks: radius.warnings };
+  } },
+  // Non-Trucking on auto liability is an NTL request; another answer leaves NTL to the agent (its
+  // items follow in the panel: ntlAnswerEdited).
+  { from: ['coverage.autoLiability'], run: (r, { mine }) => (mine('coverage.ntl') ? null
+    : { values: { 'coverage.ntl': nonTruckingAnswer(r.coverage?.autoLiability) ? true : null } }) },
+];
+
+// A derivation's checks for the record as corrected, in place of the ones it made before (`codes`).
+// Kept by position, as the panel marks checks done by position: one said again in the same words
+// keeps its mark; in other words, it takes the old one's place, unchecked; a new one is added at the
+// end; one that no longer holds is retired to a note saying so.
+const RETIRED = 'No longer applies after your edit: ';
+function recheck(intake, codes, checks) {
+  const { warnings } = intake;
+  const before = warnings.flatMap((w, i) => (codes.includes(w.code) ? [i] : []));
+  const said = new Set();
+  for (const w of checks) {
+    const i = before.find((j) => !said.has(j) && warnings[j].code === w.code);
+    if (i == null) { warnings.push(w); continue; }
+    said.add(i);
+    const was = warnings[i];
+    if (was.level === w.level && was.path === w.path && was.msg === w.msg) continue;
+    warnings[i] = w;
+    intake.done = (intake.done ?? []).filter((d) => d !== i);
+  }
+  for (const i of before) {
+    if (said.has(i) || warnings[i].msg.startsWith(RETIRED)) continue;
+    const { code, path, msg } = warnings[i];
+    warnings[i] = { code, path, level: 'info', msg: `${RETIRED}${msg}` };
+  }
+}
 
 /**
  * @param {object} record  the client record, already holding the edit at `path`
  * @param {string} path  the edited field
- * @param {{ today?: Date, keep?: Set<string> }} [options]  keep: derived paths the agent set
- *   directly, never recomputed
+ * @param {{ today?: Date, keep?: Set<string>, intake?: { warnings: object[], done?: number[], readFrom?: Record<string, string[]> } }} [options]
+ *   keep: the paths the agent set directly, never recomputed; intake: the loaded intake holding
+ *   `record`, whose checks (with their done marks) and `readFrom` follow
  * @returns {string[]} the derived paths that were recomputed
  */
-export function rederive(record, path, { today = new Date(), keep } = {}) {
-  const derived = DERIVED[path];
-  if (!derived) return [];
-  const [target, compute] = derived;
-  if (keep?.has(target)) return [];
-  set(record, target, compute(record, today.getFullYear()));
-  return [target];
+export function rederive(record, path, { today = new Date(), keep, intake } = {}) {
+  const year = today.getFullYear();
+  const mine = (p) => p === path || !!keep?.has(p);
+  const readFrom = intake ? (intake.readFrom ??= {}) : null;
+  // The edited answer is the agent's, read from no other box.
+  if (readFrom) delete readFrom[path];
+  // What the edit changed, derived answers included (the claims box's notes, read for ownership).
+  const changed = new Set([path]);
+  const recomputed = [];
+  for (const d of DERIVATIONS) {
+    if (!d.from.some((p) => changed.has(p))) continue;
+    const out = d.run(record, { mine, readFrom, year });
+    if (!out) continue;
+    for (const [p, value] of Object.entries(out.values)) {
+      if (mine(p)) continue;
+      set(record, p, value);
+      changed.add(p);
+      recomputed.push(p);
+    }
+    for (const [p, fields] of Object.entries(out.readFrom ?? {})) {
+      if (!readFrom || mine(p)) continue;
+      if (fields?.length) readFrom[p] = fields;
+      else delete readFrom[p];
+    }
+    if (intake && d.codes && out.checks) recheck(intake, d.codes, out.checks);
+  }
+  return recomputed;
 }
