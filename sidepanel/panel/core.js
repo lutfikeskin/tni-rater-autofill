@@ -389,7 +389,7 @@ const state = storeState({
   cards: {},
   // The panel's other notes, as notes-view.jsx draws them: `usage`, a usage log that can't be saved
   // (renderHealth, in #notices), `window`, a Pop out or Dock that didn't work (windowProblem, in
-  // #window-note), and `storage`, what the panel couldn't save on this computer (persistFailed, in
+  // #window-note), and `storage`, what the panel couldn't save or forget on this computer (persistFailed, in
   // #storage-note), each a card as issueSaid puts it or null; and why the PDF couldn't be read
   // (showLoadError: { title, text }, in #load-error), null until then. And the quote's steps in the
   // header's strip (renderSite: { name, at } each), as site-view.jsx draws them: none off a quote.
@@ -576,15 +576,20 @@ function aiPendingRecord(sig, x, scope) {
 }
 
 // A write to this computer's storage that failed (a full or broken store): the panel goes on, but
-// what it keeps across a reload may be gone, so it says so where the agent works (state.notes.storage,
-// in #storage-note) and logs it once as the panel's error, by what wasn't saved and the error's name
-// (audit 2026-11-07, LEARN-08). Its queue goes on to the next write. `what`: what wasn't saved;
-// `err`: the store's error.
+// what it keeps across a reload, or forgets for a new quote, may not be so. It says so where the
+// agent works (state.notes.storage, in #storage-note), naming every write that failed since the
+// panel opened (`unsaved`), and logs each once as the panel's error, by what failed and the error's
+// name (audit 2026-11-07, LEARN-08). Its queue goes on to the next write. `what`: what the panel
+// couldn't do ("save which answers you changed"); `err`: the store's error.
+const unsaved = new Set();
 function persistFailed(what, err) {
+  unsaved.add(what);
+  const all = [...unsaved];
+  const said = all.length > 1 ? `${all.slice(0, -1).join(', ')} or ${all.at(-1)}` : all[0];
   state.notes = { ...state.notes, storage: { tone: 'warn', role: 'alert', title: 'Your edits on this quote may not be remembered',
-    text: `The panel couldn't save ${what} on this computer. If the panel closes or reloads, check the page before filling it again: it may add vehicles again or refill answers you changed.`,
+    text: `The panel couldn't ${said} on this computer. If the panel closes or reloads, or the quote starts again, check the page before filling it: it may add vehicles again, skip ones not added yet or refill answers you changed.`,
     notes: [], compare: [], actions: [] } };
-  logCrash(new Error(`storage: ${what} not saved: ${err?.name ?? 'Error'}`));
+  logCrash(new Error(`storage: couldn't ${what}: ${err?.name ?? 'Error'}`));
 }
 
 function persistAiPending() {
@@ -600,7 +605,7 @@ function persistAiPending() {
     await aiPendingStore.set([...others, ...records].slice(-200));
     retired.forEach(sig => aiRetiredSignatures.delete(sig));
   });
-  aiPersistQueue = task.catch((err) => persistFailed('the AI answers waiting for you', err));
+  aiPersistQueue = task.catch((err) => persistFailed('save the AI answers waiting for you', err));
   return task;
 }
 
@@ -647,7 +652,7 @@ function persistAgentKeys(tabId = state.tab?.id, agentKeys = state.agentKeys) {
     const existing = await agentKeysStore.get();
     await agentKeysStore.set([...existing.filter(x => x.scope !== scope || x.tabId !== tabId), ...records]);
   });
-  agentKeysQueue = task.catch((err) => persistFailed('which answers you changed', err));
+  agentKeysQueue = task.catch((err) => persistFailed('save which answers you changed', err));
   return agentKeysQueue;
 }
 
@@ -679,7 +684,7 @@ function persistGuardedEdits(origin, editedKeys) {
     await agentKeysStore.set([...existing.filter(record => !matches(record)),
       { scope: origin.scope, tabId: origin.tabId, page: origin.page, keys: [...merged] }]);
   });
-  agentKeysQueue = task.catch((err) => persistFailed('which answers you changed', err));
+  agentKeysQueue = task.catch((err) => persistFailed('save which answers you changed', err));
   return agentKeysQueue;
 }
 
@@ -705,11 +710,14 @@ function clearAgentKeys(scope) {
   const epochs = state.agentKeysEpochs ??= new Map();
   epochs.set(scope, (epochs.get(scope) ?? 0) + 1);
   const task = agentKeysQueue.then(async () => agentKeysStore.set((await agentKeysStore.get()).filter((x) => x.scope !== scope)));
-  agentKeysQueue = task.catch((err) => persistFailed('which answers you changed', err));
-  doneActionsQueue = doneActionsQueue.then(() => Promise.all([doneActionsStore.clear(scope), unitFormsStore.clear(scope)])).then(() => {}).catch((err) => persistFailed('the buttons and vehicles already done', err));
+  agentKeysQueue = task.catch((err) => persistFailed('forget which answers you changed', err));
+  const done = doneActionsQueue.then(() => Promise.all([doneActionsStore.clear(scope), unitFormsStore.clear(scope)])).then(() => {});
+  doneActionsQueue = done.catch((err) => persistFailed('forget the buttons and vehicles already done', err));
   // Done once the helper records are gone too: the same PDF loaded again right after a Clear must
   // not get the cleared intake's helper ids back (units taken as already added; Codex on PR #65).
-  return Promise.all([task, doneActionsQueue]);
+  // A removal that failed fails the Clear or New quote too, rather than finishing as if it worked
+  // (CodeRabbit on PR #395); the queues go on.
+  return Promise.all([task, done]);
 }
 
 // On loading an intake: its own records stay (a PDF dropped again is the same intake, and its
@@ -726,7 +734,9 @@ async function pruneAgentRecords(current, now = Date.now()) {
   const gone = others.filter((scope, i) => i >= KEEP_INTAKES - 1 || now - Date.parse(seen[scope]) > KEEP_INTAKE_DAYS * 86_400_000);
   for (const scope of gone) delete seen[scope];
   await intakesSeenStore.set(seen);
-  await Promise.all(gone.map((scope) => clearAgentKeys(scope)));
+  // An older intake's records that couldn't be removed stay until the next load: that never stops
+  // this intake loading (persistFailed has said it).
+  await Promise.all(gone.map((scope) => clearAgentKeys(scope).catch(() => {})));
   return gone;
 }
 
@@ -734,7 +744,7 @@ function persistDoneActions(tabId = state.tab?.id, doneActions = state.doneActio
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
   const ids = [...doneActions].filter((id) => typeof id === 'string');
-  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set(scope, tabId, ids)).catch((err) => persistFailed('the buttons and vehicles already done', err));
+  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set(scope, tabId, ids)).catch((err) => persistFailed('save the buttons and vehicles already done', err));
   return doneActionsQueue;
 }
 
@@ -743,7 +753,7 @@ function persistUnitForms(tabId = state.tab?.id, unitForms = state.unitForms) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
   const forms = JSON.parse(JSON.stringify(unitForms ?? {}));
-  doneActionsQueue = doneActionsQueue.then(() => unitFormsStore.set(scope, tabId, forms)).catch((err) => persistFailed('which vehicle each form is for', err));
+  doneActionsQueue = doneActionsQueue.then(() => unitFormsStore.set(scope, tabId, forms)).catch((err) => persistFailed('save which vehicle each form is for', err));
   return doneActionsQueue;
 }
 
@@ -775,7 +785,7 @@ function keepReport(tabId, saved) {
     let size = entries.reduce((n, e) => n + JSON.stringify(e).length, 0);
     while (entries.length > 1 && size > REPORTS_BYTES) size -= JSON.stringify(entries.shift()).length;
     await store.set(`${REPORTS_PREFIX}${tabId}`, { scope, entries });
-  }).catch((err) => persistFailed("this page's report", err));
+  }).catch((err) => persistFailed("save this page's report", err));
 }
 // Forgets kept reports as dropReports forgets shown ones (`drop` gets each with its tabId): a new
 // or cleared client, a closed tab, one page's.
@@ -787,7 +797,7 @@ function forgetKeptReports(drop) {
       const entries = (Array.isArray(was?.entries) ? was.entries : []).filter((e) => !drop({ ...e, tabId }));
       await (entries.length ? store.set(k, { ...was, entries }) : store.remove(k));
     }
-  }).catch((err) => persistFailed("the pages' reports", err));
+  }).catch((err) => persistFailed("forget the pages' reports", err));
 }
 async function restoreReports(tabId) {
   const scope = usage.currentSession()?.intakeId;

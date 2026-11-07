@@ -421,11 +421,16 @@ async function clearClient() {
     await store.remove('session');
     await forgetPdf();
     await persistAiPending();
-    await clearAgentKeys(scope);
-    // agent defaults: no client, no question.
-    refreshDefaults();
-    render();
-    renderSite();
+    // The client is gone from the panel even when its records couldn't be removed: that failure is
+    // said (persistFailed's card) and still fails the Clear.
+    try {
+      await clearAgentKeys(scope);
+    } finally {
+      // agent defaults: no client, no question.
+      refreshDefaults();
+      render();
+      renderSite();
+    }
   } finally {
     state.resetDepth -= 1;
     state.resetting = state.resetDepth > 0;

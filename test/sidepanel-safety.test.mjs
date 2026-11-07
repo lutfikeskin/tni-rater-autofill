@@ -1470,22 +1470,52 @@ test('a write the panel cannot save on this computer is said and logged, and the
   let broken = true;
   const writes = [];
   const set = (what) => async (...args) => { if (broken) { const e = new Error('QUOTA_BYTES quota exceeded'); e.name = 'QuotaExceededError'; throw e; } writes.push([what, args]); };
-  const context = { state, agentKeysQueue: Promise.resolve(), doneActionsQueue: Promise.resolve(), usage: { currentSession: () => ({ intakeId: 'intake-a' }) },
+  const context = { state, unsaved: new Set(), agentKeysQueue: Promise.resolve(), doneActionsQueue: Promise.resolve(), usage: { currentSession: () => ({ intakeId: 'intake-a' }) },
     agentKeysStore: { get: async () => [], set: set('keys') }, doneActionsStore: { set: set('done') }, logCrash: (err) => crashes.push(err.message) };
   vm.createContext(context);
   vm.runInContext(['persistFailed', 'persistAgentKeys', 'persistDoneActions'].map(extractFunction).join('\n'), context);
   await context.persistAgentKeys();
   await context.persistDoneActions();
+  await context.persistAgentKeys();
   assert.equal(state.notes.storage?.tone, 'warn');
   assert.equal(state.notes.storage.role, 'alert');
   assert.match(state.notes.storage.title, /may not be remembered/);
-  assert.match(state.notes.storage.text, /the buttons and vehicles already done/);
-  assert.deepEqual(crashes, ['storage: which answers you changed not saved: QuotaExceededError', 'storage: the buttons and vehicles already done not saved: QuotaExceededError']);
+  // Every write that failed is named, not only the last (CodeRabbit on PR #395).
+  assert.match(state.notes.storage.text, /^The panel couldn't save which answers you changed or save the buttons and vehicles already done on this computer\./);
+  assert.deepEqual(crashes, ["storage: couldn't save which answers you changed: QuotaExceededError", "storage: couldn't save the buttons and vehicles already done: QuotaExceededError",
+    "storage: couldn't save which answers you changed: QuotaExceededError"], 'logCrash itself logs each message once');
   assert.equal(state.notes.usage, null, 'the other notes are kept');
   broken = false;
   await context.persistAgentKeys();
   await context.persistDoneActions();
   assert.deepEqual(writes.map(([what]) => what), ['keys', 'done'], 'each queue still writes after a failure');
+});
+
+// CodeRabbit on PR #395: a Clear or New quote whose removal of the helper records failed fails too,
+// rather than finishing as if they were gone (the same PDF then gets them back: a vehicle skipped).
+// Its queue goes on; loading another intake, which prunes old intakes' records, isn't stopped by it.
+test('a Clear whose helper records could not be removed fails, and the next write still runs', async () => {
+  const state = { notes: { usage: null, window: null, storage: null } };
+  const crashes = [];
+  let broken = true;
+  const cleared = [];
+  const clear = (what) => async (scope) => { if (broken) throw new Error('IO error'); cleared.push([what, scope]); };
+  const context = { state, unsaved: new Set(), agentKeysQueue: Promise.resolve(), doneActionsQueue: Promise.resolve(), logCrash: (err) => crashes.push(err.message),
+    agentKeysStore: { get: async () => [{ scope: 'intake-a' }, { scope: 'intake-b' }], set: async () => {} },
+    doneActionsStore: { clear: clear('done'), set: async (scope, tabId, ids) => cleared.push(['set', scope]), scopes: async () => [] },
+    unitFormsStore: { clear: clear('forms'), scopes: async () => [] }, usage: { currentSession: () => ({ intakeId: 'intake-a' }) },
+    intakesSeenStore: { get: async () => ({ 'intake-a': '2026-01-01T00:00:00Z' }), set: async () => {} }, KEEP_INTAKES: 20, KEEP_INTAKE_DAYS: 30 };
+  vm.createContext(context);
+  vm.runInContext(['persistFailed', 'clearAgentKeys', 'persistDoneActions', 'pruneAgentRecords'].map(extractFunction).join('\n'), context);
+  await assert.rejects(context.clearAgentKeys('intake-a'), /IO error/);
+  assert.match(state.notes.storage.text, /couldn't forget the buttons and vehicles already done/);
+  assert.deepEqual(crashes, ["storage: couldn't forget the buttons and vehicles already done: Error"]);
+  // An old intake's records pruned on a load: the failure is said, the load goes on.
+  assert.deepEqual([...await context.pruneAgentRecords('intake-c', Date.parse('2026-11-07T00:00:00Z'))], ['intake-a'], 'its 30 days are over');
+  broken = false;
+  state.tab = { id: 1 }; state.doneActions = new Set(['addVehicle:0']);
+  await context.persistDoneActions();
+  assert.deepEqual(cleared, [['set', 'intake-a']], 'the queue still writes after a failure');
 });
 
 test('canonical AI snapshots ignore Chromium metadata and frame ordering but retain identity', () => {
@@ -4915,7 +4945,7 @@ test('loading another intake keeps the first intake\'s edit keys and helper reco
   assert.match(extractFunction('loadFile'), /doneRestored\.clear\(\);/);
   assert.match(extractFunction('loadFile'), /await pruneAgentRecords\(summary\.intakeId\);/);
   assert.doesNotMatch(SIDEPANEL, /clearAgentKeys\(\)/);
-  assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,900}usage\.restoreSession\(null\);[\s\S]{0,300}await clearAgentKeys\(scope\);/);
+  assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,900}usage\.restoreSession\(null\);[\s\S]{0,500}await clearAgentKeys\(scope\);/);
   assert.match(SIDEPANEL, /if \(what === 'clear'\) clearClient\(\);/, 'Clear runs once the agent confirms it');
 });
 
