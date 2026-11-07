@@ -194,28 +194,46 @@ function preflightVerification(items, context, limit) {
 }
 
 // Plan every group before starting paid requests. Split oversized groups without dropping
-// options or facts; a single unreviewable field stops the run before any model call.
-function requestGroups(items, context, limit) {
-  const groups = [];
-  for (let offset = 0; offset < items.length;) {
-    let group;
-    for (let count = 1; count <= Math.min(BATCH_SIZE, items.length - offset); count++) {
-      const batch = items.slice(offset, offset + count);
-      try {
-        const body = buildRequest(batch, context, { limit });
-        preflightVerification(batch, context, limit);
-        group = { batch, body };
-      }
-      catch (error) {
-        if (!(error instanceof RequestTooLarge) || !group) throw error;
-        break;
-      }
+// options or facts. A question too large even alone is left to the agent (`tooLarge`, by its place
+// in `items`) and the group goes on with the next one. A question Luna may not review (invalid, or
+// on the never-list) still stops the whole run: collectItems keeps those out, so one here is a
+// programming error. `start`: the first question to plan (a plan again at OLD_SERVER_CHARS).
+function requestGroups(items, context, limit, start = 0) {
+  const fits = batch => {
+    try {
+      const body = buildRequest(batch, context, { limit });
+      preflightVerification(batch, context, limit);
+      return body;
+    } catch (error) {
+      if (error instanceof RequestTooLarge) return error;
+      throw error;
     }
-    groups.push(group);
-    offset += group.batch.length;
+  };
+  const groups = [], tooLarge = [];
+  for (let next = start; next < items.length;) {
+    let group = null;
+    while (next < items.length && (group?.batch.length ?? 0) < BATCH_SIZE) {
+      const batch = [...(group?.batch ?? []), items[next]], body = fits(batch);
+      if (!(body instanceof RequestTooLarge)) {
+        group = { batch, at: [...(group?.at ?? []), next], body };
+        next++;
+        continue;
+      }
+      const alone = group ? fits([items[next]]) : body;
+      if (!(alone instanceof RequestTooLarge)) break;
+      tooLarge.push({ at: next, error: alone });
+      next++;
+    }
+    if (group) groups.push(group);
   }
-  return groups;
+  return { groups, tooLarge };
 }
+
+// A field too large for one request even alone: the agent's, said so, without a model call.
+const tooLargeLeave = item => ({ ...item, choice: null, leave: true, basis: 'none', intakePath: null, evidence: null, evidenceSources: [],
+  model: DEFAULT_MODEL, provider: 'luna', policy: POLICY_VERSION, probability: null, confidence: null, margin: null,
+  evidenceProbability: null, support: null, autoOk: false, checks: [], leaveWhy: 'tooLarge', nextStep: null,
+  tip: 'Too long for Luna to review: its choices, with the intake and the rules, do not fit one request. Answer it on the page.' });
 
 export function verifyResponse(json, suggestions) {
   const data = responseData(json), picked = suggestions.filter(x => !x.leave);
@@ -303,9 +321,12 @@ export async function suggest(items, context, config, { call = callModel, isStal
     counters.cachedTokens += count(json.usage?.input_tokens_details?.cached_tokens);
     counters.cacheWriteTokens += count(json.usage?.input_tokens_details?.cache_write_tokens);
   };
-  let limit = MAX_REQUEST_CHARS, groups = requestGroups(items, context, limit), done = 0;
+  let limit = MAX_REQUEST_CHARS, { groups, tooLarge } = requestGroups(items, context, limit);
+  // None fits: the review stops before any paid call.
+  if (!groups.length && tooLarge.length) throw tooLarge[0].error;
+  for (const { at } of tooLarge) suggestions[at] = tooLargeLeave(items[at]);
   for (let i = 0; i < groups.length; i++) {
-    const { batch, body } = groups[i];
+    const { batch, at, body } = groups[i];
     let parsed;
     try {
       fresh();
@@ -324,12 +345,14 @@ export async function suggest(items, context, config, { call = callModel, isStal
       // bound, before any further paid call, and this group is asked again in the new plan.
       if (!(error instanceof OldServerLimit) || limit === OLD_SERVER_CHARS) throw error;
       limit = OLD_SERVER_CHARS;
-      groups = [...groups.slice(0, i), ...requestGroups(items.slice(done), context, limit)];
+      const again = requestGroups(items, context, limit, at[0]);
+      suggestions.length = at[0];
+      for (const x of again.tooLarge) suggestions[x.at] = tooLargeLeave(items[x.at]);
+      groups = [...groups.slice(0, i), ...again.groups];
       i--;
       continue;
     }
-    suggestions.push(...parsed);
-    done += batch.length;
+    parsed.forEach((x, k) => { suggestions[at[k]] = x; });
   }
   return { suggestions, ...counters };
 }
