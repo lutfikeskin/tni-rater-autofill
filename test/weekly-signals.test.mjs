@@ -22,7 +22,9 @@ function week() {
     e(s, v, { type: 'fill_run', page: 'BusinessOwnerInfo', blockers: 1, blockerList: ['unfamiliar: Agent Code'], clicked: ['verifyDot'], advanced: null });
     e(s, v, { type: 'page_view', page: 'CoveragesRates', from: 'BusinessOwnerInfo' });
   }
-  e('new', '0.9.9', { type: 'fill_field', page: 'CoveragesRates', q: '9B', label: 'Liability limit', result: 'failed', reason: 'no option matches "$1M CSL"' });
+  e('new', '0.9.9', { type: 'fill_field', page: 'CoveragesRates', q: '9B', label: 'Liability limit', result: 'failed', code: 'option.no-match', reason: 'no option matches "$1M CSL"' });
+  // A build before codes: by its text.
+  e('old', '0.9.8', { type: 'fill_field', page: 'CoveragesRates', q: '9B', label: 'Liability limit', result: 'failed', reason: 'no option matches "$2M CSL"' });
   e('new', '0.9.9', { type: 'fill_run', page: 'CoveragesRates', blockers: 0, blockerList: [], clicked: ['billPlan'], advanced: 'Continue', reworded: 1, pageChanged: true });
   e('old', '0.9.8', { type: 'ai_suggest', error: 'The page or intake changed. Run Fill again for fresh suggestions.' });
   e('new', '0.9.9', { type: 'ai_suggest', ms: 900 });
@@ -44,7 +46,9 @@ test('signals counts the period by build, quote and reason, never by raw repeats
   // One unfamiliar question per quote and page, whatever the number of fill runs.
   assert.equal(s.left.unfamiliar.answers, 2);
   assert.equal(s.left.noData.answers, 1);
-  assert.deepEqual(s.failed, [['progressive CoveragesRates: "Liability limit" · no option matches "…"', 1]]);
+  // By code (LEARN-09), so rewording a message doesn't split a row; a build before codes by its text.
+  assert.deepEqual(s.failed, [['progressive CoveragesRates: "Liability limit" · option.no-match', 1], ['progressive CoveragesRates: "Liability limit" · no option matches "…"', 1]]);
+  assert.deepEqual(s.failedCodes, [['option.no-match', 1], ['no code: no option matches "…"', 1]]);
   assert.deepEqual(s.blockers, [['progressive BusinessOwnerInfo: unfamiliar: Agent Code', 2]]);
   assert.equal(s.blockedRuns, 2);
   assert.deepEqual(s.pageChanges.map(([k]) => k).sort(), ['progressive CoveragesRates: 1 known question(s) reworded', 'progressive CoveragesRates: page looked changed']);

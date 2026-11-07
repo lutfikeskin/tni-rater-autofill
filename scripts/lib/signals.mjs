@@ -213,6 +213,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   const left = new Map();
   const leftQuestions = new Map();
   const failed = new Map();
+  const failedCodes = new Map();
   for (const e of events) {
     if (e.type !== 'fill_field' || ['filled', 'kept'].includes(e.result)) continue;
     const once = `${e.session}|${e.page}|${e.view ?? ''}|${e.key ?? e.q ?? ''}|${e.label ?? ''}`;
@@ -223,7 +224,12 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     const q = leftQuestions.get(e.result) ?? new Map();
     tally(q, `${where(e)}: "${mask(e.label)}"`);
     leftQuestions.set(e.result, q);
-    if (e.result === 'failed') tally(failed, `${where(e)}: "${mask(e.label)}" · ${mask(e.reason)}`);
+    // By its code (types.js FailCode), so a reworded message stays one row; a build before codes by
+    // its masked text.
+    if (e.result === 'failed') {
+      tally(failed, `${where(e)}: "${mask(e.label)}" · ${e.code ?? mask(e.reason)}`);
+      tally(failedCodes, e.code ?? `no code: ${mask(e.reason)}`);
+    }
   }
 
   // What held Continue (fill_run blockerList), per quote.
@@ -425,6 +431,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     funnel: Object.fromEntries([...funnel].map(([c, list]) => [c, { quotes: list.quotes, pages: list.pages.slice(0, 25) }])),
     left: Object.fromEntries([...left].map(([result, s]) => [result, { answers: s.size, top: top(leftQuestions.get(result), n) }])),
     failed: top(failed, n),
+    failedCodes: top(failedCodes, n),
     blockers: [...blockers].map(([b, s]) => [b, s.size]).sort((a, b) => b[1] - a[1]).slice(0, n),
     blockedRuns: runs.filter((r) => r.blockers > 0).length,
     runs: runs.length,
@@ -493,7 +500,7 @@ export function markdown(s, { noTestList = false } = {}) {
   }
   L.push('## Left to the agent', '', 'Each question counted once per quote, page and unit. unfamiliar: no rule; leftRequired: required and unanswered; noData: the intake has no answer; failed: the fill could not set it.', '');
   for (const [result, x] of Object.entries(s.left)) L.push(`**${result}**: ${x.answers}`, '', ...list(x.top), '');
-  L.push('## Fill failures by reason', '', ...list(s.failed), '');
+  L.push('## Fill failures by reason', '', 'Each question once per quote, page and unit, by why it failed (its code; `kit.exception` is an error of the kit itself, a defect rather than a refusal; a build before codes by its text).', '', ...list(s.failedCodes), '', ...list(s.failed), '');
   L.push('## What held Continue', '', `Blockers at the end of fill runs, by the number of quotes they held.`, '', ...list(s.blockers, ' quotes'), '');
   L.push('## Restricted actions by the extension', '', s.restricted.length ? '**Safety finding: the extension clicked something that reads as a restricted action.**' : 'None: every click the extension made was a helper or a continuation.', ...(s.restricted.length ? list(s.restricted, ' runs') : []), '', `Its clicks: ${s.actions.map(([a, c]) => `${a} ×${c}`).join(', ') || 'none'}.`, '');
   L.push('## Signs a carrier changed a page', '', ...list(s.pageChanges, ' runs'), '');

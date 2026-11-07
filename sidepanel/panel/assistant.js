@@ -13,7 +13,7 @@ import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
 import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout } from './coordinator.js';
-import { drawRow, fillPage, runKit } from './fill.js';
+import { drawRow, fillPage, resumeHeldFill, runKit } from './fill.js';
 import { aiHolder } from './ai-view.jsx';
 import { needId, setHead } from './report-rows.js';
 import { renderUsage } from './usage-panel.js';
@@ -507,6 +507,7 @@ async function applyAi(list, ctx, decision) {
     page: editScope(ctx.page, ctx.carrier), keys: state.agentKeys, epoch: state.agentKeysEpochs?.get(usage.currentSession()?.intakeId) ?? 0 };
   let dispatched = false, prepared = false, guarding = false;
   const guardToken = crypto.randomUUID();
+  state.fillingKind = 'ai';
   state.filling = true;
   await tellRecorder('pause', ctx.tabId);
   try {
@@ -596,7 +597,7 @@ async function applyAi(list, ctx, decision) {
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
       const ok = !protectedKeys.includes(x.key) && mine.find((r) => r.ok);
-      const problem = mine.find((r) => !r.ok && !/no longer on this page/.test(r.reason ?? '')) ?? mine[0];
+      const problem = mine.find((r) => !r.ok && r.code !== 'field.missing') ?? mine[0];
       if (ok) {
         x.origin = aiOriginRecord({ frameId: ok.frameId, documentId: ok.documentId,
           questionHash: aiQuestionHash(x), fieldHash: aiLiveFieldHash({ ...x, current: ok.shown }) });
@@ -658,6 +659,8 @@ async function applyAi(list, ctx, decision) {
     }
     await tellRecorder('resume', ctx.tabId);
     state.filling = false;
+    // A page a hold kept back, whose hold lifted while the picks went in.
+    resumeHeldFill();
     // The recorder was paused while Luna's picks went in, so it won't report the questions they
     // revealed or hid: ask for the page's layout, if that tab is still the one followed (a job
     // is built from the followed tab, and checks the page).
