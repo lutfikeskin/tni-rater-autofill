@@ -14,11 +14,13 @@
 // at the shadow host it reaches the window as.
 
 (() => {
-  const VERSION = 13;
+  const VERSION = 14;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
-  let inherited;
+  let inheritedError;
+  // The agent's edits a replaced recorder still held for a panel (`unheard`): this one keeps them.
+  let inherited = [];
   if (previous) {
     // Report what changed since the recorder's last poll before reusing or replacing it, so an
     // edit that landed immediately before reinjection doesn't disappear into a new baseline: the
@@ -27,11 +29,12 @@
     // logged). A version-8 recorder has no poll: it flushes its trusted edits and rebaselines.
     // An older recorder whose poll throws (it reports nothing) is still replaced: its error is told
     // once this one is in place (CodeRabbit on PR #403).
-    if (!orphaned) try { (previous.poll ?? previous.rebaseline)?.(); } catch (e) { inherited = e; }
+    if (!orphaned) try { (previous.poll ?? previous.rebaseline)?.(); } catch (e) { inheritedError = e; }
     // Reusing the current recorder avoids resetting its listeners on every fill. Older versions
     // have no dispose hook, so rebaseline and leave the sole installed recorder in place rather
     // than starting a second timer that would duplicate usage events.
     if ((previous.version === VERSION && !orphaned) || typeof previous.dispose !== 'function') return;
+    try { inherited = previous.unheard?.() ?? []; } catch { inherited = []; }
     previous.dispose();
   }
 
@@ -66,13 +69,20 @@
   // is read with one query, as before.
   function deepAll(root, selector) {
     const all = [...(root.querySelectorAll?.('*') ?? [])];
-    if (!all.some((el) => el.shadowRoot)) return [...(root.querySelectorAll?.(selector) ?? [])];
+    const roots = all.map(shadowOf);
+    if (!roots.some(Boolean)) return [...(root.querySelectorAll?.(selector) ?? [])];
     const out = [];
-    for (const el of all) {
+    all.forEach((el, i) => {
       if (el.matches?.(selector)) out.push(el);
-      if (el.shadowRoot) out.push(...deepAll(el.shadowRoot, selector));
-    }
+      if (roots[i]) out.push(...deepAll(roots[i], selector));
+    });
     return out;
+  }
+  // An element's shadow root, a closed one too where Chrome gives it (the kit's shadowOf, src/kit/dom.js).
+  function shadowOf(el) {
+    if (el?.shadowRoot) return el.shadowRoot;
+    if (!el?.localName?.includes('-')) return null;
+    try { return globalThis.chrome?.dom?.openOrClosedShadowRoot?.(el) ?? null; } catch { return null; }
   }
 
   // The element an event happened on. An event from inside a shadow root reaches the window
@@ -105,7 +115,7 @@
   // The radio of the option a gesture is on: its card, its slotted words, anything in its shadow root.
   const optionRadio = (target) => {
     for (let n = target, i = 0; n && i < 12; n = n.parentElement ?? n.getRootNode?.()?.host ?? null, i++) {
-      const radio = n.shadowRoot?.querySelector?.('input[type=radio]');
+      const radio = shadowOf(n)?.querySelector?.('input[type=radio]');
       if (radio && radioHost(radio) === n) return radio;
     }
     return null;
@@ -455,7 +465,46 @@
   function send(msg) {
     if (!isCurrent()) return;
     if (!chrome.runtime?.id) { clearInterval(timer); return; } // extension was reloaded
-    chrome.runtime.sendMessage({ ra: 'usage', ...msg }).catch(() => {});
+    const sent = chrome.runtime.sendMessage({ ra: 'usage', ...msg });
+    // The agent's own edits must reach a panel, or no fill knows they are theirs: the panel answers
+    // the changes it took ({ ok: true }); none answers while it is closed, follows another tab or
+    // window, or has no intake. Those edits are kept (`unheard`) and sent again when a panel attaches
+    // (resume) or a fill begins (pause), not lost as the baseline moves on.
+    const agents = msg.event === 'field_changes' ? msg.changes.filter((c) => c.agent) : [];
+    if (!agents.length) { sent?.catch?.(() => {}); return; }
+    Promise.resolve(sent).then((reply) => { if (!reply?.ok) throw new Error('not taken'); })
+      .catch(() => keepUnheard({ ...msg, changes: agents }));
+  }
+
+  // The agent's edits no panel took, by page and field: the first edit's `before` and the last
+  // one's `after`, with the step and unit forms they were made on. At most MAX_UNHEARD, the oldest
+  // going first. Only what a field change carries anyway; nothing is stored.
+  const MAX_UNHEARD = 200;
+  const unheard = new Map();
+  function keepUnheard(msg) {
+    if (disposed) return;
+    for (const c of msg.changes) {
+      const id = `${msg.page}\n${c.key}`;
+      const was = unheard.get(id);
+      unheard.delete(id);
+      unheard.set(id, { page: msg.page, step: msg.step, forms: msg.forms ?? null, change: was ? { ...c, before: was.change.before } : c });
+    }
+    while (unheard.size > MAX_UNHEARD) unheard.delete(unheard.keys().next().value);
+  }
+  for (const x of inherited) if (x?.change?.key != null) keepUnheard({ page: x.page, step: x.step, forms: x.forms, changes: [x.change] });
+  // Sent again as they were made, one message per page, step and unit forms; what no panel takes
+  // this time is kept again (send).
+  function sendUnheard() {
+    if (!isCurrent() || !unheard.size) return;
+    const groups = new Map();
+    for (const x of unheard.values()) {
+      const id = JSON.stringify([x.page, x.step ?? null, x.forms]);
+      const group = groups.get(id) ?? { page: x.page, step: x.step, forms: x.forms, changes: [] };
+      group.changes.push(x.change);
+      groups.set(id, group);
+    }
+    unheard.clear();
+    for (const g of groups.values()) send({ event: 'field_changes', page: g.page, step: g.step, forms: g.forms, changes: g.changes });
   }
 
   function changedFields(cur, explicitControls = null, skipControls = null) {
@@ -585,6 +634,7 @@
   // that was closed and opened again doesn't know it (GEICO's steps all share /quote).
   function resume() {
     if (!isCurrent()) return;
+    sendUnheard();
     if (!paused) {
       shownStep = undefined;
       tick();
@@ -635,7 +685,8 @@
 
   const onMessage = guarded((msg) => {
     if (!isCurrent() || msg?.ra !== 'recorder') return;
-    if (msg.cmd === 'pause') paused = true;
+    // The agent's edits no panel took go first, so the fill about to begin leaves them alone.
+    if (msg.cmd === 'pause') { sendUnheard(); paused = true; }
     if (msg.cmd === 'resume') resume();
   });
   chrome.runtime.onMessage.addListener(onMessage);
@@ -646,6 +697,7 @@
     clearInterval(timer);
     trustedPending.clear();
     trustedImmediate.clear();
+    unheard.clear();
     eventListeners.forEach(([type, listener]) => removeEventListener?.(type, listener, true));
     chrome.runtime.onMessage.removeListener?.(onMessage);
   }
@@ -679,11 +731,13 @@
     poll: guarded(tick),
     dispose,
     alive: () => !!chrome.runtime?.id,
+    // The agent's edits no panel took yet, for a recorder that replaces this one.
+    unheard: () => [...unheard.values()],
     // Reading only (docs/developer-recording.md).
     read: { controlForEvent, describe, choiceText, stepKey, pageKey, buttonText, buttons },
   };
   globalThis.__raterRecorder = api;
-  if (inherited) report(inherited);
+  if (inheritedError) report(inheritedError);
 
   if (isTop) send({ event: 'page_view', page, from: null, step: stepKey(), fields: prev.size, title: document.title });
 })();

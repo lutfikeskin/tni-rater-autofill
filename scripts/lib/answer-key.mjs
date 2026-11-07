@@ -33,6 +33,7 @@ import { matchIntake, normalizeForMatch } from '../../src/usage.js';
 import { get } from '../../src/util.js';
 import { activeOf, choiceVerdict, shown } from './benchmark.mjs';
 import { AGENT_DEFAULT_SOURCE } from './agent-defaults.mjs';
+import { quotePage } from './events.mjs';
 
 export const KEY_KIND = 'tni-answer-key';
 const KINDS = ['value', 'fromIntake', 'agent', 'na', 'perQuote'];
@@ -58,18 +59,8 @@ export const byIdOnly = (question) => {
   return /^q:/.test(name) || /^\d+$/.test(name);
 };
 
-// The quote's own pages: not a carrier's login or portal pages (Progressive's are recorded by path,
-// its quote pages by name), nor another product's application (AmWINS' commercial property). Every
-// GEICO step is sales.geico.com/quote (a step after ' › '); its gateway's search and dashboard
-// ('/', '/dashboard') are not the quote.
-export function quotePage(carrier, page) {
-  const p = String(page ?? '');
-  if (/\/(auth\/)?login\b/i.test(p)) return false;
-  if (carrier === 'progressive') return !p.startsWith('/');
-  if (carrier === 'amwins') return p.startsWith('/application/businessauto');
-  if (carrier === 'geico') return /^\/quote(?:\/|$)/i.test(p.split(' › ')[0]);
-  return true;
-}
+// The quote's own pages (events.mjs): shared with the learner, which suggests rules for them only.
+export { quotePage };
 
 export const keyable = (row) => !byIdOnly(row.question) && quotePage(row.carrier, row.page);
 

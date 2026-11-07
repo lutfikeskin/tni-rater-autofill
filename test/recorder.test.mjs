@@ -68,6 +68,7 @@ class Element {
   }
 
   get textContent() { return this.text + this.children.map((child) => child.textContent).join(''); }
+  get localName() { return this.tagName.toLowerCase(); }
   getAttribute(name) { return this.attrs.get(name) ?? null; }
   hasAttribute(name) { return this.attrs.has(name); }
   setAttribute(name, value) { this.attrs.set(name, String(value)); }
@@ -164,9 +165,12 @@ class Document {
 
 // realKeys: the field keys of src/content/field-key.js (GEICO's data-model names), not this file's
 // explicit stand-in. adapter: the carrier whose page adapter is in the recorder's world.
+// panel: whether a panel takes the field changes (answers { ok: true }); set panel.heard to false for
+// one that is closed, on another tab, or without an intake.
 function harness({ realKeys = false, adapter = null } = {}) {
   const document = new Document();
   const sent = [];
+  const panel = { heard: true };
   const listeners = new Map();
   const messageListeners = new Set();
   const timers = new Map();
@@ -191,8 +195,8 @@ function harness({ realKeys = false, adapter = null } = {}) {
     chrome: {
       runtime: {
         id: 'synthetic-extension',
-        // The panel's reply: none unless a test sets context.reply.
-        sendMessage(message) { sent.push(message); return Promise.resolve(context.reply?.(message)); },
+        // The panel's reply: a test's own (context.reply), else { ok: true } while it hears changes.
+        sendMessage(message) { sent.push(message); return Promise.resolve(context.reply ? context.reply(message) : panel.heard ? { ok: true } : undefined); },
         onMessage: {
           addListener(fn) { messageListeners.add(fn); },
           removeListener(fn) { messageListeners.delete(fn); },
@@ -220,6 +224,7 @@ function harness({ realKeys = false, adapter = null } = {}) {
     context,
     document,
     sent,
+    panel,
     tick() { for (const fn of timers.values()) fn(); },
     later() { while (timeouts.length) timeouts.shift()(); },
     // extra: more of the event, such as its composedPath.
@@ -488,7 +493,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 13);
+  assert.equal(h.context.__raterRecorder.version, 14);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -556,7 +561,7 @@ test('an older recorder is replaced, so changes carry what the current one repor
   h.context.__raterRecorder = { version: 7, rebaseline() {}, dispose() { disposed.push(7); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
   assert.deepEqual(disposed, [7]);
-  assert.equal(h.context.__raterRecorder.version, 13);
+  assert.equal(h.context.__raterRecorder.version, 14);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {
@@ -917,6 +922,20 @@ test('GEICO radios in shadow roots are fields in page order, and the agent\'s pi
   assert.equal(changes(h).length, 2, 'reported once');
 });
 
+// Audit 2026-11-07 (ENG-14): the same radios in closed shadow roots (no shadowRoot): Chrome hands the
+// recorder's isolated world the root (chrome.dom.openOrClosedShadowRoot), and the question is still seen.
+test('GEICO radios in closed shadow roots are still fields, through chrome.dom', () => {
+  const h = harness({ adapter: 'geico', realKeys: true });
+  h.context.chrome.dom = { openOrClosedShadowRoot: (el) => el.shadowRoot ?? el._closedRoot ?? null };
+  const name = 'Id_GiveCurrentGeicoCommercialAutoPolicyYesNo_48657';
+  const options = [gdsOption(name, 0, 'Yes', 'Yes', { checked: true }), gdsOption(name, 1, 'No', 'No')];
+  const group = gdsGroup(name, options, { question: 'Does the business have a current GEICO commercial auto policy?' });
+  for (const host of [group, ...options.map((o) => o.host)]) { host._closedRoot = host.shadowRoot; delete host.shadowRoot; }
+  h.append(group, ...options.map((o) => o.host));
+  h.tick();
+  assert.deepEqual([...(h.sent.find((m) => m.event === 'new_fields')?.keys ?? [])], ['ref:GiveCurrentGeicoCommercialAutoPolicyYesNo']);
+});
+
 test('while paused, a gesture inside a GEICO option counts for its radio; the fill\'s own click does not', () => {
   const h = harness({ adapter: 'geico', realKeys: true });
   const name = 'Id_GiveDepartmentOfTransportationNumberStatus_10683';
@@ -1122,4 +1141,83 @@ test('a unit list drawn or changed is sent once, by the step on screen', () => {
   h.context.__raterKit = { unitListsNow: () => { throw new Error('unreadable'); } };
   h.tick();
   assert.equal(shown().length, 2);
+});
+
+// Audit 2026-11-07 (LEARN-07): with the panel closed, or following another tab or window, the
+// recorder's message went nowhere and its baseline moved on: the agent's edit was neither logged
+// nor protected, and the next fill on Progressive or GEICO (replaceChoices) put its own choice back.
+const settled = () => new Promise((resolve) => setImmediate(resolve));
+
+test('an agent edit no panel took is sent again when a panel attaches, once, with its first before and last after', async () => {
+  const h = harness();
+  const years = select({ id: 'yrsInBusiness' });
+  const notes = new Control('input', { id: 'notes', value: 'before' });
+  h.append(years, notes);
+  h.context.__raterRecorder.rebaseline();
+  h.panel.heard = false;
+  h.emit('pointerdown', years, true);
+  years.value = '3';
+  h.emit('change', years, true);
+  await settled();
+  h.emit('pointerdown', years, true);
+  years.value = '5+';
+  h.emit('change', years, true);
+  await settled();
+  notes.value = 'by the page';
+  h.tick();
+  await settled();
+  // The panel opens again (or comes back to this tab): told to resume, the recorder sends the
+  // agent's edit again; the page's own change isn't the agent's and isn't kept.
+  h.panel.heard = true;
+  const sentBefore = h.sent.length;
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  await settled();
+  const again = h.sent.slice(sentBefore).filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
+  assert.deepEqual(again.map((c) => [c.key, c.before, c.after, c.agent]), [['field:yrsInBusiness', '', '5+', true]]);
+  // Taken now: not sent a third time.
+  const taken = h.sent.length;
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  await settled();
+  assert.equal(h.sent.slice(taken).filter((m) => m.event === 'field_changes').length, 0);
+});
+
+test('an agent edit no panel took is sent before a fill pauses the recorder, under the step it was made on', async () => {
+  const h = harness();
+  const heading = (text) => [{ tagName: 'H2', textContent: text, getClientRects: () => [{}] }];
+  h.document.headings = heading('Drivers');
+  const radius = select({ id: 'radius' });
+  h.append(radius);
+  h.context.__raterRecorder.rebaseline();
+  h.panel.heard = false;
+  h.emit('pointerdown', radius, true);
+  radius.value = '3';
+  h.emit('change', radius, true);
+  await settled();
+  h.document.headings = heading('Vehicles');
+  h.panel.heard = true;
+  const sentBefore = h.sent.length;
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  const again = h.sent.slice(sentBefore).filter((m) => m.event === 'field_changes');
+  assert.deepEqual(again.map((m) => [m.step, [...m.changes].map((c) => [c.key, c.after, c.agent])]), [['Drivers', [['field:radius', '3', true]]]]);
+});
+
+test('a recorder that replaces another keeps the agent edits the old one held for a panel', async () => {
+  const h = harness();
+  const years = select({ id: 'yrsInBusiness' });
+  h.append(years);
+  h.context.__raterRecorder.rebaseline();
+  h.panel.heard = false;
+  h.emit('pointerdown', years, true);
+  years.value = '3';
+  h.emit('change', years, true);
+  await settled();
+  // An older build's recorder in the page is replaced by this one (as after an update).
+  h.context.__raterRecorder.version = 12;
+  vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+  h.panel.heard = true;
+  const sentBefore = h.sent.length;
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  await settled();
+  const again = h.sent.slice(sentBefore).filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
+  assert.deepEqual(again.map((c) => [c.key, c.after, c.agent]), [['field:yrsInBusiness', '3', true]]);
 });
