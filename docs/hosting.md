@@ -233,6 +233,14 @@ opens one titled "Daily review" when none is open. New means:
   at most the panel's 1,000 characters of it);
 - questions without a rule (or AmWINS fields the mock lacks) first seen in a layout of the period,
   one per question whatever its row, number, product or step (`scripts/lib/daily.mjs`);
+- alerts, from the agents' events of the period (test runs left out), said first under
+  "### Alerts" (`alerts` and its thresholds `ALERTS` in `scripts/lib/daily.mjs`, proposed for the
+  maintainer to tune; a section of this comment, no webhook, the maintainer's choice on 2026-11-07):
+  a carrier page that reads as changed (a fill's `pageChanged`, or a known question renamed) for two
+  installs or more; the newest build failing 3 or more fields per 100 filled more than the build
+  before it, with 200 filled on each; crashes (`client_error`) in 2% of the period's sessions or
+  more, with 20 sessions or more; and 50 or more events lost before upload (`usage_lost`). A page
+  changed at 10:00 US time is still said only the next morning;
 - a deployed usage server that isn't the repository's (`scripts/server-check.mjs`, checked first
   and only on the default branch): redeploy it;
 - two days without any event received (test runs don't count);
@@ -242,7 +250,7 @@ Nothing new, no comment. Two quiet days get one comment, with the day the last e
 the run whose window holds the moment the quiet reached 48 hours. From 2026-10-11 to 10-18 no events
 arrived and every run stayed silent, so a week without quotes looked the same as broken uploads.
 Anyone with the extension's upload token can write what the comment quotes (an agent's initials, a
-page, a carrier, a build, a question's caption, data-model name and kind), so each is posted in inline code (no
+page, a carrier, a build (an alert's too), a question's caption, data-model name and kind), so each is posted in inline code (no
 markdown, link or image), its backticks and line breaks taken out, every `@` broken by a zero-width
 space (no one is mentioned, and the comment never starts the Claude workflow, which answers an
 at-mention of Claude from the maintainer's login, the one `npm run daily -- --post` posts as), and

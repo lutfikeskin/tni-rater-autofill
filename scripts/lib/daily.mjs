@@ -114,11 +114,70 @@ export function quietStretch({ lastReceived, since = null, until = null }, now =
   return { last: lastReceived, days: Math.floor((end - Date.parse(lastReceived)) / (24 * 3600 * 1000)) };
 }
 
+// Alerts: what in the period's events needs the maintainer before the weekly review (audit
+// 2026-11-07, LEARN-16), said in a section of the daily comment (the maintainer, 2026-11-07: no
+// webhook). Test runs are left out (review.mjs passes the agents' events only). The thresholds are
+// proposed, for the maintainer to tune:
+export const ALERTS = {
+  // A carrier page that reads as changed (a fill_run's pageChanged, or a known question renamed) on
+  // at least this many installs: one agent's odd quote is noise, two agents' a redesign.
+  pageChangeInstalls: 2,
+  // The newest build in the period failing more fields per 100 filled than the build before it, by
+  // at least this many points, with at least minFilled fields filled on each.
+  failedRiseBy: 3,
+  minFilled: 200,
+  // The share of the period's sessions with a crash (client_error), with at least minSessions.
+  crashShare: 0.02,
+  minSessions: 20,
+  // Events the panels lost before uploading them (usage_lost), in all.
+  lostEvents: 50,
+};
+
+// The alerts in `events` (the period's, test runs left out), each { kind, ... } as commentBody says it.
+export function alerts(events, limits = ALERTS) {
+  const out = [];
+  // fill_run events of a fill (not a stop page's, which fills nothing).
+  const runs = events.filter((e) => e.type === 'fill_run' && e.auto !== 'stop');
+  const changed = new Map();
+  for (const e of runs) {
+    if (!(e.pageChanged === true || (Array.isArray(e.renamed) && e.renamed.length > 0))) continue;
+    const key = JSON.stringify([e.carrier ?? null, e.page ?? null]);
+    const c = changed.get(key) ?? { kind: 'page-changed', carrier: e.carrier ?? null, page: e.page ?? null, installs: new Set(), runs: 0 };
+    if (e.install) c.installs.add(e.install);
+    c.runs++;
+    changed.set(key, c);
+  }
+  for (const c of changed.values()) if (c.installs.size >= limits.pageChangeInstalls) out.push({ ...c, installs: c.installs.size });
+  // Builds by version (then by when first seen): the newest against the one before it.
+  const builds = new Map();
+  for (const e of runs) {
+    const build = `${e.v ?? '?'}${e.channel ? ` ${e.channel}` : ''}${e.commit ? ` ${e.commit}` : ''}`;
+    const b = builds.get(build) ?? { build, v: String(e.v ?? ''), first: e.t ?? '', filled: 0, failed: 0 };
+    b.filled += Number(e.filled) || 0;
+    b.failed += Number(e.failed) || 0;
+    if ((e.t ?? '') < b.first) b.first = e.t;
+    builds.set(build, b);
+  }
+  const version = (v) => v.split('.').map((n) => Number(n) || 0);
+  const newer = (a, b) => { const x = version(a.v), y = version(b.v); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0); return a.first.localeCompare(b.first); };
+  const [latest, before] = [...builds.values()].filter((b) => b.filled >= limits.minFilled).sort((a, b) => newer(b, a));
+  if (latest && before) {
+    const rate = (b) => Math.round((b.failed / b.filled) * 1000) / 10;
+    if (rate(latest) - rate(before) >= limits.failedRiseBy) out.push({ kind: 'failed-rise', build: latest.build, rate: rate(latest), before: before.build, beforeRate: rate(before) });
+  }
+  const sessions = new Set(events.map((e) => e.session).filter(Boolean));
+  const crashed = new Set(events.filter((e) => e.type === 'client_error').map((e) => e.session).filter(Boolean));
+  if (sessions.size >= limits.minSessions && crashed.size / sessions.size >= limits.crashShare) out.push({ kind: 'crashes', crashed: crashed.size, sessions: sessions.size });
+  const lost = events.filter((e) => e.type === 'usage_lost').reduce((n, e) => n + (Number(e.count) || 0), 0);
+  if (lost >= limits.lostEvents) out.push({ kind: 'lost', count: lost });
+  return out;
+}
+
 // What the run says on its issue: nothing when nothing is new and the server is the repository's;
 // else a comment on the open daily-review issue, or a new one when none is open.
 export function decide(facts, openIssues = [], now = new Date()) {
-  const { problems = [], newQuestions = [], server = 'same', failed = false } = facts;
-  const something = failed || problems.length > 0 || newQuestions.length > 0 || !['same', 'skipped'].includes(server) || quietStretch(facts, now) != null;
+  const { problems = [], newQuestions = [], alerts: raised = [], server = 'same', failed = false } = facts;
+  const something = failed || problems.length > 0 || newQuestions.length > 0 || raised.length > 0 || !['same', 'skipped'].includes(server) || quietStretch(facts, now) != null;
   if (!something) return { kind: 'none' };
   const open = [...openIssues].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))).at(-1);
   return open ? { kind: 'comment', number: open.number } : { kind: 'create', title: 'Daily review' };
@@ -129,7 +188,7 @@ export function decide(facts, openIssues = [], now = new Date()) {
 // public, so a problem report's own text (an agent's free text: client names, VINs, phones) is never
 // in the comment: only when, who, which build and which page (audit 2026-11-07, SRV-02/ORG-01).
 export function commentBody(facts, today = new Date().toISOString().slice(0, 10)) {
-  const { since, problems = [], newQuestions = [], uncoveredTotal = null, server = 'same', serverNote = '', failed = false, runUrl = '', review = '', log = '', failedStep = '' } = facts;
+  const { since, problems = [], newQuestions = [], alerts: raised = [], uncoveredTotal = null, server = 'same', serverNote = '', failed = false, runUrl = '', review = '', log = '', failedStep = '' } = facts;
   const lines = [];
   if (failed) {
     lines.push(`## ${today}: the daily review could not run`, '', runUrl ? `See the run: ${runUrl}` : `It stopped${failedStep ? ` at the ${failedStep}` : ''}${log ? `: its log is \`${log}\` on the computer that ran it` : ''}.`, '');
@@ -140,7 +199,7 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
   // A skipped check says why (a run off the default branch): "skipped" alone reads like a failure.
   const serverSays = server === 'skipped' ? `not checked (${serverNote || 'skipped'})` : server;
   const lastDay = quiet?.last ? quiet.last.slice(0, 10) : null;
-  lines.push(`## ${today}: ${problems.length} new problem report(s), ${newQuestions.length} new question(s) without a rule, usage server ${serverSays}${quiet ? `, ${lastDay ? `no events since ${lastDay}` : 'no events at all'}` : ''}`, '');
+  lines.push(`## ${today}: ${raised.length ? `${raised.length} alert(s), ` : ''}${problems.length} new problem report(s), ${newQuestions.length} new question(s) without a rule, usage server ${serverSays}${quiet ? `, ${lastDay ? `no events since ${lastDay}` : 'no events at all'}` : ''}`, '');
   lines.push(`Events received since ${since}. ${runUrl ? `The run: ${runUrl}.` : `The whole review is \`${review}\` on the computer that ran it.`}${problems.length ? ` Problem reports' texts are not posted here (this repository is public): read them on the usage server's dashboard (with "Include test runs" for one marked test run), or rebuild this review on your computer with ${rebuild(since)}.` : ''}`, '');
   if (quiet) {
     lines.push(lastDay
@@ -148,6 +207,12 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
       : '**The usage log has no events at all:** the server is new or was emptied, or the download read another one.', '');
   }
   if (server !== 'same' && server !== 'skipped' && serverNote) lines.push(`**Usage server:** ${serverNote}`, '');
+  // Alerts first (alerts()): a carrier's text in them is posted as the rest of the log's text is.
+  if (raised.length) {
+    lines.push('### Alerts', '');
+    for (const a of raised) lines.push(`- ${alertLine(a)}`);
+    lines.push('', 'Thresholds: `ALERTS` in scripts/lib/daily.mjs.', '');
+  }
   if (problems.length) {
     lines.push('### Problem reports', '');
     // With the build that logged it (a report from a build older than a fix may already be done).
@@ -165,6 +230,14 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
   // the review rather than failing to say anything (Codex on PR #52).
   const body = lines.join('\n');
   return body.length <= MAX_COMMENT ? body : `${body.slice(0, MAX_COMMENT)}\n\n… (cut here: the whole list is in the review: ${runUrl ? `rebuild it with ${rebuild(since)}` : review})`;
+}
+// One alert, as the comment says it: numbers as numbers, every text from the log through untrusted.
+function alertLine(a) {
+  if (a.kind === 'page-changed') return `${untrusted(a.carrier, 20)} ${untrusted(a.page)} reads as changed for ${a.installs} installs (${a.runs} fills): the carrier may have redesigned it. Check its layout before agents meet it all day.`;
+  if (a.kind === 'failed-rise') return `Build ${untrusted(a.build, 40)} failed ${a.rate} fields per 100 filled, up from ${a.beforeRate} on ${untrusted(a.before, 40)}.`;
+  if (a.kind === 'crashes') return `${a.crashed} of ${a.sessions} sessions (${Math.round((a.crashed / a.sessions) * 1000) / 10}%) had a crash (client_error).`;
+  if (a.kind === 'lost') return `${a.count} events were lost before upload (usage_lost).`;
+  return untrusted(a.kind, 40);
 }
 // The run keeps no review (the repository is public): the command that rebuilds this window's on the
 // maintainer's computer, a dry run that posts nothing (scripts/daily.mjs).
