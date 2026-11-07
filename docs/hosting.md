@@ -253,8 +253,9 @@ arrived and every run stayed silent, so a week without quotes looked the same as
 Anyone with the extension's upload token can write what the comment quotes (an agent's initials, a
 page, a carrier, a build (an alert's too), a question's caption, data-model name and kind), so each is posted in inline code (no
 markdown, link or image), its backticks and line breaks taken out, every `@` broken by a zero-width
-space (no one is mentioned, and the comment never starts the Claude workflow, which answers an
-at-mention of Claude from the maintainer's login, the one `npm run daily -- --post` posts as), and
+space (no one is mentioned, and the comment holds no at-mention of Claude, which the Claude
+workflow would answer from the maintainer's login, the one `npm run daily -- --post` posts as;
+that workflow doesn't run on the `daily-review` or `weekly-review` issues at all either), and
 bounded (a caption at 200 characters, others at 120 or fewer) (`untrusted` in
 `scripts/lib/daily.mjs`). A report's time is written only when it is a real date and minute, else `?`. A list too long anyway is cut to fit
 a GitHub comment and points to the review. Closing the issue is how a
