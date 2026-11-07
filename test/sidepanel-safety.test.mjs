@@ -5754,7 +5754,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   u.release([{ frameId: 0, result: { ...u.results[0].result, pageMoved: '/quote-B' } }]);
   await run;
   assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
-  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
+  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
   // (runPendingPage then runs from every end of a fill, whichever tab is in front: FLOW-07.)
   assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n\s+\}/);
@@ -8471,6 +8471,27 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   assert.match(SIDEPANEL, /const fillOptions = [^\n]*\n(?:[^\n]*\n)*?  hold: switchOn\('checkBeforeContinue', 'check-continue'\),/);
   // Opening or closing Settings draws the dock again (showScreen).
   assert.match(extractFunction('showScreen'), /renderDock\(\);\n\}$/);
+});
+
+// Reviews of #389: Continue's switch was read before the page check (pageMoved), so one flipped
+// while the panel checked the page missed the fill about to begin, and GEICO's add clicks kept the
+// value read with the list. Read after the page check, right before the options go to the kit, it
+// reaches that fill, its add clicks included.
+test('a switch flipped while the fill checks the page reaches that fill, its add clicks too', async () => {
+  for (const name of ['fillPage', 'autoFill']) {
+    const t = fillHarness();
+    const advanced = [];
+    t.context.fillOptions = (carrier, extra, autoAdvance) => { advanced.push(autoAdvance); return {}; };
+    t.context.pageMoved = async () => { t.ui['auto-advance'].checked = false; return false; };
+    // An automatic fill adding the next vehicle from GEICO's list, its "+" clicked with Continue's switch on.
+    if (name === 'autoFill') t.context.pickListItem = async (carrier, page, ctx) => { ctx.adding = { list: 'vehicles', index: 1, click: true }; };
+    const run = name === 'fillPage' ? t.context.fillPage() : t.context.autoFill('/quote-A');
+    await t.started;
+    t.release(t.results);
+    await run;
+    assert.deepEqual(advanced, [false], name);
+    if (name === 'autoFill') assert.equal(t.seen.plan.active.adding?.click, false, 'the add clicks follow the switch as sent');
+  }
 });
 
 // Audit 2026-11-07, FLOW-13: after a Stop or an error, every later page on that tab stopped filling

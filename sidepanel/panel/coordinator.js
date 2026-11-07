@@ -378,14 +378,14 @@ async function autoFill(page) {
     // report is shown, as a new step's is (FL live run 6, 2026-10-21: vehicles 2 and 3 were filled by
     // follow-ups while the panel still showed the answers of the vehicle before).
     const unseen = !state.reports.has(reportKey(tabId, page, carrier, ctx.active, stepBefore));
-    // Honor the latest switch after preparation, and log the same value used by the kit. The unit the
-    // fill adds (pickUnitToAdd) has its "+" and chooser Next clicked only with it on (`click`).
-    ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
-    const plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // The tab moved on to another page meanwhile: that one gets its own fill (fillPage).
     if (await pageMoved(ctx)) { moved = true; notePageMoved(ctx); return; }
+    // Continue's switch as now, nothing awaited before the kit gets it; the add clicks follow it.
+    ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
+    if (ctx.adding) ctx.adding = { ...ctx.adding, click: !!(ctx.settings.autoPages || ctx.settings.autoAdvance || ctx.asked) };
+    const plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     // Its answers listed as they go in, as a fill the agent asked for, from the first one in (`auto`:
     // a follow-up that answers nothing never replaces the report; W43-42, 2026-10-22: a 29-second
