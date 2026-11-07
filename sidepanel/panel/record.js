@@ -1,7 +1,7 @@
 // The side panel: rendering the client record.
 // One part of the panel; sidepanel.js wires the parts together.
 import { sourcePlace } from '../../src/intake-source.js';
-import { parseEdit, rederive } from '../../src/normalize.js';
+import { noNumberEdit, parseEdit, rederive } from '../../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../../src/schema.js';
 import { get, set, STATES, quotedCarrierPolicy } from '../../src/util.js';
 import { ownerDrivesAnswered } from '../../src/answers/owner.js';
@@ -272,6 +272,8 @@ function fieldRow(path, label, kind, flagged, shown = false) {
 async function agentEdit(path, after, kind) {
   const before = get(state.intake.record, path);
   set(state.intake.record, path, after);
+  // "No" typed into the USDOT or MC box: no number, the box empty with the intake's note (noNumberEdit).
+  if (noNumberEdit(state.intake, path)) { renderSections({ keep: [path] }); renderWarnings(); }
   const edited = new Set(state.intake.agentEdited ?? []).add(path);
   state.intake.agentEdited = [...edited];
   // The agent's own Owner drives answers "Does the owner drive?" (W46-02: answers/owner.js ownerNoPending), and
