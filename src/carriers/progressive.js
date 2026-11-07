@@ -1172,7 +1172,9 @@ export const progressive = {
       { concept: 'coverage.cargo', q: '2158', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
       { concept: 'coverage.cargo', q: '215A', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },
       // TNI: an unselected Reefer option on the intake means this coverage is not requested.
-      { concept: 'coverage.reefer-breakdown', q: '215C', source: 'derived', cargo: true, ask: 'Does the customer require Refrigeration Breakdown coverage?', path: 'coverage.reeferBreakdown', kind: 'bool', value: (r) => r.coverage.reeferBreakdown === true },
+      { concept: 'coverage.reefer-breakdown', q: '215C', source: 'derived', cargo: true, ask: 'Does the customer require Refrigeration Breakdown coverage?', path: 'coverage.reeferBreakdown', kind: 'bool', value: (r) => r.coverage.reeferBreakdown === true,
+        // Its Yes reads "Yes, match Motor Truck Cargo limits" (a yes/no answer takes Yes, No or its aliases only).
+        choiceAliases: (r) => (r.coverage.reeferBreakdown === true ? ['Yes, match Motor Truck Cargo limits'] : []) },
       { concept: 'cargo.commodity', q: '216A', source: 'derived', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null, note: carPartsMixedNote },
       { concept: 'cargo.commodity', q: '216B', source: 'derived', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargoListOfCommodities', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
       // The cargo row's limit (its data-model name), then the cargo section's, which reads the same:
@@ -1229,7 +1231,9 @@ export const progressive = {
     ...onPage('ChangePaymentPlan', [
       { concept: 'quote.policy-term', q: '3E96', field: 'ChangePaymentPlanPage.PolicyTerm', ask: 'Policy length', name: 'Policy length (preserve prefilled value)', ignore: true },
       { concept: 'quote.payment', q: '3E97', field: 'ChangePaymentPlanPage.PaymentType', ask: 'How will the customer pay?', name: 'Installment plan (preserve prefilled value)', ignore: true },
-      { concept: 'quote.payment', q: '3E98', tni: 'progressive.payment-method', source: 'standard', field: 'BillingInfoInput.BillPlanEFTInd', ask: 'Payment method', name: 'Payment method (standard: automatic payments from checking account)', kind: 'choice', value: () => 'Automatic payments from checking account' },
+      { concept: 'quote.payment', q: '3E98', tni: 'progressive.payment-method', source: 'standard', field: 'BillingInfoInput.BillPlanEFTInd', ask: 'Payment method', name: 'Payment method (standard: automatic payments from checking account)', kind: 'choice', value: () => 'Automatic payments from checking account',
+        // Its option reads the method, then Progressive's tagline ("… checking account Save with lower fees – and a discount if eligible!").
+        matchStart: true },
       { concept: 'quote.payment', q: '3EA4', field: 'BillingInfoInput.TwelveMonthBillPlanOnUI', name: 'Payment schedule detail (preserve prefilled value)', ignore: true },
     ]),
 

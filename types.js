@@ -192,7 +192,8 @@
  * @property {'section' | 'limit'} [interchange]  Progressive's trailer interchange: a question of its open section, or its limit (in the section and in the row once Done); its Done checks them (`interchangeClosed`)
  * @property {string} [group]
  * @property {ClientValue<string | null>} [summaryAfter]
- * @property {ClientValue<string[]>} [choiceAliases]
+ * @property {ClientValue<string[]>} [choiceAliases]  other words for the answer, in order, as an option reads; a yes/no answer
+ *   takes only Yes, No and these, so they are the step's own value's (Progressive's "Yes, match Motor Truck Cargo limits" only with Yes)
  * @property {StandardMeta} [std]  how this standard rule writes a shared TNI amount (src/standards.js
  *   STANDARD_IDS), for a hook that may replace the amount (docs/agent-defaults-spec.md); nothing at fill
  *   time reads it without one. test/std-metadata.test.mjs holds it to the rule
@@ -651,6 +652,7 @@
  * @property {string} [reason]  why it failed
  * @property {string} [shown]  what the page shows (a choice's text)
  * @property {string} [said]
+ * @property {'prefix' | 'contains'} [matched]  filled or check: its option was matched only by a fallback, the one beginning with the answer's words or having them (none reading exactly so), so it is also a check item (apply.js looseMatch)
  * @property {boolean} [differs]
  * @property {boolean} [reviewOnly]
  * @property {boolean} [required]

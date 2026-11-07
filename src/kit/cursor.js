@@ -24,7 +24,7 @@ import { kitTrace, isTracing } from "./trace.js";
 import { receipt, signature } from "./capture.js";
 import {
   assign, matchOption, holdingCondition, moneyTokens, businessNameKey, uniqueBusinessNames,
-  heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName, apply, agreesWith,
+  heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName, apply, agreesWith, looseMatch, looseNote,
   summaryAccepted, waitedOut, unpicked, waitedOutUndrawn, WAIT_MS, WAIT_ROUND_MS,
   AFTER_WAIT_QUIET_MS, LOAD_MS, LOAD_RESULT_MS, LOAD_QUIET_MS, LOAD_HALT, KEPT_WATCH_MS,
   ONCE_UNVERIFIED, NOTHING_LEFT, AGENT_PRESSED, CONTINUE_REFUSED, RESET_QUIET_MS,
@@ -950,12 +950,17 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             const note = `The page already has another answer here (${step.name}): left as it is. Check it.`;
             state.report.checks.push({ ...item, note, ...describe(c) });
             state.handled.set(step.id, { status: 'needs', note });
-          // Review mode confirms every retained standard, including a differing carrier choice.
-          // Other defaults retain their existing confirmation behavior.
-          } else if (step.warn && (step.reviewRequired || agreesWith(step, c))) {
-            state.report.checks.push({ ...item, note: step.warn, ...describe(c) });
-            state.handled.set(step.id, { status: 'needs', note: step.warn });
-          } else state.handled.set(step.id, { status: null });
+          } else {
+            // Review mode confirms every retained standard, including a differing carrier choice;
+            // another warning is confirmed on an answer the page already has. An answer the page
+            // holds only by a fallback match (looseMatch) is checked too (the maintainer, 2026-11-07).
+            const loose = looseMatch(step, c);
+            const note = [step.warn && (step.reviewRequired || agreesWith(step, c)) ? step.warn : null, loose ? looseNote(step, loose, true) : null].filter(Boolean).join(' ');
+            if (note) {
+              state.report.checks.push({ ...item, note, ...describe(c), ...(loose ? { matched: loose.matched } : {}) });
+              state.handled.set(step.id, { status: 'needs', note });
+            } else state.handled.set(step.id, { status: null });
+          }
           continue;
         }
         // A choice an earlier answer gave that the page has since reset (an earlier fill's, or this
@@ -1021,6 +1026,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         const t0 = Date.now();
         const requests0 = state.ajaxCount;
         let result;
+        // The field as read after the answer (a redraw's own), for how it holds the answer.
+        let judged = c;
         try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
         const tApplied = Date.now();
         if (result.ok && batch) {
@@ -1044,6 +1051,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             changed: [...before.keys()].filter((k) => k !== mine && after.has(k) && after.get(k) !== before.get(k)).length,
           };
           const fresh = assign(currentControls, plan).find((p) => p.step.id === step.id)?.control;
+          if (fresh) judged = fresh;
           // An address box may collapse once a suggestion is picked; the ZIP/city rules check it.
           const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : step.kind === 'address-suggest' || summaryAccepted(step, currentControls);
           if (!settled || !accepted || state.report.halted) {
@@ -1073,7 +1081,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           }
           // An option picked in place of one never offered (`orMost`) is named in the report.
           const instead = state.substituted.get(step.id);
-          state.report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}) });
+          // An option matched only by a fallback (it begins with the answer's words, or has them,
+          // none reading exactly so) is written and checked by the agent (the maintainer, 2026-11-07).
+          const loose = looseMatch(step, judged);
+          state.report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}), ...(loose ? { matched: loose.matched } : {}) });
           state.quietDue = true;
           state.unoffered.delete(step.id);
           state.keepWait.delete(step.id);
@@ -1084,9 +1095,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             : step.source === 'agent-default'
               ? { status: 'own', note: instead ?? `your own default, in place of TNI's standard: ${step.name}` }
               : { status: 'filled', note: instead ?? `filled from intake: ${step.name}` });
-          if (step.warn) {
-            state.report.checks.push({ ...item, note: step.warn, ...describe(c) });
-            state.handled.set(step.id, { status: 'needs', note: step.warn });
+          const note = [step.warn, loose ? looseNote(step, loose) : null].filter(Boolean).join(' ');
+          if (note) {
+            state.report.checks.push({ ...item, note, ...describe(c), ...(loose ? { matched: loose.matched } : {}) });
+            state.handled.set(step.id, { status: 'needs', note });
           }
           thisRound.changed = true;
           // One at a time, the cursor is here, and on a page that isn't ExtJS the next round judges
