@@ -7,7 +7,9 @@ import { CARRIERS } from '../src/carriers.js';
 // docs/new-carrier.md's prose. The new-carrier issue template lists each as a box; this keeps the
 // two in step and every path in it real.
 const read = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
-const template = read('.github/ISSUE_TEMPLATE/new-carrier.md');
+// Only the boxes count: a path or setting named in the template's prose has no box to tick (the
+// review of #432).
+const template = read('.github/ISSUE_TEMPLATE/new-carrier.md').split('\n').filter((l) => l.startsWith('- [ ] ')).join('\n');
 const named = [...template.matchAll(/`([^`\s]+)`/g)].map((m) => m[1]).filter((p) => /^(src|test|scripts|\.github|docs)\/|\.(js|json|md)$/.test(p));
 
 test('every path the new-carrier template names exists, for each carrier where it names one', () => {
@@ -49,5 +51,8 @@ test('the template has a box for the correction keys, the agent\'s stops and whe
     assert.ok(steps.includes(`\`${option}`), `docs/new-carrier.md's adapter steps name ${option}`);
     assert.ok(template.includes(`\`${option}\``), `the template names ${option}`);
   }
-  assert.match(template, /never on a stop page or step/);
+  assert.match(template, /`advance` only on pages or steps it lists: never on one that binds, buys, submits, orders reports or signs, and never on a stop page or step/);
+  // docs/new-carrier.md step 2: what the intake doesn't answer, without a TNI standard, is the agent's.
+  assert.match(steps, /every question the intake doesn't answer is the agent's/);
+  assert.match(template, /^- \[ \] Step 2: a question the intake doesn't answer and TNI has no standard for stays the agent's, shown as unanswered: never filled as No or not applicable$/m);
 });

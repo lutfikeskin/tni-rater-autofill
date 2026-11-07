@@ -22,13 +22,14 @@ vehicle types, driver and vehicle counts, coverages, known exceptions.
 - [ ] Step 1: the module, and every module it imports, in `RULE_FILES` in `src/usage.js` (`test/usage.test.mjs` checks them)
 - [ ] Step 1: the carrier in `test/provenance.test.mjs`, and any new carrier option declared in `types.js`
 - [ ] Step 2: generic label rules on or off (`useGenericRules`), decided; a `standard` rule only for an answer TNI has recorded (docs/intake-and-rules.md)
+- [ ] Step 2: a question the intake doesn't answer and TNI has no standard for stays the agent's, shown as unanswered: never filled as No or not applicable
 - [ ] Step 3: the page adapter `src/content/carriers/<carrier>.js`, if its widgets need one (named as the carrier's `pageAdapter`)
 - [ ] Step 3: the fields' keys (`shared.keys`) named before the carrier's first live run: agents' corrections are saved under them, so a key a field already had never changes
 - [ ] Step 3: the agent's own pages, steps and screens named (`stopPages`, `stopSteps`, `stopButtons`; `stopped` where the carrier stops the quote): nothing is filled or clicked there
 - [ ] Step 4: repeated drivers and vehicles found by a witness, helpers with `verify`
 - [ ] Step 5: the rulebook part `src/ai/rulebook/<carrier>.js`, listed in `CARRIER_PARTS` in `src/ai/tni-rules.js` (`test/rulebook.test.mjs`)
 - [ ] Step 5: each rule's `concept` in `src/concepts.js`, then `npm run concepts` (`test/concepts.test.mjs`)
-- [ ] Step 6: `quoteSteps` (and `layoutSteps` on a one-address application), and `advance` only on pages or steps that bind, buy, submit, order reports or sign nothing, and never on a stop page or step
+- [ ] Step 6: `quoteSteps` (and `layoutSteps` on a one-address application), and `advance` only on pages or steps it lists: never on one that binds, buys, submits, orders reports or signs, and never on a stop page or step
 
 ### Validate and expand
 
