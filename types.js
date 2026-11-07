@@ -1022,7 +1022,7 @@
  * @property {string | null} [session]  the usage session's id, to join the usage log's events (version 2 on)
  * @property {string | null} [rules]  the rule files' fingerprint (rulesHash), null until the panel has read it
  * @property {string | null} [defaultsHash]  the agent's own defaults' fingerprint; null: TNI's
- * @property {{ autoAdvance: boolean, autoFollowUps: boolean, autoPages: boolean } | null} [settings]  the filling switches as the recording began
+ * @property {{ autoAdvance: boolean, autoFollowUps: boolean, autoPages: boolean, checkBeforeContinue?: boolean } | null} [settings]  the filling switches as the recording began (an older recording may lack checkBeforeContinue)
  * @property {string | null} [platform]  the browser's platform (Windows, macOS…)
  * @property {{ trace: number | null, recorder: number | null }} [versions]  the trace's and recorder's versions, as the trace's first batch says them
  */

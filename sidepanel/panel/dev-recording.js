@@ -48,7 +48,8 @@ async function startRecording() {
   const manifest = newManifest({ id: recordingId(carrier.id, scenario, started), carrier: carrier.id, scenario, started,
     build: usage.build(), intake: usage.currentSession()?.intakeId ?? null, test: !!state.intake.test,
     session: usage.currentSession()?.id ?? null, rules: rulesFingerprint(), defaultsHash: fillDefaultsHash() ?? null,
-    settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages') },
+    settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages'),
+      checkBeforeContinue: switchOn('checkBeforeContinue', 'check-continue') },
     platform: navigator.userAgentData?.platform || navigator.platform || null });
   const store = await RecordingStore.start(manifest);
   // `fills`: when fills ran ({ start, end }), noted by state.filling's setter.

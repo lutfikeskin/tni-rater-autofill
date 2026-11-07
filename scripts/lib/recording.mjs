@@ -262,7 +262,8 @@ export function recordingReport({ manifest, events }) {
   if ((manifest.version ?? 1) > RECORDING_VERSION) out.push(`**This recording's format is version ${manifest.version}; this report reads up to ${RECORDING_VERSION}: what it says may be incomplete or wrong. Update the repository first.**`, '');
   if ((manifest.version ?? 1) >= 2) {
     const s = manifest.settings;
-    const on = s ? Object.entries({ 'auto-advance': s.autoAdvance, 'follow-ups': s.autoFollowUps, 'automatic pages': s.autoPages }).map(([k, v]) => `${k} ${v ? 'on' : 'off'}`).join(', ') : '?';
+    const on = s ? Object.entries({ 'auto-advance': s.autoAdvance, 'follow-ups': s.autoFollowUps, 'automatic pages': s.autoPages, 'check before Continue': s.checkBeforeContinue })
+      .filter(([, v]) => v != null).map(([k, v]) => `${k} ${v ? 'on' : 'off'}`).join(', ') : '?';
     out.push(`Rules ${manifest.rules ?? '?'} · defaults ${manifest.defaultsHash ?? "TNI's"} · ${on} · trace ${manifest.versions?.trace ?? '?'}, recorder ${manifest.versions?.recorder ?? '?'} · ${manifest.platform ?? '?'} · session ${manifest.session ?? '?'}`, '');
   }
   out.push('Times are from the start (m:ss.s). ↑: an answer above the previous one on the step. Typed text is never kept.', '');

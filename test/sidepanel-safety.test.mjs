@@ -8611,7 +8611,7 @@ test('a panel that pops out or docks stops and saves its recording first', async
 
 test('a new recording first stops a trace a closed panel left in the tab', async () => {
   const done = [];
-  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: false, switches: { autoPages: false } };
+  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: false, switches: { autoPages: false, checkBeforeContinue: false } };
   let manifest = null;
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
     usage: { build: () => ({}), currentSession: () => ({ id: 'session-1', intakeId: 'intake-1' }) }, RecordingStore: { start: async (m) => { manifest = m; done.push('store'); return {}; } },
@@ -8623,7 +8623,7 @@ test('a new recording first stops a trace a closed panel left in the tab', async
   assert.deepEqual(done, ['trace:stop:4', 'store', 'inject']);
   // REC-10 (audit 2026-11-07): what the run needs to be reproduced, beside the build.
   assert.deepEqual(JSON.parse(JSON.stringify([manifest.session, manifest.intake, manifest.rules, manifest.defaultsHash, manifest.settings, manifest.platform])),
-    ['session-1', 'intake-1', 'rules-1', null, { autoAdvance: true, autoFollowUps: true, autoPages: false }, 'Windows']);
+    ['session-1', 'intake-1', 'rules-1', null, { autoAdvance: true, autoFollowUps: true, autoPages: false, checkBeforeContinue: false }, 'Windows']);
 });
 
 test('the recording\'s manifest names the trace and recorder its top frame\'s first batch came from', () => {
