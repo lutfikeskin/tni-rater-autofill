@@ -222,12 +222,20 @@ export function newestRules(events) {
 
 /**
  * @param {object[]} events   from loadEvents()
- * @param {{carriers?: object[], minIntakes?: number, threshold?: number, rules?: string | null}} opts
+ * @param {{carriers?: object[], minIntakes?: number, threshold?: number, rules?: string | null, excludeSessions?: Set<string> | null}} opts
  *   minIntakes: how many different intake PDFs a suggestion needs (quotes of one PDF, such as a
  *   sample retried many times, count once); rules: the rule files' fingerprint a rule review counts
- *   answers of (default: the newest the log's fills name, newestRules; null: every fill's)
+ *   answers of (default: the newest the agents' fills name, newestRules, test runs left out;
+ *   null: every fill's); excludeSessions: the test runs (testSessionsOf in signals.mjs), left out
+ *   as every other report leaves them out: a fixture or synthetic intake's answers were chosen on
+ *   purpose and are no agents' habit
  */
-export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9, rules = newestRules(events) } = {}) {
+export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rules: rulesOpt, excludeSessions = null } = {}) {
+  const events = excludeSessions?.size ? all.filter((e) => !excludeSessions.has(e.session)) : all;
+  const testRunsLeftOut = events === all ? 0 : new Set(all.filter((e) => e.session && excludeSessions.has(e.session)).map((e) => e.session)).size;
+  // The current rules from the agents' fills, after test runs are left out: a maintainer's test
+  // build is never "current".
+  const rules = rulesOpt === undefined ? newestRules(events) : rulesOpt;
   const contexts = sessionContexts(events);
   const answers = finalAnswers(events);
   const byId = new Map(carriers.map((c) => [c.id, c]));
@@ -407,7 +415,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9, 
     s.manualRule = `the same label on steps ${steps.join(', ')}: a label rule would match each step; write the rule by hand so it finds this step's question only`;
   }
   for (const list of Object.values(suggestions)) list.sort((a, b) => b.intakes - a.intakes || b.quotes - a.quotes);
-  return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, rules, suggestions };
+  return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, rules, testRunsLeftOut, suggestions };
 }
 
 const quote = (s) => `'${String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
