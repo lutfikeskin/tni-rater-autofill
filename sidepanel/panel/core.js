@@ -281,6 +281,10 @@ const state = storeState({
   notesAsking: null, // the intake whose claims box Luna is reading now
   notesRetry: null, // that intake again, when the settings changed meanwhile
   tabSessions: new Map(),
+  // Another rater's tab in front while the panel stays on the quote tab ({ id, carrier, windowId },
+  // tab.js refreshTab), and the tab the agent asked to move the quote to (quoteHere), until followed.
+  lookingAt: null,
+  quoteMove: null,
   agentKeys: new Map(),
   agentKeysEpochs: new Map(), // Clear/pruning invalidate late writes for that intake only
   filling: false,

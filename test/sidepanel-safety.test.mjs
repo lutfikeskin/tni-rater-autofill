@@ -153,7 +153,7 @@ function extractFunction(name) {
 const HELPERS_START = SIDEPANEL.indexOf('const samePage =');
 const HELPERS_END = SIDEPANEL.indexOf('\n\n// Watch the rater tab', HELPERS_START);
 const PAGE_HELPERS = SIDEPANEL.slice(HELPERS_START, HELPERS_END);
-const FUNCTIONS = ['rememberFill', 'scheduleAutoFill', 'tabInView', 'refreshTab', 'quoteFinished'].map(extractFunction).join('\n') + LAYOUT_STUB;
+const FUNCTIONS = ['rememberFill', 'scheduleAutoFill', 'tabInView', 'quoteUnderWay', 'refreshTab', 'showHeldNote', 'quoteHere', 'backToQuote', 'issueSaid', 'quoteFinished'].map(extractFunction).join('\n') + LAYOUT_STUB;
 
 function harness() {
   const state = {
@@ -170,6 +170,9 @@ function harness() {
     autoPaused: false,
     doneActions: new Set(),
     visitedPages: new Set(),
+    cards: {},
+    lookingAt: null,
+    quoteMove: null,
   };
   const ui = { 'auto-followups': { checked: true } };
   const scheduled = [];
@@ -178,6 +181,7 @@ function harness() {
   let timerId = 0;
   let activeTab = null;
   const openTabs = new Map();
+  const updated = [];
 
   const context = {
     URL,
@@ -198,10 +202,11 @@ function harness() {
     seedQuoteState: () => {}, noteQuoteState: () => {}, knownStep, popped: false,
     dropReports() {}, clientNote() {}, fillProblem() {}, answeredOnPage() {},
     pendingAi: () => [],
-    carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
+    carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', name: 'Progressive', practice: false } : /geico/.test(url) ? { id: 'geico', name: 'GEICO', practice: false } : null),
     chrome: {
       scripting: {},
-      tabs: { query: async () => [activeTab], get: async (id) => (openTabs.get(id) ?? Promise.reject(new Error('No tab'))) },
+      tabs: { query: async () => [activeTab], get: async (id) => (openTabs.get(id) ?? Promise.reject(new Error('No tab'))), update: async (id, props) => { updated.push([id, props]); } },
+      windows: { update: async (id, props) => { updated.push([`window ${id}`, props]); } },
     },
   };
   vm.runInNewContext(`${PAGE_HELPERS}\n${FUNCTIONS}`, context, { filename: 'sidepanel/sidepanel.js' });
@@ -214,6 +219,9 @@ function harness() {
     cleared,
     rendered,
     refreshTab: context.refreshTab,
+    quoteHere: context.quoteHere,
+    backToQuote: context.backToQuote,
+    updated,
     rememberFill: context.rememberFill,
     scheduleAutoFill: context.scheduleAutoFill,
     setActiveTab(tab) { activeTab = tab; },
@@ -1156,16 +1164,133 @@ test('during a quote, switching to a non-rater tab keeps the panel on the quote 
   assert.equal(h.state.tab.background, true);
   assert.match(h.state.tab.url, /AddDriver/, 'follows the quote tab as it moves on');
   assert.ok(h.state.autoPages.has('AddVehicle'), 'quote progress kept');
-  // Another rater tab is followed as before.
-  h.setActiveTab(quoteTab(2));
-  await h.refreshTab();
-  assert.equal(h.state.tab.id, 2);
-  assert.equal(h.state.tab.background, false);
+  assert.equal(h.state.cards.held, null, 'no card for a site that is not a rater');
   // The quote tab closed: the panel follows the active tab.
   h.state.tab = { ...quoteTab(3), carrier: { id: 'progressive' } };
   h.setActiveTab({ id: 9, url: 'https://mail.example.test/inbox' });
   await h.refreshTab();
   assert.equal(h.state.tab.id, 9);
+});
+
+// The agent opens GEICO to look something up while Progressive fills: the panel stays on the
+// Progressive tab, its follow-ups and Continue going on there, and nothing fills GEICO.
+const geicoTab = (id, extra = {}) => ({ id, url: 'https://gateway.geico.com/quote#/vehicles', windowId: 1, ...extra });
+
+test('during a quote, another rater tab in front is only looked at: the panel stays on the quote tab until the agent moves the quote', async () => {
+  const h = harness();
+  h.state.intake = { record: {} };
+  h.state.tab = { ...quoteTab(1, 'AddVehicle'), carrier: { id: 'progressive', name: 'Progressive' }, windowId: 1 };
+  h.state.autoPages = new Set(['AddVehicle']);
+  h.state.filled = new Map([['vin', { path: 'vehicles[0].vin', shown: '1FT' }]]);
+  h.openTab({ ...quoteTab(1, 'AddDriver'), windowId: 1 });
+  h.openTab(geicoTab(2));
+  h.setActiveTab(geicoTab(2));
+  await h.refreshTab();
+  assert.equal(h.state.tab.id, 1, 'still the Progressive tab');
+  assert.equal(h.state.tab.background, true);
+  assert.equal(h.state.tab.carrier.id, 'progressive');
+  assert.match(h.state.tab.url, /AddDriver/, 'follows the quote tab as it moves on');
+  assert.ok(h.state.autoPages.has('AddVehicle') && h.state.filled.has('vin'), 'the quote tab keeps its records');
+  assert.equal(h.state.tabSessions.has(1), false, 'nothing was put away');
+  assert.equal(h.state.lookingAt.id, 2);
+  assert.match(h.state.cards.held.title, /GEICO is in front\. The panel stays on the Progressive quote/);
+  assert.deepEqual([...h.state.cards.held.actions.map((a) => a.label)], ['Quote GEICO here', 'Back to Progressive']);
+
+  // Follow-ups for the quote tab still run: the panel is on its page.
+  h.scheduleAutoFill('AddDriver');
+  h.state.autoPages.add('AddDriver');
+  h.scheduleAutoFill('AddDriver');
+  assert.equal(h.scheduled.length, 1, 'a follow-up for the quote tab is scheduled while GEICO is in front');
+
+  // Back to Progressive: the quote tab in front again, without leaving its window.
+  h.backToQuote();
+  assert.equal(JSON.stringify(h.updated), JSON.stringify([[1, { active: true }]]), 'its own window is in front already');
+  h.setActiveTab({ ...quoteTab(1, 'AddDriver'), windowId: 1 });
+  await h.refreshTab();
+  assert.equal(h.state.tab.background, false);
+  assert.equal(h.state.cards.held, null);
+  assert.equal(h.state.lookingAt, null);
+
+  // "Quote GEICO here": the quote moves to the GEICO tab, the Progressive tab keeps what it had.
+  h.setActiveTab(geicoTab(2));
+  await h.refreshTab();
+  assert.equal(h.state.tab.id, 1, 'held again');
+  await h.quoteHere();
+  assert.equal(h.state.tab.id, 2, 'the GEICO tab now');
+  assert.equal(h.state.tab.background, false);
+  assert.equal(h.state.tab.carrier.id, 'geico');
+  assert.equal(h.state.cards.held, null);
+  assert.equal(h.state.quoteMove, null, 'followed once');
+  assert.equal(h.state.filled.size, 0, 'GEICO starts without Progressive\'s answers');
+  assert.ok(h.state.tabSessions.get(1).filled.has('vin'), 'Progressive\'s are kept with its tab');
+  // GEICO's quote has nothing done yet: the Progressive tab made active again is followed.
+  h.setActiveTab({ ...quoteTab(1, 'AddDriver'), windowId: 1 });
+  await h.refreshTab();
+  assert.equal(h.state.tab.id, 1);
+  assert.ok(h.state.filled.has('vin'));
+});
+
+test('another rater tab is followed when the quote has not started, when the quote tab opened it, or once the quote tab is gone', async () => {
+  // No fill on the tab yet: the panel follows the rater tab in front, as before.
+  const fresh = harness();
+  fresh.state.intake = { record: {} };
+  fresh.state.tab = { ...quoteTab(1), carrier: { id: 'progressive', name: 'Progressive' } };
+  fresh.openTab(quoteTab(1));
+  fresh.setActiveTab(geicoTab(2));
+  await fresh.refreshTab();
+  assert.equal(fresh.state.tab.id, 2, 'nothing under way: followed');
+
+  // A fill running on the quote tab is a quote under way.
+  const running = harness();
+  running.state.intake = { record: {} };
+  running.state.tab = { ...quoteTab(1), carrier: { id: 'progressive', name: 'Progressive' } };
+  running.state.filling = true;
+  running.state.fillingFor = { tabId: 1 };
+  running.openTab(quoteTab(1));
+  running.setActiveTab(geicoTab(2));
+  await running.refreshTab();
+  assert.equal(running.state.tab.id, 1, 'a fill under way: held');
+
+  // Progressive's home page opens the quote in a new tab: the quote moving on, followed.
+  const opened = harness();
+  opened.state.intake = { record: {} };
+  opened.state.tab = { ...quoteTab(1, 'Home'), carrier: { id: 'progressive', name: 'Progressive' } };
+  opened.state.autoPages = new Set(['Home']);
+  opened.openTab(quoteTab(1, 'Home'));
+  opened.setActiveTab({ ...quoteTab(3, 'BusinessOwnerInfo'), openerTabId: 1 });
+  await opened.refreshTab();
+  assert.equal(opened.state.tab.id, 3, 'a tab the quote tab opened is followed');
+
+  // Another tab of the same carrier (another client's quote): held, said as another tab.
+  const same = harness();
+  same.state.intake = { record: {} };
+  same.state.tab = { ...quoteTab(1), carrier: { id: 'progressive', name: 'Progressive' } };
+  same.state.doneActions = new Set(['lookupVin:0']);
+  same.openTab(quoteTab(1));
+  same.setActiveTab(quoteTab(4));
+  await same.refreshTab();
+  assert.equal(same.state.tab.id, 1);
+  assert.match(same.state.cards.held.title, /^Another Progressive tab is in front/);
+  assert.equal(same.state.cards.held.actions[0].label, 'Quote on this tab');
+
+  // The quote tab closed (or left the rater): the rater tab in front is followed.
+  const closed = harness();
+  closed.state.intake = { record: {} };
+  closed.state.tab = { ...quoteTab(1), carrier: { id: 'progressive', name: 'Progressive' } };
+  closed.state.autoPages = new Set(['AddVehicle']);
+  closed.setActiveTab(geicoTab(2));
+  await closed.refreshTab();
+  assert.equal(closed.state.tab.id, 2);
+  assert.equal(closed.state.cards.held, null);
+
+  // No intake: the panel follows the tab in front.
+  const none = harness();
+  none.state.tab = { ...quoteTab(1), carrier: { id: 'progressive', name: 'Progressive' } };
+  none.state.autoPages = new Set(['AddVehicle']);
+  none.openTab(quoteTab(1));
+  none.setActiveTab(geicoTab(2));
+  await none.refreshTab();
+  assert.equal(none.state.tab.id, 2);
 });
 
 test('an AI pick made before an intake or driver/vehicle change still holds Continue until the agent decides', () => {
