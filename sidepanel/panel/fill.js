@@ -166,10 +166,6 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     if (!fillCurrent(ctx)) return;
     // The agent's edits on this page as the fill's tab holds them (retiring AI picks may just
     // have released some), never the tab in front.
-    // Honor the latest switch after preparation, and log the same value used by the kit.
-    ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
-    // The add helpers are clicked only with the switch on now.
-    if (ctx.adding) plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
     if (state.fillingFor?.run === ctx.run && state.fillingFor.stopping) {
       tabMaps(tabId).autoPaused = true;
@@ -179,6 +175,12 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // The tab moved on to another page while the panel prepared: that one isn't filled with this
     // page's plan (the kit checks again as it starts: `expectPage`).
     if (await pageMoved(ctx)) { notePageMoved(ctx); return; }
+    // Continue's switch as now, nothing awaited before the kit gets it; the add clicks follow it.
+    ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
+    if (ctx.adding) {
+      ctx.adding = { ...ctx.adding, click: !!(ctx.settings.autoPages || ctx.settings.autoAdvance || ctx.asked) };
+      plan = planFor(ctx.intake.record, carrier, { ...ctx.active, adding: ctx.adding });
+    }
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // An answer the page took back (keepTakenBack: GEICO's Quote & Coverages) is kept and flagged
     // by the agent's Fill this page too, as by an automatic fill (fillOptions' `takenBack`): what
