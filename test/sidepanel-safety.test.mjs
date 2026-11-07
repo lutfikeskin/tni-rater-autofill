@@ -4838,7 +4838,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
     fillEvents, isStandard, resolutionOf, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
     renderReport: (frames, ctx) => { seen.rendered++; seen.reportTabs.push(ctx?.tabId); }, renderSite() {}, renderSteps() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
     reportKey: (tabId) => `${tabId}|report`, watchFill: () => () => {}, showFinish() {}, reportShown: () => true,
-    fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text }); },
+    fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text, active: ctx.active }); },
     viewOf: () => 't1', usage: { currentSession: () => ({ id: `session-${state.intake.id}`, intakeId: state.intake.id, keySalt: 'salt' }), log: (...events) => seen.logged.push(...events) },
     save: async () => {},
     persistAgentKeys: (tabId, keys) => { seen.persistedKeys.push([tabId, keys]); }, persistDoneActions: (tabId, ids) => { seen.persistedActions.push([tabId, ids]); },
@@ -4858,9 +4858,11 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
 test('a fill whose preparation fails ends: filling is off, the kit is not asked, and the page says so', async () => {
   const t = fillHarness();
   let asked = 0;
-  t.context.pickListItem = async () => { throw new Error('Resource::kQuotaBytes quota exceeded'); };
+  // The list page moved the tab to its second vehicle (pickUnitForm), then saving the pick failed.
+  t.context.pickListItem = async () => { t.state.active = { ...t.state.active, vehicles: 1 }; throw new Error('Resource::kQuotaBytes quota exceeded'); };
   t.context.runKit = async () => { asked++; return []; };
   await t.context.fillPage();
+  assert.equal(t.seen.problems[0].active?.vehicles, 1, 'said under the vehicle selected now (CodeRabbit on #405)');
   assert.equal(t.state.filling, false);
   assert.equal(asked, 0);
   assert.equal(t.state.tabSessions.get(7)?.autoPaused ?? t.state.autoPaused, true, 'automatic filling pauses, as after a failed fill');

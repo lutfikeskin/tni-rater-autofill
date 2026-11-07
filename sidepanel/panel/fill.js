@@ -138,6 +138,9 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     state.filling = false;
     renderSite();
     if (staleFill(ctx)) { noteStaleFill(ctx); runPendingPage(ctx); return; }
+    // The list page may have moved the tab to another unit before the failure (pickUnitForm): the
+    // problem is said under the one its tab has selected now.
+    ctx.active = { ...tabMaps(tabId).active };
     tabMaps(tabId).autoPaused = true;
     logFillError(ctx, e);
     const detail = fillErrorText(ctx, e);
