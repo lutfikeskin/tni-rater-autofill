@@ -1,7 +1,7 @@
 # Every morning: download the agents' usage log from the central server (Railway), build the
 # review (problem reports, AI decisions, speed, rule suggestions, page layouts) of what arrived
-# since the last successful run, keep it as an artifact, and comment on the open daily-review
-# issue (or open one) when something is new: problem reports, questions without a rule first
+# since the last successful run, and comment on the open daily-review issue (or open one) when
+# something is new (never a problem report's text: the repository is public): problem reports, questions without a rule first
 # seen, a deployed usage server that isn't this repository's (it would drop fields the extension
 # sends), or a run that failed. The decisions are in scripts/daily-issue.mjs and scripts/lib/daily.mjs.
 # Needs the repository secret RATER_ADMIN_TOKEN (the server's admin token).
@@ -68,12 +68,9 @@ jobs:
           if [ -f server-check.md ]; then cat server-check.md >> "$FILE"; fi
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
           echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-          head -c 60000 "$FILE" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: review-${{ steps.review.outputs.day }}
-          path: ${{ steps.review.outputs.file }}
-          retention-days: 90
+          # The repository is public: the review itself (problem reports' texts) is neither the run's
+          # summary nor kept as an artifact. The summary shows its counts only.
+          node -e "const s=require('./review-summary.json'); console.log('Problem reports: ' + (s.problems ?? []).length + ' · new questions without a rule: ' + (s.newQuestions ?? []).length)" >> "$GITHUB_STEP_SUMMARY"
       - name: Comment on the daily review issue when something is new
         env:
           SERVER_STATUS: ${{ steps.server.outputs.status }}

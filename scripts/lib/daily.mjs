@@ -124,8 +124,10 @@ export function decide(facts, openIssues = [], now = new Date()) {
   return open ? { kind: 'comment', number: open.number } : { kind: 'create', title: 'Daily review' };
 }
 
-// The comment: only what is new, with where the whole review is: the run (its summary and artifact)
-// on GitHub, the review file on the computer that ran `npm run daily` (scripts/daily.mjs).
+// The comment: only what is new, with where the whole review is: the review file on the computer
+// that ran `npm run daily` (scripts/daily.mjs), and the usage server's dashboard. The repository is
+// public, so a problem report's own text (an agent's free text: client names, VINs, phones) is never
+// in the comment: only when, who, which build and which page (audit 2026-11-07, SRV-02/ORG-01).
 export function commentBody(facts, today = new Date().toISOString().slice(0, 10)) {
   const { since, problems = [], newQuestions = [], uncoveredTotal = null, server = 'same', serverNote = '', failed = false, runUrl = '', review = '', log = '', failedStep = '' } = facts;
   const lines = [];
@@ -139,7 +141,7 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
   const serverSays = server === 'skipped' ? `not checked (${serverNote || 'skipped'})` : server;
   const lastDay = quiet?.last ? quiet.last.slice(0, 10) : null;
   lines.push(`## ${today}: ${problems.length} new problem report(s), ${newQuestions.length} new question(s) without a rule, usage server ${serverSays}${quiet ? `, ${lastDay ? `no events since ${lastDay}` : 'no events at all'}` : ''}`, '');
-  lines.push(`Events received since ${since}. ${runUrl ? `The whole review is in the run summary and its artifact: ${runUrl}` : `The whole review is \`${review}\` on the computer that ran it.`}`, '');
+  lines.push(`Events received since ${since}. ${runUrl ? `The run: ${runUrl}.` : `The whole review is \`${review}\` on the computer that ran it.`}${problems.length ? ` Problem reports' texts are not posted here (this repository is public): read them on the usage server's dashboard (with "Include test runs" for one marked test run), or rebuild this review on your computer with ${rebuild(since)}.` : ''}`, '');
   if (quiet) {
     lines.push(lastDay
       ? `**No events received for ${quiet.days} day(s):** the last arrived ${quiet.last.slice(0, 16).replace('T', ' ')} UTC. Either no agent ran a quote, or uploads stopped (the extension, its upload token, or the usage server). Said once until events arrive again.`
@@ -149,7 +151,7 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
   if (problems.length) {
     lines.push('### Problem reports', '');
     // With the build that logged it (a report from a build older than a fix may already be done).
-    for (const p of problems.slice(0, MAX_PROBLEMS)) lines.push(`- ${String(p.t ?? '').slice(0, 16).replace('T', ' ')} · ${p.agent ?? '?'}${p.build ? ` · ${p.build}` : ''}${p.test ? ' · test run' : ''} · ${p.page ?? '?'}: ${String(p.text ?? '').trim().replace(/\s+/g, ' ').slice(0, 500)}`);
+    for (const p of problems.slice(0, MAX_PROBLEMS)) lines.push(`- ${String(p.t ?? '').slice(0, 16).replace('T', ' ')} · ${p.agent ?? '?'}${p.build ? ` · ${p.build}` : ''}${p.test ? ' · test run' : ''} · ${p.page ?? '?'}`);
     if (problems.length > MAX_PROBLEMS) lines.push(`- … and ${problems.length - MAX_PROBLEMS} more (in the review)`);
     lines.push('');
   }
@@ -162,7 +164,10 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
   // GitHub refuses a comment over 65,536 characters: a window with many reports says the rest is in
   // the review rather than failing to say anything (Codex on PR #52).
   const body = lines.join('\n');
-  return body.length <= MAX_COMMENT ? body : `${body.slice(0, MAX_COMMENT)}\n\n… (cut here: the whole list is in the review: ${runUrl || review})`;
+  return body.length <= MAX_COMMENT ? body : `${body.slice(0, MAX_COMMENT)}\n\n… (cut here: the whole list is in the review: ${runUrl ? `rebuild it with ${rebuild(since)}` : review})`;
 }
+// The run keeps no review (the repository is public): the command that rebuilds this window's on the
+// maintainer's computer, a dry run that posts nothing (scripts/daily.mjs).
+const rebuild = (since) => `\`npm run daily -- --since ${since}\` (a dry run: it posts nothing)`;
 const MAX_PROBLEMS = 60;
 const MAX_COMMENT = 60_000;
