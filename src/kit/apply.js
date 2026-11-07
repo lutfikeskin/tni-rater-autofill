@@ -25,6 +25,10 @@ export const LOAD_RESULT_MS = 20000;
 export const LOAD_QUIET_MS = 1000;
 export const LOAD_HALT = 'The page was still loading after a minute: wait for it, then fill again.';
 export const KEPT_WATCH_MS = 15000;
+// How long one fill may run in all (audit 2026-11-07, ENG-12): its waits are bounded one by one, but
+// a fill making its way through many of them had no end but Stop. Past it the fill stops as on Stop.
+export const FILL_BUDGET_MS = 5 * 60 * 1000;
+export const BUDGET_HALT = 'The fill ran for 5 minutes and stopped there: check the page, then fill again.';
 export const ONCE_UNVERIFIED = 'it was clicked, but the page showed no current premium afterwards. Check the page and click Recalculate yourself: the fill clicks it once a quote.';
 export const NOTHING_LEFT = 'nothing left for you on the page';
 export const AGENT_PRESSED = 'you clicked a button during the fill: Continue is yours';

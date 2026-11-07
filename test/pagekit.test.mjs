@@ -3733,6 +3733,49 @@ test('Stop while the fill waits for a busy page to begin keeps its reason and en
   assert.equal(input.value, '');
 });
 
+// Audit 2026-11-07 (ENG-12): each wait is bounded, but a fill going through many had no end but
+// Stop. After 5 minutes in all it stops as on Stop, and says why.
+test('a fill stops once it has run 5 minutes in all, and the report says so', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  // Each answer's request keeps the page busy 14 s: 30 answers would take 7 minutes.
+  let busyUntil = 0;
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  const questions = Array.from({ length: 30 }, (_, i) => `2B${String(i).padStart(2, '0')}`);
+  const fields = questions.map((q, i) => addExtText(h, String.fromCharCode(97 + (i % 26)) + i, q, { onSet: () => { busyUntil = clock.Date.now() + 14000; } }));
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const t0 = clock.Date.now();
+  const report = await h.kit.fill(questions.map((q) => ({ id: q, q, field: fieldOf(q), path: `progressive.q${q}`, name: q, kind: 'text', value: 'Yes' })), { maxRounds: 60, advance: { text: '^continue$' } });
+  const ran = clock.Date.now() - t0;
+  assert.ok(ran >= 300000 && ran <= 300100, `the fill ran ${ran} ms`);
+  assert.equal(report.halted, true);
+  assert.equal(report.outOfTime, true);
+  assert.match(report.reason, /ran for 5 minutes and stopped there/);
+  const answered = fields.filter((f) => f.input.value === 'Yes').length;
+  assert.ok(answered > 15 && answered < 30, `${answered} answered before the time ran out`);
+  assert.ok(!next._clicked, 'Continue is not clicked');
+  assert.equal(h.kit.progress(), null, 'the fill is over');
+});
+
+// CodeRabbit on #398: a frame's fill begun again on the top's page (Arizona's popup) kept the time
+// it had left, not a new 5 minutes.
+test('a frame\'s fill begun again keeps the time it had left', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  h.context.top = { location: { origin: 'https://synthetic.example', pathname: '/rater', search: '?pageName=BECAPopup', hash: '' } };
+  // The page waits on its server 4 s as the fill begins, and the popup draws meanwhile; then it
+  // waits again, 20 s.
+  const t0 = clock.Date.now();
+  let busyUntil = t0 + 4000;
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  h.context.setTimeout(() => { h.context.location.search = '?pageName=BECAPopup'; becaPopup(h.document.body); }, 3900);
+  h.context.setTimeout(() => { busyUntil = t0 + 24000; }, 4100);
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 10, budgetMs: 5000 });
+  const ran = clock.Date.now() - t0;
+  assert.equal(report.outOfTime, true);
+  assert.ok(ran >= 5000 && ran <= 5100, `the fill ran ${ran} ms of its 5 s`);
+});
+
 test('Stop while an address box waits for its suggestions: nothing is picked and no fallback is written', async () => {
   const h = harness();
   const address = makeInput({ id: 'addr', ariaLabel: 'Home Address' });

@@ -26,7 +26,7 @@ import {
   assign, matchOption, holdingCondition, moneyTokens, businessNameKey, uniqueBusinessNames,
   heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName, apply, agreesWith, looseMatch, looseNote,
   summaryAccepted, waitedOut, unpicked, waitedOutUndrawn, WAIT_MS, WAIT_ROUND_MS,
-  AFTER_WAIT_QUIET_MS, LOAD_MS, LOAD_RESULT_MS, LOAD_QUIET_MS, LOAD_HALT, KEPT_WATCH_MS,
+  AFTER_WAIT_QUIET_MS, LOAD_MS, LOAD_RESULT_MS, LOAD_QUIET_MS, LOAD_HALT, KEPT_WATCH_MS, FILL_BUDGET_MS, BUDGET_HALT,
   ONCE_UNVERIFIED, NOTHING_LEFT, AGENT_PRESSED, CONTINUE_REFUSED, RESET_QUIET_MS,
 } from "./apply.js";
 import { itemResolution, LIST_STATUS } from "../resolution.js";
@@ -230,7 +230,7 @@ export function resolveItems(report, plan) {
  * @param {FillOptions} [options]
  * @returns {Promise<FillReport>}
  */
-export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
+export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, budgetMs = FILL_BUDGET_MS, deadline = null, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
   /** @type {RunState} */
   const state = /** @type {any} */ ({});
   // The plan as given (helpers included, which the fill sets apart below), for a fill begun again.
@@ -472,6 +472,15 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   const thisFill = { report: state.report, halt, run, phase: null };
   const phase = (name, what = null) => { thisFill.phase = name ? { name, what } : null; };
   running = thisFill;
+  // Its time in all (`budgetMs`): once it is spent, the fill stops as on Stop, its waits with it, and
+  // the report says why (`outOfTime`). A fill begun again in its frame (below) keeps this one's end
+  // (`deadline`), not a new budget.
+  const ends = deadline ?? Date.now() + budgetMs;
+  const budget = setTimeout(() => {
+    if (state.report.halted) return;
+    halt(budgetMs === FILL_BUDGET_MS ? BUDGET_HALT : BUDGET_HALT.replace('5 minutes', `${Math.round(budgetMs / 1000)} s`));
+    state.report.outOfTime = true;
+  }, Math.max(0, ends - Date.now()));
   // Stopped by the agent before it began (the panel was still preparing): nothing is done.
   if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
   // A real user edit during a fill must survive even while the recorder is paused: its field is
@@ -488,13 +497,14 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   phase('reading');
   const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
   let settled;
-  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); throw e; }
+  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); clearTimeout(budget); throw e; }
   phase(null);
   // Stopped while the page settled: nothing was done.
   if (!settled || state.report.halted) {
     releaseEditGuard();
     if (!settled) stalled('The page is still waiting on its server. Review and retry.');
     state.report.stepKey = stepKey();
+    clearTimeout(budget);
     if (running === thisFill) running = null;
     return state.report;
   }
@@ -506,8 +516,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   if (!restarted && window !== window.top && currentPage() !== startPage && currentPage() === topPageNow()) {
     adapter().offRequest(countAjax);
     releaseEditGuard();
+    clearTimeout(budget);
     if (running === thisFill) running = null;
-    return fill(givenPlan, { ...arguments[1], restarted: true });
+    return fill(givenPlan, { ...arguments[1], restarted: true, deadline: ends });
   }
   // The step on screen as the fill begins, on a page with a step progress bar (null elsewhere:
   // AmWINS' headings change with its dialogs). Read once the page has settled.
@@ -2378,6 +2389,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     adapter().offRequest(countAjax);
     releaseEditGuard();
     document.removeEventListener('click', notePress, true);
+    clearTimeout(budget);
     if (running === thisFill) running = null;
   }
 }
