@@ -43,6 +43,14 @@ const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const quote = (s) => `"${String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)}"`;
 // A request's path as code, on one line: decoded, it can hold a line break or Markdown (review of PR #379).
 const codePath = (s) => `\`${String(s ?? '').replace(/\s+/g, ' ').replace(/`/g, "'").trim().slice(0, 120)}\``;
+// A document's load (trace.js `load`, stamped at its navigation start), each moment after it.
+const LOADED_HOW = { navigate: 'a new page', reload: 'reloaded', back_forward: 'by Back or Forward', prerender: 'prerendered' };
+const loadedIn = (e) => (typeof e?.loaded === 'number' ? e.loaded - e.t : null);
+const loadLine = (e) => {
+  const parts = [typeof e.response === 'number' ? `its server answered in ${secs(e.response - e.t)}` : '',
+    typeof e.ready === 'number' ? `ready at ${secs(e.ready - e.t)}` : '', loadedIn(e) != null ? `loaded at ${secs(loadedIn(e))}` : 'not loaded yet as the trace began'].filter(Boolean);
+  return `the page loaded (${LOADED_HOW[e.how] ?? 'a page'}): ${parts.join(', ')}`;
+};
 const fieldName = (e) => quote(e.field?.label || e.field?.key || 'a question');
 // Where an answer is down the page; none for a box drawn with no size (a page's hidden status box,
 // Progressive's Current Page Errored), which is never above or below a question.
@@ -88,7 +96,9 @@ function segments(events) {
   };
   for (const e of events) {
     const top = (e.frame ?? 0) === 0;
-    if (top && e.kind === 'page' && (!current || e.page !== current.page || (e.step ?? null) !== current.step)) open(e, e.page, e.step ?? null);
+    // A new document (`injectedAt`: the trace was in from its load) opens its own step even on the
+    // same page and step, so a reload's load is told as its own (review of PR #397).
+    if (top && e.kind === 'page' && (!current || e.injectedAt != null || e.page !== current.page || (e.step ?? null) !== current.step)) open(e, e.page, e.step ?? null);
     else if (top && e.kind === 'step' && current && (e.step ?? null) !== current.step) open(e, current.page, e.step ?? null);
     else if (!current) open(e, e.page ?? '(before the first page event)', null);
     // The fill's wait or answer is logged when it ends: one begun on an earlier step (the wait after
@@ -171,6 +181,8 @@ function actions(events) {
     } else if (e.kind === 'fill') lines.push({ t: e.t, text: e.on ? 'a fill started' : `the fill ended${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
     // A request the carrier's server refused or failed (HTTP 400 and up): its own error, not the fill's.
     else if (e.kind === 'request' && failed(e)) lines.push({ t: e.t, text: `the page's request to ${codePath(e.path)} failed: HTTP ${e.status} after ${secs(e.ms ?? 0)}` });
+    // A document's load, from its navigation start (REC-03): its server's answer, ready, loaded.
+    else if (e.kind === 'load' && (e.frame ?? 0) === 0) lines.push({ t: e.t, text: loadLine(e) });
     else if (e.kind === 'note') lines.push({ t: e.t, text: `NOTE: ${e.text}` });
     else if (e.kind === 'gap') lines.push({ t: e.t, text: `GAP: ${e.dropped} event(s) lost while no panel took them` });
     // The panel following another tab than the recorded one (REC-04): the quote may go on there, unrecorded.
@@ -302,7 +314,8 @@ export function recordingReport({ manifest, events }) {
   });
   for (const { s, lines, next, leftBy, n } of told) {
     const by = leftBy ? `${quote(leftBy.button.text)} (${leftBy.kind === 'kit' ? 'extension' : 'you'})` : '—';
-    out.push(`| ${n} | ${s.page}${s.step ? ` · ${s.step}` : ''} | ${clock(s.start - t0)} | ${secs(next - s.start)} | ${lines.length} | ${by} |`);
+    const load = s.events.find((e) => e.kind === 'load' && (e.frame ?? 0) === 0 && loadedIn(e) != null);
+    out.push(`| ${n} | ${s.page}${s.step ? ` · ${s.step}` : ''} | ${clock(s.start - t0)}${load ? ` (loaded in ${secs(loadedIn(load))})` : ''} | ${secs(next - s.start)} | ${lines.length} | ${by} |`);
   }
   out.push('');
   if (ordered.some((e) => e.kind === 'kit')) out.push(...timeTable(ordered, told, end));
