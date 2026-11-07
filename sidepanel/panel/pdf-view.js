@@ -5,7 +5,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { fillEvents, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { $, clearAgentKeys, persistAiPending, state, store } from './core.js';
+import { $, clearAgentKeys, forgetJournals, persistAiPending, state, store } from './core.js';
 import { loadFile, logProfile, profileTimer } from './intake.js';
 import { render, showScreen } from './record.js';
 import { pageOf, samePage } from './usage.js';
@@ -422,6 +422,8 @@ async function clearClient() {
     await forgetPdf();
     await persistAiPending();
     await clearAgentKeys(scope);
+    // What its quote tabs' fills went through (FLOW-06), each tab's quote state aside.
+    await forgetJournals();
     // agent defaults: no client, no question.
     refreshDefaults();
     render();

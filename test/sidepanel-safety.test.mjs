@@ -116,7 +116,9 @@ function extractFunction(name) {
           stopFillFirst: 'async () => {}',
           // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
           // elsewhere none is running.
-          noteFollowed: '() => {}' };
+          noteFollowed: '() => {}',
+          // A tab's journal (FLOW-06) has its own tests: elsewhere nothing is kept.
+          keepJournal: '() => Promise.resolve()', forgetJournals: '() => Promise.resolve()', restoreJournal: 'async () => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -2360,6 +2362,84 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   const back = make();
   await back.restoreDoneActions(7);
   assert.deepEqual([...back.state.doneActions].sort(), ['lookupVin:0', 'trailerEntered:0'], 'tab 7 kept');
+});
+
+// Audit 2026-11-07, FLOW-06: a panel opened again forgot the steps it had continued from (an
+// automatic fill on a step the agent went back to clicked Next again), a pause, the pages whose
+// follow-ups fill by themselves and the tab's quote-state hold. Each tab's journal is kept in
+// storage.session (the panel's `store`), keys and ids only, and read as the panel comes to the tab.
+// `memory`: the store's contents; `writes`: each key written.
+function journalHarness(memory, { session = { intakeId: 'intake-a' }, tabId = 7 } = {}) {
+  const writes = [];
+  const state = { tab: { id: tabId }, tabSessions: new Map(), quoteStates: new Map(), doneSteps: new Set(), autoPages: new Set(), autoPaused: false, advanceRetried: new Set() };
+  const context = {
+    state, usage: { currentSession: () => session },
+    store: { get: async (k) => structuredClone(memory[k]), set: async (k, v) => { writes.push(k); memory[k] = structuredClone(v); }, remove: async (k) => { delete memory[k]; }, keys: async () => Object.keys(memory) },
+  };
+  const block = SIDEPANEL.slice(SIDEPANEL.indexOf("const JOURNAL_PREFIX = 'journal:';"), SIDEPANEL.indexOf('function journalOf('));
+  vm.runInNewContext(`${block}\n${['journalOf', 'keepJournal', 'forgetJournals', 'restoreJournal'].map(extractFunction).join('\n')}`, context);
+  return { context, state, writes };
+}
+
+test('a tab’s continued steps, pause, filled pages and quote state outlive the panel (FLOW-06)', async () => {
+  // Made in the harness's realm: compared as plain data.
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+  const memory = {};
+  const session = { intakeId: 'intake-a' };
+  const pick = { carrier: 'progressive', code: 'CA', session: 's1', dismissed: null };
+  const before = journalHarness(memory, { session });
+  Object.assign(before.state, { doneSteps: new Set(['application|v0|Vehicles@next']), autoPages: new Set(['application']), autoPaused: true, advanceRetried: new Set(['application|v1|Vehicles@next']) });
+  before.state.quoteStates.set(7, pick);
+  await before.context.keepJournal(7);
+  await before.context.keepJournal(7);
+  assert.deepEqual(before.writes, ['journal:7'], 'written once while nothing changed');
+  // Another tab's, from its kept session: its own key.
+  before.state.tabSessions.set(8, { doneSteps: new Set(['Drivers|d0|next']), autoPages: new Set(), autoPaused: false });
+  await before.context.keepJournal(8);
+  assert.deepEqual(plain([memory['journal:8'].doneSteps, memory['journal:8'].quoteState]), [['Drivers|d0|next'], null]);
+  // No answer or client text: keys, pages and the state's code only.
+  assert.deepEqual(Object.keys(memory['journal:7']).sort(), ['advanceRetried', 'autoPages', 'autoPaused', 'doneSteps', 'quoteState', 'scope']);
+
+  // The panel opened again on that tab: all of it is back, once.
+  const after = journalHarness(memory, { session });
+  await after.context.restoreJournal(7);
+  assert.deepEqual(plain([[...after.state.doneSteps], [...after.state.autoPages], after.state.autoPaused, [...after.state.advanceRetried], after.state.quoteStates.get(7)]),
+    [['application|v0|Vehicles@next'], ['application'], true, ['application|v1|Vehicles@next'], pick]);
+  after.state.autoPaused = false;
+  after.state.doneSteps.clear();
+  await after.context.restoreJournal(7);
+  assert.deepEqual([after.state.autoPaused, after.state.doneSteps.size], [false, 0], 'once: what the panel did since stays');
+  // A tab no longer in front by the time the journal is read: left for its own arrival.
+  const moved = journalHarness(memory, { session });
+  const reading = moved.context.restoreJournal(7);
+  moved.state.tab = { id: 9 };
+  await reading;
+  assert.deepEqual([moved.state.doneSteps.size, moved.state.quoteStates.size], [0, 0]);
+  // Another intake: the tab's quote state only (it outlives the intake), no fill's record.
+  const other = journalHarness(memory, { session: { intakeId: 'intake-b' } });
+  await other.context.restoreJournal(7);
+  assert.deepEqual(plain([other.state.doneSteps.size, other.state.autoPages.size, other.state.autoPaused, other.state.quoteStates.get(7)]), [0, 0, false, pick]);
+
+  // A new, cleared or reloaded client: every journal keeps its quote state only; a closed tab's goes.
+  await after.context.forgetJournals();
+  assert.deepEqual([plain(memory['journal:7']), memory['journal:8']], [{ scope: null, quoteState: pick }, undefined]);
+  const reloaded = journalHarness(memory, { session });
+  await reloaded.context.restoreJournal(7);
+  assert.deepEqual(plain([reloaded.state.doneSteps.size, reloaded.state.autoPaused, reloaded.state.quoteStates.get(7)]), [0, false, pick]);
+  await after.context.forgetJournals(7);
+  assert.equal(memory['journal:7'], undefined);
+
+  // Read as the panel comes to a tab, before the page's layout is asked for; kept as each fill ends,
+  // as Continue is clicked again or pauses, as the agent's Fill lifts a pause, and as the quote state
+  // changes. Forgotten on a new or cleared client and a closed tab.
+  assert.match(extractFunction('refreshTab'), /await restoreJournal\(state\.tab\?\.id\);[\s\S]*scheduleLayout\(/);
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /\} finally \{[\s\S]*?state\.filling = false;[\s\S]*?keepJournal\(tabId\);/, name);
+  assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false; keepJournal\(state\.tab\.id\); \}/);
+  assert.equal(extractFunction('watchNextStep').match(/keepJournal\(tabId\);/g)?.length, 2);
+  for (const name of ['noteQuoteState', 'inheritQuoteState', 'stateIssue', 'dismissState']) assert.match(extractFunction(name), /keepJournal\(/, name);
+  assert.match(extractFunction('loadFile'), /state\.doneSteps = new Set\(\);[\s\S]*await forgetJournals\(\);/);
+  assert.match(extractFunction('clearClient'), /await forgetJournals\(\);/);
+  assert.match(SIDEPANEL, /chrome\.tabs\.onRemoved\.addListener\(\(tabId\) => \{[^\n]*forgetJournals\(tabId\);/);
 });
 
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
@@ -8609,7 +8689,7 @@ test('automatic filling paused on the tab in front is said under the dock\'s wor
   assert.equal(context.pausedSaid({ phase: 'ready' }), '');
   // The dock carries it (renderDock), and the agent's own Fill lifts it (fillPage).
   assert.match(extractFunction('renderDock'), /busy: !!state\.filling, paused: pausedSaid\(d\) \};/);
-  assert.match(extractFunction('fillPage'), /if \(!auto\) state\.autoPaused = false;/);
+  assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false;/);
 });
 
 // W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log

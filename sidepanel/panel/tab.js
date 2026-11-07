@@ -2,7 +2,7 @@
 // One part of the panel; sidepanel.js wires the parts together.
 import { carrierForUrl } from '../../src/carriers.js';
 import { inExtension, popped } from './env.js';
-import { restoreAgentKeys, restoreDoneActions, restoreReports, retireAiOrigins, state } from './core.js';
+import { restoreAgentKeys, restoreDoneActions, restoreJournal, restoreReports, retireAiOrigins, state } from './core.js';
 import { firstUnits } from './intake.js';
 import { renderPickers } from './record.js';
 import { ensureRecorder, pageOf } from './usage.js';
@@ -103,6 +103,8 @@ async function refreshTab() {
   await restoreAgentKeys(state.tab?.id);
   await restoreDoneActions(state.tab?.id);
   await restoreReports(state.tab?.id);
+  // What the tab's fills have been through (FLOW-06): before anything fills there.
+  await restoreJournal(state.tab?.id);
   if (state.tab?.carrier && !state.filling) await retireAiOrigins({ tabId: state.tab.id, tabUrl: state.tab.url, intake: state.intake, carrier: state.tab.carrier });
   // A later call draws the tab, injects the recorder and asks for the layout itself.
   if (overtaken()) return;
