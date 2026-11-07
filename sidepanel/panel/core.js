@@ -522,16 +522,19 @@ async function migrateStoredData() {
   if (result.error) logCrash(new Error(`stored data not migrated${result.failedAt ? ` to version ${result.failedAt}` : ''}: ${result.error?.name ?? 'Error'}`));
 }
 
-function logCrash(err) {
+// `where`: 'panel', or 'recorder' for one the page's recorder caught and told (usage.js
+// onRecorderMessage).
+function logCrash(err, where = 'panel') {
   try {
     if (state.tab?.carrier?.practice) return;
     // An intake without a record (the very crash this log exists for) has no terms to redact. If
     // the redactor itself can't be built, the message is dropped rather than logged unredacted.
     let redact;
     try { redact = state.intake?.record ? redactor(redactionTerms(state.intake.record)) : (x) => x; } catch { redact = () => ''; }
-    const event = clientErrorEvent(err, { where: 'panel', redact });
-    if (loggedCrashes.has(event.error) || loggedCrashes.size >= 20) return;
-    loggedCrashes.add(event.error);
+    const event = clientErrorEvent(err, { where, redact });
+    const once = `${where}|${event.error}`;
+    if (loggedCrashes.has(once) || loggedCrashes.size >= 20) return;
+    loggedCrashes.add(once);
     usage.log({ ...event, carrier: state.tab?.carrier?.id ?? null, page: state.tab?.url ? pageOf(state.tab.url) : null });
   } catch { /* logging a crash must never crash */ }
 }

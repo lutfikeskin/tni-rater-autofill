@@ -6474,6 +6474,13 @@ test('a panel crash is logged once per message, at most 20, never on a practice 
   sandbox.usage.log = () => { throw new Error('storage full'); };
   state.tab.carrier.practice = false;
   assert.doesNotThrow(() => sandbox.logCrash(new Error('again')), 'logging a crash never throws');
+  // The page's recorder's exception (LEARN-10): logged where 'recorder', apart from the panel's own.
+  const recorder = [];
+  sandbox.usage.log = (e) => recorder.push(e);
+  sandbox.loggedCrashes.clear();
+  sandbox.logCrash(new Error('boom'));
+  sandbox.logCrash({ message: 'boom' }, 'recorder');
+  assert.deepEqual(recorder.map((e) => [e.where, e.error]), [['panel', 'boom'], ['recorder', 'boom']]);
 });
 
 test('a layout carries the page\'s messages, and a new message logs the page again', async () => {
@@ -6556,6 +6563,22 @@ test('a problem report names the fill it is about: view, run, step and what held
   state.intake = null;
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
   assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
+});
+
+// CodeRabbit on PR #403: the recorder tells its exception again until the panel says it logged
+// it; a panel with no intake, or another tab's, says nothing, so it is told again later.
+test('the panel logs a recorder exception where recorder and says it took it', () => {
+  const crashes = [], replies = [];
+  const state = { intake: { record: {} }, tab: { id: 1, url: 'https://synthetic.example/quote', carrier: null } };
+  const sandbox = { state, usage: { log() {} }, samePage: (p) => p, pageOf: (u) => u, logCrash: (e, where) => crashes.push([e.message, where]) };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('onRecorderMessage'), sandbox);
+  const tell = (tab) => sandbox.onRecorderMessage({ ra: 'usage', event: 'recorder_error', message: 'boom', stack: 'at recorder.js' }, { tab: { id: tab } }, (r) => replies.push(r));
+  tell(2);
+  assert.deepEqual([crashes, replies], [[], []], 'another tab\'s: nothing logged, no reply');
+  tell(1);
+  assert.deepEqual(crashes, [['boom', 'recorder']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(replies)), [{ logged: true }]);
 });
 
 test('the agent\'s own button clicks are logged redacted, with a known step only', () => {
