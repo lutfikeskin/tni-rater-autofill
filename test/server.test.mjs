@@ -67,6 +67,26 @@ test('an upload is on the disk before its 200; a failed flush is a 500 and the e
   assert.deepEqual(stored(dataDir).map((e) => e.id), [events[0].id, events[1].id, events[1].id], 'a line written before its failed flush may be on the disk twice');
 });
 
+// The review of #425: fsync on a new file doesn't keep its directory entry, so the first upload of
+// a day also flushes the events folder (on Linux, where the server runs; Windows can't open one).
+test('the first upload of a day also flushes the events folder, so the new day file survives a crash', async (t) => {
+  const dataDir = tmp();
+  const opened = new Map();
+  const open = fs.openSync;
+  t.mock.method(fs, 'openSync', (p, ...rest) => { const fd = open(p, ...rest); opened.set(fd, path.relative(dataDir, String(p))); return fd; });
+  const synced = [];
+  t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(opened.get(fd)); });
+  await withServer({ dataDir }, async ({ post }) => {
+    assert.equal((await post({ events: [ev()] })).status, 200);
+    const day = `${new Date().toISOString().slice(0, 10)}.jsonl`;
+    const dayFile = path.join('events', day);
+    assert.deepEqual(synced, process.platform === 'win32' ? [dayFile] : [dayFile, 'events'], 'the file, then its folder');
+    synced.length = 0;
+    assert.equal((await post({ events: [ev()] })).status, 200);
+    assert.deepEqual(synced, [dayFile], 'a day file that was there already: the file only');
+  });
+});
+
 test('keeps only known event types and fields', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {

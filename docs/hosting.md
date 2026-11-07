@@ -85,13 +85,22 @@ leaves this volume the only full copy of the log. Its tables, the richer intake 
 optional quoted premiums are in [quoting history database](quoting-history-database.md).
 
 The extension deletes its copy of an upload once the server answers 200, so `store` in
-`server/index.mjs` flushes the day file to the volume (`fsync`) before that answer. A write or flush
+`server/index.mjs` flushes the day file to the volume (`fsync`) before that answer, and on a day's
+first upload, which creates the file, the events folder too (on Linux; Windows opens no folder). A write or flush
 that fails answers 500 (`could not store events`), and the extension keeps the events and sends
 them again, so a line written before a failed flush can be in the file twice (readers de-duplicate
-by id). Nothing in this repository backs the volume up: `npm run pull` leaves a plain copy of the
-days it downloads in the maintainer's `server-data/`. Scheduled volume backups, an encrypted copy
-off Railway and a restore drill are Railway and account settings (audit 2026-11-07, SRV-05), not
-code.
+by id).
+
+**Backups.** Railway's Hobby plan has no volume backups. The maintainer's computer keeps a daily
+copy instead (audit 2026-11-07, SRV-05): `~/.config/tni-rater/backup-usage-server.mjs`, a
+standalone script outside the repository, pulls `/v1/export` with the admin token into
+`~/Backups/tni-usage-server/<UTC day>/events/*.jsonl`, refuses an export that was cut off, keeps
+the last 14 copies and logs each run to `backup.log` in that folder. A Windows scheduled task runs
+it every day at 12:00. To restore, deploy the server and push a copy back:
+`npm run push-logs -- ~/Backups/tni-usage-server/<UTC day>/events` (events already stored are
+skipped by id; each is stored with a new `receivedAt`). Luna's day counts (`DATA_DIR/luna/`) are
+not copied: a lost day file is counted again from 0 (above), and the next day starts its own.
+`npm run pull` also leaves a plain copy of the days it downloads in the maintainer's `server-data/`.
 
 ### Upload limits and the disk guard
 

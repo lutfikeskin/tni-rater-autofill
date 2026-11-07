@@ -538,12 +538,19 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     const lines = events.map((e) => JSON.stringify({ ...e, receivedAt })).join('\n');
     if (!lines) return;
     // On the disk before the 200 (audit 2026-11-07, SRV-05): the extension deletes its copy on that
-    // answer, so a crash between the write and the disk would lose the events for good.
+    // answer, so a crash between the write and the disk would lose the events for good. A day's
+    // first upload creates its file, whose name is in the folder: the folder is flushed too, or the
+    // file could be gone after a crash (on Linux, where the server runs; Windows opens no folder).
+    const created = !fs.existsSync(file);
     const fd = fs.openSync(file, 'a');
     try {
       fs.appendFileSync(fd, `${lines}\n`);
       fs.fsyncSync(fd);
     } finally { fs.closeSync(fd); }
+    if (created && process.platform !== 'win32') {
+      const dir = fs.openSync(eventsDir, 'r');
+      try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
+    }
   }
 
   // Browsers may ask permission (CORS preflight) before an extension posts JSON. Only browser
