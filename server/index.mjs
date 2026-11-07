@@ -391,12 +391,22 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
   };
 
   // Ids already stored, so retried uploads are ignored. Fine at pilot scale (a few million ids).
+  // What it reads is flushed first: a line written before a failed flush is read as stored, and its
+  // retry then answered 200 as a duplicate, so it must be on the disk (the review of #425). The
+  // folder too, for a day file the failed upload created (on Linux; Windows opens no folder).
   const seen = new Set();
   for (const f of fs.readdirSync(eventsDir).filter((n) => n.endsWith('.jsonl'))) {
-    for (const line of fs.readFileSync(path.join(eventsDir, f), 'utf8').split('\n')) {
+    const file = path.join(eventsDir, f);
+    const fd = fs.openSync(file, 'r+'); // writable: Windows flushes no read-only handle
+    try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
       if (!line) continue;
       try { seen.add(JSON.parse(line).id); } catch { /* skip a torn last line */ }
     }
+  }
+  if (process.platform !== 'win32') {
+    const dir = fs.openSync(eventsDir, 'r');
+    try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
   }
 
   const matches = (req, secret) => {

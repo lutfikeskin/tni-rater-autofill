@@ -89,8 +89,10 @@ The extension deletes its copy of an upload once the server answers 200, so `sto
 which holds a new day file's name (on Linux; Windows opens no folder). It flushes the folder on
 every upload, so the retry of one whose folder flush failed flushes it too. A write or flush
 that fails answers 500 (`could not store events`), and the extension keeps the events and sends
-them again, so a line written before a failed flush can be in the file twice (readers de-duplicate
-by id).
+them again, so a line written before a failed flush can be in the file twice (readers, the
+dashboard included, de-duplicate by id). A restarted server flushes every day file it reads, and
+the folder, before taking uploads: a retry it answers as a duplicate of such a line is then on the
+disk too.
 
 **Backups.** Railway's Hobby plan has no volume backups. The maintainer's computer keeps a daily
 copy instead (audit 2026-11-07, SRV-05): `~/.config/tni-rater/backup-usage-server.mjs`, a

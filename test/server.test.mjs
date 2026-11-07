@@ -55,6 +55,7 @@ test('an upload is on the disk before its 200; a failed flush is a 500 and the e
   const sync = t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(fd); });
   const events = [ev(), ev()];
   await withServer({ dataDir }, async ({ post }) => {
+    synced.length = 0; // what the start flushed: its own test, below
     assert.equal((await post({ events: events.slice(0, 1) })).status, 200);
     assert.equal(synced.length, process.platform === 'win32' ? 1 : 2, 'flushed before the answer (on Linux, its folder too)');
     assert.equal(typeof synced[0], 'number');
@@ -78,6 +79,7 @@ test('an upload also flushes the events folder, so a new day file survives a cra
   const synced = [];
   const sync = t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(opened.get(fd)); });
   await withServer({ dataDir }, async ({ post }) => {
+    synced.length = 0;
     assert.equal((await post({ events: [ev()] })).status, 200);
     const day = `${new Date().toISOString().slice(0, 10)}.jsonl`;
     const dayFile = path.join('events', day);
@@ -96,6 +98,27 @@ test('an upload also flushes the events folder, so a new day file survives a cra
     synced.length = 0;
     assert.equal((await post({ events: [retried] })).status, 200);
     assert.deepEqual(synced, [dayFile, 'events'], 'the retry flushes the folder before its 200');
+  });
+});
+
+// The review of #425: after a failed flush and a restart, the retry is a duplicate of a line the
+// start read, answered 200 without a write. So the start flushes every day file it reads, and the
+// folder (on Linux), before it takes an upload.
+test('a restarted server flushes the events it reads, so a retry answered as a duplicate is on the disk', async (t) => {
+  const dataDir = tmp();
+  const kept = ev();
+  const day = `${new Date().toISOString().slice(0, 10)}.jsonl`;
+  fs.mkdirSync(path.join(dataDir, 'events'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'events', day), `${JSON.stringify({ ...kept, receivedAt: new Date().toISOString() })}\n`);
+  const opened = new Map();
+  const open = fs.openSync;
+  t.mock.method(fs, 'openSync', (p, ...rest) => { const fd = open(p, ...rest); opened.set(fd, path.relative(dataDir, String(p))); return fd; });
+  const synced = [];
+  t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(opened.get(fd)); });
+  await withServer({ dataDir }, async ({ post }) => {
+    assert.deepEqual(synced, process.platform === 'win32' ? [path.join('events', day)] : [path.join('events', day), 'events'], 'flushed at the start');
+    const again = await (await post({ events: [kept] })).json();
+    assert.equal(again.duplicates, 1);
   });
 });
 
