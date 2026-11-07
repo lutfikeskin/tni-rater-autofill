@@ -5,7 +5,9 @@ import { redactor, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { recordingId, stampEvents, newManifest } from '../../src/recording.js';
 import { RecordingStore } from '../recording.js';
-import { $, state } from './core.js';
+import { $, state, switchOn } from './core.js';
+import { rulesFingerprint } from './coordinator.js';
+import { fillDefaultsHash } from './agent-defaults/store.js';
 import { ensureRecorder } from './usage.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -25,8 +27,44 @@ function renderDevrec() {
   // Its buttons follow it, and Advanced's title says it, seen with Advanced folded too.
   state.devrec = { ...state.devrec, on: !!rec };
   if (!rec || rec.stopping) return;
+  noteFollowed(rec);
   const s = Math.floor((Date.now() - rec.started) / 1000);
-  devrecSaid(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} · ${rec.store.count} events${rec.store.durable ? '' : '. Kept in memory only: closing the panel loses it'}.`);
+  const away = rec.away ? ' The panel is on another tab: only the tab the recording began on is recorded, and what the quote does here is not.' : '';
+  devrecSaid(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} · ${rec.store.count} events${rec.store.durable ? '' : '. Kept in memory only: closing the panel loses it'}.${away}`);
+}
+
+// The recording follows the one tab it began on (rec.tabId), whatever tab the panel follows (REC-04,
+// 2026-11-07; W44-23: 4 of 10 recordings held nothing of the quote, which had moved to another tab).
+// When the panel follows another tab, or comes back, the timeline says so (`panel`: `away`, and the
+// tab followed, a tab number only), once each time, and the panel's line above says it while it lasts.
+// Noted as the panel changes tab (refreshTab), so a move away and back between two of the line's
+// renders is in the timeline too (review of PR #383).
+function noteFollowed(rec = state.recording) {
+  if (!rec || rec.stopping) return;
+  const away = state.tab?.id !== rec.tabId;
+  if (away === !!rec.away) return;
+  rec.away = away;
+  rec.store.add([{ kind: 'panel', t: Date.now(), frame: 0, away, followed: Number.isInteger(state.tab?.id) ? state.tab.id : null, recorded: rec.tabId }]);
+}
+
+// The recorded tab loaded a new document while the panel follows another one: the panel's own
+// reinjection (ensureRecorder) is only for the tab it follows, so the trace goes in here, with the
+// recorder whose readers it uses and the carrier's page adapter. It only watches (trace.js).
+async function recordedTabUpdated(tabId, change) {
+  const rec = state.recording;
+  if (!rec || rec.stopping || tabId !== rec.tabId || change?.status !== 'complete' || state.tab?.id === tabId) return;
+  const adapter = rec.carrier?.pageAdapter ? [rec.carrier.pageAdapter] : [];
+  try {
+    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: [...adapter, 'src/content/field-key.js', 'src/content/recorder.js', 'src/content/trace.js'] });
+  } catch { /* not a page the extension may read now; the next load tries again */ }
+}
+
+// The recorded tab was closed: nothing more can be recorded, so the recording is saved, saying why.
+function recordedTabRemoved(tabId) {
+  const rec = state.recording;
+  if (!rec || rec.stopping || tabId !== rec.tabId) return;
+  rec.store.add([{ kind: 'panel', t: Date.now(), frame: 0, closed: true, recorded: rec.tabId }]);
+  stopRecording('The recorded tab was closed.');
 }
 
 async function startRecording() {
@@ -41,8 +79,14 @@ async function startRecording() {
   const redact = redactor(redactionTerms(state.intake.record));
   const scenario = redact($('capture-scenario').value.trim()).slice(0, 60) || 'unnamed';
   const started = new Date();
+  // What the run needs to be reproduced (REC-10): the session to join the usage log by, the rules
+  // and the agent's defaults it fills with, the filling switches, the platform.
   const manifest = newManifest({ id: recordingId(carrier.id, scenario, started), carrier: carrier.id, scenario, started,
-    build: usage.build(), intake: usage.currentSession()?.intakeId ?? null, test: !!state.intake.test });
+    build: usage.build(), intake: usage.currentSession()?.intakeId ?? null, test: !!state.intake.test,
+    session: usage.currentSession()?.id ?? null, rules: rulesFingerprint(), defaultsHash: fillDefaultsHash() ?? null,
+    settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages'),
+      checkBeforeContinue: switchOn('checkBeforeContinue', 'check-continue') },
+    platform: navigator.userAgentData?.platform || navigator.platform || null });
   const store = await RecordingStore.start(manifest);
   // `fills`: when fills ran ({ start, end }), noted by state.filling's setter.
   state.recording = { store, tabId, carrier, redact, fills: state.filling ? [{ start: started.getTime(), end: null }] : [], started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false };
@@ -62,6 +106,12 @@ function onTraceMessage(msg, sender, sendResponse) {
   const events = stampEvents(msg.events, { frame, fillingAt, redact: rec.redact, stepName: (s) => knownStep(rec.carrier, s) ?? null });
   // What the trace couldn't keep while no panel took its events (closed, reloading).
   if (msg.dropped > 0) events.push({ kind: 'gap', t: Date.now(), frame, dropped: msg.dropped });
+  // Which trace and recorder wrote them (REC-10), the top frame's first word on it kept.
+  const versions = rec.store.manifest?.versions;
+  if (versions && frame === 0 && versions.trace == null && Number.isInteger(msg.v)) {
+    versions.trace = msg.v;
+    versions.recorder = Number.isInteger(msg.recorder) ? msg.recorder : null;
+  }
   rec.store.add(events);
   sendResponse({ ok: true });
 }
@@ -127,4 +177,4 @@ async function recoverRecording() {
   }
 }
 
-export { noteRecording, onTraceMessage, recoverRecording, renderUnfinished, startRecording, stopRecording };
+export { noteFollowed, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording };

@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { unzipSync, strFromU8 } from 'fflate';
+import { RECORDING_VERSION } from '../../src/recording.js';
 
 const PAUSE_MS = 3000;
 
@@ -183,6 +184,9 @@ function actions(events) {
     else if (e.kind === 'request' && failed(e)) lines.push({ t: e.t, text: `the page's request to ${codePath(e.path)} failed: HTTP ${e.status} after ${secs(e.ms ?? 0)}` });
     else if (e.kind === 'note') lines.push({ t: e.t, text: `NOTE: ${e.text}` });
     else if (e.kind === 'gap') lines.push({ t: e.t, text: `GAP: ${e.dropped} event(s) lost while no panel took them` });
+    // The panel following another tab than the recorded one (REC-04): the quote may go on there, unrecorded.
+    else if (e.kind === 'panel') lines.push({ t: e.t, text: e.closed ? 'THE RECORDED TAB WAS CLOSED: the recording ends here'
+      : e.away ? 'THE PANEL MOVED TO ANOTHER TAB: what the quote does there is not in this recording' : 'the panel is back on the recorded tab' });
     else if (e.kind === 'page' && (e.frame ?? 0) !== 0) lines.push({ t: e.t, text: `a frame loaded ${quote(e.page)}` });
   }
   endTyping();
@@ -295,6 +299,14 @@ export function recordingReport({ manifest, events }) {
   const out = [`# Recording ${manifest.id}`, ''];
   out.push(`${manifest.carrier} · scenario ${quote(manifest.scenario)} · ${new Date(t0).toISOString()} · ${clock(end - t0)} long · ${ordered.length} events${manifest.dropped ? ` (${manifest.dropped} lost)` : ''}`);
   out.push(`Build ${manifest.build?.version ?? '?'} (${manifest.build?.channel ?? '?'}${manifest.build?.commit ? `, ${manifest.build.commit}` : ''})${manifest.test ? ' · a test run' : ''}${manifest.ended ? '' : ' · cut short (no end)'}`, '');
+  // What the run needs to be reproduced (format 2 on, REC-10), and a format newer than this report.
+  if ((manifest.version ?? 1) > RECORDING_VERSION) out.push(`**This recording's format is version ${manifest.version}; this report reads up to ${RECORDING_VERSION}: what it says may be incomplete or wrong. Update the repository first.**`, '');
+  if ((manifest.version ?? 1) >= 2) {
+    const s = manifest.settings;
+    const on = s ? Object.entries({ 'auto-advance': s.autoAdvance, 'follow-ups': s.autoFollowUps, 'automatic pages': s.autoPages, 'check before Continue': s.checkBeforeContinue })
+      .filter(([, v]) => v != null).map(([k, v]) => `${k} ${v ? 'on' : 'off'}`).join(', ') : '?';
+    out.push(`Rules ${manifest.rules ?? '?'} · defaults ${manifest.defaultsHash ?? "TNI's"} · ${on} · trace ${manifest.versions?.trace ?? '?'}, recorder ${manifest.versions?.recorder ?? '?'} · ${manifest.platform ?? '?'} · session ${manifest.session ?? '?'}`, '');
+  }
   out.push('Times are from the start (m:ss.s). ↑: an answer above the previous one on the step. Typed text is never kept.', '');
   // The carrier's own server errors, said up front: a step that failed on them isn't the fill's.
   const errors = ordered.filter((e) => e.kind === 'request' && failed(e));
@@ -302,6 +314,17 @@ export function recordingReport({ manifest, events }) {
     const byStatus = [...new Set(errors.map((e) => e.status))].sort((a, b) => a - b).map((s) => `HTTP ${s} ×${errors.filter((e) => e.status === s).length}`).join(', ');
     out.push(`The page's server answered ${many(errors.length, 'request')} with an error (${byStatus}): each is in its step's timeline.`, '');
   }
+  // The panel away from the recorded tab (REC-04): said up front, with how long, since the quote may
+  // have gone on in the tab the panel followed.
+  let awayMs = 0;
+  let awayFrom = null;
+  for (const e of ordered.filter((x) => x.kind === 'panel' && !x.closed)) {
+    if (e.away && awayFrom == null) awayFrom = e.t;
+    else if (!e.away && awayFrom != null) { awayMs += e.t - awayFrom; awayFrom = null; }
+  }
+  if (awayFrom != null) awayMs += end - awayFrom;
+  if (awayMs > 0) out.push(`The panel followed another tab for ${secs(awayMs)}: what the quote did there is not in this recording, which follows only the tab it began on.`, '');
+  if (ordered.some((e) => e.kind === 'panel' && e.closed)) out.push('The recorded tab was closed, which ended the recording.', '');
 
   out.push('## Flow', '', '| # | Page · step | Arrived | On screen | Actions | Left by |', '| --- | --- | --- | --- | --- | --- |');
   const told = segs.map((s, i) => {

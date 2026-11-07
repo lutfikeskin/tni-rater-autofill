@@ -12,7 +12,7 @@ import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
 import { captureFromShortcut, capturePage, checkItems, clearMarks, fillAfterDefaults, fillPage, lookRight, noteLiveItems, refreshAnswers, showNextNeed } from './panel/fill.js';
-import { noteRecording, onTraceMessage, recoverRecording, renderUnfinished, startRecording, stopRecording } from './panel/dev-recording.js';
+import { noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording } from './panel/dev-recording.js';
 import { aiActs, renderAiSettings, reviewIntake } from './panel/assistant.js';
 import { renderUsage, settingsActs, uploadNow, wireUsage } from './panel/usage-panel.js';
 import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, clientNote, closeDetails, closePdf, drawPdf, newQuote, noteStep, openDetails, openPdf, openPdfInTab, pdfPage, pdfPan, pdfZoom, workSaid } from './panel/pdf-view.js';
@@ -174,6 +174,10 @@ function wire() {
   // Developer recording (its card in Settings, above): unpacked builds only.
   if (recordable) {
     chrome.runtime.onMessage.addListener(onTraceMessage);
+    // The recorded tab, whatever tab the panel follows: its new documents get the trace, and its
+    // closing saves the recording (REC-04).
+    chrome.tabs.onUpdated.addListener(recordedTabUpdated);
+    chrome.tabs.onRemoved.addListener(recordedTabRemoved);
     renderUnfinished();
   }
   wireUsage();
