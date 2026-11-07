@@ -111,7 +111,7 @@ Every script reads the server folder, exported logs, or both. `npm run review` r
 
 ```bash
 npm run review    # everything below, plus AI accept/reject per question and problem reports
-npm run learn     # rule suggestions: standard answers, per-state answers, new intake mappings, rules agents keep correcting
+npm run learn     # rule suggestions: possible standards to decide, per-state answers, new intake mappings, rules agents keep correcting
 npm run layouts   # carrier page layouts per state/product -> captures/<carrier>/generated/
 npm run transitions  # when follow-up questions show, answers not seen yet, what changed after an answer -> reviews/
 npm run captures  # manual captures in layouts/, per scenario in order, with what changed between them -> reviews/
@@ -121,7 +121,7 @@ npm run ledger    # the open weekly-review issue's items: which builds carry eac
 node scripts/find-intake.mjs <folder of intake PDFs> server-data   # which intake a session used
 ```
 
-`signals` and `ledger` aren't part of `npm run review`; the weekly review reads all three (see the `weekly-review` and `apply-review-fixes` skills in `.claude/skills/`). `learn` prints rule lines ready to paste into `src/carriers/<carrier>.js`. **Review each one**: a consistent answer isn't always a correct one. Generated layouts are git-ignored; review them before committing any.
+`signals` and `ledger` aren't part of `npm run review`; the weekly review reads all three (see the `weekly-review` and `apply-review-fixes` skills in `.claude/skills/`). `learn` prints rule lines ready to paste into `src/carriers/<carrier>.js` for mappings, page answers and the attestations and client facts it keeps with the agent; a possible TNI standard comes with its evidence and a decision for the maintainer, never a rule line. **Review each one**: a consistent answer isn't always a correct one. Generated layouts are git-ignored; review them before committing any.
 
 To measure a rule change on recorded quotes before release, replay them through the rules, given a folder with their intake PDFs (matched by fingerprint, never copied). It isn't part of `npm run review`:
 
