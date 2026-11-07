@@ -14,9 +14,18 @@ test('every path the new-carrier template names exists, for each carrier where i
   assert.ok(named.length >= 10, `found ${named.length} paths`);
   for (const p of named) {
     if (!p.includes('<carrier>')) { assert.ok(fs.existsSync(new URL(`../${p}`, import.meta.url)), `${p} exists`); continue; }
-    // Each carrier with rules of its own (the local test page has none) has it; the page adapter
-    // only where the carrier's widgets need one.
-    if (p === 'src/content/carriers/<carrier>.js') continue;
+    // A page adapter only where the carrier's widgets need one: each carrier that names one
+    // (`pageAdapter`) has it at this path. Every carrier with rules of its own (the local test page
+    // has none) has the rest.
+    if (p === 'src/content/carriers/<carrier>.js') {
+      const adapters = CARRIERS.filter((c) => c.pageAdapter);
+      assert.ok(adapters.length >= 1);
+      for (const c of adapters) {
+        assert.equal(c.pageAdapter, p.replace('<carrier>', c.id), `${c.id}'s pageAdapter`);
+        assert.ok(fs.existsSync(new URL(`../${c.pageAdapter}`, import.meta.url)), `${c.pageAdapter} exists`);
+      }
+      continue;
+    }
     for (const carrier of CARRIERS.filter((c) => c.rules?.length).map((c) => c.id)) {
       const real = p.replace('<carrier>', carrier);
       assert.ok(fs.existsSync(new URL(`../${real}`, import.meta.url)), `${real} exists, as the template's ${p} says each carrier has`);
@@ -30,4 +39,15 @@ test('the template names every file docs/new-carrier.md\'s adapter steps link to
   const linked = [...steps.matchAll(/\]\(\.\.\/([^)#]+)/g)].map((m) => m[1]).filter((p) => !p.startsWith('docs/') && p !== 'src/ai/rulebook/general.js');
   assert.ok(linked.length >= 8, `found ${linked.length} links`);
   for (const p of new Set(linked)) assert.ok(named.some((n) => n === p || n.startsWith(p)), `the template names ${p}`);
+});
+
+// The review of #432: the settings that keep agents' corrections and the agent's own pages safe
+// have their boxes too, each one the adapter steps name.
+test('the template has a box for the correction keys, the agent\'s stops and where Continue may be clicked', () => {
+  const steps = /## Implement the adapter\n([\s\S]*?)\n## /.exec(read('docs/new-carrier.md'))?.[1] ?? '';
+  for (const option of ['shared.keys', 'stopPages', 'stopSteps', 'stopButtons', 'stopped', 'advance', 'useGenericRules']) {
+    assert.ok(steps.includes(`\`${option}`), `docs/new-carrier.md's adapter steps name ${option}`);
+    assert.ok(template.includes(`\`${option}\``), `the template names ${option}`);
+  }
+  assert.match(template, /never on a stop page or step/);
 });
