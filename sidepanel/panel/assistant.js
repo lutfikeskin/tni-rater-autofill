@@ -295,9 +295,11 @@ async function applyCheckChoice(i, choice) {
 async function runAssist(frames, ctx) {
   const record = state.intake?.record;
   const active = { ...state.active };
-  ctx = { ...ctx, intake: state.intake, tabUrl: state.tab?.url, contextKey: assistContextKey(record, active) };
+  // What Luna's answers rest on (assistContextKey): the intake as Luna sees it, the driver/vehicle,
+  // and the carrier's rules with the agent's own defaults. Compared again before any answer is used.
+  ctx = { ...ctx, intake: state.intake, tabUrl: state.tab?.url, contextKey: assistContextKey(record, active, ctx.carrier?.id) };
   const cfg = await aiSettings();
-  if (!cfg.on || !record || !aiActionCurrent(ctx, []) || ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
+  if (!cfg.on || !record || !aiActionCurrent(ctx, []) || ctx.contextKey !== assistContextKey(state.intake?.record, state.active, ctx.carrier?.id)) return;
   const provider = PROVIDERS[cfg.provider];
   // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
@@ -332,7 +334,7 @@ async function runAssist(frames, ctx) {
   // driver/vehicle are no longer the panel's. Null while they are.
   const discardWhy = () => (run < state.aiSettingsRun ? 'the assistant settings changed'
     : !aiActionCurrent(ctx, []) ? 'the tab or page changed'
-    : ctx.contextKey !== assistContextKey(state.intake?.record, state.active) ? 'the intake or driver/vehicle changed' : null);
+    : ctx.contextKey !== assistContextKey(state.intake?.record, state.active, ctx.carrier?.id) ? 'the intake, driver/vehicle or your defaults changed' : null);
   // Why this request (or its answer) no longer fits what the panel shows; null while it does. A
   // newer request or a redrawn report alone doesn't make the answer wrong: it is cached, and the
   // newer request waits for it (2026-10-09 to 10-26: 12 of 58 page reviews were thrown away, most
@@ -441,11 +443,11 @@ function pendingAi(tabId, page) {
 // A new fill clears the page's marks: put the purple back on the AI's answers on this page.
 async function remarkAi(ctx) {
   const answered = [];
-  const contextHash = aiFingerprint(assistContextKey(state.intake?.record, state.active));
+  const contextHash = aiFingerprint(assistContextKey(state.intake?.record, state.active, ctx.carrier?.id));
   for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
     if (t === String(ctx.tabId) && p === ctx.page && x.done && !x.rejected
-      && (x.contextKey === assistContextKey(state.intake?.record, state.active) || x.contextHash === contextHash)) answered.push(x);
+      && (x.contextKey === assistContextKey(state.intake?.record, state.active, ctx.carrier?.id) || x.contextHash === contextHash)) answered.push(x);
   }
   if (!answered.length) return;
   try {
@@ -469,12 +471,12 @@ async function syncAiBanner(ctx) {
 async function applyAi(list, ctx, decision) {
   if (state.filling || state.closing) return false;
   if (state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return false;
-  if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return false;
+  if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active, ctx.carrier?.id)) return false;
   if (ctx.run !== undefined && ctx.run !== state.aiRun) return false;
   list = list.filter(x => ['radio', 'select', 'checkbox'].includes(x.controlKind) && !x.leave && !agentEdited(ctx.page, x.key) && (decision !== 'auto' || x.autoOk));
   if (!list.length || !aiActionCurrent(ctx, list)) return false;
   const isCurrent = () => aiActionCurrent(ctx, list)
-    && ctx.contextKey === assistContextKey(state.intake?.record, state.active)
+    && ctx.contextKey === assistContextKey(state.intake?.record, state.active, ctx.carrier?.id)
     && (ctx.run === undefined || ctx.run === state.aiRun);
   const entries = [...state.aiCache].filter(([, x]) => list.includes(x));
   const editOrigin = { scope: usage.currentSession()?.intakeId, tabId: ctx.tabId,
@@ -669,7 +671,7 @@ function renderAi(holder, suggestions, ctx) {
   const pending = pendingAi(ctx.tabId, ctx.page);
   const awaiting = pending.filter((x) => !x.rejected);
   const rejectedPending = pending.filter((x) => x.rejected);
-  const current = assistContextKey(state.intake?.record, state.active);
+  const current = assistContextKey(state.intake?.record, state.active, ctx.carrier?.id);
   const currentHash = aiFingerprint(current);
   const canContinue = switchOn('autoAdvance', 'auto-advance') && !!ctx.carrier.advance;
   // Approving or rejecting acts on a cached pick in this intake and page. A driver/vehicle
@@ -754,7 +756,7 @@ function renderAi(holder, suggestions, ctx) {
   const answer = (x) => (x.controlKind === 'text' ? `typing “${x.choice}”` : `“${x.choice}”`);
   // Said of a pick waiting for approval that came from before a change, or a retired assistant.
   const notes = (x) => [x.retired ? 'From a retired assistant: review the page answer.' : null,
-    (x.contextKey ? x.contextKey !== current : x.contextHash !== currentHash) ? 'Picked before the intake or unit changed.' : null].filter(Boolean);
+    (x.contextKey ? x.contextKey !== current : x.contextHash !== currentHash) ? 'Picked before the intake, unit or your defaults changed.' : null].filter(Boolean);
   // What goes on a row (its card, AiCard in ai-view.jsx): the suggestion and its buttons, or what
   // happened to it; null for none.
   const box = (x) => {

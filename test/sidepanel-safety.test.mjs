@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assistContextKey, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
+import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
@@ -2738,7 +2739,10 @@ test('a Luna answer that comes after the report was redrawn is cached, and the n
 test('a Luna answer is still discarded when the driver/vehicle, page or assistant settings changed while it answered', async () => {
   const record = { vehicles: [{ year: 2016 }, { year: 2019 }] };
   for (const [scenario, change, error] of [
-    ['vehicle', (t) => { t.state.active = { ...t.state.active, vehicles: 1 }; }, 'Answer discarded: the intake or driver/vehicle changed.'],
+    ['vehicle', (t) => { t.state.active = { ...t.state.active, vehicles: 1 }; }, 'Answer discarded: the intake, driver/vehicle or your defaults changed.'],
+    // Audit 2026-11-07, AI-05: the agent's own defaults rewrite the rules Luna was given.
+    ['defaults', () => { setAgentDefaultsOn(true); setActiveDefaults({ values: { umCsl: { value: 300_000 }, medPay: { value: 2_000 } } }); },
+      'Answer discarded: the intake, driver/vehicle or your defaults changed.'],
     ['intake', (t) => { t.state.intake = { record: { ...record } }; }, 'Answer discarded: the tab or page changed.'],
     ['page', (t) => { t.state.tab = { ...t.state.tab, url: 'https://rater.test/Default.aspx?pageName=ChangePaymentPlan' }; }, 'Answer discarded: the tab or page changed.'],
     ['settings', (t) => { t.state.aiSettingsRun = ++t.state.aiRun; t.state.aiAsking.clear(); }, 'Answer discarded: the assistant settings changed.'],
@@ -2756,7 +2760,26 @@ test('a Luna answer is still discarded when the driver/vehicle, page or assistan
     assert.equal(t.state.aiCache.size, 0, `${scenario}: nothing cached`);
     assert.equal(t.state.aiAsking.size, 0, `${scenario}: nothing left waiting`);
     assert.equal(t.rendered.length, 0, `${scenario}: nothing shown`);
+    setActiveDefaults(null);
+    setAgentDefaultsOn(RELEASED_TO_AGENTS);
   }
+});
+
+// Audit 2026-11-07, AI-05: an intake edit Luna never sees (a phone number) neither discards the
+// answer nor asks again.
+test('an intake edit Luna never sees keeps its answer and its cache', async () => {
+  const luna = lunaCalls();
+  const t = assistHarness({ suggest: luna.suggest, record: { applicant: { phone: '555-0100' }, vehicles: [{ year: 2016 }] } });
+  const first = t.context.runAssist([{}], t.ctx);
+  await settle();
+  t.state.intake.record.applicant.phone = '555-0199';
+  assert.equal(luna.calls[0].opts.isStale(), false);
+  luna.calls[0].resolve();
+  await first;
+  assert.equal(t.logged[0].error, undefined);
+  assert.equal(t.state.aiCache.size, 1);
+  await t.context.runAssist([{}], t.ctx);
+  assert.equal(luna.calls.length, 1, 'answered from the cache');
 });
 
 test('a newer request that waited for a Luna request that failed asks the questions itself', async () => {
@@ -6078,7 +6101,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
       'persistAgentKeys', 'restoreAgentKeys', 'clearAgentKeys', 'firstView', 'loadFile'];
     vm.runInNewContext(functions.map(extractFunction).join('\n') + LAYOUT_STUB, context);
     const ctx = { tabId: 1, page: 'AddVehicle', tabUrl: originTab.url, intake, carrier,
-      contextKey: assistContextKey(originRecord, state.active), snapshots: [frame] };
+      contextKey: assistContextKey(originRecord, state.active, carrier.id), snapshots: [frame] };
     const apply = context.applyAi([choice], ctx, 'auto');
     await entered;
     if (switchTo === 'tab') {
