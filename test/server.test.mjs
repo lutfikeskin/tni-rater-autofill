@@ -972,3 +972,62 @@ test('RATER_MIN_FREE_MB: blank is 500 MB, 0 switches the guard off, a mistyped v
     assert.equal((await post({ events: [ev()] })).status, 200);
   });
 });
+
+// Audit 2026-11-07, SRV-07: agent, session, intakeId, carrier, page and v were stored as sent, any
+// JSON up to the event's size limit, and t could be any year. Out of shape, the event is refused.
+test('common fields out of their shape refuse the event, with why; in their shape or null they are kept as sent', async () => {
+  const dataDir = tmp();
+  const session = crypto.randomUUID();
+  const intakeId = crypto.createHash('sha256').update('intake').digest('hex');
+  const good = { agent: 'JC', session, intakeId, carrier: 'amwins', page: '/Portal/Application/:id/Edit', v: '0.9.32' };
+  const day = 24 * 60 * 60 * 1000;
+  await withServer({ dataDir }, async ({ post }) => {
+    const bad = [
+      [{ agent: { name: 'x' } }, 'agent is not a valid agent initials'],
+      [{ agent: 'A'.repeat(13) }, 'agent is not a valid agent initials'],
+      [{ agent: 'jo@x' }, 'agent is not a valid agent initials'],
+      [{ session: 'not a session' }, 'session is not a valid session id'],
+      [{ session: 42 }, 'session is not a valid session id'],
+      [{ intakeId: 'Acme Trucking LLC' }, 'intakeId is not a valid intake fingerprint'],
+      [{ intakeId: intakeId.toUpperCase() }, 'intakeId is not a valid intake fingerprint'],
+      [{ carrier: ['progressive'] }, 'carrier is not a valid carrier id'],
+      [{ carrier: 'GEICO' }, 'carrier is not a valid carrier id'],
+      [{ page: { path: '/x' } }, 'page is not a valid page name'],
+      [{ page: `/${'p'.repeat(200)}` }, 'page is not a valid page name'],
+      [{ page: 'Jane <jane@example.com>' }, 'page is not a valid page name'],
+      [{ v: 9 }, 'v is not a valid version'],
+      [{ v: '0.9.32; client Jane' }, 'v is not a valid version'],
+      [{ t: '1970-01-01T00:00:00.000Z' }, 'event time is not an ISO time in UTC from 2025 to 30 days ahead'],
+      [{ t: new Date(Date.now() + 31 * day).toISOString() }, 'event time is not an ISO time in UTC from 2025 to 30 days ahead'],
+      [{ t: '2026-11-07T10:00:00+03:00' }, 'event time is not an ISO time in UTC from 2025 to 30 days ahead'],
+      // Date.parse rolls these over (to March 2, and to the next day) rather than refusing them.
+      [{ t: '2025-02-30T00:00:00.000Z' }, 'event time is not an ISO time in UTC from 2025 to 30 days ahead'],
+      [{ t: '2026-11-06T24:00:00Z' }, 'event time is not an ISO time in UTC from 2025 to 30 days ahead'],
+    ];
+    const ok = [
+      good,
+      { agent: null, session: null, intakeId: null, carrier: null, page: null, v: null },
+      { agent: 'Ş. K', carrier: 'new-carrier2', page: 'Add Vehicle (2), step:1', v: 'dev', t: new Date(Date.now() + 29 * day).toISOString() },
+      { t: '2026-09-30T21:05:43Z' },
+    ];
+    const r = await (await post({ agent: 'AD', events: [...bad.map(([over]) => ev({ ...good, ...over })), ...ok.map((over) => ev(over))] })).json();
+    assert.deepEqual(r.rejected, bad.map(([, error], index) => ({ index, error })));
+    assert.equal(r.accepted, ok.length);
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((e) => Object.fromEntries(Object.keys(good).map((k) => [k, e[k]]))), [
+    good,
+    { agent: 'AD', session: null, intakeId: null, carrier: null, page: null, v: null },
+    { agent: 'Ş. K', session: undefined, intakeId: undefined, carrier: 'new-carrier2', page: 'Add Vehicle (2), step:1', v: 'dev' },
+    { agent: 'AD', session: undefined, intakeId: undefined, carrier: 'progressive', page: 'AddVehicle', v: undefined },
+  ], 'kept as sent; the request\'s agent where the event has none (null included, as before)');
+  assert.ok(rows.every((e) => !e.dropped));
+});
+
+test('the request\'s agent is used only in the shape of an event\'s', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    for (const agent of ['AYAZ', 'x'.repeat(40), { initials: 'AB' }, 'a@b.c']) await post({ agent, events: [ev()] });
+  });
+  assert.deepEqual(stored(dataDir).map((e) => e.agent), ['AYAZ', null, null, null]);
+});

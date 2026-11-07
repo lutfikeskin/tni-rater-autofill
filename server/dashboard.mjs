@@ -84,7 +84,8 @@ function counts(live, quotes) {
 function breakdown(live, quotes, keyOf) {
   const groups = new Map();
   for (const e of live) {
-    // As text: a stored agent or carrier may be any JSON (the upload token is public).
+    // As text: an agent or carrier stored before the server checked their shapes (COMMON_SHAPES in
+    // index.mjs) may be any JSON (the upload token is public).
     const raw = keyOf(e);
     if (raw == null) continue;
     const k = String(raw);
