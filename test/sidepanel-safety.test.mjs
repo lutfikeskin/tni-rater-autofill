@@ -8613,6 +8613,69 @@ test('a profile still waiting when another intake is loaded goes to its own quot
   assert.equal(timers.size, 0, 'no timer outlives the switch');
 });
 
+// Audit 2026-11-07 (FLOW-10, LIVE-03): every kit call put the 211 KB kit into every frame first,
+// every 150 ms while a Continue's next step drew. It goes only into a frame without this build of it.
+test('runKit puts the kit only into frames that lack this build, and calls again where a document was replaced meanwhile', async () => {
+  const kitOf = (build) => (build ? { version: 94, build, value: () => `kit ${build}` } : undefined);
+  // The tab's frames: each a document (id) and the kit's build in it.
+  const frames = new Map([[0, { doc: 'd0', kit: null }], [1, { doc: 'd1', kit: null }]]);
+  const injected = [];
+  let calls = 0;
+  let beforeCall = null;
+  const context = {
+    worldFor: () => 'ISOLATED',
+    chrome: { scripting: { executeScript: async ({ target, files, func, args = [] }) => {
+      calls++;
+      const ids = target.allFrames ? [...frames.keys()] : target.frameIds;
+      if (files) {
+        if (files.some((f) => f.endsWith('pagekit.js'))) injected.push(ids);
+        for (const id of ids) frames.get(id).kit = 'b2';
+        return ids.map((id) => ({ frameId: id, documentId: frames.get(id).doc }));
+      }
+      if (func.name !== 'kitIn' && beforeCall) { beforeCall(); beforeCall = null; }
+      return ids.map((id) => {
+        // The frame's globals, as the panel's functions (here) and the test's read them.
+        context.__raterKit = globalThis.__raterKit = kitOf(frames.get(id).kit);
+        try {
+          return { frameId: id, documentId: frames.get(id).doc, result: func(...args) ?? null };
+        } finally {
+          delete globalThis.__raterKit;
+        }
+      });
+    } } },
+  };
+  vm.createContext(context);
+  const declared = (re) => SIDEPANEL.match(re)?.[0] ?? '';
+  vm.runInContext(`${declared(/const kitIn = .*;/)}\n${declared(/const kitBuild = .*;/)}\n${['injectKit', 'runKit'].map(extractFunction).join('\n')}`, context);
+  const read = () => globalThis.__raterKit?.value() ?? null;
+  const carrier = { id: 'amwins' };
+  // The first call: the kit goes into every frame (its build learned there).
+  assert.deepEqual(plainResults(await context.runKit(1, carrier, read)), ['kit b2', 'kit b2']);
+  assert.deepEqual(JSON.parse(JSON.stringify(injected)), [[0, 1]]);
+  // Then: no frame gets it again, call after call; two calls each, the check and the call.
+  calls = 0;
+  for (let i = 0; i < 5; i++) assert.deepEqual(plainResults(await context.runKit(1, carrier, read)), ['kit b2', 'kit b2']);
+  assert.deepEqual([injected.length, calls], [1, 10]);
+  // A frame's new document, and another's earlier build: only those get the kit.
+  frames.set(1, { doc: 'd1b', kit: null });
+  frames.get(0).kit = 'b1';
+  assert.deepEqual(plainResults(await context.runKit(1, carrier, read)), ['kit b2', 'kit b2']);
+  assert.deepEqual(JSON.parse(JSON.stringify(injected.at(-1))), [0, 1]);
+  frames.set(1, { doc: 'd1c', kit: null });
+  await context.runKit(1, carrier, read);
+  assert.deepEqual(JSON.parse(JSON.stringify(injected.at(-1))), [1]);
+  // The top frame's document replaced between the check and the call: it gets the kit, and the call again.
+  const before = injected.length;
+  beforeCall = () => frames.set(0, { doc: 'd0b', kit: null });
+  assert.deepEqual(plainResults(await context.runKit(1, carrier, read)), ['kit b2', 'kit b2']);
+  assert.deepEqual(JSON.parse(JSON.stringify(injected.slice(before))), [[0]]);
+  // Asked for the top frame only: only it is checked and called.
+  calls = 0;
+  assert.deepEqual(plainResults(await context.runKit(1, carrier, read, [], [0])), ['kit b2']);
+  assert.equal(calls, 2);
+});
+const plainResults = (results) => JSON.parse(JSON.stringify(results.map((r) => r.result)));
+
 // Developer recording (docs/developer-recording.md): the trace goes into the recorded tab only, with
 // the recorder whose readers it uses, and not once the recording is stopping.
 test('the developer recording\'s trace is injected with the recorder, into the recorded tab only', async () => {

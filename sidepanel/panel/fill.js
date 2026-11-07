@@ -37,26 +37,58 @@ import { bindQuoteTab, quoteOwnerIssue } from './quote-owner.js';
 /** @param {CarrierConfig | null} carrier @returns {'MAIN' | 'ISOLATED'} */
 const worldFor = (carrier) => (carrier?.world === 'MAIN' ? 'MAIN' : 'ISOLATED');
 
-/** @param {number} tabId @param {CarrierConfig} carrier */
-async function injectKit(tabId, carrier) {
+/**
+ * Puts the kit into the frames named.
+ * @param {number} tabId @param {CarrierConfig} carrier @param {number[]} frameIds
+ * @returns {Promise<chrome.scripting.InjectionResult<any>[]>} the engine's own injection, by frame
+ */
+async function injectKit(tabId, carrier, frameIds) {
+  const target = { tabId, frameIds };
   // The buttons the kit presses, clicked from the page's own world (`pressInPage`: GEICO, W43-44).
-  if (carrier?.pressInPage) await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: 'MAIN', files: ['src/content/page-press.js'] });
+  if (carrier?.pressInPage) await chrome.scripting.executeScript({ target, world: 'MAIN', files: ['src/content/page-press.js'] });
   // The carrier's page adapter (its own widgets: src/content/carriers/) goes in before the engine,
   // which the package builds from src/kit/ into src/content/pagekit.js (scripts/lib/kit.mjs).
   const adapter = carrier?.pageAdapter ? [carrier.pageAdapter] : [];
-  await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), files: ['src/content/field-key.js', ...adapter, 'src/content/pagekit.js'] });
+  return chrome.scripting.executeScript({ target, world: worldFor(carrier), files: ['src/content/field-key.js', ...adapter, 'src/content/pagekit.js'] });
 }
 
+// The kit a frame holds (`version:build`), or null where it has none (a new document). It runs in
+// the page on its own, so it uses nothing from here.
+const kitIn = () => (globalThis.__raterKit ? `${globalThis.__raterKit.version}:${globalThis.__raterKit.build}` : null);
+// This extension's kit as a frame reports it once put in (kitIn), learned from the panel's first
+// injection: a frame holding another (an earlier build's, left by an extension reload or update)
+// gets this one.
+const kitBuild = { now: /** @type {string | null} */ (null) };
+
 /**
+ * Runs `func` in the tab's frames (or those named), the kit put in first only where a frame lacks
+ * this build of it (audit 2026-11-07, FLOW-10, LIVE-03: the 211 KB kit went into every frame before
+ * every call, every 150 ms while a Continue's next step drew). A frame whose document was replaced
+ * between that check and the call (its result null, the kit not in it) gets the kit, and the call
+ * once more there.
  * @param {number} tabId
  * @param {CarrierConfig} carrier
- * @param {(...args: any[]) => any} func  run in each frame, after the kit is injected
+ * @param {(...args: any[]) => any} func  run in each frame, once the kit is in it
  * @param {any[]} [args]
  * @param {number[]} [frameIds]
  */
 async function runKit(tabId, carrier, func, args = [], frameIds) {
-  await injectKit(tabId, carrier);
-  return chrome.scripting.executeScript({ target: { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) }, world: worldFor(carrier), func, args });
+  const world = worldFor(carrier);
+  const target = { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) };
+  const held = await chrome.scripting.executeScript({ target, world, func: kitIn });
+  const missing = held.filter((r) => kitBuild.now == null || r.result !== kitBuild.now).map((r) => r.frameId);
+  // The documents known to hold this kit, by the id Chrome gives each.
+  const ready = new Set(held.filter((r) => !missing.includes(r.frameId)).map((r) => r.documentId));
+  if (missing.length) {
+    for (const r of await injectKit(tabId, carrier, missing)) ready.add(r.documentId);
+    if (kitBuild.now == null) kitBuild.now = (await chrome.scripting.executeScript({ target: { tabId, frameIds: missing }, world, func: kitIn })).find((r) => r.result)?.result ?? null;
+  }
+  const results = await chrome.scripting.executeScript({ target, world, func, args });
+  const again = results.filter((r) => r.documentId && !ready.has(r.documentId) && r.result == null).map((r) => r.frameId);
+  if (!again.length) return results;
+  await injectKit(tabId, carrier, again);
+  const retried = await chrome.scripting.executeScript({ target: { tabId, frameIds: again }, world, func, args });
+  return results.map((r) => retried.find((x) => x.frameId === r.frameId) ?? r);
 }
 
 // agent defaults: the page whose opening fill the quote's question held (fillPage), with the intake
@@ -506,7 +538,8 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     try {
       // While the page saves / reloads (its loading overlay) the step isn't ready yet. A frame without
       // the kit (its document replaced after the kit went in) reads as nothing, as the snapshot reads do.
-      const results = await runKit(tabId, carrier, () => (!globalThis.__raterKit || globalThis.__raterKit.busy() ? null : globalThis.__raterKit.signature()));
+      // The top frame's only: the step is read there.
+      const results = await runKit(tabId, carrier, () => (!globalThis.__raterKit || globalThis.__raterKit.busy() ? null : globalThis.__raterKit.signature()), [], [0]);
       now = results.find((r) => r.frameId === 0)?.result ?? null;
     } catch { return; }
     if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page) return;

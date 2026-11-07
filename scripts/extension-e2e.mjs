@@ -117,6 +117,18 @@ await panel.addInitScript(() => {
   const note = () => { window.__docScrolled = Math.max(window.__docScrolled, document.scrollingElement?.scrollTop ?? 0); };
   document.addEventListener('scroll', note, { capture: true, passive: true });
   setInterval(note, 100);
+  // How often the panel puts the kit into the page (an executeScript of its files, pagekit.js), and
+  // all its executeScript calls: printed per Save & Continue at the end (audit FLOW-10, LIVE-03).
+  window.__scripts = { kit: 0, calls: 0 };
+  const scripting = globalThis.chrome?.scripting;
+  if (scripting?.executeScript) {
+    const executeScript = scripting.executeScript.bind(scripting);
+    scripting.executeScript = (options, ...rest) => {
+      window.__scripts.calls++;
+      if (options?.files?.some((f) => f.endsWith('pagekit.js'))) window.__scripts.kit++;
+      return executeScript(options, ...rest);
+    };
+  }
 });
 await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
 await mock.bringToFront();
@@ -402,6 +414,9 @@ for (let round = 0; round < 20; round++) {
   }
 }
 for (const [, , selector] of AGENT_ANSWERS) if (!agentAnswered.has(selector)) manualFailures.push(`Manual hold wasn't exercised: ${selector}`);
+const scripts = await panel.evaluate(() => window.__scripts);
+const savesSoFar = await mock.evaluate(() => window.__amwinsMock.saves);
+console.log(`Kit put into the page: ${scripts.kit} times, ${scripts.calls} executeScript calls in all, over ${savesSoFar} Save & Continue (${(scripts.kit / Math.max(1, savesSoFar)).toFixed(1)} and ${(scripts.calls / Math.max(1, savesSoFar)).toFixed(1)} per Continue)`);
 const docScrolled = await panel.evaluate(() => window.__docScrolled);
 console.log('Panel document scrolled at most:', docScrolled);
 if (docScrolled) console.log('SCROLLED: the panel\'s document scrolled, so its header and client strip went out of view.');
@@ -516,6 +531,10 @@ try {
   // its page menu before it fills anything.
   const restoredOk = await within(5000, async () => (await popup.locator('#page-menu option').allTextContents()).includes('Insured Info'));
   console.log('Restored pages:', (await popup.locator('#page-menu option').allTextContents()).join(', '));
+  // Its dock shows the step's restored report (Continued, Fill this page again) a moment after the
+  // page menu lists it: a click before then finds the Fill this page it shows meanwhile, hidden as
+  // the report comes.
+  await popup.waitForFunction(() => !!document.getElementById('dock')?.dataset.report, null, { timeout: 5000 });
   const before = await popup.locator('#dock').getAttribute('data-report');
   await popup.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first().click({ timeout: 10000 });
   await popup.waitForFunction((old) => {
