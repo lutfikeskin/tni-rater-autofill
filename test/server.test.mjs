@@ -338,8 +338,8 @@ test('without a token the server starts on loopback only', () => {
 
 // The server as deployed (node server/index.mjs): its own environment, never this shell's tokens.
 const SERVER = fileURLToPath(new URL('../server/index.mjs', import.meta.url));
-function startServer(env) {
-  const child = spawn(process.execPath, [SERVER], { env: { PATH: process.env.PATH, DATA_DIR: tmp(), PORT: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+function startServer(env, nodeArgs = []) {
+  const child = spawn(process.execPath, [...nodeArgs, SERVER], { env: { PATH: process.env.PATH, DATA_DIR: tmp(), PORT: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '', stderr = '';
   child.stdout.on('data', (c) => { stdout += c; });
   child.stderr.on('data', (c) => { stderr += c; });
@@ -1035,6 +1035,46 @@ test('an exception inside one request is a 500, logged by name, and the server k
   assert.ok(logged.some((l) => /RangeError/.test(l)), 'the error is logged by name');
   assert.ok(logged.some((l) => /TypeError/.test(l)));
   assert.ok(logged.every((l) => !/clock broke/.test(l)), 'not its message');
+});
+
+// SRV-11 review: the 500 an exception answers is an answer like any other, counted by route and
+// status and logged with them; where it was thrown is its frames, never a message's later lines.
+test('an exception\'s 500 is counted and logged with its status and time, by frames only', crashTest, async () => {
+  const logged = [];
+  const error = console.error;
+  console.error = (...a) => { logged.push(a.join(' ')); };
+  const dashboardToken = 'd'.repeat(32);
+  let broken = true;
+  const clock = () => { if (broken) throw new RangeError('clock broke\nsecond line of the message'); return Date.now(); };
+  try {
+    await withServer({ dataDir: tmp(), dashboardToken, adminToken: 'admin', clock }, async ({ base }) => {
+      assert.equal((await fetch(`${base}/dashboard`, { headers: { authorization: `Bearer ${dashboardToken}` } })).status, 500);
+      broken = false;
+      const { metrics: m } = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json();
+      assert.deepEqual(m.requests['/dashboard'], { 500: 1 });
+      assert.equal(m.exceptions, 1);
+    });
+  } finally { console.error = error; }
+  const failure = logged.map((l) => JSON.parse(l)).find((x) => x.msg === 'request failed');
+  assert.deepEqual([failure.level, failure.method, failure.route, failure.status, typeof failure.ms, failure.error], ['error', 'GET', '/dashboard', 500, 'number', 'RangeError']);
+  assert.match(failure.where, /^at /);
+  assert.ok(logged.every((l) => !/clock broke|second line/.test(l)), `no line of the message: ${logged.join('\n')}`);
+});
+
+test('an uncaught exception exits non-zero with its name and frames, never its message', crashTest, async () => {
+  // The message comes from the environment, so the frame naming this preload doesn't quote it.
+  const throwLater = 'setTimeout(() => { throw new SyntaxError(process.env.THROWN); }, 1500);';
+  const s = startServer({ HOST: '127.0.0.1', THROWN: 'Unexpected token in "Jane Roe 555-0142"\nsecond line Jane' },
+    ['--import', `data:text/javascript,${encodeURIComponent(throwLater)}`]);
+  try {
+    assert.ok(await within(s.started, 'the server did not start'));
+    assert.notEqual(await within(s.exit, 'the server did not exit'), 0);
+  } finally { s.child.kill(); }
+  const { stdout, stderr } = s.out();
+  const line = stderr.split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((x) => x.msg === 'uncaughtException');
+  assert.equal(line.error, 'SyntaxError');
+  assert.match(line.stack, /^at /, 'where it was thrown');
+  assert.ok(!/Jane|555-0142/.test(stdout + stderr), `no message in the log: ${stderr}`);
 });
 
 // Audit 2026-11-07, SRV-13: the upload token ships in the extension, so anyone could fill the

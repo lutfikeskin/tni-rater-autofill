@@ -179,7 +179,9 @@ and `budget`, and the answer's `in` and `out` tokens (`estimated` when OpenAI ga
 limit's `limit`, `ip` and `wait`; a disk refusal's `disk`; an export's `since`, `until` and `days`;
 the dashboard's `window`, `tests` and `cached`. Other lines have a `msg` (startup, `DISK LOW`,
 `disk ok again`, a Luna day file not read or saved, a request's exception with its `error` name and
-`where`, an uncaught one's `stack`). Lines carry names, counts and ids only: never a token, an
+`where`, and, when it answered 500, that answer's `status` and `ms`, counted like any other; an
+uncaught one's `error` and `stack`). `where` and `stack` are the error's stack frames only, never
+its message. Lines carry names, counts and ids only: never a token, an
 event's or a Luna request's content, OpenAI's answer, or a request's query beyond the export's dates.
 
 With the admin token, `/v1/health` adds `metrics`: since the process started (`startedAt`,

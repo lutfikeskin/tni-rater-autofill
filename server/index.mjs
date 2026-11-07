@@ -71,6 +71,10 @@ export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fi
 // console.error), and what happened as fields, with `msg` for a sentence. Names, counts and ids
 // only: never a token, an event's or a Luna request's content, OpenAI's answer, or a request's
 // path beyond the routes this server has.
+// Where an error was thrown: its first `n` stack frames. A stack starts with the error's message,
+// which can run over several lines and quote event text or a path, so only the `at` lines count.
+const framesOf = (e, n) => (typeof e?.stack === 'string' ? e.stack.split('\n').map((s) => s.trim()).filter((s) => s.startsWith('at ')).slice(0, n).join(' | ') : '');
+
 export function logLine(fields, level = 'info') {
   const line = JSON.stringify({ t: new Date().toISOString(), level, ...fields });
   if (level === 'error') console.error(line);
@@ -691,13 +695,25 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
   // One request's exception is that request's 500, never the end of the server (audit 2026-11-07,
   // SRV-01: a single request used to stop it for every agent). The log gets the error's name and
   // where it was thrown, not its message.
+  // A 500 it answers is counted and logged with its status and time like any answer; one that came
+  // after the answer had begun (an export streaming out) only closes the connection.
   const failed = (req, res, e) => {
-    const where = String(e?.stack ?? '').split('\n').slice(1, 3).map((s) => s.trim()).join(' | ');
+    const where = framesOf(e, 2);
+    const route = routeOf(req);
     metrics.exceptions++;
-    logLine({ msg: 'request failed', method: req.method, route: routeOf(req), error: e?.name ?? 'error', ...(where ? { where } : {}) }, 'error');
-    if (res.headersSent) res.destroy();
-    else send(res, 500, { error: 'server error' }, corsHeaders(req));
+    const line = { msg: 'request failed', method: req.method, route, error: e?.name ?? 'error', ...(where ? { where } : {}) };
+    if (res.headersSent) {
+      logLine(line, 'error');
+      res.destroy();
+      return;
+    }
+    send(res, 500, { error: 'server error' }, corsHeaders(req));
+    countRequest(route, 500);
+    const started = arrived.get(res);
+    logLine({ ...line, status: 500, ...(started === undefined ? {} : { ms: Date.now() - started }) }, 'error');
   };
+  // When each request arrived, for its 500's `ms`.
+  const arrived = new WeakMap();
   // A request callback (sync or async) with that guard.
   const guarded = (req, res, fn) => (...args) => {
     try {
@@ -710,6 +726,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
 
   function respond(req, res) {
     const started = Date.now();
+    arrived.set(res, started);
     const cors = corsHeaders(req);
     const route = routeOf(req);
     // Every answer is logged and counted once, with what it was about (`fields`).
@@ -889,7 +906,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   // non-zero exit, so the platform restarts it.
   for (const kind of ['uncaughtException', 'unhandledRejection']) {
     process.on(kind, (e) => {
-      logLine({ msg: kind, error: e?.name ?? 'error', stack: String(e?.stack ?? e) }, 'error');
+      logLine({ msg: kind, error: e?.name ?? 'error', stack: framesOf(e, 5) }, 'error');
       process.exit(1);
     });
   }
