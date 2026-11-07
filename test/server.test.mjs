@@ -554,11 +554,17 @@ test('a problem report keeps the fill it is about, in its shapes', async () => {
     await post({ events: [
       ev({ type: 'problem_report', filled: undefined, text: 'stuck on Rates', view: 't1', run: 'run-1234-abcd', blockerList: ['button: recalculate'], since: 90 }),
       ev({ type: 'problem_report', filled: undefined, text: 'x', blockerList: 'oops', since: -1 }),
+      // Audit 2026-11-07, SRV-04: at most the panel's 1,000 characters, and text only.
+      ev({ type: 'problem_report', filled: undefined, text: 'y'.repeat(1000) }),
+      ev({ type: 'problem_report', filled: undefined, text: 'z'.repeat(1001) }),
+      ev({ type: 'problem_report', filled: undefined, text: { say: 'x' } }),
     ] });
   });
-  const [ok, odd] = stored(dataDir);
+  const [ok, odd, longest, tooLong, notText] = stored(dataDir);
   assert.deepEqual([ok.view, ok.run, ok.blockerList, ok.since], ['t1', 'run-1234-abcd', ['button: recalculate'], 90]);
   assert.deepEqual([odd.blockerList, odd.since], [undefined, undefined]);
+  assert.equal(longest.text.length, 1000);
+  for (const e of [tooLong, notText]) assert.deepEqual([e.text, e.dropped], [undefined, ['text']]);
 });
 
 test('keeps a button the agent clicked: its text, bounded', async () => {

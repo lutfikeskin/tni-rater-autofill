@@ -449,6 +449,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     }
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
     if (out.type === 'agent_click' && out.text !== undefined && !(typeof out.text === 'string' && out.text.length <= 60)) drop('text');
+    // A problem report's words, at most the panel's 1,000 characters (audit 2026-11-07, SRV-04).
+    if (out.type === 'problem_report' && out.text !== undefined && !(typeof out.text === 'string' && out.text.length <= 1000)) drop('text');
     if (out.type === 'problem_report') {
       if (out.blockerList !== undefined && !(Array.isArray(out.blockerList) && out.blockerList.length <= 12 && out.blockerList.every((b) => typeof b === 'string' && b.length <= 120))) drop('blockerList');
       if (out.since !== undefined && !(Number.isSafeInteger(out.since) && out.since >= 0)) drop('since');
