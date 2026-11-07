@@ -37,7 +37,18 @@ try { testList = readTestList({ tests: opt('tests', null) }); } catch (err) { co
 if (testList.warning) console.error(`Warning: ${testList.warning}`);
 
 const events = loadEvents(inputs);
-const result = learn(events, { carriers: CARRIERS, minIntakes: Number(opt('min', 5)), threshold: Number(opt('threshold', 0.9)), excludeSessions: testSessionsOf(events, testList.intakes) });
+// A capped export or a slice of days can lack a quote's intake_loaded, which testSessionsOf reads,
+// while its other events still carry the intake's fingerprint (learn() counts support by it): a
+// listed fingerprint is matched on those too, unless the agent's latest mark in the panel says the
+// quote is no test (CodeRabbit on PR #369).
+const tests = testSessionsOf(events, testList.intakes);
+const marks = new Map();
+for (const e of events) if (e.type === 'intake_marked' && e.session) marks.set(e.session, e.test === true);
+for (const e of events) {
+  if (!e.session || !e.intakeId || marks.get(e.session) === false) continue;
+  if (testList.intakes.some((id) => String(e.intakeId).toLowerCase().startsWith(id))) tests.add(e.session);
+}
+const result = learn(events, { carriers: CARRIERS, minIntakes: Number(opt('min', 5)), threshold: Number(opt('threshold', 0.9)), excludeSessions: tests });
 
 if (args.includes('--json')) {
   console.log(JSON.stringify(result, null, 2));

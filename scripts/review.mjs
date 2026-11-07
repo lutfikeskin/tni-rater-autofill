@@ -89,7 +89,8 @@ const run = (script, scriptArgs) => {
   }
 };
 const summary = live.length ? run('summarize-usage.mjs', [recentFile]) : '(no events in this period)';
-const learn = run('learn-rules.mjs', [...inputs, ...(testsOpt ? ['--tests', testsOpt] : [])]).replace(/^# /m, '### ');
+// The child runs in the repository's root: the list by its full path, as this review read it.
+const learn = run('learn-rules.mjs', [...inputs, ...(testsOpt ? ['--tests', path.resolve(testsOpt)] : [])]).replace(/^# /m, '### ');
 const layouts = run('build-layouts.mjs', [...inputs, ...(sideDir ? ['--out', path.join(sideDir, 'captures')] : [])]);
 const transitions = run('transitions.mjs', [...inputs, ...sideOut('transitions')]);
 // Manual captures kept in layouts/ (developer captures; not in the usage log).

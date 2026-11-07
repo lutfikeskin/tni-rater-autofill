@@ -753,4 +753,18 @@ test('learning leaves test runs out: a test-only intake PDF adds no support', as
   assert.equal(standardOf(JSON.parse(listed.stdout)), undefined);
   assert.equal(JSON.parse(listed.stdout).testRunsLeftOut, 1);
   assert.equal(report('--tests').status, 1, '--tests needs a value');
+  // A slice of the log without the test quote's intake_loaded: its other events name the PDF
+  // (CodeRabbit on PR #369).
+  const slice = path.join(dir, 'slice.jsonl');
+  fs.writeFileSync(slice, events.filter((e) => !(e.session === 's4' && e.type === 'intake_loaded')).map((e) => JSON.stringify(e.session === 's4' ? { ...e, intakeId: 'aaaaaaaa0001' } : e)).join('\n'));
+  const sliced = spawnSync(process.execPath, [path.join(root, 'scripts', 'learn-rules.mjs'), slice, '--json', '--tests', list], { encoding: 'utf8' });
+  assert.equal(sliced.status, 0, sliced.stderr);
+  assert.deepEqual([standardOf(JSON.parse(sliced.stdout)), JSON.parse(sliced.stdout).testRunsLeftOut], [undefined, 1]);
+  // The review, run from another folder with the list by a relative path, passes that list on.
+  const data = path.join(dir, 'data');
+  fs.mkdirSync(data);
+  fs.copyFileSync(log, path.join(data, '2026-10-05.jsonl'));
+  const reviewed = spawnSync(process.execPath, [path.join(root, 'scripts', 'review.mjs'), data, '--all', '--tests', 'tests.txt', '--out', path.join(dir, 'review.md')], { encoding: 'utf8', cwd: dir });
+  assert.equal(reviewed.status, 0, reviewed.stderr);
+  assert.match(fs.readFileSync(path.join(dir, 'review.md'), 'utf8'), /1 test run left out\./);
 });
