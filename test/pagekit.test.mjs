@@ -9,7 +9,7 @@ import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { advanceFor } from '../src/units.js';
-import { fieldChangeEvent, redactor } from '../src/usage.js';
+import { fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import { assistContextKey } from '../src/ai/common.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
 import { assertReportResolutions } from './resolution-check.mjs';
@@ -1819,6 +1819,17 @@ test('vehicle ZIP: Progressive\'s own ZIP is left when the intake has none; empt
   // ...and a different one on the page is flagged, not kept quietly.
   ({ report } = await zipRun('17101', '18042'));
   assert.ok(report.kept.some((x) => x.differs), 'page ZIP differs from the intake: flagged');
+  // The intake's ZIP already there: kept, with what the field shows as the fill ends (reconcile's
+  // `now`), which a quote's kept answers are logged once by (LEARN-11; Claude on PR #406).
+  ({ report } = await zipRun('17101', '17101'));
+  const kept = report.kept.find((x) => x.key === 'ref:RiskInput.PrimaryZIP');
+  assert.deepEqual([kept?.differs ?? false, kept?.now], [false, '17101']);
+  const keptLogged = new Set();
+  const logged = () => fillEvents([report], { carrier: 'progressive', page: 'AddVehicle', view: 't1', overwrite: false, ms: 1, redact: (s) => s, keptLogged })
+    .filter((e) => e.result === 'kept' && e.key === 'ref:RiskInput.PrimaryZIP').length;
+  assert.deepEqual([logged(), logged()], [1, 0]);
+  kept.now = '17102';
+  assert.equal(logged(), 1, 'what the field shows changed: logged again');
 });
 
 // SC 2026-10-07: the equipment amount showed until "no equipment" was ticked, then went away; it

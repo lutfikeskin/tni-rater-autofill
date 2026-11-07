@@ -411,8 +411,8 @@ function fieldWhy(x, list) {
 //   rules: the rule files' fingerprint (rulesHash); settings: the panel's filling switches in force
 //   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep);
 //   keptLogged: the kept answers already logged in this quote (the panel's, per usage session).
-// A kept answer (the page already held the rule's answer) is logged once per quote, tab, page, step,
-// question and what the field shows, or again when it differs from the rule's: every fill run of a
+// A kept answer (the page already held the rule's answer) is logged once per quote, tab and unit
+// (`view`), page, step, question and what the field shows as the fill ends (reconcile's `now`), or again when it differs from the rule's: every fill run of a
 // page re-logged each one, 59% of fill events for nothing new (audit 2026-11-07, LEARN-11). The run
 // still counts them all (`kept`). Without `keptLogged`, every one is logged.
 /**
