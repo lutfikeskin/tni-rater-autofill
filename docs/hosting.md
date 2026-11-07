@@ -287,7 +287,10 @@ deployed server with that checkout, and the review uses its rules: switch the ma
 A real run here that takes over from the workflow needs `--since`, once: where the workflow's last
 review stopped, which `node scripts/daily-issue.mjs since` prints (the last successful run's
 download start). Without it, a `reviews/daily/state.json` left from earlier local runs is older
-than the workflow's reviews, and the run would post what they already said. After it,
+than the workflow's reviews, and the run would post what they already said. Check first that
+Actions shows a successful Daily review run on `main`: with none, `since` prints a day ago, which
+could skip reports nobody reviewed, so leave `--since` out and let the state file say where to
+start. After it,
 `reviews/daily/state.json` (git-ignored) says where each run starts: when the last real run's
 download began. It's written whole (a temporary file, then a rename) and only after the post step
 succeeded (a comment, or nothing new to say). A run that fails leaves it, so the next one reviews
