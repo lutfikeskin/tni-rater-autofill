@@ -40,6 +40,20 @@ export function releaseNotes({ previous, commits }) {
   return `What changed on main since v${previous}, by pull request:\n\n${lines.join('\n')}\n`;
 }
 
+/**
+ * Did a push bring `target`: main had it after the push, but not before (`before`, the push's
+ * previous head)? A version set before the push is never tagged by it (the maintainer, 2026-11-07:
+ * no backfill). A missing or all-zero `before` brings nothing.
+ * @param {(...args: string[]) => string | null} git
+ * @param {string} target
+ * @param {string | undefined} before
+ */
+export function broughtBy(git, target, before) {
+  if (!before || /^0+$/.test(before)) return false;
+  if (git('cat-file', '-e', `${before}^{commit}`) === null) return false;
+  return git('merge-base', '--is-ancestor', target, before) === null;
+}
+
 const VERSION = /^\d+\.\d+\.\d+$/;
 /** @param {string | null} json */
 const versionIn = (json) => {

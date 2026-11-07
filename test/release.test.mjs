@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { gitEnv } from '../scripts/lib/ledger.mjs';
-import { prTitle, parseLog, releaseNotes, releaseOf, LOG_FORMAT } from '../scripts/lib/release.mjs';
+import { prTitle, parseLog, releaseNotes, releaseOf, broughtBy, LOG_FORMAT } from '../scripts/lib/release.mjs';
 
 // Audit 2026-11-07, ORG-13: no tag said which commit was which version, and nothing told what
 // changed. A version's release is the commit on main that set manifest.json to it.
@@ -18,6 +18,19 @@ test('a merge commit reads as its pull request\'s title; a squash merge keeps it
   assert.equal(releaseNotes({ version: '0.9.32', previous: '0.9.31', commits: parseLog(log) }),
     'What changed on main since v0.9.31, by pull request:\n\n- Two\'s title (#2)\n- Fix one (#1)\n', 'oldest first, from git log\'s newest first');
   assert.equal(releaseNotes({ version: '0.1.0', previous: null, commits: [] }), 'The first tagged version.\n');
+});
+
+// The reviews of #429: no run on another branch, no manual run (no backfill), main's history only,
+// and an existing tag that names another commit fails rather than being released.
+test('the release workflow tags only what a push to main brought, from main\'s history', () => {
+  const workflow = fs.readFileSync(new URL('../.github/workflows/release-tag.yml', import.meta.url), 'utf8');
+  assert.doesNotMatch(workflow, /workflow_dispatch/);
+  assert.match(workflow, /^ {2}push:\n {4}branches: \[main\]/m);
+  assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
+  assert.match(workflow, /release-notes\.mjs --ref origin\/main --before "\$BEFORE"/);
+  assert.match(workflow, /BEFORE: \$\{\{ github\.event\.before \}\}/);
+  assert.match(workflow, /if: steps\.release\.outputs\.tag != ''/);
+  assert.match(workflow, /"\$existing" != "\$TARGET"[\s\S]*exit 1/);
 });
 
 test('a version\'s release commit is the one on main that set manifest.json to it, with the version before it', () => {
@@ -41,5 +54,11 @@ test('a version\'s release commit is the one on main that set manifest.json to i
   const commits = parseLog(git('log', '--first-parent', `--format=${LOG_FORMAT}`, `${r.previousTarget}..${r.target}`));
   assert.deepEqual(commits.map((c) => c.subject), ['Release 0.1.1 (#4)', 'The manifest, not its version (#3)', 'A change (#2)']);
   assert.equal(releaseOf(git, '9.9.9'), null, 'a version main never had');
+  // The maintainer, 2026-11-07: no backfill. A push tags its version only when it brought the
+  // release commit: one already on main before the push (its `before`) is left untagged.
+  assert.equal(broughtBy(git, second, first), true, 'the push from 0.1.0 brought 0.1.1');
+  assert.equal(broughtBy(git, first, first), false);
+  assert.equal(broughtBy(git, second, git('rev-parse', 'HEAD').trim()), false, 'a later push that only touched the manifest');
+  assert.equal(broughtBy(git, second, '0000000000000000000000000000000000000000'), false, 'no before: nothing is assumed new');
   assert.throws(() => releaseOf(git, '0.1'), /not a version/);
 });
