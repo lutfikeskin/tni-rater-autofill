@@ -30,7 +30,7 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity, carPartsMixedNote } from '../util.js';
+import { companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, priorPolicyExpired, untypedCarrierPolicy, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity, carPartsMixedNote } from '../util.js';
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitRaised,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
@@ -907,7 +907,8 @@ export const progressive = {
       { concept: 'prior.continuous', q: '83', tni: 'progressive.continuous-coverage', source: (r) => (currentlyInsured(r) ? 'standard' : 'attestation'), field: 'MoreBusinessInput.HasContinuousCoverage', ask: 'Has the customer had continuous coverage?', name: 'Continuous coverage (Yes when currently insured)', kind: 'bool',
         value: (r) => (currentlyInsured(r) ? true : null),
         note: (r) => (currentlyInsured(r) ? null : onlyNotAuto(r) ? `The intake's current insurance is ${notAutoType(r)}, not an auto policy, so whether the customer has had continuous coverage is yours to answer.`
-          : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
+          : priorPolicyExpired(r) ? `The intake's current policy expired ${r.priorInsurance[0].expiration}, so whether the customer has had continuous coverage is yours to answer.`
+            : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
       { concept: 'prior.limit', q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'),
         ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
       { concept: 'prior.expiration', q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', clientFact: true, source: priorBoxSource, value: priorBoxValue('expiration'),

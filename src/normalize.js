@@ -6,7 +6,7 @@
 // client wrote it and gets a warning instead.
 
 import { stateCode } from './quote-state.js';
-import { STATES, noPriorInsurance, set, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyNotAuto } from './util.js';
+import { STATES, noPriorInsurance, set, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyExpiredBy, priorPolicyNotAuto } from './util.js';
 import { ownerRow, ownerRowNameDiffers } from './answers/owner.js';
 
 /** @import { IntakeResult } from '../types.js' */
@@ -943,6 +943,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       raw.cross_personal_auto && 'Personal auto', raw.cross_life && 'Life', raw.cross_homeowners && 'Homeowners',
       raw.cross_renters && 'Renters', raw.cross_other && (txt('cross_other_text') ?? 'Other'),
     ].filter(Boolean),
+    // The day the intake was loaded (MM/DD/YYYY), not on the form: a current policy's expiration is
+    // compared with it as well as with the application date (util.js priorPolicyExpired).
+    loadedOn: `${String(today.getMonth() + 1).padStart(2, '0')}/${String(today.getDate()).padStart(2, '0')}/${today.getFullYear()}`,
   };
   const a = record.applicant;
   const ops = record.operations;
@@ -1247,11 +1250,14 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     const named = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
     if (missing.length && priorInsuranceAssumed(record, prior)) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Proof of prior insurance (1-3 years) is assumed (TNI); get the rest from the client.`);
     else if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Confirm before quoting.`);
-    if (prior.expiration && /^\d{2}\/\d{2}\/\d{4}$/.test(prior.expiration)) {
-      const [mm, dd, yyyy] = prior.expiration.split('/').map(Number);
-      const expiry = Date.UTC(yyyy, mm - 1, dd);
-      const current = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-      if (expiry < current) check('prior-expiration.expired', 'priorInsurance[0].expiration', `Expired ${prior.expiration}. Uses the intake date; review it.`);
+    // Expired by today's date or the application date: the carriers' rules read it the same way
+    // (priorPolicyExpired; the maintainer, 2026-11-07, audit DATA-02), so the check names the date.
+    const { byToday, byApplication } = priorPolicyExpiredBy(record, prior);
+    if (byToday || byApplication) {
+      const applied = record.applicant.applicationDate;
+      const before = byApplication ? (byToday ? 'before the application date and today' : 'before the application date')
+        : applied ? `before today, though after the application date ${applied}` : 'before today';
+      check('prior-expiration.expired', 'priorInsurance[0].expiration', `Expired ${prior.expiration}, ${before}: an expired policy is not current insurance. Review it.`);
     }
   }
 

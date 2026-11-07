@@ -9,6 +9,7 @@ import { geico } from '../src/carriers/geico.js';
 import { parseEdit } from '../src/normalize.js';
 
 const baseRecord = () => ({
+  loadedOn: '10/01/2026', // a fixed load day, so a dated policy's expiration doesn't pass with the clock
   applicant: {
     name: 'Synthetic Expediter LLC', dot: null, mc: null, mcDotWithin60Days: null,
     owner1: 'Amina Kone', ownerDrives: true, phone: '(555) 010-0100', email: 'client@example.test',

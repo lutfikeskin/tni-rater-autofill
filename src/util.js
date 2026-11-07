@@ -237,19 +237,35 @@ export function priorPolicyCurrent(record, policy = record?.priorInsurance?.[0])
   return !priorPolicyExpired(record, policy);
 }
 
-// Compare calendar dates using the application date, so an archived intake stays reproducible.
-// An absent/invalid date does not establish that a policy expired.
-export function priorPolicyExpired(record, policy = record.priorInsurance?.[0]) {
-  const parse = (value) => {
-    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value ?? '');
-    if (!m) return null;
-    const d = new Date(Date.UTC(+m[3], +m[1] - 1, +m[2]));
-    return d.getUTCFullYear() === +m[3] && d.getUTCMonth() === +m[1] - 1 && d.getUTCDate() === +m[2] ? +d : null;
-  };
-  const expiry = parse(policy?.expiration);
+// The policy's expiration date compared with two dates, calendar days: the application date and
+// today's, the day the intake was loaded (`record.loadedOn`, set by normalizeIntake; the clock's
+// date for a record without one). Expired by either is expired (the maintainer, 2026-11-07, audit
+// DATA-02): a policy that lapsed between the application and the quote is not current insurance,
+// so no carrier answers currently insured or continuous coverage Yes from it. `byApplication` is
+// false without a usable application date; an absent or invalid expiration date expires on neither.
+const calendarDay = (value) => {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value ?? '');
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[3], +m[1] - 1, +m[2]));
+  return d.getUTCFullYear() === +m[3] && d.getUTCMonth() === +m[1] - 1 && d.getUTCDate() === +m[2] ? +d : null;
+};
+export function priorPolicyExpiredBy(record, policy = record?.priorInsurance?.[0]) {
+  const expiry = calendarDay(policy?.expiration);
+  const application = calendarDay(record?.applicant?.applicationDate);
   const now = new Date();
-  const reference = parse(record.applicant?.applicationDate) ?? Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-  return expiry != null && expiry < reference;
+  const today = calendarDay(record?.loadedOn) ?? Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return {
+    byToday: expiry != null && expiry < today,
+    byApplication: expiry != null && application != null && expiry < application,
+  };
+}
+// Every rule that reads current insurance from the expiration date asks this: Progressive's
+// currently insured (so continuous coverage) and insured with Progressive, GEICO's current GEICO
+// policy, current auto insurance and current GL, AmWINS' disclosure and how long with the carrier,
+// proof of prior insurance (priorInsuranceAssumed, priorPolicyCurrent) and the intake check.
+export function priorPolicyExpired(record, policy = record?.priorInsurance?.[0]) {
+  const { byToday, byApplication } = priorPolicyExpiredBy(record, policy);
+  return byToday || byApplication;
 }
 
 // Proof of prior insurance (POP) assumed (TNI, 2026-10-26, W44-29: "if any of the policy type,

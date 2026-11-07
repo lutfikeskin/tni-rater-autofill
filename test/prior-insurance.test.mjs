@@ -42,7 +42,7 @@ const disclosure = (record) => amwinsPlan(record).find((s) => /^Disclosure detai
 const agents = (s) => { assert.equal(s.value, null, `${s.name}: not filled`); assert.ok(s.note, `${s.name}: has a note`); };
 
 test('any box of the current insurance filled is proof of prior insurance (TNI, 2026-10-26, W44-29)', () => {
-  const policy = (p) => ({ applicant: { applicationDate: '09/15/2026' }, priorInsurance: [{ type: null, carrier: null, limit: null, expiration: null, ...p }] });
+  const policy = (p) => ({ loadedOn: '09/15/2026', applicant: { applicationDate: '09/15/2026' }, priorInsurance: [{ type: null, carrier: null, limit: null, expiration: null, ...p }] });
   for (const p of [{ type: 'Commercial Auto' }, { type: 'Personal Auto' }, { carrier: 'Synthetic Mutual' }, { limit: 'State Minimum' }, { expiration: '12/31/2026' },
     { type: 'Commercial Auto', carrier: 'Synthetic Mutual', limit: '$1M CSL', expiration: 'dec page to follow' }]) {
     assert.equal(priorInsuranceAssumed(policy(p)), true, JSON.stringify(p));
@@ -111,6 +111,48 @@ test('GEICO: no current insurance, an expired policy or another kind of policy s
   const none = intake({ ins_carrier_1: 'NO POP' }).record;
   assert.equal(geicoStep(none, GEICO.auto).value, 'No');
   agents(geicoStep(none, GEICO.years));
+});
+
+// The maintainer, 2026-11-07 (audit DATA-02): a policy expired by today's date (the day the intake
+// is loaded) or by the application date is expired for every carrier, as the intake check says: no
+// currently insured or continuous coverage Yes from it. Until then the carriers compared only with
+// the application date, so a policy that lapsed after the application was Progressive's currently
+// insured and continuous coverage Yes while the check said Expired. The sample is applied for on
+// 09/15/2026.
+test('a policy expired by today or by the application date is expired on every carrier; current on both keeps Yes (DATA-02)', () => {
+  const load = (expiration, day) => normalizeIntake({ ...raw, ...DATED, ins_exp_1: expiration }, { today: new Date(day) });
+  const expiredCase = (expiration, day, says) => {
+    const { record, warnings } = load(expiration, day);
+    assert.deepEqual([byQ(record, '81').value, byQ(record, '81').source], [false, 'derived'], `${expiration} loaded ${day}: not currently insured`);
+    assert.equal(byQ(record, '83').value, null, 'continuous coverage is the agent\'s');
+    const check = warnings.find((w) => w.code === 'prior-expiration.expired');
+    assert.ok(check, `${expiration} loaded ${day}: the intake check says Expired`);
+    assert.match(check.msg, says);
+    assert.match(byQ(record, '83').note, new RegExp(`expired ${expiration.replace(/\//g, '\\/')}`));
+    assert.equal(byQ(record, '95').ignore, true, 'no current limit typed');
+    agents(geicoStep(record, GEICO.auto));
+    assert.match(disclosure(record), /EXPIRED; confirm renewal or lapse/);
+    assert.equal(priorInsuranceAssumed(record), false);
+    return record;
+  };
+  // Expired by today, not by the application date: lapsed after the client applied.
+  const lapsed = expiredCase('10/15/2026', '2026-11-06T12:00', /before today, though after the application date 09\/15\/2026/);
+  assert.equal(lapsed.loadedOn, '11/06/2026');
+  // Expired by the application date, not by today: loaded before the application date.
+  expiredCase('09/10/2026', '2026-09-01T12:00', /before the application date:/);
+  // Both.
+  expiredCase('08/31/2026', '2026-11-06T12:00', /before the application date and today/);
+  // Current on both dates: as before, currently insured and continuous coverage Yes.
+  const { record, warnings } = load('12/31/2026', '2026-11-06T12:00');
+  assert.equal(warnings.some((w) => w.code === 'prior-expiration.expired'), false);
+  assert.deepEqual([byQ(record, '81').value, byQ(record, '83').value, byQ(record, '9D').value], [true, true, '12/31/2026']);
+  assert.match(disclosure(record), /Exp Date 12\/31\/2026/);
+  assert.doesNotMatch(disclosure(record), /EXPIRED/);
+  // A record without a load day (kept from before loadedOn): the clock's date and the application date.
+  const kept = structuredClone(record);
+  delete kept.loadedOn;
+  kept.priorInsurance[0].expiration = '01/01/2020';
+  assert.equal(byQ(kept, '81').value, false);
 });
 
 // TNI, 2026-10-26 (answer to PR question 10): a longer time with the insurer the notes give picks

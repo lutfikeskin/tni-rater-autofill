@@ -18,6 +18,7 @@ const [BCU, BOI, VEH, DRV, ABI, QC] = STEPS;
 
 // An expediter with one box truck, as an intake gives it (synthetic values only).
 const intake = () => ({
+  loadedOn: '10/20/2026', // loaded on the application date: a dated policy's expiration is compared with it
   applicant: { name: 'Synthetic Expediter LLC', dot: '1234567', mc: null, mcDotWithin60Days: null, fein: null, yearEstablished: 2021, yearsInBusiness: 5,
     phone: '(555) 010-0100', email: 'client@example.test', owner1: 'Amina Kone', owner2: null, ownerDrives: true, yearsExperience: 3, applicationDate: '10/20/2026' },
   garaging: { street: '1 Test Way', unit: null, city: 'Testville', state: 'NE', zip: '68000' },

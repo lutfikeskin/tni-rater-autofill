@@ -31,14 +31,14 @@ test('loan / lease from the ownership answer: no answer, or another one, is the 
 });
 
 test('currently insured: derived with a limit and a date, TNI\'s standard on any box filled, No when expired', () => {
-  const dated = { applicant: { applicationDate: '10/01/2026' }, priorInsurance: [{ type: 'Commercial Auto', carrier: 'Acme', limit: '1,000,000', expiration: '12/01/2026' }] };
+  const dated = { loadedOn: '10/01/2026', applicant: { applicationDate: '10/01/2026' }, priorInsurance: [{ type: 'Commercial Auto', carrier: 'Acme', limit: '1,000,000', expiration: '12/01/2026' }] };
   assert.equal(currentlyInsured(dated), true);
   assert.equal(currentlyInsuredSource(dated), 'derived');
-  const undated = { applicant: { applicationDate: '10/01/2026' }, priorInsurance: [{ type: 'Commercial Auto', carrier: 'Acme', limit: '1,000,000', expiration: '' }] };
+  const undated = { loadedOn: '10/01/2026', applicant: { applicationDate: '10/01/2026' }, priorInsurance: [{ type: 'Commercial Auto', carrier: 'Acme', limit: '1,000,000', expiration: '' }] };
   assert.equal(currentlyInsured(undated), true);
   assert.equal(currentlyInsuredSource(undated), 'standard');
   assert.match(priorBoxNote(undated, 'expiration'), /no expiration date/);
-  const expired = { applicant: { applicationDate: '10/01/2026' }, priorInsurance: [{ type: 'Commercial Auto', carrier: 'Acme', limit: '1,000,000', expiration: '01/01/2026' }] };
+  const expired = { loadedOn: '10/01/2026', applicant: { applicationDate: '10/01/2026' }, priorInsurance: [{ type: 'Commercial Auto', carrier: 'Acme', limit: '1,000,000', expiration: '01/01/2026' }] };
   assert.equal(currentlyInsured(expired), false);
   assert.equal(currentlyInsuredSource(expired), 'derived');
   assert.equal(priorBoxNote(expired, 'limit'), null, 'not asked when not currently insured');
@@ -46,7 +46,7 @@ test('currently insured: derived with a limit and a date, TNI\'s standard on any
 });
 
 test('the current limit, unless it is the form\'s "Other", which is the agent\'s', () => {
-  const r = (limit) => ({ applicant: { applicationDate: '10/01/2026' }, priorInsurance: [{ type: 'Commercial Auto', limit, expiration: '12/01/2026' }] });
+  const r = (limit) => ({ loadedOn: '10/01/2026', applicant: { applicationDate: '10/01/2026' }, priorInsurance: [{ type: 'Commercial Auto', limit, expiration: '12/01/2026' }] });
   assert.equal(priorLimit(r(' 1,000,000 ')), '1,000,000');
   assert.equal(priorLimit(r('Other')), null);
   assert.match(priorBoxNote(r('other'), 'limit'), /"Other", with no amount/);

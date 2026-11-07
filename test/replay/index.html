@@ -242,7 +242,10 @@
     async function intakeRecord() {
       const file = $('pdf').files[0];
       const bytes = file ? new Uint8Array(await file.arrayBuffer()) : new Uint8Array(await (await fetch('/test/fixtures/sample-intake.pdf')).arrayBuffer());
-      const result = normalizeIntake(await readIntakeFields(pdfjs, bytes));
+      // The sample is loaded on its application date (09/15/2026), so the replays stay the same as the
+      // days pass: on a later day its policy (to 10/31/2026) is expired and the prior-insurance answers
+      // are the agent's (util.js priorPolicyExpired). An intake chosen here is loaded today.
+      const result = normalizeIntake(await readIntakeFields(pdfjs, bytes), file ? {} : { today: new Date(2026, 8, 15) });
       if (result.error) throw new Error(result.error);
       // The quote's state is the layout's: Progressive quotes a client in their garaging state, and
       // some answers are a state's (Florida's PIP).
