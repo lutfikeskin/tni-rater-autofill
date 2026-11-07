@@ -58,9 +58,11 @@ const whose = (e) => (e.filling ? ' (not you, during a fill)' : ' (the page)');
 const many = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 // A page request its server answered with an error (HTTP 400 and up; the trace's `status`).
 const failed = (e) => Number.isInteger(e.status) && e.status >= 400;
-// What the panel put in while it was `filling` (the panel's `fillingKind`), as it began and ended.
-const SPANS = { fill: ['a fill started', 'the fill ended'], pick: ["the panel put in the agent's pick from a row", 'the pick was in'],
-  ai: ['the panel put in an AI answer', 'the AI answer was in'] };
+// What the panel was putting in while it was `filling` (the panel's `fillingKind`), as it began and
+// ended. The end says it ended, not that it went in: a pick that found no field, or an AI answer
+// whose page had changed, ends the same way.
+const SPANS = { fill: ['a fill started', 'the fill ended'], pick: ["the panel began putting in the agent's pick from a row", 'the pick ended'],
+  ai: ['the panel began putting in an AI answer', 'the AI answer ended'] };
 // A wait's own words: what it was for (pagekit.js settle's `why`).
 const WAITS = { answer: 'after an answer', round: 'after a round of answers', load: 'for a new view to load', 'before-load': 'before a button that loads a view',
   rated: 'for the premium', continue: 'before pressing Continue', continued: 'after pressing Continue', drawn: 'for a late question', start: 'before the fill',

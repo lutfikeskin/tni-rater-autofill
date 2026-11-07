@@ -8697,15 +8697,16 @@ test('a new recording first stops a trace a closed panel left in the tab', async
 
 test('a recording started during a fill begins with that fill, so its end isn\'t one without a start', async () => {
   const added = [];
-  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: true };
+  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: true, fillingKind: 'pick' };
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
     usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => ({ add: (events) => added.push(...events) }) },
     setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => {}, Date,
     chrome: { tabs: { sendMessage: async () => {} } } };
   vm.runInNewContext(extractFunction('startRecording'), context);
   await context.startRecording();
-  assert.deepEqual(added.map((e) => [e.kind, e.on, e.t, e.frame]), [['fill', true, state.recording.started, 0]]);
-  assert.deepEqual(JSON.parse(JSON.stringify(state.recording.fills)), [{ start: state.recording.started, end: null }]);
+  // What went in, on the store's span and the recording's own entry alike (#412 review).
+  assert.deepEqual(added.map((e) => [e.kind, e.on, e.t, e.frame, e.what]), [['fill', true, state.recording.started, 0, 'pick']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.recording.fills)), [{ start: state.recording.started, end: null, what: 'pick' }]);
 });
 
 test('a recording kept in memory only that could not be saved is said to be lost, not kept', async () => {

@@ -215,7 +215,10 @@ test('the timeline says what went in while the panel was filling: a fill, the ag
     { kind: 'fill', t: t0 + 4100, frame: 0, on: false },
   ];
   const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
-  assert.match(report, /0:01\.0 .*a fill started\n.*the fill ended \(it ran 0\.5 s\)\n.*the panel put in the agent's pick from a row\n.*the pick was in \(it ran 0\.2 s\)\n.*the panel put in an AI answer\n.*the AI answer was in \(it ran 0\.4 s\)\n.*a fill started\n.*the fill ended \(it ran 0\.1 s\)/);
+  // The pick's and the AI answer's ends say they ended, not that the answer went in: a pick that found
+  // no field, or an AI answer whose page had changed, ends the same way (#412 review).
+  assert.match(report, /0:01\.0 .*a fill started\n.*the fill ended \(it ran 0\.5 s\)\n.*the panel began putting in the agent's pick from a row\n.*the pick ended \(it ran 0\.2 s\)\n.*the panel began putting in an AI answer\n.*the AI answer ended \(it ran 0\.4 s\)\n.*a fill started\n.*the fill ended \(it ran 0\.1 s\)/);
+  assert.doesNotMatch(report, /was in/);
 });
 
 test('the questions a page drew, a request\'s path and what the fill answered are redacted as a field is', () => {
