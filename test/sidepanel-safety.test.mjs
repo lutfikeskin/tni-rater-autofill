@@ -2932,7 +2932,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
 function claimsHarness() {
   const logs = [], requests = [];
   const gates = [];
-  const t = { logs, requests, reply: 'ok', onRequest: null };
+  const t = { logs, requests, reply: 'ok', onRequest: null, session: { id: 'quote-1', intakeId: 'intake-1' } };
   const state = { intake: null, notesAsking: null, notesRetry: null };
   class AssistError extends Error {}
   const context = {
@@ -2945,7 +2945,7 @@ function claimsHarness() {
       if (reply === 'fail') throw new AssistError('Luna took too long. Nothing was applied.');
       return { warnings: [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }], lines: 1, flagged: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0, cachedTokens: 2, cacheWriteTokens: 1 };
     },
-    usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
+    usage: { log: (e) => logs.push(e), currentSession: () => t.session }, save: async () => {}, render: () => {},
   };
   vm.runInNewContext(extractFunction('claimsContext') + extractFunction('supersedeClaimsItems') + extractFunction('spentOf') + extractFunction('reviewClaimsBox'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -2967,7 +2967,7 @@ test('Luna reads the claims box once per intake, visibly fails, and retries on a
   assert.equal(t.requests.length, 1, 'two triggers close together ask once');
   assert.equal(typeof t.requests[0].opts.redact, 'function', 'names are redacted before the request');
   assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
-  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
+  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'intakeId', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'session', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
   await t.review({ retry: true });
   assert.equal(t.requests.length, 1, 'once per intake');
 
@@ -3031,7 +3031,7 @@ test('reopening the panel on a reviewed intake neither re-reads the claims box n
 });
 
 // Codex on PR #22.
-test('a settings change during a review runs it again, an edit during it discards the answer, a replaced intake logs nothing', async () => {
+test('a settings change during a review runs it again, an edit during it discards the answer, a replaced intake gets nothing', async () => {
   // The key is corrected while the old-key request is still out: tried again once it fails.
   let t = claimsHarness();
   const intake = claimsIntake('Needs physical damage');
@@ -3075,7 +3075,8 @@ test('a settings change during a review runs it again, an edit during it discard
   assert.equal(untouched.requests.length, 1, 'setting NTL is not a change to what Luna read');
   assert.equal(ntlOnly.notesReview.done, true);
 
-  // A request for an intake that was replaced meanwhile: no result and nothing logged.
+  // A request for an intake that was replaced meanwhile: no result, and the usage is logged as the
+  // quote the review began in, never the new one's (CodeRabbit on PR #391).
   for (const reply of ['ok', 'fail']) {
     t = claimsHarness();
     const old = claimsIntake('NTL please');
@@ -3084,10 +3085,14 @@ test('a settings change during a review runs it again, an edit during it discard
     t.review();
     await t.settle();
     t.state.intake = claimsIntake('');
+    t.session = { id: 'quote-2', intakeId: 'intake-2' };
     await t.answer();
     assert.deepEqual(old.warnings.map((w) => w.code), ['other'], reply);
     assert.equal(old.notesReview, undefined, reply);
-    assert.equal(t.logs.length, 0, `${reply}: not attributed to the new intake`);
+    assert.equal(t.logs.length, 1, reply);
+    assert.deepEqual([t.logs[0].session, t.logs[0].intakeId], ['quote-1', 'intake-1'], `${reply}: the quote it began in`);
+    assert.equal(t.logs[0].error, reply === 'ok' ? 'Answer discarded: the intake was replaced.' : 'Luna took too long. Nothing was applied.', reply);
+    if (reply === 'ok') assert.deepEqual([t.logs[0].tokensIn, t.logs[0].modelCalls], [5, 1], 'the tokens it spent');
   }
 });
 
@@ -6597,7 +6602,7 @@ test('a panel crash is still logged when the intake has no record, and never unr
 // nothing is sent and nothing changes.
 function namesHarness() {
   const logs = [], requests = [], gates = [];
-  const t = { logs, requests, reply: 'ok' };
+  const t = { logs, requests, reply: 'ok', session: { id: 'quote-1', intakeId: 'intake-1' } };
   const state = { intake: null, namesAsking: null, namesRetry: null };
   class AssistError extends Error {}
   const context = {
@@ -6611,7 +6616,7 @@ function namesHarness() {
       if (reply === 'fail') throw new AssistError('Luna returned an invalid driver-name review.');
       return { warnings: [{ code: 'ai.driver-gender', path: 'drivers[0].gender', level: 'check', msg: 'x', choices: [] }], names: 2, flagged: 1, modelCalls: 1, tokensIn: 5, tokensOut: 1, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
     },
-    usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
+    usage: { log: (e) => logs.push(e), currentSession: () => t.session }, save: async () => {}, render: () => {},
   };
   vm.runInNewContext(extractFunction('driverNamesContext') + extractFunction('supersedeGenderItems') + extractFunction('spentOf') + extractFunction('reviewDriverGender'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -6639,8 +6644,9 @@ test('Luna checks driver first names once per intake, never with the assistant o
   await t.answer();
   assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.driver-gender', 'check']]);
   assert.equal(intake.namesReview.done, true);
-  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never a name');
+  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'intakeId', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'session', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never a name');
   assert.equal(t.logs[0].page, 'DriverNames');
+  assert.deepEqual([t.logs[0].session, t.logs[0].intakeId], ['quote-1', 'intake-1']);
   await t.review({ retry: true });
   assert.equal(t.requests.length, 1, 'once per intake');
   // The agent set the gender meanwhile: that isn't a change to what Luna read.
@@ -6670,6 +6676,25 @@ test('Luna checks driver first names once per intake, never with the assistant o
   f.review({ retry: true });
   await f.answer();
   assert.deepEqual(failing.warnings.map((w) => w.code), ['other', 'ai.driver-names-reviewed', 'ai.driver-gender']);
+
+  // An intake replaced while Luna answered: nothing for it, and the usage is logged as the quote
+  // the check began in (CodeRabbit on PR #391).
+  for (const reply of ['ok', 'fail']) {
+    const r = namesHarness();
+    const old = namesIntake();
+    r.state.intake = old;
+    r.reply = reply;
+    r.review();
+    await r.settle();
+    r.state.intake = namesIntake();
+    r.session = { id: 'quote-2', intakeId: 'intake-2' };
+    await r.answer();
+    assert.deepEqual(old.warnings.map((w) => w.code), ['other'], reply);
+    assert.equal(old.namesReview, undefined, reply);
+    assert.equal(r.logs.length, 1, reply);
+    assert.deepEqual([r.logs[0].session, r.logs[0].intakeId], ['quote-1', 'intake-1'], reply);
+    assert.equal(r.logs[0].error, reply === 'ok' ? 'Answer discarded: the intake was replaced.' : 'Luna returned an invalid driver-name review.', reply);
+  }
 });
 
 test('Luna\'s GL and driver-gender check cards set the record as the agent\'s edit, or dismiss', async () => {
