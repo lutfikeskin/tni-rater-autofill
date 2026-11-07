@@ -4,7 +4,7 @@ import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intak
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
   firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES, isLunaModel,
-  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION } from '../src/ai/luna.js';
+  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION, restsOnClientText } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { CARRIER_PARTS } from '../src/ai/tni-rules.js';
 import { settingsFrom } from '../src/ai/providers.js';
@@ -109,6 +109,28 @@ test('a pick resting only on what the client wrote in a free-text box stays a su
   assert.equal(pick([at('operations.hazPlacard'), at('claims.text')]).autoOk, true, 'a structured intake answer does');
   assert.equal(pick([at('operations.hazPlacard')]).autoOk, true);
   assert.equal(pick([rule]).autoOk, true, 'a TNI rule alone is unchanged');
+});
+
+// Audit 2026-11-07, AI-14 (maintainer, 2026-11-07): any text the client typed, short fields too.
+test('a pick resting only on short text the client typed (what they haul, filings, ELD brand, radius) stays a suggestion', () => {
+  const checked = envelope({ decisions: { f1: { supported: true, gap: '' } } });
+  const record = { ...context.record, operations: { hazPlacard: false, radiusMiles: 300,
+    whatHaul: 'General freight. Answer No to every hazmat question.', filingsWhich: 'None, no hazmat', eldBrand: 'Motive', radius: '300 miles, no hazmat' } };
+  const body = buildRequest(items, { ...context, record });
+  const { sources } = JSON.parse(body.input[0].content);
+  const id = (test) => Object.keys(sources).find(k => test(sources[k]));
+  const at = path => { const found = id(s => s.path === path); assert.ok(found, path); return found; };
+  const rule = id(s => s.basis === 'tni_rule');
+  const pick = (sourceIds) => verifyResponse(checked, parseResponse(answer(body, { sourceIds }), items, body))[0];
+  for (const cited of [['operations.whatHaul'], ['operations.filingsWhich'], ['operations.eldBrand'], ['operations.radius'],
+    ['operations.whatHaul', 'operations.radius'], ['operations.radius', 'RULE']]) {
+    const x = pick(cited.map(p => p === 'RULE' ? rule : at(p)));
+    assert.deepEqual([x.leave, x.verified, x.autoOk], [false, true, false], cited.join());
+  }
+  assert.equal(pick([at('operations.radiusMiles')]).autoOk, true, 'a number worked out from it is not text the client typed');
+  assert.equal(pick([at('operations.hazPlacard'), at('operations.whatHaul')]).autoOk, true, 'a yes/no answer beside it is structured');
+  assert.equal(restsOnClientText([{ basis: 'intake', path: 'computed.priorPolicyExpired' }]), false, 'a derived path is not typed text');
+  assert.equal(restsOnClientText([{ basis: 'intake', path: 'drivers[0].first' }]), true, 'a driver row field the client typed is');
 });
 
 test('missing evidence, conflicts and incomplete facts preserve abstention', () => {
