@@ -293,6 +293,9 @@ const state = storeState({
   agentKeys: new Map(),
   agentKeysEpochs: new Map(), // Clear/pruning invalidate late writes for that intake only
   filling: false,
+  // What goes in while `filling` (the developer recording's span says it): 'fill' (Fill this page, an
+  // automatic fill), 'pick' (the agent's pick from a row), 'ai' (an AI answer applied).
+  fillingKind: null,
   autoTimer: null,
   // The page whose new questions the pending follow-up fill is for (scheduleAutoFill `drawn`).
   autoDrawn: null,
@@ -481,18 +484,22 @@ const state = storeState({
   closing: false,
 });
 
-// A fill starting and ending, noted for the developer recording timeline.
+// A fill starting and ending, noted for the developer recording timeline, with what went in (`what`:
+// state.fillingKind as it began), so the agent's pick from a row or an AI answer applied doesn't read
+// as a fill there (audit 2026-11-07, FLOW-15). Its end says what it began as.
 // Routed through panelStore subscription so state.filling updates remain reactive on the store.
 let fillingPrevious = !!panelStore.getState().filling;
+let fillingWhat = null;
 panelStore.subscribe((stateNow) => {
   const on = !!stateNow.filling;
   if (on !== fillingPrevious) {
+    if (on) fillingWhat = stateNow.fillingKind ?? 'fill';
     const rec = stateNow.recording ?? state.recording;
     if (rec && !rec.stopping) {
       const t = Date.now();
-      if (on) rec.fills.push({ start: t, end: null });
+      if (on) rec.fills.push({ start: t, end: null, what: fillingWhat });
       else if (rec.fills.at(-1)) rec.fills.at(-1).end = t;
-      rec.store.add([{ kind: 'fill', t, frame: 0, on }]);
+      rec.store.add([{ kind: 'fill', t, frame: 0, on, what: fillingWhat }]);
     }
     fillingPrevious = on;
   }

@@ -206,6 +206,14 @@ test('fill results drop typed values but keep chosen options', () => {
   events.forEach(assertNoClientData);
 });
 
+// Audit 2026-11-07, LEARN-09: a failed answer is logged with its code, for the reviews to count by.
+test('a failed answer is logged with its code beside its reason', () => {
+  const frames = [{ fields: 1, filled: [], noData: [], kept: [], leftRequired: [],
+    failed: [{ label: 'Radius', path: 'operations.radius', q: null, controlKind: 'select', code: 'option.no-match', reason: 'no option matches "Unlimited"' }] }];
+  const failed = fillEvents(frames, { carrier: 'progressive', page: 'AddVehicle', overwrite: false, ms: 1, redact }).find((e) => e.result === 'failed');
+  assert.deepEqual([failed.code, failed.reason], ['option.no-match', 'no option matches "Unlimited"']);
+});
+
 // Audit 2026-11-07, LEARN-11: every fill run of a page logged each kept answer again (59% of fill
 // events). A kept answer is logged once per quote, tab, page, step, question and what it shows; the
 // run still counts them all.

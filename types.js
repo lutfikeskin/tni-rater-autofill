@@ -634,6 +634,40 @@
  */
 
 /**
+ * Why an answer didn't go in, as a stable code: the kit branches on it, the usage log keeps it
+ * (`fill_field`'s `code`), and the reviews count by it, so rewording the `reason` people read changes
+ * none of them. Set by the kit where it gives up (src/kit/apply.js, cursor.js, pagekit.js, guard.js,
+ * drivers/, the carriers' page code); a test checks every failure there carries one.
+ * - `option.no-match`: the list has no option for the answer; `option.ambiguous`: a searched list
+ *   showed several or no confident match
+ * - `answer.not-kept`: the page took it and then didn't keep it (tried again once); `answer.refused`:
+ *   a widget didn't take the choice (Progressive's lists); `answer.cleared`: the page emptied
+ *   it (format); `answer.too-long`; `answer.invalid`: the page marks it invalid, or a yes/no field got
+ *   another answer; `answer.changed`: the page or the carrier changed it after the fill (a server
+ *   response, Recalculate); `answer.agent-edited`: the agent changed that question meanwhile
+ * - `field.read-only`; `field.vanished`: the field went away on the answer; `field.missing`: the
+ *   question is no longer on the page; `field.changed`: it changed since the AI read it
+ * - `page.unsettled`: the page didn't settle after the answer; `page.changed`: the page or frame
+ *   changed since the AI read it; `page.stop-step`: a step that is the agent's
+ * - `fill.interrupted`: the agent stopped the fill or edited the page
+ * - `lookup.differs`: a looked-up value isn't the intake's (VIN); `action.unverified`: a button
+ *   clicked with no sign it worked (Recalculate with no premium)
+ * - `address.no-suggestion`: no address suggestion to pick; `widget.unavailable`: a list's search
+ *   box or remove button isn't there; `widget.unsupported`: no page code for the control
+ * - `kit.exception`: the kit threw (its message is the reason): a defect, not a refusal;
+ *   `kit.uncoded`: a failure that came back without a code (a write path that names none: the
+ *   source test should have caught it)
+ * @typedef {'option.no-match' | 'option.ambiguous' | 'answer.not-kept' | 'answer.refused' | 'answer.cleared' | 'answer.too-long' | 'answer.invalid' | 'answer.changed' | 'answer.agent-edited' | 'field.read-only' | 'field.vanished' | 'field.missing' | 'field.changed' | 'page.unsettled' | 'page.changed' | 'page.stop-step' | 'fill.interrupted' | 'lookup.differs' | 'action.unverified' | 'address.no-suggestion' | 'widget.unavailable' | 'widget.unsupported' | 'kit.exception' | 'kit.uncoded'} FailCode
+ */
+
+/**
+ * What writing one answer did (src/kit/apply.js apply, a driver's or page code's write): `shown`, what
+ * the field shows; on failure its `code` (FailCode) and `reason`, and a list's `options` without the
+ * answer.
+ * @typedef {{ ok: boolean, shown?: string | null, code?: FailCode, reason?: string, options?: string[] }} WriteResult
+ */
+
+/**
  * One question in a fill report: its field, the plan step that answered it (when one did), and
  * what happened. Which keys are set depends on the list it is in.
  * @typedef {object} FillItem
@@ -652,7 +686,8 @@
  * @property {boolean} [otherStep]
  * @property {string} [note]  why it is the agent's
  * @property {string | null} [action]  a markable helper's reminder: the helper's id as the fill tracks it (scoped: `vehicleTile:0`), for the tab's done actions
- * @property {string} [reason]  why it failed
+ * @property {string} [reason]  why it failed, for people
+ * @property {FailCode} [code]  failed: why, as a code (FailCode)
  * @property {string} [shown]  what the page shows (a choice's text)
  * @property {string} [said]
  * @property {'prefix' | 'contains'} [matched]  filled or check: its option was matched only by a fallback, the one beginning with the answer's words or having them (none reading exactly so), so it is also a check item (apply.js looseMatch)
@@ -877,6 +912,7 @@
  * @property {true} [manualOnly]
  * @property {true} [review]
  * @property {string} [shown]
+ * @property {FailCode} [code]  failed: why, as a code (FailCode)
  * @property {string} [reason]
  * @property {string[]} [options]
  * @property {object} [timing]
@@ -1046,9 +1082,9 @@
  * @property {(s: any) => string} oneLine  one line of text, spaces squashed
  * @property {(ms: number) => Promise<void>} sleep  ends early once the running fill stops (halted)
  * @property {() => boolean} [halted]  the running fill stopped (the agent's Stop, or their edit): a wait ends, and nothing more is written
- * @property {() => { ok: false, reason: string }} [interrupted]  the result of an answer the fill stopped during, nothing written
+ * @property {() => { ok: false, code?: FailCode, reason: string }} [interrupted]  the result of an answer the fill stopped during, nothing written
  * @property {(options: any[], step: FieldStep) => any} matchOption  the option a step's answer picks, or null
- * @property {(step: FieldStep, options: any[]) => { ok: false, reason: string, options?: string[] }} noMatch  the result for an answer none of the options takes
+ * @property {(step: FieldStep, options: any[]) => { ok: false, code?: FailCode, reason: string, options?: string[] }} noMatch  the result for an answer none of the options takes
  * @property {(step: FieldStep, control: any) => string} textFor  the text a step types into a field
  * @property {(options: any[]) => boolean} hasOptions  a list offers a real choice, not only its placeholder
  * @property {(el: Element) => string | null} labelFor  a field's label as the page shows it
@@ -1110,7 +1146,7 @@
  * @property {(option: any) => any} groupOf  a radio option's group widget, for its validity
  * @property {(widget: any, text: string) => void} setText  an address typed into a widget's box
  * @property {(widget: any, text: string) => void} changed  after the typing events: the widget's own change
- * @property {(step: FieldStep, control: any) => Promise<{ ok: boolean, shown?: string, reason?: string }>} apply  puts an answer into a widget's field
+ * @property {(step: FieldStep, control: any) => Promise<WriteResult>} apply  puts an answer into a widget's field
  * @property {(widget: any, el: Element) => void} reselect  picks a widget's answer again (a nudge that makes the page show what follows it)
  * @property {(widget: any) => Element | null} highlight  the element to mark for a widget's field
  * @property {(widget: any) => string | null} typeName  the widget's type, for captures
@@ -1180,6 +1216,7 @@
  * @property {Map<string, Set<string>>} [agentKeys]
  * @property {Map<string, number>} [agentKeysEpochs]
  * @property {boolean} [filling]
+ * @property {'fill' | 'pick' | 'ai' | null} [fillingKind]  what goes in while `filling`: a fill, the agent's pick from a row, an AI answer
  * @property {any} [autoTimer]
  * @property {any} [autoDrawn]
  * @property {boolean} [autoPending]
