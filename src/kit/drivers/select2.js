@@ -26,7 +26,7 @@ export function createSelect2Drivers(kit) {
   async function select2Search(select, text) {
     const container = select2Box(select);
     const opener = container?.querySelectorAll?.('.select2-selection')?.[0] ?? container;
-    if (!opener) return { reason: 'the search box for this list was not found; pick it yourself' };
+    if (!opener) return { code: 'widget.unavailable', reason: 'the search box for this list was not found; pick it yourself' };
     if (!/\bselect2-container--open\b/.test(String(container.className))) press(opener);
     const inline = () => (select.multiple ? container.querySelectorAll?.('.select2-search__field')?.[0] ?? null : null);
     // Never another list's own box (a list taking several choices always shows its box).
@@ -42,7 +42,7 @@ export function createSelect2Drivers(kit) {
     }
     // Stopped meanwhile (the agent's Stop, or their edit): nothing is typed or picked.
     if (halted()) return interrupted();
-    if (!box && !(own() && listed().length)) return { reason: "the list's search box didn't open; pick it yourself" };
+    if (!box && !(own() && listed().length)) return { code: 'widget.unavailable', reason: "the list's search box didn't open; pick it yourself" };
     if (box) {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, String(text));
       for (const type of ['input', 'keyup']) box.dispatchEvent(new Event(type, { bubbles: true }));
@@ -78,18 +78,18 @@ export function createSelect2Drivers(kit) {
   // match, and the agent picks.
   async function applySearchSelect(step, c) {
     const found = await select2Search(c.el, step.search ?? step.value);
-    if (found.reason) return { ok: false, reason: found.reason };
+    if (found.reason) return { ok: false, code: found.code, reason: found.reason };
     const want = squash(step.value);
     const texts = found.results.map((n) => squash(n.textContent));
     const picked = searchHits(texts, want);
     const hits = found.results.filter((n, i) => picked.includes(texts[i]));
     if (hits.length !== 1) {
       closeSelect2(found.box);
-      return { ok: false, reason: hits.length ? `${hits.length} results match "${step.value}"; pick the right one` : `no confident match for "${step.value}"; pick it yourself` };
+      return { ok: false, code: 'option.ambiguous', reason: hits.length ? `${hits.length} results match "${step.value}"; pick the right one` : `no confident match for "${step.value}"; pick it yourself` };
     }
     press(hits[0]);
     await settle({ quietMs: 250, maxMs: 4000 });
-    return searchAgrees(step, c) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
+    return searchAgrees(step, c) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, code: 'answer.not-kept', reason: 'the page did not keep the choice; pick it yourself' };
   }
 
   // The pick a search-select holds is its answer by the write's own rule (searchHits): it reads
@@ -110,12 +110,12 @@ export function createSelect2Drivers(kit) {
   // several: clicking a picked one takes it off).
   async function pickSelect2(select, text) {
     const found = await select2Search(select, text);
-    if (found.reason) return { ok: false, reason: found.reason };
+    if (found.reason) return { ok: false, code: found.code, reason: found.reason };
     const want = oneLine(text).toLowerCase();
     const hits = found.results.filter((n) => oneLine(n.textContent).toLowerCase() === want && n.getAttribute?.('aria-selected') !== 'true');
     if (hits.length !== 1) {
       closeSelect2(found.box);
-      return { ok: false, reason: hits.length ? `the list showed "${text}" ${hits.length} times; pick it yourself` : `the list didn't show "${text}" when it was typed; pick it yourself` };
+      return { ok: false, code: 'option.ambiguous', reason: hits.length ? `the list showed "${text}" ${hits.length} times; pick it yourself` : `the list didn't show "${text}" when it was typed; pick it yourself` };
     }
     press(hits[0]);
     await settle({ quietMs: 250, maxMs: 4000 });
@@ -128,7 +128,7 @@ export function createSelect2Drivers(kit) {
     const chip = [...(select2Box(select)?.querySelectorAll?.('.select2-selection__choice') ?? [])]
       .find((n) => oneLine(n.getAttribute?.('title') ?? n.textContent.replace(/^×/, '')).toLowerCase() === want);
     const remove = chip?.querySelectorAll?.('.select2-selection__choice__remove')?.[0] ?? null;
-    if (!remove) return { ok: false, reason: `"${text}" is picked but has no × to take it off; take it off yourself` };
+    if (!remove) return { ok: false, code: 'widget.unavailable', reason: `"${text}" is picked but has no × to take it off; take it off yourself` };
     press(remove);
     await settle({ quietMs: 250, maxMs: 4000 });
     return { ok: true };
@@ -157,7 +157,7 @@ export function createSelect2Drivers(kit) {
         const on = await pickSelect2(c.el, o.text);
         if (!on.ok) return on;
       }
-      if (!options.every((o) => !!o.el.selected === picks.includes(o))) return { ok: false, reason: 'the page did not keep these picks' };
+      if (!options.every((o) => !!o.el.selected === picks.includes(o))) return { ok: false, code: 'answer.not-kept', reason: 'the page did not keep these picks' };
       return { ok: true, shown: picks.map((o) => o.text).join('; ') };
     }
     let opt = matchOption(options, step);
@@ -170,7 +170,7 @@ export function createSelect2Drivers(kit) {
     if (!opt) return noMatch(step, options);
     const on = await pickSelect2(c.el, opt.text);
     if (!on.ok) return on;
-    return selectedText(c) === opt.text ? { ok: true, shown: opt.text } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
+    return selectedText(c) === opt.text ? { ok: true, shown: opt.text } : { ok: false, code: 'answer.not-kept', reason: 'the page did not keep the choice; pick it yourself' };
   }
 
   return {
