@@ -65,6 +65,8 @@ function virtualClock() {
       return id;
     },
     clearTimeout(id) { timers.delete(id); },
+    // The page's own script holding the thread (no timer fires meanwhile).
+    advance(ms) { now += ms; },
   };
 }
 const clock = virtualClock();
@@ -3918,6 +3920,18 @@ test('answers given one at a time go down the page, and what an answer reveals u
 // AmWINS' driver rules give the names and license number before gender, marital status and the
 // license year, which sit between them on the page: a batch round's answers land together, so it
 // keeps the order its rules are written in.
+// CodeRabbit on #398: an answer whose page handler holds the thread past the fill's deadline, in a
+// batch round: no answer more goes in, before the timer gets to run.
+test('a batch round gives no answer more once the page held it past the fill\'s time', async () => {
+  const h = harness();
+  const fields = ['first', 'second', 'third'].map((id) => makeInput({ id, ariaLabel: id }));
+  h.document.body.append(...fields);
+  fields[0].addEventListener('input', () => clock.advance(6000));
+  const report = await h.kit.fill(fields.map((f) => ({ id: f.id, selector: `#${f.id}`, path: `x.${f.id}`, kind: 'text', value: 'v' })), { maxRounds: 4, batch: true, budgetMs: 5000 });
+  assert.deepEqual(fields.map((f) => f.value), ['v', '', ''], JSON.stringify(report.filled.map((x) => x.path)));
+  assert.equal(report.outOfTime, true);
+});
+
 test('a batch round keeps the order its rules are written in', async () => {
   const h = harness();
   const gender = makeInput({ id: 'gender', ariaLabel: 'Gender' });
