@@ -91,8 +91,9 @@ export function logLine(fields, level = 'info') {
 // A route for the log and the counters: one of this server's, or `other`, never what was asked.
 const ROUTES = new Set(['/v1/events', '/v1/luna', '/v1/health', '/v1/days', '/v1/export', '/dashboard', '/privacy']);
 // A refusal's reason as a counter's name: what the server said, without the event's own text (an
-// unknown type's name) or numbers, so a client can't make up names of its own.
-const reasonKey = (error) => String(error).replace(/"[^"]*"/g, '"…"').replace(/\d+/g, 'N').slice(0, 80);
+// unknown type's name, quotes inside it included: from the first quote to the last) or numbers,
+// so a client can't make up names of its own.
+const reasonKey = (error) => String(error).replace(/"[\s\S]*"/, '"…"').replace(/\d+/g, 'N').slice(0, 80);
 const MAX_REASONS = 50;
 
 // Uploads from one address (audit 2026-11-07, SRV-13: the upload token ships in the extension, so

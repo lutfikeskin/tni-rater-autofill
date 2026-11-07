@@ -307,7 +307,7 @@ test('the admin\'s health counts requests by route and status, exceptions, store
   try {
     await withServer({ dataDir, adminToken: 'admin', openaiKey: 'sk-server', fetchImpl, freeSpace: () => 2048 * 1024 * 1024 }, async ({ post, base }) => {
       const first = ev();
-      await post({ events: [first, ev({ type: 'a_made_up_type' }), ev({ type: 'another_made_up' }), ev({ id: 'x' })] });
+      await post({ events: [first, ev({ type: 'a_made_up_type' }), ev({ type: 'another_made_up' }), ev({ type: 'a"Jane Roe' }), ev({ id: 'x' })] });
       await post({ events: [first, ev({ junk: 1 })] });
       await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
       await fetch(`${base}/v1/health`);
@@ -315,8 +315,8 @@ test('the admin\'s health counts requests by route and status, exceptions, store
       assert.equal(anyone.metrics, undefined, 'the counters are TNI\'s only');
       const { metrics: m } = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json();
       assert.deepEqual(m.requests, { '/v1/events': { 200: 2 }, '/v1/luna': { 200: 1 }, '/v1/health': { 200: 2 } });
-      assert.deepEqual({ ...m.events, lastStoredAt: typeof m.events.lastStoredAt }, { accepted: 2, duplicates: 1, rejected: 3, withDropped: 1, lastStoredAt: 'string' });
-      assert.deepEqual(m.rejects, { 'unknown event type "…"': 2, 'event id missing or invalid': 1 }, 'by the server\'s reason, never the event\'s own words');
+      assert.deepEqual({ ...m.events, lastStoredAt: typeof m.events.lastStoredAt }, { accepted: 2, duplicates: 1, rejected: 4, withDropped: 1, lastStoredAt: 'string' });
+      assert.deepEqual(m.rejects, { 'unknown event type "…"': 3, 'event id missing or invalid': 1 }, 'by the server\'s reason, never the event\'s own words');
       assert.equal(m.exceptions, 0);
       assert.deepEqual(m.disk, { freeMB: 2048, guardMB: 500 });
       assert.deepEqual([m.luna.requests, m.luna.inputTokens, m.luna.outputTokens, m.luna.limit, m.luna.budget], [1, 10, 5, 5000, 10_000_000]);
