@@ -3602,7 +3602,7 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   // Fills ready their tab once they went through (tested with autoFill below; fillPage the same).
   // (After the stale check: a fill whose intake changed meanwhile proves nothing for the new one;
   // nor does one whose page had moved on, which filled nothing.)
-  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
+  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
 });
 
 test('a queued capture is dropped for a later change on its page, which gets its reasons', async () => {
@@ -5073,7 +5073,7 @@ test('helper follow-ups and pending-page timers discard a switched tab or change
     vm.runInContext(['afterFill', 'runPendingPage'].map(extractFunction).join('\n'), t.context);
     const ctx = t.context.fillContext({ tabId: 7, carrier: t.state.tab.carrier, page: '/quote-A' });
     t.context.afterFill([{ actions: [{ id: 'helper' }] }], ctx);
-    t.state.pagePending = '/quote-A';
+    t.state.pagePending = { tabId: 7, page: '/quote-A' };
     t.context.runPendingPage(ctx);
     assert.equal(timers.length, 2);
     if (change === 'tab') t.state.tab = { ...t.state.tab, id: 8 };
@@ -5082,6 +5082,63 @@ test('helper follow-ups and pending-page timers discard a switched tab or change
     timers.forEach((fn) => fn());
     assert.deepEqual(scheduled, [], change);
   }
+});
+
+// Audit 2026-11-07, FLOW-07: while tab A filled, the agent moved to tab B and its page opened. B's
+// opening fill waited for A's (pagePending, a bare page name), and was dropped when A's ended with B
+// in front (runPendingPage ran only for the finished fill's tab). So was a follow-up B asked for.
+test('a page that opened on the tab the agent moved to while another tab filled is filled once that fill ends', async () => {
+  for (const ending of ['done', 'stopped']) {
+    const t = fillHarness();
+    vm.runInContext(extractFunction('runPendingPage'), t.context);
+    const run = t.context.fillPage();
+    await t.started;
+    // Tab 8 comes to the front and its page opens: its opening fill waits for this one.
+    t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier };
+    await t.context.fillPage({ auto: 'page' });
+    assert.deepEqual({ ...t.state.pagePending }, { tabId: 8, page: '/quote-B' });
+    const later = [], filled = [];
+    t.context.setTimeout = (fn) => { later.push(fn); return 1; };
+    t.context.fillPage = (opts) => filled.push(opts);
+    if (ending === 'stopped') t.state.fillingFor = { ...t.state.fillingFor, stopping: true };
+    t.release(ending === 'stopped' ? [{ frameId: 0, result: { ...t.results[0].result, halted: true } }] : t.results);
+    await run;
+    later.forEach((fn) => fn());
+    assert.deepEqual(JSON.parse(JSON.stringify(filled)), [{ auto: 'page' }], ending);
+    assert.equal(t.state.pagePending, null);
+  }
+  // Not once the agent moved on again, or for another intake.
+  const t = fillHarness();
+  vm.runInContext(extractFunction('runPendingPage'), t.context);
+  const later = [], filled = [];
+  t.context.setTimeout = (fn) => { later.push(fn); return 1; };
+  t.context.fillPage = (opts) => filled.push(opts);
+  const ctx = t.context.fillContext({ tabId: 7, carrier: t.state.tab.carrier, page: '/quote-A' });
+  t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier };
+  t.state.pagePending = { tabId: 8, page: '/quote-B' };
+  t.context.runPendingPage(ctx);
+  t.state.tab = { id: 9, url: 'https://carrier.test/quote-C', carrier: t.state.tab.carrier };
+  later.forEach((fn) => fn());
+  t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier };
+  t.state.pagePending = { tabId: 8, page: '/quote-B' };
+  t.state.intakeRevision++;
+  t.context.runPendingPage(ctx);
+  later.forEach((fn) => fn());
+  assert.deepEqual(filled, []);
+});
+
+test('a follow-up the tab the agent moved to asked for while an automatic fill ran elsewhere is scheduled when it ends', async () => {
+  const t = fillHarness();
+  const scheduled = [];
+  t.context.scheduleAutoFill = (page) => scheduled.push(page);
+  const run = t.context.autoFill('/quote-A');
+  await t.started;
+  // refreshTab let go of tab 7's; tab 8's recorder then asked for a follow-up (scheduleAutoFill: autoPending).
+  t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier };
+  t.state.autoPending = true;
+  t.release(t.results);
+  await run;
+  assert.deepEqual(scheduled, ['/quote-B']);
 });
 
 test('list verification discards driver and trailer reads after intake replacement or correction before writing helpers', async () => {
@@ -5522,7 +5579,8 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
   assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
-  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,400}if \(moved && fillCurrent\(ctx\)\) \{\s+if \(stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);/);
+  // (runPendingPage then runs from every end of a fill, whichever tab is in front: FLOW-07.)
+  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n\s+\}/);
 });
 
 // Review 2026-10-22: rows a follow-up fill added had no source or group, so a worked-out answer or

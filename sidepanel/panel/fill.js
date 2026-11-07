@@ -98,7 +98,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   if (auto && state.intake && quoteOwnerIssue()) { showOwnerNote(); renderSteps(); return; }
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
-  if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
+  // Kept with its tab: the fill running may be on another one (audit 2026-11-07, FLOW-07).
+  if (state.filling && auto === 'page') { state.pagePending = { tabId: state.tab?.id, page: pageOf(state.tab?.url) }; return; }
   if (state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
   // Back on a step that takes follow-ups only for new questions (newQuestionsOnlySteps) after its
   // fill: only the agent, or new questions, fill it again.
@@ -122,7 +123,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
   await pickListItem(carrier, page, ctx);
-  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); return; }
+  // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
+  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); return; }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
@@ -135,8 +137,6 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   const started = Date.now();
   let assistFrames = null;
   let followUp = false;
-  // The page moved on before the fill began (pageMoved): the page in front gets its fill after this.
-  let moved = false;
   // Our own fills aren't the agent's changes: pause the recorder while filling.
   try {
     await ensureRecorder();
@@ -158,7 +158,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     }
     // The tab moved on to another page while the panel prepared: that one isn't filled with this
     // page's plan (the kit checks again as it starts: `expectPage`).
-    if (await pageMoved(ctx)) { moved = true; notePageMoved(ctx); return; }
+    if (await pageMoved(ctx)) { notePageMoved(ctx); return; }
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // The agent's Fill this page gives back an answer the page took back (keepTakenBack): GEICO's
     // own coverage choice put back over the fill's, on a question the agent didn't answer
@@ -167,7 +167,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
+    if (results.some((r) => r.result?.pageMoved)) { notePageMoved(ctx); return; }
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
     // And its quote is this intake's (the agent's Fill this page on another intake's quote too).
@@ -197,8 +197,9 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     state.filling = false;
     if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
     renderSite();
-    // The page in front, which this fill wasn't for, gets its own fill.
-    if (moved && fillCurrent(ctx)) runPendingPage(ctx);
+    // The page in front, which this fill wasn't for, gets its own fill: one this tab moved on to, or
+    // one that opened on the tab the agent moved to meanwhile, however this fill ended.
+    runPendingPage(ctx);
   }
   if (!fillCurrent(ctx)) return;
   // The agent's next step is the page's answers: in view (showFinish).
@@ -511,7 +512,7 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     same = now === last ? same + 1 : 0;
     last = now;
     if (now != null && now !== before && same >= 2) {
-      if (state.filling) state.pagePending = page;
+      if (state.filling) state.pagePending = { tabId: ctx.tabId, page };
       else fillPage({ auto: 'page' });
       return;
     }
