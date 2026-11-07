@@ -8,6 +8,7 @@ import { renderPickers } from './record.js';
 import { ensureRecorder, pageOf } from './usage.js';
 import { issueSaid, renderSite, scheduleLayout, seedQuoteState } from './coordinator.js';
 import { noteQuoteTab } from './quote-owner.js';
+import { noteFollowed } from './dev-recording.js';
 
 // ---------------------------------------------------------------------------------------------
 // The current tab
@@ -56,6 +57,7 @@ async function refreshTab() {
     const carrier = quote?.url ? carrierForUrl(quote.url) : null;
     if (carrier) {
       state.tab = { id: quote.id, url: quote.url, carrier, background: true, windowId: quote.windowId };
+      noteFollowed();
       showHeldNote(activeIsRater ? { id: tab.id, carrier: carrierForUrl(tab.url), windowId: tab.windowId } : null);
       renderSite();
       ensureRecorder();
@@ -85,6 +87,8 @@ async function refreshTab() {
     state.autoPending = false;
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false, windowId: tab.windowId } : null;
+  // A recording on another tab says the panel moved (REC-04), as it moves.
+  noteFollowed();
   // Whose quote the tab is, as the panel finds it (one it saw go into a quote, or out of one).
   noteQuoteTab(state.tab?.id, state.tab?.url);
   await restoreAgentKeys(state.tab?.id);

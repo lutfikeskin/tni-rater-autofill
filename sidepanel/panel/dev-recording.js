@@ -35,7 +35,10 @@ function renderDevrec() {
 // 2026-11-07; W44-23: 4 of 10 recordings held nothing of the quote, which had moved to another tab).
 // When the panel follows another tab, or comes back, the timeline says so (`panel`: `away`, and the
 // tab followed, a tab number only), once each time, and the panel's line above says it while it lasts.
-function noteFollowed(rec) {
+// Noted as the panel changes tab (refreshTab), so a move away and back between two of the line's
+// renders is in the timeline too (review of PR #383).
+function noteFollowed(rec = state.recording) {
+  if (!rec || rec.stopping) return;
   const away = state.tab?.id !== rec.tabId;
   if (away === !!rec.away) return;
   rec.away = away;
@@ -160,4 +163,4 @@ async function recoverRecording() {
   }
 }
 
-export { noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording };
+export { noteFollowed, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording };

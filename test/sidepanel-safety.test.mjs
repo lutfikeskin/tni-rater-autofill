@@ -113,7 +113,10 @@ function extractFunction(name) {
           quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
-          stopFillFirst: 'async () => {}' };
+          stopFillFirst: 'async () => {}',
+          // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
+          // elsewhere none is running.
+          noteFollowed: '() => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -10125,4 +10128,17 @@ test('the recording follows its own tab whatever tab the panel follows, says whe
   assert.equal(added.at(-1).closed, true);
   const wire = extractFunction('wire');
   assert.match(wire, /chrome\.tabs\.onUpdated\.addListener\(recordedTabUpdated\);\s+chrome\.tabs\.onRemoved\.addListener\(recordedTabRemoved\);/);
+  // Review of PR #383: noted as the panel changes tab, not only at the line's next render, so a
+  // move away and back within a second is in the timeline too.
+  const marks = added.length;
+  state.recording.stopping = false;
+  state.tab = { id: 9 };
+  context.noteFollowed();
+  state.tab = { id: 4 };
+  context.noteFollowed();
+  assert.deepEqual(added.slice(marks).map((e) => e.away), [true, false]);
+  const refresh = extractFunction('refreshTab');
+  const sets = [...refresh.matchAll(/^\s*state\.tab = (?!null; return).*$/gm)];
+  assert.equal(sets.length, 2);
+  for (const m of sets) assert.match(refresh.slice(m.index + m[0].length), /^\s*(?:\/\/.*\s*)*noteFollowed\(\);/, 'each tab the panel follows is noted as it is set');
 });
