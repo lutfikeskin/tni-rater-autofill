@@ -1493,7 +1493,8 @@ const DERIVATIONS = [
 // Not for an answer derived from another one (ownership, years in business, the miles): an agent's
 // value there keeps its checks as they are (answer 3), as for a later edit of its source. The
 // garaging address's checks are about how the whole address was split, not one box's value, and
-// stay the agent's to confirm.
+// stay the agent's to confirm. They restate normalizeIntake's checks: a test runs the same values
+// through both and holds them to the same checks in the same words (test/normalize.test.mjs).
 const unitWho = (list, i, rows) => {
   const u = rows?.[list]?.[i] ?? i + 1;
   return { list, i, n: u, p: (k) => `${list}[${i}].${k}` };

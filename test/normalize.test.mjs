@@ -2346,3 +2346,70 @@ test('correcting a box runs its own checks again: a valid value retires them, an
   assert.ok(intake.warnings.every((w) => !w.path?.startsWith('drivers[1].') || !w.msg.startsWith('No longer applies')));
   assert.equal(intake.warnings.filter((w) => w.code !== 'prior-expiration.expired' && w.code !== 'vin.missing' && w.code !== 'dob.invalid').length, length, 'positions never move');
 });
+
+// The edit-time box checks (normalize.js BOX_CHECKS) restate the checks normalizeIntake makes at
+// load. So they can't drift apart silently: for each box they cover, the same bad and good values,
+// read at load and typed into the panel (parseEdit by the field's kind, then rederive), give the
+// same checks in the same words. Each case: the form fields read at load (`raw`), the panel's edits
+// of the same values ([path, text]), and the good form fields the edit starts from (`start`).
+test('the edit-time box checks say what load-time normalization says, for the same values (DATA-04)', async () => {
+  const { parseEdit } = await import('../src/normalize.js');
+  const { fieldInfo } = await import('../src/schema.js');
+  const box = (codes, at) => (w) => codes.includes(w.code) && (at.endsWith('.') ? w.path.startsWith(at) : w.path === at);
+  const said = (warnings, owns) => warnings.filter((w) => owns(w) && !w.msg.startsWith('No longer applies after your edit: '))
+    .map(({ code, path, level, msg }) => ({ code, path, level, msg })).sort((a, b) => a.code.localeCompare(b.code));
+  const cases = [
+    // [codes, the path they're on, bad cases, good cases]: a case is [raw fields, edits]
+    [['claims.blank'], 'claims.text', [[{ claims_details: '' }, [['claims.text', '']]]], [[{ claims_details: 'No' }, [['claims.text', 'No']]]]],
+    [['fein.invalid', 'fein.none'], 'applicant.fein', [[{ fein: '12-345' }, [['applicant.fein', '12-345']]], [{ fein: 'No' }, [['applicant.fein', 'No']]]], [[{ fein: '12-3456789' }, [['applicant.fein', '12-3456789']]]]],
+    [['year-established.invalid'], 'applicant.yearEstablished', [[{ year_established: '1850' }, [['applicant.yearEstablished', '1850']]], [{ year_established: '2099' }, [['applicant.yearEstablished', '2099']]]], [[{ year_established: '2019' }, [['applicant.yearEstablished', '2019']]]]],
+    [['phone.invalid'], 'applicant.phone', [[{ phone_number: '555-12' }, [['applicant.phone', '555-12']]]], [[{ phone_number: '(555) 201-0199' }, [['applicant.phone', '(555) 201-0199']]]]],
+    [['email.invalid'], 'applicant.email', [[{ email: 'sample@example' }, [['applicant.email', 'sample@example']]]], [[{ email: 'sample@example.com' }, [['applicant.email', 'sample@example.com']]]]],
+    [['id.invalid'], 'applicant.dot', [[{ dot_number: '123456789' }, [['applicant.dot', '123456789']]], [{ dot_number: 'ABC' }, [['applicant.dot', 'ABC']]]], [[{ dot_number: '1234567' }, [['applicant.dot', '1234567']]]]],
+    [['id.invalid'], 'applicant.mc', [[{ mc_number: '123456789' }, [['applicant.mc', '123456789']]]], [[{ mc_number: '7654321' }, [['applicant.mc', '7654321']]]]],
+    [['years-experience.invalid'], 'applicant.yearsExperience', [[{ years_experience: 'many' }, [['applicant.yearsExperience', 'many']]]], [[{ years_experience: '3' }, [['applicant.yearsExperience', '3']]]]],
+    [['dob.invalid', 'dob.missing', 'dob.unusual-age'], 'drivers[0].dob',
+      [[{ drv_dob_1: '' }, [['drivers[0].dob', '']]], [{ drv_dob_1: '02/31/1990' }, [['drivers[0].dob', '02/31/1990']]], [{ drv_dob_1: '01/01/2020' }, [['drivers[0].dob', '01/01/2020']]]],
+      [[{ drv_dob_1: '02/03/1988' }, [['drivers[0].dob', '02/03/1988']]]]],
+    [['license.missing'], 'drivers[0].licenseNumber', [[{ drv_lic_1: '' }, [['drivers[0].licenseNumber', '']]]], [[{ drv_lic_1: 'D1234567' }, [['drivers[0].licenseNumber', 'D1234567']]]]],
+    [['license-state.missing'], 'drivers[0].licenseState', [[{ drv_lic_1: 'D1234567', drv_state_1: '' }, [['drivers[0].licenseState', '']]]], [[{ drv_lic_1: 'D1234567', drv_state_1: 'IL' }, [['drivers[0].licenseState', 'IL']]]]],
+    [['name.missing-part', 'name.multi-word-first'], 'drivers[0].',
+      [[{ drv_first_1: '', drv_last_1: 'Sample' }, [['drivers[0].first', '']]], [{ drv_first_1: 'Jordan', drv_last_1: '' }, [['drivers[0].last', '']]],
+        [{ drv_first_1: 'Mary Ann', drv_last_1: 'Sample' }, [['drivers[0].first', 'Mary Ann']]]],
+      [[{ drv_first_1: 'Jordan', drv_last_1: 'Sample' }, [['drivers[0].first', 'Jordan'], ['drivers[0].last', 'Sample']]]]],
+    [['cdl-year.missing', 'cdl-year.without-cdl', 'cdl.blank-with-year'], 'drivers[0].',
+      [[{ drv_cdl_1: 'Yes', drv_cdl_yr_1: '' }, [['drivers[0].cdl', 'true'], ['drivers[0].cdlYear', '']]],
+        [{ drv_cdl_1: 'No', drv_cdl_yr_1: '2015' }, [['drivers[0].cdl', 'false'], ['drivers[0].cdlYear', '2015']]],
+        [{ drv_cdl_1: '', drv_cdl_yr_1: '2015' }, [['drivers[0].cdl', ''], ['drivers[0].cdlYear', '2015']]]],
+      [[{ drv_cdl_1: 'Yes', drv_cdl_yr_1: '2015' }, [['drivers[0].cdl', 'true'], ['drivers[0].cdlYear', '2015']]]]],
+    [['vehicle-year.invalid'], 'vehicles[0].year', [[{ veh_year_1: '1900' }, [['vehicles[0].year', '1900']]]], [[{ veh_year_1: '2021' }, [['vehicles[0].year', '2021']]]]],
+    [['vehicle-value.invalid'], 'vehicles[0].value', [[{ veh_value_1: 'lots' }, [['vehicles[0].value', 'lots']]]], [[{ veh_value_1: '45000' }, [['vehicles[0].value', '45000']]]]],
+    [['vin.invalid', 'vin.missing'], 'vehicles[0].vin', [[{ veh_vin_1: 'ABC' }, [['vehicles[0].vin', 'ABC']]], [{ veh_vin_1: '' }, [['vehicles[0].vin', '']]]], [[{ veh_vin_1: '1HGCM82633A004352' }, [['vehicles[0].vin', '1HGCM82633A004352']]]]],
+    [['vehicle-type.missing'], 'vehicles[0].type', [[{ veh_type_1: '' }, [['vehicles[0].type', '']]]], [[{ veh_type_1: 'Van' }, [['vehicles[0].type', 'Van']]]]],
+    [['eld-brand.missing'], 'operations.eldBrand', [[{ use_eld: 'Yes', eld_brand: '' }, [['operations.usesEld', 'true'], ['operations.eldBrand', '']]]], [[{ use_eld: 'Yes', eld_brand: 'Motive' }, [['operations.usesEld', 'true'], ['operations.eldBrand', 'Motive']]]]],
+    [['filings-which.missing'], 'operations.filingsWhich', [[{ fed_state_filings: 'Yes', filings_which: '' }, [['operations.filingsRequired', 'true'], ['operations.filingsWhich', '']]]], [[{ fed_state_filings: 'Yes', filings_which: 'MCS-90' }, [['operations.filingsRequired', 'true'], ['operations.filingsWhich', 'MCS-90']]]]],
+    [['cargo-limit.missing', 'cargo-deductible.missing'], 'coverage.',
+      [[{ cargo_cov: 'Yes', cargo_limit_ded: '' }, [['coverage.cargo', 'true'], ['coverage.cargoLimit', ''], ['coverage.cargoDeductible', '']]],
+        [{ cargo_cov: 'Yes', cargo_limit_ded: '$100,000' }, [['coverage.cargo', 'true'], ['coverage.cargoLimit', '100000'], ['coverage.cargoDeductible', '']]]],
+      [[{ cargo_cov: 'Yes', cargo_limit_ded: '$100,000 / $1,000' }, [['coverage.cargo', 'true'], ['coverage.cargoLimit', '100000'], ['coverage.cargoDeductible', '1000']]]]],
+    [['auto-limit.missing'], 'coverage.autoLiabLimit', [[{ auto_liability: 'Yes', auto_liab_limit: '' }, [['coverage.autoLiability', 'Yes'], ['coverage.autoLiabLimit', '']]]], [[{ auto_liability: 'Yes', auto_liab_limit: '$1M CSL' }, [['coverage.autoLiability', 'Yes'], ['coverage.autoLiabLimit', '$1M CSL']]]]],
+    [['gl-limit.missing'], 'coverage.glLimit', [[{ gen_liability: 'Yes', gen_liab_limit: '' }, [['coverage.gl', 'true'], ['coverage.glLimit', '']]]], [[{ gen_liability: 'Yes', gen_liab_limit: '$1M/$2M' }, [['coverage.gl', 'true'], ['coverage.glLimit', '$1M/$2M']]]]],
+    [['prior-expiration.invalid', 'prior-expiration.expired'], 'priorInsurance[0].expiration',
+      [[{ ins_exp_1: '13/45/2026' }, [['priorInsurance[0].expiration', '13/45/2026']]], [{ ins_exp_1: '01/15/2026' }, [['priorInsurance[0].expiration', '01/15/2026']]]],
+      [[{ ins_exp_1: '01/15/2027' }, [['priorInsurance[0].expiration', '01/15/2027']]]]],
+  ];
+  for (const [codes, at, bad, good] of cases) {
+    const owns = box(codes, at);
+    const [goodRaw] = good[0];
+    for (const [fields, edits] of [...bad, ...good]) {
+      const why = `${at} ${JSON.stringify(fields)}`;
+      const atLoad = said(normalizeIntake({ ...raw, ...fields }, DATA04).warnings, owns);
+      if (good.some(([g]) => g === fields)) assert.deepEqual(atLoad, [], `${why}: a good value has no check at load`);
+      else assert.ok(atLoad.length, `${why}: a bad value has a check at load`);
+      // The panel: from the good intake, or from the bad one for a good value, the same values typed.
+      const intake = loaded({ ...(good.some(([g]) => g === fields) ? bad[0][0] : goodRaw) });
+      for (const [path, text] of edits) correct(intake, path, parseEdit(fieldInfo(path).kind, text));
+      assert.deepEqual(said(intake.warnings, owns), atLoad, `${why}: typed in the panel, the same checks in the same words`);
+    }
+  }
+});
