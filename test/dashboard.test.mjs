@@ -189,6 +189,16 @@ test('the deployed image has every file the server imports', () => {
   const local = [...index.matchAll(/from '\.\/([^']+)'/g)].map((m) => m[1]);
   assert.ok(local.includes('dashboard.mjs'));
   for (const f of local) assert.match(docker, new RegExp(`COPY [^\\n]*server/${f.replace('.', '\\.')}`), f);
+  // The event contract shared with the extension (src/usage-schema.js): copied to the same place,
+  // and with no imports of its own, since the image has nothing else of src/.
+  const shared = [...index.matchAll(/from '\.\.\/(src\/[^']+)'/g)].map((m) => m[1]);
+  assert.deepEqual(shared, ['src/usage-schema.js']);
+  for (const f of shared) {
+    assert.match(docker, new RegExp(`COPY [^\\n]*${f.replace('.', '\\.')} src/`), f);
+    assert.doesNotMatch(fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'), /^\s*import\s/m, `${f} imports nothing`);
+  }
+  const ignored = fs.readFileSync(new URL('../.railwayignore', import.meta.url), 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  assert.ok(!ignored.some((p) => p === 'src' || p.startsWith('src/')), 'railway up uploads src/usage-schema.js');
 });
 
 // Review of #261: the upload token ships in the extension, so a stored event may carry any JSON as
