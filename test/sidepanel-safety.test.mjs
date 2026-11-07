@@ -133,7 +133,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -1126,6 +1126,29 @@ test('a fill error is said in words the agent can act on, with the redacted deta
   assert.match(context.fillErrorMessage({}, new Error('No tab with id: 7')), /^The tab was closed/);
   assert.match(context.fillErrorMessage({}, new Error('Frame with ID 0 was removed')), /^The page changed or reloaded/);
   assert.equal(context.fillErrorMessage({}, new Error('x')), 'Filling failed. Check the page, then fill again. (redacted:x)');
+});
+
+// Audit 2026-11-07 (ENG-07): a fill whose call rejected logs fill_error with the kit's timeline,
+// read from the tab's frames (the first that has one) and redacted as a fill_run's.
+test('a fill error carries the kit\'s timeline, read from the page and redacted', async () => {
+  const logged = [];
+  const timeline = [{ what: 'answer', at: 5, key: 'ref:Role', label: "Jordan's Role", kind: 'choice', ok: false, ms: 9 }];
+  const context = {
+    rulesVersion: null, fillErrorText: () => 'error', redactionTerms: () => ['Jordan'],
+    redactor: (terms) => (s) => terms.reduce((x, t) => x.replaceAll(t, '[client]'), s),
+    loggedTimeline: (t, redact) => t.map((e) => ({ ...e, label: redact(e.label) })),
+    usage: { log: (e) => logged.push(e), currentSession: () => ({ keySalt: 's' }) }, setTimeout,
+    runKit: async (tabId, carrier, func) => { assert.equal(func(), null, 'null where the kit is not'); return [{ result: [] }, { result: timeline }, { result: null }]; },
+  };
+  vm.runInNewContext(['logFillError', 'fillTimeline'].map(extractFunction).join('\n'), context);
+  const ctx = { tabId: 1, carrier: { id: 'geico' }, page: '/quote', run: 'r', intake: { record: {} } };
+  context.logFillError(ctx, new Error('x'), await context.fillTimeline(ctx));
+  assert.deepEqual(logged[0].timeline, [{ ...timeline[0], label: "[client]'s Role" }]);
+  // Nothing read (the page gone, or the call slow): the event without one.
+  context.runKit = async () => { throw new Error('No tab with id: 1'); };
+  context.logFillError(ctx, new Error('x'), await context.fillTimeline(ctx));
+  assert.equal('timeline' in logged[1], false);
+  assert.equal(await context.fillTimeline({ ...ctx, carrier: { id: 'test', practice: true } }), null, 'a practice page: nothing read');
 });
 
 test('warning-only automatic follow-ups render and log unfamiliar fields without pausing', async () => {

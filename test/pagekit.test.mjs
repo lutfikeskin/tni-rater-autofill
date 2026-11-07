@@ -9955,3 +9955,34 @@ test('a detached list pick that fires no input or change event still stops the f
   assert.deepEqual([...report.protectedKeys], ['ref:Test.combo']);
   assert.equal(combo.input.value, 'Agent choice');
 });
+
+// Audit 2026-11-07 (ENG-07): a live fill that halted or failed an answer came back without the
+// waits, presses and answers that led there; only a developer recording had them. Every fill keeps
+// them, value free, and one that halts or fails an answer carries the last of them (`timeline`).
+test('a fill that fails an answer carries its timeline, value free, without a recording; one that does not, none', async () => {
+  const run = async (plan) => {
+    const h = harness();
+    h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+    const events = new Set();
+    h.document.addEventListener('rater-trace', (e) => events.add(e));
+    h.document.body.append(new SelectNode([{ text: '', value: '' }, { text: '3', value: '3' }], { id: 'yrsInBusiness', ariaLabel: 'Years in Business' }));
+    h.document.body.append(new SelectNode([{ text: '', value: '' }, { text: 'Owner', value: 'O' }], { id: 'role', ariaLabel: 'Role' }));
+    addButton(h, 'Continue');
+    const report = await h.kit.fill(plan, { maxRounds: 4, advance: { text: '^Continue$' } });
+    return { report, said: events.size, kit: h.kit };
+  };
+  const years = { id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: '3', name: 'Years in business' };
+  const role = { id: 'role', path: 'applicant.role', selector: '#role', kind: 'choice', value: 'Secret Value Partner', name: 'Role' };
+  const failed = await run([years, role]);
+  assert.ok(failed.report.failed.length || failed.report.halted, JSON.stringify({ failed: failed.report.failed, noData: failed.report.noData }));
+  assert.equal(failed.said, 0, 'no recording: nothing dispatched');
+  const timeline = failed.report.timeline;
+  assert.ok(Array.isArray(timeline) && timeline.length, 'its timeline');
+  const answer = timeline.find((e) => e.what === 'answer');
+  assert.deepEqual([answer.label, answer.kind, answer.ok, typeof answer.ms, typeof answer.at], ['Years in Business', 'choice', true, 'number', 'number']);
+  assert.ok(timeline.some((e) => e.what === 'wait' && e.why === 'answer' && e.ended === 'quiet'));
+  assert.ok(!JSON.stringify(timeline).includes('Secret Value'), 'never an answer');
+  assert.deepEqual(failed.kit.timeline(), timeline, 'the kit hands it to the panel too');
+  const clean = await run([years]);
+  assert.equal(clean.report.timeline, undefined, 'a fill with nothing failed carries none');
+});

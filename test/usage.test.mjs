@@ -102,6 +102,25 @@ test('a fill run says it ran in the background and how long its page was hidden,
   assert.deepEqual(['background' in front, 'hiddenMs' in front], [false, false]);
 });
 
+// Audit 2026-11-07 (ENG-07): a fill that halted or failed an answer logs its timeline on fill_run,
+// its questions and buttons redacted and its keys salted as a fill_field's.
+test('a fill_run carries the timeline of a fill that halted, redacted as its fields are', () => {
+  const timeline = [
+    { what: 'wait', at: 0, why: 'answer', ms: 150, ended: 'quiet' },
+    { what: 'answer', at: 160, key: 'owner_Jordan', label: "Jordan's Role", kind: 'choice', ok: false, ms: 20 },
+    { what: 'press', at: 300, button: 'Edit Jordan', how: 'kit' },
+    { what: 'wait', at: 310, why: 'continue', ms: 15000, ended: 'limit', held: ['busy'] },
+  ];
+  const [run] = fillEvents([{ halted: true, timeline }, { timeline: [{ what: 'run', at: 0, on: true }] }], { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact, keySalt: 'salt-1' });
+  assert.equal(run.timeline.length, 4, 'one frame\'s, the first that has one');
+  assert.deepEqual(run.timeline[0], timeline[0]);
+  assert.deepEqual(run.timeline[3], timeline[3]);
+  assert.match(run.timeline[1].key, /^owner_\[client\]#[0-9a-f]{8}$/);
+  assert.deepEqual([run.timeline[1].label, run.timeline[2].button], ["[client]'s Role", 'Edit [client]']);
+  assertNoClientData(run.timeline);
+  const [plain] = fillEvents([{ filled: [] }], { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact });
+  assert.equal('timeline' in plain, false, 'none without one');
+});
 test('dropdown changes keep the option text, minus client names', () => {
   const filled = new Map([['2B9D', { path: 'progressive.q2B9D', shown: 'More than 500 miles' }]]);
   const e = fieldChangeEvent({ key: '2B9D', q: '2B9D', label: 'Farthest distance', kind: 'select', before: 'More than 500 miles', after: '500 miles', agent: true }, { record, filled, redact });

@@ -4,7 +4,7 @@
 import { drawnParent, deepQueryAll, buttonText, hostDisabled } from './dom.js';
 import { closestOwn, withAdapter } from './adapter.js';
 import { BANNER_ID } from './marks.js';
-import { kitTrace, isTracing } from './trace.js';
+import { kitTrace } from './trace.js';
 
 export const NEVER_ADVANCE = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out|order)\b/i;
 export const NEVER_CLICK = /\b(continue|next|start quote|finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|order|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out)\b/i;
@@ -54,7 +54,7 @@ export function pressButton(el, { late = null, kit = false } = {}) {
   if (!kit) {
     try { taken = !el.dispatchEvent(new CustomEvent('rater-press', { bubbles: true, composed: true, cancelable: true })); } catch { /* no CustomEvent */ }
   }
-  if (isTracing()) kitTrace('press', { button: { text: buttonText(el).slice(0, 60) }, how: taken ? 'page' : 'kit' });
+  kitTrace('press', { button: { text: buttonText(el).slice(0, 60) }, how: taken ? 'page' : 'kit' });
   if (!taken) {
     /** @type {HTMLElement} */ (el).click();
     return 'kit';

@@ -186,7 +186,7 @@ export const EVENT_FIELDS = {
   // (AmWINS). Their shapes are checked below (RUN_FIELDS): a malformed value refuses the event.
   // background: the quote tab filled while the agent was on another; hiddenMs: how long its page was
   // hidden meanwhile (Chrome slows a hidden tab's timers).
-  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
+  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed', 'timeline'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
   // source: where the answer comes from (plan.js; FIELD_SOURCES below); standard, manualOnly,
   // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
@@ -195,7 +195,7 @@ export const EVENT_FIELDS = {
   agent_click: ['text', 'step'],
   // The agent dismissed a "needs you" item (×): the question, and why it needed them.
   check_dismissed: ['q', 'key', 'label', 'mark'],
-  fill_error: ['run', 'rules', 'settings', 'auto', 'error'],
+  fill_error: ['run', 'rules', 'settings', 'auto', 'error', 'timeline'],
   field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
   // many seconds before the report).
@@ -229,6 +229,19 @@ export const RUN_FIELDS = {
   // agent defaults: the fingerprint of the defaults a fill ran with.
   ...AGENT_DEFAULT_RUN_FIELDS,
 };
+
+// A fill's timeline (TimelineEvent in types.js; src/kit/trace.js): the kit's waits, presses and
+// answers, value free, its texts redacted by the panel (audit 2026-11-07, ENG-07).
+const TIMELINE_TEXT = { what: 20, why: 40, ended: 20, button: 60, how: 10, key: 256, label: 120, kind: 30 };
+const TIMELINE_NUMBER = ['at', 'ms'];
+const TIMELINE_FLAG = ['ok', 'on'];
+export function validTimeline(v) {
+  return Array.isArray(v) && v.length <= 40 && v.every((e) => !!e && typeof e === 'object' && !Array.isArray(e)
+    && typeof e.what === 'string' && Object.entries(e).every(([k, x]) => (Object.hasOwn(TIMELINE_TEXT, k) ? x === null || (typeof x === 'string' && x.length <= TIMELINE_TEXT[k])
+      : TIMELINE_NUMBER.includes(k) ? Number.isFinite(x)
+        : TIMELINE_FLAG.includes(k) ? typeof x === 'boolean'
+          : k === 'held' && Array.isArray(x) && x.length <= 4 && x.every((h) => typeof h === 'string' && h.length <= 20))));
+}
 
 // The common fields' shapes (audit 2026-11-07, SRV-07), as the extension stamps them (log() in
 // sidepanel/usage-log.js, the panel's pageOf): reviews group, join and order events by them, so an
@@ -463,6 +476,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
     }
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
+    // A fill's timeline (fill_run, fill_error): at most 40 value-free events of the kit's (TimelineEvent).
+    if (out.timeline !== undefined && !validTimeline(out.timeline)) drop('timeline');
     if (out.type === 'agent_click' && out.text !== undefined && !(typeof out.text === 'string' && out.text.length <= 60)) drop('text');
     // A problem report's words, at most the panel's 1,000 characters (audit 2026-11-07, SRV-04).
     if (out.type === 'problem_report' && out.text !== undefined && !(typeof out.text === 'string' && out.text.length <= 1000)) drop('text');

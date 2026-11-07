@@ -8,7 +8,7 @@ import { planFor } from './plan-for.js';
 import { advanceFor } from '../../src/units.js';
 import { quoteProgress, stopScreen } from '../../src/carriers.js';
 import { quotedCarrierPolicy } from '../../src/util.js';
-import { fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../../src/usage.js';
+import { fillEvents, loggedTimeline, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../../src/usage.js';
 import { stateCode, stateMismatch } from '../../src/quote-state.js';
 import { notePremium, premiumHere } from '../../src/premium.js';
 import { isStandard } from '../../src/resolution.js';
@@ -322,11 +322,26 @@ function logFill(ctx, frames, results, started) {
     keptLogged: state.keptLogged.seen,
   }));
 }
-// A rejected fill has no fill_run result to carry its rule version and switches.
-function logFillError(ctx, error) {
+// A rejected fill has no fill_run result to carry its rule version and switches. `timeline`: the
+// kit's last waits, presses and answers, where the page still has them (fillTimeline).
+function logFillError(ctx, error, timeline = null) {
   if (ctx.carrier.practice) return;
+  const logged = timeline ? loggedTimeline(timeline, redactor(redactionTerms(ctx.intake?.record ?? {})), usage.currentSession()?.keySalt) : undefined;
   usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run,
-    rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, error: fillErrorText(ctx, error), ...ctx.ids });
+    rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, error: fillErrorText(ctx, error),
+    ...(logged ? { timeline: logged } : {}), ...ctx.ids });
+}
+// The timeline of a fill whose report never came back (its call rejected): read from the kit in
+// the tab's frames, the first that has one; none from a page gone or slow to answer (a second).
+async function fillTimeline(ctx) {
+  if (ctx.carrier?.practice) return null;
+  try {
+    const frames = await Promise.race([
+      runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit?.timeline?.() ?? null),
+      new Promise((resolve) => { setTimeout(() => resolve([]), 1000); }),
+    ]);
+    return frames.map((f) => f?.result).find((t) => Array.isArray(t) && t.length) ?? null;
+  } catch { return null; }
 }
 
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
@@ -450,7 +465,7 @@ async function autoFill(page) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
     // The message may quote the page, so it's redacted with the origin intake.
-    logFillError(ctx, e);
+    fillTimeline(ctx).then((timeline) => logFillError(ctx, e, timeline));
     fillProblem(ctx, 'Automatic filling paused after an error. Check the page, then fill again.');
   } finally {
     unwatch();
@@ -1621,4 +1636,4 @@ function stopPageIsOurs() {
   return !state.layoutHold || state.layoutReadyTabs.has(state.tab?.id);
 }
 
-export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, rulesFingerprint, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };
+export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, fillTimeline, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, rulesFingerprint, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };

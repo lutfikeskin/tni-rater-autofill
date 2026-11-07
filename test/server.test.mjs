@@ -415,6 +415,32 @@ test('failed runs retain rule/settings identity and reject malformed metadata li
   assert.doesNotMatch(JSON.stringify(stored(dataDir)), /client name|must not persist/);
 });
 
+// Audit 2026-11-07 (ENG-07): a fill's timeline on fill_run and fill_error, kept in its value-free
+// shape; anything else in its place is dropped, the event kept.
+test('a fill\'s timeline is kept on fill_run and fill_error in its own shape, and dropped otherwise', async () => {
+  const dataDir = tmp();
+  const timeline = [
+    { what: 'wait', at: 0, why: 'answer', ms: 150, ended: 'limit', held: ['busy'] },
+    { what: 'answer', at: 160, key: 'ref:Role', label: 'Role', kind: 'choice', ok: false, ms: 20 },
+    { what: 'press', at: 300, button: 'Continue', how: 'kit' },
+    { what: 'run', at: 400, on: false },
+  ];
+  await withServer({ dataDir }, async ({ post }) => {
+    const result = await (await post({ events: [
+      ev({ type: 'fill_run', filled: 0, timeline }),
+      ev({ type: 'fill_error', filled: undefined, error: 'safe error', timeline }),
+      ev({ type: 'fill_error', filled: undefined, error: 'safe error', timeline: [{ what: 'answer', at: 1, value: 'client name' }] }),
+      ev({ type: 'fill_error', filled: undefined, error: 'safe error', timeline: Array.from({ length: 41 }, (_, at) => ({ what: 'wait', at })) }),
+      ev({ type: 'fill_error', filled: undefined, error: 'safe error', timeline: 'client name' }),
+    ] })).json();
+    assert.equal(result.accepted, 5);
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual([rows[0].timeline, rows[1].timeline], [timeline, timeline]);
+  assert.deepEqual(rows.slice(2).map((r) => [r.timeline, r.dropped]), [[undefined, ['timeline']], [undefined, ['timeline']], [undefined, ['timeline']]]);
+  assert.doesNotMatch(JSON.stringify(rows), /client name/);
+});
+
 test('legacy AI decision evidence survives older-client uploads and historical reuploads in its original bounded shapes', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {

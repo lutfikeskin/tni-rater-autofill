@@ -3,7 +3,7 @@
 
 import { oneLine, squash, sleep } from './text.js';
 import { RATES_STALE } from '../rates.js';
-import { kitTrace, isTracing } from './trace.js';
+import { kitTrace } from './trace.js';
 import { deepQueryAll, isVisible } from './dom.js';
 
 /** @import { PageAdapter, PageAdapterKit, PageAdapterShared } from '../../types.js' */
@@ -250,7 +250,7 @@ export async function settle({ quietMs = 250, maxMs = 15000, requests = null, wh
   mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', ...adapter().changeAttributes] });
   const start = Date.now();
   const told = (ended, more = {}) => {
-    if (isTracing()) kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms: Date.now() - start, ended, ...more });
+    kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms: Date.now() - start, ended, ...more });
   };
   try {
     const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
@@ -263,7 +263,7 @@ export async function settle({ quietMs = 250, maxMs = 15000, requests = null, wh
     }
     if (abort?.()) { told('stopped'); return false; }
     const settled = !pageBusy() && Date.now() - last >= quietMs;
-    if (isTracing()) told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
+    told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
     return settled;
   } finally {
     mo.disconnect();
