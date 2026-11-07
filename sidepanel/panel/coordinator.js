@@ -330,7 +330,7 @@ async function autoFill(page) {
   const drawn = state.autoDrawn === page;
   state.autoDrawn = null;
   // The client may have been cleared while this fill was waiting to run.
-  if (state.autoPaused || state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
+  if (state.autoPaused || state.filling || state.closing || state.resetting || state.newQuoteFailed || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   // Nor on a tab whose quote wasn't started with this intake (quote-owner.js).
   if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue()) return;
   const { id: tabId, carrier } = state.tab;

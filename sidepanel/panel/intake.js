@@ -85,6 +85,8 @@ async function loadFile(file, { reset = false } = {}) {
     // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
     // intakeId: whose quote a tab is (quote-owner.js), from the moment this intake is the panel's.
     state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test, intakeId: summary.intakeId };
+    // A New quote that failed is over once an intake is loaded (its own load included).
+    state.newQuoteFailed = false;
     // agent defaults: nothing fills with the last quote's answer until this one is set up and asked.
     quoteStarting();
     if (same) keepWork(state.intake, same);

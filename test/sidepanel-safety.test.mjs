@@ -8995,16 +8995,21 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
   context.intakePdfBytes = async () => null;
   await context.newQuote();
   assert.deepEqual(calls.map((c) => c[0]), ['note', 'note']);
-  // CodeRabbit on PR #395: records that couldn't be removed fail the New quote, and this quote goes
-  // on with the panel's records of it (edits on the page, helpers done, unit forms), not without them.
+  // CodeRabbit on PR #395: records that couldn't be removed fail the New quote, and the quote on
+  // screen, without the panel's records of it, gets no fill until a New quote or a load finishes.
   calls.length = 0;
   context.intakePdfBytes = async () => new Uint8Array([1, 2]);
-  Object.assign(state, { tabSessions: new Map([[4, 's1']]), agentKeys: new Map([['4|Vehicles', new Set(['vin'])]]), doneActions: new Set(['4|add-vehicle']), unitForms: { vehicles: { VAN: 'f1' }, drivers: {}, trailers: {} } });
-  context.clearAgentKeys = async () => { state.doneActions.add('4|later'); throw Object.assign(new Error('storage: said in the panel'), { name: 'StorageSaid' }); };
+  context.clearAgentKeys = async () => { throw Object.assign(new Error('storage: said in the panel'), { name: 'StorageSaid' }); };
+  context.render = () => calls.push(['render']);
   await assert.rejects(context.newQuote(), { name: 'StorageSaid' });
   assert.equal(calls.some((c) => c[0] === 'load'), false, 'no new quote loaded');
-  assert.deepEqual(JSON.parse(JSON.stringify([[...state.tabSessions], [...state.agentKeys.keys()], [...state.doneActions], state.unitForms.vehicles])),
-    [[[4, 's1']], ['4|Vehicles'], ['4|add-vehicle', '4|later'], { VAN: 'f1' }]);
+  assert.equal(state.newQuoteFailed, true);
+  assert.deepEqual(calls.map((c) => c[0]), ['clear', 'note', 'render'], 'said, and drawn');
+  assert.match(calls[1][1], /Nothing fills until it does/);
+  assert.match(extractFunction('fillPage'), /state\.resetting \|\| state\.newQuoteFailed \|\| !state\.intake/);
+  assert.match(extractFunction('autoFill'), /state\.resetting \|\| state\.newQuoteFailed \|\| !state\.intake/);
+  assert.match(extractFunction('loadFile'), /state\.intake = \{[^\n]*\n\s+\/\/[^\n]*\n\s+state\.newQuoteFailed = false;/);
+  state.newQuoteFailed = false;
   // Asked first, under the client's name; loadFile says what stays and logs the reset.
   assert.match(extractFunction('wire'), /\n    newQuote: \(\) => \{\s+if \(state\.filling\) return;\s+askFile\('new-quote'/);
   assert.match(extractFunction('wire'), /if \(what === 'new-quote'\) newQuote\(\)\.catch\(storageSaid\);/);

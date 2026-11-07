@@ -374,7 +374,6 @@ async function newQuote() {
     if (!bytes) { clientNote('The PDF isn’t kept here: load it again with Change file to start a new quote.'); return; }
     const scope = usage.currentSession()?.intakeId;
     if (inExtension && state.tab?.carrier) await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit?.clear?.()).catch(() => {});
-    const kept = { tabSessions: new Map(state.tabSessions), agentKeys: state.agentKeys, doneActions: state.doneActions, unitForms: state.unitForms };
     state.tabSessions.clear();
     state.agentKeys = new Map();
     state.doneActions = new Set();
@@ -382,13 +381,13 @@ async function newQuote() {
     try {
       await clearAgentKeys(scope);
     } catch (err) {
-      // The records couldn't be removed, so this quote goes on (no new one is loaded): its fills must
-      // still keep the agent's edits on the page and not add a vehicle or click a helper again, so
-      // the panel's own records come back, with anything noted meanwhile (CodeRabbit on PR #395).
-      state.tabSessions = new Map([...kept.tabSessions, ...state.tabSessions]);
-      state.agentKeys = new Map([...kept.agentKeys, ...state.agentKeys]);
-      state.doneActions = new Set([...kept.doneActions, ...state.doneActions]);
-      state.unitForms = Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...kept.unitForms[list], ...state.unitForms[list] }]));
+      // The records couldn't all be removed: no new quote is loaded, and the quote on screen has
+      // lost the panel's records of it (edits on the page, helpers clicked, unit forms), some of the
+      // stored ones too. No fill runs, by itself or asked, until a New quote or a loaded intake
+      // finishes, so none refills a changed answer or adds a vehicle again (CodeRabbit on PR #395).
+      state.newQuoteFailed = true;
+      clientNote('The new quote didn’t start: this computer couldn’t let go of the last quote’s records. Nothing fills until it does: press New quote again, or Clear and load the PDF again.');
+      render();
       throw err;
     }
     state.intake.ntlAdded = false;
