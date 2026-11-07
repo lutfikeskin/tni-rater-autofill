@@ -159,5 +159,7 @@ test('rule proposals: the script lists candidates without --live and sends nothi
   assert.throws(() => run(['--live']), /OPENAI_API_KEY/);
   assert.throws(() => run(['--max', '0']), /--max needs a whole number/);
   assert.throws(() => run(['--bogus']), /Unknown option --bogus/);
+  for (const bad of ['abc', '0', '5']) assert.throws(() => run(['--threshold', bad]), /--threshold needs a share above 0 and at most 1/, bad);
+  assert.match(run(['--threshold', '1']), /Rule proposals for questions left to the agent/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
