@@ -147,6 +147,8 @@ function extractFunction(name) {
         // a draw before the focus that follows (flushSync) is the draw itself.
         if (/\browIds\b/.test(source) && !/let rowIds =/.test(source)) source += '\nvar rowIds = globalThis.rowIds ?? 0;';
         if (/\bflushSync\(/.test(source)) source += '\nvar flushSync = globalThis.flushSync ?? ((fn) => fn());';
+        // refreshTab's count of its calls (the latest wins), module-level in tab.js.
+        if (/\btabRefreshes\b/.test(source) && !/let tabRefreshes =/.test(source)) source += '\nvar tabRefreshes = 0;';
         for (const map of ['rowNodes', 'whereTimers']) {
           if (new RegExp(`\\b${map}\\b`).test(source) && !new RegExp(`const ${map} =`).test(source)) source += `\nvar ${map} = globalThis.${map} ?? new WeakMap();`;
         }
@@ -323,6 +325,41 @@ test('combo choices from every fill are kept per tab, for the usage log', async 
   h.setActiveTab(quoteTab(1));
   await h.refreshTab();
   assert.deepEqual([...h.state.choices.get('2C1A')], ['Transit 150', 'Transit 250', 'Transit 350']);
+});
+
+// Audit 2026-11-07, FLOW-14: overlapping calls (a tab switch, an address change and its load, a
+// window's focus) each asked for the tab in front, and one whose answer came late put the panel
+// back on a tab no longer in front. The latest call wins; one overtaken stops where it waited.
+test('overlapping tab refreshes: the latest wins, and one overtaken stops where it waited', async () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1), carrier: { id: 'progressive' } };
+  const answers = [];
+  h.context.chrome.tabs.query = () => new Promise((resolve) => answers.push(resolve));
+  const drawn = h.rendered.length;
+  // The agent goes to tab 2, then straight to tab 3: tab 3's answer comes first, tab 2's late.
+  const first = h.refreshTab();
+  const second = h.refreshTab();
+  answers[1]([quoteTab(3)]);
+  await second;
+  answers[0]([quoteTab(2)]);
+  await first;
+  assert.equal(h.state.tab.id, 3, 'the tab in front, not the late answer\'s');
+  assert.ok(!h.state.tabSessions.has(3), 'tab 3 is the one in front');
+  assert.deepEqual(h.rendered.slice(drawn), [3], 'drawn once, for the tab in front');
+  // A later call overtaking one past the swap: the earlier stops before drawing, the later draws.
+  h.context.chrome.tabs.query = async () => [quoteTab(3)];
+  let release;
+  h.context.restoreReports = () => new Promise((resolve) => { release = resolve; });
+  const slow = h.refreshTab();
+  await new Promise((r) => setImmediate(r));
+  h.context.restoreReports = async () => {};
+  await h.refreshTab();
+  release();
+  await slow;
+  assert.deepEqual(h.rendered.slice(drawn), [3, 3]);
+  // A closed tab's session and quote state go with it (its view number stays: viewOf counts them).
+  assert.match(SIDEPANEL, /chrome\.tabs\.onRemoved\.addListener\(\(tabId\) => \{[^\n]*state\.tabSessions\.delete\(tabId\); state\.quoteStates\.delete\(tabId\);/);
+  assert.doesNotMatch(SIDEPANEL.match(/chrome\.tabs\.onRemoved\.addListener[^\n]*/)[0], /viewTabs/);
 });
 
 test('switching tabs stores and restores agent keys and the persistent pause', async () => {
