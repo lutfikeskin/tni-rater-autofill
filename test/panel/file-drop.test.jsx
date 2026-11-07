@@ -11,10 +11,11 @@ const workSaid = (edits, checks) => [edits ? `corrected ${edits} answer${edits =
 
 let state, calls, replacing;
 beforeEach(() => {
-  state = { filling: false, resetting: false, closing: false, intake: null };
+  state = { filling: false, resetting: false, closing: false, intake: null, fileConfirm: null };
   calls = [];
   replacing = fileReplacer({ state, load: (file) => calls.push(['load', file.name]), pick: () => calls.push(['pick']),
-    ask: (text, yes) => calls.push(['ask', text, yes]), note: (text) => calls.push(['note', text]), work: workSaid });
+    // As askFile does: the question shows (`fileConfirm`) until Yes or Cancel takes it down.
+    ask: (text, yes) => { state.fileConfirm = 'replace'; calls.push(['ask', text, yes]); }, note: (text) => calls.push(['note', text]), work: workSaid });
 });
 const pdf = (name) => /** @type {File} */ ({ name });
 
@@ -65,4 +66,33 @@ test('a PDF dropped while answers go in is refused with a note, and so is a Yes 
   state.intake = { agentEdited: [], done: [] };
   replacing.replace();
   expect(calls).toEqual([['pick']]);
+});
+
+// Review of PR #371 (CodeRabbit): a second PDF dropped while the question about the first showed
+// took its place unseen, so Yes loaded a file the agent wasn't asked about.
+test('another PDF dropped while the question about the last one shows is refused, and Yes loads the one asked about', () => {
+  state.intake = { agentEdited: ['applicant.name'], done: [] };
+  replacing.replace(pdf('first.pdf'));
+  replacing.replace(pdf('second.pdf'));
+  expect(calls.slice(1)).toEqual([['note', 'Answer the question about the file you dropped first.']]);
+  // Yes, as the panel answers it (the question taken down, then answered).
+  state.fileConfirm = null;
+  replacing.answered(true);
+  expect(calls.at(-1)).toEqual(['load', 'first.pdf']);
+  // Once another question has replaced it (Clear, New quote), a drop asks again for itself.
+  calls.length = 0;
+  replacing.replace(pdf('first.pdf'));
+  state.fileConfirm = 'clear';
+  replacing.replace(pdf('second.pdf'));
+  state.fileConfirm = null;
+  replacing.answered(true);
+  expect(calls.map((c) => c[0])).toEqual(['ask', 'ask', 'load']);
+  expect(calls.at(-1)).toEqual(['load', 'second.pdf']);
+  // Change file's button while it shows asks for the picker instead, as before.
+  calls.length = 0;
+  replacing.replace(pdf('first.pdf'));
+  replacing.replace();
+  state.fileConfirm = null;
+  replacing.answered(true);
+  expect(calls.map((c) => c[0])).toEqual(['ask', 'ask', 'pick']);
 });

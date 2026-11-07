@@ -4,12 +4,13 @@
 // picker); once the agent has corrected or checked anything, Change file's question asks first
 // (a different file starts over; the same file keeps the work), and a dropped PDF is kept until
 // it is answered. A PDF dropped while answers go in (or while the panel is starting a new quote,
-// clearing the client or giving way to another copy) is refused with a note: Stop first.
+// clearing the client or giving way to another copy) is refused with a note: Stop first. Another
+// PDF dropped while the question about the last one shows is refused too.
 // One part of the panel; sidepanel.js wires it to the panel's own parts (`panel`).
 
 /**
  * @typedef {object} ReplacePanel
- * @property {{ filling?: boolean, resetting?: boolean, closing?: boolean, intake?: any }} state the panel's state
+ * @property {{ filling?: boolean, resetting?: boolean, closing?: boolean, intake?: any, fileConfirm?: string | null }} state the panel's state (`fileConfirm`: the file tools' question showing)
  * @property {(file: File) => unknown} load loads an intake PDF (loadFile)
  * @property {() => void} pick opens the file picker
  * @property {(text: string, yes: string) => void} ask Change file's question under the client's name (askFile 'replace')
@@ -18,6 +19,7 @@
  */
 
 const BUSY = 'Answers are going in. Stop the fill, then drop the file again.';
+const ASKING = 'Answer the question about the file you dropped first.';
 
 /** @param {ReplacePanel} panel */
 function fileReplacer(panel) {
@@ -29,6 +31,9 @@ function fileReplacer(panel) {
     // Change file (no `file`), or a PDF dropped on the panel (`file`).
     /** @param {File | null} [file] */
     replace(file = null) {
+      // Another PDF dropped while the question about the last one shows: refused, and the question
+      // stays about the PDF it asked for (Yes never loads one the agent wasn't asked about).
+      if (file && kept && state.fileConfirm === 'replace') { panel.note(ASKING); return; }
       kept = null;
       if (file && busy()) { panel.note(BUSY); return; }
       const work = state.intake ? panel.work(state.intake.agentEdited?.length ?? 0, state.intake.done?.length ?? 0) : '';
