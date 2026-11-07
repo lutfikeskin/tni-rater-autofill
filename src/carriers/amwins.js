@@ -232,7 +232,7 @@ const LEFT_AS_IS = { '#effectiveDate': 'quote.effective-date', '#expirationDate'
 const UNDERWRITING_NO = [
   'subsidiary to other', 'subsidiary', 'safety info', 'other insurance', 'coverage denial',
   'past criminal activity', 'criminal activity in past ?5 ?years', 'code vo\\w*ation', 'finacial default', 'financial default',
-  'finacial judgement', 'financial judgement', 'trust', 'foreign operations', 'other venture', 'own drones',
+  'finacial judgement', 'financial judgement', 'trust', 'other venture', 'own drones',
   'hire other to operate drones', 'use their auto', 'vehicle maintenance program', 'vehicle used by family',
   'recruiting method', 'covered by wc',
 ];
@@ -241,7 +241,7 @@ const UNDERWRITING_CONCEPTS = {
   'subsidiary to other': 'underwriting.subsidiary', subsidiary: 'underwriting.subsidiary', 'safety info': 'underwriting.safety-program', 'other insurance': 'underwriting.other-insurance',
   'coverage denial': 'underwriting.coverage-denial', 'past criminal activity': 'underwriting.criminal-activity', 'criminal activity in past ?5 ?years': 'underwriting.criminal-activity',
   'code vo\\w*ation': 'underwriting.code-violation', 'finacial default': 'underwriting.financial-default', 'financial default': 'underwriting.financial-default',
-  'finacial judgement': 'underwriting.financial-judgement', 'financial judgement': 'underwriting.financial-judgement', trust: 'underwriting.trust', 'foreign operations': 'underwriting.foreign-operations',
+  'finacial judgement': 'underwriting.financial-judgement', 'financial judgement': 'underwriting.financial-judgement', trust: 'underwriting.trust',
   'other venture': 'underwriting.other-venture', 'own drones': 'underwriting.drones', 'hire other to operate drones': 'underwriting.drones', 'use their auto': 'underwriting.use-their-auto',
   'vehicle maintenance program': 'underwriting.maintenance-program', 'vehicle used by family': 'underwriting.family-use', 'recruiting method': 'underwriting.driver-recruiting', 'covered by wc': 'underwriting.workers-comp',
 };
@@ -697,6 +697,10 @@ export const amwins = {
     { concept: 'underwriting.hazard-exposure', tni: 'amwins.hazard-exposure', name: 'Underwriting: hazard exposure (standard: No; Yes when the intake\'s hazmat is Yes)', label: '^hazard exposure$', kind: 'bool',
       source: (r) => (hazardExposure(r) ? 'intake' : 'standard'), value: hazardExposure, replace: hazardExposure },
     ...UNDERWRITING_NO.map(/** @returns {CarrierRule} */ (q) => ({ concept: UNDERWRITING_CONCEPTS[q], tni: 'amwins.underwriting-general', name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
+    // Foreign operations: No, also when the intake says the client takes loads to Canada
+    // (operations.canadaLoads): hauling loads to Canada isn't foreign operations on AmWINS (TNI,
+    // 2026-11-07, the maintainer; amwins.foreign-operations), so the rule reads nothing from the record.
+    { concept: 'underwriting.foreign-operations', tni: 'amwins.foreign-operations', name: 'Underwriting: foreign operations (standard: No)', label: '^foreign operations$', kind: 'bool', source: 'standard', value: () => false },
     // Yes again after "Default all answers to No".
     { concept: 'underwriting.other-disclosures', tni: 'amwins.disclose', name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', source: 'standard', value: () => true, replace: true },
     { concept: 'underwriting.other-disclosures', name: 'Disclosure details (from the intake)', label: '^disclosure details$', source: 'derived', value: disclosure, warn: disclosureWarn },

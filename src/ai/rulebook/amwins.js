@@ -51,7 +51,8 @@ export const amwins = {
       { id: 'amwins.no-exclusions', kind: 'standard', text: 'Nothing excluded (every "Exclude …" box unticked).' },
     ] },
     { heading: 'Underwriting', rules: [
-      { id: 'amwins.underwriting-general', kind: 'standard', text: 'Underwriting questions: General Information via "Default all answers to No" (hazard exposure as below).' },
+      { id: 'amwins.underwriting-general', kind: 'standard', text: 'Underwriting questions: General Information via "Default all answers to No" (hazard exposure and foreign operations as below).' },
+      { id: 'amwins.foreign-operations', kind: 'standard', text: 'Foreign operations (General Information): No, also when the intake says the client takes loads to Canada: hauling loads to Canada is not foreign operations on AmWINS (TNI, 2026-11-07, the maintainer).' },
       { id: 'amwins.underwriting-second', kind: 'standard', text: 'The second underwriting section is No (vehicles not owned, vehicles leased, MVR verification, owned unscheduled vehicles, convictions / moving violations), whatever the intake says about ownership or claims; transporting hazardous material as below.' },
       { id: 'amwins.hazmat', kind: 'standard', text: 'Transporting hazardous material (underwriting): from the intake. Left blank: No (TNI standard), unless the intake says a hazardous material placard is required, or what they haul or its notes name something that may be hazardous (fuel, propane, chemicals and the like); then the agent\'s.' },
       { id: 'amwins.hazard-exposure', kind: 'standard', text: 'Hazard exposure (General Information: storing, treating, disposing or transporting hazardous material): Yes when the intake\'s hazmat answer is Yes; otherwise No (TNI standard), also when the hazmat box is blank and what they haul or the notes name hazardous goods.' },
