@@ -11,13 +11,12 @@
 //
 // No imports: the server image has only this file of src/.
 //
-// Changing the contract (an event type, a field, a profile group or field) changes its fingerprint:
-// test/consistency.test.mjs fails until SCHEMA_VERSION is raised and SCHEMA_FINGERPRINT set to the
-// new one, so an extension that sends the new fields waits for a server that keeps them.
+// Changing the contract (an event type, a field, a profile group or field) changes its fingerprint
+// (a SHA-256 of COMMON, the server's EVENT_FIELDS and PROFILE's fields): test/consistency.test.mjs
+// holds every version's fingerprint and fails until SCHEMA_VERSION is raised and the new version's
+// added, so an extension that sends the new fields waits for a server that keeps them.
 
 export const SCHEMA_VERSION = 1;
-// test/consistency.test.mjs: a SHA-256 of COMMON, the server's EVENT_FIELDS and PROFILE's fields.
-export const SCHEMA_FINGERPRINT = '5f062552bb01';
 
 // Event type -> fields kept. Anything else in an event is dropped (and named in `dropped`).
 // install: a random id for one copy of the extension on one computer (with seq: gaps show loss).

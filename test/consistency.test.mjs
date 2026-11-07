@@ -94,14 +94,22 @@ const profileShape = (spec) => (typeof spec === 'function' ? true : Array.isArra
 const schemaFingerprint = () => crypto.createHash('sha256').update(JSON.stringify({
   common: COMMON, events: Object.keys(EVENT_FIELDS).sort().map((t) => [t, EVENT_FIELDS[t]]), profile: profileShape(PROFILE),
 })).digest('hex').slice(0, 12);
+// Every schema version's fingerprint, one entry a version. A version's entry is never rewritten:
+// a contract that changed is a new version with its own entry, so the fingerprint can't be brought
+// up to date while the version stays (the review of #378).
+const VERSION_FINGERPRINTS = { 1: '5f062552bb01' };
 test('the event contract is shared, and its version goes up whenever it changes', () => {
   assert.equal(COMMON, SCHEMA.COMMON, 'the server keeps the shared COMMON');
   assert.deepEqual(Object.keys(EVENT_FIELDS), Object.keys(SCHEMA.EVENT_FIELDS), 'the server knows every shared event type, and only those');
   for (const [type, fields] of Object.entries(SCHEMA.EVENT_FIELDS)) assert.deepEqual(EVENT_FIELDS[type].slice(0, fields.length), [...fields], type);
   assert.equal(EXTENSION_ID_LIKE, SCHEMA.ID_LIKE);
   assert.equal(SERVER_SCHEMA, SCHEMA.SCHEMA_VERSION);
-  assert.equal(SCHEMA.SCHEMA_FINGERPRINT, schemaFingerprint(),
-    `the event contract changed: raise SCHEMA_VERSION in src/usage-schema.js (now ${SCHEMA.SCHEMA_VERSION}) and set SCHEMA_FINGERPRINT to '${schemaFingerprint()}'`);
+  const versions = Object.keys(VERSION_FINGERPRINTS).map(Number);
+  assert.deepEqual(versions, Array.from({ length: SCHEMA.SCHEMA_VERSION }, (_, i) => i + 1), 'one fingerprint for each version up to the current one');
+  assert.equal(new Set(Object.values(VERSION_FINGERPRINTS)).size, versions.length, 'each version a different contract');
+  const next = SCHEMA.SCHEMA_VERSION + 1;
+  assert.equal(VERSION_FINGERPRINTS[SCHEMA.SCHEMA_VERSION], schemaFingerprint(),
+    `the event contract changed: raise SCHEMA_VERSION in src/usage-schema.js to ${next} and add ${next}: '${schemaFingerprint()}' to VERSION_FINGERPRINTS here, leaving the earlier entries as they are`);
 });
 
 // The business profile: every value the extension sends fits the server's shape for it, and each

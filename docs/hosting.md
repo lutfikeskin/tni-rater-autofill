@@ -146,8 +146,9 @@ than the server's is refused, per event in the reply's `rejected`, as `schema ne
 upload, so once the server is deployed it is stored with every field. Until then nothing of that
 extension's is stored (its events wait on the agents' computers, which keep 20,000 each), so deploy
 soon after. A change to the contract (an event type, a field, a profile group or field) changes its
-fingerprint, and `test/consistency.test.mjs` fails until `SCHEMA_VERSION` is raised and
-`SCHEMA_FINGERPRINT` set to the new one, which the failure names. A shape check alone (tighter
+fingerprint, and `test/consistency.test.mjs`, which holds each version's fingerprint, fails until
+`SCHEMA_VERSION` is raised and the new version's fingerprint (which the failure names) is added,
+earlier versions' entries left as they are. A shape check alone (tighter
 validation, no new field) needs no new version. An event without `schema`, from an extension
 released before it, is kept as before: such an extension's new fields still need the server
 deployed first, as an older server drops unknown fields (and refuses layouts over its size limit)
