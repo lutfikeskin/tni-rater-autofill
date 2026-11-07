@@ -7,9 +7,9 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, LUNA_TIMEOUT_MS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom } from '../server/index.mjs';
 import { MAX_EVENTS } from '../src/usage.js';
-import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
+import { buildRequest, MAX_REQUEST_CHARS, TIMEOUT_MS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
 import { imageFiles } from '../scripts/lib/deploy.mjs';
@@ -865,6 +865,12 @@ test('/v1/luna: 501 without a key, a daily limit, and OpenAI refusing the server
     assert.equal(limited.headers.get('retry-after'), '3600');
   });
   assert.equal(lunaRequestError(lunaBody()), null);
+});
+
+// Audit 2026-11-07, AI-09: the server gives up on OpenAI well before the panel gives up on it, so the
+// panel gets the server's 504 instead of leaving a call that is still paid for.
+test("the server's wait for OpenAI ends at least 5 s before the panel's", () => {
+  assert.ok(LUNA_TIMEOUT_MS + 5000 <= TIMEOUT_MS, `${LUNA_TIMEOUT_MS} vs ${TIMEOUT_MS}`);
 });
 
 // Audit 2026-11-07, AI-01: the server's bound is above the panel's, so the largest request the panel

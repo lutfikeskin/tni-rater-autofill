@@ -108,7 +108,9 @@ const LUNA_FIELDS = new Set(['model', 'store', 'reasoning', 'max_output_tokens',
 // passes; 48,000 until 2026-11-07 (audit AI-01). Raise it here, and deploy, before the panel's.
 export const LUNA_MAX_CHARS = 160_000;
 const LUNA_MAX_OUTPUT = 4096;
-const LUNA_TIMEOUT_MS = 60_000;
+// Shorter than the panel's own wait (TIMEOUT_MS, 55 s, src/ai/luna.js), so the panel gets this
+// server's 504 instead of giving up first while the call goes on (audit 2026-11-07, AI-09).
+export const LUNA_TIMEOUT_MS = 45_000;
 export const LUNA_DAILY_LIMIT = 5000;
 
 // RATER_LUNA_DAILY_LIMIT: unset or blank is LUNA_DAILY_LIMIT; a whole number is the limit, 0
