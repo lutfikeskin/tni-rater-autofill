@@ -1510,7 +1510,7 @@ function noteQuoteState(tabId, carrier, code) {
   const same = was && was.carrier === carrier && was.code === code;
   if (code) state.quoteStates.set(tabId, same ? was : { carrier, code, session: usage.currentSession()?.id ?? null, dismissed: null });
   else state.quoteStates.delete(tabId);
-  keepJournal(tabId);
+  keepJournal(tabId, code ? {} : { dropped: ['quoteState'] });
   showStateNote();
 }
 
@@ -1578,7 +1578,7 @@ function showStateNote() {
 function stateIssue() {
   const tabId = state.tab?.id;
   let pick = state.quoteStates.get(tabId);
-  if (pick && state.tab?.carrier && pick.carrier !== state.tab.carrier.id) { state.quoteStates.delete(tabId); pick = null; keepJournal(tabId); }
+  if (pick && state.tab?.carrier && pick.carrier !== state.tab.carrier.id) { state.quoteStates.delete(tabId); pick = null; keepJournal(tabId, { dropped: ['quoteState'] }); }
   const intakeId = usage.currentSession()?.intakeId ?? null;
   const off = !pick || !state.intake || pick.carrier !== state.tab?.carrier?.id || pick.dismissed === `${intakeId}|${pick.code}`;
   const differs = off ? null : stateMismatch(pick.code, state.intake.record);

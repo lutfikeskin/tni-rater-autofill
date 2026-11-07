@@ -115,7 +115,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     if (!auto) fillProblem({ tabId: state.tab.id, page: pageOf(state.tab.url), carrier: state.tab.carrier }, 'This is the portal. Open a quote, then fill.', 'notice');
     return;
   }
-  if (!auto && state.autoPaused) { state.autoPaused = false; keepJournal(state.tab.id); }
+  if (!auto && state.autoPaused) { state.autoPaused = false; keepJournal(state.tab.id, { dropped: ['autoPaused'] }); }
   state.filling = true;
   clearTimeout(state.autoTimer);
   state.autoDrawn = null;
@@ -530,7 +530,7 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     if (retries && unchanged >= patience && doneKey && !state.filling && !state.advanceRetried.has(doneKey)) {
       state.advanceRetried.add(doneKey);
       state.doneSteps.delete(doneKey);
-      keepJournal(tabId);
+      keepJournal(tabId, { dropped: [`step:${doneKey}`] });
       fillPage({ auto: 'page' });
       return;
     }

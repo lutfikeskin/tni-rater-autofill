@@ -837,6 +837,10 @@ async function restoreReports(tabId) {
 const JOURNAL_PREFIX = 'journal:';
 const journalWritten = new Map(); // tab id -> the journal last written (once stored), as JSON
 const journalRestored = new Set();
+// tab id -> what this copy took out of the tab's journal before reading it back (keepJournal's
+// `dropped`: 'quoteState', 'autoPaused', or `step:<doneSteps key>`), so the stored copy doesn't
+// bring it back.
+const journalDropped = new Map();
 let journalQueue = Promise.resolve();
 const journalIds = (list) => (Array.isArray(list) ? list : []).filter((x) => typeof x === 'string' && x);
 function journalOf(tabId) {
@@ -847,25 +851,29 @@ function journalOf(tabId) {
 }
 // A tab's journal not yet read back for this intake (restoreJournal) adds to the stored one rather
 // than replacing it: a recorder message or a fill ending before the panel came to the tab would
-// otherwise leave it with only what this copy learned.
-function journalMerged(was, journal) {
+// otherwise leave it with only what this copy learned. What this copy took out meanwhile
+// (`dropped`) isn't taken from the stored one.
+function journalMerged(was, journal, dropped = new Set()) {
   if (!was || typeof was !== 'object') return journal;
   const same = !!journal.scope && was.scope === journal.scope;
-  const union = (key) => (same ? [...new Set([...journalIds(was[key]), ...journal[key]])] : journal[key]);
-  const pick = was.quoteState && typeof was.quoteState.carrier === 'string' && typeof was.quoteState.code === 'string' && was.quoteState.code ? was.quoteState : null;
-  return { ...journal, doneSteps: union('doneSteps'), autoPages: union('autoPages'), autoPaused: journal.autoPaused || (same && was.autoPaused === true),
+  const union = (key, prefix = '') => (same ? [...new Set([...journalIds(was[key]).filter((x) => !dropped.has(`${prefix}${x}`)), ...journal[key]])] : journal[key]);
+  const pick = !dropped.has('quoteState') && was.quoteState && typeof was.quoteState.carrier === 'string' && typeof was.quoteState.code === 'string' && was.quoteState.code ? was.quoteState : null;
+  return { ...journal, doneSteps: union('doneSteps', 'step:'), autoPages: union('autoPages'), autoPaused: journal.autoPaused || (same && was.autoPaused === true && !dropped.has('autoPaused')),
     advanceRetried: union('advanceRetried'), quoteState: journal.quoteState ?? pick };
 }
 // Called where a tab's fill ends and where its quote state changes; written only when it changed.
-function keepJournal(tabId) {
+// `dropped`: what the caller just took out (a quote state forgotten, a pause lifted, a step to
+// continue from again), kept from coming back while the tab's journal isn't read back yet.
+function keepJournal(tabId, { dropped = [] } = {}) {
   if (!Number.isInteger(tabId)) return journalQueue;
   const journal = journalOf(tabId);
+  const restored = journalRestored.has(`${journal.scope}|${tabId}`);
+  if (!restored && dropped.length) journalDropped.set(tabId, new Set([...(journalDropped.get(tabId) ?? []), ...dropped]));
   const json = JSON.stringify(journal);
   if (journalWritten.get(tabId) === json) return journalQueue;
   const key = `${JOURNAL_PREFIX}${tabId}`;
-  const restored = journalRestored.has(`${journal.scope}|${tabId}`);
   journalQueue = journalQueue.then(async () => {
-    await store.set(key, restored ? journal : journalMerged(await store.get(key), journal));
+    await store.set(key, restored ? journal : journalMerged(await store.get(key), journal, journalDropped.get(tabId)));
     journalWritten.set(tabId, json);
   }).catch(() => { journalWritten.delete(tabId); }); // not stored: the next call writes it again
   return journalQueue;
@@ -878,6 +886,7 @@ function forgetJournals(tabId = null) {
       const id = Number(k.slice(JOURNAL_PREFIX.length));
       if (tabId != null && id !== tabId) continue;
       journalWritten.delete(id);
+      if (tabId != null) journalDropped.delete(id);
       const was = tabId == null ? await store.get(k) : null;
       await (was?.quoteState ? store.set(k, { scope: null, quoteState: was.quoteState }) : store.remove(k));
     }
@@ -894,16 +903,19 @@ async function restoreJournal(tabId) {
   const was = await store.get(`${JOURNAL_PREFIX}${tabId}`).catch(() => null);
   if (state.tab?.id !== tabId || (usage.currentSession()?.intakeId ?? null) !== scope || journalRestored.has(done)) return;
   journalRestored.add(done);
+  // What this copy took out before now (keepJournal's `dropped`) stays out.
+  const dropped = journalDropped.get(tabId) ?? new Set();
+  journalDropped.delete(tabId);
   if (!was || typeof was !== 'object') return;
   const pick = was.quoteState;
-  if (!state.quoteStates.has(tabId) && pick && typeof pick.carrier === 'string' && typeof pick.code === 'string' && pick.code) {
+  if (!state.quoteStates.has(tabId) && !dropped.has('quoteState') && pick && typeof pick.carrier === 'string' && typeof pick.code === 'string' && pick.code) {
     state.quoteStates.set(tabId, { carrier: pick.carrier, code: pick.code, session: pick.session ?? null, dismissed: typeof pick.dismissed === 'string' ? pick.dismissed : null });
   }
   if (scope && was.scope === scope) {
-    for (const key of journalIds(was.doneSteps)) state.doneSteps.add(key);
+    for (const key of journalIds(was.doneSteps)) if (!dropped.has(`step:${key}`)) state.doneSteps.add(key);
     for (const page of journalIds(was.autoPages)) state.autoPages.add(page);
     for (const key of journalIds(was.advanceRetried)) state.advanceRetried.add(key);
-    if (was.autoPaused === true) state.autoPaused = true;
+    if (was.autoPaused === true && !dropped.has('autoPaused')) state.autoPaused = true;
   }
   // What this copy learned before reading it, stored with it; nothing written when they agree.
   const json = JSON.stringify(journalOf(tabId));

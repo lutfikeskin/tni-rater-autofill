@@ -2435,8 +2435,8 @@ test('a tab’s continued steps, pause, filled pages and quote state outlive the
   // changes. Forgotten on a new or cleared client and a closed tab.
   assert.match(extractFunction('refreshTab'), /await restoreJournal\(state\.tab\?\.id\);[\s\S]*scheduleLayout\(/);
   for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /\} finally \{[\s\S]*?state\.filling = false;[\s\S]*?keepJournal\(tabId\);/, name);
-  assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false; keepJournal\(state\.tab\.id\); \}/);
-  assert.equal(extractFunction('watchNextStep').match(/keepJournal\(tabId\);/g)?.length, 2);
+  assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false; keepJournal\(state\.tab\.id, \{ dropped: \['autoPaused'\] \}\); \}/);
+  assert.equal(extractFunction('watchNextStep').match(/keepJournal\(tabId(, \{ dropped: [^\n]*\})?\);/g)?.length, 2);
   for (const name of ['noteQuoteState', 'inheritQuoteState', 'stateIssue', 'dismissState']) assert.match(extractFunction(name), /keepJournal\(/, name);
   assert.match(extractFunction('loadFile'), /state\.doneSteps = new Set\(\);[\s\S]*await forgetJournals\(\);/);
   assert.match(extractFunction('clearClient'), /await forgetJournals\(\);/);
@@ -2476,6 +2476,31 @@ test('a tab’s journal written before it is read back keeps what was stored, ea
   failing.context.store.set = set;
   await failing.context.keepJournal(7);
   assert.deepEqual(failing.writes, ['journal:7']);
+});
+
+// #401 review: a journal merged before it was read back could only add, so a quote state the panel
+// forgot (another carrier, no state), a pause the agent's Fill lifted, or a step to continue from
+// again came back from the stored copy, and a stale pick then held every fill on the tab.
+test('what the panel takes out of a tab’s journal before reading it back stays out', async () => {
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+  const pick = { carrier: 'progressive', code: 'CA', session: 's1', dismissed: null };
+  const memory = { 'journal:7': { scope: 'intake-a', doneSteps: ['application|v0|Vehicles@next', 'Drivers|d0|next'], autoPages: ['application'], autoPaused: true, advanceRetried: [], quoteState: pick } };
+  const early = journalHarness(memory);
+  // The panel had the pick, then forgot it; Fill lifted the pause; a lost Continue is to be clicked again.
+  await early.context.keepJournal(7, { dropped: ['quoteState', 'autoPaused', 'step:Drivers|d0|next'] });
+  assert.deepEqual(plain([memory['journal:7'].quoteState, memory['journal:7'].autoPaused, memory['journal:7'].doneSteps]), [null, false, ['application|v0|Vehicles@next']]);
+  // Stored before the change (the write failed, or another copy's): the read-back leaves them out too.
+  memory['journal:7'] = { scope: 'intake-a', doneSteps: ['Drivers|d0|next'], autoPages: [], autoPaused: true, advanceRetried: [], quoteState: pick };
+  const later = journalHarness(memory);
+  later.context.store.set = async () => { throw new Error('quota'); };
+  await later.context.keepJournal(7, { dropped: ['quoteState', 'autoPaused', 'step:Drivers|d0|next'] });
+  await later.context.restoreJournal(7);
+  assert.deepEqual([later.state.quoteStates.has(7), later.state.autoPaused, later.state.doneSteps.size], [false, false, 0]);
+  // Where they are taken out.
+  assert.match(extractFunction('noteQuoteState'), /else state\.quoteStates\.delete\(tabId\);\n\s*keepJournal\(tabId, code \? \{\} : \{ dropped: \['quoteState'\] \}\);/);
+  assert.match(extractFunction('stateIssue'), /state\.quoteStates\.delete\(tabId\); pick = null; keepJournal\(tabId, \{ dropped: \['quoteState'\] \}\);/);
+  assert.match(extractFunction('fillPage'), /state\.autoPaused = false; keepJournal\(state\.tab\.id, \{ dropped: \['autoPaused'\] \}\);/);
+  assert.match(extractFunction('watchNextStep'), /state\.doneSteps\.delete\(doneKey\);\n\s*keepJournal\(tabId, \{ dropped: \[`step:\$\{doneKey\}`\] \}\);/);
 });
 
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
