@@ -443,12 +443,12 @@ async function autoFill(page) {
     await tellRecorder('resume', tabId);
     state.filling = false;
     renderSteps();
-    if (fillCurrent(ctx) && state.autoPending) scheduleAutoFill(page);
+    // A follow-up asked for while this ran: this page's, or the tab's the agent moved to meanwhile (a
+    // tab switch lets go of the last tab's, so one left is that tab's: audit 2026-11-07, FLOW-07).
+    if (state.autoPending && !staleFill(ctx)) scheduleAutoFill(fillCurrent(ctx) ? page : pageOf(state.tab?.url));
     // The page in front, which this fill wasn't for: its stop card, or its own fill.
-    if (moved && fillCurrent(ctx)) {
-      if (stopNoteFor(state.tab?.carrier, pageOf(state.tab?.url))) showStopPage();
-      runPendingPage(ctx);
-    }
+    if (moved && fillCurrent(ctx) && stopNoteFor(state.tab?.carrier, pageOf(state.tab?.url))) showStopPage();
+    runPendingPage(ctx);
   }
   if (!fillCurrent(ctx)) return;
   // The page moved on to a stop page while this ran: its card stays on top of this fill's report.
@@ -460,12 +460,16 @@ async function autoFill(page) {
   if (assistFrames && !unread) assistAfterFill(assistFrames, { tabId, page, carrier }, followUp);
 }
 
+// A page that opened while a fill ran (`pagePending`, { tabId, page }: fillPage, watchNextStep), filled
+// once that fill ends, whichever tab it ran on: the tab and page must be the ones in front then, and
+// the intake the one the fill began with (audit 2026-11-07, FLOW-07: a page that opened on the tab the
+// agent moved to was dropped when the fill on the other tab ended). Called from every end of a fill;
+// the first takes it.
 function runPendingPage(ctx) {
   const pending = state.pagePending;
   state.pagePending = null;
-  if (pending && pending === pageOf(state.tab?.url)) setTimeout(() => {
-    if (fillCurrent(ctx) && pending === pageOf(state.tab?.url)) fillPage({ auto: 'page' });
-  }, 300);
+  const here = () => !staleFill(ctx) && !!pending && pending.tabId === state.tab?.id && pending.page === pageOf(state.tab?.url);
+  if (here()) setTimeout(() => { if (here()) fillPage({ auto: 'page' }); }, 300);
 }
 
 // Each page's question layout (ids, question text, options, which choice is picked; no typed

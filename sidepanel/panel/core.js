@@ -299,7 +299,7 @@ const state = storeState({
   // The page and step a fill found still drawing, or done with no Continue to click yet, was
   // filled once more for (rememberFill): not again until a fill there finds neither.
   triedAgain: null,
-  pagePending: null, // a page the tab moved to while a fill ran: filled when that fill ends (runPendingPage)
+  pagePending: null, // a page that opened while a fill ran ({ tabId, page }): filled when that fill ends, on whichever tab it ran (runPendingPage)
   // A page that arrived with no question drawn yet ({ tabId, page }): its first fill runs when they
   // show (new_fields), with "Fill each new page as soon as it opens" on (W44-11).
   drawPending: null,
