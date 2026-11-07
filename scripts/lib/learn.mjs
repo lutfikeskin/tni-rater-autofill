@@ -175,10 +175,16 @@ function pageLeftAnswers(events, out, get, ids) {
 const share = (counts, n) => [...counts].sort((x, y) => y[1] - x[1]).map(([v, c]) => ({ value: v, count: c, share: c / n }));
 
 // The rules agents fill with now: the fingerprint of the newest fill run that names one (null: no
-// fill in the log names one, from before fingerprints).
+// fill in the log names one, from before fingerprints). By time, not by the text of `t` (another
+// offset or precision would sort wrong; CodeRabbit on PR #373); a fill without a readable time
+// can't be the newest.
 export function newestRules(events) {
   let newest = null;
-  for (const e of events) if (e.type === 'fill_run' && e.rules && (!newest || String(e.t ?? '') >= String(newest.t ?? ''))) newest = e;
+  let at = -Infinity;
+  for (const e of events) {
+    const t = Date.parse(e.t);
+    if (e.type === 'fill_run' && e.rules && t >= at) { newest = e; at = t; }
+  }
   return newest?.rules ?? null;
 }
 
@@ -270,16 +276,19 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9, 
       // its correction is the agent overriding themselves (the weekly signals count those apart).
       // Only answers today's rules filled (`rules`): a correction of a rule since changed says
       // nothing about the rule now, and would keep a fixed rule on the list for good. Earlier
-      // builds' answers are shown beside it, before and after the change.
+      // builds' answers are shown beside it, before and after the change, apart from answers whose
+      // rules aren't known (a build from before fingerprints, or a fill on another page whose run
+      // the log doesn't hold; CodeRabbit on PR #373).
       const all = obs.filter((o) => o.autofilled && !isOwnDefault(o.ruleSource));
       const filled = rules ? all.filter((o) => o.rules === rules) : all;
       const corrected = filled.filter((o) => o.corrected);
       if (intakesOf(filled) >= minIntakes && corrected.length / filled.length >= 0.2) {
         const changes = new Map();
         corrected.forEach((o) => changes.set(o.correction, (changes.get(o.correction) ?? 0) + 1));
-        const earlier = all.filter((o) => !filled.includes(o));
+        const counts = (list) => ({ filled: list.length, corrected: list.filter((o) => o.corrected).length });
+        const others = all.filter((o) => !filled.includes(o));
         suggestions.review.push({ ...base, ...support(filled), filled: filled.length, corrected: corrected.length, rate: corrected.length / filled.length, changes: share(changes, corrected.length),
-          earlier: { filled: earlier.length, corrected: earlier.filter((o) => o.corrected).length } });
+          earlier: counts(others.filter((o) => o.rules)), unknownRules: counts(others.filter((o) => !o.rules)) });
       }
       continue;
     }
