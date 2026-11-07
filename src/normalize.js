@@ -1325,20 +1325,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     // since an intake isn't tied to one carrier; in red (`alert`), and a warning only (question 19):
     // filling goes on. The panel shows it only on that carrier's site (checkShown; TNI, 2026-10-27),
     // and the carrier's pages say it again (W44-27).
-    const quoted = quotedCarriersOf(prior);
-    if (quoted.length) {
-      warnings.push({ code: 'prior.carrier-is-quoted', path: 'priorInsurance[0].carrier', level: 'check', alert: true,
-        msg: `Current insurance is with ${quoted.join(' and ')}: a ${quoted.join(' or ')} quote may be declined or routed. Check with the client first.` });
-    }
-    if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
-    // TNI (2026-10-26, W44-29): any box filled is proof of prior insurance, 1-3 years (util.js
-    // priorInsuranceAssumed), and the agent is told at the start which boxes are blank.
-    const missing = [
-      ['policy type', prior.type], ['carrier', prior.carrier], ['limit', prior.limit], ['expiration date', prior.expiration],
-    ].filter(([, value]) => !value).map(([name]) => name);
-    const named = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
-    if (missing.length && priorInsuranceAssumed(record, prior)) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Proof of prior insurance (1-3 years) is assumed (TNI); get the rest from the client.`);
-    else if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Confirm before quoting.`);
+    warnings.push(...priorQuotedChecks(prior));
+    warnings.push(...priorPersonalAutoNotes(prior));
+    warnings.push(...priorIncompleteChecks(record, prior));
     warnings.push(...priorExpiredChecks(record, prior));
   }
 
@@ -1629,6 +1618,18 @@ const BOX_CHECKS = [
     if (!toDate(prior.expiration)) return [chk('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`)];
     return noPriorInsurance(prior) ? [] : priorExpiredChecks(r, prior);
   } },
+  // The current policy's boxes together (and the application date, which says whether it has
+  // expired): the boxes left blank, and whether proof of prior insurance is still assumed (review
+  // of PR #367, CodeRabbit). A policy no box of which is filled any more, or "no prior", has none.
+  { match: /^priorInsurance\[0\]\.(type|carrier|limit|expiration)$|^applicant\.applicationDate$/, codes: ['prior.incomplete'], at: () => 'priorInsurance[0]', run: (r) => {
+    const prior = r.priorInsurance?.[0];
+    if (!prior || noPriorInsurance(prior) || !(prior.type || prior.carrier || prior.limit || prior.expiration)) return [];
+    return priorIncompleteChecks(r, prior);
+  } },
+  // With a carrier the panel quotes: a current commercial auto policy (quotedCarrierPolicy reads the
+  // carrier, the type and whether it has expired).
+  { match: /^priorInsurance\[0\]\.(type|carrier|limit|expiration)$|^applicant\.applicationDate$/, codes: ['prior.carrier-is-quoted'], run: (r) => (r.priorInsurance?.[0] && !noPriorInsurance(r.priorInsurance[0]) ? priorQuotedChecks(r.priorInsurance[0]) : []) },
+  { match: /^priorInsurance\[0\]\.type$/, codes: ['prior.personal-auto'], run: (r) => (r.priorInsurance?.[0] && !noPriorInsurance(r.priorInsurance[0]) ? priorPersonalAutoNotes(r.priorInsurance[0]) : []) },
   // The application date: a current policy expired before it is expired too (priorExpiredChecks),
   // and the check names the date (review of PR #367, CodeRabbit).
   { match: /^applicant\.applicationDate$/, codes: ['prior-expiration.expired'], at: () => 'priorInsurance[0].expiration', run: (r) => {
@@ -1636,6 +1637,35 @@ const BOX_CHECKS = [
     return !prior || !toDate(prior.expiration) || noPriorInsurance(prior) ? [] : priorExpiredChecks(r, prior);
   } },
 ];
+
+/** The check for a current policy with a carrier the panel quotes. */
+function priorQuotedChecks(prior) {
+  // The current commercial auto policy is with a carrier the panel quotes (TNI, 2026-10-26: answer
+  // to PR question 9: said on the intake check screen, so the agent doesn't fill that carrier's
+  // pages for nothing; question 18: commercial auto only, util.js quotedCarrierPolicy). Named,
+  // since an intake isn't tied to one carrier; in red (`alert`), and a warning only (question 19):
+  // filling goes on. The panel shows it only on that carrier's site (checkShown; TNI, 2026-10-27),
+  // and the carrier's pages say it again (W44-27).
+  const quoted = quotedCarriersOf(prior);
+  return quoted.length ? [{ code: 'prior.carrier-is-quoted', path: 'priorInsurance[0].carrier', level: 'check', alert: true,
+    msg: `Current insurance is with ${quoted.join(' and ')}: a ${quoted.join(' or ')} quote may be declined or routed. Check with the client first.` }] : [];
+}
+const priorPersonalAutoNotes = (prior) => (prior.type === 'Personal Auto'
+  ? [{ code: 'prior.personal-auto', path: 'priorInsurance[0].type', level: 'info', msg: 'Current insurance is a personal auto policy — no prior commercial coverage.' }] : []);
+
+/** The check for a current policy with boxes left blank. */
+function priorIncompleteChecks(record, prior) {
+  // TNI (2026-10-26, W44-29): any box filled is proof of prior insurance, 1-3 years (util.js
+  // priorInsuranceAssumed), and the agent is told at the start which boxes are blank.
+  const missing = [
+    ['policy type', prior.type], ['carrier', prior.carrier], ['limit', prior.limit], ['expiration date', prior.expiration],
+  ].filter(([, value]) => !value).map(([name]) => name);
+  if (!missing.length) return [];
+  const named = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
+  return [chk('prior.incomplete', 'priorInsurance[0]', priorInsuranceAssumed(record, prior)
+    ? `Current insurance: missing the ${named}. Proof of prior insurance (1-3 years) is assumed (TNI); get the rest from the client.`
+    : `Current insurance: missing the ${named}. Confirm before quoting.`)];
+}
 
 /** The check for a current policy expired by today's date or the application date. */
 function priorExpiredChecks(record, prior) {

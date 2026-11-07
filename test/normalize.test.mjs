@@ -2370,7 +2370,9 @@ test('the edit-time box checks say what load-time normalization says, for the sa
   const { fieldInfo } = await import('../src/schema.js');
   const box = (codes, at) => (w) => codes.includes(w.code) && (at.endsWith('.') ? w.path.startsWith(at) : w.path === at);
   const said = (warnings, owns) => warnings.filter((w) => owns(w) && !w.msg.startsWith('No longer applies after your edit: '))
-    .map(({ code, path, level, msg }) => ({ code, path, level, msg })).sort((a, b) => a.code.localeCompare(b.code));
+    .map(({ code, path, level, msg, alert }) => ({ code, path, level, msg, ...(alert ? { alert } : {}) })).sort((a, b) => a.code.localeCompare(b.code));
+  // A current commercial auto policy with every box filled, not expired by the application date.
+  const POLICY = { ins_type_1: 'Commercial Auto', ins_carrier_1: 'Synthetic Mutual', ins_limit_1: '$1M CSL', ins_exp_1: '01/15/2027', date_of_application: '09/15/2026' };
   const cases = [
     // [codes, the path they're on, bad cases, good cases]: a case is [raw fields, edits]
     [['claims.blank'], 'claims.text', [[{ claims_details: '' }, [['claims.text', '']]]], [[{ claims_details: 'No' }, [['claims.text', 'No']]]]],
@@ -2410,6 +2412,16 @@ test('the edit-time box checks say what load-time normalization says, for the sa
     [['prior-expiration.invalid', 'prior-expiration.expired'], 'priorInsurance[0].expiration',
       [[{ ins_exp_1: '13/45/2026' }, [['priorInsurance[0].expiration', '13/45/2026']]], [{ ins_exp_1: '01/15/2026' }, [['priorInsurance[0].expiration', '01/15/2026']]]],
       [[{ ins_exp_1: '01/15/2027' }, [['priorInsurance[0].expiration', '01/15/2027']]]]],
+    // The current policy's boxes (review of PR #367, CodeRabbit): blank ones, and proof of prior
+    // insurance no longer assumed once the application date passes the expiration.
+    [['prior.incomplete'], 'priorInsurance[0]',
+      [[{ ...POLICY, ins_limit_1: '' }, [['priorInsurance[0].limit', '']]],
+        [{ ...POLICY, ins_limit_1: '', date_of_application: '02/01/2027' }, [['priorInsurance[0].limit', ''], ['applicant.applicationDate', '02/01/2027']]]],
+      [[POLICY, [['priorInsurance[0].limit', '$1M CSL'], ['applicant.applicationDate', '09/15/2026']]]]],
+    [['prior.carrier-is-quoted'], 'priorInsurance[0].carrier', [[{ ...POLICY, ins_carrier_1: 'GEICO' }, [['priorInsurance[0].carrier', 'GEICO']]]],
+      [[POLICY, [['priorInsurance[0].carrier', 'Synthetic Mutual']]]]],
+    [['prior.personal-auto'], 'priorInsurance[0].type', [[{ ...POLICY, ins_type_1: 'Personal Auto' }, [['priorInsurance[0].type', 'Personal Auto']]]],
+      [[POLICY, [['priorInsurance[0].type', 'Commercial Auto']]]]],
     // The application date moved past the expiration (review of PR #367, CodeRabbit), and back.
     [['prior-expiration.expired'], 'priorInsurance[0].expiration',
       [[{ ins_exp_1: '01/15/2027', date_of_application: '02/01/2027' }, [['applicant.applicationDate', '02/01/2027']]]],
