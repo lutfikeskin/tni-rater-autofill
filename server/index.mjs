@@ -536,7 +536,14 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     const receivedAt = new Date().toISOString();
     const file = path.join(eventsDir, `${receivedAt.slice(0, 10)}.jsonl`);
     const lines = events.map((e) => JSON.stringify({ ...e, receivedAt })).join('\n');
-    if (lines) fs.appendFileSync(file, `${lines}\n`);
+    if (!lines) return;
+    // On the disk before the 200 (audit 2026-11-07, SRV-05): the extension deletes its copy on that
+    // answer, so a crash between the write and the disk would lose the events for good.
+    const fd = fs.openSync(file, 'a');
+    try {
+      fs.appendFileSync(fd, `${lines}\n`);
+      fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
   }
 
   // Browsers may ask permission (CORS preflight) before an extension posts JSON. Only browser

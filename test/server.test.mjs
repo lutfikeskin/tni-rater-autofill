@@ -46,6 +46,27 @@ test('stores events once, even when an upload is retried', async () => {
   });
 });
 
+// Audit 2026-11-07, SRV-05: the extension deletes its copy of an upload once the server says 200,
+// so the day file is flushed to the disk (fsync) before that answer. A flush that fails is a 500:
+// the extension keeps the events and sends them again.
+test('an upload is on the disk before its 200; a failed flush is a 500 and the events can be sent again', async (t) => {
+  const dataDir = tmp();
+  const synced = [];
+  const sync = t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(fd); });
+  const events = [ev(), ev()];
+  await withServer({ dataDir }, async ({ post }) => {
+    assert.equal((await post({ events: events.slice(0, 1) })).status, 200);
+    assert.equal(synced.length, 1, 'flushed once, before the answer');
+    assert.equal(typeof synced[0], 'number');
+    sync.mock.mockImplementation(() => { throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); });
+    assert.equal((await post({ events: events.slice(1) })).status, 500);
+    sync.mock.mockImplementation((fd) => { synced.push(fd); });
+    const again = await (await post({ events: events.slice(1) })).json();
+    assert.deepEqual([again.accepted, again.duplicates], [1, 0], 'not counted as stored: sent again, it is accepted');
+  });
+  assert.deepEqual(stored(dataDir).map((e) => e.id), [events[0].id, events[1].id, events[1].id], 'a line written before its failed flush may be on the disk twice');
+});
+
 test('keeps only known event types and fields', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {

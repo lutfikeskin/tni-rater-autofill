@@ -84,6 +84,15 @@ maintainer's computer (`server-data/warehouse.duckdb`, git-ignored). It runs not
 leaves this volume the only full copy of the log. Its tables, the richer intake profile it plans and
 optional quoted premiums are in [quoting history database](quoting-history-database.md).
 
+The extension deletes its copy of an upload once the server answers 200, so `store` in
+`server/index.mjs` flushes the day file to the volume (`fsync`) before that answer. A write or flush
+that fails answers 500 (`could not store events`), and the extension keeps the events and sends
+them again, so a line written before a failed flush can be in the file twice (readers de-duplicate
+by id). Nothing in this repository backs the volume up: `npm run pull` leaves a plain copy of the
+days it downloads in the maintainer's `server-data/`. Scheduled volume backups, an encrypted copy
+off Railway and a restore drill are Railway and account settings (audit 2026-11-07, SRV-05), not
+code.
+
 ### Upload limits and the disk guard
 
 The upload token ships in the extension, so `/v1/events` bounds what one address can send and stops
