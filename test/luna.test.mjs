@@ -544,7 +544,9 @@ test("groups are asked two at a time, each still with both its calls, and their 
   const fields = questions(30);
   const review = suggest(fields, context, { apiKey: 'synthetic' }, { call });
   const flush = () => new Promise((resolve) => setImmediate(resolve));
-  await flush();
+  // The prompt hash is worked out (crypto.subtle) before the first call.
+  for (let i = 0; i < 200 && started.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 1));
+  for (let i = 0; i < 5; i++) await flush();
   assert.deepEqual(started, ['ask 12', 'ask 12'], 'the first two groups are asked at once, the third waits');
   // The second group answers first: its evidence check starts, and still the third waits for the wave.
   pending.splice(1, 1)[0]();
