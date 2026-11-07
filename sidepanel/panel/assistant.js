@@ -184,7 +184,7 @@ async function reviewClaimsBox({ retry = false } = {}) {
     } catch (e) {
       if (state.intake !== intake) return;
       const msg = e instanceof AssistError ? e.message : 'The claims-box review failed.';
-      usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+      usage.log({ ...logged, ms: Date.now() - started, ...spentOf(e), error: msg.slice(0, 200) });
       if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Luna couldn't review the claims box and Additional Notes. Read them for coverage requests, e.g. NTL or a different limit." });
       intake.notesReview = { failed: true, model: cfg.model };
     }
@@ -251,7 +251,7 @@ async function reviewDriverGender({ retry = false } = {}) {
     } catch (e) {
       if (state.intake !== intake) return;
       const msg = e instanceof AssistError ? e.message : 'The driver-name check failed.';
-      usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+      usage.log({ ...logged, ms: Date.now() - started, ...spentOf(e), error: msg.slice(0, 200) });
       if (failed < 0) intake.warnings.push({ code: 'ai.driver-names-failed', path: 'drivers', level: 'info', msg: "Luna couldn't check the drivers' first names. Gender is filled Male (TNI standard) unless you set it under All client details." });
       intake.namesReview = { failed: true, model: cfg.model };
     }
@@ -393,9 +393,10 @@ async function runAssist(frames, ctx) {
       }));
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : 'The assistant could not review this page. Nothing was applied.';
-      // Which prompt failed (luna.js suggest: error.promptHash), only as its 12 hex characters.
+      // Which prompt failed (luna.js suggest: error.promptHash), only as its 12 hex characters, and what
+      // a failed or dropped review spent before it stopped (error.usage).
       const prompt = /^[0-9a-f]{12}$/.test(e?.promptHash ?? '') ? { promptHash: e.promptHash } : {};
-      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, ...prompt, error: redactor(redactionTerms(record))(msg).slice(0, 200) });
+      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, ...prompt, ...spentOf(e), error: redactor(redactionTerms(record))(msg).slice(0, 200) });
       if (!stale()) holder.say({ bad: `AI assistant: ${msg}` });
       else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;
@@ -416,6 +417,15 @@ async function runAssist(frames, ctx) {
   else if (applied) dropped(`${staleWhy()} after its selections were put in`, 'Click Fill this page to review them before continuing.');
   else dropped(`${staleWhy()} before its answers were shown, so nothing was applied`);
   syncAiBanner(ctx);
+}
+
+// The usage counters a failed Luna review carries (luna.js: error.usage), for its ai_suggest event:
+// the calls made before it failed or was dropped were paid for. None for a call never answered.
+function spentOf(e) {
+  const u = e?.usage;
+  if (!u || typeof u !== 'object') return {};
+  const keys = ['modelCalls', 'tokensIn', 'tokensOut', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'];
+  return Object.fromEntries(keys.filter((k) => Number.isFinite(u[k]) && u[k] >= 0).map((k) => [k, u[k]]));
 }
 
 // Why Luna left questions, as counts (luna.js leaveWhy): it said information is missing, saw a

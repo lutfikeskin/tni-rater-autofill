@@ -2629,7 +2629,7 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
     syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
-  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('runAssist'), context);
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
   return { state, context, ctx, report, logged, rendered, applied, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
 }
@@ -2674,6 +2674,15 @@ test('Luna without a key says so above the list, and a failed review says it fai
   await failed.context.runAssist([{}], failed.ctx);
   assert.deepEqual({ ...failed.holder().said }, { bad: 'AI assistant: Luna is rate-limited. Try again shortly.' });
   assert.equal(failed.rendered.length, 0);
+  // Audit 2026-11-07, AI-10: what a failed review spent before it stopped is logged with its error.
+  const spent = assistHarness({ suggest: async () => {
+    throw Object.assign(new spent.context.AssistError('Luna returned an invalid decision. Nothing was applied.'), { usage: { modelCalls: 2, tokensIn: 900, tokensOut: 40, reasoningTokens: 10, cachedTokens: 0, cacheWriteTokens: 0, junk: 'x' } });
+  } });
+  await spent.context.runAssist([{}], spent.ctx);
+  const { modelCalls, tokensIn, tokensOut, reasoningTokens, junk, error } = spent.logged[0];
+  assert.deepEqual({ modelCalls, tokensIn, tokensOut, reasoningTokens, junk, error },
+    { modelCalls: 2, tokensIn: 900, tokensOut: 40, reasoningTokens: 10, junk: undefined, error: 'Luna returned an invalid decision. Nothing was applied.' });
+  assert.equal(failed.logged[0].modelCalls, undefined, 'a call never answered spent nothing to log');
   const none = assistHarness({ suggest: async () => { throw new Error('never asked'); } });
   none.context.collectItems = () => ({ items: [], blocked: [] });
   await none.context.runAssist([{}], none.ctx);
@@ -2917,7 +2926,7 @@ function claimsHarness() {
     },
     usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
   };
-  vm.runInNewContext(extractFunction('claimsContext') + extractFunction('supersedeClaimsItems') + extractFunction('reviewClaimsBox'), context);
+  vm.runInNewContext(extractFunction('claimsContext') + extractFunction('supersedeClaimsItems') + extractFunction('spentOf') + extractFunction('reviewClaimsBox'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
   // Lets the oldest pending request answer, then lets the panel finish with it.
   t.answer = async () => { await settle(); gates.shift()(); for (let i = 0; i < 5; i++) await settle(); };
@@ -6583,7 +6592,7 @@ function namesHarness() {
     },
     usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
   };
-  vm.runInNewContext(extractFunction('driverNamesContext') + extractFunction('supersedeGenderItems') + extractFunction('reviewDriverGender'), context);
+  vm.runInNewContext(extractFunction('driverNamesContext') + extractFunction('supersedeGenderItems') + extractFunction('spentOf') + extractFunction('reviewDriverGender'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
   t.answer = async () => { await settle(); gates.shift()(); for (let i = 0; i < 5; i++) await settle(); };
   return Object.assign(t, { state, review: context.reviewDriverGender, settle });

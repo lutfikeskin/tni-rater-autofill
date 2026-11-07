@@ -390,6 +390,31 @@ test('promptHash follows the instructions and the rules as sent, and each review
   assert.equal(dropped.promptHash, result.promptHash);
 });
 
+// Audit 2026-11-07, AI-10: a call's tokens are counted as soon as it returns, so a review that is
+// dropped or fails afterwards still says what it spent (error.usage); so do the intake reviews.
+test('a review dropped or failing after its calls still reports what they spent', async () => {
+  const withUsage = (json, n) => ({ ...json, usage: { input_tokens: n, output_tokens: 10 } });
+  let stale = false;
+  const dropped = await suggest(items, context, { apiKey: 'synthetic' }, { isStale: () => stale, call: async ({ body }) => {
+    const state = JSON.parse(body.input[0].content);
+    if (state.proposed) { stale = true; return withUsage(groupCheck(body), 200); }
+    return withUsage(answer(body), 100);
+  } }).catch(e => e);
+  assert.match(dropped.message, /page or intake changed/);
+  assert.deepEqual([dropped.usage.modelCalls, dropped.usage.tokensIn, dropped.usage.tokensOut], [2, 300, 20], 'both calls, the second answered after the page changed');
+  const invalid = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => withUsage({ ...answer(body), output: [] }, 50) }).catch(e => e);
+  assert.ok(invalid instanceof AssistError);
+  assert.deepEqual([invalid.usage.modelCalls, invalid.usage.tokensIn], [1, 50], 'an invalid answer was still paid for');
+  const notes = await reviewNotes({ coverage: {}, claims: { text: 'Needs NTL off dispatch' } }, { apiKey: 'synthetic' },
+    { call: async () => withUsage(envelope({ unexpected: true }), 70) }).catch(e => e);
+  assert.ok(notes instanceof AssistError);
+  assert.deepEqual([notes.usage.modelCalls, notes.usage.tokensIn], [1, 70]);
+  const names = await reviewDriverNames({ drivers: [{ first: 'Ann' }] }, { apiKey: 'synthetic' },
+    { call: async () => withUsage(envelope({ unexpected: true }), 30) }).catch(e => e);
+  assert.ok(names instanceof AssistError);
+  assert.deepEqual([names.usage.modelCalls, names.usage.tokensIn], [1, 30]);
+});
+
 test('incomplete verification fails closed without spending again on a higher output cap', async () => {
   const bodies = [];
   await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => {
