@@ -5,7 +5,7 @@
 import * as usage from './usage-log.js';
 import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
-import { $, migrateStoredData, restoreAiPending, state, storageSaid, store } from './panel/core.js';
+import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
 import { firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty, showScreen } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
@@ -208,6 +208,9 @@ async function init() {
   holdLayouts();
   state.intake = (await store.get('intake')) ?? null;
   if (state.intake) state.view = firstView(state.intake);
+  // An intake whose New quote failed still holds its fills (fillsHeld), said again.
+  state.newQuoteFailed = await fillsHeld(state.intake?.intakeId);
+  if (state.newQuoteFailed) state.clientNote = FILLS_HELD_NOTE;
   state.active = (await store.get('active')) ?? state.active;
   // The selection saved for that tab, kept should the panel reach another tab first.
   state.savedActive = state.active;

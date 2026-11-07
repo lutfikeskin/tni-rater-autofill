@@ -417,8 +417,8 @@ const state = storeState({
   details: null,
   // An intake change under way (New quote, Change file, Clear: newQuote, loadFile, clearClient): no fill starts.
   resetting: false,
-  // A New quote whose records couldn't be removed (newQuote): no fill starts until a New quote
-  // finishes or another intake is loaded (loadFile lifts it).
+  // This intake's New quote couldn't remove the records (newQuote, fillsHeld): no fill starts until
+  // a New quote for it finishes. Set by loadFile and on opening from the held intakes.
   newQuoteFailed: false,
   // How many intake changes hold `resetting` (loadFile, clearClient, newQuote), so overlapping ones lift it only once all are done.
   resetDepth: 0,
@@ -725,6 +725,33 @@ function clearAgentKeys(scope) {
   return Promise.all([task, done]).catch(() => { throw Object.assign(new Error('storage: said in the panel'), { name: STORAGE_SAID }); });
 }
 const STORAGE_SAID = 'StorageSaid';
+
+// The intakes whose New quote couldn't remove the last quote's records (newQuote): the quote on
+// screen lost them, so no fill runs for that intake, after a Clear, another intake or the panel
+// opening again too, until a New quote for it finishes (the maintainer, 2026-11-07). Kept in
+// chrome.storage.session (`store`), and in this panel's memory should that write fail.
+const FILLS_HELD_KEY = 'fillsHeld';
+const FILLS_HELD_NOTE = 'The new quote didn’t start: this computer couldn’t let go of the last quote’s records. Nothing fills until it does: press New quote again.';
+const heldIntakes = new Set();
+async function storedHeld() {
+  const held = await store.get(FILLS_HELD_KEY).catch((err) => { logCrash(err); return []; });
+  return Array.isArray(held) ? held : [];
+}
+async function holdFills(intakeId) {
+  if (!intakeId) return;
+  heldIntakes.add(intakeId);
+  await store.set(FILLS_HELD_KEY, [...new Set([...(await storedHeld()), intakeId])])
+    .catch((err) => persistFailed('keep that this quote waits for New quote', err));
+}
+async function releaseFills(intakeId) {
+  if (!intakeId) return;
+  heldIntakes.delete(intakeId);
+  await store.set(FILLS_HELD_KEY, (await storedHeld()).filter((id) => id !== intakeId))
+    .catch((err) => persistFailed('forget that this quote waited for New quote', err));
+}
+async function fillsHeld(intakeId) {
+  return !!intakeId && (heldIntakes.has(intakeId) || (await storedHeld()).includes(intakeId));
+}
 // A Clear's or New quote's catch: a failure persistFailed already said goes no further; any other
 // is thrown again (a crash, logged as one).
 function storageSaid(err) {
@@ -967,4 +994,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, logCrash, storageSaid, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };
+export { $, logCrash, storageSaid, FILLS_HELD_NOTE, fillsHeld, holdFills, releaseFills, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };

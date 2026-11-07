@@ -6,7 +6,7 @@ import { normalizeIntake } from '../../src/normalize.js';
 import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { $, discardAiSuggestions, doneRestored, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes } from './core.js';
+import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes } from './core.js';
 import { firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
@@ -85,10 +85,10 @@ async function loadFile(file, { reset = false } = {}) {
     // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
     // intakeId: whose quote a tab is (quote-owner.js), from the moment this intake is the panel's.
     state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test, intakeId: summary.intakeId };
-    // A New quote that failed is over once it finishes (its own load, `reset`) or another intake is
-    // loaded; not with the same PDF loaded again, whose quote on screen lost its records (CodeRabbit
-    // on PR #395).
-    if (reset || !same) state.newQuoteFailed = false;
+    // A New quote that failed holds this intake's fills until one for it finishes (its own load,
+    // `reset`): not lifted by the same PDF loaded again, after a Clear or another intake too, whose
+    // quote on screen lost its records (fillsHeld; CodeRabbit on PR #395).
+    state.newQuoteFailed = !reset && await fillsHeld(summary.intakeId);
     // agent defaults: nothing fills with the last quote's answer until this one is set up and asked.
     quoteStarting();
     if (same) keepWork(state.intake, same);

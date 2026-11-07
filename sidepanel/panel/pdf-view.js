@@ -5,7 +5,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { fillEvents, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { $, clearAgentKeys, persistAiPending, state, store } from './core.js';
+import { $, clearAgentKeys, FILLS_HELD_NOTE, holdFills, persistAiPending, releaseFills, state, store } from './core.js';
 import { loadFile, logProfile, profileTimer } from './intake.js';
 import { render, showScreen } from './record.js';
 import { pageOf, samePage } from './usage.js';
@@ -383,14 +383,17 @@ async function newQuote() {
     } catch (err) {
       // The records couldn't all be removed: no new quote is loaded, and the quote on screen has
       // lost the panel's records of it (edits on the page, helpers clicked, unit forms), some of the
-      // stored ones too. No fill runs, by itself or asked, until a New quote finishes or another
-      // intake is loaded, so none refills a changed answer or adds a vehicle again (CodeRabbit on PR
-      // #395).
+      // stored ones too. No fill runs for this intake, by itself or asked, until a New quote for it
+      // finishes, so none refills a changed answer or adds a vehicle again (CodeRabbit on PR #395):
+      // kept apart from the panel (holdFills), so a Clear, another intake or the panel opening again
+      // doesn't lift it.
       state.newQuoteFailed = true;
-      clientNote('The new quote didn’t start: this computer couldn’t let go of the last quote’s records. Nothing fills until it does: press New quote again.');
+      await holdFills(scope);
+      clientNote(FILLS_HELD_NOTE);
       render();
       throw err;
     }
+    await releaseFills(scope);
     state.intake.ntlAdded = false;
     await loadFile(new File([bytes], state.intake.fileName || 'intake.pdf', { type: 'application/pdf' }), { reset: true });
   } finally {

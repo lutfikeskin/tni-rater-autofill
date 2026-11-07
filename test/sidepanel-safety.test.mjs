@@ -2098,7 +2098,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
     store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     profileTimer: null, logProfile: () => false,
-    save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {} };
+    save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {}, fillsHeld: async () => false };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
     'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'firstView', 'loadFile', 'keepWork', 'workSaid'].map(extractFunction).join('\n'), context);
   await context.persistAiPending();
@@ -6133,7 +6133,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
       readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, normalizeIntake: () => ({ record: nextRecord, warnings: [] }),
       intakeSummary: async () => ({ intakeId: nextFingerprint }), pdfjs: {},
       cancelLayouts() {}, holdLayouts() {}, resetViews() {}, discardAiSuggestions() {}, uploadNow() {},
-      store: { set: async () => {} }, render() {}, reviewClaimsBox() {}, reviewIntake() {}, refreshTab() {},
+      store: { set: async () => {} }, render() {}, reviewClaimsBox() {}, reviewIntake() {}, refreshTab() {}, fillsHeld: async () => false,
     });
     const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
@@ -6228,7 +6228,7 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
       store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
       discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
       uploadNow() {}, render() {}, reviewClaimsBox() {}, reviewIntake() {},
-      refreshTab: () => { refreshed = h.refreshTab(); return refreshed; },
+      refreshTab: () => { refreshed = h.refreshTab(); return refreshed; }, fillsHeld: async () => false,
     });
     vm.runInNewContext(['firstView', 'loadFile', 'persistDoneActions', 'persistUnitForms', 'restoreDoneActions'].map(extractFunction).join('\n'), context);
     return { h, context, state, load: async id => {
@@ -8459,7 +8459,7 @@ test('a profile still waiting when another intake is loaded goes to its own quot
     normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
     store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
-    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile, redactor, redactionTerms,
+    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile, redactor, redactionTerms, fillsHeld: async () => false,
     setTimeout: (fn) => { timers.set(timers.size + 1, fn); return timers.size; }, clearTimeout: (id) => timers.delete(id) };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks', 'persistAiPending', 'restoreAiPending',
     'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid', 'logProfile', 'profileLater', 'firstView'].map(extractFunction).join('\n'), context);
@@ -8599,7 +8599,7 @@ test('loading another client\'s intake stops and saves the recording, redacted w
     normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
     store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
-    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile: () => null, redactor, redactionTerms, logProfile() {}, profileLater() {},
+    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile: () => null, redactor, redactionTerms, logProfile() {}, profileLater() {}, fillsHeld: async () => false,
     stopRecording: async (why) => { stopped.push([why, state.intake?.record.garaging.state]); state.recording = null; },
     setTimeout: () => 1, clearTimeout() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks', 'persistAiPending', 'restoreAiPending',
@@ -8636,7 +8636,7 @@ function intakeChangeHarness({ fillEndMs = 15000 } = {}) {
     normalizeIntake: () => ({ record: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] }, warnings: [] }), intakeSummary: async () => ({ intakeId: 'b' }),
     store: { set: async () => {}, remove: async () => {} }, pruneAgentRecords: async () => [], clearAgentKeys: async () => {}, testIntakes: { get: async () => [] }, logSettings: async () => {},
     platformOf: () => ({ os: null, chrome: null }), uploadNow() {}, save: async () => {}, render() {}, renderSite() {}, renderSteps() {}, refreshTab() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
-    profileTimer: null, logProfile() {}, stopRecording: async () => {}, worldFor: () => 'ISOLATED',
+    profileTimer: null, logProfile() {}, stopRecording: async () => {}, worldFor: () => 'ISOLATED', fillsHeld: async () => false, holdFills: async () => {}, releaseFills: async () => {}, FILLS_HELD_NOTE: 'held',
     chrome: { scripting: { executeScript: async ({ target }, ...rest) => { seen.stops.push([target.tabId, target.allFrames, state.intake === intakeA, state.resetting]); ends(); return []; } } } };
   // The stop goes with its run id (`args`), as Stop's does.
   context.chrome.scripting.executeScript = async (spec) => { seen.stops.push([spec.target.tabId, spec.args, state.intake === intakeA, state.resetting]); if (spec.args) ends(); return []; };
@@ -8694,22 +8694,59 @@ test('overlapping Change file and Clear hold resetting until the last is done, t
   assert.deepEqual([t.state.resetting, t.state.resetDepth], [false, 0]);
 });
 
-// CodeRabbit on PR #395: after a New quote that failed, the same PDF loaded again (Change file)
-// doesn't lift the hold on fills: its quote on screen lost its records. New quote's own load does,
-// and so does another intake.
-test('a failed New quote holds fills through the same PDF loaded again, not through New quote or another intake', async () => {
+// CodeRabbit on PR #395, the maintainer 2026-11-07: after a New quote that failed, the intake's fills
+// stay held (fillsHeld) through the same PDF loaded again, after a Clear or another intake too, and
+// only New quote's own load lifts it; another intake isn't held.
+test('a failed New quote holds its intake\'s fills through any load of it but New quote\'s own', async () => {
   const pdf = { name: 'client.pdf', arrayBuffer: async () => new ArrayBuffer(1) };
-  let t = intakeChangeHarness();
-  t.context.intakeSummary = async () => ({ intakeId: 'a' });
-  t.state.newQuoteFailed = true;
+  const held = new Set(['a']);
+  const harness = (intakeId) => {
+    const t = intakeChangeHarness();
+    t.state.filling = false;
+    t.state.fillingFor = null;
+    Object.assign(t.context, { intakeSummary: async () => ({ intakeId }), fillsHeld: async (id) => held.has(id) });
+    return t;
+  };
+  let t = harness('a');
   await t.context.loadFile(pdf);
   assert.equal(t.state.newQuoteFailed, true, 'the same PDF again');
+  await t.context.clearClient();
+  await t.context.loadFile(pdf);
+  assert.equal(t.state.newQuoteFailed, true, 'the same PDF after a Clear');
   await t.context.loadFile(pdf, { reset: true });
   assert.equal(t.state.newQuoteFailed, false, 'New quote\'s own load');
-  t = intakeChangeHarness();
+  t = harness('b');
   t.state.newQuoteFailed = true;
   await t.context.loadFile(pdf);
-  assert.equal(t.state.newQuoteFailed, false, 'another intake');
+  assert.equal(t.state.newQuoteFailed, false, 'another intake, not held');
+  // The panel opened again on that intake: still held, and said.
+  const init = extractFunction('init');
+  assert.match(init, /state\.newQuoteFailed = await fillsHeld\(state\.intake\?\.intakeId\);\s+if \(state\.newQuoteFailed\) state\.clientNote = FILLS_HELD_NOTE;/);
+  assert.ok(init.indexOf('fillsHeld') > init.indexOf("state.intake = (await store.get('intake'))"), 'read once the saved intake is');
+});
+
+// The held intakes (core.js): kept in the session store, and in this panel's memory should that
+// write fail; a New quote that finishes lets its intake go.
+test('the intakes whose fills are held are kept in the session store, and in memory when it fails', async () => {
+  const kept = {};
+  const failed = [];
+  const store = { get: async (k) => kept[k], set: async (k, v) => { if (store.broken) throw new Error('QUOTA_BYTES quota exceeded'); kept[k] = v; } };
+  const context = { store, Set, Array, logCrash: () => {}, persistFailed: (what) => failed.push(what) };
+  vm.createContext(context);
+  vm.runInContext(`const FILLS_HELD_KEY = 'fillsHeld'; const heldIntakes = new Set();\n${['storedHeld', 'holdFills', 'releaseFills', 'fillsHeld'].map(extractFunction).join('\n')}`, context);
+  await context.holdFills('a');
+  assert.deepEqual([...kept.fillsHeld], ['a']);
+  assert.equal(await context.fillsHeld('a'), true);
+  assert.equal(await context.fillsHeld('b'), false);
+  assert.equal(await context.fillsHeld(undefined), false);
+  store.broken = true;
+  await context.holdFills('b');
+  assert.deepEqual(failed, ['keep that this quote waits for New quote'], 'said');
+  assert.equal(await context.fillsHeld('b'), true, 'held in memory');
+  store.broken = false;
+  await context.releaseFills('a');
+  assert.deepEqual([...kept.fillsHeld], []);
+  assert.equal(await context.fillsHeld('a'), false);
 });
 
 test('a fill that only gets its tab\'s word while the intake waits is stopped then; one that never ends doesn\'t hold the intake', async () => {
@@ -9000,10 +9037,11 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
   const context = { state, inExtension: true, File: class { constructor(parts, name, opts) { Object.assign(this, { parts, name, type: opts?.type }); } },
     intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
     runKit: async (tabId) => { calls.push(['clear', tabId]); return []; }, clearAgentKeys: async (scope) => { calls.push(['keys', scope]); },
-    loadFile: async (file, opts) => { calls.push(['load', file.name, file.type, opts]); }, clientNote: (t) => calls.push(['note', t]) };
+    loadFile: async (file, opts) => { calls.push(['load', file.name, file.type, opts]); }, clientNote: (t) => calls.push(['note', t]),
+    holdFills: async (scope) => { calls.push(['hold', scope]); }, releaseFills: async (scope) => { calls.push(['release', scope]); }, FILLS_HELD_NOTE: 'Nothing fills until it does' };
   vm.runInNewContext(extractFunction('newQuote'), context);
   await context.newQuote();
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['clear', 4], ['keys', 'abc'], ['load', 'client.pdf', 'application/pdf', { reset: true }]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['clear', 4], ['keys', 'abc'], ['release', 'abc'], ['load', 'client.pdf', 'application/pdf', { reset: true }]], 'a New quote that finishes lets its intake go');
   assert.equal(state.intake.ntlAdded, false, 'NTL is added again on the new quote');
   // While answers go in, or without the PDF kept: said, nothing done.
   calls.length = 0;
@@ -9022,8 +9060,7 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
   await assert.rejects(context.newQuote(), { name: 'StorageSaid' });
   assert.equal(calls.some((c) => c[0] === 'load'), false, 'no new quote loaded');
   assert.equal(state.newQuoteFailed, true);
-  assert.deepEqual(calls.map((c) => c[0]), ['clear', 'note', 'render'], 'said, and drawn');
-  assert.match(calls[1][1], /Nothing fills until it does/);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['clear', 4], ['hold', 'abc'], ['note', 'Nothing fills until it does'], ['render']], 'held for its intake, said, and drawn');
   assert.match(extractFunction('fillPage'), /state\.resetting \|\| state\.newQuoteFailed \|\| !state\.intake/);
   assert.match(extractFunction('autoFill'), /state\.resetting \|\| state\.newQuoteFailed \|\| !state\.intake/);
   state.newQuoteFailed = false;
@@ -9436,7 +9473,7 @@ test('New quote lets go of the panel\'s own records before the stored ones, star
   const notes = [];
   const context = { state, inExtension: true, File: class { constructor(parts, name, opts) { Object.assign(this, { parts, name, type: opts?.type }); } },
     intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
-    runKit: async () => [], clearAgentKeys: async () => snapshot('keys'), loadFile: async () => snapshot('load'), clientNote: (t) => notes.push(t) };
+    runKit: async () => [], clearAgentKeys: async () => snapshot('keys'), loadFile: async () => snapshot('load'), clientNote: (t) => notes.push(t), releaseFills: async () => {} };
   vm.runInNewContext(extractFunction('newQuote'), context);
   await context.newQuote();
   assert.deepEqual(JSON.parse(JSON.stringify(seen)), [['keys', [], 0, 0, 0, true], ['load', [], 0, 0, 0, true]]);
