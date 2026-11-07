@@ -249,14 +249,21 @@ export async function settle({ quietMs = 250, maxMs = 15000, requests = null, wh
   const mo = new MutationObserver(() => { last = Date.now(); });
   mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', ...adapter().changeAttributes] });
   const start = Date.now();
+  // While a recording runs, the wait says what it saw itself (REC-02, 2026-11-07): the trace sees
+  // only the page's child lists, not the attributes this one watches (a radio's `checked`, GEICO's
+  // `active-index`) nor a busy page or an undefined component. `lastChange`: its last change seen;
+  // `lastHeld`: the last moment it saw the page busy, a component undefined or a request going;
+  // each its start when it saw none.
+  let lastHeld = start;
   const told = (ended, more = {}) => {
-    if (isTracing()) kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms: Date.now() - start, ended, ...more });
+    if (isTracing()) kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms: Date.now() - start, ended, lastChange: Math.max(last, start), lastHeld, ...more });
   };
   try {
     const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
     for (let now = Date.now(); now - start < maxMs; now = Date.now()) {
       if (abort?.()) { told('stopped'); return false; }
       if (mo.takeRecords?.().length) last = now;
+      if (isTracing() && (pageBusy() || partsUndefined() || requested())) lastHeld = now;
       const quietFor = now - last;
       if (quietFor >= quietMs && !pageBusy() && !partsUndefined() && !requested()) { told('quiet'); return true; }
       await sleep(Math.max(1, Math.min(quietFor < quietMs ? quietMs - quietFor : WAKE_MS, abort ? WAKE_MS : Infinity, maxMs - (now - start))));

@@ -283,6 +283,11 @@ test('what the extension\'s fill says is kept by its own time; anything else on 
   assert.deepEqual(kit.map((e) => [e.what, e.t]), [['wait', ORIGIN + 3000.5], ['press', ORIGIN + 3200]]);
   assert.deepEqual([kit[0].ms, kit[0].why, kit[0].kind, kit[0].seq !== 99, 'frame' in kit[0], 'filling' in kit[0]], [120, 'answer', 'kit', true, false, false]);
   assert.deepEqual(kit[1].button, { text: 'Continue' });
+  // REC-02: what the wait saw itself, as numbers only.
+  say(JSON.stringify({ what: 'wait', t: ORIGIN + 4000, start: ORIGIN + 3800, ms: 200, ended: 'quiet', lastChange: ORIGIN + 3950, lastHeld: 'Sam Smith' }));
+  await h.advance(400);
+  const last = h.events().filter((e) => e.kind === 'kit').at(-1);
+  assert.deepEqual([last.lastChange, 'lastHeld' in last], [ORIGIN + 3950, false]);
 });
 
 // Review of PR #257: the page can dispatch the same event, so what it holds is built afresh from

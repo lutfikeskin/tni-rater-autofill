@@ -1368,6 +1368,24 @@ test('Progressive: the fill after a helper opened the page begins sooner; answer
   assert.deepEqual(starts(), [400, 100, 400]);
 });
 
+// REC-02 (audit 2026-11-07): a recording's slack came from the trace's observer alone, which sees
+// neither the attributes a wait watches nor a busy page: each wait says what it saw itself.
+test('a traced wait says the last change and the last moment it was held that it saw itself', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  addExtText(h, 'c', '2BA1');
+  await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }], { maxRounds: 2, trace: true });
+  const waits = said.filter((x) => x.what === 'wait');
+  assert.ok(waits.length >= 2, `${waits.length} waits`);
+  for (const w of waits) {
+    assert.ok(typeof w.lastChange === 'number' && w.lastChange >= w.start && w.lastChange <= w.start + w.ms, `${w.why}: lastChange within the wait`);
+    assert.ok(typeof w.lastHeld === 'number' && w.lastHeld >= w.start && w.lastHeld <= w.start + w.ms, `${w.why}: lastHeld within the wait`);
+  }
+});
+
 // Review of PR 284: the answer wait counts its quiet from the page's last request too, in a frame
 // inside the page as well as the top one. A request ending 160 ms after the answer is waited after.
 test('Progressive: in a frame inside the page, an answer waits 150 ms after the request it set off', async () => {
