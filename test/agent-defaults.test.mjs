@@ -65,8 +65,10 @@ test('off until the panel turns it on, as agents\' store build keeps it until re
   }
 });
 
-test('no profile confirmed for the quote: every plan and rulebook is the rules\' own; confirmed: the panel\'s plans take it', () => {
+test('no profile confirmed for the quote: every plan and rulebook is the rules\' own; confirmed: the panel\'s plans take it', (t) => {
+  // On for this test only, as the panel turns it on; back as the store build has it after.
   setAgentDefaultsOn(true);
+  t.after(() => setAgentDefaultsOn(RELEASED_TO_AGENTS));
   for (const c of CARRIERS) {
     assert.equal(overlayFor(c.id), null);
     assert.equal(rulebookRewriteFor(c.id), null);

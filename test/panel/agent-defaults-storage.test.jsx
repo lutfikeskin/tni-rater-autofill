@@ -28,7 +28,7 @@ const failing = vi.hoisted(() => {
 
 const { state: panelState } = await import('../../sidepanel/panel/core.js');
 const usage = await import('../../sidepanel/usage-log.js');
-const { answerDefaults, defaultsActs, defaultsHold, initialsChanged, loadDefaults, quoteStarting, refreshDefaults } = await import('../../sidepanel/panel/agent-defaults/store.js');
+const { answerDefaults, defaultsActs, defaultsHold, initialsChanged, loadDefaults, quoteStarting, refreshDefaults, setDefaultsShown } = await import('../../sidepanel/panel/agent-defaults/store.js');
 const { overlayFor } = await import('../../src/agent-defaults/index.js');
 
 test('a write Chrome refuses changes nothing: the quote stays held, and the overlay follows what was saved', async () => {
@@ -128,4 +128,33 @@ test('nothing fills with defaults while the answer saves, after a refused answer
   expect(panelState.agentDefaults.active).toBeNull();
   expect(defaultsHold()).toBe(false);
   expect(overlayFor('geico')).toBeNull();
+});
+
+// The developer's switch (unpacked copies): a write Chrome refuses changes nothing, so the next panel
+// opened doesn't quietly go back; a read Chrome refuses is taken as not hidden and never stops the
+// panel's start (review of #305).
+test('the developer\'s switch: a refused write changes nothing, a refused read doesn\'t stop the panel', async () => {
+  failing.clear();
+  await loadDefaults();
+  expect(panelState.defaultsOn).toBe(true);
+  failing.add('agentDefaultsHidden');
+  await setDefaultsShown(false);
+  expect(panelState.defaultsOn).toBe(true);
+  failing.delete('agentDefaultsHidden');
+  await setDefaultsShown(false);
+  expect(panelState.defaultsOn).toBe(false);
+  await loadDefaults();
+  expect(panelState.defaultsOn).toBe(false);
+  const get = chrome.storage.local.get;
+  chrome.storage.local.get = async (k) => {
+    if ([].concat(k).includes('agentDefaultsHidden')) throw new Error('read refused');
+    return get(k);
+  };
+  try {
+    await loadDefaults();
+  } finally {
+    chrome.storage.local.get = get;
+  }
+  expect(panelState.defaultsOn).toBe(true);
+  await setDefaultsShown(true);
 });

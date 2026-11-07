@@ -117,7 +117,10 @@ function apply() {
 /** Reads what is stored (the panel's init) and logs an overlay error as a client_error. */
 export async function loadDefaults() {
   onDefaultsError((error) => logCrash(error));
-  const [stored, saved, kept, hidden] = await Promise.all([local.get(), usage.settings(), session.get(), hiddenStore.get()]);
+  // The developer's switch, read apart: a read Chrome refuses is logged and taken as not hidden, never
+  // stopping the panel's start (the store build ignores it anyway).
+  const hiddenRead = hiddenStore.get().catch((error) => { logCrash(error); return undefined; });
+  const [stored, saved, kept, hidden] = await Promise.all([local.get(), usage.settings(), session.get(), hiddenRead]);
   channel = usage.build().channel;
   // The developer's switch: in every copy but the store build.
   state.defaultsDev = channel !== 'store';
@@ -278,7 +281,14 @@ export function refreshDefaults() {
  */
 export async function setDefaultsShown(on) {
   if (channel === 'store') return;
-  await hiddenStore.set(!on).catch((error) => logCrash(error));
+  // As with the profiles, the panel shows only what was saved: a write Chrome refuses is logged and
+  // changes nothing, so the next panel opened doesn't quietly go back.
+  try {
+    await hiddenStore.set(!on);
+  } catch (error) {
+    logCrash(error);
+    return;
+  }
   show(!!on);
   apply();
 }
