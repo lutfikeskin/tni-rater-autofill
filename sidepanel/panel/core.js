@@ -281,7 +281,7 @@ const state = storeState({
   autoPages: new Set(),
   // Steps already continued from, keyed by stepScope (AmWINS steps, Progressive's per-vehicle pages).
   doneSteps: new Set(),
-  advanceRetried: new Set(), // steps whose lost Continue was clicked a second time (once each)
+  advanceRetried: new Set(), // the tab's steps whose lost Continue was clicked a second time (once each)
   assistPage: null, // a page whose Luna request waits for a helper's follow-up fill (per tab, like the above)
   notesAsking: null, // the intake whose claims box Luna is reading now
   notesRetry: null, // that intake again, when the settings changed meanwhile
@@ -835,7 +835,7 @@ async function restoreReports(tabId) {
 // intake (state.quoteStates). The tab's step and stop screen aren't kept: the page is read for them
 // as the panel opens (scheduleLayout, noteStep), and one kept could be one the agent has left.
 const JOURNAL_PREFIX = 'journal:';
-const journalWritten = new Map(); // tab id -> the journal last written, as JSON
+const journalWritten = new Map(); // tab id -> the journal last written (once stored), as JSON
 const journalRestored = new Set();
 let journalQueue = Promise.resolve();
 const journalIds = (list) => (Array.isArray(list) ? list : []).filter((x) => typeof x === 'string' && x);
@@ -843,15 +843,31 @@ function journalOf(tabId) {
   const maps = state.tab?.id === tabId ? state : state.tabSessions.get(tabId);
   const pick = state.quoteStates.get(tabId);
   return { scope: usage.currentSession()?.intakeId ?? null, doneSteps: [...(maps?.doneSteps ?? [])], autoPages: [...(maps?.autoPages ?? [])],
-    autoPaused: !!maps?.autoPaused, advanceRetried: [...(state.advanceRetried ?? [])], quoteState: pick ? { ...pick } : null };
+    autoPaused: !!maps?.autoPaused, advanceRetried: [...(maps?.advanceRetried ?? [])], quoteState: pick ? { ...pick } : null };
+}
+// A tab's journal not yet read back for this intake (restoreJournal) adds to the stored one rather
+// than replacing it: a recorder message or a fill ending before the panel came to the tab would
+// otherwise leave it with only what this copy learned.
+function journalMerged(was, journal) {
+  if (!was || typeof was !== 'object') return journal;
+  const same = !!journal.scope && was.scope === journal.scope;
+  const union = (key) => (same ? [...new Set([...journalIds(was[key]), ...journal[key]])] : journal[key]);
+  const pick = was.quoteState && typeof was.quoteState.carrier === 'string' && typeof was.quoteState.code === 'string' && was.quoteState.code ? was.quoteState : null;
+  return { ...journal, doneSteps: union('doneSteps'), autoPages: union('autoPages'), autoPaused: journal.autoPaused || (same && was.autoPaused === true),
+    advanceRetried: union('advanceRetried'), quoteState: journal.quoteState ?? pick };
 }
 // Called where a tab's fill ends and where its quote state changes; written only when it changed.
 function keepJournal(tabId) {
   if (!Number.isInteger(tabId)) return journalQueue;
-  const json = JSON.stringify(journalOf(tabId));
+  const journal = journalOf(tabId);
+  const json = JSON.stringify(journal);
   if (journalWritten.get(tabId) === json) return journalQueue;
-  journalWritten.set(tabId, json);
-  journalQueue = journalQueue.then(() => store.set(`${JOURNAL_PREFIX}${tabId}`, JSON.parse(json))).catch(() => {});
+  const key = `${JOURNAL_PREFIX}${tabId}`;
+  const restored = journalRestored.has(`${journal.scope}|${tabId}`);
+  journalQueue = journalQueue.then(async () => {
+    await store.set(key, restored ? journal : journalMerged(await store.get(key), journal));
+    journalWritten.set(tabId, json);
+  }).catch(() => { journalWritten.delete(tabId); }); // not stored: the next call writes it again
   return journalQueue;
 }
 // A new or cleared client, or the same PDF loaded again, starts the fills over: every tab's
@@ -889,7 +905,10 @@ async function restoreJournal(tabId) {
     for (const key of journalIds(was.advanceRetried)) state.advanceRetried.add(key);
     if (was.autoPaused === true) state.autoPaused = true;
   }
-  journalWritten.set(tabId, JSON.stringify(journalOf(tabId)));
+  // What this copy learned before reading it, stored with it; nothing written when they agree.
+  const json = JSON.stringify(journalOf(tabId));
+  if (JSON.stringify(was) === json) journalWritten.set(tabId, json);
+  else await keepJournal(tabId);
 }
 
 async function restoreDoneActions(tabId) {

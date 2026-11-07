@@ -2377,7 +2377,8 @@ function journalHarness(memory, { session = { intakeId: 'intake-a' }, tabId = 7 
     store: { get: async (k) => structuredClone(memory[k]), set: async (k, v) => { writes.push(k); memory[k] = structuredClone(v); }, remove: async (k) => { delete memory[k]; }, keys: async () => Object.keys(memory) },
   };
   const block = SIDEPANEL.slice(SIDEPANEL.indexOf("const JOURNAL_PREFIX = 'journal:';"), SIDEPANEL.indexOf('function journalOf('));
-  vm.runInNewContext(`${block}\n${['journalOf', 'keepJournal', 'forgetJournals', 'restoreJournal'].map(extractFunction).join('\n')}`, context);
+  const names = ['journalOf', 'journalMerged', 'keepJournal', 'forgetJournals', 'restoreJournal'].filter((name) => SIDEPANEL.includes(`function ${name}(`));
+  vm.runInNewContext(`${block}\n${names.map(extractFunction).join('\n')}`, context);
   return { context, state, writes };
 }
 
@@ -2440,6 +2441,41 @@ test('a tab’s continued steps, pause, filled pages and quote state outlive the
   assert.match(extractFunction('loadFile'), /state\.doneSteps = new Set\(\);[\s\S]*await forgetJournals\(\);/);
   assert.match(extractFunction('clearClient'), /await forgetJournals\(\);/);
   assert.match(SIDEPANEL, /chrome\.tabs\.onRemoved\.addListener\(\(tabId\) => \{[^\n]*forgetJournals\(tabId\);/);
+});
+
+// #401 review: a journal written before the panel read it back (a recorder message reaching
+// noteQuoteState while refreshTab waited) replaced the stored one; the Continues clicked again were
+// the panel's, not the tab's; and a write that failed was taken as written.
+test('a tab’s journal written before it is read back keeps what was stored, each tab its own retried Continues', async () => {
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+  const pick = { carrier: 'progressive', code: 'CA', session: 's1', dismissed: null };
+  const memory = { 'journal:7': { scope: 'intake-a', doneSteps: ['application|v0|Vehicles@next'], autoPages: ['application'], autoPaused: true, advanceRetried: ['application|v1|Vehicles@next'], quoteState: null } };
+  const early = journalHarness(memory);
+  early.state.quoteStates.set(7, pick);
+  await early.context.keepJournal(7);
+  assert.deepEqual(plain(memory['journal:7']), { scope: 'intake-a', doneSteps: ['application|v0|Vehicles@next'], autoPages: ['application'], autoPaused: true,
+    advanceRetried: ['application|v1|Vehicles@next'], quoteState: pick }, 'the stored journal stays, with the quote state added');
+  await early.context.restoreJournal(7);
+  assert.deepEqual(plain([[...early.state.doneSteps], [...early.state.autoPages], early.state.autoPaused, [...early.state.advanceRetried]]),
+    [['application|v0|Vehicles@next'], ['application'], true, ['application|v1|Vehicles@next']]);
+
+  // Each tab's own retried Continues: tab 8's kept session, not the tab in front.
+  early.state.tabSessions.set(8, { doneSteps: new Set(), autoPages: new Set(), autoPaused: false, advanceRetried: new Set(['Drivers|d0|next']) });
+  await early.context.keepJournal(8);
+  assert.deepEqual(plain(memory['journal:8'].advanceRetried), ['Drivers|d0|next']);
+  assert.match(extractFunction('refreshTab'), /const keys = \[[^\]]*'advanceRetried'[^\]]*\];/);
+  assert.match(extractFunction('refreshTab'), /Object\.assign\(state, previous \?\? \{[\s\S]*?advanceRetried: new Set\(\)[\s\S]*?\}\);/);
+  assert.match(extractFunction('tabMaps'), /saved = \{[\s\S]*?advanceRetried: new Set\(\)[\s\S]*?\};/);
+
+  // A write that fails is written again by the next call, unchanged as the journal is.
+  const failing = journalHarness({});
+  failing.state.doneSteps.add('application|v0|Vehicles@next');
+  const set = failing.context.store.set;
+  failing.context.store.set = async () => { throw new Error('quota'); };
+  await failing.context.keepJournal(7);
+  failing.context.store.set = set;
+  await failing.context.keepJournal(7);
+  assert.deepEqual(failing.writes, ['journal:7']);
 });
 
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.

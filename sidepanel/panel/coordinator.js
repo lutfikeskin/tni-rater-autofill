@@ -740,7 +740,7 @@ function tabMaps(tabId) {
   let saved = state.tabSessions.get(tabId);
   if (!saved) {
     saved = { filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false, triedAgain: null,
-      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null, unitNamed: null, active: firstUnits() };
+      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), advanceRetried: new Set(), assistPage: null, unitNamed: null, active: firstUnits() };
     state.tabSessions.set(tabId, saved);
   }
   return saved;
