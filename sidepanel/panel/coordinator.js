@@ -141,6 +141,8 @@ if (inExtension) {
   Promise.all(RULE_FILES.map((f) => fetch(chrome.runtime.getURL(f)).then((r) => r.text()))).then(rulesHash)
     .then((hash) => { rulesVersion = hash; }).catch(() => {});
 }
+// The same fingerprint, for a developer recording's manifest (null until read).
+const rulesFingerprint = () => rulesVersion;
 
 // What a fill is about, taken before it waits on anything (audit 2026-10-08, finding 5): its own
 // id (`run`, shared by its events), the tab, carrier and page it fills, the intake and revision it
@@ -396,9 +398,9 @@ async function autoFill(page) {
     // automatic fill showed nothing until it ended).
     state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false, auto: true };
     unwatch = watchFill(ctx);
-    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
+    if (results.some((r) => r.result?.pageMoved) || results.some((r) => r.frameId === 0 && r.result == null)) { moved = true; notePageMoved(ctx); return; }
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
@@ -539,7 +541,7 @@ async function captureLayout(job, reason) {
   if (fillStarted()) return waitForFill(job);
   const { tabId, carrier, page } = job;
   try {
-    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
+    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit?.capture(p, r),
       [planFor(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
     if (!jobCurrent(job) || superseded(job)) return;
     if (fillStarted()) return waitForFill(job);
@@ -704,7 +706,7 @@ async function layoutWhenQuiet(job, tries = 0) {
   if (state.filling) return afterFill();
   let busy;
   try {
-    busy = (await runKit(job.tabId, job.carrier, () => globalThis.__raterKit.busy())).some((r) => r.result);
+    busy = (await runKit(job.tabId, job.carrier, () => globalThis.__raterKit?.busy())).some((r) => r.result);
   } catch (e) {
     // Couldn't ask the page: the same as a layout that couldn't be read, unless it moved on.
     if (live()) layoutFailed(job, reason(), layoutErrorKind(e));
@@ -1619,4 +1621,4 @@ function stopPageIsOurs() {
   return !state.layoutHold || state.layoutReadyTabs.has(state.tab?.id);
 }
 
-export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };
+export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, rulesFingerprint, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };
