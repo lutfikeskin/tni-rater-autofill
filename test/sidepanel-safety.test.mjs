@@ -3031,6 +3031,7 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   const { rederive } = await import('../src/normalize.js');
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake: { record: { claims: { text: 'No' }, notes: { text: null }, applicant: {} }, warnings: [] } },
     get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, usage: { log: () => {} }, save: async () => {}, profileLater() {},
     claimsTextEdited: () => calls.push('claimsTextEdited'), reviewClaimsBox: () => calls.push('reviewClaimsBox'), reviewDriverGender: () => {},
@@ -5902,6 +5903,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   const record = { operations: { radius: '100', radiusMiles: 100 }, applicant: {} };
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake: { record, warnings: [], done: [] }, detailsClosed: new Set(), showEmpty: false, details: null },
     get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES,
     intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
@@ -6489,6 +6491,7 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   ] };
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake, view: 'check' }, $, get, set, rederive, ownerDrivesAnswered, fieldInfo: (p) => ({ label: p }), sourcePlace: () => null, pdfPageSaid: () => '',
     document: { getElementById: () => null, querySelector: () => null },
     renderSteps() {}, renderSections: () => calls.push(['renderSections', get(record, 'drivers[0].gender') ?? null]), jumpTo() {}, openPdf() {},
@@ -8992,6 +8995,31 @@ test('an agent change on the finishing step after the print, or a stopped fill, 
   assert.match(SIDEPANEL, /const byAgent = msg\.changes\.filter\(\(c\) => c\.agent\);\s+if \(byAgent\.length\) \{\s+const page = samePage\(msg\.page\);\s+if \(noteChangedAfterDone\(state\.tab\.carrier, page, step, sender\.tab\.id\)\) renderSteps\(\);/);
   assert.match(SIDEPANEL, /for \(const a of frames\.flatMap\(\(f\) => f\.actions \?\? \[\]\)\) \{ maps\.doneActions\.add\(a\.id\); maps\.doneActions\.delete\(`\$\{a\.id\}:changed`\); \}/);
   assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;/);
+});
+
+// The maintainer, 2026-11-07 (answer 1 on PR #367): "No" typed into the USDOT box in the panel is
+// saved as no number, as the intake's own No: the box empty, noDot true, the note said, and the row
+// and the checks said again.
+test('a panel edit of "No" into the USDOT box saves no number, and says the row and the note again', async () => {
+  const { get, set } = await import('../src/util.js');
+  const { noNumberEdit, rederive } = await import('../src/normalize.js');
+  const calls = [];
+  const intake = { record: { applicant: { dot: '1234567', noDot: null } }, warnings: [], done: [], agentEdited: [] };
+  const sandbox = {
+    state: { intake }, get, set, noNumberEdit, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    usage: { log: (e) => calls.push(['log', e.path]) }, renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings']),
+    claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  await sandbox.agentEdit('applicant.dot', 'No', 'text');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, [...intake.agentEdited]], [null, true, ['applicant.dot']]);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['dot.none', 'info']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['renderSections', ['applicant.dot']], ['renderWarnings'], ['log', 'applicant.dot']]);
+  calls.length = 0;
+  await sandbox.agentEdit('applicant.dot', '7654321', 'text');
+  assert.equal(intake.record.applicant.dot, '7654321', 'a number stays as typed');
+  assert.deepEqual(calls, [['log', 'applicant.dot']]);
 });
 
 // Review of PR #170: a field the agent emptied in the drawer went with the blank ones (hidden at the
