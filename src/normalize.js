@@ -1339,15 +1339,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     const named = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
     if (missing.length && priorInsuranceAssumed(record, prior)) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Proof of prior insurance (1-3 years) is assumed (TNI); get the rest from the client.`);
     else if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Confirm before quoting.`);
-    // Expired by today's date or the application date: the carriers' rules read it the same way
-    // (priorPolicyExpired; the maintainer, 2026-11-07, audit DATA-02), so the check names the date.
-    const { byToday, byApplication } = priorPolicyExpiredBy(record, prior);
-    if (byToday || byApplication) {
-      const applied = record.applicant.applicationDate;
-      const before = byApplication ? (byToday ? 'before the application date and today' : 'before the application date')
-        : applied ? `before today, though after the application date ${applied}` : 'before today';
-      check('prior-expiration.expired', 'priorInsurance[0].expiration', `Expired ${prior.expiration}, ${before}: an expired policy is not current insurance. Review it.`);
-    }
+    warnings.push(...priorExpiredChecks(record, prior));
   }
 
   // --- Coverage -------------------------------------------------------------------------------
@@ -1493,14 +1485,169 @@ const DERIVATIONS = [
     : { values: { 'coverage.ntl': nonTruckingAnswer(r.coverage?.autoLiability) ? true : null } }) },
 ];
 
-// A derivation's checks for the record as corrected, in place of the ones it made before (`codes`).
-// Kept by position, as the panel marks checks done by position: one said again in the same words
-// keeps its mark; in other words, it takes the old one's place, unchecked; a new one is added at the
-// end; one that no longer holds is retired to a note saying so.
+// A box's own checks, run again on the value the agent corrected it to (the maintainer,
+// 2026-11-07, answer 2 on PR #367): a value now valid retires the check, one still invalid keeps it
+// (in its new words). Each entry: the edited paths it is for (`match`, its groups passed on), the
+// checks it owns (`codes`, on the paths `at` gives), and the checks for the record as corrected.
+// Not for an answer derived from another one (ownership, years in business, the miles): an agent's
+// value there keeps its checks as they are (answer 3), as for a later edit of its source. The
+// garaging address's checks are about how the whole address was split, not one box's value, and
+// stay the agent's to confirm.
+const unitWho = (list, i, rows) => {
+  const u = rows?.[list]?.[i] ?? i + 1;
+  return { list, i, n: u, p: (k) => `${list}[${i}].${k}` };
+};
+const driverName = (d, n) => [d.first, d.last].filter(Boolean).join(' ') || `Driver ${n}`;
+const unitName = (u, label, n) => [u.year, u.make, u.model].filter((x) => x != null && x !== '').join(' ') || `${label} ${n}`;
+const chk = (code, path, msg) => ({ code, path, level: 'check', msg });
+/** @type {{ match: RegExp, codes: string[], at?: (m: RegExpMatchArray) => string, run: (record: any, m: RegExpMatchArray, ctx: { year: number, rows?: object }) => object[] }[]} */
+const BOX_CHECKS = [
+  { match: /^claims\.text$/, codes: ['claims.blank'], run: (r) => (r.claims?.text ? [] : [chk('claims.blank', 'claims.text', 'Claims question left blank.')]) },
+  { match: /^applicant\.fein$/, codes: ['fein.invalid', 'fein.none'], run: (r) => {
+    const v = r.applicant?.fein;
+    if (v == null || String(v).replace(/\D/g, '').length === 9) return [];
+    if (/^no\.?$/i.test(String(v).trim())) return [{ code: 'fein.none', path: 'applicant.fein', level: 'info', msg: `FEIN "${v}": no FEIN.` }];
+    return [chk('fein.invalid', 'applicant.fein', `"${v}" should be 9 digits.`)];
+  } },
+  { match: /^applicant\.yearEstablished$/, codes: ['year-established.invalid'], run: (r, m, { year }) => {
+    const v = r.applicant?.yearEstablished;
+    return v == null || (Number.isInteger(v) && v >= 1900 && v <= year) ? [] : [chk('year-established.invalid', 'applicant.yearEstablished', `"${v}" isn't a valid year.`)];
+  } },
+  { match: /^applicant\.phone$/, codes: ['phone.invalid'], run: (r) => {
+    const v = r.applicant?.phone;
+    return v == null || toPhone(v) ? [] : [chk('phone.invalid', 'applicant.phone', `"${v}" isn't a 10-digit US number.`)];
+  } },
+  { match: /^applicant\.email$/, codes: ['email.invalid'], run: (r) => {
+    const v = r.applicant?.email;
+    return v == null || /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(String(v)) ? [] : [chk('email.invalid', 'applicant.email', `"${v}" looks malformed.`)];
+  } },
+  // The USDOT or MC number: digits (after a USDOT, DOT, MC or MX before them), 1 to 8 of them.
+  { match: /^applicant\.(dot|mc)$/, codes: ['id.invalid'], at: (m) => `applicant.${m[1]}`, run: (r, m) => {
+    const v = r.applicant?.[m[1]];
+    if (v == null || numberBoxSaysNo(v)) return [];
+    const digits = String(v).replace(/^(us\s*dot|dot|mc|mx)\b/i, '').replace(/\D/g, '');
+    return /^\d{1,8}$/.test(digits) ? [] : [chk('id.invalid', `applicant.${m[1]}`, `"${v}" isn't a valid number.`)];
+  } },
+  // (The form's "NEW" read as 0 years is the intake's: its note is retired by the agent's years.)
+  { match: /^applicant\.yearsExperience$/, codes: ['years-experience.invalid', 'years-experience.new'], run: (r) => {
+    const v = r.applicant?.yearsExperience;
+    return v == null || Number.isInteger(v) ? [] : [chk('years-experience.invalid', 'applicant.yearsExperience', `"${v}" isn't a number.`)];
+  } },
+  { match: /^drivers\[(\d+)\]\.dob$/, codes: ['dob.invalid', 'dob.missing', 'dob.unusual-age'], at: (m) => `drivers[${m[1]}].dob`, run: (r, m, { year, rows }) => {
+    const { i, n, p } = unitWho('drivers', Number(m[1]), rows);
+    const d = r.drivers?.[i];
+    if (!d) return [];
+    const who = driverName(d, n);
+    if (d.dob == null) return [chk('dob.missing', p('dob'), `${who}: no date of birth.`)];
+    const dob = toDate(d.dob);
+    if (!dob) return [chk('dob.invalid', p('dob'), `${who}: "${d.dob}" isn't a valid date.`)];
+    const age = year - Number(dob.slice(6));
+    return age < 18 || age > 90 ? [chk('dob.unusual-age', p('dob'), `${who}: age ~${age}. Typo?`)] : [];
+  } },
+  { match: /^drivers\[(\d+)\]\.licenseNumber$/, codes: ['license.missing'], at: (m) => `drivers[${m[1]}].licenseNumber`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho('drivers', Number(m[1]), rows);
+    const d = r.drivers?.[i];
+    return d && d.licenseNumber == null ? [chk('license.missing', p('licenseNumber'), `${driverName(d, n)}: no driver's license number.`)] : [];
+  } },
+  { match: /^drivers\[(\d+)\]\.licenseState$/, codes: ['license-state.missing'], at: (m) => `drivers[${m[1]}].licenseState`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho('drivers', Number(m[1]), rows);
+    const d = r.drivers?.[i];
+    return d && !d.licenseState ? [chk('license-state.missing', p('licenseState'), `${driverName(d, n)}: no license state.`)] : [];
+  } },
+  // The name boxes together: a missing part is on the blank one.
+  { match: /^drivers\[(\d+)\]\.(first|last)$/, codes: ['name.missing-part', 'name.multi-word-first'], at: (m) => `drivers[${m[1]}].`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho('drivers', Number(m[1]), rows);
+    const d = r.drivers?.[i];
+    if (!d) return [];
+    const who = driverName(d, n);
+    const checks = [];
+    if (d.first && /\s/.test(d.first)) checks.push(chk('name.multi-word-first', p('first'), `${who}: "${d.first}" has two words. Check the license for the middle name.`));
+    if (!d.first || !d.last) checks.push(chk('name.missing-part', p(d.first ? 'last' : 'first'), `${who}: missing ${d.first ? 'last' : 'first'} name.`));
+    return checks;
+  } },
+  // The CDL and its year together.
+  { match: /^drivers\[(\d+)\]\.(cdl|cdlYear)$/, codes: ['cdl-year.missing', 'cdl-year.without-cdl', 'cdl.blank-with-year'], at: (m) => `drivers[${m[1]}].`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho('drivers', Number(m[1]), rows);
+    const d = r.drivers?.[i];
+    if (!d) return [];
+    const who = driverName(d, n);
+    if (d.cdl && !d.cdlYear) return [chk('cdl-year.missing', p('cdlYear'), `${who}: has a CDL but no year it was issued.`)];
+    if (d.cdl === false && d.cdlYear) return [chk('cdl-year.without-cdl', p('cdlYear'), `${who}: no CDL, but a CDL year is given.`)];
+    if (d.cdl == null && d.cdlYear) return [chk('cdl.blank-with-year', p('cdl'), `${who}: CDL blank, but a CDL year is given. Answer it.`)];
+    return [];
+  } },
+  { match: /^(vehicles|trailers)\[(\d+)\]\.year$/, codes: ['vehicle-year.invalid'], at: (m) => `${m[1]}[${m[2]}].year`, run: (r, m, { year, rows }) => {
+    const { i, n, p } = unitWho(m[1], Number(m[2]), rows);
+    const u = r[m[1]]?.[i];
+    if (!u || u.year == null || (Number.isInteger(u.year) && u.year >= 1950 && u.year <= year + 1)) return [];
+    return [chk('vehicle-year.invalid', p('year'), `${unitName(u, m[1] === 'vehicles' ? 'Vehicle' : 'Trailer', n)}: year "${u.year}" doesn't look right.`)];
+  } },
+  { match: /^(vehicles|trailers)\[(\d+)\]\.value$/, codes: ['vehicle-value.invalid'], at: (m) => `${m[1]}[${m[2]}].value`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho(m[1], Number(m[2]), rows);
+    const u = r[m[1]]?.[i];
+    if (!u || u.value == null || typeof u.value === 'number') return [];
+    return [chk('vehicle-value.invalid', p('value'), `${unitName(u, m[1] === 'vehicles' ? 'Vehicle' : 'Trailer', n)}: value "${u.value}" isn't a dollar amount.`)];
+  } },
+  { match: /^(vehicles|trailers)\[(\d+)\]\.vin$/, codes: ['vin.invalid', 'vin.missing'], at: (m) => `${m[1]}[${m[2]}].vin`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho(m[1], Number(m[2]), rows);
+    const u = r[m[1]]?.[i];
+    if (!u) return [];
+    const what = unitName(u, m[1] === 'vehicles' ? 'Vehicle' : 'Trailer', n);
+    if (u.vin == null) return [chk('vin.missing', p('vin'), `${what}: no VIN.`)];
+    const vin = String(u.vin).replace(/[\s-]/g, '').toUpperCase();
+    const problem = vinProblem(vin);
+    return problem ? [chk('vin.invalid', p('vin'), `${what}: VIN ${vin} ${problem}.`)] : [];
+  } },
+  { match: /^(vehicles|trailers)\[(\d+)\]\.type$/, codes: ['vehicle-type.missing'], at: (m) => `${m[1]}[${m[2]}].type`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho(m[1], Number(m[2]), rows);
+    const u = r[m[1]]?.[i];
+    const label = m[1] === 'vehicles' ? 'Vehicle' : 'Trailer';
+    return u && !u.type ? [chk('vehicle-type.missing', p('type'), `${unitName(u, label, n)}: ${label.toLowerCase()} type not selected.`)] : [];
+  } },
+  { match: /^operations\.(usesEld|eldBrand)$/, codes: ['eld-brand.missing'], run: (r) => (r.operations?.usesEld && !r.operations.eldBrand
+    ? [chk('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.')] : []) },
+  { match: /^operations\.(filingsRequired|filingsWhich)$/, codes: ['filings-which.missing'], run: (r) => (r.operations?.filingsRequired && !r.operations.filingsWhich && !ntlNoDotFilings(r)
+    ? [chk('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.')] : []) },
+  { match: /^coverage\.(cargo|cargoLimit|cargoDeductible)$/, codes: ['cargo-limit.missing', 'cargo-deductible.missing'], run: (r) => {
+    const c = r.coverage ?? {};
+    if (c.cargo && !c.cargoLimit) return [chk('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.')];
+    if (c.cargo && c.cargoDeductible == null) return [chk('cargo-deductible.missing', 'coverage.cargoDeductible', 'No cargo deductible: usually $1,000 or $2,500.')];
+    return [];
+  } },
+  { match: /^coverage\.(autoLiability|autoLiabLimit)$/, codes: ['auto-limit.missing'], run: (r) => ((r.coverage?.autoLiability === 'Yes' || nonTruckingAnswer(r.coverage?.autoLiability)) && !r.coverage.autoLiabLimit
+    ? [chk('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.')] : []) },
+  { match: /^coverage\.(gl|glLimit)$/, codes: ['gl-limit.missing'], run: (r) => (r.coverage?.gl && !r.coverage.glLimit
+    ? [chk('gl-limit.missing', 'coverage.glLimit', 'No GL limit. TNI default is $1M/$2M: confirm with the client.')] : []) },
+  // The current policy's expiration: a date, and whether it has expired (priorExpiredChecks).
+  { match: /^priorInsurance\[0\]\.expiration$/, codes: ['prior-expiration.invalid', 'prior-expiration.expired'], run: (r) => {
+    const prior = r.priorInsurance?.[0];
+    if (!prior || prior.expiration == null) return [];
+    if (!toDate(prior.expiration)) return [chk('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`)];
+    return noPriorInsurance(prior) ? [] : priorExpiredChecks(r, prior);
+  } },
+];
+
+/** The check for a current policy expired by today's date or the application date. */
+function priorExpiredChecks(record, prior) {
+  // Expired by today's date or the application date: the carriers' rules read it the same way
+  // (priorPolicyExpired; the maintainer, 2026-11-07, audit DATA-02), so the check names the date.
+  const { byToday, byApplication } = priorPolicyExpiredBy(record, prior);
+  if (!byToday && !byApplication) return [];
+  const applied = record.applicant?.applicationDate;
+  const before = byApplication ? (byToday ? 'before the application date and today' : 'before the application date')
+    : applied ? `before today, though after the application date ${applied}` : 'before today';
+  return [chk('prior-expiration.expired', 'priorInsurance[0].expiration', `Expired ${prior.expiration}, ${before}: an expired policy is not current insurance. Review it.`)];
+}
+
+// Checks for the record as corrected, in place of the ones `owns` picks among the intake's (a
+// derivation's, or the edited box's own). Kept by position, as the panel marks checks done by
+// position: one said again in the same words keeps its mark; in other words, it takes the old one's
+// place, unchecked; a new one is added at the end; one that no longer holds is retired to a note
+// saying so.
 const RETIRED = 'No longer applies after your edit: ';
-function recheck(intake, codes, checks) {
+function recheck(intake, owns, checks) {
   const { warnings } = intake;
-  const before = warnings.flatMap((w, i) => (codes.includes(w.code) ? [i] : []));
+  const before = warnings.flatMap((w, i) => (owns(w) ? [i] : []));
   const said = new Set();
   for (const w of checks) {
     const i = before.find((j) => !said.has(j) && warnings[j].code === w.code);
@@ -1521,7 +1668,7 @@ function recheck(intake, codes, checks) {
 /**
  * @param {object} record  the client record, already holding the edit at `path`
  * @param {string} path  the edited field
- * @param {{ today?: Date, keep?: Set<string>, intake?: { warnings: object[], done?: number[], readFrom?: Record<string, string[]> } }} [options]
+ * @param {{ today?: Date, keep?: Set<string>, intake?: { warnings: object[], done?: number[], readFrom?: Record<string, string[]>, rows?: object } }} [options]
  *   keep: the paths the agent set directly, never recomputed; intake: the loaded intake holding
  *   `record`, whose checks (with their done marks) and `readFrom` follow
  * @returns {string[]} the derived paths that were recomputed
@@ -1550,7 +1697,15 @@ export function rederive(record, path, { today = new Date(), keep, intake } = {}
       if (fields?.length) readFrom[p] = fields;
       else delete readFrom[p];
     }
-    if (intake && d.codes && out.checks) recheck(intake, d.codes, out.checks);
+    if (intake && d.codes && out.checks) recheck(intake, (w) => d.codes.includes(w.code), out.checks);
+  }
+  // The edited box's own checks, on the value it holds now.
+  for (const box of intake ? BOX_CHECKS : []) {
+    const m = path.match(box.match);
+    if (!m) continue;
+    const at = box.at?.(m);
+    const owns = (w) => box.codes.includes(w.code) && (!at || (at.endsWith('.') ? w.path?.startsWith(at) : w.path === at));
+    recheck(intake, owns, box.run(record, m, { year, rows: intake.rows }));
   }
   return recomputed;
 }

@@ -2193,6 +2193,7 @@ const correct = (intake, path, value) => {
   return rederive(intake.record, path, { ...DATA04, keep: new Set(intake.agentEdited), intake });
 };
 const open = (intake, code) => intake.warnings.some((w, i) => w.code === code && w.level === 'check' && !intake.done.includes(i));
+const openOn = (intake, code, path) => intake.warnings.some((w, i) => w.code === code && w.path === path && w.level === 'check' && !intake.done.includes(i));
 const retired = (intake, code) => intake.warnings.some((w) => w.code === code && w.level === 'info' && w.msg.startsWith('No longer applies after your edit: '));
 
 test('correcting the claims box recomputes the claims answer and its notes, unless the agent answered it (DATA-04)', () => {
@@ -2300,4 +2301,43 @@ test('correcting the radius recomputes its check with the miles; the time with t
   assert.ok(retired(notes, 'prior.tenure') && !open(notes, 'prior.tenure'));
   // Positions never move: the panel marks checks done by position.
   assert.equal(notes.warnings.length, normalizeIntake({ ...raw, claims_details: 'No', additional_notes: 'Insured with Synthetic Mutual for 6 years' }, DATA04).warnings.length);
+});
+
+// The maintainer, 2026-11-07 (answer 2 on PR #367): correcting a box runs that box's own checks again
+// on the corrected value. A value now valid retires the check; one still invalid keeps it open, in
+// its new words.
+test('correcting a box runs its own checks again: a valid value retires them, an invalid one keeps them (DATA-04)', () => {
+  const intake = loaded({ claims_details: '', dot_number: '123456789', year_established: '1850', veh_vin_1: 'ABC', drv_dob_1: '', ins_exp_1: '13/45/2026' });
+  for (const code of ['claims.blank', 'id.invalid', 'year-established.invalid', 'vin.invalid', 'dob.missing', 'prior-expiration.invalid']) assert.ok(open(intake, code), code);
+  const length = intake.warnings.length;
+  correct(intake, 'claims.text', 'No');
+  assert.ok(retired(intake, 'claims.blank') && !open(intake, 'claims.blank'));
+  // Still invalid: kept, in the new words, and asked again though it was marked done.
+  const dot = intake.warnings.findIndex((w) => w.code === 'id.invalid' && w.path === 'applicant.dot');
+  intake.done.push(dot);
+  correct(intake, 'applicant.dot', '1234567890');
+  assert.deepEqual([intake.warnings[dot].level, intake.warnings[dot].msg, intake.done.includes(dot)], ['check', '"1234567890" isn\'t a valid number.', false]);
+  correct(intake, 'applicant.dot', 'USDOT 1234567');
+  assert.ok(retired(intake, 'id.invalid') && !open(intake, 'id.invalid'));
+  correct(intake, 'applicant.yearEstablished', 1801);
+  assert.match(intake.warnings.find((w) => w.code === 'year-established.invalid').msg, /"1801" isn't a valid year/);
+  assert.ok(open(intake, 'year-established.invalid'));
+  correct(intake, 'applicant.yearEstablished', 2019);
+  assert.ok(!open(intake, 'year-established.invalid'));
+  correct(intake, 'vehicles[0].vin', '1HGCM82633A004352');
+  assert.ok(!openOn(intake, 'vin.invalid', 'vehicles[0].vin'), 'a VIN that passes');
+  correct(intake, 'vehicles[0].vin', null);
+  assert.ok(openOn(intake, 'vin.missing', 'vehicles[0].vin'), 'emptied: no VIN');
+  correct(intake, 'drivers[0].dob', '02/31/1990');
+  assert.ok(open(intake, 'dob.invalid') && !open(intake, 'dob.missing'), 'the same box, another check');
+  correct(intake, 'drivers[0].dob', '02/03/1988');
+  assert.ok(!open(intake, 'dob.invalid') && !open(intake, 'dob.missing'));
+  correct(intake, 'priorInsurance[0].expiration', '01/15/2026');
+  assert.ok(!open(intake, 'prior-expiration.invalid'));
+  assert.ok(open(intake, 'prior-expiration.expired'), 'a valid date before today: expired');
+  correct(intake, 'priorInsurance[0].expiration', '01/15/2027');
+  assert.ok(!open(intake, 'prior-expiration.expired'));
+  // Another driver's checks are theirs.
+  assert.ok(intake.warnings.every((w) => !w.path?.startsWith('drivers[1].') || !w.msg.startsWith('No longer applies')));
+  assert.equal(intake.warnings.filter((w) => w.code !== 'prior-expiration.expired' && w.code !== 'vin.missing' && w.code !== 'dob.invalid').length, length, 'positions never move');
 });
