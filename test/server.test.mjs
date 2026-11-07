@@ -232,6 +232,18 @@ test('dropped fields are named on the event (names only, bounded), and health na
   assert.equal(row.extra0, undefined);
 });
 
+// Audit 2026-11-07, FLOW-12: a fill run's `background` (true only) and `hiddenMs` (a whole number of
+// milliseconds, up to a day) are kept; anything else there is dropped and named.
+test('a fill run keeps whether it ran in the background and how long its page was hidden', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [ev({ background: true, hiddenMs: 4200 }), ev({ background: 'yes', hiddenMs: -1 }), ev({ hiddenMs: 1.5 })] });
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((e) => [e.background ?? null, e.hiddenMs ?? null, (e.dropped ?? []).filter((k) => ['background', 'hiddenMs'].includes(k)).sort()]),
+    [[true, 4200, []], [null, null, ['background', 'hiddenMs']], [null, null, ['hiddenMs']]]);
+});
+
 // Codex on PR #47: stored events uploaded again (npm run push-logs) keep what was dropped before.
 test('a re-uploaded event keeps the names an earlier server dropped', async () => {
   const dataDir = tmp();

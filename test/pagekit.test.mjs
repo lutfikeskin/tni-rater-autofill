@@ -605,6 +605,30 @@ test('reinjection reuses the installed pagekit and preserves its state', () => {
   assert.equal(h.context.__raterKit, h.kit);
 });
 
+// Audit 2026-11-07, FLOW-12: Chrome slows a hidden tab's timers, which the fill's waits run on. A
+// fill says how long its page was hidden (`hiddenMs`), and nothing when it wasn't.
+test('a fill says how long its page was hidden, and nothing when it was in view', async () => {
+  const fillOn = async (visibility, hideAfterAnswer = false) => {
+    const h = harness();
+    h.document.visibilityState = visibility;
+    const select = new SelectNode([{ text: '', value: '' }, { text: 'NO PRIOR', value: 'np' }], { attrs: { 'data-id': 'carrierName' } });
+    h.document.body.append(select);
+    // The agent moves to another tab once the answer is in: hidden from then on.
+    if (hideAfterAnswer) select.addEventListener('change', () => { h.document.visibilityState = 'hidden'; h.document.dispatchEvent({ type: 'visibilitychange' }); });
+    const report = await h.kit.fill([{ id: 'prior', path: 'prior', withOption: 'NO PRIOR', kind: 'choice', value: 'NO PRIOR' }], { maxRounds: 3 });
+    assert.equal(select.value, 'np');
+    return { report, h };
+  };
+  const shown = await fillOn('visible');
+  assert.equal(shown.report.hiddenMs, undefined);
+  const hidden = await fillOn('hidden');
+  assert.ok(Number.isInteger(hidden.report.hiddenMs) && hidden.report.hiddenMs > 0, `hidden throughout: ${hidden.report.hiddenMs}`);
+  const later = await fillOn('visible', true);
+  assert.ok(later.report.hiddenMs > 0 && later.report.hiddenMs <= hidden.report.hiddenMs, `hidden after the answer: ${later.report.hiddenMs}`);
+  // The fill's listener goes with it.
+  assert.equal(later.h.document._listeners.get('visibilitychange')?.length ?? 0, 0);
+});
+
 test('anonymous repeated carrier fields have distinct keys and protecting one does not skip the others', async () => {
   const h = harness();
   const garage = new FakeNode('div', { id: 'garagePanel' });

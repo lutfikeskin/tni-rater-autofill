@@ -7,7 +7,7 @@
 /** @import { FillOptions, FillReport, PlanStep } from '../../types.js' */
 
 import { kitTrace, setTracing } from './trace.js';
-import { adapter, pageBusy, stepKey, stopStepOn, settle, getKnownStopSteps } from './adapter.js';
+import { adapter, pageBusy, perfNow, stepKey, stopStepOn, settle, getKnownStopSteps } from './adapter.js';
 import { collectControls, fieldKey, describe, invalidControl } from './dom.js';
 import { mark, clear, markKey, reveal, aiBanner } from './marks.js';
 import { listed, unitList, unitListsNow, unitFormsNow } from './units.js';
@@ -108,11 +108,24 @@ import { fill, progress, stop } from './cursor.js';
   async function tracedFill(plan, options = {}) {
     setTracing(!!options?.trace);
     kitTrace('run', { on: true, steps: plan?.length ?? 0 });
+    // How long the page was hidden while it filled (`hiddenMs`, only when it was): Chrome slows a
+    // hidden tab's timers, which the fill's waits run on (audit 2026-11-07, FLOW-12). Measured, not
+    // worked around.
+    let hiddenMs = 0;
+    let hiddenSince = document.visibilityState === 'hidden' ? perfNow() : null;
+    const seen = () => {
+      if (document.visibilityState === 'hidden') hiddenSince ??= perfNow();
+      else if (hiddenSince != null) { hiddenMs += perfNow() - hiddenSince; hiddenSince = null; }
+    };
+    document.addEventListener('visibilitychange', seen);
     try {
       const report = await fill(plan, options);
       kitTrace('run', { on: false, filled: report?.filled?.length ?? 0, halted: !!report?.halted });
+      if (hiddenSince != null) hiddenMs += perfNow() - hiddenSince;
+      if (report && hiddenMs >= 1) report.hiddenMs = Math.round(hiddenMs);
       return report;
     } finally {
+      document.removeEventListener('visibilitychange', seen);
       setTracing(false);
     }
   }

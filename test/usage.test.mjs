@@ -82,6 +82,16 @@ test('change and fill events name the control, so repeated vehicle rows stay apa
   assert.deepEqual([filled.q, filled.key], ['2B9D', '2B9D@3']);
 });
 
+// Audit 2026-11-07, FLOW-12: a fill of the quote tab while the agent was on another, and how long its
+// page was hidden (the longest a frame saw), so the weekly review can tell throttled fills apart.
+test('a fill run says it ran in the background and how long its page was hidden, only when so', () => {
+  const ctx = { carrier: 'progressive', page: 'Rates', overwrite: false, ms: 1, redact: (t) => t };
+  const [back] = fillEvents([{ fields: 3, hiddenMs: 1200 }, { fields: 1, hiddenMs: 900 }, { fields: 1 }], { ...ctx, background: true });
+  const [front] = fillEvents([{ fields: 3 }], ctx);
+  assert.deepEqual([back.background, back.hiddenMs], [true, 1200]);
+  assert.deepEqual(['background' in front, 'hiddenMs' in front], [false, false]);
+});
+
 test('dropdown changes keep the option text, minus client names', () => {
   const filled = new Map([['2B9D', { path: 'progressive.q2B9D', shown: 'More than 500 miles' }]]);
   const e = fieldChangeEvent({ key: '2B9D', q: '2B9D', label: 'Farthest distance', kind: 'select', before: 'More than 500 miles', after: '500 miles', agent: true }, { record, filled, redact });

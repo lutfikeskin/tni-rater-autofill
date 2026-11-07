@@ -4427,6 +4427,26 @@ test('events name their view: the tab\'s order in the quote and the vehicle or d
   assert.equal(context.viewOf(402, 'Vehicles', carrier), 't1');
 });
 
+// Audit 2026-11-07, FLOW-12: a fill of the quote tab while the agent is on another tab (refreshTab's
+// `background`) says so on its fill_run, taken with its context as it begins.
+test('a fill of the quote tab while the agent is on another tab is logged as in the background', () => {
+  const logged = [];
+  const state = { tab: { id: 7, background: true }, intake: { record: {} }, intakeRevision: 0, active: { vehicles: 0, drivers: 0, trailers: 0 } };
+  const context = { state, crypto: { randomUUID: () => 'run-1' }, usage: { currentSession: () => ({ id: 's', intakeId: 'i' }), log: (...e) => logged.push(...e) },
+    viewOf: () => 't1', editScope: () => 'p', tabStep: () => null, switchOn: () => true, fillDefaultsHash: () => undefined,
+    redactor: () => (t) => t, redactionTerms: () => [], stepOfResults: () => null, rulesVersion: null, fillEvents };
+  vm.runInNewContext(['fillContext', 'logFill'].map((name) => extractFunction(name).split('\nfunction ')[0]).join('\n'), context);
+  const carrier = { id: 'geico', practice: false };
+  const fill = (tabId) => { const ctx = context.fillContext({ tabId, carrier, page: 'Vehicles', tabUrl: 'x' }); context.logFill(ctx, [{ fields: 1, hiddenMs: 800 }], [], Date.now()); };
+  fill(7);
+  // Another tab's fill (one the agent left running there): not this tab's background.
+  fill(8);
+  state.tab.background = false;
+  fill(7);
+  const runs = logged.filter((e) => e.type === 'fill_run');
+  assert.deepEqual(runs.map((e) => [e.background ?? false, e.hiddenMs]), [[true, 800], [false, 800], [false, 800]]);
+});
+
 test('fills take their view before waiting, stop pages log theirs, and a reopened panel keeps the quote\'s views', () => {
   for (const name of ['fillPage', 'autoFill']) {
     const body = extractFunction(name);
