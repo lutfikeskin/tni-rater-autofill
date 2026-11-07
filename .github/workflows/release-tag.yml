@@ -1,0 +1,56 @@
+# Tags each extension version and gives it a GitHub Release (audit 2026-11-07, ORG-13): when main's
+# manifest.json version changes, the commit that set it is tagged v<version>, with the pull
+# requests merged since the version before it as notes (scripts/release-notes.mjs). A version
+# already tagged is left as it is. Run it by hand with a version to tag an earlier one.
+# It uploads nothing to the Chrome Web Store: that stays the maintainer's step (docs/chrome-web-store.md).
+name: Release tag
+
+on:
+  push:
+    branches: [main]
+    paths: [manifest.json]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'A version main had (x.y.z); blank: manifest.json''s'
+        required: false
+
+# One at a time, so two pushes never race to create the same tag.
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write   # the tag and the release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the history back to the previous version
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: release
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION" ]; then
+            node scripts/release-notes.mjs --version "$VERSION" --out notes.md >> "$GITHUB_OUTPUT"
+          else
+            node scripts/release-notes.mjs --out notes.md >> "$GITHUB_OUTPUT"
+          fi
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TARGET: ${{ steps.release.outputs.target }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$TAG already has a release: left as it is."
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$TARGET" --title "$VERSION" --notes-file notes.md
+          fi
