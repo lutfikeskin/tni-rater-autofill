@@ -332,8 +332,12 @@ test('a page request its server answered with an error is in the step\'s timelin
     { kind: 'fill', t: t0 + 2000, frame: 0, on: false },
   ];
   const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:03.000Z' }, events });
-  assert.match(report, /the page's request to \/api\/rate failed: HTTP 503 after 1\.2 s/);
+  assert.match(report, /the page's request to `\/api\/rate` failed: HTTP 503 after 1\.2 s/);
   assert.equal(report.match(/failed: HTTP/g).length, 1, 'a 200 or a request with no status is no line');
+  // Review of PR #379: a decoded path holding a line break and Markdown stays code on its one line.
+  const odd = recordingReport({ manifest: manifestFor(), events: events.map((e) => (e.status === 503 ? { ...e, path: '/api/\n\n# Extra `x`' } : e)) });
+  assert.match(odd, /the page's request to `\/api\/ # Extra 'x'` failed: HTTP 503/);
+  assert.doesNotMatch(odd, /^# Extra/m);
   assert.match(report, /\| 3 \(1\.4 s\), 1 failed \|/);
   assert.match(report, /The page's server answered 1 request with an error \(HTTP 503 ×1\)/);
   assert.ok(!/with an error/.test(recordingReport({ manifest: manifestFor(), events: events.filter((e) => e.status !== 503) })));

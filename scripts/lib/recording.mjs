@@ -40,6 +40,8 @@ const clock = (ms) => {
 };
 const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const quote = (s) => `"${String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)}"`;
+// A request's path as code, on one line: decoded, it can hold a line break or Markdown (review of PR #379).
+const codePath = (s) => `\`${String(s ?? '').replace(/\s+/g, ' ').replace(/`/g, "'").trim().slice(0, 120)}\``;
 const fieldName = (e) => quote(e.field?.label || e.field?.key || 'a question');
 // Where an answer is down the page; none for a box drawn with no size (a page's hidden status box,
 // Progressive's Current Page Errored), which is never above or below a question.
@@ -167,7 +169,7 @@ function actions(events) {
       lines.push({ t: e.t, text: `the page ${[drew, took].filter(Boolean).join(' and ')}${e.sinceAction != null ? `, ${secs(e.sinceAction)} after the last action` : ''}` });
     } else if (e.kind === 'fill') lines.push({ t: e.t, text: e.on ? 'a fill started' : `the fill ended${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
     // A request the carrier's server refused or failed (HTTP 400 and up): its own error, not the fill's.
-    else if (e.kind === 'request' && failed(e)) lines.push({ t: e.t, text: `the page's request to ${e.path} failed: HTTP ${e.status} after ${secs(e.ms ?? 0)}` });
+    else if (e.kind === 'request' && failed(e)) lines.push({ t: e.t, text: `the page's request to ${codePath(e.path)} failed: HTTP ${e.status} after ${secs(e.ms ?? 0)}` });
     else if (e.kind === 'note') lines.push({ t: e.t, text: `NOTE: ${e.text}` });
     else if (e.kind === 'gap') lines.push({ t: e.t, text: `GAP: ${e.dropped} event(s) lost while no panel took them` });
     else if (e.kind === 'page' && (e.frame ?? 0) !== 0) lines.push({ t: e.t, text: `a frame loaded ${quote(e.page)}` });
