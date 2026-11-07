@@ -9167,6 +9167,31 @@ test('GEICO coverages: a CSL limit takes property damage and UMPD off the page a
   assert.ok(report.reconcile.ms >= 0);
 });
 
+// TNI, 2026-11-06, W47-03: where GEICO's UM list has split limits only (FL), TNI's $100,000 is
+// $100,000/$300,000; a list offering the CSL keeps it. Through the fill's own option selection.
+test('GEICO FL UM: $100,000/$300,000 on a split-only list, the CSL kept when offered (W47-03)', async () => {
+  const UM = 'Uninsured Motorist Bodily Injury (includes Underinsured)';
+  const fillUm = async (options) => {
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    geicoBar(h, 'Quote & Coverages');
+    h.document.body.innerText = STALE;
+    const id = `Id_${randomUUID()}_40000`;
+    const box = new FakeNode('div');
+    const legend = new FakeNode('gds-label-legend', { attrs: { element: 'label', for: id } });
+    legend.append(new FakeNode('span', { textContent: UM }));
+    const select = new SelectNode(['Please Select', ...options], { id, ariaLabel: UM, value: 'Please Select' });
+    box.append(legend, select);
+    h.document.body.append(box);
+    const record = { ...geicoRecord(), garaging: { state: 'FL' } };
+    const plan = buildPlan(record, { id: 'geico', useGenericRules: false, rules: geico.rules.filter((r) => r.q === 'UninsuredMotorist'), actions: [] });
+    const report = await h.kit.fill(plan, { replaceChoices: true, maxRounds: 5 });
+    return { value: select.value, failed: report.failed.map((x) => x.label) };
+  };
+  const SPLIT = ['I decline', '$10,000/$20,000', '$25,000/$50,000', '$50,000/$100,000', '$100,000/$300,000'];
+  assert.deepEqual(plain(await fillUm(SPLIT)), { value: '$100,000/$300,000', failed: [] });
+  assert.deepEqual(plain(await fillUm([...SPLIT, '$100,000 Combined Single Limit'])), { value: '$100,000 Combined Single Limit', failed: [] });
+});
+
 // What a fill streams to the panel while it runs (progress: the items judged so far, one snapshot a
 // round), read as the page takes each answer and every few ms, until `done` settles.
 function watchStream(kit, controls, done) {
