@@ -116,7 +116,9 @@ function extractFunction(name) {
           stopFillFirst: 'async () => {}',
           // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
           // elsewhere none is running.
-          noteFollowed: '() => {}' };
+          noteFollowed: '() => {}',
+          // A page a hold kept back (resumeHeldFill) has its own test: elsewhere none waits.
+          resumeHeldFill: '() => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -5824,7 +5826,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
   // (runPendingPage then runs from every end of a fill, whichever tab is in front: FLOW-07.)
-  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n\s+\}/);
+  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n[^\n]*\n\s+resumeHeldFill\(\);\n\s+\}/);
 });
 
 // Review 2026-10-22: rows a follow-up fill added had no source or group, so a worked-out answer or
@@ -6033,33 +6035,78 @@ test('the defaults hold opens the quote\'s question from the intake\'s checks, a
 // pages when they open is on; never while still held, with that switch off, or over a page filled.
 // Only the page whose opening fill the question held fills after it, once, for the same intake: never
 // a page nothing was waiting on, such as the last client's quote left in front when a new intake loads.
-test('after the defaults question, the page whose opening fill it held fills as on opening, once', () => {
+// Audit 2026-11-07, FLOW-16: the tab's quote-state hold keeps a page's opening fill the same way, and
+// "<state> is right" fills it; one that lifted while something went in (a fill, a pick from a row,
+// an AI answer) fills as that ends.
+test('after a hold lifts, the page whose opening fill it held fills as on opening, once', () => {
   const intake = {};
-  const run = ({ held = { key: 'key', intake }, hold = false, autoPages = true, report = false, filling = false, front = 'key', now = intake, twice = false } = {}) => {
+  const run = ({ held = { key: 'key', intake }, hold = false, stateHeld = false, autoPages = true, report = false, filling = false, front = 'key', now = intake, twice = false } = {}) => {
     const fills = [];
     const state = { intake: now, filling, tab: { id: 7, url: 'Quote', carrier: { name: 'AmWINS' } }, reports: new Map(report ? [['key', {}]] : []), switches: { autoPages } };
-    const context = { state, heldForDefaults: held, $: () => null, defaultsHold: () => hold, onQuotePage: () => true, currentReportKey: () => front, fillPage: (o) => fills.push(o) };
-    vm.runInNewContext(extractFunction('fillAfterDefaults'), context);
-    context.fillAfterDefaults();
-    if (twice) context.fillAfterDefaults();
-    return { fills: JSON.parse(JSON.stringify(fills)), kept: context.heldForDefaults };
+    const context = { state, heldFill: held, $: () => null, defaultsHold: () => hold, stateIssue: () => (stateHeld ? { picked: 'Texas' } : null), onQuotePage: () => true, currentReportKey: () => front, fillPage: (o) => fills.push(o) };
+    vm.runInNewContext(extractFunction('resumeHeldFill'), context);
+    context.resumeHeldFill();
+    if (twice) context.resumeHeldFill();
+    return { fills: JSON.parse(JSON.stringify(fills)), kept: context.heldFill, context };
   };
   assert.deepEqual(run().fills, [{ auto: 'page' }]);
   assert.deepEqual(run({ twice: true }).fills, [{ auto: 'page' }], 'once');
-  assert.deepEqual(run({ held: null }).fills, [], 'no fill waited on the question: the page in front is not filled');
+  assert.deepEqual(run({ held: null }).fills, [], 'no fill waited on a hold: the page in front is not filled');
   assert.deepEqual(run({ now: {} }).fills, [], 'held for another intake');
   assert.deepEqual(run({ front: 'other' }).fills, [], 'another page in front');
   assert.deepEqual(run({ report: true }).fills, [], 'a page filled since keeps its answers');
-  const still = run({ hold: true });
-  assert.deepEqual(still.fills, []);
-  assert.ok(still.kept, 'still held: kept for the answer');
+  for (const still of [run({ hold: true }), run({ stateHeld: true })]) {
+    assert.deepEqual(still.fills, []);
+    assert.ok(still.kept, 'still held (the defaults question, or the quote state): kept for the hold to lift');
+  }
   assert.deepEqual(run({ autoPages: false }).fills, []);
-  assert.deepEqual(run({ filling: true }).fills, []);
-  // Recorded only by a page's own opening fill the hold stopped.
-  assert.match(extractFunction('fillPage'), /if \(state\.intake && defaultsHold\(\)\) \{\s*\/\/[^\n]*\n\s*if \(auto === 'page'\) heldForDefaults = \{ key: currentReportKey\(\), intake: state\.intake \};/);
-  assert.match(SIDEPANEL, /onDefaultsAnswer\(async \(choice\) => \{ await answerDefaults\(choice\); logSettings\('changed', 'defaults'\); renderSteps\(\); fillAfterDefaults\(\); \}\);/);
+  // Something going in as the hold lifted: kept, and filled once that ends.
+  const busy = run({ filling: true });
+  assert.deepEqual([busy.fills, !!busy.kept], [[], true]);
+  busy.context.state.filling = false;
+  busy.context.resumeHeldFill();
+  assert.equal(busy.context.heldFill, null);
+  // Recorded only by a page's own opening fill a hold stopped: the quote state's, the question's.
+  const fillPage = extractFunction('fillPage');
+  assert.match(fillPage, /if \(state\.intake && stateIssue\(\)\) \{\n\s*if \(auto === 'page'\) heldFill = \{ key: currentReportKey\(\), intake: state\.intake \};/);
+  assert.match(fillPage, /if \(state\.intake && defaultsHold\(\)\) \{\s*\/\/[^\n]*\n\s*if \(auto === 'page'\) heldFill = \{ key: currentReportKey\(\), intake: state\.intake \};/);
+  assert.match(SIDEPANEL, /onDefaultsAnswer\(async \(choice\) => \{ await answerDefaults\(choice\); logSettings\('changed', 'defaults'\); renderSteps\(\); resumeHeldFill\(\); \}\);/);
   // The developer hiding the feature lifts the hold too: the held page fills as in the store build.
-  assert.match(SIDEPANEL, /defaultsShown: async \(on\) => \{ await setDefaultsShown\(on\); renderSteps\(\); fillAfterDefaults\(\); \}/);
+  assert.match(SIDEPANEL, /defaultsShown: async \(on\) => \{ await setDefaultsShown\(on\); renderSteps\(\); resumeHeldFill\(\); \}/);
+  // "<state> is right" fills it; the dock's Fill anyway fills the page as the agent's, as before.
+  assert.match(extractFunction('showStateNote'), /\{ label: `\$\{picked\} is right`, className: 'tinted', onClick: \(\) => \{ dismissState\(\); resumeHeldFill\(\); \} \}/);
+  assert.doesNotMatch(extractFunction('dismissState'), /resumeHeldFill/);
+  // Tried as each thing that goes in ends: a fill, an automatic one, a pick from a row, an AI answer.
+  assert.match(fillPage, /\} finally \{[\s\S]*?state\.filling = false;[\s\S]*?resumeHeldFill\(\);\n\s*\}/);
+  assert.match(extractFunction('autoFill'), /\} finally \{[\s\S]*?state\.filling = false;[\s\S]*?resumeHeldFill\(\);\n\s*\}/);
+  assert.match(extractFunction('agentAnswer'), /state\.filling = false;\n\s*if \(button\) button\.disabled = false;\n[^\n]*\n\s*resumeHeldFill\(\);/);
+  assert.match(extractFunction('applyAi'), /state\.filling = false;\n[^\n]*\n\s*resumeHeldFill\(\);/);
+});
+
+// #414 review: AmWINS' next step opens at the same address (new_fields -> scheduleAutoFill ->
+// autoFill, which fills a step without a report as a new page). Under a state or defaults hold
+// scheduleAutoFill dropped it before fillPage could keep it for resumeHeldFill. A step with no
+// report yet goes to fillPage, which keeps it; a follow-up on a step already filled still waits for
+// nothing.
+test('a new step at the same address opened under a hold is kept for when the hold lifts', () => {
+  const run = ({ hold = 'state', report = false, front = 7 } = {}) => {
+    const fills = [];
+    const timers = [];
+    const state = { tab: { id: 7, url: 'Quote', carrier: { name: 'AmWINS' } }, intake: {}, intakeRevision: 0, autoPages: new Set(['Quote']), autoPaused: false, filling: false,
+      reports: new Map(report ? [['7|Quote|Coverages', {}]] : []) };
+    const context = { state, $: () => ({ checked: true }), switchOn: () => true, onQuotePage: () => true, stopNoteFor: () => null, quoteOwnerIssue: () => null,
+      stateIssue: () => (hold === 'state' ? { picked: 'Texas' } : null), defaultsHold: () => hold === 'defaults', pageOf: (u) => u,
+      reportKey: (tabId, page) => `${tabId}|${page}|Coverages`, fillPage: (o) => fills.push(o), fillCurrent: () => true, autoFill: () => fills.push('autoFill'),
+      setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout: () => {} };
+    vm.runInNewContext(extractFunction('scheduleAutoFill'), context);
+    context.scheduleAutoFill('Quote', { tabId: front, intake: state.intake, revision: 0 }, true);
+    return { fills: JSON.parse(JSON.stringify(fills)), timers: timers.length };
+  };
+  assert.deepEqual(run(), { fills: [{ auto: 'page' }], timers: 0 }, 'a state hold: the new step goes to fillPage, which keeps it');
+  assert.deepEqual(run({ hold: 'defaults' }), { fills: [{ auto: 'page' }], timers: 0 }, 'a defaults hold: the same');
+  assert.deepEqual(run({ report: true }), { fills: [], timers: 0 }, 'a follow-up on a step filled: nothing waits');
+  assert.deepEqual(run({ front: 8 }), { fills: [], timers: 0 }, 'another tab\'s: nothing');
+  assert.deepEqual(run({ hold: null }), { fills: [], timers: 1 }, 'no hold: scheduled as before');
 });
 
 test('the fill hint says Continue is clicked for the agent only while that setting is on and the carrier has an advance pattern', () => {
@@ -8441,6 +8488,8 @@ test('no fill, follow-up or scheduled fill while the quote state differs from th
   const t = fillHarness({ carrier: { id: 'progressive', advance: /Continue/ } });
   let notes = 0;
   t.context.showStateNote = () => { notes++; };
+  // The opening fill it holds is kept by its page's report key (resumeHeldFill, FLOW-16).
+  t.context.currentReportKey = () => '7|/quote-A';
   t.context.stateIssue = () => issue;
   await t.context.fillPage();
   await t.context.fillPage({ auto: 'page' });
@@ -8454,10 +8503,11 @@ test('no fill, follow-up or scheduled fill while the quote state differs from th
   t.release(t.results);
   await run;
   assert.equal(t.seen.rendered, 1);
-  // A follow-up isn't scheduled either.
+  // A follow-up (its page filled, with a report) isn't scheduled either.
   const timers = [];
-  const state = { autoPaused: false, autoPages: new Set(['Quote']), tab: { id: 1, url: 'Quote', carrier: { id: 'progressive' } }, filling: false, intake: {}, tabSteps: new Map() };
-  const context = { state, $: () => ({ checked: true }), onQuotePage: () => true, setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {}, pageOf: (u) => u, stateIssue: () => issue };
+  const state = { autoPaused: false, autoPages: new Set(['Quote']), tab: { id: 1, url: 'Quote', carrier: { id: 'progressive' } }, filling: false, intake: {}, tabSteps: new Map(), reports: new Map([['1|Quote', {}]]) };
+  const context = { state, $: () => ({ checked: true }), onQuotePage: () => true, setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {}, pageOf: (u) => u, stateIssue: () => issue,
+    reportKey: (tabId, page) => `${tabId}|${page}`, fillPage: () => timers.push('fillPage') };
   vm.runInNewContext(extractFunction('scheduleAutoFill'), context);
   context.scheduleAutoFill('Quote');
   assert.equal(timers.length, 0);

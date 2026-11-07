@@ -18,7 +18,7 @@ import { $, forgetKeptReports, persistAgentKeys, persistDoneActions, persistUnit
 import { firstUnits, save } from './intake.js';
 import { checkShown, renderPickers, renderWarnings, showScreen } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
-import { afterFill, appendRows, assistAfterFill, fillPage, noteMissingUnit, pickListItem, renderReport, runKit, worldFor } from './fill.js';
+import { afterFill, appendRows, assistAfterFill, fillPage, noteMissingUnit, pickListItem, renderReport, resumeHeldFill, runKit, worldFor } from './fill.js';
 import { pendingAi } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNameFor, unitScope } from './scope.js';
@@ -332,7 +332,14 @@ function logFillError(ctx, error) {
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || stateIssue() || defaultsHold() || quoteOwnerIssue(ctx.tabId)) return;
+  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || quoteOwnerIssue(ctx.tabId)) return;
+  // Held by the quote's state or the defaults question, a follow-up waits for nothing. A step with no
+  // report yet (AmWINS' next step at the same address, which autoFill fills as a new page) is a page's
+  // opening fill: fillPage keeps it for resumeHeldFill, to run once the hold lifts.
+  if (stateIssue() || defaultsHold()) {
+    if (ctx.tabId === state.tab?.id && pageOf(state.tab?.url) === page && !state.reports.has(reportKey(ctx.tabId, page, state.tab.carrier))) fillPage({ auto: 'page' });
+    return;
+  }
   if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
@@ -465,6 +472,8 @@ async function autoFill(page) {
     // The page in front, which this fill wasn't for: its stop card, or its own fill.
     if (moved && fillCurrent(ctx) && stopNoteFor(state.tab?.carrier, pageOf(state.tab?.url))) showStopPage();
     runPendingPage(ctx);
+    // A page a hold kept back, whose hold lifted while this ran.
+    resumeHeldFill();
   }
   if (!fillCurrent(ctx)) return;
   // The page moved on to a stop page while this ran: its card stays on top of this fill's report.
@@ -1564,7 +1573,8 @@ function showStateNote() {
     text: `${before ? `Quote started in ${picked} before this intake was loaded. ` : ''}Start the quote in ${intake}, or check the intake.`,
     compare: [['Rater', picked], [`Intake${place ? pdfPageSaid(place.page, ' page ') : ''}`, address || intake]],
     actions: [
-      { label: `${picked} is right`, className: 'tinted', onClick: dismissState },
+      // The page's opening fill it held goes on (resumeHeldFill); the dock's Fill anyway fills it as the agent's.
+      { label: `${picked} is right`, className: 'tinted', onClick: () => { dismissState(); resumeHeldFill(); } },
       pdf ? { label: `See intake${pdfPageSaid(place.page, ' · p')}`, className: 'ghost', onClick: () => openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' }) } : null,
     ] }) };
 }

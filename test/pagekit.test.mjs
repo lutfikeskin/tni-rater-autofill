@@ -5768,7 +5768,7 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
         if (scenario.startsWith('transport failure') && /\.answer\(/.test(String(func))) throw new Error('Transport unavailable after answer');
         return results.filter(Boolean);
       },
-      tellRecorder: async () => {}, persistAiPending: async () => {},
+      tellRecorder: async () => {}, persistAiPending: async () => {}, resumeHeldFill: () => {},
       agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => {} },
       usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
     const source = PANEL_SOURCE;

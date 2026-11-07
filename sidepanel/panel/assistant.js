@@ -13,7 +13,7 @@ import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
 import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout } from './coordinator.js';
-import { drawRow, fillPage, runKit } from './fill.js';
+import { drawRow, fillPage, resumeHeldFill, runKit } from './fill.js';
 import { aiHolder } from './ai-view.jsx';
 import { needId, setHead } from './report-rows.js';
 import { renderUsage } from './usage-panel.js';
@@ -659,6 +659,8 @@ async function applyAi(list, ctx, decision) {
     }
     await tellRecorder('resume', ctx.tabId);
     state.filling = false;
+    // A page a hold kept back, whose hold lifted while the picks went in.
+    resumeHeldFill();
     // The recorder was paused while Luna's picks went in, so it won't report the questions they
     // revealed or hid: ask for the page's layout, if that tab is still the one followed (a job
     // is built from the followed tab, and checks the page).
