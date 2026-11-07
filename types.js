@@ -605,7 +605,8 @@
  * @property {string[]} [stopSteps]
  * @property {any} [units]
  * @property {{ steps?: { [step: string]: string[] }, stepUnits?: { [step: string]: any }, units?: { [list: string]: string[] }, forms?: { [id: string]: string[] } } | null} [skipBy]
- * @property {{ steps: string[], keys: { [key: string]: true } } | null} [takenBack]
+ * @property {{ steps: string[], keys: { [key: string]: true } } | null} [takenBack]  the steps where the page takes
+ *   answers back (carrier `keepTakenBack`) and the keys earlier fills answered
  * @property {boolean} [hold]
  * @property {any} [confirmed]  the page's receipt as the agent approved it
  * @property {string | null} [run]
@@ -614,7 +615,9 @@
  * @property {string | null} [expectPage]
  * @property {{ list: UnitList, text: string, names: string[][], active: number, label: string } | null} [formUnit]
  *   a form that names its unit (carrier `unitNames`): each intake unit's name words, and the plan's unit
- * @property {{ [key: string]: any }} [givenBefore]
+ * @property {{ [key: string]: { path: string | null, shown: string | null } }} [givenBefore]  what this tab's fills
+ *   gave, by field key: one now showing otherwise is kept (pagekit `changedSince`), or replaced when it
+ *   shows another unit's answer (`givenForOtherUnit`)
  * @property {UnitPager | null} [pager]  the carrier's `unitPager`
  * @property {boolean} [restarted]  the kit's own: a frame's fill begun again on the page it turned into (pagekit fill)
  * @property {boolean} [trace]  a developer recording runs on the tab: the kit says what it waits
@@ -727,6 +730,7 @@
  * @property {string} [pageMoved]
  * @property {string} [navigatedTo]
  * @property {boolean} [pageChanged]
+ * @property {number} [hiddenMs]  how long the page was hidden while it filled (pagekit tracedFill), only when it was
  * @property {[string, string][]} [labels]  field key, question text
  * @property {[string, string[]][]} [choices]  field key, a combo's options
  * @property {{ label: string | null, key: string | null }[]} [skipped]
@@ -834,6 +838,8 @@
  * @property {string} [rules]
  * @property {object} [settings]
  * @property {string} [step]
+ * @property {boolean} [background]  the panel filled the quote tab while the agent was on another tab
+ * @property {number} [hiddenMs]  how long the quote tab's page was hidden during the fill, only when it was
  * @property {number} fields
  * @property {number} rounds
  * @property {number} filled
@@ -906,6 +912,7 @@
  * @property {number} [leaveNoSource]  it answered but cited nothing usable
  * @property {number} [leaveUnverified]  the evidence check refused its answer
  * @property {number} [leaveTooLarge]  too large for one request even alone: not asked
+ * @property {string} [promptHash]  the instructions and rules it got (src/ai/luna.js promptHash)
  * @property {number} [tokensIn]
  * @property {number} [tokensOut]
  * @property {number} [modelCalls]

@@ -64,6 +64,16 @@ test('agent edits to text boxes are logged without the text', () => {
   assertNoClientData(typed);
 });
 
+// Audit 2026-11-07 LEARN-04: GEICO wraps a driver's name in an analytics <span> inside the label; the
+// change and the fill name the field with the same text.
+test('change and fill events log a question\'s text without the page\'s markup', () => {
+  const label = "<span data-qm-encrypt='true'>Jordan</span>'s   Driver License State";
+  const change = fieldChangeEvent({ key: 'ref:GiveLicenseState', label, kind: 'select', before: '', after: 'TX', agent: true }, { record, filled: new Map(), redact });
+  const [, fill] = fillEvents([{ filled: [{ key: 'ref:GiveLicenseState', label: "[client]'s Driver License State", controlKind: 'select', shown: 'TX' }] }], { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact });
+  assert.equal(change.label, "[client]'s Driver License State");
+  assert.equal(change.label, fill.label);
+});
+
 test('change and fill events name the control, so repeated vehicle rows stay apart', () => {
   const second = fieldChangeEvent({ key: '2B9D@2', q: '2B9D', label: 'Farthest distance', kind: 'select', before: '', after: '500 miles', agent: true }, { record, filled: new Map(), redact });
   assert.deepEqual([second.q, second.key], ['2B9D', '2B9D@2']);
@@ -80,6 +90,16 @@ test('change and fill events name the control, so repeated vehicle rows stay apa
   assert.equal(owner('2B9D@2', 'salt-1'), '2B9D@2', 'keys without client data stay as they are');
   const [, filled] = fillEvents([{ filled: [{ key: '2B9D@3', q: '2B9D', label: 'Farthest distance', controlKind: 'select', shown: '500 miles' }] }], { carrier: 'progressive', page: 'Rates', overwrite: false, ms: 1, redact });
   assert.deepEqual([filled.q, filled.key], ['2B9D', '2B9D@3']);
+});
+
+// Audit 2026-11-07, FLOW-12: a fill of the quote tab while the agent was on another, and how long its
+// page was hidden (the longest a frame saw), so the weekly review can tell throttled fills apart.
+test('a fill run says it ran in the background and how long its page was hidden, only when so', () => {
+  const ctx = { carrier: 'progressive', page: 'Rates', overwrite: false, ms: 1, redact: (t) => t };
+  const [back] = fillEvents([{ fields: 3, hiddenMs: 1200 }, { fields: 1, hiddenMs: 900 }, { fields: 1 }], { ...ctx, background: true });
+  const [front] = fillEvents([{ fields: 3 }], ctx);
+  assert.deepEqual([back.background, back.hiddenMs], [true, 1200]);
+  assert.deepEqual(['background' in front, 'hiddenMs' in front], [false, false]);
 });
 
 test('dropdown changes keep the option text, minus client names', () => {

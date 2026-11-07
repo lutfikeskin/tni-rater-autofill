@@ -54,7 +54,10 @@ function tellRecorder(cmd, tabId = state.tab?.id) {
   return chrome.tabs.sendMessage(tabId, { ra: 'recorder', cmd }).catch(() => {});
 }
 
-function onRecorderMessage(msg, sender) {
+// `sendResponse`: field changes this panel took are answered ({ ok: true }); the recorder keeps the
+// agent's edits no panel answered (closed, on another tab or window, no intake) and sends them again
+// when a panel attaches or a fill begins (recorder.js `unheard`).
+function onRecorderMessage(msg, sender, sendResponse) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier?.id ?? null;
   const log = (...events) => { if (!state.tab.carrier?.practice) usage.log(...events); };
@@ -148,6 +151,7 @@ function onRecorderMessage(msg, sender) {
       }).catch(() => {});
       scheduleAutoFill(page);
     }
+    sendResponse?.({ ok: true });
   }
   if (msg.event === 'new_fields') {
     const page = samePage(msg.page);

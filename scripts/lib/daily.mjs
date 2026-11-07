@@ -151,13 +151,13 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
   if (problems.length) {
     lines.push('### Problem reports', '');
     // With the build that logged it (a report from a build older than a fix may already be done).
-    for (const p of problems.slice(0, MAX_PROBLEMS)) lines.push(`- ${String(p.t ?? '').slice(0, 16).replace('T', ' ')} · ${p.agent ?? '?'}${p.build ? ` · ${p.build}` : ''}${p.test ? ' · test run' : ''} · ${p.page ?? '?'}`);
+    for (const p of problems.slice(0, MAX_PROBLEMS)) lines.push(`- ${minute(p.t)} · ${untrusted(p.agent, 12)}${p.build ? ` · ${untrusted(p.build, 40)}` : ''}${p.test ? ' · test run' : ''} · ${untrusted(p.page)}`);
     if (problems.length > MAX_PROBLEMS) lines.push(`- … and ${problems.length - MAX_PROBLEMS} more (in the review)`);
     lines.push('');
   }
   if (newQuestions.length) {
     lines.push(`### New questions without a rule${uncoveredTotal != null ? ` (${uncoveredTotal} different ones in all)` : ''}`, '');
-    for (const q of newQuestions.slice(0, 50)) lines.push(`- ${q.carrier} ${q.page}: ${q.ref ? `\`${q.ref}\` ` : ''}"${q.caption}"${q.kind ? ` (${q.kind})` : ''}${q.notInMock ? ' (has a rule; not in the AmWINS mock)' : ''}`);
+    for (const q of newQuestions.slice(0, 50)) lines.push(`- ${untrusted(q.carrier, 20)} ${untrusted(q.page)}: ${q.ref ? `${untrusted(q.ref)} ` : ''}${untrusted(q.caption, 200)}${q.kind ? ` (${untrusted(q.kind, 40)})` : ''}${q.notInMock ? ' (has a rule; not in the AmWINS mock)' : ''}`);
     if (newQuestions.length > 50) lines.push(`- … and ${newQuestions.length - 50} more (in the review)`);
     lines.push('');
   }
@@ -170,4 +170,22 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
 // maintainer's computer, a dry run that posts nothing (scripts/daily.mjs).
 const rebuild = (since) => `\`npm run daily -- --since ${since}\` (a dry run: it posts nothing)`;
 const MAX_PROBLEMS = 60;
+// Text from the usage log, which anyone with the extension's upload token can write (audit
+// 2026-11-07, SRV-04): an agent's initials, a page, a carrier, a question's caption and data-model
+// name. Posted as an inline code span (no markdown, link or image), with its backticks and line
+// breaks taken out, every @ broken by a zero-width space (no one is mentioned, and the comment never
+// holds the at-mention that starts the Claude workflow when the maintainer's own login posts it),
+// and bounded. A build and a question's kind are posted the same way.
+export function untrusted(v, max = 120) {
+  const s = String(v ?? '').replace(/\s+/g, ' ').replace(/`/g, "'").trim().slice(0, max).replace(/@/g, '@​');
+  return `\`${s || '?'}\``;
+}
+// An event's time to the minute, written only when it is one (digits, a dash and a colon can't
+// make a link or a mention) on the calendar and the clock; anything else is `?`.
+const minute = (t) => {
+  const m = /^(\d{4}-\d\d-\d\d)T(\d\d:\d\d)/.exec(String(t ?? ''));
+  const ms = m ? Date.parse(`${m[1]}T${m[2]}:00Z`) : NaN;
+  const real = m && !Number.isNaN(ms) && new Date(ms).toISOString().startsWith(`${m[1]}T${m[2]}`);
+  return real ? `${m[1]} ${m[2]}` : '?';
+};
 const MAX_COMMENT = 60_000;

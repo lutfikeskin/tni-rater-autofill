@@ -1,21 +1,30 @@
 #!/usr/bin/env node
-// Offline scoring and opt-in live evaluation for Luna.
+// Offline scoring and opt-in live evaluation for Luna: page reviews (cases.json), the claims-box
+// review (notes-cases.json) and the driver-name check (names-cases.json).
 //
 // Offline scoring:
 //   node scripts/ai-eval.mjs --score result.json
 // Live evaluation (never run implicitly):
 //   OPENAI_API_KEY=... node scripts/ai-eval.mjs --live
-//   OPENAI_API_KEY=... node scripts/ai-eval.mjs --live --out result.json
+//   OPENAI_API_KEY=... node scripts/ai-eval.mjs --live --out result.json --responses responses.json
+// Replay (offline, no key): today's code on the model answers a live run saved with --responses.
+// A request today's code builds differently (a prompt, rule or code change) has no saved answer:
+// that case is a service error, to run live again.
+//   node scripts/ai-eval.mjs --replay responses.json
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { collectItems } from '../src/ai/common.js';
-import { DEFAULT_MODEL, suggest as suggestLuna } from '../src/ai/luna.js';
+import { DEFAULT_MODEL, suggest as suggestLuna, callModel, buildNotesReview, parseNotesReview, buildNameReview, parseNameReview, NAME_GUESSES, noteLines } from '../src/ai/luna.js';
+import { intakeNotes } from '../src/normalize.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DEFAULT_CASES_PATH = path.join(ROOT, 'test/ai-eval/cases.json');
+export const DEFAULT_NOTES_PATH = path.join(ROOT, 'test/ai-eval/notes-cases.json');
+export const DEFAULT_NAMES_PATH = path.join(ROOT, 'test/ai-eval/names-cases.json');
 
 const clone = value => structuredClone(value);
 const tidy = value => String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -131,8 +140,7 @@ export function safeLiveResult(entries, providerCases) {
   };
 }
 
-export async function runProvider(entries, { env = process.env, clock = performance } = {}) {
-  const config = lunaConfig(env);
+export async function runProvider(entries, { env = process.env, clock = performance, call = callModel, config = lunaConfig(env) } = {}) {
   const runs = [];
   for (const entry of entries) {
     const started = clock.now();
@@ -140,7 +148,7 @@ export async function runProvider(entries, { env = process.env, clock = performa
       const collected = collectItems([{ unknown: providerItems(entry) }]);
       const blocked = collected.blocked.map(item => ({ ...item, choice: null, leave: true, basis: 'none', intakePath: null }));
       const result = collected.items.length
-        ? await suggestLuna(collected.items, providerContext(entry), config)
+        ? await suggestLuna(collected.items, providerContext(entry), config, { call })
         : { suggestions: [], tokensIn: 0, tokensOut: 0 };
       const suggestions = [...blocked, ...(Array.isArray(result?.suggestions) ? result.suggestions : [])];
       runs.push({
@@ -291,6 +299,157 @@ export function scoreResult(result, entries) {
   };
 }
 
+// The claims-box review and the driver-name check (audit 2026-11-07, AI-06: they had no evaluation).
+// Their flags and guesses only are kept and scored: no line text, explanation or prompt.
+const NOTE_FLAGS = ['ntl', 'coverageChange', 'generalLiability'];
+const NOTE_NUMBERS = ['businessYears', 'businessSince'];
+
+function readSet(file, label, checkEntry) {
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.cases) || parsed.cases.length === 0) fail(`${label} cases must be version 1 with at least one case.`);
+  const seen = new Set();
+  for (const entry of parsed.cases) {
+    if (!entry || typeof entry.id !== 'string' || !entry.id || seen.has(entry.id)) fail(`${label} case IDs must be unique.`);
+    seen.add(entry.id);
+    if (typeof entry.expertReviewed !== 'boolean') fail(`${label} case ${entry.id} must set expertReviewed to a boolean.`);
+    if (!entry.record || typeof entry.record !== 'object' || !Array.isArray(entry.expected) || !entry.expected.length) fail(`${label} case ${entry.id} is missing its record or expected answers.`);
+    checkEntry(entry);
+  }
+  return parsed.cases;
+}
+
+export function readNotesCases(file = DEFAULT_NOTES_PATH) {
+  return readSet(file, 'Claims-box', (entry) => {
+    const lines = noteLines(intakeNotes(entry.record));
+    for (const x of entry.expected) {
+      if (!lines.includes(x?.line)) fail(`Claims-box case ${entry.id} expects a line the review would not send.`);
+      if (!NOTE_FLAGS.every((k) => typeof x[k] === 'boolean')) fail(`Claims-box case ${entry.id} must give every flag as a boolean.`);
+      if (NOTE_NUMBERS.some((k) => x[k] !== undefined && x[k] !== null && !Number.isInteger(x[k]))) fail(`Claims-box case ${entry.id} has an invalid year.`);
+    }
+  });
+}
+
+export function readNamesCases(file = DEFAULT_NAMES_PATH) {
+  return readSet(file, 'Driver-name', (entry) => {
+    const sent = new Set(buildNameReview(entry.record)?.ids ?? []);
+    for (const x of entry.expected) {
+      if (!sent.has(`d${x?.driver}`)) fail(`Driver-name case ${entry.id} expects a driver the check would not send.`);
+      if (!NAME_GUESSES.includes(x.guess)) fail(`Driver-name case ${entry.id} has an invalid guess.`);
+    }
+  });
+}
+
+async function runEach(entries, ask, clock) {
+  const out = [];
+  for (const entry of entries) {
+    const started = clock.now();
+    try {
+      out.push({ id: entry.id, status: 'ok', ...(await ask(entry)), timingMs: Math.max(0, Math.round(clock.now() - started)) });
+    } catch {
+      // Never expose provider errors: they may contain prompts or keys.
+      out.push({ id: entry.id, status: 'error', timingMs: Math.max(0, Math.round(clock.now() - started)) });
+    }
+  }
+  return { cases: out };
+}
+
+export function runNotes(entries, { call = callModel, config, clock = performance } = {}) {
+  return runEach(entries, async (entry) => {
+    const review = buildNotesReview(entry.record);
+    if (!review) return { lines: [] };
+    const results = parseNotesReview(await call({ apiKey: config.apiKey, proxy: config.proxy, body: review.body }), review);
+    return { lines: results.map((x, index) => ({ index, ...Object.fromEntries([...NOTE_FLAGS, ...NOTE_NUMBERS].map((k) => [k, x[k]])) })) };
+  }, clock);
+}
+
+export function runNames(entries, { call = callModel, config, clock = performance } = {}) {
+  return runEach(entries, async (entry) => {
+    const review = buildNameReview(entry.record);
+    if (!review) return { guesses: [] };
+    const results = parseNameReview(await call({ apiKey: config.apiKey, proxy: config.proxy, body: review.body }), review);
+    return { guesses: results.map((x) => ({ driver: x.index, guess: x.guess })) };
+  }, clock);
+}
+
+export function scoreNotes(result, entries) {
+  const byId = new Map((result?.cases ?? []).map((x) => [x?.id, x]));
+  const flags = Object.fromEntries(NOTE_FLAGS.map((k) => [k, { expectedTrue: 0, truePositives: 0, falsePositives: 0, falseNegatives: 0 }]));
+  let lines = 0, correctLines = 0, numbers = 0, correctNumbers = 0, serviceErrors = 0;
+  const cases = [];
+  for (const entry of entries) {
+    const run = byId.get(entry.id);
+    if (!run || run.status !== 'ok') { serviceErrors++; cases.push({ id: entry.id, status: run ? 'service-error' : 'missing' }); continue; }
+    const sent = noteLines(intakeNotes(entry.record));
+    let pass = true;
+    for (const x of entry.expected) {
+      lines++;
+      const got = (run.lines ?? []).find((l) => l?.index === sent.indexOf(x.line));
+      let right = !!got;
+      for (const k of NOTE_FLAGS) {
+        const f = flags[k], said = got?.[k] === true;
+        if (x[k]) {
+          f.expectedTrue++;
+          if (said) f.truePositives++; else { f.falseNegatives++; right = false; }
+        } else if (said) { f.falsePositives++; right = false; }
+      }
+      for (const k of NOTE_NUMBERS) {
+        if (x[k] === undefined) continue;
+        numbers++;
+        if (got?.[k] === x[k]) correctNumbers++; else right = false;
+      }
+      if (right) correctLines++; else pass = false;
+    }
+    cases.push({ id: entry.id, status: pass ? 'pass' : 'fail' });
+  }
+  return { cases, aggregate: { lines, correctLines, lineAccuracy: lines ? correctLines / lines : null, flags, numbers, correctNumbers, serviceErrors,
+    expertReviewedCases: entries.filter((e) => e.expertReviewed === true).length, calibration: 'not measured' } };
+}
+
+export function scoreNames(result, entries) {
+  const byId = new Map((result?.cases ?? []).map((x) => [x?.id, x]));
+  let names = 0, correct = 0, opposite = 0, unclearWhenClear = 0, guessedWhenUnclear = 0, serviceErrors = 0;
+  const cases = [];
+  for (const entry of entries) {
+    const run = byId.get(entry.id);
+    if (!run || run.status !== 'ok') { serviceErrors++; cases.push({ id: entry.id, status: run ? 'service-error' : 'missing' }); continue; }
+    let pass = true;
+    for (const x of entry.expected) {
+      names++;
+      const got = (run.guesses ?? []).find((g) => g?.driver === x.driver)?.guess ?? null;
+      if (got === x.guess) { correct++; continue; }
+      pass = false;
+      // A female name guessed male (or the other way) is the costly mistake; the agent is asked either way.
+      if (x.guess !== 'unclear' && got !== 'unclear' && got !== null) opposite++;
+      else if (x.guess !== 'unclear' && got === 'unclear') unclearWhenClear++;
+      else if (x.guess === 'unclear' && got !== null) guessedWhenUnclear++;
+    }
+    cases.push({ id: entry.id, status: pass ? 'pass' : 'fail' });
+  }
+  return { cases, aggregate: { names, correct, accuracy: names ? correct / names : null, opposite, unclearWhenClear, guessedWhenUnclear, serviceErrors,
+    expertReviewedCases: entries.filter((e) => e.expertReviewed === true).length, calibration: 'not measured' } };
+}
+
+// Saved model answers, by the request they answered: a live run keeps them (--responses), and a
+// replay gives today's code the answer to the same request, or nothing for one built differently.
+// Only the response envelope is kept (status, model, output, usage). The cases are synthetic.
+export const requestKey = (body) => createHash('sha256').update(JSON.stringify(body)).digest('hex');
+
+export function savingCall(call, store) {
+  return async (args) => {
+    const json = await call(args);
+    store[requestKey(args.body)] = { status: json?.status, model: json?.model, output: json?.output, usage: json?.usage };
+    return json;
+  };
+}
+
+export function replayCall(store) {
+  return async ({ body }) => {
+    const saved = store[requestKey(body)];
+    if (!saved) throw new Error('not in the saved responses: run live again');
+    return structuredClone(saved);
+  };
+}
+
 function valueAfter(args, flag) {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : null;
@@ -299,28 +458,45 @@ function valueAfter(args, flag) {
 export function parseArgs(args) {
   const live = args.includes('--live');
   const scorePath = valueAfter(args, '--score');
+  const replayPath = valueAfter(args, '--replay');
   const casesPath = valueAfter(args, '--cases') ?? DEFAULT_CASES_PATH;
+  const notesPath = valueAfter(args, '--notes-cases') ?? DEFAULT_NOTES_PATH;
+  const namesPath = valueAfter(args, '--names-cases') ?? DEFAULT_NAMES_PATH;
   const outPath = valueAfter(args, '--out');
+  const responsesPath = valueAfter(args, '--responses');
   if (args.includes('--provider')) fail('--provider is no longer supported; Luna is the only live evaluator.');
-  if (live === Boolean(scorePath)) fail('Choose exactly one mode: --live or --score <saved-result.json>.');
-  if (!live && outPath) fail('--out is only valid with --live.');
-  return { live, scorePath, casesPath, outPath };
+  if ([live, Boolean(scorePath), Boolean(replayPath)].filter(Boolean).length !== 1) fail('Choose exactly one mode: --live, --replay <responses.json> or --score <saved-result.json>.');
+  if (scorePath && outPath) fail('--out is only valid with --live or --replay.');
+  if (!live && responsesPath) fail('--responses is only valid with --live.');
+  return { live, scorePath, replayPath, casesPath, notesPath, namesPath, outPath, responsesPath };
+}
+
+// All three sets' scores; the claims-box and driver-name ones only when the result has them (a saved
+// result from before them has page reviews only), their cases read only then.
+function scoreAll(result, options, pages) {
+  return { ...scoreResult(result, pages),
+    ...(result.notes ? { notes: scoreNotes(result.notes, readNotesCases(options.notesPath)) } : {}),
+    ...(result.names ? { names: scoreNames(result.names, readNamesCases(options.namesPath)) } : {}) };
 }
 
 export async function main(args = process.argv.slice(2)) {
   const options = parseArgs(args);
-  const entries = readCases(options.casesPath);
-  if (!options.live) {
+  const pages = readCases(options.casesPath);
+  if (options.scorePath) {
     const saved = JSON.parse(fs.readFileSync(options.scorePath, 'utf8'));
-    const output = scoreResult(saved, entries);
+    const output = scoreAll(saved, options, pages);
     console.log(JSON.stringify(output, null, 2));
     return output;
   }
-
+  const store = options.replayPath ? JSON.parse(fs.readFileSync(options.replayPath, 'utf8')) : {};
+  const call = options.replayPath ? replayCall(store) : savingCall(callModel, store);
+  const config = options.replayPath ? { apiKey: 'replay', model: DEFAULT_MODEL } : lunaConfig();
   // Each run receives a fresh clone of the same synthetic case data.
-  const result = await runProvider(clone(entries));
+  const result = { ...(await runProvider(clone(pages), { call, config })),
+    notes: await runNotes(readNotesCases(options.notesPath), { call, config }), names: await runNames(readNamesCases(options.namesPath), { call, config }) };
   if (options.outPath) fs.writeFileSync(options.outPath, JSON.stringify(result, null, 2));
-  const output = scoreResult(result, entries);
+  if (options.responsesPath) fs.writeFileSync(options.responsesPath, JSON.stringify(store, null, 2));
+  const output = scoreAll(result, options, pages);
   console.log(JSON.stringify(output, null, 2));
   return output;
 }

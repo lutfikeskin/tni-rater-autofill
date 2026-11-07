@@ -15,7 +15,7 @@
 // standard until the maintainer decides it is and records it (AGENTS.md), so a possible standard
 // comes with its evidence and the decision to make, never with a rule line to paste.
 
-import { isPageLayout, sessionContexts } from './events.mjs';
+import { isPageLayout, quotePage, sessionContexts } from './events.mjs';
 import { fieldIdentities, ENTITY_PAGES } from './layouts.mjs';
 import { fieldStatus } from './coverage.mjs';
 import { isOwnDefault } from './agent-defaults.mjs';
@@ -24,7 +24,10 @@ const CHOICE = new Set(['select', 'radio', 'checkbox', 'combo']);
 const textOf = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 // Labels the recorder gives a page's own controls (AmWINS: the file button, a pager, a row's
 // Delete): no question, so no candidate (compared lower-cased, after textOf).
-const UI_CHROME = /^(browse|delete coverage|\d+ of \d+|select files?)$/;
+// Trailing dots, ellipses or a colon don't make one a question ("Browse …", audit 2026-11-07 LEARN-04).
+const UI_CHROME = /^(browse|delete coverage|\d+ of \d+|select files?)[\s.…:]*$/;
+// A label as the panel logs it now (usage.js tidyLabel): without page markup an older event kept.
+const tidyLabel = (s) => (s == null ? s : String(s).replace(/<\/?[a-z][^>]*>/gi, '').replace(/\s+/g, ' ').trim());
 // A label that is only the redaction's tokens (GEICO's coverage rows read as their vehicle, which
 // the log redacts to "[client]") names no question.
 const blind = (label) => !/[a-z0-9]/.test(textOf(label).replace(/\[client\]/g, ''));
@@ -60,18 +63,19 @@ function identify(e, ids) {
     // cov:<its caption>): their labels name the vehicle, which the log redacts, so five coverages
     // would read as one "[client]" question. A quote's vehicles merge, as without an id.
     const coverage = String(e.key ?? '').match(/^cov:(.+?)(?:#\d+)?$/)?.[1];
-    return coverage ? { key: `${page}|cov:${coverage}`, unit: '', coverage } : { key: `${page}|${e.label}`, unit: '' };
+    return coverage ? { key: `${page}|cov:${coverage}`, unit: '', coverage } : { key: `${page}|${tidyLabel(e.label)}`, unit: '' };
   }
   // Its row from its own key (<q>@<row>, ref:<name>@<row>; none: the first row).
   const unit = `${String(e.view ?? '').split(':')[1] ?? ''}@${String(e.key ?? '').match(/@(\d+)$/)?.[1] ?? '1'}`;
   if (named) return { key: `${e.carrier}|${e.page}|ref:${named[1]}`, unit, ref: named[1], layout: ids.byField.get(`${e.session}|${e.page}|${e.q}`) };
-  const caption = `${e.carrier}|${e.page}|${textOf(e.label)}`;
+  const text = textOf(tidyLabel(e.label));
+  const caption = `${e.carrier}|${e.page}|${text}`;
   const found = ids.byField.get(`${e.session}|${e.page}|${e.q}`) ?? ids.byCaption.get(caption);
   if (found) return { key: `${e.carrier}|${e.page}|${found.id}`, unit, ref: found.ref, layout: found };
   // A text two questions of the page share (byCaption knows it, but as no one question) can't name
   // either: its id, which Progressive may renumber, rather than one question for both (Codex on PR #56).
   const shared = ids.byCaption.has(caption);
-  return { key: `${e.carrier}|${e.page}|${textOf(e.label) && !shared ? `text:${textOf(e.label)}` : `q:${e.q}`}`, unit };
+  return { key: `${e.carrier}|${e.page}|${text && !shared ? `text:${text}` : `q:${e.q}`}`, unit };
 }
 
 // Which question an event is about, as the learner groups them (by data-model name or text, never
@@ -93,9 +97,9 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
     out.set(e.session, perSession);
     const { key, unit, ref, layout, coverage } = identify(e, ids);
     const k = unit ? `${key}#${unit}` : key;
-    const a = perSession.get(k) ?? { question: key, q: e.q ?? null, ref: ref ?? null, layout: layout ?? null, page: e.page, ...(e.step ? { step: e.step } : {}), ...(coverage ? { coverage } : {}), label: e.label, carrier: e.carrier };
+    const a = perSession.get(k) ?? { question: key, q: e.q ?? null, ref: ref ?? null, layout: layout ?? null, page: e.page, ...(e.step ? { step: e.step } : {}), ...(coverage ? { coverage } : {}), label: tidyLabel(e.label), carrier: e.carrier };
     perSession.set(k, a);
-    if (e.label && !a.label) a.label = e.label;
+    if (e.label && !a.label) a.label = tidyLabel(e.label);
     return a;
   };
   for (const e of events) {
@@ -288,6 +292,9 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
     // rule for (the 2026-10-06 review listed "Browse" and "1 of 1").
     // A label that is only redacted text names none either, unless its key does (a coverage row).
     if (!first.q && !field && !first.coverage && (blind(first.label) || UI_CHROME.test(textOf(first.label)))) continue;
+    // A question off the quote (a login, the carrier's portal: GEICO's gateway search, Progressive's
+    // home page) gets no suggestion, as the answer key keys none (quotePage).
+    if (!quotePage(carrier, first.page)) continue;
     const selector = `${carrier}|${target({ ...first, field })}`;
     const steps = observedSteps.get(selector) ?? new Set();
     for (const o of obs) steps.add(o.step ?? '(no step)');

@@ -238,6 +238,18 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   }
 
   const runs = events.filter((e) => e.type === 'fill_run');
+  // Fills while the quote tab was in the background or its page hidden (audit 2026-11-07, FLOW-12):
+  // Chrome slows a hidden tab's timers. Their median time against the others', per carrier, to
+  // judge whether the slowdown is worth saying in the dock.
+  const hiddenFills = {};
+  const msMedian = (list) => { const x = list.filter(Number.isFinite).sort((a, b) => a - b); return x.length ? Math.round(x[Math.floor(x.length / 2)]) : null; };
+  for (const carrier of [...new Set(runs.map((r) => r.carrier))].sort()) {
+    const mine = runs.filter((r) => r.carrier === carrier && r.auto !== 'stop');
+    const hidden = mine.filter((r) => r.background || r.hiddenMs > 0);
+    if (!hidden.length) continue;
+    hiddenFills[carrier] = { runs: mine.length, background: mine.filter((r) => r.background).length, hidden: mine.filter((r) => r.hiddenMs > 0).length,
+      medianMs: msMedian(hidden.map((r) => r.ms)), medianMsOthers: msMedian(mine.filter((r) => !hidden.includes(r)).map((r) => r.ms)) };
+  }
   // Software defects show in test runs too: page changes, the extension's clicks, errors, dropped
   // fields and problem reports count every run of the period, a test run's marked as one.
   const allRuns = periodAll.filter((e) => e.type === 'fill_run');
@@ -417,6 +429,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     blockedRuns: runs.filter((r) => r.blockers > 0).length,
     runs: runs.length,
     pageChanges: top(changed, n),
+    hiddenFills,
     actions: top(actions, 40),
     restricted,
     fillErrors: top(fillErrors, n),
@@ -484,6 +497,8 @@ export function markdown(s, { noTestList = false } = {}) {
   L.push('## What held Continue', '', `Blockers at the end of fill runs, by the number of quotes they held.`, '', ...list(s.blockers, ' quotes'), '');
   L.push('## Restricted actions by the extension', '', s.restricted.length ? '**Safety finding: the extension clicked something that reads as a restricted action.**' : 'None: every click the extension made was a helper or a continuation.', ...(s.restricted.length ? list(s.restricted, ' runs') : []), '', `Its clicks: ${s.actions.map(([a, c]) => `${a} ×${c}`).join(', ') || 'none'}.`, '');
   L.push('## Signs a carrier changed a page', '', ...list(s.pageChanges, ' runs'), '');
+  L.push('## Fills of a hidden tab', '', 'Fill runs while the quote tab was in the background or its page hidden, where Chrome slows timers: their median time against the other runs on that carrier.', '',
+    ...(Object.keys(s.hiddenFills ?? {}).length ? Object.entries(s.hiddenFills).map(([c, h]) => `- ${c}: ${h.background} in the background, ${h.hidden} hidden, of ${h.runs} runs · median ${h.medianMs ?? '—'} ms against ${h.medianMsOthers ?? '—'} ms`) : ['None.']), '');
   L.push('## Panel crashes', '', 'Errors nothing in the panel caught (client_error), by build; test runs included. Each one is a finding.', '', ...list(s.crashes), '');
   L.push('## Settings in force', '', `The last agent_settings of each quote (${s.settings.quotes} quotes reported one).`, '', ...list(s.settings.on, ' quotes'), '');
   L.push("## Agents' own defaults", '', `The defaults each quote's last agent_settings logged in place of TNI's (${s.ownDefaults.quotes} quotes reported them), by the number of quotes and who had them. An answer they filled reads as agent-default below, never as a TNI standard.`, '', ...(s.ownDefaults.defaults.length ? s.ownDefaults.defaults.map((d) => `- ${d.quotes} quotes · ${d.text} · ${d.agents.join(', ') || '?'}`) : ['None.']), '');
