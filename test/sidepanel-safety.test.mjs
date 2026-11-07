@@ -8989,25 +8989,39 @@ test('two panels holding two intakes at once each keep their hold, and letting o
 });
 
 // CodeRabbit on PR #395: a New quote whose hold can't be saved, then the panel opened again: the
-// last quote's records (edit keys, helper actions, unit forms) are all still there, so every
-// protection they give still holds, and nothing is held that needn't be.
+// last quote's stored records (edit keys, helper actions) are all still there, the panel opened again
+// restores them (core.js's own restore), and its next fill leaves the agent's edit alone and doesn't
+// redo a helper already done; nothing is held that needn't be.
 test('a New quote whose hold can\'t be saved removes nothing, and the panel opened again keeps every protection', async () => {
   const store = sessionStore();
-  const records = { agentKeys: ['ref:Name'], doneActions: ['add-vehicle:1'], unitForms: { vehicle: 1 } };
+  const session = { intakeId: 'abc' };
+  // The stored records, as core.js keeps them (agentKeysStore, doneActionsStore).
+  let keyRecords = [{ scope: 'abc', tabId: 4, page: 'Quote', keys: ['ref:Name'] }];
+  const done = { 'abc:4': ['addVehicle:0'] };
   const panel = heldPanel(store);
   const state = { intake: { fileName: 'client.pdf', intakeId: 'abc' }, filling: false, tab: { id: 4, carrier: { id: 'geico' } }, tabSessions: new Map() };
   const notes = [];
-  const context = { state, inExtension: true, File: class {}, intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
-    runKit: async () => { delete records.marks; return []; }, clearAgentKeys: async () => { for (const k of Object.keys(records)) delete records[k]; },
+  const context = { state, inExtension: true, File: class {}, intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => session },
+    runKit: async () => [], clearAgentKeys: async () => { keyRecords = []; delete done['abc:4']; },
     loadFile: async () => {}, clientNote: (t) => notes.push(t), render: () => {},
     holdFills: panel.holdFills, releaseFills: panel.releaseFills, FILLS_HELD_NOTE: panel.FILLS_HELD_NOTE };
   vm.runInNewContext(extractFunction('newQuote'), context);
   store.broken = true;
   await context.newQuote();
   store.broken = false;
-  assert.deepEqual(records, { agentKeys: ['ref:Name'], doneActions: ['add-vehicle:1'], unitForms: { vehicle: 1 } }, 'nothing removed');
+  assert.deepEqual([keyRecords.length, done['abc:4']], [1, ['addVehicle:0']], 'nothing removed');
   assert.match(notes.at(-1), /Nothing was changed: try New quote again/);
-  assert.deepEqual(await openedOn(store, 'abc'), [false, null], 'opened again: the records protect it, nothing held');
+  // The panel opened again: not held, and its records back from the store.
+  assert.deepEqual(await openedOn(store, 'abc'), [false, null], 'opened again: nothing held');
+  const reopened = { state: { tab: { id: 4 }, agentKeys: new Map(), doneActions: new Set() }, usage: { currentSession: () => session }, Promise, Set,
+    agentKeysStore: { get: async () => keyRecords }, doneActionsStore: { get: async (scope, tabId) => done[`${scope}:${tabId}`] ?? [] }, unitFormsStore: { get: async () => null } };
+  vm.runInNewContext(`var doneActionsQueue = Promise.resolve();\n${SIDEPANEL.match(/const doneRestored = new Set\(\);/)[0]}\n${['restoreAgentKeys', 'restoreDoneActions', 'fillSkip'].map(extractFunction).join('\n')}\nObject.assign(globalThis, { fillSkip });`, reopened);
+  await reopened.restoreAgentKeys(4);
+  await reopened.restoreDoneActions(4);
+  // Its next fill: the agent's edit is skipped (formScoped is false for this carrier), the helper isn't done again.
+  reopened.formScoped = () => false;
+  assert.deepEqual([...reopened.fillSkip(reopened.state.agentKeys, 'Quote', 'Quote', {})], ['ref:Name'], 'the agent\'s edit is left alone');
+  assert.equal(reopened.state.doneActions.has('addVehicle:0'), true, 'the vehicle already added isn\'t added again');
 });
 
 test('a fill that only gets its tab\'s word while the intake waits is stopped then; one that never ends doesn\'t hold the intake', async () => {
