@@ -49,7 +49,7 @@ Each usage event the extension logs, when, and the fields the collection server 
 | Event | Logged when | Fields kept |
 | --- | --- | --- |
 | `intake_loaded` | an intake PDF is loaded: its summary, without the client | `formVersion`, `answers`, `state`, `businessClass`, `vehicleTypes`, `counts`, `coverages`, `warnings`, `test`, `platform` |
-| `intake_profile` | the business an intake describes, without names or numbers, once it is read and when it changes | `business`, `operations`, `vehicles`, `trailers`, `trailerInfo`, `drivers`, `coverage`, `priorInsurance`, `hasClaims` |
+| `intake_profile` | the business an intake describes, without names, addresses or identification numbers (counts, years, ages and limits are in it), once it is read and when it changes | `business`, `operations`, `vehicles`, `trailers`, `trailerInfo`, `drivers`, `coverage`, `priorInsurance`, `hasClaims` |
 | `usage_lost` | the queue was full: its oldest events went | `count` |
 | `intake_closed` | an intake is replaced, reset for a new quote or cleared | `reason` |
 | `intake_marked` | the agent marks the intake as a test run, or not | `test` |
@@ -60,7 +60,7 @@ Each usage event the extension logs, when, and the fields the collection server 
 | `page_layout` | a page's questions as it arrives and as they change (and a Recalculate's trace, reason `recalculate`) | `context`, `fields`, `buttons`, `reason`, `step`, `messages` |
 | `quote_premium` | the premium a page quotes, when it is current and differs from the last logged | `step`, `total`, `termMonths`, `dueToday`, `payments`, `payment` |
 | `layout_error` | a page's layout couldn't be read | `reason`, `error` |
-| `fill_run` | one fill invocation | `run`, `rules`, `settings`, `step`, `overwrite`, `auto`, `ms`, `fields`, `rounds`, `filled`, `kept`, `noData`, `failed`, `leftRequired`, `unknown`, `clicked`, `blockers`, `blockerList`, `advanced`, `pageChanged`, `reworded`, `renamed`, `defaultsHash` |
+| `fill_run` | one fill invocation; also one with `auto: 'stop'`, no `run` and `fields: 0`, when a carrier stop page or step arrives (its `blockers` name it) | `run`, `rules`, `settings`, `step`, `overwrite`, `auto`, `ms`, `fields`, `rounds`, `filled`, `kept`, `noData`, `failed`, `leftRequired`, `unknown`, `clicked`, `blockers`, `blockerList`, `advanced`, `pageChanged`, `reworded`, `renamed`, `defaultsHash` |
 | `fill_field` | one question of a fill run | `run`, `step`, `result`, `q`, `key`, `label`, `path`, `controlKind`, `shown`, `reason`, `options`, `timing`, `how`, `source`, `standard`, `manualOnly`, `review` |
 | `agent_click` | a button or link the agent clicks on a carrier page | `text`, `step` |
 | `check_dismissed` | the agent's Mark done on a "needs you" item | `q`, `key`, `label`, `mark` |
