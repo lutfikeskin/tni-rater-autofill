@@ -214,8 +214,13 @@ export const EVENT_FIELDS = {
   ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens', 'promptHash',
     'leaveMissing', 'leaveConflict', 'leaveChose', 'leaveNoSource', 'leaveUnverified', 'leaveTooLarge'],
   // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
-  ai_decision: ['model', 'policy', 'promptHash', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
+  // ruleIds: the TNI rules a pick cites, by rulebook id (at most 12).
+  ai_decision: ['model', 'policy', 'promptHash', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason', 'ruleIds'],
+  // One per question Luna left: its code and label, why (leaveWhy) and the intake field it maps to.
+  ai_leave: ['q', 'label', 'controlKind', 'leaveWhy', 'intakePath'],
 };
+// Why Luna left a question (src/ai/luna.js leaveWhy).
+const AI_LEAVE_WHY = ['restricted', 'missing', 'conflict', 'chose', 'noSource', 'unverified', 'tooLarge'];
 // agent defaults: their fields on agent_settings, fill_run and fill_error.
 for (const [type, fields] of Object.entries(AGENT_DEFAULT_FIELDS)) EVENT_FIELDS[type].push(...fields);
 
@@ -475,6 +480,9 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       if (out[k] !== undefined && !(out[k] === null || (typeof out[k] === 'number' && Number.isFinite(out[k]) && out[k] >= 0 && out[k] <= 1)
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
     }
+    if (out.type === 'ai_decision' && out.ruleIds !== undefined && !(Array.isArray(out.ruleIds) && out.ruleIds.length <= 12
+      && out.ruleIds.every((id) => typeof id === 'string' && id.length <= 80 && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id)))) drop('ruleIds');
+    if (out.type === 'ai_leave' && out.leaveWhy !== undefined && !AI_LEAVE_WHY.includes(out.leaveWhy)) drop('leaveWhy');
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
     if (out.type === 'agent_click' && out.text !== undefined && !(typeof out.text === 'string' && out.text.length <= 60)) drop('text');
     // A problem report's words, at most the panel's 1,000 characters (audit 2026-11-07, SRV-04).

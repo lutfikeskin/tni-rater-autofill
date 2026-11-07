@@ -402,7 +402,7 @@ async function runAssist(frames, ctx) {
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length, ...leaveCounts(fresh),
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
         reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
-        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
+        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) }, ...aiLeaveEvents(fresh, ctx, redactor(redactionTerms(record))));
       if (why) { dropped(`it answered after ${why}, so nothing was applied`); return; }
       fresh.forEach(x => state.aiCache.set(sigOf(x), {
         ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),
@@ -680,7 +680,18 @@ function aiDecisionEvent(x, ctx, decision) {
     type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
     decision, choice: x.controlKind !== 'text' && x.choice ? redact(x.choice) : undefined,
     model: x.model, policy: x.policy, promptHash: x.promptHash ?? undefined, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
+    // Which TNI rules the pick cites, by id (audit 2026-11-07, AI-07).
+    ruleIds: x.ruleIds?.length ? x.ruleIds.slice(0, 12) : undefined,
   };
+}
+
+// One per question Luna left (audit 2026-11-07, AI-07): which question, why, and the intake field it
+// maps to, if any; the questions it keeps leaving are where a deterministic rule would pay off.
+function aiLeaveEvents(list, ctx, redact) {
+  return list.filter((x) => x.leave).map((x) => ({
+    type: 'ai_leave', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label ?? ''), controlKind: x.controlKind,
+    leaveWhy: x.leaveWhy ?? null, intakePath: x.rulePath ?? null,
+  }));
 }
 
 // Each suggestion goes on its question's row (AI suggests …, Use this answer / No thanks; its pick

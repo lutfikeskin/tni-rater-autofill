@@ -2948,7 +2948,7 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
     syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
-  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('runAssist'), context);
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('aiLeaveEvents') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
   return { state, context, ctx, report, logged, rendered, applied, session, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
 }
@@ -3099,6 +3099,26 @@ test('a failed page review logs the prompt it got, and only as a hash', async ()
     await u.context.runAssist([{}], u.ctx);
     assert.equal('promptHash' in u.logged[0], false, String(odd));
   }
+});
+
+// Audit 2026-11-07, AI-07: each question Luna left is logged on its own (ai_leave), so a review sees
+// which ones it keeps leaving; a decision names the TNI rules it cites by id.
+test('each question Luna left is logged with its code and why, and a decision lists its cited rules', async () => {
+  const t = assistHarness({ suggest: async () => ({ suggestions: [
+    { key: 'k0', q: '7Z', label: 'Years with Acme Trucking', controlKind: 'radio', leave: true, leaveWhy: 'missing', rulePath: 'priorInsurance.years' },
+    { key: 'k1', q: null, label: 'Other', controlKind: 'select', leave: true, leaveWhy: 'chose' },
+    { key: 'k2', q: '7Y', label: 'Hazmat', controlKind: 'radio', leave: false, choice: 'No', ruleIds: ['general.hazmat-blank'] },
+  ], tokensIn: 1, tokensOut: 1, modelCalls: 1 }) });
+  t.context.redactor = () => (s) => s.replace('Acme Trucking', '[client]');
+  await t.context.runAssist([{}], t.ctx);
+  assert.deepEqual(t.logged.map((e) => e.type), ['ai_suggest', 'ai_leave', 'ai_leave']);
+  assert.deepEqual({ ...t.logged[1] }, { type: 'ai_leave', carrier: 'progressive', page: 'CoveragesRates', q: '7Z', label: 'Years with [client]', controlKind: 'radio', leaveWhy: 'missing', intakePath: 'priorInsurance.years' });
+  assert.deepEqual([t.logged[2].q, t.logged[2].leaveWhy, t.logged[2].intakePath], [null, 'chose', null]);
+  const context = { state: { intake: { record: {} } }, redactor: () => (s) => s, redactionTerms: () => [] };
+  vm.runInNewContext(extractFunction('aiDecisionEvent'), context);
+  const ctx = { carrier: { id: 'progressive' }, page: 'Quote' };
+  assert.deepEqual(context.aiDecisionEvent({ label: 'Hazmat', choice: 'No', ruleIds: ['general.hazmat-blank'] }, ctx, 'accepted').ruleIds, ['general.hazmat-blank']);
+  assert.equal(context.aiDecisionEvent({ label: 'Hazmat', choice: 'No', ruleIds: [] }, ctx, 'accepted').ruleIds, undefined);
 });
 
 // 2026-10-09 to 10-26: 12 of 58 page reviews ended "The page or intake changed", most on GEICO's

@@ -163,6 +163,26 @@ test('keeps bounded Luna usage counters and drops unrelated fields', async () =>
   assert.equal(suggest.clientName, undefined);
 });
 
+// Audit 2026-11-07, AI-07: cited rule ids on decisions, and one event per question Luna left.
+test("keeps a decision's cited rule ids and each left question, dropping what is out of shape", async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'ai_decision', q: '4A', decision: 'accepted', ruleIds: ['general.cdl-blank', 'progressive.um'] }),
+      ev({ type: 'ai_decision', q: '4B', decision: 'accepted', ruleIds: ['The client said so'] }),
+      ev({ type: 'ai_decision', q: '4C', decision: 'accepted', ruleIds: Array.from({ length: 13 }, (_, i) => `general.r${i}`) }),
+      ev({ type: 'ai_leave', q: '7Z', label: 'Prior carrier tenure', controlKind: 'radio', leaveWhy: 'missing', intakePath: 'priorInsurance.years', value: 'x' }),
+      ev({ type: 'ai_leave', q: '7Y', leaveWhy: 'because' }),
+    ] })).json();
+    assert.equal(r.accepted, 5);
+  });
+  const [kept, text, many, left, odd] = stored(dataDir);
+  assert.deepEqual(kept.ruleIds, ['general.cdl-blank', 'progressive.um']);
+  assert.deepEqual([text.ruleIds, text.dropped.includes('ruleIds'), many.ruleIds], [undefined, true, undefined]);
+  assert.deepEqual([left.q, left.label, left.controlKind, left.leaveWhy, left.intakePath, left.value], ['7Z', 'Prior carrier tenure', 'radio', 'missing', 'priorInsurance.years', undefined]);
+  assert.deepEqual([odd.leaveWhy, odd.dropped.includes('leaveWhy')], [undefined, true]);
+});
+
 test('token, content type and size checks', async () => {
   await withServer({ dataDir: tmp(), token: 'secret' }, async ({ post, base }) => {
     assert.equal((await post({ events: [ev()] })).status, 401);

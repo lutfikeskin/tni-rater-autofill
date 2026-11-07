@@ -204,7 +204,9 @@ export function parseResponse(json, items, body) {
     const clarification = [...x.missingInformation, ...x.conflicts].join(' · ');
     return { ...item, choice: leave ? null : state.fields[item.id].options[x.option], leave,
       basis: evidence?.basis ?? 'none', intakePath: evidenceSources.length === 1 && evidence?.basis === 'intake' ? evidence.path : null,
-      evidence, evidenceSources: leave ? [] : evidenceSources, cited: leave ? [] : evidenceSources.map(citedSaid), citedRules: leave ? [] : evidenceSources.map(citedRuleFull).filter(Boolean), model: json.model, provider: 'luna', policy: POLICY_VERSION,
+      evidence, evidenceSources: leave ? [] : evidenceSources, cited: leave ? [] : evidenceSources.map(citedSaid), citedRules: leave ? [] : evidenceSources.map(citedRuleFull).filter(Boolean),
+      // The TNI rules it cites, by rulebook id (for the log: ids only, no rule text or client data).
+      ruleIds: leave ? [] : [...new Set(x.sourceIds)].filter(id => state.sources[id]?.basis === 'tni_rule'), model: json.model, provider: 'luna', policy: POLICY_VERSION,
       probability: null, confidence: null, margin: null, evidenceProbability: null, support: null, autoOk: false,
       checks: leave ? [] : ['The choice is one of this field’s visible options.', 'Every cited source exists in the supplied context.'],
       leaveWhy, nextStep: leave ? blankFieldStep(state.fields[item.id]) ?? (x.nextStep.trim() || null) : null,
@@ -312,7 +314,7 @@ export function verifyResponse(json, suggestions) {
   }
   return suggestions.map(x => x.leave ? x : data.decisions[x.id].supported
     ? { ...x, verified: true, autoOk: automaticChoiceAllowed(x) }
-    : { ...x, choice: null, leave: true, autoOk: false, verified: false, evidence: null, evidenceSources: [], cited: [], citedRules: [], basis: 'none', intakePath: null, leaveWhy: 'unverified',
+    : { ...x, choice: null, leave: true, autoOk: false, verified: false, evidence: null, evidenceSources: [], cited: [], citedRules: [], ruleIds: [], basis: 'none', intakePath: null, leaveWhy: 'unverified',
       tip: data.decisions[x.id].gap.trim() ? `Luna could not verify an answer: ${data.decisions[x.id].gap.trim()}` : 'Luna could not verify this answer against the supplied facts. Review it on the page.' });
 }
 
