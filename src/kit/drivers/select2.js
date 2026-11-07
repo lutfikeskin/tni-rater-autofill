@@ -89,16 +89,17 @@ export function createSelect2Drivers(kit) {
     return searchAgrees(step, c) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
   }
 
-  // The pick a search-select holds is its answer by the write's own rule (searchHits) among what
-  // the list holds: its pick and its <select>'s options (a server-filled list holds the picks only).
-  // A pick only having the answer's words, beside an option reading exactly so, is not it.
+  // The pick a search-select holds is its answer by the write's own rule (searchHits): it reads
+  // exactly so, or it has the answer's words and no option of its <select> reads exactly so. Which
+  // result was the only one having them was the write's to judge, among the live results: the
+  // <select> can keep stale options from an earlier search, which are no rivals (Claude review of
+  // PR #360).
   function searchAgrees(step, c) {
     const want = squash(step.value);
     const current = squash(selectedText(c) ?? '');
     if (!want || !current) return false;
-    const texts = [...new Set([current, ...optionsOf(c).map((o) => squash(o.text)).filter(Boolean)])];
-    const hits = searchHits(texts, want);
-    return hits.length === 1 && hits[0] === current;
+    if (current === want) return true;
+    return hasWords(current, want) && !optionsOf(c).some((o) => squash(o.text) === want);
   }
 
   // One option of a select2 list picked as the agent picks it: its text typed in the list's search

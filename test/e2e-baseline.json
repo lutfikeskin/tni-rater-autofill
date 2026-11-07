@@ -65,8 +65,10 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
-    "blockers": 1,
-    "clicked": [],
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ],
     "outcomes": "e48928e5870c"
    },
    "Filings": {
@@ -186,8 +188,10 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
-    "blockers": 1,
-    "clicked": [],
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ],
     "outcomes": "a4ea8096af36"
    },
    "CoveragesRates": {
@@ -281,8 +285,10 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
-    "blockers": 1,
-    "clicked": [],
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ],
     "outcomes": "99e9b8b40e87"
    },
    "CoveragesRates": {
@@ -390,8 +396,10 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
-    "blockers": 1,
-    "clicked": [],
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ],
     "outcomes": "38ca72fded61"
    },
    "CoveragesRates": {
@@ -568,8 +576,10 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
-    "blockers": 1,
-    "clicked": [],
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ],
     "outcomes": "afb8368f13dc"
    },
    "CoveragesRates": {
@@ -662,8 +672,10 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
-    "blockers": 1,
-    "clicked": [],
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ],
     "outcomes": "a4ea8096af36"
    },
    "CoveragesRates": {
@@ -808,8 +820,10 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
-    "blockers": 1,
-    "clicked": [],
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ],
     "outcomes": "a4ea8096af36"
    },
    "CoveragesRates": {

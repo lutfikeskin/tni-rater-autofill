@@ -40,7 +40,11 @@ import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreig
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingIs } from '../answers/state.js';
 import { recentModel, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
-import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
+import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorLimit, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
+
+// The intake's current bodily injury limit in Progressive's words: its "State Minimum" is the
+// list's "State Minimum or less" (the maintainer, 2026-11-07), not a fallback match to check.
+const priorLimitAliases = (r) => (/^state minimum$/i.test(priorLimit(r) ?? '') ? ['State Minimum or less'] : []);
 
 // TNI's standard coverages (src/standards.js), as Progressive's options write them. The rules'
 // `std` (CarrierRule `std`) write any amount the same way; test/std-metadata.test.mjs holds them to
@@ -472,7 +476,7 @@ const SAFE_LABEL_RULES = [
   { concept: 'operations.hazmat-placard', path: 'operations.hazPlacard', label: 'placard', kind: 'bool', source: hazPlacardSource, tni: 'general.hazmat-placard', value: hazPlacard, note: hazPlacardNote },
   { concept: 'operations.personal-use', path: 'operations.personalUse', label: 'personal use' },
   { concept: 'coverage.liability', path: 'coverage.autoLiabLimit', label: '(auto |bodily injury |combined single |csl )?liability limit|^bi limit|combined single limit', not: 'general|cargo' },
-  { concept: 'prior.limit', path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'), ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
+  { concept: 'prior.limit', path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'), choiceAliases: priorLimitAliases, ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
   { concept: 'prior.expiration', path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration', clientFact: true, source: priorBoxSource, value: priorBoxValue('expiration'), ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'expiration') },
   { concept: 'coverage.fire-theft', tni: 'progressive.fire-theft', name: 'Fire / theft additional coverage (standard: Not selected)', label: 'fire\\s*/?\\s*theft', kind: 'choice', source: 'standard', value: () => 'Not selected' },
 ];
@@ -917,7 +921,7 @@ export const progressive = {
         note: (r) => (currentlyInsured(r) ? null : onlyNotAuto(r) ? `The intake's current insurance is ${notAutoType(r)}, not an auto policy, so whether the customer has had continuous coverage is yours to answer.`
           : priorPolicyExpired(r) ? `The intake's current policy expired ${r.priorInsurance[0].expiration}, so whether the customer has had continuous coverage is yours to answer.`
             : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
-      { concept: 'prior.limit', q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'),
+      { concept: 'prior.limit', q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'), choiceAliases: priorLimitAliases,
         ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
       { concept: 'prior.expiration', q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', clientFact: true, source: priorBoxSource, value: priorBoxValue('expiration'),
         ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'expiration') },

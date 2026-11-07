@@ -209,6 +209,16 @@ test('an intake current limit of "Other" is no amount: the current BI limit is t
   assert.deepEqual([listed.value, listed.note], ['$500K/$1M', null]);
 });
 
+// The maintainer, 2026-11-07 (PR #360): the intake's "State Minimum" is Progressive's "State Minimum or
+// less", an alias, so it is filled green, not checked as a prefix match. No other limit gets it.
+test('an intake current limit of "State Minimum" has Progressive\'s "State Minimum or less" as its alias', () => {
+  const record = baseRecord();
+  for (const [limit, aliases] of [['State Minimum', ['State Minimum or less']], [' state minimum ', ['State Minimum or less']], ['$500k CSL', []], ['State Minimum or more', []]]) {
+    record.priorInsurance[0].limit = limit;
+    assert.deepEqual(byQ(buildPlan(record, progressive), '95').choiceAliases, aliases, limit);
+  }
+});
+
 test('sole owner-driver with duplicated first name uses owner surname and driver DOB', () => {
   const record = baseRecord();
   record.drivers[0].last = 'Amina';

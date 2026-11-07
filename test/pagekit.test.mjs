@@ -3514,6 +3514,18 @@ test('a choice\'s fallbacks match whole words, and an option matched by one is f
   assert.match(again.checks[0]?.note ?? '', /the page's "Box Truck \(Straight\)" was kept, the only one beginning with it/);
 });
 
+test('Progressive\'s current BI limit: the intake\'s "State Minimum" fills "State Minimum or less" as its alias, with no check', async () => {
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [{ type: 'Commercial Auto', carrier: 'Acme Mutual', limit: 'State Minimum', expiration: '12/01/2099' }], coverage: {}, claims: {} };
+  const planned = buildPlan(record, progressive).find((s) => s.q === '95');
+  const h = harness();
+  const select = choiceSelect(h, 'bi', ['Physical Damage Only', 'State Minimum or less', '$25,000 person/$50,000 accident']);
+  const report = await h.kit.fill([{ ...planned, selector: '#bi', field: undefined, ask: undefined, pages: undefined }], { maxRounds: 3 });
+  assert.equal(select.value, 'State Minimum or less');
+  assert.equal(report.filled.length, 1);
+  assert.equal(report.filled[0].matched, undefined);
+  assert.equal(report.checks.length, 0, 'an alias is exact: green, not amber');
+});
+
 test('a type-ahead pick holds its answer by the write\'s rule: one reading exactly so wins, one only containing it is checked', async () => {
   const typeAhead = (h, listed, held, results) => {
     const select = new SelectNode([{ text: '', value: '' }, ...listed.map((text) => ({ text, value: text }))], { id: 'cls', ariaLabel: 'Classification', value: held });
@@ -3549,6 +3561,14 @@ test('a type-ahead pick holds its answer by the write\'s rule: one reading exact
   select = typeAhead(h, [], '', ['Trucking - Hazmat', 'Towing']);
   report = await h.kit.fill([step], { maxRounds: 3 });
   assert.equal(select.value, 'Trucking - Hazmat');
+  assert.equal(report.checks[0]?.matched, 'contains');
+  // A stale option left in the <select> from an earlier search ("Trucking - Local") is no rival:
+  // the write judged the one result among the list's live results (Claude review of PR #360).
+  h = harness();
+  select = typeAhead(h, ['Trucking - Local'], '', ['Trucking - Hazmat', 'Towing']);
+  report = await h.kit.fill([step], { maxRounds: 3 });
+  assert.equal(select.value, 'Trucking - Hazmat');
+  assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
   assert.equal(report.checks[0]?.matched, 'contains');
 });
 
