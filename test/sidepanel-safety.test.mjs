@@ -7972,10 +7972,13 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   // What the dock says keeps dockFor's word, its `go` included.
   const state = { settingsOpen: false, filling: false, reportFor: { at: 1700 } };
   const word = { phase: 'ready-continue', title: 'Ready for Continue', button: 'fill', label: 'Continue', go: 'continue', alt: 'fill-again' };
-  const context = { state, dockFor: () => word };
+  const marked = [];
+  const context = { state, dockFor: () => word, markTab: (d) => marked.push(d) };
   vm.runInNewContext(extractFunction('renderDock'), context);
   context.renderDock();
   assert.deepEqual({ ...state.dock }, { ...word, hidden: false, report: '1700', busy: false });
+  // The quote's tab in the tab strip follows the same word (tab-mark.js, test/tab-mark.test.mjs).
+  assert.deepEqual(marked, [word]);
   // While a fill runs it is about no report and holds Fill; Settings open hides it.
   Object.assign(state, { filling: true, settingsOpen: true });
   context.dockFor = () => ({ phase: 'filling', title: 'Reading the page…', button: 'fill-stop', label: 'Stop' });

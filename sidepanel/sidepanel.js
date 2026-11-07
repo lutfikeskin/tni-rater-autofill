@@ -29,6 +29,7 @@ import { mountLoadError, mountNote } from './panel/notes-view.jsx';
 import { mountSiteTrack } from './panel/site-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer } from './panel/agent-defaults/store.js';
+import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
 import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
@@ -182,6 +183,8 @@ function wire() {
     chrome.tabs.onUpdated.addListener(onTabUpdated);
     chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); dropReports((entry) => entry.tabId === tabId); });
     chrome.windows.onFocusChanged.addListener(refreshTab);
+    // Settings' Mark the quote's tab follows the tabGroups permission, given or taken back anywhere.
+    watchMarkSwitch();
   }
 }
 
@@ -213,6 +216,7 @@ async function init() {
     state.switches = { ...state.switches, autoFollowUps: saved.autoFollowUps ?? true, autoPages: saved.autoPages ?? true, autoAdvance: saved.autoAdvance ?? true,
       checkBeforeContinue: saved.checkBeforeContinue ?? true, finishSound: saved.finishSound ?? true };
   });
+  await readMarkSwitch();
   // agent defaults: the stored profiles and this quote's answer, before the settings are logged; the
   // agent's answer is logged and the page's dock and cards follow it.
   await loadDefaults();
