@@ -3033,6 +3033,7 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   const sandbox = {
     state: { intake: { record: { claims: { text: 'No' }, notes: { text: null }, applicant: {} }, warnings: [] } },
     get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, usage: { log: () => {} }, save: async () => {}, profileLater() {},
+    renderSections() {}, renderWarnings() {},
     claimsTextEdited: () => calls.push('claimsTextEdited'), reviewClaimsBox: () => calls.push('reviewClaimsBox'), reviewDriverGender: () => {},
   };
   vm.createContext(sandbox);
@@ -3043,6 +3044,39 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   assert.deepEqual(calls.splice(0), ['claimsTextEdited', 'reviewClaimsBox']);
   await sandbox.agentEdit('applicant.name', 'X', 'text');
   assert.deepEqual(calls, []);
+});
+
+// Audit 2026-11-07, DATA-04: a correction in the panel left what was derived from the corrected box
+// as the intake had it. The edit recomputes it from the corrected record (the claims answer, the
+// ownership its notes give), the checks follow in place, and the check list is said again.
+test('a panel edit of the claims box recomputes what derives from it and says the checks again', async () => {
+  const { get, set } = await import('../src/util.js');
+  const { rederive } = await import('../src/normalize.js');
+  const calls = [];
+  const intake = {
+    record: { claims: { text: 'Clean MVR', hasClaims: false, notes: null }, notes: { text: null }, applicant: { yearEstablished: 2021, yearsInBusiness: 5 },
+      operations: { vehicleOwnership: null }, vehicles: [{ type: 'Box Truck' }], coverage: {} },
+    warnings: [{ code: 'ownership.missing', path: 'operations.vehicleOwnership', level: 'check', msg: 'Not selected.' }], done: [], agentEdited: [], readFrom: {},
+  };
+  const sandbox = {
+    state: { intake }, get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    usage: { log: (e) => calls.push(['log', e.path, e.warnings]) },
+    renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings', intake.warnings[0].level]),
+    claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  await sandbox.agentEdit('claims.text', 'Yes - 1 accident 2024\nFinanced', 'textarea');
+  assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes, intake.record.operations.vehicleOwnership], [true, 'Financed', 'Financed']);
+  assert.deepEqual(intake.readFrom, { 'operations.vehicleOwnership': ['claims_details'] });
+  assert.equal(intake.warnings.length, 1, 'kept by position');
+  assert.deepEqual(calls.map(([what]) => what), ['renderSections', 'renderWarnings', 'log']);
+  assert.ok(['claims.hasClaims', 'claims.notes', 'operations.vehicleOwnership'].every((p) => calls[0][1].includes(p)), 'the recomputed rows stay shown');
+  assert.equal(calls[1][1], 'info', 'the check list is said again with the ownership check retired');
+  // An edit that changes no check says nothing again.
+  calls.length = 0;
+  await sandbox.agentEdit('applicant.name', 'X', 'text');
+  assert.deepEqual(calls.map(([what]) => what), ['log']);
 });
 
 // Codex on PR #22: an edit retires Luna's old items even when no new review can run.

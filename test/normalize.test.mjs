@@ -6,7 +6,7 @@ import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
-import { noPriorInsurance } from '../src/util.js';
+import { noPriorInsurance, set } from '../src/util.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { owner, ownerDrivesAnswered } from '../src/answers/owner.js';
 import { amwins } from '../src/carriers/amwins.js';
@@ -2178,4 +2178,238 @@ test('"no" in the FEIN box is no FEIN (W44-15)', () => {
   }
   assert.equal(normalizeIntake({ ...raw, fein: '12-345' }, W44).warnings.find((w) => w.code === 'fein.invalid')?.level, 'check', 'a short number is still checked');
   assert.equal(normalizeIntake({ ...raw, fein: '12-3456789' }, W44).record.applicant.fein, '12-3456789');
+});
+
+// Audit 2026-11-07, DATA-04: correcting a source field in Client details left what was derived from
+// it as the intake had it (the probe: the claims box corrected from "Clean MVR" to an accident, and
+// AmWINS was still told there was no prior loss). Each derived answer follows its corrected source,
+// with the checks that came with it; an answer the agent set themselves always wins.
+const DATA04 = { today: new Date('2026-11-07') };
+const loaded = (fields) => ({ ...normalizeIntake({ ...raw, ...fields }, DATA04), done: [], agentEdited: [] });
+// The panel's edit (record.js agentEdit): set, marked the agent's, then rederive with the intake.
+const correct = (intake, path, value) => {
+  set(intake.record, path, value);
+  intake.agentEdited = [...new Set([...intake.agentEdited, path])];
+  return rederive(intake.record, path, { ...DATA04, keep: new Set(intake.agentEdited), intake });
+};
+const open = (intake, code) => intake.warnings.some((w, i) => w.code === code && w.level === 'check' && !intake.done.includes(i));
+const openOn = (intake, code, path) => intake.warnings.some((w, i) => w.code === code && w.path === path && w.level === 'check' && !intake.done.includes(i));
+const retired = (intake, code) => intake.warnings.some((w) => w.code === code && w.level === 'info' && w.msg.startsWith('No longer applies after your edit: '));
+
+test('correcting the claims box recomputes the claims answer and its notes, unless the agent answered it (DATA-04)', () => {
+  const intake = loaded({ claims_details: 'Clean MVR', additional_notes: '' });
+  assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes], [false, null]);
+  assert.ok(correct(intake, 'claims.text', 'Yes - 1 accident 2024').includes('claims.hasClaims'));
+  assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes], [true, null]);
+  assert.equal(buildPlan(intake.record, amwins).find((s) => s.name === 'Any prior loss').value, true, 'AmWINS prior loss follows the box');
+  assert.equal(buildPlan(intake.record, progressive).find((s) => s.q === '28F5').value, true, 'so does Progressive\'s claims question');
+  correct(intake, 'claims.text', 'Not sure\nDec page will be provided');
+  assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes], [null, 'Not sure\nDec page will be provided'], 'neither Yes nor No: unset, every line a note');
+  // The agent's own answer stays theirs; the notes still follow the box.
+  correct(intake, 'claims.hasClaims', false);
+  correct(intake, 'claims.text', 'Yes\n2 accidents');
+  assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes], [false, '2 accidents']);
+});
+
+test('correcting the notes recomputes the ownership read from them, and its checks; the form\'s box and the agent\'s answer win (DATA-04)', () => {
+  const intake = loaded({ claims_details: 'No\nFinanced', additional_notes: '', veh_ownership: '' });
+  assert.equal(intake.record.operations.vehicleOwnership, 'Financed');
+  assert.deepEqual(intake.readFrom['operations.vehicleOwnership'], ['claims_details'], 'read from the claims box');
+  correct(intake, 'claims.text', 'No\nLeased');
+  assert.equal(intake.record.operations.vehicleOwnership, 'Leased', 'through the claims box\'s notes');
+  correct(intake, 'claims.text', 'No');
+  assert.equal(intake.record.operations.vehicleOwnership, null);
+  assert.equal(intake.readFrom['operations.vehicleOwnership'], undefined);
+  assert.ok(open(intake, 'ownership.missing'));
+  correct(intake, 'notes.text', 'Truck is leased or financed');
+  assert.equal(intake.record.operations.vehicleOwnership, null, 'two ownership words: the agent\'s');
+  assert.ok(open(intake, 'ownership.notes'));
+  assert.ok(retired(intake, 'ownership.missing') && !open(intake, 'ownership.missing'));
+  correct(intake, 'notes.text', 'Owned outright');
+  assert.equal(intake.record.operations.vehicleOwnership, 'Owned');
+  assert.deepEqual(intake.readFrom['operations.vehicleOwnership'], ['additional_notes']);
+  assert.ok(!open(intake, 'ownership.notes') && !open(intake, 'ownership.missing'));
+  // The agent's own answer stays theirs.
+  correct(intake, 'operations.vehicleOwnership', 'Leased');
+  correct(intake, 'notes.text', 'Financed');
+  assert.equal(intake.record.operations.vehicleOwnership, 'Leased');
+  // The form's own box wins over the notes, as at load.
+  const box = loaded({ claims_details: 'No', additional_notes: '', veh_ownership: 'Owned' });
+  correct(box, 'notes.text', 'Financed');
+  assert.equal(box.record.operations.vehicleOwnership, 'Owned');
+});
+
+test('correcting the notes or the year established recomputes years in business and its check; the agent\'s years win (DATA-04)', () => {
+  const intake = loaded({ year_established: '', years_experience: '', claims_details: 'No', additional_notes: '5 years in business' });
+  assert.equal(intake.record.applicant.yearsInBusiness, 5);
+  const check = intake.warnings.findIndex((w) => w.code === 'years-in-business.notes');
+  intake.done.push(check);
+  correct(intake, 'claims.text', 'Yes');
+  assert.ok(intake.done.includes(check), 'the same check in the same words keeps its mark');
+  correct(intake, 'notes.text', 'established 2019');
+  assert.deepEqual([intake.record.applicant.yearsInBusiness, intake.record.applicant.yearEstablished], [7, 2019]);
+  assert.deepEqual([intake.readFrom['applicant.yearsInBusiness'], intake.readFrom['applicant.yearEstablished']], [['additional_notes'], ['additional_notes']]);
+  assert.match(intake.warnings[check].msg, /established 2019/, 'the check quotes the corrected notes, in its place');
+  assert.ok(open(intake, 'years-in-business.notes'), 'and asks again');
+  correct(intake, 'notes.text', '3-5 years in business');
+  assert.deepEqual([intake.record.applicant.yearsInBusiness, intake.record.applicant.yearEstablished, intake.record.applicant.yearsInBusinessRange], [null, null, true], 'a range: the agent\'s');
+  correct(intake, 'notes.text', 'Needs hired auto');
+  assert.deepEqual([intake.record.applicant.yearsInBusiness, intake.record.applicant.yearsInBusinessRange], [null, undefined]);
+  assert.ok(open(intake, 'years-in-business.default'), 'notes silent: the blank standard');
+  assert.ok(retired(intake, 'years-in-business.notes'));
+  assert.equal(buildPlan(intake.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, 'New Venture', 'AmWINS gets New Venture (0 years) again');
+  // A year established the agent enters wins over the notes, as the form's does.
+  correct(intake, 'notes.text', '5 years in business');
+  correct(intake, 'applicant.yearEstablished', 2020);
+  assert.equal(intake.record.applicant.yearsInBusiness, 6);
+  assert.ok(!open(intake, 'years-in-business.notes') && !open(intake, 'years-in-business.default'));
+  correct(intake, 'notes.text', '10 years in business');
+  assert.equal(intake.record.applicant.yearsInBusiness, 6);
+  // The agent's own years stay theirs.
+  correct(intake, 'applicant.yearsInBusiness', 12);
+  correct(intake, 'applicant.yearEstablished', 2001);
+  correct(intake, 'notes.text', '3 years in business');
+  assert.equal(intake.record.applicant.yearsInBusiness, 12);
+});
+
+test('correcting the USDOT or MC box recomputes whether the client has none, and its note (DATA-04)', () => {
+  const intake = loaded({ dot_number: 'No', mc_number: 'N/A' });
+  assert.deepEqual([intake.record.applicant.noDot, intake.record.applicant.noMc], [true, true]);
+  correct(intake, 'applicant.dot', '1234567');
+  assert.equal(intake.record.applicant.noDot, null);
+  assert.ok(retired(intake, 'dot.none'));
+  correct(intake, 'applicant.dot', null);
+  assert.equal(intake.record.applicant.noDot, null, 'emptied: says nothing new, so the number\'s reading stays');
+  correct(intake, 'applicant.mc', '7654321');
+  assert.equal(intake.record.applicant.noMc, null);
+  correct(intake, 'applicant.dot', 'None');
+  assert.equal(intake.record.applicant.noDot, true);
+  assert.equal(intake.warnings.find((w) => w.code === 'dot.none').msg, 'USDOT # "None": the client has no USDOT number.');
+  // An emptied box keeps its No (an agent's typed No is saved as an empty box with the No).
+  const no = loaded({ dot_number: 'No' });
+  correct(no, 'applicant.dot', null);
+  assert.deepEqual([no.record.applicant.noDot, no.warnings.find((w) => w.code === 'dot.none').level], [true, 'info']);
+  assert.ok(!retired(no, 'dot.none'));
+});
+
+test('correcting the radius recomputes its check with the miles; the time with the insurer follows the notes (DATA-04)', () => {
+  const intake = loaded({ avg_radius: '100-500 miles' });
+  assert.ok(open(intake, 'radius.range'));
+  correct(intake, 'operations.radius', '250 miles');
+  assert.equal(intake.record.operations.radiusMiles, 250);
+  assert.ok(retired(intake, 'radius.range') && !open(intake, 'radius.range'));
+  correct(intake, 'operations.radius', 'around town');
+  assert.ok(open(intake, 'radius.not-miles'));
+  const notes = loaded({ claims_details: 'No', additional_notes: 'Insured with Synthetic Mutual for 6 years' });
+  assert.ok(open(notes, 'prior.tenure'));
+  correct(notes, 'notes.text', 'Needs hired auto');
+  assert.ok(retired(notes, 'prior.tenure') && !open(notes, 'prior.tenure'));
+  // Positions never move: the panel marks checks done by position.
+  assert.equal(notes.warnings.length, normalizeIntake({ ...raw, claims_details: 'No', additional_notes: 'Insured with Synthetic Mutual for 6 years' }, DATA04).warnings.length);
+});
+
+// The maintainer, 2026-11-07 (answer 2 on PR #367): correcting a box runs that box's own checks again
+// on the corrected value. A value now valid retires the check; one still invalid keeps it open, in
+// its new words.
+test('correcting a box runs its own checks again: a valid value retires them, an invalid one keeps them (DATA-04)', () => {
+  const intake = loaded({ claims_details: '', dot_number: '123456789', year_established: '1850', veh_vin_1: 'ABC', drv_dob_1: '', ins_exp_1: '13/45/2026' });
+  for (const code of ['claims.blank', 'id.invalid', 'year-established.invalid', 'vin.invalid', 'dob.missing', 'prior-expiration.invalid']) assert.ok(open(intake, code), code);
+  const length = intake.warnings.length;
+  correct(intake, 'claims.text', 'No');
+  assert.ok(retired(intake, 'claims.blank') && !open(intake, 'claims.blank'));
+  // Still invalid: kept, in the new words, and asked again though it was marked done.
+  const dot = intake.warnings.findIndex((w) => w.code === 'id.invalid' && w.path === 'applicant.dot');
+  intake.done.push(dot);
+  correct(intake, 'applicant.dot', '1234567890');
+  assert.deepEqual([intake.warnings[dot].level, intake.warnings[dot].msg, intake.done.includes(dot)], ['check', '"1234567890" isn\'t a valid number.', false]);
+  correct(intake, 'applicant.dot', 'USDOT 1234567');
+  assert.ok(retired(intake, 'id.invalid') && !open(intake, 'id.invalid'));
+  correct(intake, 'applicant.yearEstablished', 1801);
+  assert.match(intake.warnings.find((w) => w.code === 'year-established.invalid').msg, /"1801" isn't a valid year/);
+  assert.ok(open(intake, 'year-established.invalid'));
+  correct(intake, 'applicant.yearEstablished', 2019);
+  assert.ok(!open(intake, 'year-established.invalid'));
+  correct(intake, 'vehicles[0].vin', '1HGCM82633A004352');
+  assert.ok(!openOn(intake, 'vin.invalid', 'vehicles[0].vin'), 'a VIN that passes');
+  correct(intake, 'vehicles[0].vin', null);
+  assert.ok(openOn(intake, 'vin.missing', 'vehicles[0].vin'), 'emptied: no VIN');
+  correct(intake, 'drivers[0].dob', '02/31/1990');
+  assert.ok(open(intake, 'dob.invalid') && !open(intake, 'dob.missing'), 'the same box, another check');
+  correct(intake, 'drivers[0].dob', '02/03/1988');
+  assert.ok(!open(intake, 'dob.invalid') && !open(intake, 'dob.missing'));
+  correct(intake, 'priorInsurance[0].expiration', '01/15/2026');
+  assert.ok(!open(intake, 'prior-expiration.invalid'));
+  assert.ok(open(intake, 'prior-expiration.expired'), 'a valid date before today: expired');
+  correct(intake, 'priorInsurance[0].expiration', '01/15/2027');
+  assert.ok(!open(intake, 'prior-expiration.expired'));
+  // Another driver's checks are theirs.
+  assert.ok(intake.warnings.every((w) => !w.path?.startsWith('drivers[1].') || !w.msg.startsWith('No longer applies')));
+  assert.equal(intake.warnings.filter((w) => w.code !== 'prior-expiration.expired' && w.code !== 'vin.missing' && w.code !== 'dob.invalid').length, length, 'positions never move');
+});
+
+// The edit-time box checks (normalize.js BOX_CHECKS) restate the checks normalizeIntake makes at
+// load. So they can't drift apart silently: for each box they cover, the same bad and good values,
+// read at load and typed into the panel (parseEdit by the field's kind, then rederive), give the
+// same checks in the same words. Each case: the form fields read at load (`raw`), the panel's edits
+// of the same values ([path, text]), and the good form fields the edit starts from (`start`).
+test('the edit-time box checks say what load-time normalization says, for the same values (DATA-04)', async () => {
+  const { parseEdit } = await import('../src/normalize.js');
+  const { fieldInfo } = await import('../src/schema.js');
+  const box = (codes, at) => (w) => codes.includes(w.code) && (at.endsWith('.') ? w.path.startsWith(at) : w.path === at);
+  const said = (warnings, owns) => warnings.filter((w) => owns(w) && !w.msg.startsWith('No longer applies after your edit: '))
+    .map(({ code, path, level, msg }) => ({ code, path, level, msg })).sort((a, b) => a.code.localeCompare(b.code));
+  const cases = [
+    // [codes, the path they're on, bad cases, good cases]: a case is [raw fields, edits]
+    [['claims.blank'], 'claims.text', [[{ claims_details: '' }, [['claims.text', '']]]], [[{ claims_details: 'No' }, [['claims.text', 'No']]]]],
+    [['fein.invalid', 'fein.none'], 'applicant.fein', [[{ fein: '12-345' }, [['applicant.fein', '12-345']]], [{ fein: 'No' }, [['applicant.fein', 'No']]]], [[{ fein: '12-3456789' }, [['applicant.fein', '12-3456789']]]]],
+    [['year-established.invalid'], 'applicant.yearEstablished', [[{ year_established: '1850' }, [['applicant.yearEstablished', '1850']]], [{ year_established: '2099' }, [['applicant.yearEstablished', '2099']]]], [[{ year_established: '2019' }, [['applicant.yearEstablished', '2019']]]]],
+    [['phone.invalid'], 'applicant.phone', [[{ phone_number: '555-12' }, [['applicant.phone', '555-12']]]], [[{ phone_number: '(555) 201-0199' }, [['applicant.phone', '(555) 201-0199']]]]],
+    [['email.invalid'], 'applicant.email', [[{ email: 'sample@example' }, [['applicant.email', 'sample@example']]]], [[{ email: 'sample@example.com' }, [['applicant.email', 'sample@example.com']]]]],
+    [['id.invalid'], 'applicant.dot', [[{ dot_number: '123456789' }, [['applicant.dot', '123456789']]], [{ dot_number: 'ABC' }, [['applicant.dot', 'ABC']]]], [[{ dot_number: '1234567' }, [['applicant.dot', '1234567']]]]],
+    [['id.invalid'], 'applicant.mc', [[{ mc_number: '123456789' }, [['applicant.mc', '123456789']]]], [[{ mc_number: '7654321' }, [['applicant.mc', '7654321']]]]],
+    [['years-experience.invalid'], 'applicant.yearsExperience', [[{ years_experience: 'many' }, [['applicant.yearsExperience', 'many']]]], [[{ years_experience: '3' }, [['applicant.yearsExperience', '3']]]]],
+    [['dob.invalid', 'dob.missing', 'dob.unusual-age'], 'drivers[0].dob',
+      [[{ drv_dob_1: '' }, [['drivers[0].dob', '']]], [{ drv_dob_1: '02/31/1990' }, [['drivers[0].dob', '02/31/1990']]], [{ drv_dob_1: '01/01/2020' }, [['drivers[0].dob', '01/01/2020']]]],
+      [[{ drv_dob_1: '02/03/1988' }, [['drivers[0].dob', '02/03/1988']]]]],
+    [['license.missing'], 'drivers[0].licenseNumber', [[{ drv_lic_1: '' }, [['drivers[0].licenseNumber', '']]]], [[{ drv_lic_1: 'D1234567' }, [['drivers[0].licenseNumber', 'D1234567']]]]],
+    [['license-state.missing'], 'drivers[0].licenseState', [[{ drv_lic_1: 'D1234567', drv_state_1: '' }, [['drivers[0].licenseState', '']]]], [[{ drv_lic_1: 'D1234567', drv_state_1: 'IL' }, [['drivers[0].licenseState', 'IL']]]]],
+    [['name.missing-part', 'name.multi-word-first'], 'drivers[0].',
+      [[{ drv_first_1: '', drv_last_1: 'Sample' }, [['drivers[0].first', '']]], [{ drv_first_1: 'Jordan', drv_last_1: '' }, [['drivers[0].last', '']]],
+        [{ drv_first_1: 'Mary Ann', drv_last_1: 'Sample' }, [['drivers[0].first', 'Mary Ann']]]],
+      [[{ drv_first_1: 'Jordan', drv_last_1: 'Sample' }, [['drivers[0].first', 'Jordan'], ['drivers[0].last', 'Sample']]]]],
+    [['cdl-year.missing', 'cdl-year.without-cdl', 'cdl.blank-with-year'], 'drivers[0].',
+      [[{ drv_cdl_1: 'Yes', drv_cdl_yr_1: '' }, [['drivers[0].cdl', 'true'], ['drivers[0].cdlYear', '']]],
+        [{ drv_cdl_1: 'No', drv_cdl_yr_1: '2015' }, [['drivers[0].cdl', 'false'], ['drivers[0].cdlYear', '2015']]],
+        [{ drv_cdl_1: '', drv_cdl_yr_1: '2015' }, [['drivers[0].cdl', ''], ['drivers[0].cdlYear', '2015']]]],
+      [[{ drv_cdl_1: 'Yes', drv_cdl_yr_1: '2015' }, [['drivers[0].cdl', 'true'], ['drivers[0].cdlYear', '2015']]]]],
+    [['vehicle-year.invalid'], 'vehicles[0].year', [[{ veh_year_1: '1900' }, [['vehicles[0].year', '1900']]]], [[{ veh_year_1: '2021' }, [['vehicles[0].year', '2021']]]]],
+    [['vehicle-value.invalid'], 'vehicles[0].value', [[{ veh_value_1: 'lots' }, [['vehicles[0].value', 'lots']]]], [[{ veh_value_1: '45000' }, [['vehicles[0].value', '45000']]]]],
+    [['vin.invalid', 'vin.missing'], 'vehicles[0].vin', [[{ veh_vin_1: 'ABC' }, [['vehicles[0].vin', 'ABC']]], [{ veh_vin_1: '' }, [['vehicles[0].vin', '']]]], [[{ veh_vin_1: '1HGCM82633A004352' }, [['vehicles[0].vin', '1HGCM82633A004352']]]]],
+    [['vehicle-type.missing'], 'vehicles[0].type', [[{ veh_type_1: '' }, [['vehicles[0].type', '']]]], [[{ veh_type_1: 'Van' }, [['vehicles[0].type', 'Van']]]]],
+    [['eld-brand.missing'], 'operations.eldBrand', [[{ use_eld: 'Yes', eld_brand: '' }, [['operations.usesEld', 'true'], ['operations.eldBrand', '']]]], [[{ use_eld: 'Yes', eld_brand: 'Motive' }, [['operations.usesEld', 'true'], ['operations.eldBrand', 'Motive']]]]],
+    [['filings-which.missing'], 'operations.filingsWhich', [[{ fed_state_filings: 'Yes', filings_which: '' }, [['operations.filingsRequired', 'true'], ['operations.filingsWhich', '']]]], [[{ fed_state_filings: 'Yes', filings_which: 'MCS-90' }, [['operations.filingsRequired', 'true'], ['operations.filingsWhich', 'MCS-90']]]]],
+    [['cargo-limit.missing', 'cargo-deductible.missing'], 'coverage.',
+      [[{ cargo_cov: 'Yes', cargo_limit_ded: '' }, [['coverage.cargo', 'true'], ['coverage.cargoLimit', ''], ['coverage.cargoDeductible', '']]],
+        [{ cargo_cov: 'Yes', cargo_limit_ded: '$100,000' }, [['coverage.cargo', 'true'], ['coverage.cargoLimit', '100000'], ['coverage.cargoDeductible', '']]]],
+      [[{ cargo_cov: 'Yes', cargo_limit_ded: '$100,000 / $1,000' }, [['coverage.cargo', 'true'], ['coverage.cargoLimit', '100000'], ['coverage.cargoDeductible', '1000']]]]],
+    [['auto-limit.missing'], 'coverage.autoLiabLimit', [[{ auto_liability: 'Yes', auto_liab_limit: '' }, [['coverage.autoLiability', 'Yes'], ['coverage.autoLiabLimit', '']]]], [[{ auto_liability: 'Yes', auto_liab_limit: '$1M CSL' }, [['coverage.autoLiability', 'Yes'], ['coverage.autoLiabLimit', '$1M CSL']]]]],
+    [['gl-limit.missing'], 'coverage.glLimit', [[{ gen_liability: 'Yes', gen_liab_limit: '' }, [['coverage.gl', 'true'], ['coverage.glLimit', '']]]], [[{ gen_liability: 'Yes', gen_liab_limit: '$1M/$2M' }, [['coverage.gl', 'true'], ['coverage.glLimit', '$1M/$2M']]]]],
+    [['prior-expiration.invalid', 'prior-expiration.expired'], 'priorInsurance[0].expiration',
+      [[{ ins_exp_1: '13/45/2026' }, [['priorInsurance[0].expiration', '13/45/2026']]], [{ ins_exp_1: '01/15/2026' }, [['priorInsurance[0].expiration', '01/15/2026']]]],
+      [[{ ins_exp_1: '01/15/2027' }, [['priorInsurance[0].expiration', '01/15/2027']]]]],
+  ];
+  for (const [codes, at, bad, good] of cases) {
+    const owns = box(codes, at);
+    const [goodRaw] = good[0];
+    for (const [fields, edits] of [...bad, ...good]) {
+      const why = `${at} ${JSON.stringify(fields)}`;
+      const atLoad = said(normalizeIntake({ ...raw, ...fields }, DATA04).warnings, owns);
+      if (good.some(([g]) => g === fields)) assert.deepEqual(atLoad, [], `${why}: a good value has no check at load`);
+      else assert.ok(atLoad.length, `${why}: a bad value has a check at load`);
+      // The panel: from the good intake, or from the bad one for a good value, the same values typed.
+      const intake = loaded({ ...(good.some(([g]) => g === fields) ? bad[0][0] : goodRaw) });
+      for (const [path, text] of edits) correct(intake, path, parseEdit(fieldInfo(path).kind, text));
+      assert.deepEqual(said(intake.warnings, owns), atLoad, `${why}: typed in the panel, the same checks in the same words`);
+    }
+  }
 });
