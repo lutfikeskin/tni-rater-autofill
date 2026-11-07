@@ -4853,6 +4853,28 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   return { state, ui, seen, context, intakeA, started, release, reject, results };
 }
 
+// Audit 2026-11-07 (FLOW-04): a rejection while the fill was prepared (the list's pick saved to a
+// full session storage) left filling on for good: the dock's Fill stayed disabled until a reload.
+test('a fill whose preparation fails ends: filling is off, the kit is not asked, and the page says so', async () => {
+  const t = fillHarness();
+  let asked = 0;
+  t.context.pickListItem = async () => { throw new Error('Resource::kQuotaBytes quota exceeded'); };
+  t.context.runKit = async () => { asked++; return []; };
+  await t.context.fillPage();
+  assert.equal(t.state.filling, false);
+  assert.equal(asked, 0);
+  assert.equal(t.state.tabSessions.get(7)?.autoPaused ?? t.state.autoPaused, true, 'automatic filling pauses, as after a failed fill');
+  assert.deepEqual(t.seen.problems.map((p) => p.tabId), [7]);
+  assert.match(t.seen.problems[0].text, /^Filling couldn’t start: fill again, or reload the panel if it happens again\. \(Resource::kQuotaBytes quota exceeded\)$/);
+  assert.deepEqual(t.seen.logged.map((e) => [e.type, e.error]), [['fill_error', 'Resource::kQuotaBytes quota exceeded']]);
+  // And the next Fill goes ahead.
+  t.context.pickListItem = async () => {};
+  t.state.autoPaused = false;
+  await t.context.fillPage();
+  assert.equal(asked, 1);
+  assert.equal(t.state.filling, false);
+});
+
 // Codex reproduction (stale-fill-reproduction.mjs): a fill's results came back after the agent had
 // loaded another intake and moved to its tab, and were remembered and logged as that intake's.
 test('a fill whose intake changed while the carrier worked is dropped: the new intake and tab are untouched', async () => {

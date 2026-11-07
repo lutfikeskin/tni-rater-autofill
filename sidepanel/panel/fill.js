@@ -19,7 +19,7 @@ import { announce, dropReports, fillContext, fillOptions, fillProblem, issueSaid
 import { aiDecisionEvent, remarkAi, runAssist, syncAiBanner } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep } from './scope.js';
-import { fillCurrent, fillErrorMessage, staleFill } from './fill-checks.js';
+import { fillCurrent, fillErrorMessage, fillErrorText, staleFill } from './fill-checks.js';
 import { liveOf } from './live.js';
 import { agentPickable, answerSources, choiceSaid, choicesOf, currentReportKey, finishLeftOk, groupRows, itemsLeft, looseText, reportKey, stopNoteFor } from './report-model.js';
 import { answerRecord, needId, needRecord, reopenRow, setHead, settleRow, showLive } from './report-rows.js';
@@ -122,13 +122,29 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
-  await pickListItem(carrier, page, ctx);
-  // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
-  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); return; }
-  // The list page may have picked the next vehicle or driver: the plan is for that one.
-  ctx.active = { ...state.active };
-  // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
-  let plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
+  let plan;
+  // Preparing the fill (the list's pick saved, the plan for it) can fail too (a storage write
+  // refused): filling then ends here, rather than staying on with the dock's Fill disabled until the
+  // panel is reloaded (audit 2026-11-07, FLOW-04).
+  try {
+    await pickListItem(carrier, page, ctx);
+    // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
+    if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); return; }
+    // The list page may have picked the next vehicle or driver: the plan is for that one.
+    ctx.active = { ...state.active };
+    // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
+    plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
+  } catch (e) {
+    state.filling = false;
+    renderSite();
+    if (staleFill(ctx)) { noteStaleFill(ctx); runPendingPage(ctx); return; }
+    tabMaps(tabId).autoPaused = true;
+    logFillError(ctx, e);
+    const detail = fillErrorText(ctx, e);
+    fillProblem(ctx, `Filling couldn’t start: fill again, or reload the panel if it happens again.${detail ? ` (${detail})` : ''}`);
+    runPendingPage(ctx);
+    return;
+  }
   // The page view lists the answers as they go in and the dock has Stop; the new report replaces
   // the last one when it comes (kept until then, in case this fill stops before it gets anywhere).
   state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false };
