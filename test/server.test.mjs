@@ -1045,7 +1045,8 @@ test('an exception\'s 500 is counted and logged with its status and time, by fra
   console.error = (...a) => { logged.push(a.join(' ')); };
   const dashboardToken = 'd'.repeat(32);
   let broken = true;
-  const clock = () => { if (broken) throw new RangeError('clock broke\nsecond line of the message'); return Date.now(); };
+  // A message line that reads like a frame ("at …") is still the message.
+  const clock = () => { if (broken) throw new RangeError('clock broke\nsecond line of the message\n    at Jane Roe 555-0142'); return Date.now(); };
   try {
     await withServer({ dataDir: tmp(), dashboardToken, adminToken: 'admin', clock }, async ({ base }) => {
       assert.equal((await fetch(`${base}/dashboard`, { headers: { authorization: `Bearer ${dashboardToken}` } })).status, 500);
@@ -1058,13 +1059,13 @@ test('an exception\'s 500 is counted and logged with its status and time, by fra
   const failure = logged.map((l) => JSON.parse(l)).find((x) => x.msg === 'request failed');
   assert.deepEqual([failure.level, failure.method, failure.route, failure.status, typeof failure.ms, failure.error], ['error', 'GET', '/dashboard', 500, 'number', 'RangeError']);
   assert.match(failure.where, /^at /);
-  assert.ok(logged.every((l) => !/clock broke|second line/.test(l)), `no line of the message: ${logged.join('\n')}`);
+  assert.ok(logged.every((l) => !/clock broke|second line|Jane|555-0142/.test(l)), `no line of the message: ${logged.join('\n')}`);
 });
 
 test('an uncaught exception exits non-zero with its name and frames, never its message', crashTest, async () => {
   // The message comes from the environment, so the frame naming this preload doesn't quote it.
   const throwLater = 'setTimeout(() => { throw new SyntaxError(process.env.THROWN); }, 1500);';
-  const s = startServer({ HOST: '127.0.0.1', THROWN: 'Unexpected token in "Jane Roe 555-0142"\nsecond line Jane' },
+  const s = startServer({ HOST: '127.0.0.1', THROWN: 'Unexpected token in "Jane Roe 555-0142"\nsecond line Jane\n    at Jane Roe (555-0142)' },
     ['--import', `data:text/javascript,${encodeURIComponent(throwLater)}`]);
   try {
     assert.ok(await within(s.started, 'the server did not start'));

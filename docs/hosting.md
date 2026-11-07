@@ -181,7 +181,8 @@ the dashboard's `window`, `tests` and `cached`. Other lines have a `msg` (startu
 `disk ok again`, a Luna day file not read or saved, a request's exception with its `error` name and
 `where`, and, when it answered 500, that answer's `status` and `ms`, counted like any other; an
 uncaught one's `error` and `stack`). `where` and `stack` are the error's stack frames only, never
-its message. Lines carry names, counts and ids only: never a token, an
+its message: the stack's `Name: message` header is cut off whole before frames are read, and a
+stack that doesn't start with it gives none. Lines carry names, counts and ids only: never a token, an
 event's or a Luna request's content, OpenAI's answer, or a request's query beyond the export's dates.
 
 With the admin token, `/v1/health` adds `metrics`: since the process started (`startedAt`,

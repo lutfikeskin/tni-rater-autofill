@@ -71,9 +71,17 @@ export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fi
 // console.error), and what happened as fields, with `msg` for a sentence. Names, counts and ids
 // only: never a token, an event's or a Luna request's content, OpenAI's answer, or a request's
 // path beyond the routes this server has.
-// Where an error was thrown: its first `n` stack frames. A stack starts with the error's message,
-// which can run over several lines and quote event text or a path, so only the `at` lines count.
-const framesOf = (e, n) => (typeof e?.stack === 'string' ? e.stack.split('\n').map((s) => s.trim()).filter((s) => s.startsWith('at ')).slice(0, n).join(' | ') : '');
+// Where an error was thrown: its first `n` stack frames. A stack starts with the error's header
+// (`Name: message`), and the message can run over several lines, quote event text or a path, and
+// hold a line that reads like a frame. So the header is cut off whole first, and a stack that
+// doesn't start with it (a changed `stack`, a thrown non-Error) gives no frames at all.
+const framesOf = (e, n) => {
+  if (typeof e?.stack !== 'string') return '';
+  let head;
+  try { head = Error.prototype.toString.call(e); } catch { return ''; }
+  if (!e.stack.startsWith(head)) return '';
+  return e.stack.slice(head.length).split('\n').map((s) => s.trim()).filter((s) => s.startsWith('at ')).slice(0, n).join(' | ');
+};
 
 export function logLine(fields, level = 'info') {
   const line = JSON.stringify({ t: new Date().toISOString(), level, ...fields });
