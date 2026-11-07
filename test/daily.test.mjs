@@ -261,6 +261,6 @@ test('daily: alerts for a page changed for two installs, a build failing more, c
   assert.match(body, /- 2 of 50 sessions \(4%\) had a crash \(client_error\)\./);
   assert.match(body, /Thresholds: `ALERTS` in scripts\/lib\/daily\.mjs\./);
   // A page name from the log can't mention anyone or link anywhere.
-  const odd = commentBody({ since: facts.since, alerts: [{ kind: 'page-changed', carrier: 'progressive', page: '@claude [x](https://evil.example)', installs: 2, runs: 2 }] }, '2026-11-07');
+  const odd = commentBody({ since: facts.since, alerts: [{ kind: 'page-changed', carrier: 'progressive', page: `${AT_CLAUDE} [x](https://evil.example)`, installs: 2, runs: 2 }] }, '2026-11-07');
   assert.match(odd, /`@\u200bclaude \[x\]\(https:\/\/evil\.example\)`/);
 });
