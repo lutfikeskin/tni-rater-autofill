@@ -2002,7 +2002,27 @@ test('NTL with primary auto liability, or NTL mentioned and not answered: the US
 test('Texas UM: $100,000/$300,000 when GEICO lists split limits, else $100,000 CSL', () => {
   const um = one(plan(with_({ 'garaging.state': 'TX' })), 'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)');
   assert.deepEqual([um.value, um.choiceAliases], ['$100,000/$300,000', ['$100,000 Combined Single Limit']]);
-  assert.deepEqual(one(plan(intake()), 'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)').choiceAliases, []);
+  // Elsewhere the CSL first, then the split where the list has no CSL (W47-03, below).
+  assert.deepEqual(one(plan(intake()), 'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)').choiceAliases, ['$100,000/$300,000']);
+});
+
+// TNI, 2026-11-06, W47-03 (an agent's FL quote on 0.9.31, 2026-11-06: "no option matches $100,000
+// Combined Single Limit"; FL's list was I decline, $10,000/$20,000 to $100,000/$300,000): where
+// GEICO lists split limits only, TNI's $100,000 is $100,000/$300,000, on each UM question.
+test('GEICO UM: $100,000/$300,000 where the list has no combined single limit (W47-03)', () => {
+  const fl = plan(with_({ 'garaging.state': 'FL' }));
+  for (const name of ['Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)',
+    'Uninsured motorist bodily injury, UMBI (TNI: $100,000 CSL)', 'Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)']) {
+    const s = one(fl, name);
+    // The CSL stays the answer, so a list offering it keeps it; the split only after it.
+    assert.deepEqual([s.value, s.choiceAliases, s.source], ['$100,000 Combined Single Limit', ['$100,000/$300,000'], 'standard'], name);
+    // Only TNI's amount has that split: another amount (an agent's own default) drops it.
+    const std = geico.rules.find((rule) => rule.name === name).std;
+    assert.deepEqual([std.aliases(100000), std.aliases(300000)], [['$100,000/$300,000'], []], name);
+  }
+  // Texas unchanged: the split first, the CSL after.
+  const tx = one(plan(with_({ 'garaging.state': 'TX' })), 'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)');
+  assert.deepEqual([tx.value, tx.choiceAliases], ['$100,000/$300,000', ['$100,000 Combined Single Limit']]);
 });
 
 // The maintainer, 2026-10-26: a blank CDL box on the intake means No (TNI's standard), for the

@@ -27,6 +27,7 @@ import { DOCK_PHASES, phaseSaid } from './live.js';
 import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
 import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
+import { markTab } from './tab-mark.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -1272,9 +1273,12 @@ function dockFor() {
     return { phase: 'hold', tone: 'bad', eyebrow: 'Check first', title: 'Sort out the state above', sub: `${issue.intake} answers fail on a ${issue.picked} quote.`,
       button: 'fill', label: 'Fill this page', disabled: true, alt: 'fill-anyway', altLabel: 'Fill anyway' };
   }
-  // agent defaults: no fill until the agent says whose defaults this quote takes (the card above).
+  // agent defaults: no fill until the agent says whose defaults this quote takes (the card above
+  // the page's answers). Elsewhere (the intake's checks) the card isn't drawn: the dock opens it.
   if (state.intake && defaultsHold()) {
-    return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Answer the question above', sub: 'Your own defaults, or TNI\'s standards, for this quote.', button: 'fill', label: 'Fill this page', disabled: true };
+    const sub = 'Your own defaults, or TNI\'s standards, for this quote.';
+    if (state.view !== 'page') return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Whose defaults does this quote take?', sub, button: 'dock-defaults', label: 'Show the question' };
+    return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Answer the question above', sub, button: 'fill', label: 'Fill this page', disabled: true };
   }
   // The carrier's portal pages outside a quote are never filled (fillPage).
   if (!onQuotePage()) return { phase: 'portal', eyebrow: 'Next', title: 'Open the client’s quote', sub: 'This is the portal. Filling starts on a quote page.' };
@@ -1326,10 +1330,11 @@ function dockFor() {
 
 // What the dock says now (state.dock, drawn by steps-view.jsx): dockFor's word, hidden while Settings
 // is open, with the fill it is about (`report`: none while one runs) and whether a fill runs, which
-// holds its Fill (`busy`).
+// holds its Fill (`busy`). The quote's tab in the tab strip and its toolbar badge follow it (markTab).
 function renderDock() {
   const d = dockFor();
   state.dock = { ...d, hidden: state.settingsOpen, report: state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '', busy: !!state.filling };
+  markTab(d);
 }
 
 // The intake's current insurance is with the carrier the tab is on (util.js sameCarrier: GEICO or

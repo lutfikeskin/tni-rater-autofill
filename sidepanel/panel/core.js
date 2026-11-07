@@ -368,7 +368,7 @@ const state = storeState({
   captureStatus: null,
   devrec: { on: false, status: null, unfinished: null },
   recordingLine: false,
-  // Settings → TNI defaults (agent defaults: sidepanel/panel/agent-defaults/): the stored profiles
+  // Settings → Your defaults (agent defaults: sidepanel/panel/agent-defaults/): the stored profiles
   // ({ v, active, profiles }, null until read) and the agent's initials they need.
   agentDefaults: null,
   defaultsInitials: null,

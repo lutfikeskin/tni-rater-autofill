@@ -946,6 +946,14 @@ export const progressive = {
         note: 'Whether the vehicles have dashcams isn\'t on the intake (an ELD isn\'t a dashcam): answer it yourself.' },
       { concept: 'quote.agency', q: '135', source: 'fact', field: 'PolicyInput.SmartHaulEmail', ask: 'Email address provided:', name: 'Smart Haul email (the agent\'s own)', kind: 'text',
         note: 'Smart Haul asks for your own email address (Progressive tells you there when the savings apply), not the client\'s: type it yourself.' },
+      // The commitments Progressive asks for when it offers no Snapshot Pro (TNI, 2026-11-06, W47-02;
+      // agents' quotes of 2026-11-06 held them as unknown and required): agreeing to install dashcams,
+      // or Progressive's own devices, within 30 days (one field, two wordings), and the unlabelled
+      // consent box beside them. The client's commitments, so the agent's, as Snapshot Pro is.
+      { concept: 'quote.telematics-commitment', q: '14A', source: 'fact', field: 'TelematicsInput.MandatoryAgreeToInstall', ask: ['Does the customer agree to purchase and install qualified dashcam(s) in all their vehicle(s) within 30 days?', 'Does the customer agree to install devices, provided by Progressive at no charge, in all vehicle(s) within 30 days?'], name: 'Agrees to install dashcams or devices (the agent\'s)', kind: 'bool',
+        note: 'Whether the client agrees to install dashcams or Progressive\'s devices within 30 days is their commitment: ask them and answer it yourself.' },
+      { concept: 'quote.telematics-commitment', q: '126', source: 'fact', field: 'PolicyInput.ELDConsentMandatoryTelematics', name: 'Telematics consent box (the agent\'s)', kind: 'bool',
+        note: 'Progressive\'s unlabelled consent box beside the dashcam and device questions is the client\'s consent: tick it yourself only if they give it.' },
     ]),
 
     // --- Filings (pageName=Filings; only reached when filings are required) --------------------

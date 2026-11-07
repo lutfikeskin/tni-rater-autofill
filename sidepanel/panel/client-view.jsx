@@ -8,6 +8,8 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+// agent defaults: the quote's defaults, once answered, as a pill among the tools.
+import { DefaultsChip } from './agent-defaults/view.jsx';
 
 // `act`: details (the name: client details open or closed), pdf, replace, newQuote, clear, and the
 // question's yes and cancel.
@@ -26,6 +28,7 @@ function ClientHead({ act }) {
           <span id="client-meta" className="client-meta">{client?.meta ?? ''}</span>
         </button>
         <div className="client-tools">
+          <DefaultsChip />
           <button type="button" id="open-pdf" className="ghost intake-btn" title="Show the intake PDF" hidden={!client?.pdf} onClick={() => act.pdf()}><span className="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
           <button type="button" id="replace" className="ghost tool-btn" aria-label="Change file" title="Change file: load another intake PDF" onClick={() => act.replace()}><svg aria-hidden="true"><use href="#file-in" /></svg></button>
           <button type="button" id="new-quote" className="ghost tool-btn" aria-label="New quote with this intake" title="New quote with this intake: forgets this quote’s fills, marks and clicks; keeps the intake, your corrections and checks"

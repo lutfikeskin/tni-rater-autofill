@@ -39,6 +39,12 @@ the store refuses a version it already has.
    - `unlimitedStorage`: "Keeps the usage log on the agent's computer while TNI's usage server
      can't be reached, so what happened isn't lost before it's uploaded (no client names, numbers or
      addresses; the business profile and problem reports are described in the privacy policy)."
+   - `tabGroups`: an optional permission, asked for only when the agent turns on **Settings →
+     Filling → Mark the quote's tab**. "Puts the carrier tab the extension is filling in a tab group titled with what
+     it is doing (Filling, Your turn, Done), so the agent sees from another tab when the quote needs
+     them." It is optional on purpose: Chrome warns "View and manage your tab groups" for it, and a
+     required permission with a new warning disables the store's update on every agent's computer
+     until they accept it. The toolbar badge the extension also sets needs no permission.
    - Host permissions: "foragentsonly.com / progressive.com / amwinsadmittedplacement.com /
      geico.com: the carrier quote pages it fills. api.openai.com: Luna suggestions for unresolved
      choice questions, a review of the application's claims box, and a check of drivers' first
@@ -80,6 +86,11 @@ Raise the version, `npm run package` from a clean, committed tree (the usage eve
 commit they were packaged from, `+dirty` otherwise), upload the new zip on the item's **Package**
 tab, submit.
 Chrome updates installed copies by itself within a few hours of approval.
+
+Agents' own defaults ([spec](agent-defaults-spec.md)) ship hidden in the store build until TNI's
+managers approve them: that release's PR sets `RELEASED_TO_AGENTS` to `true` in
+`src/agent-defaults/index.js`. The unpacked copy has them on regardless (Settings → Advanced, for
+setup only, hides them there to see the panel as agents will).
 
 ## API keys for the pilot
 

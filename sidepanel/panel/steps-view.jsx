@@ -42,6 +42,8 @@ const DOCK_BUTTONS = [
   { id: 'dock-next', className: 'primary big', text: 'Show the next one', act: 'next' },
   { id: 'look-right', className: 'primary big', text: 'Looks right, continue', act: 'lookRight' },
   { id: 'ai-approve', className: 'primary big ai', text: '', act: 'approve' },
+  // agent defaults: opens the quote's question (the page's answers) from the intake's checks.
+  { id: 'dock-defaults', className: 'primary big', text: 'Show the question', act: 'defaults' },
 ];
 
 // A dock button. Disabled as each word of the dock says, set on every draw: a click may disable it
