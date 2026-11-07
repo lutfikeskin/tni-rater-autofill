@@ -41,9 +41,12 @@ function post(msg) {
 function markTab(dock) {
   if (!inExtension || state.closing) return;
   const onQuote = !!(state.intake && state.tab?.carrier && Number.isInteger(state.tab.id));
-  const mark = onQuote ? markFor(dock) : null;
+  const quote = usage.currentSession()?.id ?? null;
+  // A mark to keep only when this panel put one on this tab for this quote (markFor).
+  const marked = !!(last?.mark && last.tabId === state.tab?.id && last.quote === quote);
+  const mark = onQuote ? markFor(dock, marked) : null;
   if (mark === 'keep') return;
-  const msg = { tabId: mark ? state.tab.id : null, mark, quote: usage.currentSession()?.id ?? null };
+  const msg = { tabId: mark ? state.tab.id : null, mark, quote };
   if (last && last.tabId === msg.tabId && last.mark === msg.mark && last.quote === msg.quote) return;
   // Nothing marked and nothing to mark: nothing said (no worker woken for it).
   if (!last && msg.tabId == null) return;
