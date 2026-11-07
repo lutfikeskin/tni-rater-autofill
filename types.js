@@ -935,8 +935,12 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap
+ *   burst, request; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
+ * @property {boolean} [away]  panel: the panel follows another tab than the recorded one (true), or is back on it
+ * @property {number | null} [followed]  panel: the tab the panel follows (a tab number)
+ * @property {number} [recorded]  panel: the recorded tab (a tab number)
+ * @property {true} [closed]  panel: the recorded tab was closed, which ends the recording
  * @property {number} t  wall-clock ms when it happened, on the page's own clock (a fraction kept)
  * @property {number} [seq]  the frame's counter: the order of two events in one millisecond
  * @property {number} [frame]  the frame it came from (0: the top frame)
@@ -1021,6 +1025,12 @@
  * @property {boolean} test  marked as a test run, not a client
  * @property {number} events  how many events were kept
  * @property {number} dropped  how many the trace couldn't keep
+ * @property {string | null} [session]  the usage session's id, to join the usage log's events (version 2 on)
+ * @property {string | null} [rules]  the rule files' fingerprint (rulesHash), null until the panel has read it
+ * @property {string | null} [defaultsHash]  the agent's own defaults' fingerprint; null: TNI's
+ * @property {{ autoAdvance: boolean, autoFollowUps: boolean, autoPages: boolean, checkBeforeContinue?: boolean } | null} [settings]  the filling switches as the recording began (an older recording may lack checkBeforeContinue)
+ * @property {string | null} [platform]  the browser's platform (Windows, macOS…)
+ * @property {{ trace: number | null, recorder: number | null }} [versions]  the trace's and recorder's versions, as the trace's first batch says them
  */
 
 // ---------------------------------------------------------------------------------------------

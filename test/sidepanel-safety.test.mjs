@@ -116,7 +116,10 @@ function extractFunction(name) {
           stopFillFirst: 'async () => {}',
           // What the panel's work is, and whether a recording runs on the tab (core.js, REC-14):
           // elsewhere no recording runs.
-          fillingAs: '() => {}', traced: '() => false' };
+          fillingAs: '() => {}', traced: '() => false',
+          // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
+          // elsewhere none is running.
+          noteFollowed: '() => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -5757,7 +5760,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   u.release([{ frameId: 0, result: { ...u.results[0].result, pageMoved: '/quote-B' } }]);
   await run;
   assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
-  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
+  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
   // (runPendingPage then runs from every end of a fill, whichever tab is in front: FLOW-07.)
   assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n\s+\}/);
@@ -8458,11 +8461,43 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   assert.deepEqual({ ...state.dock }, { ...word, hidden: false, report: '1700', busy: false, paused: '' });
   // The quote's tab in the tab strip follows the same word (tab-mark.js, test/tab-mark.test.mjs).
   assert.deepEqual(marked, [word]);
-  // While a fill runs it is about no report and holds Fill; Settings open hides it.
+  // While a fill runs it is about no report and holds Fill. Settings open hides the dock, except
+  // its Stop while a fill runs (audit 2026-11-07, UX-02: Settings was the one screen with no Stop).
   Object.assign(state, { filling: true, settingsOpen: true });
   context.dockFor = () => ({ phase: 'filling', title: 'Reading the page…', button: 'fill-stop', label: 'Stop' });
   context.renderDock();
-  assert.deepEqual([state.dock.report, state.dock.busy, state.dock.hidden], ['', true, true]);
+  assert.deepEqual([state.dock.report, state.dock.busy, state.dock.hidden], ['', true, false]);
+  context.dockFor = () => word;
+  context.renderDock();
+  assert.equal(state.dock.hidden, true, 'any other word is hidden under Settings');
+  // Settings' Filling note says a switch changed meanwhile reaches what is filled after, and the fill
+  // under way only while it gets ready (reviews of #389): each fill, a follow-up's included, reads
+  // Continue's switch again and Check answers before Continue (fillOptions' hold) as it asks the kit.
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /ctx\.settings\.autoAdvance = switchOn\('autoAdvance', 'auto-advance'\);[\s\S]*= fillOptions\(carrier, [\s\S]*?__raterKit\.fill\(p, o\), \[plan, options\]\)/, name);
+  assert.match(SIDEPANEL, /const fillOptions = [^\n]*\n(?:[^\n]*\n)*?  hold: switchOn\('checkBeforeContinue', 'check-continue'\),/);
+  // Opening or closing Settings draws the dock again (showScreen).
+  assert.match(extractFunction('showScreen'), /renderDock\(\);\n\}$/);
+});
+
+// Reviews of #389: Continue's switch was read before the page check (pageMoved), so one flipped
+// while the panel checked the page missed the fill about to begin, and GEICO's add clicks kept the
+// value read with the list. Read after the page check, right before the options go to the kit, it
+// reaches that fill, its add clicks included.
+test('a switch flipped while the fill checks the page reaches that fill, its add clicks too', async () => {
+  for (const name of ['fillPage', 'autoFill']) {
+    const t = fillHarness();
+    const advanced = [];
+    t.context.fillOptions = (carrier, extra, autoAdvance) => { advanced.push(autoAdvance); return {}; };
+    t.context.pageMoved = async () => { t.ui['auto-advance'].checked = false; return false; };
+    // An automatic fill adding the next vehicle from GEICO's list, its "+" clicked with Continue's switch on.
+    if (name === 'autoFill') t.context.pickListItem = async (carrier, page, ctx) => { ctx.adding = { list: 'vehicles', index: 1, click: true }; };
+    const run = name === 'fillPage' ? t.context.fillPage() : t.context.autoFill('/quote-A');
+    await t.started;
+    t.release(t.results);
+    await run;
+    assert.deepEqual(advanced, [false], name);
+    if (name === 'autoFill') assert.equal(t.seen.plan.active.adding?.click, false, 'the add clicks follow the switch as sent');
+  }
 });
 
 // Audit 2026-11-07, FLOW-13: after a Stop or an error, every later page on that tab stopped filling
@@ -8520,6 +8555,23 @@ test('a unit list not read as complete is said in counts in the usage log', asyn
   assert.deepEqual([...run_.blockerList], ['list: 2 rows for 2 units, 1 shown, 0 saved by a fill', 'continue: none to click']);
   assert.equal(run_.blockers, 1);
   assert.equal(run_.fields, 0);
+});
+
+// Audit 2026-11-07, LEARN-11: the fill's kept answers are logged once per usage session; a new
+// quote's session starts again.
+test('a fill logs its kept answers once per quote, and again for a new quote', () => {
+  const logged = [];
+  let session = { id: 's1' };
+  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => session }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, fillEvents, knownStep };
+  vm.runInNewContext(extractFunction('logFill'), context);
+  const fill = () => context.logFill({ carrier: { id: 'geico' }, intake: { record: {} }, page: '/quote', view: 't1', run: 'r', settings: {} },
+    [{ fields: 1, filled: [], blockers: [], kept: [{ label: 'Garaging ZIP', key: 'ref:GiveZip', controlKind: 'text', now: '20001' }] }], [{ frameId: 0, result: { stepKey: 'Vehicles' } }], Date.now());
+  const kept = () => logged.filter((e) => e.result === 'kept').length;
+  fill(); fill();
+  assert.equal(kept(), 1);
+  session = { id: 's2' };
+  fill();
+  assert.equal(kept(), 2, 'a new quote logs it again');
 });
 
 // W43-42 (Progressive, 2026-10-22): a 29-second automatic follow-up fill showed no rows until it
@@ -8688,14 +8740,32 @@ test('a panel that pops out or docks stops and saves its recording first', async
 
 test('a new recording first stops a trace a closed panel left in the tab', async () => {
   const done = [];
-  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: false };
+  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: false, switches: { autoPages: false, checkBeforeContinue: false } };
+  let manifest = null;
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
-    usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => { done.push('store'); return {}; } },
+    usage: { build: () => ({}), currentSession: () => ({ id: 'session-1', intakeId: 'intake-1' }) }, RecordingStore: { start: async (m) => { manifest = m; done.push('store'); return {}; } },
     setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => { done.push('inject'); },
+    rulesFingerprint: () => 'rules-1', fillDefaultsHash: () => null, navigator: { platform: 'Win32', userAgentData: { platform: 'Windows' } },
     chrome: { tabs: { sendMessage: async (tabId, msg) => { done.push(`${msg.ra}:${msg.cmd}:${tabId}`); } } } };
   vm.runInNewContext(extractFunction('startRecording'), context);
   await context.startRecording();
   assert.deepEqual(done, ['trace:stop:4', 'store', 'inject']);
+  // REC-10 (audit 2026-11-07): what the run needs to be reproduced, beside the build.
+  assert.deepEqual(JSON.parse(JSON.stringify([manifest.session, manifest.intake, manifest.rules, manifest.defaultsHash, manifest.settings, manifest.platform])),
+    ['session-1', 'intake-1', 'rules-1', null, { autoAdvance: true, autoFollowUps: true, autoPages: false, checkBeforeContinue: false }, 'Windows']);
+});
+
+test('the recording\'s manifest names the trace and recorder its top frame\'s first batch came from', () => {
+  const manifest = { versions: { trace: null, recorder: null } };
+  const store = { manifest, add() {} };
+  const state = { recording: { tabId: 4, store, fills: [], redact: (s) => s, carrier: {} } };
+  const context = { state, stampEvents: (events) => events, knownStep: () => null };
+  vm.runInNewContext(extractFunction('onTraceMessage'), context);
+  context.onTraceMessage({ ra: 'trace', events: [], v: 2, recorder: 12 }, { tab: { id: 4 }, frameId: 3 }, () => {});
+  assert.deepEqual({ ...manifest.versions }, { trace: null, recorder: null }, 'a frame\'s is not the page\'s');
+  context.onTraceMessage({ ra: 'trace', events: [], v: 2, recorder: 12 }, { tab: { id: 4 }, frameId: 0 }, () => {});
+  context.onTraceMessage({ ra: 'trace', events: [], v: 3, recorder: 13 }, { tab: { id: 4 }, frameId: 0 }, () => {});
+  assert.deepEqual({ ...manifest.versions }, { trace: 2, recorder: 12 });
 });
 
 test('a recording started during a fill begins with that fill, so its end isn\'t one without a start', async () => {
@@ -8704,6 +8774,7 @@ test('a recording started during a fill begins with that fill, so its end isn\'t
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
     usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => ({ add: (events) => added.push(...events) }) },
     setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => {}, Date,
+    rulesFingerprint: () => null, fillDefaultsHash: () => null, navigator: {},
     chrome: { tabs: { sendMessage: async () => {} } } };
   vm.runInNewContext(extractFunction('startRecording'), context);
   await context.startRecording();
@@ -10178,4 +10249,60 @@ test('a recording\'s fill marker says whose the work is, and AI applies and pane
   assert.deepEqual([context.traced(4), context.traced(5)], [true, false]);
   context.state.recording.stopping = true;
   assert.equal(context.traced(4), false);
+});
+
+// REC-04 (audit 2026-11-07; W44-23): with the panel on another tab, each new document of the recorded
+// tab lost the trace, nothing said so, and a closed recorded tab left the recording running empty.
+test('the recording follows its own tab whatever tab the panel follows, says when the panel is away, and ends with the tab', async () => {
+  const added = [];
+  const injected = [];
+  const said = [];
+  const stops = [];
+  const store = { count: 0, durable: true, add: (events) => added.push(...events) };
+  const state = { tab: { id: 4 }, recording: { tabId: 4, started: 0, stopping: false, carrier: { pageAdapter: 'src/content/carriers/progressive.js' }, store }, devrec: {} };
+  const context = { state, Date, Number,
+    devrecSaid: (s) => said.push(s), stopRecording: (why) => { stops.push(why); state.recording.stopping = true; },
+    chrome: { scripting: { executeScript: async ({ target, files }) => { injected.push([target.tabId, target.allFrames, files.map((f) => f.split('/').pop())]); } } } };
+  vm.runInNewContext(['renderDevrec', 'noteFollowed', 'recordedTabUpdated', 'recordedTabRemoved'].map(extractFunction).join('\n'), context);
+  context.renderDevrec();
+  assert.deepEqual(added, [], 'on the recorded tab: nothing to say');
+  // The panel follows another tab: said once in the timeline, and on the panel's line while it lasts.
+  state.tab = { id: 9 };
+  context.renderDevrec();
+  context.renderDevrec();
+  assert.deepEqual(JSON.parse(JSON.stringify(added)).map((e) => [e.kind, e.away, e.followed, e.recorded]), [['panel', true, 9, 4]]);
+  assert.match(said.at(-1), /The panel is on another tab: only the tab the recording began on is recorded/);
+  // A new document in the recorded tab gets the trace, with the recorder and the carrier's adapter.
+  await context.recordedTabUpdated(4, { status: 'loading' });
+  await context.recordedTabUpdated(7, { status: 'complete' });
+  await context.recordedTabUpdated(4, { status: 'complete' });
+  assert.deepEqual(JSON.parse(JSON.stringify(injected)), [[4, true, ['progressive.js', 'field-key.js', 'recorder.js', 'trace.js']]]);
+  // Back on it: said, and the panel's own reinjection (ensureRecorder) does it again.
+  state.tab = { id: 4 };
+  context.renderDevrec();
+  assert.deepEqual(added.map((e) => e.away), [true, false]);
+  assert.doesNotMatch(said.at(-1), /another tab/);
+  await context.recordedTabUpdated(4, { status: 'complete' });
+  assert.equal(injected.length, 1);
+  // Another tab closed: nothing; the recorded one: the recording is saved, saying why.
+  context.recordedTabRemoved(9);
+  assert.deepEqual(stops, []);
+  context.recordedTabRemoved(4);
+  assert.deepEqual(stops, ['The recorded tab was closed.']);
+  assert.equal(added.at(-1).closed, true);
+  const wire = extractFunction('wire');
+  assert.match(wire, /chrome\.tabs\.onUpdated\.addListener\(recordedTabUpdated\);\s+chrome\.tabs\.onRemoved\.addListener\(recordedTabRemoved\);/);
+  // Review of PR #383: noted as the panel changes tab, not only at the line's next render, so a
+  // move away and back within a second is in the timeline too.
+  const marks = added.length;
+  state.recording.stopping = false;
+  state.tab = { id: 9 };
+  context.noteFollowed();
+  state.tab = { id: 4 };
+  context.noteFollowed();
+  assert.deepEqual(added.slice(marks).map((e) => e.away), [true, false]);
+  const refresh = extractFunction('refreshTab');
+  const sets = [...refresh.matchAll(/^\s*state\.tab = (?!null; return).*$/gm)];
+  assert.equal(sets.length, 2);
+  for (const m of sets) assert.match(refresh.slice(m.index + m[0].length), /^\s*(?:\/\/.*\s*)*noteFollowed\(\);/, 'each tab the panel follows is noted as it is set');
 });
