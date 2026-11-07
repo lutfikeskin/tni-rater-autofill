@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom } from '../server/index.mjs';
 import { MAX_EVENTS } from '../src/usage.js';
 import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
@@ -770,24 +770,116 @@ test('/v1/luna takes the largest request the panel may send', async () => {
 // (`Number(v) || 3000`), so a limit set to 0 to stop the spending didn't. Unset or blank is the
 // default (5000 since the maintainer raised it, 2026-10-26); a whole number is the limit, 0 stopping every request; anything else spends nothing.
 test('RATER_LUNA_DAILY_LIMIT: 0 stops Luna requests, a mistyped value spends nothing, blank is the default', async () => {
-  const startup = async (limit) => {
-    const s = startServer({ HOST: '127.0.0.1', OPENAI_API_KEY: 'sk-synthetic', ...(limit == null ? {} : { RATER_LUNA_DAILY_LIMIT: limit }) });
+  const startup = async (limit, tokens) => {
+    const s = startServer({ HOST: '127.0.0.1', OPENAI_API_KEY: 'sk-synthetic', ...(limit == null ? {} : { RATER_LUNA_DAILY_LIMIT: limit }),
+      ...(tokens == null ? {} : { RATER_LUNA_DAILY_TOKENS: tokens }) });
     try {
       const port = await within(s.started, 'the server did not start');
       assert.ok(port, `started: ${JSON.stringify(s.out())}`);
       return s.out().stdout.match(/\(Luna on, ([^)]*)\)/)?.[1] ?? null;
     } finally { s.child.kill(); }
   };
-  assert.equal(await startup('0'), '0/day');
-  assert.equal(await startup('abc'), '0/day');
-  assert.equal(await startup('-5'), '0/day');
-  assert.equal(await startup('25'), '25/day');
-  assert.equal(await startup(' '), '5000/day');
-  assert.equal(await startup(null), '5000/day');
+  const said = (requests, tokens = 10_000_000) => `${requests} requests and ${tokens} tokens a day`;
+  assert.equal(await startup('0'), said(0));
+  assert.equal(await startup('abc'), said(0));
+  assert.equal(await startup('-5'), said(0));
+  assert.equal(await startup('25'), said(25));
+  assert.equal(await startup(' '), said(5000));
+  assert.equal(await startup(null), said(5000));
+  // The token budget reads the same way (audit 2026-11-07, SRV-12).
+  assert.equal(await startup(null, '2000000'), said(5000, 2_000_000));
+  assert.equal(await startup(null, 'lots'), said(5000, 0));
+  assert.equal(await startup(null, ''), said(5000));
+  assert.equal(lunaDailyTokensFrom(undefined), LUNA_DAILY_TOKENS);
+  assert.equal(lunaDailyTokensFrom('0'), 0);
   // A limit of 0 refuses every request before OpenAI is asked.
   await withServer({ dataDir: tmp(), openaiKey: 'sk-server', lunaDailyLimit: 0, fetchImpl: async () => { throw new Error('OpenAI was asked'); } }, async ({ base }) => {
     assert.equal((await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) })).status, 429);
   });
+});
+
+// Audit 2026-11-07, SRV-12: the day's Luna count was in memory, so a restart started it again, and
+// it counted requests only. It is kept on the volume now, with the tokens OpenAI says each used.
+const askLuna = (base) => fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
+const lunaUsage = (dataDir) => JSON.parse(fs.readFileSync(path.join(dataDir, 'luna', `${new Date().toISOString().slice(0, 10)}.json`), 'utf8'));
+
+test('/v1/luna: the day\'s requests and tokens survive a restart, and the limit holds across it', async () => {
+  const dataDir = tmp();
+  const answer = { status: 'completed', output: [], usage: { input_tokens: 3100, output_tokens: 350, output_tokens_details: { reasoning_tokens: 200 } } };
+  const fetchImpl = async () => new Response(JSON.stringify(answer), { status: 200 });
+  const opts = { dataDir, openaiKey: 'sk-server', lunaDailyLimit: 3, fetchImpl };
+  await withServer(opts, async ({ base }) => {
+    for (let i = 0; i < 2; i++) assert.equal((await askLuna(base)).status, 200);
+  });
+  const day = new Date().toISOString().slice(0, 10);
+  assert.deepEqual(lunaUsage(dataDir), { day, requests: 2, inputTokens: 6200, outputTokens: 700, estimated: 0 });
+  assert.ok(!JSON.stringify(lunaUsage(dataDir)).includes('completed'), 'counts only, never the answer');
+  // A restart (or a redeploy on the same volume) goes on from the day's count.
+  await withServer(opts, async ({ base }) => {
+    assert.equal((await askLuna(base)).status, 200);
+    const limited = await askLuna(base);
+    assert.equal(limited.status, 429);
+    assert.deepEqual(await limited.json(), { error: 'daily Luna limit reached' });
+  });
+  assert.equal(lunaUsage(dataDir).requests, 3);
+  assert.deepEqual(fs.readdirSync(path.join(dataDir, 'luna')), [`${day}.json`], 'no temporary file left');
+});
+
+test('/v1/luna: a daily token budget refuses requests once the day\'s tokens reach it; an answer without usage counts at its most', async () => {
+  const dataDir = tmp();
+  let usage = { input_tokens: 4000, output_tokens: 1000 };
+  const asked = [];
+  const fetchImpl = async () => { asked.push(1); return new Response(JSON.stringify({ status: 'completed', output: [], ...(usage ? { usage } : {}) }), { status: 200 }); };
+  await withServer({ dataDir, openaiKey: 'sk-server', lunaDailyTokens: 9000, fetchImpl }, async ({ base }) => {
+    assert.equal((await askLuna(base)).status, 200);
+    usage = { input_tokens: 'many', output_tokens: -1 };
+    assert.equal((await askLuna(base)).status, 200, 'below the budget when it started');
+    const body = lunaBody();
+    // At its most (CodeRabbit on #375): a token is at least one byte of the request as sent, plus the
+    // message framing; a token per 4 characters undercounted text in other scripts and punctuation.
+    assert.deepEqual(lunaUsage(dataDir), { day: lunaUsage(dataDir).day, requests: 2, inputTokens: 4000 + Buffer.byteLength(JSON.stringify(body)) + 64,
+      outputTokens: 1000 + body.max_output_tokens, estimated: 1 });
+    const refused = await askLuna(base);
+    assert.equal(refused.status, 429);
+    assert.equal(refused.headers.get('retry-after'), '3600');
+    assert.deepEqual(await refused.json(), { error: 'daily Luna token budget reached' });
+    assert.equal(asked.length, 2, 'OpenAI was not asked once the budget was spent');
+  });
+  // Text that takes more than a byte a character (Turkish, punctuation-dense JSON) counts by its bytes.
+  const wide = tmp();
+  const body = { ...lunaBody(), instructions: `${lunaBody().instructions} ${'şğü…'.repeat(500)}` };
+  await withServer({ dataDir: wide, openaiKey: 'sk-server', fetchImpl: async () => new Response('{"output":[]}', { status: 200 }) }, async ({ base }) => {
+    assert.equal((await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).status, 200);
+  });
+  assert.equal(lunaUsage(wide).inputTokens, Buffer.byteLength(JSON.stringify(body)) + 64);
+  assert.ok(lunaUsage(wide).inputTokens > JSON.stringify(body).length);
+});
+
+test('/v1/luna: a day file that cannot be read or written is logged and the count goes on in memory', async () => {
+  const dataDir = tmp();
+  const day = new Date().toISOString().slice(0, 10);
+  fs.mkdirSync(path.join(dataDir, 'luna'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'luna', `${day}.json`), '{"requests": 4');
+  const logged = [];
+  const error = console.error;
+  console.error = (...a) => { logged.push(a.join(' ')); };
+  try {
+    const fetchImpl = async () => new Response(JSON.stringify({ usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 });
+    await withServer({ dataDir, openaiKey: 'sk-server', lunaDailyLimit: 1, fetchImpl }, async ({ base }) => {
+      assert.equal((await askLuna(base)).status, 200);
+      assert.equal((await askLuna(base)).status, 429);
+    });
+    assert.equal(lunaUsage(dataDir).requests, 1, 'written whole again');
+    // A volume that can't be written: Luna still answers, within the limit kept in memory.
+    const blocked = tmp();
+    fs.writeFileSync(path.join(blocked, 'luna'), 'a file where the folder goes');
+    await withServer({ dataDir: blocked, openaiKey: 'sk-server', lunaDailyLimit: 1, fetchImpl }, async ({ base }) => {
+      assert.equal((await askLuna(base)).status, 200);
+      assert.equal((await askLuna(base)).status, 429);
+    });
+  } finally { console.error = error; }
+  assert.ok(logged.some((l) => /Luna usage for \d{4}-\d{2}-\d{2} unreadable \(SyntaxError\): counting from 0/.test(l)));
+  assert.ok(logged.some((l) => /Luna usage not saved/.test(l)));
 });
 
 // Review of PR 179: OpenAI answers 429 insufficient_quota when TNI's project is out of credit or
