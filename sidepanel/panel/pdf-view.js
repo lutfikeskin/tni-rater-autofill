@@ -9,7 +9,7 @@ import { $, clearAgentKeys, persistAiPending, state, store } from './core.js';
 import { loadFile, logProfile, profileTimer } from './intake.js';
 import { render, showScreen } from './record.js';
 import { pageOf, samePage } from './usage.js';
-import { cancelLayouts, dropReports, holdLayouts, renderSite, resetViews, stopPageIsOurs, viewOf } from './coordinator.js';
+import { cancelLayouts, dropReports, holdLayouts, renderSite, resetViews, stopFillFirst, stopPageIsOurs, viewOf } from './coordinator.js';
 import { refreshAnswers, runKit } from './fill.js';
 import { stopRecording } from './dev-recording.js';
 import { flushSync } from 'react-dom';
@@ -392,32 +392,41 @@ function clientNote(text) {
 
 async function clearClient() {
   const scope = usage.currentSession()?.intakeId;
-  // A recording ends with its client, saved as it is.
-  if (state.recording) await stopRecording('The client was cleared, so the recording stopped.');
-  if (profileTimer) logProfile();
-  usage.log({ type: 'intake_closed', reason: 'cleared' });
-  cancelLayouts();
-  holdLayouts();
-  resetViews();
-  state.intake = null;
-  state.fileConfirm = null;
-  state.view = 'check';
-  state.filter = 'all';
-  state.aiDocks = new Map();
-  state.pastKey = null;
-  state.detailsOpen = false;
-  dropReports();
-  clientNote(null);
-  usage.restoreSession(null);
-  await store.remove('intake');
-  await store.remove('session');
-  await forgetPdf();
-  await persistAiPending();
-  await clearAgentKeys(scope);
-  // agent defaults: no client, no question.
-  refreshDefaults();
-  render();
-  renderSite();
+  // A fill running on any tab is stopped first and waited for (stopFillFirst), and none starts
+  // until the client is gone (`resetting`).
+  const resetting = state.resetting;
+  state.resetting = true;
+  try {
+    await stopFillFirst();
+    // A recording ends with its client, saved as it is.
+    if (state.recording) await stopRecording('The client was cleared, so the recording stopped.');
+    if (profileTimer) logProfile();
+    usage.log({ type: 'intake_closed', reason: 'cleared' });
+    cancelLayouts();
+    holdLayouts();
+    resetViews();
+    state.intake = null;
+    state.fileConfirm = null;
+    state.view = 'check';
+    state.filter = 'all';
+    state.aiDocks = new Map();
+    state.pastKey = null;
+    state.detailsOpen = false;
+    dropReports();
+    clientNote(null);
+    usage.restoreSession(null);
+    await store.remove('intake');
+    await store.remove('session');
+    await forgetPdf();
+    await persistAiPending();
+    await clearAgentKeys(scope);
+    // agent defaults: no client, no question.
+    refreshDefaults();
+    render();
+    renderSite();
+  } finally {
+    state.resetting = resetting;
+  }
 }
 
 export { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, clientNote, closeDetails, closePdf, drawPdf, keepPdf, newQuote, noteStep, openDetails, openPdf, openPdfInTab, pdfAvailable, pdfPage, pdfPageSaid, pdfPan, pdfZoom, workSaid };

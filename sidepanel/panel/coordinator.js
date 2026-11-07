@@ -156,9 +156,13 @@ function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = f
     defaultsHash: fillDefaultsHash(),
   };
 }
+// A correction (the same intake, a later revision): the fill went on with the answers it started
+// with, so the page was filled from the intake as it was before the correction.
 function noteStaleFill(ctx) {
   logFillError(ctx, 'stale: intake changed during the fill');
-  fillProblem(ctx, 'The intake changed during the fill: the page may hold earlier answers. Check it, then fill again.');
+  fillProblem(ctx, state.intake === ctx.intake
+    ? 'You corrected the intake during the fill: this page may hold answers from before the correction. Check it, then fill again.'
+    : 'The intake changed during the fill: the page may hold earlier answers. Check it, then fill again.');
 }
 
 // Whether the fill's tab shows another page than the one it was asked for, as Chrome has the tab's
@@ -260,6 +264,21 @@ async function stopFill() {
   } catch { /* the page is navigating: the fill ends anyway */ }
 }
 
+// Before the intake is replaced or cleared (Change file, a PDF dropped, Clear this client): a fill
+// running on any tab is stopped as Stop does (stopFill: the answer going in finishes, nothing more
+// is filled or clicked), and waited for, up to FILL_END_MS, as a panel giving way does (giveWay), so
+// none of the earlier intake's answers go in after the agent moved on. Its results come back for the
+// intake it filled from. A fill that only gets its tab's word (`fillingFor`) while this waits is
+// stopped then. One still running after the wait is dropped as stale when it ends (staleFill). The
+// caller holds `resetting`, so no fill starts meanwhile.
+const FILL_END_MS = 15000;
+async function stopFillFirst() {
+  for (const end = Date.now() + FILL_END_MS; state.filling && Date.now() < end;) {
+    if (state.fillingFor && !state.fillingFor.stopping) await stopFill();
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 // Scrolling into view: at once for an agent who asked the system for less motion.
 function scrollBehavior() {
   return matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
@@ -358,7 +377,7 @@ async function autoFill(page) {
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // The tab moved on to another page meanwhile: that one gets its own fill (fillPage).
     if (await pageMoved(ctx)) { moved = true; notePageMoved(ctx); return; }
-    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     // Its answers listed as they go in, as a fill the agent asked for, from the first one in (`auto`:
     // a follow-up that answers nothing never replaces the report; W43-42, 2026-10-22: a 29-second
     // automatic fill showed nothing until it ended).
@@ -1568,4 +1587,4 @@ function stopPageIsOurs() {
   return !state.layoutHold || state.layoutReadyTabs.has(state.tab?.id);
 }
 
-export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };
+export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };
