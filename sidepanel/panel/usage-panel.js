@@ -138,12 +138,14 @@ function settingsActs() {
 }
 
 // What the footer says once a problem report is saved (audit 2026-11-07, UX-11: the box closed with
-// no word but the screen reader's): whether it reached TNI, as the upload right after it went
-// (usage.lastUpload: `ok`, `error`, `off`), and whether the page's last fill goes with it (`withFill`:
-// problemContext found one). `at`: the time to say.
-function problemSaid(status, withFill, at = new Date()) {
+// no word but the screen reader's): whether it reached TNI, by where the report itself is after the
+// upload right after it (`fate`: usage.eventFate, `sent` only once the server confirmed it), with
+// the upload's status for why it waits (`off`: no server), and whether the page's last fill goes with
+// it (`withFill`: problemContext found one). `at`: the time to say.
+function problemSaid(fate, status, withFill, at = new Date()) {
   const fill = withFill ? ", with this page's last fill" : '';
-  if (status?.state === 'ok') return `Report saved and sent to TNI at ${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${fill}.`;
+  if (fate === 'sent') return `Report saved and sent to TNI at ${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${fill}.`;
+  if (fate === 'refused') return `Report saved on this computer${fill}, but the usage server didn't take it: it stays here, and goes with Export.`;
   if (status?.state === 'off') return `Report saved on this computer${fill}. No usage server is set, so it isn't sent.`;
   return `Report saved on this computer${fill}. It goes to TNI with the next upload.`;
 }
@@ -151,6 +153,8 @@ function problemSaid(status, withFill, at = new Date()) {
 // opens again.
 const PROBLEM_SAID_MS = 10_000;
 let problemSaidTimer = null;
+// Counts the box opened and the reports saved: a report's upload that ends after either says nothing.
+let problemRun = 0;
 function sayProblem(text) {
   clearTimeout(problemSaidTimer);
   const line = $('problem-said');
@@ -166,6 +170,7 @@ function wireUsage() {
   // Report a problem opens its box above the footer, and says so (aria-expanded).
   const problemOpen = (open) => { $('problem-form').hidden = !open; $('report-problem').setAttribute('aria-expanded', String(open)); };
   $('report-problem').addEventListener('click', () => {
+    problemRun++;
     sayProblem(null);
     problemOpen($('problem-form').hidden);
     if (!$('problem-form').hidden) $('problem-text').focus();
@@ -177,7 +182,14 @@ function wireUsage() {
     const redact = state.intake ? redactor(redactionTerms(state.intake.record)) : (x) => x;
     const page = state.tab?.url ? pageOf(state.tab.url) : null;
     const context = problemContext(state.tab, page);
-    usage.log({ type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, text: redact(text).slice(0, 1000), ...context });
+    const run = ++problemRun;
+    // Its own id, to say where it is once uploaded (usage.eventFate).
+    const id = crypto.randomUUID();
+    $('send-problem').disabled = true;
+    await usage.log({ id, type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, text: redact(text).slice(0, 1000), ...context });
+    $('send-problem').disabled = false;
+    // Not saved (storage full, say): said, and the text stays in the box to try again or copy.
+    if (usage.lastSave().state === 'error') { sayProblem("The report couldn't be saved on this computer. Copy it, then try again."); return; }
     $('problem-text').value = '';
     problemOpen(false);
     announce('Thanks — saved with the usage log.');
@@ -185,8 +197,10 @@ function wireUsage() {
     sayProblem('Report saved. Sending it to TNI…');
     // Sent now rather than on the minute: the panel is often closed right after (audit 2026-10-08).
     await uploadNow();
-    // Said in the footer, where the box was, as that upload went (and to a screen reader, role=status).
-    sayProblem(problemSaid(usage.lastUpload(), !!context.run));
+    // Said in the footer, where the box was, as this report went (and to a screen reader,
+    // role=status), unless the box opened again or another report was saved meanwhile.
+    const fate = await usage.eventFate(id);
+    if (run === problemRun) sayProblem(problemSaid(fate, usage.lastUpload(), !!context.run));
   });
   setInterval(renderUsage, 5000);
 }

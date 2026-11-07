@@ -5191,24 +5191,70 @@ test('a Continue on a carrier without the retry is never clicked again: waited f
 // panel was often closed before.
 test('a problem report is uploaded as soon as it is logged', () => {
   // The line under the usage card is said as data (state.usageNote; settings-view.jsx draws it).
-  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,400}state\.usageNote = 'Thanks — saved with the usage log\.';\s+sayProblem\([^\n]*\);\s+\/\/[^\n]*\n\s+await uploadNow\(\);/);
+  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,900}state\.usageNote = 'Thanks — saved with the usage log\.';\s+sayProblem\([^\n]*\);\s+\/\/[^\n]*\n\s+await uploadNow\(\);/);
 });
 
 // Audit 2026-11-07, UX-11: Save report closed the box with no word but the screen reader's. The
-// footer says it was saved, then whether it reached TNI as the upload right after it went, and
-// whether the page's last fill goes with it; the line goes when the box opens again.
-test('a saved problem report says in the footer whether it reached TNI', () => {
-  const context = {};
-  vm.runInNewContext(extractFunction('problemSaid'), context);
+// footer says it was saved, then whether it reached TNI, and whether the page's last fill goes with
+// it; the line goes when the box opens again. Reviews of #422: "sent" is this report's own fate
+// (usage.eventFate: gone from this computer only by an upload the server confirmed), not the
+// upload's `ok`, which a refused report or an empty queue's health check also ends in; a report not
+// saved says so and keeps its text; and a report's upload that ends after the box opened again, or
+// after a newer report, says nothing.
+test('a saved problem report says in the footer whether it reached TNI', async () => {
   const at = new Date(2026, 10, 7, 15, 42);
   const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  assert.equal(context.problemSaid({ state: 'ok' }, true, at), `Report saved and sent to TNI at ${time}, with this page's last fill.`);
-  assert.equal(context.problemSaid({ state: 'ok' }, false, at), `Report saved and sent to TNI at ${time}.`);
-  assert.equal(context.problemSaid({ state: 'error' }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
-  assert.equal(context.problemSaid({ state: 'off' }, true, at), "Report saved on this computer, with this page's last fill. No usage server is set, so it isn't sent.");
-  const wire = extractFunction('wireUsage');
-  assert.match(wire, /const context = problemContext\(state\.tab, page\);[\s\S]*await uploadNow\(\);[\s\S]*sayProblem\(problemSaid\(usage\.lastUpload\(\), !!context\.run\)\);/);
-  assert.match(wire, /\$\('report-problem'\)\.addEventListener\('click', \(\) => \{\n\s+sayProblem\(null\);/);
+  const said = {};
+  vm.runInNewContext(extractFunction('problemSaid'), said);
+  assert.equal(said.problemSaid('sent', { state: 'ok' }, true, at), `Report saved and sent to TNI at ${time}, with this page's last fill.`);
+  assert.equal(said.problemSaid('sent', { state: 'ok' }, false, at), `Report saved and sent to TNI at ${time}.`);
+  assert.equal(said.problemSaid('refused', { state: 'ok', sent: 0 }, false, at), "Report saved on this computer, but the usage server didn't take it: it stays here, and goes with Export.");
+  assert.equal(said.problemSaid('queued', { state: 'ok', sent: 0 }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
+  assert.equal(said.problemSaid('queued', { state: 'error' }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
+  assert.equal(said.problemSaid('queued', { state: 'off' }, true, at), "Report saved on this computer, with this page's last fill. No usage server is set, so it isn't sent.");
+
+  // The handlers, as wired.
+  const make = ({ saved = true, fate = 'sent' } = {}) => {
+    const handlers = {};
+    const el = (id) => ({ id, value: '', hidden: true, disabled: false, textContent: '', attrs: {}, focus() {}, setAttribute(k, v) { this.attrs[k] = v; }, addEventListener: (type, fn) => { handlers[id] = fn; } });
+    const els = Object.fromEntries(['report-problem', 'problem-form', 'problem-text', 'cancel-problem', 'send-problem', 'problem-said'].map((id) => [id, el(id)]));
+    let release;
+    const logged = [];
+    const context = { state: { intake: null, tab: null }, $: (id) => els[id], document: { addEventListener() {} }, setInterval() {}, setTimeout: () => 1, clearTimeout() {},
+      unlockAudio() {}, renderUsage() {}, announce() {}, redactor: () => (x) => x, redactionTerms: () => [], pageOf: (u) => u, problemContext: () => ({}),
+      crypto: { randomUUID: () => `id-${logged.length}` }, problemSaidTimer: null, PROBLEM_SAID_MS: 10_000, problemRun: 0,
+      uploadNow: () => new Promise((r) => { release = r; }),
+      usage: { log: async (e) => { logged.push(e); }, lastSave: () => (saved ? { state: 'ok' } : { state: 'error', message: 'quota' }), lastUpload: () => ({ state: 'ok', sent: 0 }), eventFate: async () => fate } };
+    vm.runInNewContext(['problemSaid', 'sayProblem', 'wireUsage'].map(extractFunction).join('\n'), context);
+    context.wireUsage();
+    return { els, handlers, logged, release: () => release?.(), context };
+  };
+  // Refused by the server, though the upload ended ok: not said as sent.
+  const refused = make({ fate: 'refused' });
+  refused.els['problem-text'].value = 'The vehicle page froze';
+  const sending = refused.handlers['send-problem']();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(refused.els['problem-said'].textContent, 'Report saved. Sending it to TNI…');
+  refused.release();
+  await sending;
+  assert.match(refused.els['problem-said'].textContent, /didn't take it/);
+  assert.equal(refused.logged[0].id, 'id-0', 'logged with the id its fate is read by');
+  // Not saved: said, its text kept and the box left open; nothing is sent.
+  const lost = make({ saved: false });
+  lost.els['problem-text'].value = 'The vehicle page froze';
+  lost.els['problem-form'].hidden = false;
+  await lost.handlers['send-problem']();
+  assert.deepEqual([lost.els['problem-text'].value, lost.els['problem-form'].hidden, lost.els['send-problem'].disabled], ['The vehicle page froze', false, false]);
+  assert.match(lost.els['problem-said'].textContent, /couldn't be saved/);
+  // The box opened again while the report went: its outcome isn't said over it.
+  const reopened = make();
+  reopened.els['problem-text'].value = 'The vehicle page froze';
+  const going = reopened.handlers['send-problem']();
+  await new Promise((r) => setImmediate(r));
+  reopened.handlers['report-problem']();
+  reopened.release();
+  await going;
+  assert.deepEqual([reopened.els['problem-said'].textContent, reopened.els['problem-said'].hidden], ['', true]);
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
   assert.match(html, /<div id="problem-form"[\s\S]*?<\/div>\n\s+<\/div>\n\s+<!--[^\n]*-->\n\s+<p id="problem-said" class="problem-said" role="status" hidden><\/p>/);
 });
@@ -6574,7 +6620,7 @@ test('a problem report names the fill it is about: view, run, step and what held
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), { view: 't1' });
   state.intake = null;
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
-  assert.match(extractFunction('wireUsage'), /const context = problemContext\(state\.tab, page\);\n\s+usage\.log\(\{ type: 'problem_report'[^\n]*\.\.\.context \}\);/);
+  assert.match(extractFunction('wireUsage'), /const context = problemContext\(state\.tab, page\);[\s\S]{0,300}await usage\.log\(\{ id, type: 'problem_report'[^\n]*\.\.\.context \}\);/);
 });
 
 test('the agent\'s own button clicks are logged redacted, with a known step only', () => {

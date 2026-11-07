@@ -270,6 +270,16 @@ export function upload({ timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
   return queue;
 }
 
+// Where one event is now, by its id (the panel's problem report): still waiting here (`queued`), set
+// aside as refused or too large (`refused`), or gone from this computer (`sent`), which only an
+// upload the server confirmed does. The upload's own `ok` says neither: it ends so with events
+// refused, and with nothing to send.
+export async function eventFate(id) {
+  if (((await local.get(LOG_KEY)) ?? []).some((e) => e.id === id)) return 'queued';
+  if (((await local.get(REJECTED_KEY)) ?? []).some((e) => e.id === id)) return 'refused';
+  return 'sent';
+}
+
 // Deletes the upload queue and the events kept aside for export: what Export wrote (audit
 // 2026-10-08: Clear left the refused events, which Export kept including).
 export async function clearLog() {
