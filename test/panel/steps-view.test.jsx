@@ -167,3 +167,28 @@ test('mountSteps and mountDock draw before they return', () => {
   nav.remove();
   foot.remove();
 });
+
+// Audit 2026-11-07, UX-08: Fill this page hid as Stop showed, and keyboard focus fell to the page;
+// a keyboard or screen-reader agent had to tab back through the panel to reach Stop.
+test('keyboard focus stays in the dock as its button changes, and is never taken from elsewhere', () => {
+  const t = acts();
+  const { container } = render(<><button id="elsewhere">elsewhere</button><Dock act={t.act} /></>);
+  const say = (word) => act(() => { state.dock = { title: 'x', hidden: false, report: '', busy: false, ...word }; });
+  say({ phase: 'ready', button: 'fill', label: 'Fill this page' });
+  $(container, 'fill').focus();
+  // Fill pressed: Stop shows in its place, and takes the focus.
+  say({ phase: 'filling', button: 'fill-stop', label: 'Stop', busy: true });
+  expect(document.activeElement.id).toBe('fill-stop');
+  // Stop pressed: it stays, disabled, as Stopping…; then the next word's button takes it.
+  say({ phase: 'filling', button: 'fill-stop', label: 'Stopping…', disabled: true, busy: true });
+  say({ phase: 'needs', button: 'dock-next', label: 'Show the next one', alt: 'fill-again', altLabel: 'Fill this page again' });
+  expect(document.activeElement.id).toBe('dock-next');
+  // A word with no button: its alternative.
+  say({ phase: 'finished', alt: 'fill-again', altLabel: 'Fill this page again' });
+  expect(document.activeElement.id).toBe('dock-alt');
+  // Focus elsewhere: the dock's changes leave it there.
+  $(container, 'elsewhere').focus();
+  say({ phase: 'ready', button: 'fill', label: 'Fill this page' });
+  say({ phase: 'filling', button: 'fill-stop', label: 'Stop', busy: true });
+  expect(document.activeElement.id).toBe('elsewhere');
+});
