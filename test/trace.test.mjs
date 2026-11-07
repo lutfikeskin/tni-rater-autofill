@@ -444,3 +444,15 @@ test('every wait the fill engine names is kept by the trace and said by the repo
     assert.ok(said.has(why), `the report says "${why}"`);
   }
 });
+
+// REC-20 (audit 2026-11-07): a request the carrier's server failed looked like one that finished.
+test('a page request carries the HTTP status its server answered, when the browser says it', async () => {
+  const h = harness();
+  h.resource([
+    { initiatorType: 'fetch', name: 'https://synthetic.example/api/rate', startTime: 2000, responseEnd: 2300, responseStatus: 500 },
+    { initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/save', startTime: 2400, responseEnd: 2500, responseStatus: 200 },
+    { initiatorType: 'fetch', name: 'https://synthetic.example/api/old', startTime: 2600, responseEnd: 2700 },
+  ]);
+  await h.advance(400);
+  assert.deepEqual(h.events().filter((e) => e.kind === 'request').map((e) => [e.path, e.status ?? null]), [['/api/rate', 500], ['/api/save', 200], ['/api/old', null]]);
+});

@@ -972,6 +972,8 @@
  * @property {number} [drawnCount]  burst: how many questions it drew in all
  * @property {number} [removed]  burst: how many questions it took away
  * @property {'fetch' | 'xhr'} [via]  request: how the page sent it
+ * @property {number} [status]  request: the HTTP status its server answered (responseStatus; 0 when the browser doesn't
+ *   say; none from a browser without it): 400 and up is a failed request in the report
  * @property {'run' | 'wait' | 'answer' | 'press'} [what]  kit: what the fill said. run: it started (`on`, its `steps`) or ended (`filled`, `halted`); wait: a
  *   settle (`quietMs`, `maxMs`, `requests`, `start`, `ms`, `ended` quiet or limit, at the limit `settled` and what `held` it); answer: one answer
  *   (`field`, `stepKind`, `ok`, `start`, `applyMs`, the usage log's `timing`); press: a button it pressed (`button`, `how`: from the page's world or the kit's)

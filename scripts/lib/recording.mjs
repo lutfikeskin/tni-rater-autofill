@@ -40,6 +40,8 @@ const clock = (ms) => {
 };
 const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const quote = (s) => `"${String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)}"`;
+// A request's path as code, on one line: decoded, it can hold a line break or Markdown (review of PR #379).
+const codePath = (s) => `\`${String(s ?? '').replace(/\s+/g, ' ').replace(/`/g, "'").trim().slice(0, 120)}\``;
 const fieldName = (e) => quote(e.field?.label || e.field?.key || 'a question');
 // Where an answer is down the page; none for a box drawn with no size (a page's hidden status box,
 // Progressive's Current Page Errored), which is never above or below a question.
@@ -54,6 +56,8 @@ const yours = (e) => (e.kind === 'click' || e.kind === 'pointer' || e.kind === '
   : e.trusted !== false && typeof e.gestureMs === 'number' && e.gestureMs >= 0 && e.gestureMs <= GESTURE_MS);
 const whose = (e) => (e.filling ? ' (not you, during a fill)' : ' (the page)');
 const many = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+// A page request its server answered with an error (HTTP 400 and up; the trace's `status`).
+const failed = (e) => Number.isInteger(e.status) && e.status >= 400;
 // A wait's own words: what it was for (pagekit.js settle's `why`).
 const WAITS = { answer: 'after an answer', round: 'after a round of answers', load: 'for a new view to load', 'before-load': 'before a button that loads a view',
   rated: 'for the premium', continue: 'before pressing Continue', continued: 'after pressing Continue', drawn: 'for a late question', start: 'before the fill',
@@ -164,6 +168,8 @@ function actions(events) {
       const took = e.removed ? `took away ${many(e.removed, 'question')}` : '';
       lines.push({ t: e.t, text: `the page ${[drew, took].filter(Boolean).join(' and ')}${e.sinceAction != null ? `, ${secs(e.sinceAction)} after the last action` : ''}` });
     } else if (e.kind === 'fill') lines.push({ t: e.t, text: e.on ? 'a fill started' : `the fill ended${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
+    // A request the carrier's server refused or failed (HTTP 400 and up): its own error, not the fill's.
+    else if (e.kind === 'request' && failed(e)) lines.push({ t: e.t, text: `the page's request to ${codePath(e.path)} failed: HTTP ${e.status} after ${secs(e.ms ?? 0)}` });
     else if (e.kind === 'note') lines.push({ t: e.t, text: `NOTE: ${e.text}` });
     else if (e.kind === 'gap') lines.push({ t: e.t, text: `GAP: ${e.dropped} event(s) lost while no panel took them` });
     else if (e.kind === 'page' && (e.frame ?? 0) !== 0) lines.push({ t: e.t, text: `a frame loaded ${quote(e.page)}` });
@@ -205,14 +211,14 @@ function timeTable(ordered, told, end) {
   const out = ['## Where the time went', '',
     "Filling: while a fill ran. Waiting: the fill waiting for the page, after its answers too; slack: the part after the page's last change or request. Without a fill: the person's time, or nobody's.", '',
     '| # | Page · step | On screen | Filling | Answers | Waiting | Slack | Page requests | Without a fill |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- |'];
-  const all = { screen: 0, filling: 0, answers: 0, waiting: 0, slack: 0, requests: 0, requestMs: 0 };
-  const cells = (r) => `${secs(r.screen)} | ${secs(r.filling)} | ${r.answers} | ${secs(r.waiting)} | ${secs(r.slack)} | ${r.requests} (${secs(r.requestMs)}) | ${secs(r.screen - r.filling)}`;
+  const all = { screen: 0, filling: 0, answers: 0, waiting: 0, slack: 0, requests: 0, requestMs: 0, failed: 0 };
+  const cells = (r) => `${secs(r.screen)} | ${secs(r.filling)} | ${r.answers} | ${secs(r.waiting)} | ${secs(r.slack)} | ${r.requests} (${secs(r.requestMs)})${r.failed ? `, ${r.failed} failed` : ''} | ${secs(r.screen - r.filling)}`;
   for (const { s, next, n } of told) {
     const on = (t) => t >= s.start && t < next;
     const theirs = requests.filter((e) => on(e.t));
     const row = { screen: next - s.start, filling: filling(s.start, next), answers: answers.filter(on).length,
       waiting: within(waits, s.start, next), slack: within(slacks, s.start, next),
-      requests: theirs.length, requestMs: theirs.reduce((m, e) => m + (e.ms ?? 0), 0) };
+      requests: theirs.length, requestMs: theirs.reduce((m, e) => m + (e.ms ?? 0), 0), failed: theirs.filter(failed).length };
     for (const k of Object.keys(all)) all[k] += row[k];
     out.push(`| ${n} | ${s.page}${s.step ? ` · ${s.step}` : ''} | ${cells(row)} |`);
   }
@@ -252,6 +258,12 @@ export function recordingReport({ manifest, events }) {
   out.push(`${manifest.carrier} · scenario ${quote(manifest.scenario)} · ${new Date(t0).toISOString()} · ${clock(end - t0)} long · ${ordered.length} events${manifest.dropped ? ` (${manifest.dropped} lost)` : ''}`);
   out.push(`Build ${manifest.build?.version ?? '?'} (${manifest.build?.channel ?? '?'}${manifest.build?.commit ? `, ${manifest.build.commit}` : ''})${manifest.test ? ' · a test run' : ''}${manifest.ended ? '' : ' · cut short (no end)'}`, '');
   out.push('Times are from the start (m:ss.s). ↑: an answer above the previous one on the step. Typed text is never kept.', '');
+  // The carrier's own server errors, said up front: a step that failed on them isn't the fill's.
+  const errors = ordered.filter((e) => e.kind === 'request' && failed(e));
+  if (errors.length) {
+    const byStatus = [...new Set(errors.map((e) => e.status))].sort((a, b) => a - b).map((s) => `HTTP ${s} ×${errors.filter((e) => e.status === s).length}`).join(', ');
+    out.push(`The page's server answered ${many(errors.length, 'request')} with an error (${byStatus}): each is in its step's timeline.`, '');
+  }
 
   out.push('## Flow', '', '| # | Page · step | Arrived | On screen | Actions | Left by |', '| --- | --- | --- | --- | --- | --- |');
   const told = segs.map((s, i) => {
