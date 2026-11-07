@@ -2607,6 +2607,8 @@ test('a page without form fields still shows what needs the agent', () => {
 
 function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
   const logged = [], rendered = [], applied = [], holders = [];
+  // The usage log's quote (usage-log.js currentSession): a test may replace it mid-review.
+  const session = { current: { id: 'quote-1', intakeId: 'intake-1' } };
   // The report's holders above the list (aiHolder in ai-view.jsx): each placed by its node, saying
   // what it was told last (`said`).
   const aiHolder = () => {
@@ -2625,14 +2627,33 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
     aiSettledOnPage: () => false, aiFingerprint: (v) => JSON.stringify(v), aiItemFingerprint: (x) => `${x.key}|${x.label}`,
     aiCacheSignature: (x) => JSON.stringify(x), runKit: async () => [{ frameId: 0, result: 'snapshot' }],
-    suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events) },
+    suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events), currentSession: () => session.current },
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
     syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
-  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('runAssist'), context);
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
-  return { state, context, ctx, report, logged, rendered, applied, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
+  return { state, context, ctx, report, logged, rendered, applied, session, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
 }
+
+// CodeRabbit on #391: an intake replaced while Luna answered moved the review's spent tokens to the
+// next quote, as log() stamps the session current when it is called.
+test("a page review's ai_suggest is logged as the quote it began in, also when the intake was replaced meanwhile", async () => {
+  const answer = { suggestions: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125', leave: true }], tokensIn: 10, tokensOut: 2, modelCalls: 1 };
+  const late = assistHarness({ suggest: async () => { late.session.current = { id: 'quote-2', intakeId: 'intake-2' }; return answer; } });
+  await late.context.runAssist([{}], late.ctx);
+  const failed = assistHarness({ suggest: async () => {
+    failed.session.current = { id: 'quote-2', intakeId: 'intake-2' };
+    throw Object.assign(new failed.context.AssistError('Luna returned an invalid decision. Nothing was applied.'), { usage: { modelCalls: 1, tokensIn: 10, tokensOut: 2 } });
+  } });
+  await failed.context.runAssist([{}], failed.ctx);
+  for (const t of [late, failed]) assert.deepEqual([t.logged[0].type, t.logged[0].session, t.logged[0].intakeId, t.logged[0].tokensIn], ['ai_suggest', 'quote-1', 'intake-1', 10]);
+  // No quote loaded when it began: logged as none, not as one loaded meanwhile.
+  const none = assistHarness({ suggest: async () => { none.session.current = { id: 'quote-2', intakeId: 'intake-2' }; return answer; } });
+  none.session.current = null;
+  await none.context.runAssist([{}], none.ctx);
+  assert.deepEqual([none.logged[0].session, none.logged[0].intakeId], [null, null]);
+});
 
 // 2026-10-05 FL run: Luna answered in 17 s, but the page had changed meanwhile; the panel kept
 // "Asking Luna about 14 questions…" on screen for minutes.
@@ -2674,6 +2695,15 @@ test('Luna without a key says so above the list, and a failed review says it fai
   await failed.context.runAssist([{}], failed.ctx);
   assert.deepEqual({ ...failed.holder().said }, { bad: 'AI assistant: Luna is rate-limited. Try again shortly.' });
   assert.equal(failed.rendered.length, 0);
+  // Audit 2026-11-07, AI-10: what a failed review spent before it stopped is logged with its error.
+  const spent = assistHarness({ suggest: async () => {
+    throw Object.assign(new spent.context.AssistError('Luna returned an invalid decision. Nothing was applied.'), { usage: { modelCalls: 2, tokensIn: 900, tokensOut: 40, reasoningTokens: 10, cachedTokens: 0, cacheWriteTokens: 0, junk: 'x' } });
+  } });
+  await spent.context.runAssist([{}], spent.ctx);
+  const { modelCalls, tokensIn, tokensOut, reasoningTokens, junk, error } = spent.logged[0];
+  assert.deepEqual({ modelCalls, tokensIn, tokensOut, reasoningTokens, junk, error },
+    { modelCalls: 2, tokensIn: 900, tokensOut: 40, reasoningTokens: 10, junk: undefined, error: 'Luna returned an invalid decision. Nothing was applied.' });
+  assert.equal(failed.logged[0].modelCalls, undefined, 'a call never answered spent nothing to log');
   const none = assistHarness({ suggest: async () => { throw new Error('never asked'); } });
   none.context.collectItems = () => ({ items: [], blocked: [] });
   await none.context.runAssist([{}], none.ctx);
@@ -2902,7 +2932,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
 function claimsHarness() {
   const logs = [], requests = [];
   const gates = [];
-  const t = { logs, requests, reply: 'ok', onRequest: null };
+  const t = { logs, requests, reply: 'ok', onRequest: null, session: { id: 'quote-1', intakeId: 'intake-1' } };
   const state = { intake: null, notesAsking: null, notesRetry: null };
   class AssistError extends Error {}
   const context = {
@@ -2915,9 +2945,9 @@ function claimsHarness() {
       if (reply === 'fail') throw new AssistError('Luna took too long. Nothing was applied.');
       return { warnings: [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }], lines: 1, flagged: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0, cachedTokens: 2, cacheWriteTokens: 1 };
     },
-    usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
+    usage: { log: (e) => logs.push(e), currentSession: () => t.session }, save: async () => {}, render: () => {},
   };
-  vm.runInNewContext(extractFunction('claimsContext') + extractFunction('supersedeClaimsItems') + extractFunction('reviewClaimsBox'), context);
+  vm.runInNewContext(extractFunction('claimsContext') + extractFunction('supersedeClaimsItems') + extractFunction('spentOf') + extractFunction('reviewClaimsBox'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
   // Lets the oldest pending request answer, then lets the panel finish with it.
   t.answer = async () => { await settle(); gates.shift()(); for (let i = 0; i < 5; i++) await settle(); };
@@ -2937,7 +2967,7 @@ test('Luna reads the claims box once per intake, visibly fails, and retries on a
   assert.equal(t.requests.length, 1, 'two triggers close together ask once');
   assert.equal(typeof t.requests[0].opts.redact, 'function', 'names are redacted before the request');
   assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
-  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
+  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'intakeId', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'session', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
   await t.review({ retry: true });
   assert.equal(t.requests.length, 1, 'once per intake');
 
@@ -3001,7 +3031,7 @@ test('reopening the panel on a reviewed intake neither re-reads the claims box n
 });
 
 // Codex on PR #22.
-test('a settings change during a review runs it again, an edit during it discards the answer, a replaced intake logs nothing', async () => {
+test('a settings change during a review runs it again, an edit during it discards the answer, a replaced intake gets nothing', async () => {
   // The key is corrected while the old-key request is still out: tried again once it fails.
   let t = claimsHarness();
   const intake = claimsIntake('Needs physical damage');
@@ -3045,7 +3075,8 @@ test('a settings change during a review runs it again, an edit during it discard
   assert.equal(untouched.requests.length, 1, 'setting NTL is not a change to what Luna read');
   assert.equal(ntlOnly.notesReview.done, true);
 
-  // A request for an intake that was replaced meanwhile: no result and nothing logged.
+  // A request for an intake that was replaced meanwhile: no result, and the usage is logged as the
+  // quote the review began in, never the new one's (CodeRabbit on PR #391).
   for (const reply of ['ok', 'fail']) {
     t = claimsHarness();
     const old = claimsIntake('NTL please');
@@ -3054,10 +3085,14 @@ test('a settings change during a review runs it again, an edit during it discard
     t.review();
     await t.settle();
     t.state.intake = claimsIntake('');
+    t.session = { id: 'quote-2', intakeId: 'intake-2' };
     await t.answer();
     assert.deepEqual(old.warnings.map((w) => w.code), ['other'], reply);
     assert.equal(old.notesReview, undefined, reply);
-    assert.equal(t.logs.length, 0, `${reply}: not attributed to the new intake`);
+    assert.equal(t.logs.length, 1, reply);
+    assert.deepEqual([t.logs[0].session, t.logs[0].intakeId], ['quote-1', 'intake-1'], `${reply}: the quote it began in`);
+    assert.equal(t.logs[0].error, reply === 'ok' ? 'Answer discarded: the intake was replaced.' : 'Luna took too long. Nothing was applied.', reply);
+    if (reply === 'ok') assert.deepEqual([t.logs[0].tokensIn, t.logs[0].modelCalls], [5, 1], 'the tokens it spent');
   }
 });
 
@@ -6587,7 +6622,7 @@ test('a panel crash is still logged when the intake has no record, and never unr
 // nothing is sent and nothing changes.
 function namesHarness() {
   const logs = [], requests = [], gates = [];
-  const t = { logs, requests, reply: 'ok' };
+  const t = { logs, requests, reply: 'ok', session: { id: 'quote-1', intakeId: 'intake-1' } };
   const state = { intake: null, namesAsking: null, namesRetry: null };
   class AssistError extends Error {}
   const context = {
@@ -6601,9 +6636,9 @@ function namesHarness() {
       if (reply === 'fail') throw new AssistError('Luna returned an invalid driver-name review.');
       return { warnings: [{ code: 'ai.driver-gender', path: 'drivers[0].gender', level: 'check', msg: 'x', choices: [] }], names: 2, flagged: 1, modelCalls: 1, tokensIn: 5, tokensOut: 1, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
     },
-    usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
+    usage: { log: (e) => logs.push(e), currentSession: () => t.session }, save: async () => {}, render: () => {},
   };
-  vm.runInNewContext(extractFunction('driverNamesContext') + extractFunction('supersedeGenderItems') + extractFunction('reviewDriverGender'), context);
+  vm.runInNewContext(extractFunction('driverNamesContext') + extractFunction('supersedeGenderItems') + extractFunction('spentOf') + extractFunction('reviewDriverGender'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
   t.answer = async () => { await settle(); gates.shift()(); for (let i = 0; i < 5; i++) await settle(); };
   return Object.assign(t, { state, review: context.reviewDriverGender, settle });
@@ -6629,8 +6664,9 @@ test('Luna checks driver first names once per intake, never with the assistant o
   await t.answer();
   assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.driver-gender', 'check']]);
   assert.equal(intake.namesReview.done, true);
-  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never a name');
+  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'intakeId', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'session', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never a name');
   assert.equal(t.logs[0].page, 'DriverNames');
+  assert.deepEqual([t.logs[0].session, t.logs[0].intakeId], ['quote-1', 'intake-1']);
   await t.review({ retry: true });
   assert.equal(t.requests.length, 1, 'once per intake');
   // The agent set the gender meanwhile: that isn't a change to what Luna read.
@@ -6660,6 +6696,25 @@ test('Luna checks driver first names once per intake, never with the assistant o
   f.review({ retry: true });
   await f.answer();
   assert.deepEqual(failing.warnings.map((w) => w.code), ['other', 'ai.driver-names-reviewed', 'ai.driver-gender']);
+
+  // An intake replaced while Luna answered: nothing for it, and the usage is logged as the quote
+  // the check began in (CodeRabbit on PR #391).
+  for (const reply of ['ok', 'fail']) {
+    const r = namesHarness();
+    const old = namesIntake();
+    r.state.intake = old;
+    r.reply = reply;
+    r.review();
+    await r.settle();
+    r.state.intake = namesIntake();
+    r.session = { id: 'quote-2', intakeId: 'intake-2' };
+    await r.answer();
+    assert.deepEqual(old.warnings.map((w) => w.code), ['other'], reply);
+    assert.equal(old.namesReview, undefined, reply);
+    assert.equal(r.logs.length, 1, reply);
+    assert.deepEqual([r.logs[0].session, r.logs[0].intakeId], ['quote-1', 'intake-1'], reply);
+    assert.equal(r.logs[0].error, reply === 'ok' ? 'Answer discarded: the intake was replaced.' : 'Luna returned an invalid driver-name review.', reply);
+  }
 });
 
 test('Luna\'s GL and driver-gender check cards set the record as the agent\'s edit, or dismiss', async () => {
