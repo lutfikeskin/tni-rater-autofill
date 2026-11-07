@@ -1,4 +1,5 @@
 // The cards at the top of the page view in React: the rater to open while the tab in front is none,
+// another rater's tab in front while the panel stays on the quote tab (showHeldNote),
 // then what's wrong or different about this tab's quote, above its answers: the client's current
 // insurance with this carrier (showCarrierNote), the quote's state against the intake's
 // (showStateNote), the carrier's stop or the agent's step (showStopPage), review mode
@@ -38,6 +39,8 @@ function IssueCard({ tone, title, text, notes, compare, actions, role }) {
 
 // The cards above the answers, in this order, each in its place (`id`), hidden while it says nothing.
 const NOTES = [
+  // Another rater's tab in front while the panel stays on the quote tab (tab.js showHeldNote).
+  { name: 'held', id: 'held-note' },
   { name: 'carrier', id: 'carrier-note' },
   { name: 'state', id: 'state-note' },
   // agent defaults: whose defaults this quote fills with (sidepanel/panel/agent-defaults/store.js).
