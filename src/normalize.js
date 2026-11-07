@@ -1467,11 +1467,12 @@ const DERIVATIONS = [
   // The time with the current insurer a line of the notes gives: its check (the carriers read the
   // notes as they fill).
   { from: ['claims.text', 'notes.text'], codes: ['prior.tenure'], run: (r) => ({ values: {}, checks: tenureChecks(r) }) },
-  // "No", "None" or "N/A" in the USDOT or MC box: the client has none, which a number or a blank
-  // box doesn't say.
-  { from: ['applicant.dot'], codes: ['dot.none'], run: (r) => (r.applicant
+  // "No", "None" or "N/A" in the USDOT or MC box: the client has none, which a number doesn't say.
+  // An emptied box says nothing new: its No, if any, stays (an agent's typed No is saved as an empty
+  // box with the No).
+  { from: ['applicant.dot'], codes: ['dot.none'], run: (r) => (r.applicant?.dot != null
     ? { values: { 'applicant.noDot': numberBoxSaysNo(r.applicant.dot) || null }, checks: noNumberNotes('dot', r.applicant.dot) } : null) },
-  { from: ['applicant.mc'], codes: ['mc.none'], run: (r) => (r.applicant
+  { from: ['applicant.mc'], codes: ['mc.none'], run: (r) => (r.applicant?.mc != null
     ? { values: { 'applicant.noMc': numberBoxSaysNo(r.applicant.mc) || null }, checks: noNumberNotes('mc', r.applicant.mc) } : null) },
   // The radius box's miles, and its check when it gives none.
   { from: ['operations.radius'], codes: ['radius.missing', 'radius.range', 'radius.unit', 'radius.not-miles'], run: (r, { mine }) => {

@@ -2279,12 +2279,17 @@ test('correcting the USDOT or MC box recomputes whether the client has none, and
   assert.equal(intake.record.applicant.noDot, null);
   assert.ok(retired(intake, 'dot.none'));
   correct(intake, 'applicant.dot', null);
-  assert.equal(intake.record.applicant.noDot, null, 'a blank box is unanswered, not No');
+  assert.equal(intake.record.applicant.noDot, null, 'emptied: says nothing new, so the number\'s reading stays');
   correct(intake, 'applicant.mc', '7654321');
   assert.equal(intake.record.applicant.noMc, null);
   correct(intake, 'applicant.dot', 'None');
   assert.equal(intake.record.applicant.noDot, true);
   assert.equal(intake.warnings.find((w) => w.code === 'dot.none').msg, 'USDOT # "None": the client has no USDOT number.');
+  // An emptied box keeps its No (an agent's typed No is saved as an empty box with the No).
+  const no = loaded({ dot_number: 'No' });
+  correct(no, 'applicant.dot', null);
+  assert.deepEqual([no.record.applicant.noDot, no.warnings.find((w) => w.code === 'dot.none').level], [true, 'info']);
+  assert.ok(!retired(no, 'dot.none'));
 });
 
 test('correcting the radius recomputes its check with the miles; the time with the insurer follows the notes (DATA-04)', () => {
