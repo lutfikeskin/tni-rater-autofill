@@ -300,7 +300,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
 
   function clean(e, agent) {
     if (!e || typeof e !== 'object' || Array.isArray(e)) return { error: 'event is not an object' };
-    const keep = EVENT_FIELDS[e.type];
+    // Own keys only: a type such as constructor or __proto__ is unknown, not Object.prototype's member.
+    const keep = typeof e.type === 'string' && Object.hasOwn(EVENT_FIELDS, e.type) ? EVENT_FIELDS[e.type] : null;
     if (!keep) return { error: `unknown event type "${String(e.type).slice(0, 40)}"` };
     // The local test page (src/carriers.js `test`, localhost) is never a quote: refused, as before
     // a reviewer has to tell its fills from agents' (audit 2026-10-08: 453 such events).
@@ -462,14 +463,35 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     done(200, json, `luna ${lunaDay.count}/${lunaDailyLimit}`);
   }
 
-  return http.createServer((req, res) => {
+  // One request's exception is that request's 500, never the end of the server (audit 2026-11-07,
+  // SRV-01: a single request used to stop it for every agent). The log gets the error's name and
+  // where it was thrown, not its message.
+  const failed = (req, res, e) => {
+    const where = String(e?.stack ?? '').split('\n').slice(1, 3).map((s) => s.trim()).join(' | ');
+    console.error(`${new Date().toISOString()} ${req.method} ${req.url} failed: ${e?.name ?? 'error'}${where ? ` ${where}` : ''}`);
+    if (res.headersSent) res.destroy();
+    else send(res, 500, { error: 'server error' }, corsHeaders(req));
+  };
+  // A request callback (sync or async) with that guard.
+  const guarded = (req, res, fn) => (...args) => {
+    try {
+      const out = fn(...args);
+      if (out && typeof out.catch === 'function') out.catch((e) => failed(req, res, e));
+    } catch (e) { failed(req, res, e); }
+  };
+
+  return http.createServer((req, res) => guarded(req, res, respond)(req, res));
+
+  function respond(req, res) {
     const started = Date.now();
     const cors = corsHeaders(req);
     const done = (status, body, note = '') => {
       send(res, status, body, cors);
       console.log(`${new Date().toISOString()} ${req.method} ${req.url} ${status} ${Date.now() - started}ms ${note}`);
     };
-    const url = new URL(req.url, 'http://x');
+    // A request target that isn't a URL (GET http://[::1/) is the client's mistake, before any check.
+    let url;
+    try { url = new URL(req.url, 'http://x'); } catch { return done(400, { error: 'bad request target' }); }
 
     if (req.method === 'OPTIONS') {
       if (!cors['access-control-allow-origin']) return done(403, { error: 'not allowed' });
@@ -545,12 +567,12 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
 
     let size = 0;
     const chunks = [];
-    req.on('data', (c) => {
+    req.on('data', guarded(req, res, (c) => {
       size += c.length;
       if (size > maxBody) { done(413, { error: 'request too large' }); req.destroy(); return; }
       chunks.push(c);
-    });
-    req.on('end', () => {
+    }));
+    req.on('end', guarded(req, res, () => {
       if (res.writableEnded) return;
       let body;
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return done(400, { error: 'body is not valid JSON' }); }
@@ -575,8 +597,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
         return done(500, { error: 'could not store events' }, String(e.message));
       }
       done(200, { accepted: accepted.length, duplicates, rejected }, `agent=${agent ?? '-'} +${accepted.length} dup=${duplicates} bad=${rejected.length}`);
-    });
-  });
+    }));
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -598,4 +620,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit}/day)` : ''}${dashboardToken.length >= MIN_DASHBOARD_TOKEN ? '  (dashboard on: /dashboard)' : ''}`);
   });
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => server.close(() => process.exit(0)));
+  // Anything outside a request's guard still stops the server, visibly: a timestamped log line and a
+  // non-zero exit, so the platform restarts it.
+  for (const kind of ['uncaughtException', 'unhandledRejection']) {
+    process.on(kind, (e) => {
+      console.error(`${new Date().toISOString()} ${kind}: ${e?.stack ?? e}`);
+      process.exit(1);
+    });
+  }
 }
