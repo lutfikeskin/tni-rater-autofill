@@ -59,20 +59,23 @@ async function runKit(tabId, carrier, func, args = [], frameIds) {
   return chrome.scripting.executeScript({ target: { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) }, world: worldFor(carrier), func, args });
 }
 
-// agent defaults: the page whose opening fill the quote's question held (fillPage), with the intake
-// it was held for. Only that page fills once the hold lifts: never another page that happens to be in
-// front, such as the last client's quote left open when a new intake loads.
+// The page whose opening fill a hold kept back (fillPage): the quote's defaults question (agent
+// defaults) or the tab's quote state (stateIssue), with the intake it was held for. Only that page
+// fills once the holds lift: never another page that happens to be in front, such as the last
+// client's quote left open when a new intake loads.
 /** @type {{ key: string, intake: any } | null} */
-let heldForDefaults = null;
+let heldFill = null;
 
-// agent defaults: the quote's question answered, or the feature hidden (its hold lifted). The page
-// whose own fill waited on it is filled as on opening, while it is still in front for the same intake,
-// "Fill pages when they open" is on and nothing has filled it since. A page filled before keeps its
-// answers until the agent fills it again.
-function fillAfterDefaults() {
-  const held = heldForDefaults;
-  if (!held || !state.intake || defaultsHold() || state.filling || !state.tab?.carrier || !switchOn('autoPages', 'auto-pages') || !onQuotePage()) return;
-  heldForDefaults = null;
+// A hold lifted: the defaults question answered or the feature hidden, "<state> is right" (audit
+// 2026-11-07, FLOW-16: it lifted the hold and filled nothing), or what was going in when one lifted
+// (a fill, a pick from a row, an AI answer) has ended. The page whose own fill waited is filled as on
+// opening, once no hold is left, while it is still in front for the same intake, "Fill pages when they
+// open" is on and nothing has filled it since. A page filled before keeps its answers until the agent
+// fills it again.
+function resumeHeldFill() {
+  const held = heldFill;
+  if (!held || !state.intake || defaultsHold() || stateIssue() || state.filling || !state.tab?.carrier || !switchOn('autoPages', 'auto-pages') || !onQuotePage()) return;
+  heldFill = null;
   if (held.intake !== state.intake || held.key !== currentReportKey() || state.reports.has(held.key)) return;
   fillPage({ auto: 'page' });
 }
@@ -85,11 +88,15 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
   // The tab's quote is for another state than the intake's: nothing is filled until the agent says
   // the state is right (or Fill anyway), on request or automatically (stateIssue).
-  if (state.intake && stateIssue()) { showStateNote(); renderSteps(); return; }
+  // A page's opening fill held so is kept for resumeHeldFill, as one the defaults question holds.
+  if (state.intake && stateIssue()) {
+    if (auto === 'page') heldFill = { key: currentReportKey(), intake: state.intake };
+    showStateNote(); renderSteps(); return;
+  }
   // agent defaults: nothing fills until the agent says whose defaults this quote takes (the card above).
   if (state.intake && defaultsHold()) {
-    // A page's opening fill: kept for fillAfterDefaults, to run once the agent answers.
-    if (auto === 'page') heldForDefaults = { key: currentReportKey(), intake: state.intake };
+    // A page's opening fill: kept for resumeHeldFill, to run once the agent answers.
+    if (auto === 'page') heldFill = { key: currentReportKey(), intake: state.intake };
     renderSteps();
     return;
   }
@@ -124,7 +131,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
   await pickListItem(carrier, page, ctx);
   // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
-  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); return; }
+  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); resumeHeldFill(); return; }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
@@ -203,6 +210,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // The page in front, which this fill wasn't for, gets its own fill: one this tab moved on to, or
     // one that opened on the tab the agent moved to meanwhile, however this fill ended.
     runPendingPage(ctx);
+    // A page a hold kept back, whose hold lifted while this ran.
+    resumeHeldFill();
   }
   if (!fillCurrent(ctx)) return;
   // The agent's next step is the page's answers: in view (showFinish).
@@ -1212,6 +1221,8 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
     await tellRecorder('resume', tabId);
     state.filling = false;
     if (button) button.disabled = false;
+    // A page a hold kept back, whose hold lifted while the pick went in.
+    resumeHeldFill();
     // The recorder was paused: the questions the answer revealed or hid are read here.
     if (field && state.tab?.id === tabId) scheduleLayout(page, 'changed');
   }
@@ -1390,4 +1401,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillAfterDefaults, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };
+export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, resumeHeldFill, runKit, showNextNeed, unitArrival, worldFor };
