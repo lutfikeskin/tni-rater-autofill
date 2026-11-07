@@ -415,13 +415,18 @@ function fieldWhy(x, list) {
 // Fill results, minus typed values (text boxes) and client names.
 //   run: one fill invocation's id, shared by its fill_run and fill_field events (and a fill_error);
 //   rules: the rule files' fingerprint (rulesHash); settings: the panel's filling switches in force
-//   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep).
+//   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep);
+//   keptLogged: the kept answers already logged in this quote (the panel's, per usage session).
+// A kept answer (the page already held the rule's answer) is logged once per quote, tab and unit
+// (`view`), page, step, question and what the field shows as the fill ends (reconcile's `now`), or again when it differs from the rule's: every fill run of a
+// page re-logged each one, 59% of fill events for nothing new (audit 2026-11-07, LEARN-11). The run
+// still counts them all (`kept`). Without `keptLogged`, every one is logged.
 /**
  * @param {Partial<FillReport>[]} frames  the page kit's fill reports, one per frame (a stop page's: its blockers only)
- * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean }} ctx
+ * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean, keptLogged?: Set<string> }} ctx
  * @returns {UsageEvent[]}
  */
-export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false }) {
+export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false, keptLogged }) {
   // Typed for the report list it reads (the body takes any key).
   /** @type {<K extends keyof FillReport>(k: K) => NonNullable<FillReport[K]>} */
   const all = /** @param {any} k @returns {any} */ (k) => frames.flatMap((f) => f[k] ?? []);
@@ -476,7 +481,13 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     ...(x.timing ? { timing: x.timing } : {}),
   });
   events.push(...all('filled').map(item('filled')), ...all('failed').map(item('failed')), ...all('noData').map(item('noData')),
-    ...all('kept').map(item('kept')), ...all('leftRequired').map(item('leftRequired')), ...all('unknown').map(item('unfamiliar', 'unknown')));
+    ...all('kept').filter((x) => {
+      if (!keptLogged || x.differs) return true;
+      const once = JSON.stringify([carrier, view, page, step ?? null, x.key ?? x.q ?? null, x.label ?? null, x.now ?? x.current ?? x.shown ?? null]);
+      if (keptLogged.has(once)) return false;
+      keptLogged.add(once);
+      return true;
+    }).map(item('kept')), ...all('leftRequired').map(item('leftRequired')), ...all('unknown').map(item('unfamiliar', 'unknown')));
   // A helper the fill clicked that rates the answers (GEICO's Recalculate, W43-44), as a layout the
   // review scripts don't read as the page's (reason 'recalculate'): each choice it kept, what the
   // page showed at the click (`selected`) and after it ([ms after the click, value]), whether the
