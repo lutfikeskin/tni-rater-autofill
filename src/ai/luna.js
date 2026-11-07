@@ -339,7 +339,19 @@ export async function callModel({ apiKey, proxy = null, body, fetchImpl = global
   } finally { clearTimeout(timer); }
 }
 
-export async function suggest(items, context, config, { call = callModel, isStale = () => false } = {}) {
+// A failed or dropped review carries its prompt hash too (error.promptHash), so its log can be told
+// apart by the instructions and rules that produced it.
+export async function suggest(items, context, config, options = {}) {
+  const prompt = await promptHash(context.carrier);
+  try {
+    return await reviewPage(items, context, config, options, prompt);
+  } catch (error) {
+    if (error && typeof error === 'object') error.promptHash = prompt;
+    throw error;
+  }
+}
+
+async function reviewPage(items, context, config, { call = callModel, isStale = () => false }, prompt) {
   const suggestions = [];
   const counters = { tokensIn: 0, tokensOut: 0, modelCalls: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
   const fresh = () => { if (isStale()) throw new AssistError('The page or intake changed. Run Fill again for fresh suggestions.'); };
@@ -353,7 +365,6 @@ export async function suggest(items, context, config, { call = callModel, isStal
     counters.cacheWriteTokens += count(json.usage?.input_tokens_details?.cache_write_tokens);
   };
   let limit = MAX_REQUEST_CHARS, { groups, tooLarge } = requestGroups(items, context, limit);
-  const prompt = await promptHash(context.carrier);
   // None fits: the review stops before any paid call.
   if (!groups.length && tooLarge.length) throw tooLarge[0].error;
   for (const { at } of tooLarge) suggestions[at] = tooLargeLeave(items[at]);

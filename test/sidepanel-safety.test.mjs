@@ -2691,6 +2691,21 @@ test('Luna gets the page’s other answers from the snapshot, and the log counts
   assert.equal(t.logged[0].promptHash, '0123456789ab');
 });
 
+test('a failed page review logs the prompt it got, and only as a hash', async () => {
+  const failing = (promptHash) => {
+    const h = assistHarness({ suggest: async () => { throw Object.assign(new h.context.AssistError('Luna returned an invalid evidence check. Nothing was applied.'), { promptHash }); } });
+    return h;
+  };
+  const t = failing('0123456789ab');
+  await t.context.runAssist([{}], t.ctx);
+  assert.deepEqual([t.logged[0].promptHash, t.logged[0].error], ['0123456789ab', 'Luna returned an invalid evidence check. Nothing was applied.']);
+  for (const odd of [undefined, 'not a hash', { x: 1 }]) {
+    const u = failing(odd);
+    await u.context.runAssist([{}], u.ctx);
+    assert.equal('promptHash' in u.logged[0], false, String(odd));
+  }
+});
+
 // 2026-10-09 to 10-26: 12 of 58 page reviews ended "The page or intake changed", most on GEICO's
 // quote page: a fill of the same page redrew the report and asked Luna again while it answered,
 // so its answer was thrown away and the same questions were asked (and paid for) twice.

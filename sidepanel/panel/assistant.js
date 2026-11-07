@@ -393,7 +393,9 @@ async function runAssist(frames, ctx) {
       }));
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : 'The assistant could not review this page. Nothing was applied.';
-      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: redactor(redactionTerms(record))(msg).slice(0, 200) });
+      // Which prompt failed (luna.js suggest: error.promptHash), only as its 12 hex characters.
+      const prompt = /^[0-9a-f]{12}$/.test(e?.promptHash ?? '') ? { promptHash: e.promptHash } : {};
+      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, ...prompt, error: redactor(redactionTerms(record))(msg).slice(0, 200) });
       if (!stale()) holder.say({ bad: `AI assistant: ${msg}` });
       else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;

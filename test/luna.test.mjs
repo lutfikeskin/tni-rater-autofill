@@ -378,6 +378,16 @@ test('promptHash follows the instructions and the rules as sent, and each review
   const result = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => (JSON.parse(body.input[0].content).proposed ? groupCheck(body) : answer(body)) });
   assert.equal(result.promptHash, await promptHash('geico'));
   assert.ok(result.suggestions.every(x => x.promptHash === result.promptHash));
+  // A review that fails after its calls, or is dropped between them, says which prompt it got too.
+  const failed = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => (JSON.parse(body.input[0].content).proposed ? envelope({}) : answer(body)) })
+    .then(() => null, (error) => error);
+  assert.match(failed.message, /invalid evidence check/);
+  assert.equal(failed.promptHash, result.promptHash);
+  let calls = 0;
+  const dropped = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => { calls++; return answer(body); }, isStale: () => calls > 0 })
+    .then(() => null, (error) => error);
+  assert.match(dropped.message, /page or intake changed/);
+  assert.equal(dropped.promptHash, result.promptHash);
 });
 
 test('incomplete verification fails closed without spending again on a higher output cap', async () => {
