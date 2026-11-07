@@ -311,9 +311,15 @@ function digest(s) {
 // box for a dropdown (date pickers look like dropdowns), these still never reach the log.
 const LOOKS_TYPED = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|@|\d{5,}/;
 
+const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+// A question's text as logged: without the page's markup (GEICO's analytics wrapper,
+// <span data-qm-encrypt='true'>, reached field changes' labels), on one line, so a fill's and a
+// change's label for one field read the same (audit 2026-11-07, LEARN-04). Absent stays absent.
+/** @param {string | null | undefined} s */
+export const tidyLabel = (s) => (s == null ? s : oneLine(String(s).replace(/<\/?[a-z][^>]*>/gi, '')));
+
 // A combo box (ExtJS) holds whatever is in its box: a pick, or a search the agent typed. Its values
 // are choices only when each one is empty or one of the options the fill engine saw for it.
-const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 function isComboPick(change, choices) {
   const options = choices?.get(change.key);
   return [change.before, change.after].every((v) => !oneLine(v) || !!options?.has(oneLine(v)));
@@ -340,7 +346,7 @@ export function fieldChangeEvent(change, { record, filled, redact, labels, choic
     type: 'field_change',
     q: change.q ?? null,
     key: fieldKeyOf(change.key, redact, keySalt),
-    label: redact(labels?.get(change.key) ?? change.label),
+    label: redact(tidyLabel(labels?.get(change.key) ?? change.label)),
     kind,
     by: change.agent ? 'agent' : 'page',
     autofilled: ours ? ours.path : null,
@@ -450,7 +456,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   }];
   /** @type {(result: FillFieldEvent['result'], list?: string) => (x: FillItem) => FillFieldEvent} */
   const item = (result, list = result) => (x) => ({
-    type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
+    type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(tidyLabel(x.label)), path: x.path ?? null, controlKind: x.controlKind ?? null,
     how: x.how ?? undefined,
     // Why this answer, from its resolution (resolution.js): where it comes from (its method: intake,
     // derived, standard, fact, attestation), a TNI standard, the agent's only (never the AI's); and
