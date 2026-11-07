@@ -11,19 +11,26 @@
 //   agent's (`liability` null), never ticked.
 // - A state or intrastate filing is a state filing. A box naming only state filings has no federal
 //   liability filing (`liability` false).
+// - A cargo filing the text rules out ("no cargo filing", "without BMC-34", "cargo not needed") is a
+//   cargo No, not a cargo request. One it both rules out and asks for ("BMC-34, no cargo filing") is
+//   the agent's (`cargo-conflict`), and so is a liability filing only "federal" could name then.
 // - A box naming only an SR-22 or FR-44, or one naming none of these, leaves both to the agent (null).
 
 const ONLY_FR = /^\s*(?:sr[\s-]?22|fr[\s-]?44)(?:\s*(?:,|\/|&|and)\s*(?:sr[\s-]?22|fr[\s-]?44))*\s*$/i;
 const FED_LIAB = /\bbmc[\s-]?91x?\b|\bmcs[\s-]?90\b|\bfederal\s+liab/i;
 const FEDERAL = /\bfederal\b/i;
 const CARGO = /\bbmc[\s-]?3[24]\b|\bcargo\b/i;
+// A cargo filing ruled out: "no / not / without / excluding / except (a / any) (federal) cargo
+// (filing)" or "BMC-34", and "cargo (filing) (is) not needed / required / wanted", "cargo: none",
+// "cargo N/A".
+const NO_CARGO = /\b(?:no|not|without|exclud(?:e|es|ed|ing)|except)\s+(?:a\s+|any\s+)?(?:federal\s+)?(?:cargo|bmc[\s-]?3[24])\b(?:\s+filings?\b)?|\b(?:cargo|bmc[\s-]?3[24])(?:\s+filings?)?\s*(?:(?:is|are)\s+)?(?:not\s+(?:needed|required|wanted)\b|:?\s*(?:none\b|n\/a(?![a-z])))/gi;
 const STATE = /\bstate\b|\bintrastate\b/i;
 
 /**
  * Why a federal filing is left to the agent: `unnamed` (no box, or it names neither a federal nor a
  * state filing), `sr-fr-only` (only an SR-22 or FR-44), `cargo` (a cargo filing, with no liability
- * filing named).
- * @typedef {'unnamed' | 'sr-fr-only' | 'cargo'} FilingsOpen
+ * filing named), `cargo-conflict` (a cargo filing both asked for and ruled out).
+ * @typedef {'unnamed' | 'sr-fr-only' | 'cargo' | 'cargo-conflict'} FilingsOpen
  */
 
 /**
@@ -38,11 +45,16 @@ export const filingsIntent = (text) => {
   const t = String(text ?? '').trim();
   if (!t) return { liability: null, cargo: null, state: false, srFrOnly: false, open: 'unnamed' };
   if (ONLY_FR.test(t)) return { liability: null, cargo: null, state: false, srFrOnly: true, open: 'sr-fr-only' };
-  const cargo = CARGO.test(t);
+  // A cargo filing asked for (true), ruled out (false), or both (null: the agent's).
+  const ruledOut = new RegExp(NO_CARGO.source, 'i').test(t);
+  const asked = CARGO.test(t.replace(NO_CARGO, ' '));
+  const cargo = ruledOut && asked ? null : asked;
+  /** @type {FilingsOpen | null} */
+  const cargoOpen = cargo === null ? 'cargo-conflict' : null;
   const state = STATE.test(t);
-  if (FED_LIAB.test(t)) return { liability: true, cargo, state, srFrOnly: false, open: null };
-  if (FEDERAL.test(t)) return cargo ? { liability: null, cargo, state, srFrOnly: false, open: 'cargo' } : { liability: true, cargo, state, srFrOnly: false, open: null };
-  if (cargo) return state ? { liability: false, cargo, state, srFrOnly: false, open: null } : { liability: null, cargo, state, srFrOnly: false, open: 'cargo' };
+  if (FED_LIAB.test(t)) return { liability: true, cargo, state, srFrOnly: false, open: cargoOpen };
+  if (FEDERAL.test(t)) return cargo === false ? { liability: true, cargo, state, srFrOnly: false, open: null } : { liability: null, cargo, state, srFrOnly: false, open: cargoOpen ?? 'cargo' };
+  if (cargo !== false) return { liability: state ? false : null, cargo, state, srFrOnly: false, open: cargoOpen ?? (state ? null : 'cargo') };
   if (state) return { liability: false, cargo: false, state, srFrOnly: false, open: null };
-  return { liability: null, cargo: null, state, srFrOnly: false, open: 'unnamed' };
+  return { liability: null, cargo: ruledOut ? false : null, state, srFrOnly: false, open: 'unnamed' };
 };

@@ -355,6 +355,7 @@ const filingsQuoted = (r) => `"${String(r.operations.filingsWhich ?? '').trim().
 const federalFilingNote = (which) => (r) => {
   const intent = filingsIntentOf(r);
   if (!intent || intent[which] != null) return null;
+  if (intent.open === 'cargo-conflict') return `The intake's filings (${filingsQuoted(r)}) both ask for a cargo filing and rule one out: answer it yourself.`;
   if (intent.open === 'cargo') return `The intake's filings (${filingsQuoted(r)}) name a cargo filing, which isn't a liability filing: whether BMC-91 and MCS-90 are needed is yours to answer.`;
   if (intent.open === 'sr-fr-only') return `The intake names only ${filingsQuoted(r)}, which isn't a federal filing: answer it yourself.`;
   return String(r.operations.filingsWhich ?? '').trim() ? `The intake's filings (${filingsQuoted(r)}) don't say which federal filing: answer it yourself.`

@@ -249,7 +249,8 @@ const filingTypeNote = (r) => {
   if (f !== true) return 'The intake doesn\'t say whether filings are needed: answer it yourself.';
   if (!which(r)) return 'The intake says filings are needed but not which: answer it yourself.';
   return onlyFr(r) ? `The intake names only ${quote(which(r), 40)}, which GEICO doesn't count as a filing here: answer it yourself.`
-    : intent(r).cargo ?`The intake's filings (${quote(which(r), 40)}) name a cargo filing, which isn't a liability filing: whether a federal liability filing is needed is yours to answer.`
+    : intent(r).open === 'cargo-conflict' ? `The intake's filings (${quote(which(r), 40)}) both ask for a cargo filing and rule one out, so whether "federal" means a liability filing is yours to answer.`
+    : intent(r).cargo ? `The intake's filings (${quote(which(r), 40)}) name a cargo filing, which isn't a liability filing: whether a federal liability filing is needed is yours to answer.`
       : `The intake's filings (${quote(which(r), 40)}) don't say state or federal: answer it yourself.`;
 };
 // The Add Filings boxes: ticked when the intake names that filing; otherwise left as the page has

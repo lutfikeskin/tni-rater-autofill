@@ -68,6 +68,17 @@ const CASES = [
   ['State and federal cargo', null, true],
   ['Federal cargo liability', null, true],
   ['BMC-34', null, true],
+  // A cargo filing ruled out is a cargo No; asked for elsewhere in the text, it stays a request; both
+  // asked for and ruled out is the agent's (CodeRabbit on #355).
+  ['Federal liability only, no cargo filing', true, false],
+  ['BMC-91, without BMC-34', true, false],
+  ['MCS-90; cargo filing not needed', true, false],
+  ['Federal liability, cargo: none', true, false],
+  ['Federal, no cargo', true, false],
+  ['Federal liability and BMC-34, no cargo filing', true, null],
+  ['Federal, BMC-34, no cargo filing', null, null],
+  ['Federal liability, BMC-34 for cargo', true, true],
+  ['State filing, no cargo', false, false],
   // State filings only: no federal liability filing.
   ['State filing', false, false],
   ['Intrastate', false, false],
