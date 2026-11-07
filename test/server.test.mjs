@@ -1000,6 +1000,9 @@ test('common fields out of their shape refuse the event, with why; in their shap
       [{ t: '1970-01-01T00:00:00.000Z' }, 'event time is not an ISO time in UTC from 2025 to 30 days ahead'],
       [{ t: new Date(Date.now() + 31 * day).toISOString() }, 'event time is not an ISO time in UTC from 2025 to 30 days ahead'],
       [{ t: '2026-11-07T10:00:00+03:00' }, 'event time is not an ISO time in UTC from 2025 to 30 days ahead'],
+      // Date.parse rolls these over (to March 2, and to the next day) rather than refusing them.
+      [{ t: '2025-02-30T00:00:00.000Z' }, 'event time is not an ISO time in UTC from 2025 to 30 days ahead'],
+      [{ t: '2026-11-06T24:00:00Z' }, 'event time is not an ISO time in UTC from 2025 to 30 days ahead'],
     ];
     const ok = [
       good,

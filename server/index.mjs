@@ -229,8 +229,10 @@ const EARLIEST_T = Date.parse('2025-01-01T00:00:00Z');
 const T_AHEAD_MS = 30 * 24 * 60 * 60 * 1000;
 const orNull = (test) => (v) => v === null || (typeof v === 'string' && test.test(v));
 export const COMMON_SHAPES = {
+  // Date.parse rolls an impossible date or time over (2025-02-30 is March 2, 24:00 the next day):
+  // the time it reads must write back as the same date and time.
   t: (v, now = Date.now()) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(v)
-    && Date.parse(v) >= EARLIEST_T && Date.parse(v) <= now + T_AHEAD_MS,
+    && Date.parse(v) >= EARLIEST_T && Date.parse(v) <= now + T_AHEAD_MS && new Date(Date.parse(v)).toISOString().slice(0, 19) === v.slice(0, 19),
   agent: orNull(/^[\p{L}\p{N} .'-]{1,12}$/u),
   session: orNull(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
   intakeId: orNull(/^[0-9a-f]{64}$/),
