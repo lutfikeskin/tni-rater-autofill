@@ -9792,6 +9792,28 @@ test('a value an earlier fill gave that a rule replaces (`replace`) is kept once
   assert.equal(report.checks[0]?.note, 'This was changed after it was filled (Mailing state): left as it is. Check it.');
 });
 
+// Review of PR #374: a fill reports a list's several picks in the answer's order ("Gravel; Sand"),
+// the page reads them back in its own ("Sand; Gravel"): the same picks, not an edit.
+test('a list\'s several picks read back in another order are what the fill gave; other picks are an edit', async () => {
+  const h = harness();
+  const goods = new SelectNode(['Sand', 'Gravel', 'Steel'], { id: 'goods' });
+  goods.multiple = true;
+  Object.defineProperty(goods, 'selectedOptions', { get: () => goods.options.filter((o) => o.selected) });
+  h.document.body.append(goods);
+  const step = { id: 'goods', selector: '#goods', path: 'operations.commodities', name: 'Commodities', kind: 'choice', value: 'Gravel; Sand' };
+  const first = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true });
+  assert.deepEqual(plain(first.filled.map((x) => x.shown)), ['Gravel; Sand']);
+  // The intake now says otherwise: the fill's own picks, given anew.
+  let report = await h.kit.fill([{ ...step, value: 'Steel' }], { maxRounds: 3, replaceChoices: true, givenBefore: givenBy(first) });
+  assert.deepEqual(goods.options.map((o) => !!o.selected), [false, false, true]);
+  assert.deepEqual(plain(report.checks), []);
+  // Picks the agent changed are kept and flagged.
+  for (const o of goods.options) o.selected = o.text !== 'Gravel';
+  report = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, givenBefore: givenBy(first) });
+  assert.deepEqual(goods.options.map((o) => !!o.selected), [true, false, true]);
+  assert.equal(report.checks[0]?.note, 'This was changed after it was filled (Commodities): left as it is. Check it.');
+});
+
 // The maintainer, 2026-11-07: on GEICO's Quote & Coverages too, an answer the fill gave that shows
 // otherwise now is kept and flagged, by the agent's Fill this page as well, also where the panel's
 // keys of the tab's answers don't name it (a panel opened again knows it from the kept reports only).

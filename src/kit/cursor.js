@@ -931,7 +931,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         // page took back (`tookBack`) is kept as that, with its own note.
         const givenHere = answered && !overwrite ? givenBefore?.[fieldKey(c)] : null;
         const changedSince = !!givenHere && givenHere.path != null && givenHere.path === step.path && givenHere.shown != null
-          && loose(givenHere.shown) !== loose(answerShown(c)) && !agreesWith(step, c) && !tookBack
+          && !sameShown(c, givenHere.shown, answerShown(c)) && !agreesWith(step, c) && !tookBack
           && !state.refill.has(step.id) && !state.report.filled.some((x) => x.stepId === step.id);
         // A street an earlier fill left without a suggestion is not answered while the box holds
         // what that fill left: it stays the agent's, never taken as the page's.
@@ -1493,6 +1493,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   }
   function answerShown(c) {
     return c.kind === 'text' ? c.el.value : selectedText(c);
+  }
+  // The same answer shown, a list's several picks ("a; b") in any order: a fill reports them in
+  // the answer's order, the page reads them back in its own (review of PR #374).
+  function sameShown(c, a, b) {
+    if (c.kind === 'text') return loose(a) === loose(b);
+    const picks = (v) => String(v ?? '').split(/;\s*/).map(loose).sort().join(';');
+    return picks(a) === picks(b);
   }
 
   // The answers on the page as a helper that redraws them is clicked (`keepAnswers`: GEICO's
