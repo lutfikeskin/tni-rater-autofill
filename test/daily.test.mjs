@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { windowStart, lastSuccess, DOWNLOAD_STEP, questionId, uncoveredQuestions, decide, commentBody, receivedAt, quietStretch, QUIET_HOURS, lastReceipts } from '../scripts/lib/daily.mjs';
+import { windowStart, lastSuccess, DOWNLOAD_STEP, questionId, uncoveredQuestions, decide, commentBody, receivedAt, quietStretch, QUIET_HOURS, lastReceipts, alerts, ALERTS } from '../scripts/lib/daily.mjs';
 import { loadEvents } from '../scripts/lib/events.mjs';
 
 // Audit 2026-10-08: the daily review read events by when they were logged, from yesterday: 17 of 95
@@ -225,4 +225,47 @@ test('a build, a kind or a time from the usage log is never a link outside a cod
   assert.equal(at('2025-02-30T10:00:00Z'), '- ? · `AY` · `Quote`');
   assert.equal(at('2026-10-07T24:00:00Z'), '- ? · `AY` · `Quote`');
   assert.equal(at('2024-02-29T23:59:00.000Z'), '- 2024-02-29 23:59 · `AY` · `Quote`');
+});
+
+// Audit 2026-11-07, LEARN-16 (the maintainer, 2026-11-07: a section of the daily comment, no
+// webhook): a carrier page that reads as changed for two installs, a new build failing more fields
+// than the one before it, crashes in many sessions and lost events are said the morning after.
+test('daily: alerts for a page changed for two installs, a build failing more, crashes and lost events', () => {
+  const run = (x) => ({ type: 'fill_run', carrier: 'progressive', page: 'AddVehicle', t: '2026-11-07T10:00:00Z', v: '0.9.32', channel: 'store', filled: 100, failed: 1, ...x });
+  // One install's changed page is not an alert; two installs' is, renamed questions counting too.
+  assert.deepEqual(alerts([run({ install: 'i1', pageChanged: true }), run({ install: 'i1', pageChanged: true })]), []);
+  const changed = alerts([run({ install: 'i1', pageChanged: true }), run({ install: 'i2', renamed: [{ name: 'VIN', field: 'RiskInput.VIN', now: null }] }), run({ install: 'i3' })]);
+  assert.deepEqual(changed, [{ kind: 'page-changed', carrier: 'progressive', page: 'AddVehicle', installs: 2, runs: 2 }]);
+  // A stop page's fill_run fills nothing and is no page change.
+  assert.deepEqual(alerts([run({ install: 'i1', pageChanged: true, auto: 'stop' }), run({ install: 'i2', pageChanged: true, auto: 'stop' })]), []);
+  // The newest build against the one before it, each with enough filled: 1.0 to 5.0 per 100 is up 4.
+  const old = [1, 2, 3].map((i) => run({ install: `o${i}`, v: '0.9.31', filled: 100, failed: 1 }));
+  const now = [1, 2, 3].map((i) => run({ install: `n${i}`, v: '0.9.32', filled: 100, failed: 5 }));
+  assert.deepEqual(alerts([...now, ...old]), [{ kind: 'failed-rise', build: '0.9.32 store', rate: 5, before: '0.9.31 store', beforeRate: 1 }]);
+  assert.deepEqual(alerts([...now.slice(0, 1), ...old]), [], 'too few filled on the new build to say');
+  assert.deepEqual(alerts([...old, ...[1, 2, 3].map((i) => run({ install: `n${i}`, v: '0.9.32', filled: 100, failed: 3 }))]), [], 'up 2, under 3');
+  // CodeRabbit on PR #433: the newest version is the one weighed, also while it has too few filled
+  // (nothing said yet, never the two before it), and only against its own channel.
+  assert.deepEqual(alerts([...old, ...now, run({ install: 'x', v: '0.9.33', filled: 50, failed: 10 })]), [], 'the newest under 200 filled: quiet, 0.9.32 against 0.9.31 not said');
+  const dev = [1, 2, 3].map((i) => run({ install: `d${i}`, v: '0.9.33', channel: 'unpacked', filled: 100, failed: 9 }));
+  assert.deepEqual(alerts([...old, ...dev]), [], 'an unpacked copy is never weighed against the store build');
+  // Crashes in 2% of the sessions or more; and events lost before upload.
+  const sessions = Array.from({ length: 60 }, (_, i) => ({ type: 'intake_loaded', session: `s${i}` }));
+  assert.deepEqual(alerts([...sessions, { type: 'client_error', session: 's1' }]), [], '1 of 60');
+  assert.deepEqual(alerts([...sessions, { type: 'client_error', session: 's1' }, { type: 'client_error', session: 's2' }]), [{ kind: 'crashes', crashed: 2, sessions: 60 }]);
+  assert.deepEqual(alerts([{ type: 'usage_lost', count: 30 }, { type: 'usage_lost', count: 20 }]), [{ kind: 'lost', count: 50 }]);
+  assert.equal(ALERTS.pageChangeInstalls, 2);
+
+  // The comment says them first, a carrier's text as inline code; alerts alone are worth a comment.
+  const facts = { since: '2026-11-06T06:00:00Z', alerts: [...changed, { kind: 'crashes', crashed: 2, sessions: 50 }], runUrl: 'https://github.com/o/r/actions/runs/1' };
+  assert.equal(decide(facts, []).kind, 'create');
+  assert.equal(decide({ since: facts.since }, []).kind, 'none');
+  const body = commentBody(facts, '2026-11-07');
+  assert.match(body, /^## 2026-11-07: 2 alert\(s\), 0 new problem report\(s\)/);
+  assert.match(body, /### Alerts\n\n- `progressive` `AddVehicle` reads as changed for 2 installs \(2 fills\)/);
+  assert.match(body, /- 2 of 50 sessions \(4%\) had a crash \(client_error\)\./);
+  assert.match(body, /Thresholds: `ALERTS` in scripts\/lib\/daily\.mjs\./);
+  // A page name from the log can't mention anyone or link anywhere.
+  const odd = commentBody({ since: facts.since, alerts: [{ kind: 'page-changed', carrier: 'progressive', page: `${AT_CLAUDE} [x](https://evil.example)`, installs: 2, runs: 2 }] }, '2026-11-07');
+  assert.match(odd, /`@\u200bclaude \[x\]\(https:\/\/evil\.example\)`/);
 });

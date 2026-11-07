@@ -351,7 +351,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
 
   // Crashes in the panel (client_error), by build and message; test runs too.
   const crashes = new Map();
-  for (const e of periodAll.filter((x) => x.type === 'client_error')) tally(crashes, `${build(e)} · ${mask(e.error)}${e.stack?.[0] ? ` @ ${e.stack[0]}` : ''}`);
+  for (const e of periodAll.filter((x) => x.type === 'client_error')) tally(crashes, `${build(e)} · ${e.where ?? 'panel'} · ${mask(e.error)}${e.stack?.[0] ? ` @ ${e.stack[0]}` : ''}`);
 
   // The settings in force for each quote: its last agent_settings; how many quotes had each on.
   const lastSettings = new Map();
@@ -490,7 +490,7 @@ export function markdown(s, { noTestList = false } = {}) {
   L.push('## Signs a carrier changed a page', '', ...list(s.pageChanges, ' runs'), '');
   L.push('## Fills of a hidden tab', '', 'Fill runs while the quote tab was in the background or its page hidden, where Chrome slows timers: their median time against the other runs on that carrier.', '',
     ...(Object.keys(s.hiddenFills ?? {}).length ? Object.entries(s.hiddenFills).map(([c, h]) => `- ${c}: ${h.background} in the background, ${h.hidden} hidden, of ${h.runs} runs · median ${h.medianMs ?? '—'} ms against ${h.medianMsOthers ?? '—'} ms`) : ['None.']), '');
-  L.push('## Panel crashes', '', 'Errors nothing in the panel caught (client_error), by build; test runs included. Each one is a finding.', '', ...list(s.crashes), '');
+  L.push('## Crashes', '', 'Errors nothing in the panel caught (where panel), and exceptions the recorder on the page caught and reported (where recorder): client_error, by build and where; test runs included. Each one is a finding.', '', ...list(s.crashes), '');
   L.push('## Settings in force', '', `The last agent_settings of each quote (${s.settings.quotes} quotes reported one).`, '', ...list(s.settings.on, ' quotes'), '');
   L.push("## Agents' own defaults", '', `The defaults each quote's last agent_settings logged in place of TNI's (${s.ownDefaults.quotes} quotes reported them), by the number of quotes and who had them. An answer they filled reads as agent-default below, never as a TNI standard.`, '', ...(s.ownDefaults.defaults.length ? s.ownDefaults.defaults.map((d) => `- ${d.quotes} quotes · ${d.text} · ${d.agents.join(', ') || '?'}`) : ['None.']), '');
   L.push('## Buttons agents clicked themselves', '', 'By the number of quotes: a helper the extension has (Recalculate, Print, Lookup VIN) clicked by hand is one it didn\'t do.', '', ...list(s.agentClicks, ' quotes'), '');
