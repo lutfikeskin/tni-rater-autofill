@@ -3662,6 +3662,108 @@ test('Stop halts a running fill after the answer going in; progress counts what 
   assert.equal(h.kit.progress(), null, 'the fill is over');
 });
 
+// Audit 2026-11-07 (ENG-02, LIVE-05): after Stop, the kit kept waiting for a quiet page for up to
+// the wait's limit (15 s after an answer, 60 s around a helper), the dock saying it was stopping
+// after the answer going in. Every wait of the kit's ends at its next wake once the fill stops.
+test('Stop during a wait on a page that stays busy ends the fill within one wake, and nothing more is written', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  // The first answer's request never ends: the wait after it would run its whole 15 s.
+  let busy = false;
+  h.context.Ext.Ajax.isLoading = () => busy;
+  let stoppedAt = null;
+  addExtText(h, 'a', '2BA1', { onSet: () => {
+    busy = true;
+    setTimeout(() => { stoppedAt = clock.Date.now(); assert.equal(h.kit.stop(), true); }, 1000);
+  } });
+  const { input: second } = addExtText(h, 'b', '2BA2');
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const report = await h.kit.fill([
+    { id: 'one', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'First', kind: 'text', value: 'Yes' },
+    { id: 'two', q: '2BA2', field: fieldOf('2BA2'), path: 'progressive.q2BA2', name: 'Second', kind: 'text', value: 'No' },
+  ], { maxRounds: 3, advance: { text: '^continue$' } });
+  const after = clock.Date.now() - stoppedAt;
+  assert.ok(stoppedAt != null);
+  assert.ok(after <= 100, `the fill ended ${after} ms after Stop`);
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.equal(second.value, '', 'nothing after Stop is written');
+  assert.ok(!next._clicked, 'Continue is not clicked');
+  assert.equal(h.kit.progress(), null, 'the fill is over');
+});
+
+test('Stop while the fill waits for a busy page to begin keeps its reason and ends at once', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  h.context.Ext.Ajax.isLoading = () => true;
+  const { input } = addExtText(h, 'a', '2BA1');
+  const t0 = clock.Date.now();
+  setTimeout(() => h.kit.stop(), 500);
+  const report = await h.kit.fill([{ id: 'one', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'First', kind: 'text', value: 'Yes' }], { maxRounds: 3 });
+  assert.ok(clock.Date.now() - t0 <= 600, `the fill ended ${clock.Date.now() - t0} ms after it began`);
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/, 'not "still waiting on its server"');
+  assert.equal(input.value, '');
+});
+
+test('Stop while an address box waits for its suggestions: nothing is picked and no fallback is written', async () => {
+  const h = harness();
+  const address = makeInput({ id: 'addr', ariaLabel: 'Home Address' });
+  h.document.body.append(address);
+  // The page never offers a suggestion: the driver would wait 4 s, then type the street back.
+  const t0 = clock.Date.now();
+  setTimeout(() => h.kit.stop(), 500);
+  const report = await h.kit.fill([{ id: 'addr', selector: '#addr', path: 'x.addr', kind: 'address-suggest', value: '125 Maple Leaf Dr, Springfield IL 62704', fallback: '125 Maple Leaf Dr' }], { maxRounds: 3 });
+  assert.ok(clock.Date.now() - t0 <= 600, `the fill ended ${clock.Date.now() - t0} ms after it began`);
+  assert.equal(report.halted, true);
+  assert.notEqual(address.value, '125 Maple Leaf Dr', 'the fallback is not written after Stop');
+  assert.equal(report.filled.length, 0);
+});
+
+test('Stop while a list waits for its options (a plain list, select2\'s search, Progressive\'s combo): nothing is picked, at once', async () => {
+  const stopIn = (h, ms) => { const t0 = clock.Date.now(); setTimeout(() => h.kit.stop(), ms); return () => clock.Date.now() - t0; };
+  // A plain list still loading (one placeholder option): the fill would wait 6 s for it.
+  {
+    const h = harness();
+    const list = new SelectNode([{ text: '', value: '' }], { id: 'odd', ariaLabel: 'Body type' });
+    h.document.body.append(list);
+    setTimeout(() => { list.options = [...list.options, { text: 'Box', value: 'box' }]; }, 2000);
+    const took = stopIn(h, 500);
+    const report = await h.kit.fill([{ id: 'body', selector: '#odd', path: 'x.body', kind: 'choice', value: 'Box' }], { maxRounds: 3 });
+    assert.ok(took() <= 600, `the plain list: the fill ended ${took()} ms in`);
+    assert.deepEqual([report.halted, list.value, report.filled.length], [true, '', 0]);
+  }
+  // A select2 type-ahead whose server never answers: 6 s for its results.
+  {
+    const h = harness();
+    const select = new SelectNode([{ text: '', value: '' }], { id: 'classCodeAndDescription', ariaLabel: 'Classification' });
+    const container = new FakeNode('span', { className: 'select2 select2-container' });
+    const opener = new FakeNode('span', { className: 'select2-selection' });
+    container.append(opener);
+    h.document.body.append(select, container);
+    opener.addEventListener('mousedown', () => {
+      const search = makeInput({ className: 'select2-search__field' });
+      search.className = 'select2-search__field';
+      h.document.body.append(search);
+    });
+    const took = stopIn(h, 500);
+    const report = await h.kit.fill([{ id: 'cls', selector: '#classCodeAndDescription', path: 'x.cls', kind: 'search-select', value: '484122', search: '484122' }], { maxRounds: 3 });
+    assert.ok(took() <= 600, `select2: the fill ended ${took()} ms in`);
+    assert.deepEqual([report.halted, select.value, report.filled.length], [true, '', 0]);
+  }
+  // Progressive's combo whose list fills only later (cargo commodities): 6 s for it.
+  {
+    const h = harness({ ext: true, search: '?pageName=NewCustomer' });
+    const field = addExtText(h, 'a', '93');
+    let records = [];
+    Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records, isLoading: () => false }, doQuery: () => {} });
+    setTimeout(() => { records = [{ get: () => 'Trucking' }]; }, 3000);
+    const took = stopIn(h, 500);
+    const report = await h.kit.fill([{ id: 'desc', q: '93', field: fieldOf('93'), path: 'progressive.q93', name: 'Business description', kind: 'choice', value: 'Trucking' }], { maxRounds: 3 });
+    assert.ok(took() <= 600, `Progressive's combo: the fill ended ${took()} ms in`);
+    assert.deepEqual([report.halted, field.cmp.getValue() ?? '', report.filled.length], [true, '', 0]);
+  }
+});
+
 // Bitwarden comparison (2026-10-22): the page the panel asked to fill is checked as the fill starts.
 // Another one in the top frame is left alone: nothing filled, and the marks of an earlier fill stay.
 test('a fill meant for another page than the top frame shows fills nothing and names the page found', async () => {
@@ -6368,6 +6470,44 @@ test('GEICO\'s Recalculate rated 18 s after the click, nothing busy for 3 s: its
   assert.match(report.failed[0].reason, /changed this answer when it recalculated \(to "\$500 deductible"\), and the fill put it back/);
   assert.match(report.failed[1].reason, /changed an answer when it recalculated/);
   assert.equal(slow.more._clicked, undefined, 'View More Payment Plans waits for the agent');
+});
+
+// Audit 2026-11-07 (LIVE-05): Stop during GEICO's redraw after the premium showed (the `rated` wait,
+// up to a minute on a page that stays busy) ends it too (the maintainer, 2026-11-07): nothing is put
+// back, nothing more is clicked.
+test('GEICO\'s Recalculate: Stop while the page redraws after its premium ends the wait at once, nothing put back', async () => {
+  let stoppedAt = null;
+  const p = recalcPage({ redraw: ({ h, comp }) => {
+    comp.value = '$500 deductible';
+    // GEICO's loader, a second in, never going: the wait after the premium would last its minute.
+    setTimeout(() => h.document.body.append(new FakeNode('div', { id: 'page-load', className: 'loader-container' })), 1000);
+    setTimeout(() => { stoppedAt = clock.Date.now(); h.kit.stop(); }, 3000);
+  } });
+  p.h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  p.h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 12, trace: true });
+  const after = clock.Date.now() - stoppedAt;
+  assert.ok(stoppedAt != null && after <= 100, `the fill ended ${after} ms after Stop`);
+  assert.equal(p.recalcs, 1);
+  assert.deepEqual(plain(said.filter((x) => x.what === 'wait' && x.why === 'rated').map((x) => x.ended)), ['stopped']);
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.equal(p.comp.value, '$500 deductible', 'nothing put back after Stop');
+  assert.equal(p.more._clicked, undefined, 'nothing more clicked');
+});
+
+test('GEICO\'s Recalculate: Stop while the fill puts GEICO\'s changes back ends the put-back after the answer going in', async () => {
+  const p = recalcPage({ redraw: ({ comp, coll }) => { comp.value = '$500 deductible'; coll.value = '$500 deductible'; } });
+  // The agent stops as the first answer goes back in.
+  p.comp.addEventListener('change', () => p.h.kit.stop());
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+  assert.equal(p.recalcs, 1);
+  assert.deepEqual([p.comp.value, p.coll.value], ['$1,000 deductible', '$500 deductible'], 'the second is not put back after Stop');
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.equal(p.more._clicked, undefined);
 });
 
 // W43-41 (FL, 2026-10-22): after the fill's Recalculate, the liability limit, UM, road service and
