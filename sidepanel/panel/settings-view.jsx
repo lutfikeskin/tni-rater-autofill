@@ -48,11 +48,13 @@ function TextBox({ onChange, ...props }) {
   return <input ref={ref} {...props} />;
 }
 
-// A Filling switch, as a row: its name, what it does on hover, and the switch.
+// A Filling switch, as a row: its name, what it does under it, and the switch. What it does is
+// written out, not left to a tooltip that keyboard, touch and screen-reader users never get (audit
+// 2026-11-07, UX-10; as Your defaults' Per carrier, #305).
 function SwitchRow({ id, name, title, rowId, sub, checked, said, disabled, onChange }) {
   return (
-    <label id={rowId} className={`opt${sub ? ' sub' : ''}`} title={title}>
-      <span className="opt-text"><b>{name}</b></span>
+    <label id={rowId} className={`opt${sub ? ' sub' : ''}`}>
+      <span className="opt-text"><b>{name}</b>{title ? <span>{title}</span> : null}</span>
       <Check role="switch" className="switch" id={id} checked={checked} said={said} disabled={disabled} onChange={onChange} />
     </label>
   );
@@ -73,9 +75,9 @@ function Assistant({ act }) {
     <details id="assistant" ref={fold} className="group fold">
       <summary className="list-row"><svg className="fold-icon" aria-hidden="true"><use href="#brain" /></svg><span className="fold-name">AI</span><span id="ai-note" className={ai?.noteTone}>{ai?.note ?? ''}</span><span className="chev" aria-hidden="true">›</span></summary>
       <div id="agent-card" className={`card${ai?.warn ? ' warn' : ''}`}>
-        <label className="opt" title="For questions the intake doesn’t answer"><span className="opt-text"><b>Suggest answers</b></span><Check id="ai-on" role="switch" className="switch" checked={!!ai?.on} said={ai} onChange={act.aiOn} /></label>
-        <label id="ai-auto-option" className="opt" title="Shown in purple. You still approve them before Continue." hidden={!!ai && !ai.autoShown}>
-          <span className="opt-text"><b>Put checked picks in</b></span>
+        <label className="opt"><span className="opt-text"><b>Suggest answers</b><span>For questions the intake doesn’t answer</span></span><Check id="ai-on" role="switch" className="switch" checked={!!ai?.on} said={ai} onChange={act.aiOn} /></label>
+        <label id="ai-auto-option" className="opt" hidden={!!ai && !ai.autoShown}>
+          <span className="opt-text"><b>Put checked picks in</b><span>Shown in purple. You still approve them before Continue.</span></span>
           <Check id="ai-auto" role="switch" className="switch" checked={!!ai?.auto} said={ai} disabled={!!ai?.autoOff} onChange={act.aiAuto} />
         </label>
         <div className="key-row">
@@ -139,7 +141,7 @@ function Settings({ act }) {
       <div className="group">
         <div className="eyebrow">You</div>
         <div className="card">
-          <label className="opt" title="So your quotes count as yours"><span className="opt-text"><b>Your initials</b></span><TextBox id="agent" className={health?.agentMissing ? 'missing' : undefined} type="text" maxLength={6} autoComplete="off" placeholder="e.g. JK" onChange={act.agent} /></label>
+          <label className="opt"><span className="opt-text"><b>Your initials</b><span>So your quotes count as yours</span></span><TextBox id="agent" className={health?.agentMissing ? 'missing' : undefined} type="text" maxLength={6} autoComplete="off" placeholder="e.g. JK" onChange={act.agent} /></label>
         </div>
       </div>
 
