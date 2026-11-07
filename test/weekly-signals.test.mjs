@@ -351,7 +351,7 @@ test('the agent\'s latest test mark wins, and the new events are digested', () =
   const report = s.problems.find((p) => p.text === 'stuck on Rates');
   assert.equal(report.run, 'run-rates-1');
   assert.equal(report.lastRun.advanced, 'Continue', 'joined to the run it names, not the last fill on its page');
-  assert.match(markdown(s), /## Panel crashes[\s\S]*## Settings in force[\s\S]*## Buttons agents clicked themselves/);
+  assert.match(markdown(s), /## Crashes[\s\S]*## Settings in force[\s\S]*## Buttons agents clicked themselves/);
 });
 
 // agent defaults: the defaults each quote was filled with, by quote and agent; a correction of an

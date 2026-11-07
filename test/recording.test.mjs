@@ -381,6 +381,33 @@ test('a step is left by the last button pressed on it, the agent\'s or the exten
   assert.match(report, /\| 4 \| \/quote · Summary \|[^\n]*\| — \|/);
 });
 
+// REC-03 (audit 2026-11-07): a page's load time was invisible, charged to the step before it.
+test('a page loaded with the trace in it says how long it took, in the Flow and its own lines', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'click', t: t0 + 5000, seq: 2, frame: 0, button: { text: 'Continue' }, trusted: true },
+    { kind: 'page', t: t0 + 5200, seq: 1, frame: 0, page: '/drivers', step: 'Drivers', top: true, injectedAt: t0 + 8000 },
+    { kind: 'load', t: t0 + 5200, seq: 2, frame: 0, how: 'navigate', response: t0 + 6100, ready: t0 + 7000, loaded: t0 + 7800 },
+    { kind: 'load', t: t0 + 5300, seq: 1, frame: 1, how: 'navigate', response: null, ready: null, loaded: t0 + 9000 },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:20.000Z' }, events });
+  assert.match(report, /\| 2 \| \/drivers · Drivers \| 0:05\.2 \(loaded in 2\.6 s\) \|/);
+  assert.match(report, /the page loaded \(a new page\): its server answered in 0\.9 s, ready at 1\.8 s, loaded at 2\.6 s/);
+  assert.equal(report.match(/the page loaded/g).length, 1, 'a frame\'s load is not the page\'s');
+  assert.match(report, /\| 1 \| \/quote · Vehicles \| 0:00\.0 \|/);
+  // Review of PR #397: a reload, the same page and step, is a step of its own with its load.
+  const reload = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:20.000Z' }, events: [...events,
+    { kind: 'page', t: t0 + 12_000, seq: 1, frame: 0, page: '/drivers', step: 'Drivers', top: true, injectedAt: t0 + 13_500 },
+    { kind: 'load', t: t0 + 12_000, seq: 2, frame: 0, how: 'reload', response: t0 + 12_400, ready: t0 + 12_900, loaded: t0 + 13_100 }] });
+  assert.match(reload, /\| 3 \| \/drivers · Drivers \| 0:12\.0 \(loaded in 1\.1 s\) \|/);
+  assert.match(reload, /the page loaded \(reloaded\): its server answered in 0\.4 s, ready at 0\.9 s, loaded at 1\.1 s/);
+  // The same page seen again by a trace put in again in that document (no injectedAt): no new step.
+  const again = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:20.000Z' }, events: [...events,
+    { kind: 'page', t: t0 + 12_000, seq: 1, frame: 0, page: '/drivers', step: 'Drivers', top: true }] });
+  assert.doesNotMatch(again, /^\| 3 \|/m);
+});
+
 // REC-04 (audit 2026-11-07): a recording whose panel followed another tab looked complete.
 test('the report says when the panel followed another tab, and for how long, and when the recorded tab was closed', () => {
   const t0 = Date.parse('2026-10-23T14:12:00.000Z');
