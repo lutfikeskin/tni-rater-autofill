@@ -290,7 +290,9 @@ download start). Without it, a `reviews/daily/state.json` left from earlier loca
 than the workflow's reviews, and the run would post what they already said. Check first that
 Actions shows a successful Daily review run on `main`: with none, `since` prints a day ago, which
 could skip reports nobody reviewed, so leave `--since` out and let the state file say where to
-start. After it,
+start. With no state file either, the run stops and asks for `--since`: give the time the last
+review you know of stopped, or an earlier one (an earlier start only says some things again).
+After it,
 `reviews/daily/state.json` (git-ignored) says where each run starts: when the last real run's
 download began. It's written whole (a temporary file, then a rename) and only after the post step
 succeeded (a comment, or nothing new to say). A run that fails leaves it, so the next one reviews
