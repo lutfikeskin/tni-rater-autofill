@@ -871,7 +871,7 @@ async function settleRejectedAi(page, changes, sender, tabId = state.tab?.id) {
   });
   let fresh = null;
   if (eligible.some(([, x]) => !x.origin && !x.originAmbiguous)) {
-    try { fresh = await runKit(tabId, tab.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); } catch { /* page navigating */ }
+    try { fresh = await runKit(tabId, tab.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null)); } catch { /* page navigating */ }
   }
   if (state.tab?.id !== tabId || state.tab?.url !== tab?.url || state.intake !== intake) return false;
   let changed = false;
@@ -919,7 +919,7 @@ async function retireAiOrigins(ctx, frames = null) {
     && x.done === 'auto' && (x.quoteHash || aiOriginRecord(x.origin)));
   if (!entries.length) return false;
   if (frames == null && entries.some(([, x]) => x.origin && (!x.quoteHash || x.quoteHash === quoteHash))) {
-    try { frames = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); }
+    try { frames = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null)); }
     catch { frames = null; }
   }
   if (!current()) return false;
