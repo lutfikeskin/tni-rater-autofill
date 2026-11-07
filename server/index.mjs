@@ -215,6 +215,31 @@ export const RUN_FIELDS = {
   ...AGENT_DEFAULT_RUN_FIELDS,
 };
 
+// The common fields' shapes (audit 2026-11-07, SRV-07), as the extension stamps them (log() in
+// sidepanel/usage-log.js, the panel's pageOf): reviews group, join and order events by them, so an
+// event with one out of its shape is refused, like a malformed run id, never stored with it or
+// trimmed. null (no intake loaded, no carrier tab) is allowed for all but t. t: an ISO time in UTC,
+// from 2025 to 30 days ahead of the server's clock (queued and re-uploaded events are older; a
+// computer's clock may run a little ahead). agent: initials as typed (letters, digits, space, . '
+// -; at most 12, the request's own limit). session: a UUID (startSession). intakeId: the intake
+// PDF's SHA-256 (intakeSummary). carrier: a carrier id's shape (lowercase, at most 20), so a new
+// carrier needs no server change. page: a page name or path (letters, digits and _ . : / ~ % + ( ) , -
+// and space; at most 200). v: the extension's version number, or `dev` outside Chrome.
+const EARLIEST_T = Date.parse('2025-01-01T00:00:00Z');
+const T_AHEAD_MS = 30 * 24 * 60 * 60 * 1000;
+const orNull = (test) => (v) => v === null || (typeof v === 'string' && test.test(v));
+export const COMMON_SHAPES = {
+  t: (v, now = Date.now()) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(v)
+    && Date.parse(v) >= EARLIEST_T && Date.parse(v) <= now + T_AHEAD_MS,
+  agent: orNull(/^[\p{L}\p{N} .'-]{1,12}$/u),
+  session: orNull(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+  intakeId: orNull(/^[0-9a-f]{64}$/),
+  carrier: orNull(/^[a-z][a-z0-9-]{0,19}$/),
+  page: orNull(/^[\w .:/~%+(),-]{0,200}$/),
+  v: orNull(/^(\d{1,4}(\.\d{1,6}){0,3}|dev)$/),
+};
+const COMMON_SAID = { agent: 'agent initials', session: 'session id', intakeId: 'intake fingerprint', carrier: 'carrier id', page: 'page name', v: 'version' };
+
 // Where a filled answer came from: the rules' sources (SOURCES in src/plan.js), and, for agent
 // defaults, a TNI standard the agent replaced with their own default.
 export const FIELD_SOURCES = ['intake', 'derived', 'standard', 'fact', 'attestation', AGENT_DEFAULT_SOURCE];
@@ -392,6 +417,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (e.carrier === 'test') return { error: 'events from the local test page are not collected' };
     if (typeof e.id !== 'string' || !/^[\w-]{8,64}$/.test(e.id)) return { error: 'event id missing or invalid' };
     if (typeof e.t !== 'string' || Number.isNaN(Date.parse(e.t))) return { error: 'event time missing or invalid' };
+    if (!COMMON_SHAPES.t(e.t)) return { error: 'event time is not an ISO time in UTC from 2025 to 30 days ahead' };
+    for (const [k, said] of Object.entries(COMMON_SAID)) if (e[k] !== undefined && !COMMON_SHAPES[k](e[k])) return { error: `${k} is not a valid ${said}` };
     if (JSON.stringify(e).length > (e.type === 'page_layout' ? MAX_LAYOUT_BYTES : MAX_EVENT_BYTES)) return { error: 'event too large' };
     const out = {};
     const allowed = new Set([...COMMON, ...keep]);
@@ -683,7 +710,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       if (luna) return askLuna(body, done, res);
       if (!Array.isArray(body?.events)) return done(400, { error: 'body.events must be an array' });
       if (body.events.length > MAX_EVENTS_PER_REQUEST) return done(413, { error: `at most ${MAX_EVENTS_PER_REQUEST} events per request` });
-      const agent = typeof body.agent === 'string' ? body.agent.slice(0, 12) : null;
+      // The request's agent, for events that don't name theirs: in the shape of an event's, or none.
+      const agent = typeof body.agent === 'string' && COMMON_SHAPES.agent(body.agent) ? body.agent : null;
       const accepted = [];
       const rejected = [];
       let duplicates = 0;

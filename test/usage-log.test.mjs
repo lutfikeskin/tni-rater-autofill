@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as usage from '../sidepanel/usage-log.js';
 import { createServer } from '../server/index.mjs';
+import { sha256Hex, fillEvents, fieldChangeEvent, agentSettingsEvent, clientErrorEvent, checkDismissedEvent, intakeProfile } from '../src/usage.js';
 
 // Node's own fetch, before the tests below replace it with fake servers.
 const realFetch = globalThis.fetch;
@@ -313,6 +314,54 @@ test('a server that is rate limiting (429) or out of space (507) leaves the even
     console.error = error;
     await new Promise((r) => server.close(r));
   }
+});
+
+// Audit 2026-11-07, SRV-07: the server refuses an event whose common fields are out of their shape.
+// What this log stamps (time, version, initials, session, intake fingerprint) on the extension's
+// own events, with carrier pages as the panel names them, is all stored, nothing refused or dropped.
+test('events as the extension builds and stamps them are all stored by the server, none refused or dropped', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-usage-log-'));
+  const server = createServer({ dataDir });
+  const quiet = console.log;
+  console.log = () => {};
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    globalThis.fetch = realFetch;
+    await usage.saveSettings({ serverUrl: `http://127.0.0.1:${server.address().port}`, serverToken: '', agent: 'JC' });
+    await usage.clearLog();
+    usage.startSession(await sha256Hex(new TextEncoder().encode('%PDF-1.7 intake')));
+    const redact = (s) => s;
+    const settings = { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false };
+    const frames = [{ fields: 2, rounds: 1, filled: [{ label: 'Farthest distance', key: '2B9D', q: '2B9D', controlKind: 'select', shown: '500 miles' }], unknown: [], failed: [], noData: [], kept: [], leftRequired: [], blockers: [] }];
+    const pages = [['progressive', 'AddVehicle'], ['geico', '/quote/vehicles'], ['amwins', '/Portal/Application/:id/Edit']];
+    await usage.log(
+      { type: 'intake_loaded', formVersion: '2026-10', state: 'TX', test: false },
+      { type: 'intake_profile', ...intakeProfile({ garaging: { state: 'TX' }, vehicles: [], trailers: [], drivers: [] }) },
+      { ...agentSettingsEvent({}, { reason: 'intake', centralServer: usage.DEFAULT_SERVER }) },
+      ...pages.flatMap(([carrier, page]) => [
+        { type: 'page_view', carrier, page, view: 't1', from: null, fields: 4 },
+        ...fillEvents(frames, { carrier, page, view: 't1', overwrite: false, ms: 900, redact, run: crypto.randomUUID(), rules: 'abcdef012345', settings, step: 'Vehicles' }),
+        { carrier, page, view: 't1', ...fieldChangeEvent({ key: '2B9D', q: '2B9D', label: 'Farthest distance', kind: 'select', before: '500 miles', after: '200 miles', agent: true }, { record: {}, filled: new Map(), redact, step: 'Vehicles' }) },
+        { carrier, page, ...checkDismissedEvent({ q: '2B9D', key: '2B9D', label: 'Farthest distance', mark: 'needs' }) },
+      ]),
+      { ...clientErrorEvent(new Error('x'), { where: 'panel' }), carrier: null, page: null },
+      { type: 'problem_report', carrier: 'geico', page: '/quote/vehicles', text: 'stuck' },
+      { type: 'intake_closed', reason: 'cleared' },
+    );
+    const sent = await usage.count();
+    await usage.upload();
+    assert.deepEqual([usage.lastUpload().state, usage.lastUpload().sent], ['ok', sent], usage.lastUpload().message);
+    assert.deepEqual(await usage.counts(), { queued: 0, rejected: 0 }, 'none refused');
+  } finally {
+    console.log = quiet;
+    usage.restoreSession(null);
+    await usage.saveSettings({ agent: null });
+    await new Promise((r) => server.close(r));
+  }
+  const rows = fs.readdirSync(path.join(dataDir, 'events')).flatMap((f) => fs.readFileSync(path.join(dataDir, 'events', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+  assert.ok(rows.length >= 15, `${rows.length} stored`);
+  assert.deepEqual(rows.filter((e) => e.dropped).map((e) => [e.type, e.dropped]), [], 'nothing dropped');
+  assert.ok(rows.every((e) => e.agent === 'JC' && /^[0-9a-f]{64}$/.test(e.intakeId) && e.v === 'dev'));
 });
 
 test('every event names its install; a full log says how many oldest events it dropped', async () => {

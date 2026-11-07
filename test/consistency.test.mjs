@@ -9,7 +9,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { EVENT_FIELDS, COMMON, RUN_FIELDS, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT } from '../server/index.mjs';
+import { EVENT_FIELDS, COMMON, COMMON_SHAPES, RUN_FIELDS, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT } from '../server/index.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms, SOURCES } from '../src/plan.js';
@@ -71,6 +71,16 @@ test('field change events carry only fields the server keeps', () => {
     const dropped = Object.keys(e).filter((k) => !keep.has(k) && e[k] !== undefined);
     assert.deepEqual(dropped, [], `${c.kind}: the server drops ${dropped.join(', ')}`);
   }
+});
+
+// Audit 2026-11-07, SRV-07: the server refuses an event whose common fields are out of their shape.
+// Every carrier id and the extension's version fit, or every event naming them would be refused.
+test('carrier ids and the extension\'s version are in the shapes the server keeps', () => {
+  for (const c of CARRIERS) assert.ok(COMMON_SHAPES.carrier(c.id), `carrier id "${c.id}"`);
+  assert.ok(COMMON_SHAPES.v(JSON.parse(read('manifest.json')).version));
+  assert.ok(COMMON_SHAPES.v(JSON.parse(read('package.json')).version));
+  assert.deepEqual(Object.keys(COMMON_SHAPES).sort(), COMMON.filter((k) => ['t', 'agent', 'session', 'intakeId', 'carrier', 'page', 'v'].includes(k)).sort(),
+    'id, channel, commit, install, seq, type and view keep their own checks');
 });
 
 // The business profile: every value the extension sends fits the server's shape for it, and each
