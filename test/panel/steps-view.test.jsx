@@ -186,6 +186,15 @@ test('keyboard focus stays in the dock as its button changes, and is never taken
   // A word with no button: its alternative.
   say({ phase: 'finished', alt: 'fill-again', altLabel: 'Fill this page again' });
   expect(document.activeElement.id).toBe('dock-alt');
+  // Stop pressed with nothing else in the dock: the browser drops focus from it (blur, to the page),
+  // and the agent then moves on to a control outside the dock before the next word: that is theirs
+  // (review of #390, CodeRabbit).
+  say({ phase: 'filling', button: 'fill-stop', label: 'Stopping…', disabled: true, busy: true });
+  act(() => { document.activeElement.blur(); });
+  $(container, 'elsewhere').focus();
+  act(() => { document.activeElement.blur(); });
+  say({ phase: 'ready', button: 'fill', label: 'Fill this page again' });
+  expect(document.activeElement).toBe(document.body);
   // Focus elsewhere: the dock's changes leave it there.
   $(container, 'elsewhere').focus();
   say({ phase: 'ready', button: 'fill', label: 'Fill this page' });

@@ -3,7 +3,7 @@
 // next thing to do and its button (state.dock, renderDock from dockFor). What their buttons do is the
 // panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountSteps, mountDock).
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
@@ -71,6 +71,13 @@ function Dock({ act }) {
   const d = useStore(panelStore, (s) => s.dock);
   const dock = useRef(null);
   const focused = useRef(false);
+  // Focus that went anywhere outside the dock (the agent's, after the browser dropped it from Stop
+  // once pressed) is no longer the dock's (review of #390).
+  useEffect(() => {
+    const away = (e) => { if (!dock.current?.contains(e.target)) focused.current = false; };
+    document.addEventListener('focusin', away);
+    return () => document.removeEventListener('focusin', away);
+  }, []);
   useLayoutEffect(() => {
     const root = dock.current;
     if (!root || !focused.current || root.hidden) return;
