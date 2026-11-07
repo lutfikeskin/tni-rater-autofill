@@ -922,8 +922,9 @@ async function restoreJournal(tabId) {
   }
   // What this copy learned before reading it, stored with it; nothing written when they agree.
   const json = JSON.stringify(journalOf(tabId));
+  // Stored otherwise (another copy wrote it since, say): written out whatever was cached.
   if (JSON.stringify(was) === json) journalWritten.set(tabId, json);
-  else await keepJournal(tabId);
+  else { journalWritten.delete(tabId); await keepJournal(tabId); }
 }
 
 async function restoreDoneActions(tabId) {

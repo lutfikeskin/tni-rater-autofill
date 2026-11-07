@@ -2509,6 +2509,13 @@ test('what the panel takes out of a tab’s journal before reading it back stays
   const reopened = journalHarness(memory);
   await reopened.context.restoreJournal(7);
   assert.equal(reopened.state.quoteStates.has(7), false, 'and a panel opened later has none');
+  // Another copy wrote the old pick back after this one forgot it, before this one read the tab's
+  // journal back: the read-back leaves it out here and writes it out there, whatever was cached.
+  const raced = journalHarness(memory);
+  await raced.context.keepJournal(7, { dropped: ['quoteState'] });
+  memory['journal:7'] = { ...memory['journal:7'], quoteState: pick };
+  await raced.context.restoreJournal(7);
+  assert.deepEqual([raced.state.quoteStates.has(7), memory['journal:7'].quoteState], [false, null]);
   // Where they are taken out.
   assert.match(extractFunction('noteQuoteState'), /else state\.quoteStates\.delete\(tabId\);\n\s*keepJournal\(tabId, code \? \{\} : \{ dropped: \['quoteState'\] \}\);/);
   assert.match(extractFunction('stateIssue'), /state\.quoteStates\.delete\(tabId\); pick = null; keepJournal\(tabId, \{ dropped: \['quoteState'\] \}\);/);
