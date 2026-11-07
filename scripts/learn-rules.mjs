@@ -3,9 +3,11 @@
 //
 //   node scripts/learn-rules.mjs server-data [more logs...] [--min 5] [--threshold 0.9] [--json] [--out report.md]
 //
-// Proposes rule changes (standard answers, per-state answers, new intake mappings, and rules
-// agents keep correcting) with ready-to-paste rule lines for src/carriers/<carrier>.js.
-// Review every suggestion before adding it: a consistent answer is not always a correct one.
+// Proposes rule changes (per-state answers, new intake mappings, rules agents keep correcting,
+// attestations and client facts kept with the agent) with ready-to-paste rule lines for
+// src/carriers/<carrier>.js, and asks the maintainer about possible TNI standards (evidence and the
+// decision, never a rule line). Review every suggestion before adding it: a consistent answer is
+// not always a correct one.
 
 import fs from 'node:fs';
 import { loadEvents } from './lib/events.mjs';
@@ -41,12 +43,12 @@ const lines = [
   '',
   `Generated ${new Date().toISOString().slice(0, 10)} from ${events.length} events. Minimum ${opt('min', 5)} different intake PDFs per suggestion (quotes of one PDF count once). Review before adding anything.`,
   '',
-  `## Standard answers (${standard.length})`,
-  'Unmapped questions agents answer the same way nearly every time. A habit is not a TNI standard: decide each one. Paste a line only once TNI makes the answer its standard, with its rulebook entry (`tni`) and concept in place of the placeholders; otherwise map the question from the intake or keep it with the agent.',
+  `## Possible standards: questions for the maintainer (${standard.length})`,
+  'Unmapped questions agents answer the same way nearly every time. A habit is not a TNI standard, so none comes with a rule: decide each one, with its evidence.',
   '',
   ...standard.flatMap((s) => [
     `- **${where(s)}** "${s.label}": "${s.answer}" in ${pct(s.share)} of ${s.answers} (${s.intakes} PDFs)${s.others.length ? ` (also: ${s.others.map((o) => `"${o.value}" ×${o.count}`).join(', ')})` : ''}`,
-    s.rule ? `  \`${s.rule}\`` : `  No ready rule: ${s.manualRule}.`,
+    `  Decide: ${s.decide}`,
   ]),
   '',
   `## Answers that depend on the state (${byState.length})`,

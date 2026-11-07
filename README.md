@@ -111,7 +111,7 @@ Every script reads the server folder, exported logs, or both. `npm run review` r
 
 ```bash
 npm run review    # everything below, plus AI accept/reject per question and problem reports
-npm run learn     # rule suggestions: standard answers, per-state answers, new intake mappings, rules agents keep correcting
+npm run learn     # rule suggestions: possible standards to decide, per-state answers, new intake mappings, rules agents keep correcting
 npm run layouts   # carrier page layouts per state/product -> captures/<carrier>/generated/
 npm run transitions  # when follow-up questions show, answers not seen yet, what changed after an answer -> reviews/
 npm run captures  # manual captures in layouts/, per scenario in order, with what changed between them -> reviews/

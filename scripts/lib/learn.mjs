@@ -2,7 +2,8 @@
 //
 // For every quote (session) and question it works out the final answer and who gave it:
 // autofill, the agent, or the page itself. Across quotes it then proposes:
-//   standard   an unmapped question agents answer the same way nearly every time
+//   standard   an unmapped question agents answer the same way nearly every time: a question for
+//              the maintainer (is it TNI's standard?), never a ready rule
 //   byState    an unmapped question whose answer is consistent within each state
 //   mapping    an unmapped text box whose typed value matches the same intake field every time
 //   review     a mapped question whose autofill answer agents change often
@@ -10,8 +11,9 @@
 //   pageSets   an unmapped question the page itself answers (its own cascade), the same nearly every time
 //   agent      an unmapped question agents answer the same way that is an attestation or a client
 //              fact: the agent's (or the intake's), never a TNI standard
-// Suggestions are for a person to review; nothing is changed automatically. A suggested standard is
-// no TNI standard until the maintainer decides it: its line names no concept or rulebook entry yet.
+// Suggestions are for a person to review; nothing is changed automatically. A habit is no TNI
+// standard until the maintainer decides it is and records it (AGENTS.md), so a possible standard
+// comes with its evidence and the decision to make, never with a rule line to paste.
 
 import { isPageLayout, sessionContexts } from './events.mjs';
 import { fieldIdentities, ENTITY_PAGES } from './layouts.mjs';
@@ -29,7 +31,9 @@ const blind = (label) => !/[a-z0-9]/.test(textOf(label).replace(/\[client\]/g, '
 // Answers that are never TNI's to standardise (AGENTS.md: a standard is a TNI rulebook entry;
 // attestations are the agent's): a question that reads as an attestation or consent, or as a fact
 // about the client (its filings, its identifying numbers). Read from its text and its data-model name.
-const ATTESTATION = /\b(i agree|agrees? to|certif(y|ies|ication)|attest|consent|acknowledge?|i declare|declaration|signature|e-?sign|sign (here|below)|i understand|i confirm|i authori[sz]e|authori[sz]ation|warrant)/;
+// First-person or consent wording only: "Declarations page" or "Prior authorization" asks no
+// attestation (Claude review on PR #372).
+const ATTESTATION = /\b(i agree|agrees? to|i certify|certif(ies|ication)|attest|consent|i acknowledge|acknowledge that|i declare|declare that|e-?sign|sign (here|below)|i understand|i confirm|i authori[sz]e|i warrant)/;
 const CLIENT_FACT = /\b(filings?|mcs-?90|bmc-?\d*|federal liability|usdot|dot number|mc number|fein|social security|ssn|date of birth|vin)\b/;
 const agentsOwn = (o) => {
   const text = `${textOf(o.label)} ${String(o.field ?? '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[._]/g, ' ').toLowerCase()}`;
@@ -310,7 +314,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
         continue;
       }
       if (ranked[0].share >= threshold) {
-        suggestions.standard.push({ ...base, ...support(choices), answers: choices.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1), kind: first.kind, rule: ruleFor({ ...first, field }, ranked[0].value) });
+        suggestions.standard.push({ ...base, ...support(choices), answers: choices.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1), kind: first.kind, decide: decision(ranked[0].value) });
         continue;
       }
       // Consistent within each state?
@@ -360,7 +364,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
   // A question known only by its text (AmWINS) gets a rule by its label, which no step constrains:
   // two observed steps' questions reading the same would get one selector, even when only one has
   // enough support for a suggestion. Such suggestions get no ready rule, only a note naming the steps.
-  const pasted = [...suggestions.standard, ...suggestions.mapping, ...suggestions.pageAnswer, ...suggestions.agent].filter((s) => s.rule);
+  const pasted = [...suggestions.mapping, ...suggestions.pageAnswer, ...suggestions.agent].filter((s) => s.rule);
   for (const s of pasted) {
     // A coverage row (cov:COMP) is found by its element id, never by its label (its vehicle).
     if (s.coverage) {
@@ -388,16 +392,10 @@ function target(o) {
   return `label: '${squash(o.label)}'`;
 }
 
-// A standard's line names placeholders for its concept and its TNI rulebook entry, so a line pasted
-// as it is fails the concept and rulebook tests until the maintainer decides it is TNI's standard
-// (AGENTS.md: only a recorded TNI standard may answer what the intake doesn't).
-const DECIDE = "concept: '<choose a concept>', tni: '<TNI rulebook entry>', source: 'standard'";
-function ruleFor(o, answer) {
-  const name = quote(`${String(o.label ?? '').slice(0, 70)} (standard: ${answer})`);
-  if (/^(yes|no)$/i.test(answer)) return `{ ${target(o)}, ${DECIDE}, name: ${name}, kind: 'bool', value: () => ${/^yes$/i.test(answer)} },`;
-  if (/^(checked|unchecked)$/.test(answer)) return `{ ${target(o)}, ${DECIDE}, name: ${name}, kind: 'bool', value: () => ${answer === 'checked'} },`;
-  return `{ ${target(o)}, ${DECIDE}, name: ${name}, kind: 'choice', value: () => ${quote(answer)} },`;
-}
+// The maintainer's decision on a possible standard (maintainer, 2026-11-07: every suggested TNI
+// standard is decide-only). Only a recorded TNI standard may answer what the intake doesn't
+// (AGENTS.md), so the report asks; the rule is written once the answer is TNI's.
+const decision = (answer) => `Is "${answer}" TNI's standard here? If so, record it in TNI's rulebook (docs/intake-and-rules.md, src/ai/tni-rules.js) and write its rule with that entry (tni) and a concept; if it depends on the client, map it from the intake or keep it with the agent.`;
 
 // An attestation or a client fact agents answer the same way: kept with the agent (a note, never
 // filled: plan.js fills no `attestation` or `fact`), or mapped from the intake by hand.
