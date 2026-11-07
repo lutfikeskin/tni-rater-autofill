@@ -5,7 +5,7 @@
 import * as usage from './usage-log.js';
 import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
-import { $, migrateStoredData, restoreAiPending, state, store } from './panel/core.js';
+import { $, migrateStoredData, restoreAiPending, state, storageSaid, store } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
 import { firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty, showScreen } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
@@ -96,8 +96,8 @@ function wire() {
       state.fileConfirm = null;
       render();
       if (what === 'replace') replacing.answered(true);
-      if (what === 'clear') clearClient();
-      if (what === 'new-quote') newQuote();
+      if (what === 'clear') clearClient().catch(storageSaid);
+      if (what === 'new-quote') newQuote().catch(storageSaid);
     },
   });
   // Step 1's checks and their All client details row.

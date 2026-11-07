@@ -1499,15 +1499,20 @@ test('a Clear whose helper records could not be removed fails, and the next writ
   const crashes = [];
   let broken = true;
   const cleared = [];
-  const clear = (what) => async (scope) => { if (broken) throw new Error('IO error'); cleared.push([what, scope]); };
+  const clear = (what) => async (scope) => { if (broken) throw new Error('IO error at /Users/Jordan Avery'); cleared.push([what, scope]); };
   const context = { state, unsaved: new Set(), agentKeysQueue: Promise.resolve(), doneActionsQueue: Promise.resolve(), logCrash: (err) => crashes.push(err.message),
     agentKeysStore: { get: async () => [{ scope: 'intake-a' }, { scope: 'intake-b' }], set: async () => {} },
     doneActionsStore: { clear: clear('done'), set: async (scope, tabId, ids) => cleared.push(['set', scope]), scopes: async () => [] },
     unitFormsStore: { clear: clear('forms'), scopes: async () => [] }, usage: { currentSession: () => ({ intakeId: 'intake-a' }) },
     intakesSeenStore: { get: async () => ({ 'intake-a': '2026-01-01T00:00:00Z' }), set: async () => {} }, KEEP_INTAKES: 20, KEEP_INTAKE_DAYS: 30 };
   vm.createContext(context);
-  vm.runInContext(['persistFailed', 'clearAgentKeys', 'persistDoneActions', 'pruneAgentRecords'].map(extractFunction).join('\n'), context);
-  await assert.rejects(context.clearAgentKeys('intake-a'), /IO error/);
+  vm.runInContext(`const STORAGE_SAID = 'StorageSaid';\n${['persistFailed', 'clearAgentKeys', 'storageSaid', 'persistDoneActions', 'pruneAgentRecords'].map(extractFunction).join('\n')}`, context);
+  // It fails as already said, without the store's message, which the crash log would take again
+  // (unredacted once the client is cleared: CodeRabbit on PR #395); its caller lets that go only.
+  const failed = await context.clearAgentKeys('intake-a').then(() => null, (err) => err);
+  assert.deepEqual([failed?.name, /IO error|Jordan/.test(failed?.message)], ['StorageSaid', false]);
+  assert.doesNotThrow(() => context.storageSaid(failed));
+  assert.throws(() => context.storageSaid(new Error('another')), /another/);
   assert.match(state.notes.storage.text, /couldn't forget the buttons and vehicles already done/);
   assert.deepEqual(crashes, ["storage: couldn't forget the buttons and vehicles already done: Error"]);
   // An old intake's records pruned on a load: the failure is said, the load goes on.
@@ -4946,7 +4951,7 @@ test('loading another intake keeps the first intake\'s edit keys and helper reco
   assert.match(extractFunction('loadFile'), /await pruneAgentRecords\(summary\.intakeId\);/);
   assert.doesNotMatch(SIDEPANEL, /clearAgentKeys\(\)/);
   assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,900}usage\.restoreSession\(null\);[\s\S]{0,500}await clearAgentKeys\(scope\);/);
-  assert.match(SIDEPANEL, /if \(what === 'clear'\) clearClient\(\);/, 'Clear runs once the agent confirms it');
+  assert.match(SIDEPANEL, /if \(what === 'clear'\) clearClient\(\)\.catch\(storageSaid\);/, 'Clear runs once the agent confirms it');
 });
 
 // Codex on PR #65 (2c8eeb9): Clear was done once the edit keys were gone, while the helper records'
@@ -8992,7 +8997,7 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
   assert.deepEqual(calls.map((c) => c[0]), ['note', 'note']);
   // Asked first, under the client's name; loadFile says what stays and logs the reset.
   assert.match(extractFunction('wire'), /\n    newQuote: \(\) => \{\s+if \(state\.filling\) return;\s+askFile\('new-quote'/);
-  assert.match(extractFunction('wire'), /if \(what === 'new-quote'\) newQuote\(\);/);
+  assert.match(extractFunction('wire'), /if \(what === 'new-quote'\) newQuote\(\)\.catch\(storageSaid\);/);
   assert.match(extractFunction('loadFile'), /reset \? 'New quote with the same intake' : 'Same intake'/);
 });
 

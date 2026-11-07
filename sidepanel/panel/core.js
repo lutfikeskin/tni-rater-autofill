@@ -716,8 +716,16 @@ function clearAgentKeys(scope) {
   // Done once the helper records are gone too: the same PDF loaded again right after a Clear must
   // not get the cleared intake's helper ids back (units taken as already added; Codex on PR #65).
   // A removal that failed fails the Clear or New quote too, rather than finishing as if it worked
-  // (CodeRabbit on PR #395); the queues go on.
-  return Promise.all([task, done]);
+  // (CodeRabbit on PR #395); the queues go on. persistFailed has said and logged it, so it fails
+  // with STORAGE_SAID, which the caller lets go (storageSaid), rather than the store's own message,
+  // which a crash log would take again, unredacted once the client is cleared.
+  return Promise.all([task, done]).catch(() => { throw Object.assign(new Error('storage: said in the panel'), { name: STORAGE_SAID }); });
+}
+const STORAGE_SAID = 'StorageSaid';
+// A Clear's or New quote's catch: a failure persistFailed already said goes no further; any other
+// is thrown again (a crash, logged as one).
+function storageSaid(err) {
+  if (err?.name !== STORAGE_SAID) throw err;
 }
 
 // On loading an intake: its own records stay (a PDF dropped again is the same intake, and its
@@ -956,4 +964,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, logCrash, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };
+export { $, logCrash, storageSaid, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };
