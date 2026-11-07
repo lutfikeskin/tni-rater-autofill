@@ -291,5 +291,7 @@ test('the Claude workflow never runs on an issue labelled as a daily or weekly r
     else if (cond[i] === ')' && --depth === 0) end = i;
   }
   const guard = cond.slice(end + 1).trim();
-  assert.equal(guard, labels.map((l) => `&& !contains(github.event.issue.labels.*.name, '${l}')`).join(' '));
+  // A pull request's conversation comment also arrives as issue_comment, with the PR as `issue`
+  // (and its `pull_request` set): the labels are refused on issues only, so a PR is never held.
+  assert.equal(guard, `&& (github.event.issue.pull_request || (${labels.map((l) => `!contains(github.event.issue.labels.*.name, '${l}')`).join(' && ')}))`);
 });

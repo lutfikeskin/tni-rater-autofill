@@ -25,13 +25,15 @@ jobs:
   claude:
     # Never on the daily and weekly review issues (the maintainer, 2026-11-07): they quote the usage
     # log, which anyone with the extension's upload token can write. The triggers are one group, and
-    # then each review issue's label is refused, whatever the comment says or who wrote it.
+    # then each review issue's label is refused, whatever the comment says or who wrote it. A PR's
+    # conversation comment arrives as issue_comment too, with the PR as `issue`: the labels are
+    # refused only where `issue.pull_request` is absent, so a PR is never held by them.
     if: |
       ((github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.user.type != 'Bot' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.user.type != 'Bot' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && github.event.review.user.type != 'Bot' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))) &&
-      !contains(github.event.issue.labels.*.name, 'daily-review') && !contains(github.event.issue.labels.*.name, 'weekly-review')
+      (github.event.issue.pull_request || (!contains(github.event.issue.labels.*.name, 'daily-review') && !contains(github.event.issue.labels.*.name, 'weekly-review')))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
