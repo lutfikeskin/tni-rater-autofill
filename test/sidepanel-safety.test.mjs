@@ -6408,6 +6408,22 @@ test('a problem report names the fill it is about: view, run, step and what held
   assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
 });
 
+// CodeRabbit on PR #403: the recorder tells its exception again until the panel says it logged
+// it; a panel with no intake, or another tab's, says nothing, so it is told again later.
+test('the panel logs a recorder exception where recorder and says it took it', () => {
+  const crashes = [], replies = [];
+  const state = { intake: { record: {} }, tab: { id: 1, url: 'https://synthetic.example/quote', carrier: null } };
+  const sandbox = { state, usage: { log() {} }, samePage: (p) => p, pageOf: (u) => u, logCrash: (e, where) => crashes.push([e.message, where]) };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('onRecorderMessage'), sandbox);
+  const tell = (tab) => sandbox.onRecorderMessage({ ra: 'usage', event: 'recorder_error', message: 'boom', stack: 'at recorder.js' }, { tab: { id: tab } }, (r) => replies.push(r));
+  tell(2);
+  assert.deepEqual([crashes, replies], [[], []], 'another tab\'s: nothing logged, no reply');
+  tell(1);
+  assert.deepEqual(crashes, [['boom', 'recorder']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(replies)), [{ logged: true }]);
+});
+
 test('the agent\'s own button clicks are logged redacted, with a known step only', () => {
   const body = extractFunction('onRecorderMessage');
   assert.match(body, /if \(msg\.event === 'agent_click'\) \{[\s\S]{0,400}log\(\{ type: 'agent_click', carrier, page, view: viewOf\(sender\.tab\.id, page\), \.\.\.\(step \? \{ step \} : \{\}\), text: redactor\(redactionTerms\(state\.intake\.record\)\)/);

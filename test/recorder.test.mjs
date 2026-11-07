@@ -191,7 +191,8 @@ function harness({ realKeys = false, adapter = null } = {}) {
     chrome: {
       runtime: {
         id: 'synthetic-extension',
-        sendMessage(message) { sent.push(message); return Promise.resolve(); },
+        // The panel's reply: none unless a test sets context.reply.
+        sendMessage(message) { sent.push(message); return Promise.resolve(context.reply?.(message)); },
         onMessage: {
           addListener(fn) { messageListeners.add(fn); },
           removeListener(fn) { messageListeners.delete(fn); },
@@ -258,6 +259,41 @@ test('an exception in the recorder poll is told to the panel once, and the recor
   broken = false;
   h.tick();
   assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after]), [['field:notes', 'before', 'after']], 'the recorder still reports changes');
+});
+
+// CodeRabbit on PR #403: an error told while the panel was closed (no reply) was lost. It is told
+// again on the later polls until the panel says it logged it, then no more.
+test('a recorder error is told again until the panel says it logged it', async () => {
+  const h = harness();
+  const field = new Control('input', { id: 'notes', value: 'before' });
+  h.append(field);
+  h.context.__raterRecorder.rebaseline();
+  Object.defineProperty(field, 'value', { get() { throw new TypeError('unreadable'); }, configurable: true });
+  const told = () => h.sent.filter((m) => m.event === 'recorder_error').length;
+  h.tick();
+  await new Promise((r) => setImmediate(r));
+  h.tick();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(told(), 2, 'told again while nobody took it');
+  h.context.reply = (m) => (m.event === 'recorder_error' ? { logged: true } : undefined);
+  h.tick();
+  await new Promise((r) => setImmediate(r));
+  h.tick();
+  h.tick();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(told(), 3, 'not again once the panel logged it');
+});
+
+// CodeRabbit on PR #403: the poll the panel calls on reinjection, and the flush a discrete pick
+// schedules, ran outside the guard.
+test('the poll the panel calls and the scheduled flush are guarded too', () => {
+  const h = harness();
+  const field = new Control('input', { id: 'notes', value: 'before' });
+  h.append(field);
+  h.context.__raterRecorder.rebaseline();
+  Object.defineProperty(field, 'value', { get() { throw new TypeError('unreadable'); }, configurable: true });
+  assert.doesNotThrow(() => h.context.__raterRecorder.poll());
+  assert.equal(h.sent.filter((m) => m.event === 'recorder_error').length, 1);
 });
 
 test('coalesces multi-keystroke text input into one final manual event', async () => {

@@ -54,7 +54,7 @@ function tellRecorder(cmd, tabId = state.tab?.id) {
   return chrome.tabs.sendMessage(tabId, { ra: 'recorder', cmd }).catch(() => {});
 }
 
-function onRecorderMessage(msg, sender) {
+function onRecorderMessage(msg, sender, sendResponse) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier?.id ?? null;
   const log = (...events) => { if (!state.tab.carrier?.practice) usage.log(...events); };
@@ -196,7 +196,11 @@ function onRecorderMessage(msg, sender) {
   if (msg.event === 'new_messages') scheduleLayout(layoutPage, 'messages');
   // The recorder's own exception (recorder.js guarded): logged as the panel logs its own, redacted,
   // with the frames inside the extension's files only (audit 2026-11-07, LEARN-10).
-  if (msg.event === 'recorder_error') logCrash({ message: String(msg.message ?? ''), stack: String(msg.stack ?? '') }, 'recorder');
+  // It says it took it, so the recorder stops telling it again.
+  if (msg.event === 'recorder_error') {
+    logCrash({ message: String(msg.message ?? ''), stack: String(msg.stack ?? '') }, 'recorder');
+    sendResponse?.({ logged: true });
+  }
 }
 
 // A helper the agent clicked themselves is done, as one a fill clicked: a later fill doesn't click
