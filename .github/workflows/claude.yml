@@ -1,4 +1,5 @@
-# Claude answers `@claude` in pull request and issue comments from people with write access:
+# Claude answers `@claude` in pull request and issue comments from people with write access (the
+# repository's owner, members and collaborators; anyone else's comment, issue or review is ignored):
 # `@claude fix the review comments` on a PR pushes the fixes to that PR's branch, and
 # `@claude review` reviews the PR again after new pushes. Comments from bots (including Claude's
 # own review) never trigger it.
@@ -23,10 +24,10 @@ concurrency:
 jobs:
   claude:
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.user.type != 'Bot') ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.user.type != 'Bot') ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && github.event.review.user.type != 'Bot') ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.user.type != 'Bot' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.user.type != 'Bot' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && github.event.review.user.type != 'Bot' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -42,12 +43,17 @@ jobs:
           # A comment in a PR's conversation arrives as issue_comment on the default branch, so
           # check out the PR's head instead: npm ci below must install that PR's lockfile.
           ref: ${{ github.event.pull_request.head.sha || (github.event.issue.pull_request && format('refs/pull/{0}/head', github.event.issue.number)) || '' }}
+          # The PR's code must not find this job's token in .git/config (claude-code-action sets up its
+          # own push access from the Claude GitHub App).
+          persist-credentials: false
       # So Claude can run `npm test` before it pushes, as AGENTS.md requires.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # Without the lockfile packages' install scripts: a fork PR's package.json must not run code
+      # here. (Only fsevents, macOS-only, has one.)
+      - run: npm ci --ignore-scripts
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
