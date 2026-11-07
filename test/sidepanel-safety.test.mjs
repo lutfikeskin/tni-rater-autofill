@@ -12,7 +12,9 @@ import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
-import { intakeNotes } from '../src/normalize.js';
+import { intakeNotes, rederive } from '../src/normalize.js';
+import { KEPT_WORK_MS, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf } from '../src/kept-work.js';
+import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
@@ -116,7 +118,10 @@ function extractFunction(name) {
           stopFillFirst: 'async () => {}',
           // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
           // elsewhere none is running.
-          noteFollowed: '() => {}' };
+          noteFollowed: '() => {}',
+          // The agent's corrections and checks kept on this computer (FLOW-17) have their own test:
+          // elsewhere nothing is kept or brought back.
+          forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -2296,6 +2301,56 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   const back = make();
   await back.restoreDoneActions(7);
   assert.deepEqual([...back.state.doneActions].sort(), ['lookupVin:0', 'trailerEntered:0'], 'tab 7 kept');
+});
+
+// Audit 2026-11-07, FLOW-17 (the maintainer: 24 hours on this computer): after a browser restart the
+// same PDF came back with none of the agent's corrections and checks. Each save keeps them in local
+// storage (keepKeptWork); the same intake loaded with no copy in the session gets them back
+// (restoreKeptWork), the derived values following; a new client's intake or Clear lets them go.
+test('the agent\'s corrections and checks of an intake come back after a browser restart, for a day', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); }, remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const context = { keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, get: getPath, set: setPath, rederive, JSON, Date, structuredClone };
+  vm.runInNewContext(['keepKeptWork', 'restoreKeptWork'].map(extractFunction).join('\n'), context);
+  const warnings = [{ code: 'drivers.cdl', path: 'drivers[0].cdl' }, { code: 'garaging.zip', path: 'garaging.zip' }];
+  const fresh = () => ({ intakeId: 'pdf-1', record: { garaging: { zip: '33101' }, drivers: [{ cdl: null }] }, warnings: warnings.map((w) => ({ ...w })), agentEdited: [], done: [] });
+  const intake = fresh();
+  intake.record.garaging.zip = '33139';
+  intake.agentEdited = ['garaging.zip'];
+  intake.done = [0];
+  await context.keepKeptWork(intake);
+  const key = `${KEPT_WORK_PREFIX}pdf-1`;
+  const at = memory[key].at;
+  assert.deepEqual([memory[key].edits, memory[key].checks], [[['garaging.zip', '33139']], [{ code: 'drivers.cdl', path: 'drivers[0].cdl', n: 0 }]]);
+  // A save that changed neither leaves their day as it was.
+  memory[key].at = at - 1000;
+  await context.keepKeptWork(intake);
+  assert.equal(memory[key].at, at - 1000);
+  // The same PDF read again with no session copy: they are back.
+  const again = fresh();
+  assert.equal(JSON.stringify(await context.restoreKeptWork(again)), JSON.stringify({ edits: 1, checks: 1 }));
+  assert.deepEqual([again.record.garaging.zip, [...again.agentEdited], [...again.done]], ['33139', ['garaging.zip'], [0]]);
+  // Past the day: nothing comes back, and the kept copy goes.
+  memory[key].at = Date.now() - KEPT_WORK_MS - 1;
+  assert.equal(await context.restoreKeptWork(fresh()), null);
+  assert.equal(memory[key], undefined);
+  // Undone: nothing left to keep, so nothing is kept.
+  const undone = fresh();
+  await context.keepKeptWork({ ...undone, agentEdited: ['garaging.zip'] });
+  assert.ok(memory[key]);
+  await context.keepKeptWork(undone);
+  assert.equal(memory[key], undefined);
+  // Kept with each save; brought back only where no copy of the same intake was in the session, after
+  // the last client's go; Clear this client and the panel opening let theirs go.
+  assert.match(extractFunction('save'), /await store\.set\('intake', state\.intake\);\n\s+await keepKeptWork\(state\.intake\);/);
+  const load = extractFunction('loadFile');
+  assert.match(load, /if \(same\) keepWork\(state\.intake, same\);[\s\S]{0,400}await forgetKeptWork\(\{ except: summary\.intakeId \}\);\n\s+const restored = same \? null : await restoreKeptWork\(state\.intake\);\n\s+state\.view = firstView\(state\.intake\);/);
+  assert.match(load, /restored \? `Same intake as earlier: you \$\{work\}, and that's back \(kept on this computer for a day\)\.`/);
+  assert.match(extractFunction('clearClient'), /await forgetKeptWork\(\{ all: true \}\);/);
+  assert.match(extractFunction('init'), /\n\s+forgetKeptWork\(\);\n/);
 });
 
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
