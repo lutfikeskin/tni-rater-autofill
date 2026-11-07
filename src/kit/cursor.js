@@ -927,13 +927,12 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         // that the field now shows otherwise, and that this fill hasn't given: the extension didn't
         // write what is there, so it is the agent's (an edit the panel never heard: closed, on
         // another tab, a page no recorder was in) or the page's. Kept and flagged, never replaced
-        // (LEARN-07, 2026-11-07), unless the agent asks to replace answers (`overwrite`). On the
-        // steps where the page takes answers back (`takenBack`), that rule decides instead.
+        // (LEARN-07, 2026-11-07), unless the agent asks to replace answers (`overwrite`). One the
+        // page took back (`tookBack`) is kept as that, with its own note.
         const givenHere = answered && !overwrite ? givenBefore?.[fieldKey(c)] : null;
         const changedSince = !!givenHere && givenHere.path != null && givenHere.path === step.path && givenHere.shown != null
           && loose(givenHere.shown) !== loose(answerShown(c)) && !agreesWith(step, c) && !tookBack
-          && !state.refill.has(step.id) && !state.report.filled.some((x) => x.stepId === step.id)
-          && !(takenBack?.steps?.length && stepIs(takenBack.steps));
+          && !state.refill.has(step.id) && !state.report.filled.some((x) => x.stepId === step.id);
         // A street an earlier fill left without a suggestion is not answered while the box holds
         // what that fill left: it stays the agent's, never taken as the page's.
         if (step.checkNumber && unpicked.has(c.el) && unpicked.get(c.el) === c.el.value) {

@@ -4805,11 +4805,11 @@ test('a fill whose intake changed while the carrier worked is dropped: the new i
   assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value|clientA/, 'no client data in the error');
 });
 
-// FL live run 6, 2026-10-21 (the maintainer: "give back, then Recalculate"): GEICO put its own
-// coverage choices back over the fill's, and the agent picked each one again by hand. The agent's
-// Fill this page gives such an answer again (`takenBack` with its steps and no keys); an automatic fill
-// and Looks right keep what the page shows (the carrier's `takenBack`, as fillOptions builds it).
-test('only the agent\'s Fill this page gives back an answer the page took back', async () => {
+// The maintainer, 2026-11-07 (LEARN-07), in place of 2026-10-21's "give back, then Recalculate": an
+// answer the page shows otherwise since the fill gave it may be the agent's, one no panel heard. The
+// agent's Fill this page, an automatic fill and Looks right all keep what the page shows (the
+// carrier's `takenBack`, as fillOptions builds it); only Replace existing answers gives it again.
+test('every fill, the agent\'s Fill this page too, keeps an answer the page took back', async () => {
   const runs = [];
   for (const args of [[], [{ auto: 'page' }], [{ confirmed: 'receipt' }]]) {
     const t = fillHarness({ carrier: { id: 'geico', practice: false, layoutSteps: amwins.layoutSteps, keepTakenBack: ['Quote & Coverages'] } });
@@ -4820,7 +4820,7 @@ test('only the agent\'s Fill this page gives back an answer the page took back',
     await run;
     runs.push(t.seen.options.takenBack);
   }
-  assert.deepEqual(JSON.parse(JSON.stringify(runs)), [{ steps: ['Quote & Coverages'], keys: null }, { steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(runs)), [{ steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }]);
 });
 
 test('an intake correction during a fill makes its results stale too, for automatic fills as well', async () => {

@@ -605,9 +605,8 @@
  * @property {string[]} [stopSteps]
  * @property {any} [units]
  * @property {{ steps?: { [step: string]: string[] }, stepUnits?: { [step: string]: any }, units?: { [list: string]: string[] }, forms?: { [id: string]: string[] } } | null} [skipBy]
- * @property {{ steps: string[], keys: { [key: string]: true } | null } | null} [takenBack]  the steps where the page takes
- *   answers back (carrier `keepTakenBack`) and the keys earlier fills answered; keys null on the agent's
- *   Fill this page, which gives such answers again
+ * @property {{ steps: string[], keys: { [key: string]: true } } | null} [takenBack]  the steps where the page takes
+ *   answers back (carrier `keepTakenBack`) and the keys earlier fills answered
  * @property {boolean} [hold]
  * @property {any} [confirmed]  the page's receipt as the agent approved it
  * @property {string | null} [run]
