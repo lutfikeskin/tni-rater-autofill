@@ -1,3 +1,6 @@
+// @ts-check
+import { createTabMarker } from './src/tab-mark.js';
+
 // Clicking the toolbar icon opens the side panel.
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
 
@@ -13,3 +16,8 @@ try {
 } catch (e) {
   console.warn('storage access level not set:', e?.message ?? e);
 }
+
+// The quote's tab marked in the tab strip (a titled group, with the tabGroups permission the agent
+// gave in Settings) and on the toolbar icon (a badge): what the panel says over its 'tab-mark' port,
+// let go when the panel closes (src/tab-mark.js).
+createTabMarker(chrome).listen();

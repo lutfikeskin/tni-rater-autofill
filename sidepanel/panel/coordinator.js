@@ -27,6 +27,7 @@ import { DOCK_PHASES, phaseSaid } from './live.js';
 import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
 import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
+import { markTab } from './tab-mark.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -1329,10 +1330,11 @@ function dockFor() {
 
 // What the dock says now (state.dock, drawn by steps-view.jsx): dockFor's word, hidden while Settings
 // is open, with the fill it is about (`report`: none while one runs) and whether a fill runs, which
-// holds its Fill (`busy`).
+// holds its Fill (`busy`). The quote's tab in the tab strip and its toolbar badge follow it (markTab).
 function renderDock() {
   const d = dockFor();
   state.dock = { ...d, hidden: state.settingsOpen, report: state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '', busy: !!state.filling };
+  markTab(d);
 }
 
 // The intake's current insurance is with the carrier the tab is on (util.js sameCarrier: GEICO or

@@ -11,6 +11,7 @@ import { pageOf } from './usage.js';
 import { announce, issueSaid, renderSite, renderSteps, unlockAudio } from './coordinator.js';
 import { aiSettings, renderAiSettings } from './assistant.js';
 import { initialsChanged } from './agent-defaults/store.js';
+import { markSwitch } from './tab-mark.js';
 
 // ---------------------------------------------------------------------------------------------
 // Usage log panel and problem reports
@@ -91,6 +92,9 @@ function settingsActs() {
     checkBeforeContinue: (on) => { usage.saveSettings({ checkBeforeContinue: on }); renderSteps(); },
     // Saved, never logged, like the one above. The chime needs a click in the panel first (unlockAudio).
     finishSound: (on) => { usage.saveSettings({ finishSound: on }); },
+    // Not saved: on while the extension has the optional tabGroups permission, which Chrome asks the
+    // agent for here (tab-mark.js). Never logged.
+    markTab: (on) => markSwitch(on),
   };
   return {
     // A Filling switch: what Settings draws follows it at once (Let me look first is off with

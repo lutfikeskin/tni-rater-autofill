@@ -16,6 +16,9 @@
     "storage",
     "unlimitedStorage"
   ],
+  "optional_permissions": [
+    "tabGroups"
+  ],
   "host_permissions": [
     "https://*.foragentsonly.com/*",
     "https://*.progressive.com/*",
@@ -27,7 +30,8 @@
     "http://127.0.0.1/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "side_panel": {
     "default_path": "sidepanel/sidepanel.html"
