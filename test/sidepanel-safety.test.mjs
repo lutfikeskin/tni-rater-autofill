@@ -8694,6 +8694,24 @@ test('overlapping Change file and Clear hold resetting until the last is done, t
   assert.deepEqual([t.state.resetting, t.state.resetDepth], [false, 0]);
 });
 
+// CodeRabbit on PR #395: after a New quote that failed, the same PDF loaded again (Change file)
+// doesn't lift the hold on fills: its quote on screen lost its records. New quote's own load does,
+// and so does another intake.
+test('a failed New quote holds fills through the same PDF loaded again, not through New quote or another intake', async () => {
+  const pdf = { name: 'client.pdf', arrayBuffer: async () => new ArrayBuffer(1) };
+  let t = intakeChangeHarness();
+  t.context.intakeSummary = async () => ({ intakeId: 'a' });
+  t.state.newQuoteFailed = true;
+  await t.context.loadFile(pdf);
+  assert.equal(t.state.newQuoteFailed, true, 'the same PDF again');
+  await t.context.loadFile(pdf, { reset: true });
+  assert.equal(t.state.newQuoteFailed, false, 'New quote\'s own load');
+  t = intakeChangeHarness();
+  t.state.newQuoteFailed = true;
+  await t.context.loadFile(pdf);
+  assert.equal(t.state.newQuoteFailed, false, 'another intake');
+});
+
 test('a fill that only gets its tab\'s word while the intake waits is stopped then; one that never ends doesn\'t hold the intake', async () => {
   // Getting ready (no fillingFor yet): stopped once it has one.
   let t = intakeChangeHarness();
@@ -9008,7 +9026,6 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
   assert.match(calls[1][1], /Nothing fills until it does/);
   assert.match(extractFunction('fillPage'), /state\.resetting \|\| state\.newQuoteFailed \|\| !state\.intake/);
   assert.match(extractFunction('autoFill'), /state\.resetting \|\| state\.newQuoteFailed \|\| !state\.intake/);
-  assert.match(extractFunction('loadFile'), /state\.intake = \{[^\n]*\n\s+\/\/[^\n]*\n\s+state\.newQuoteFailed = false;/);
   state.newQuoteFailed = false;
   // Asked first, under the client's name; loadFile says what stays and logs the reset.
   assert.match(extractFunction('wire'), /\n    newQuote: \(\) => \{\s+if \(state\.filling\) return;\s+askFile\('new-quote'/);

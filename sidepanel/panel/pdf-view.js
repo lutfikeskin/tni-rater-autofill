@@ -383,10 +383,11 @@ async function newQuote() {
     } catch (err) {
       // The records couldn't all be removed: no new quote is loaded, and the quote on screen has
       // lost the panel's records of it (edits on the page, helpers clicked, unit forms), some of the
-      // stored ones too. No fill runs, by itself or asked, until a New quote or a loaded intake
-      // finishes, so none refills a changed answer or adds a vehicle again (CodeRabbit on PR #395).
+      // stored ones too. No fill runs, by itself or asked, until a New quote finishes or another
+      // intake is loaded, so none refills a changed answer or adds a vehicle again (CodeRabbit on PR
+      // #395).
       state.newQuoteFailed = true;
-      clientNote('The new quote didn’t start: this computer couldn’t let go of the last quote’s records. Nothing fills until it does: press New quote again, or Clear and load the PDF again.');
+      clientNote('The new quote didn’t start: this computer couldn’t let go of the last quote’s records. Nothing fills until it does: press New quote again.');
       render();
       throw err;
     }

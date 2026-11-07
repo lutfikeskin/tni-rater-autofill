@@ -417,8 +417,8 @@ const state = storeState({
   details: null,
   // An intake change under way (New quote, Change file, Clear: newQuote, loadFile, clearClient): no fill starts.
   resetting: false,
-  // A New quote whose records couldn't be removed (newQuote): no fill starts until a New quote or
-  // an intake load finishes (loadFile lifts it).
+  // A New quote whose records couldn't be removed (newQuote): no fill starts until a New quote
+  // finishes or another intake is loaded (loadFile lifts it).
   newQuoteFailed: false,
   // How many intake changes hold `resetting` (loadFile, clearClient, newQuote), so overlapping ones lift it only once all are done.
   resetDepth: 0,
