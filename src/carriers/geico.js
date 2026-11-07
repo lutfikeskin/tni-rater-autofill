@@ -53,6 +53,7 @@ import { owner, ownerDobNote as noOwnerDob, ownerIsDriver, ownerDrives, ownerDri
 import { STANDARDS, usd } from '../standards.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler } from '../answers/classes.js';
 import { garagingIs } from '../answers/state.js';
+import { filingsIntent } from '../answers/filings.js';
 import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { glRequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitNote, interchangeLimitRaised,
@@ -222,17 +223,14 @@ const placardNote = (r) => (typeof r.operations.hazPlacard === 'boolean' ? null
     notes: `The intake doesn't answer the placard question, and its notes say ${quote(notesLine(HAZ_HAUL)(r), 80)}: answer it yourself.` }[placardMention(r)] ?? null);
 
 // Filings. GEICO's question excludes SR-22, FR-44 and other financial responsibility filings, so
-// "which filings" naming only those is the agent's. Federal liability is BMC-91, MCS-90 or a federal
-// liability filing; "federal" alone is one only when no cargo filing is named (BMC-34 / BMC-32
-// aren't liability, and "Federal BMC-34" is cargo), else whether one is needed is the agent's. State
-// is a state or intrastate filing.
+// "which filings" naming only those is the agent's. Which filings the intake names is the reading
+// every carrier shares (filingsIntent, src/answers/filings.js; TNI, 2026-11-07): federal liability is
+// BMC-91, MCS-90 or a federal liability filing; "federal" alone is one only when no cargo filing is
+// named (BMC-34 / BMC-32 aren't liability, and "Federal BMC-34" is cargo), else whether one is needed
+// is the agent's. State is a state or intrastate filing.
 const which = (r) => String(r.operations.filingsWhich ?? '');
-const ONLY_FR = /^\s*(?:sr[\s-]?22|fr[\s-]?44)(?:\s*(?:,|\/|&|and)\s*(?:sr[\s-]?22|fr[\s-]?44))*\s*$/i;
-const FED_LIAB = /\bbmc[\s-]?91x?\b|\bmcs[\s-]?90\b|\bfederal\s+liab/i;
-const CARGO_FILING = /\bbmc[\s-]?3[24]\b|\bcargo\b/i;
-const STATE_FILING = /\bstate\b|\bintrastate\b/i;
-// true, false, or null when "federal" may be the cargo filing.
-const federalLiability = (text) => (FED_LIAB.test(text) ? true : /\bfederal\b/i.test(text) ? (CARGO_FILING.test(text) ? null : true) : false);
+const intent = (r) => filingsIntent(which(r));
+const onlyFr = (r) => intent(r).srFrOnly;
 // An NTL quote has no filings (TNI, 2026-10-26, W44-28: "filings not added if its NTL, in every
 // case"): Neither, No, and no Add Filings box ticked, whatever the intake asks; the intake's own No
 // stays the intake's.
@@ -240,10 +238,9 @@ const ntlNoFilings = (r) => ntlNoDotFilings(r) && r.operations.filingsRequired !
 const filingType = (r) => {
   const f = r.operations.filingsRequired;
   if (f === false || ntlNoDotFilings(r)) return 'Neither';
-  if (f !== true || !which(r) || ONLY_FR.test(which(r))) return null;
-  const federal = federalLiability(which(r));
+  if (f !== true || !which(r) || onlyFr(r)) return null;
+  const { liability: federal, state } = intent(r);
   if (federal == null) return null;
-  const state = STATE_FILING.test(which(r));
   return federal && state ? 'Both' : federal ? 'Federal' : state ? 'State' : null;
 };
 const filingTypeNote = (r) => {
@@ -251,14 +248,15 @@ const filingTypeNote = (r) => {
   const f = r.operations.filingsRequired;
   if (f !== true) return 'The intake doesn\'t say whether filings are needed: answer it yourself.';
   if (!which(r)) return 'The intake says filings are needed but not which: answer it yourself.';
-  return ONLY_FR.test(which(r)) ? `The intake names only ${quote(which(r), 40)}, which GEICO doesn't count as a filing here: answer it yourself.`
-    : CARGO_FILING.test(which(r)) ? `The intake's filings (${quote(which(r), 40)}) name a cargo filing, which isn't a liability filing: whether a federal liability filing is needed is yours to answer.`
+  return onlyFr(r) ? `The intake names only ${quote(which(r), 40)}, which GEICO doesn't count as a filing here: answer it yourself.`
+    : intent(r).open === 'cargo-conflict' ? `The intake's filings (${quote(which(r), 40)}) both ask for a cargo filing and rule one out, so whether "federal" means a liability filing is yours to answer.`
+    : intent(r).cargo ? `The intake's filings (${quote(which(r), 40)}) name a cargo filing, which isn't a liability filing: whether a federal liability filing is needed is yours to answer.`
       : `The intake's filings (${quote(which(r), 40)}) don't say state or federal: answer it yourself.`;
 };
 // The Add Filings boxes: ticked when the intake names that filing; otherwise left as the page has
 // them (never unticked: a box no filing names isn't a No).
-const filingBoxes = (r) => (!ntlNoDotFilings(r) && r.operations.filingsRequired === true && which(r) && !ONLY_FR.test(which(r))
-  ? { federal: federalLiability(which(r)) || null, state: STATE_FILING.test(which(r)) || null } : { federal: null, state: null });
+const filingBoxes = (r) => (!ntlNoDotFilings(r) && r.operations.filingsRequired === true && which(r) && !onlyFr(r)
+  ? { federal: intent(r).liability || null, state: intent(r).state || null } : { federal: null, state: null });
 // Whether proof of insurance or filings go to an agency: the intake's Yes or No; blank, TNI's No
 // (W43-34) unless the intake names filings or a line of its notes mentions one. An SR-22 or FR-44
 // (the intake's SR-22 answer, filings naming only those, a notes line naming only those) doesn't
@@ -266,12 +264,12 @@ const filingBoxes = (r) => (!ntlNoDotFilings(r) && r.operations.filingsRequired 
 const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\b/i;
 const FR_FILINGS = /\b(?:sr[\s-]?22|fr[\s-]?44)(?:\s+filings?)?\b/gi;
 const OTHER_FILING = { test: (s) => FILING_WORDS.test(s.replace(FR_FILINGS, ' ')) };
-const filingsMention = (r) => (which(r) && !ONLY_FR.test(which(r)) ? 'which' : notesLine(OTHER_FILING)(r) ? 'notes' : null);
+const filingsMention = (r) => (which(r) && !onlyFr(r) ? 'which' : notesLine(OTHER_FILING)(r) ? 'notes' : null);
 const hasFilings = noUnless((r) => r.operations.filingsRequired, filingsMention);
 const filingsNote = (r) => {
   const f = r.operations.filingsRequired;
   if (ntlNoDotFilings(r)) return null;
-  if (f === true && ONLY_FR.test(which(r))) return `The intake names only ${quote(which(r), 40)}, which GEICO doesn't count as a filing here: answer it yourself.`;
+  if (f === true && onlyFr(r)) return `The intake names only ${quote(which(r), 40)}, which GEICO doesn't count as a filing here: answer it yourself.`;
   if (f != null) return null;
   return { which: `The intake leaves "filings required" blank but names filings (${quote(which(r), 40)}): answer it yourself.`,
     notes: `The intake leaves "filings required" blank, and its notes say ${quote(notesLine(OTHER_FILING)(r), 80)}: answer it yourself.` }[filingsMention(r)] ?? null;

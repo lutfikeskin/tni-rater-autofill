@@ -54,6 +54,7 @@ import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolic
 import { HAZ_HAUL } from '../util.js';
 import { driverExcluded, ownerRowExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
+import { filingsIntent } from '../answers/filings.js';
 import { EXPEDITING_OR_GENERAL_FREIGHT, namesExpeditingOrGeneralFreight } from '../answers/classes.js';
 
 // A UM limit as AmWINS lists it: $100K, and from a million $1M or $1.5M (captured layouts), never $1000K.
@@ -339,11 +340,29 @@ const withCurrentCarrierNote = (r) => (withCurrentCarrier(r) ? null
   : expiredWithTenure(r) ? `The intake's current policy has expired, and its notes give the time with the insurer ("${insurerTenure(r)?.line.slice(0, 80)}"): pick it yourself.`
     : notAutoWithTenure(r) ? `The intake's current insurance is ${String(r.priorInsurance[0].type).trim().slice(0, 30)}, not proof of prior insurance, and its notes give the time with the insurer ("${insurerTenure(r)?.line.slice(0, 80)}"): pick it yourself.`
       : `The intake's notes give the time with the current carrier ("${longerTenure(r)?.line.slice(0, 80)}"), and more than one of AmWINS' bands could fit it: pick it yourself.`);
-// Federal filings from the intake's "which filings": liability means BMC-91 (MCS-90 comes with
-// it); cargo means BMC-32. Unknown when the intake doesn't say which.
-const filingsText = (r) => (filings(r) ? r.operations.filingsWhich ?? null : null);
-const federalLiability = (r) => { const t = filingsText(r); return t == null ? null : /liab|bmc.?91|mcs.?90|federal/i.test(t); };
-const federalCargo = (r) => { const t = filingsText(r); return t == null ? null : /cargo|bmc.?3[24]/i.test(t); };
+// Federal filings from the intake's "which filings", read as every carrier reads them (filingsIntent,
+// src/answers/filings.js; TNI, 2026-11-07, the maintainer): a federal liability filing ticks BMC-91
+// and MCS-90 (MCS-90 comes with it), a cargo filing BMC-32. A cargo-only request ("Federal BMC-34",
+// "Federal cargo filing") ticks only BMC-32 and leaves whether a liability filing is needed to the
+// agent; a box that doesn't say which, or names only an SR-22 or FR-44, leaves them to the agent.
+// Each one left is the agent's (`fact`) with a note. Only with Filing required Yes: the page shows
+// the boxes then.
+const filingsIntentOf = (r) => (filings(r) ? filingsIntent(r.operations.filingsWhich) : null);
+const federalLiability = (r) => filingsIntentOf(r)?.liability ?? null;
+const federalCargo = (r) => filingsIntentOf(r)?.cargo ?? null;
+const filingsQuoted = (r) => `"${String(r.operations.filingsWhich ?? '').trim().slice(0, 40)}"`;
+/** @param {'liability' | 'cargo'} which */
+const federalFilingNote = (which) => (r) => {
+  const intent = filingsIntentOf(r);
+  if (!intent || intent[which] != null) return null;
+  if (intent.open === 'cargo-conflict') return `The intake's filings (${filingsQuoted(r)}) both ask for a cargo filing and rule one out: answer it yourself.`;
+  if (intent.open === 'cargo') return `The intake's filings (${filingsQuoted(r)}) name a cargo filing, which isn't a liability filing: whether BMC-91 and MCS-90 are needed is yours to answer.`;
+  if (intent.open === 'sr-fr-only') return `The intake names only ${filingsQuoted(r)}, which isn't a federal filing: answer it yourself.`;
+  return String(r.operations.filingsWhich ?? '').trim() ? `The intake's filings (${filingsQuoted(r)}) don't say which federal filing: answer it yourself.`
+    : 'The intake says a federal filing is required but not which: answer it yourself.';
+};
+const liabilityNote = federalFilingNote('liability');
+const cargoNote = federalFilingNote('cargo');
 
 // Vehicle Coverages: one row per vehicle (#vehicleCoveragesPanel, the same 0-based data-id as
 // its vehicle's row), each with an "Exclude …" box per coverage. The boxes are found by their
@@ -574,9 +593,9 @@ export const amwins = {
     { concept: 'business.mc', selector: '#mcNumber', name: 'MC number', source: 'derived', value: (r) => digits(r.applicant.mc) },
     // Shown with Filing required Yes.
     { concept: 'filings.authority-age', selector: '#howLongFederalOperatingAuthorityActive', name: 'Federal authority active for (years under own authority)', kind: 'choice', source: 'derived', value: authorityAge },
-    { concept: 'filings.which', name: 'Federal BMC-91', label: '^federal bmc91$', kind: 'bool', source: held('derived'), value: federalLiability, note: holdOr() },
-    { concept: 'filings.which', name: 'Federal liability MCS-90', label: '^federal liability mcs90$', kind: 'bool', source: held('derived'), value: federalLiability, note: holdOr() },
-    { concept: 'filings.which', name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', source: held('derived'), value: federalCargo, note: holdOr() },
+    { concept: 'filings.which', name: 'Federal BMC-91', label: '^federal bmc91$', kind: 'bool', source: held((r) => (liabilityNote(r) ? 'fact' : 'derived')), value: federalLiability, note: holdOr(liabilityNote) },
+    { concept: 'filings.which', name: 'Federal liability MCS-90', label: '^federal liability mcs90$', kind: 'bool', source: held((r) => (liabilityNote(r) ? 'fact' : 'derived')), value: federalLiability, note: holdOr(liabilityNote) },
+    { concept: 'filings.which', name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', source: held((r) => (cargoNote(r) ? 'fact' : 'derived')), value: federalCargo, note: holdOr(cargoNote) },
     // The client's insurance history the intake doesn't give. TNI's standards (2026-10-19, after a
     // live run; may change later): 1 TO 2 YEARS with the current carrier and no claim-free loss
     // runs. Valued loss runs: No too (TNI, 2026-10-19, a later AmWINS run: "valued loss runs are
