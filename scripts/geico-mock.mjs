@@ -396,7 +396,9 @@ async function fill(form, { asked = false, expectFailed = [] } = {}) {
       count: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, record[list]?.length ?? 0])),
       bound: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...unitForms[list] }])),
     },
-    skip: keysOf(PAGE), skipBy: skipBy(), run: ++run, expectPage: PAGE,
+    skip: keysOf(PAGE), skipBy: skipBy(), run: ++run,
+    // The page as the panel reads the tab's address (pageOf: GEICO's is its path), which the kit checks.
+    expectPage: await inWorld('location.pathname'),
     takenBack: !asked && geico.keepTakenBack?.length ? { steps: geico.keepTakenBack, keys: Object.fromEntries([...filledKeys].map((key) => [key, true])) } : null,
     // A field reset since a fill gave it is given again only on a quiet page (W43-21); one still
     // showing another unit's answer gets this unit's (W43-38).
