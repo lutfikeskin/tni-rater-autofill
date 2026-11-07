@@ -365,3 +365,21 @@ test('a step is left by the last button pressed on it, the agent\'s or the exten
   assert.match(report, /\| 3 \| \/quote · Coverages \|[^\n]*\| "Next" \(you\) \|/);
   assert.match(report, /\| 4 \| \/quote · Summary \|[^\n]*\| — \|/);
 });
+
+// REC-04 (audit 2026-11-07): a recording whose panel followed another tab looked complete.
+test('the report says when the panel followed another tab, and for how long, and when the recorded tab was closed', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: 'Home', top: true },
+    { kind: 'panel', t: t0 + 1000, frame: 0, away: true, followed: 9, recorded: 4 },
+    { kind: 'panel', t: t0 + 4000, frame: 0, away: false, followed: 4, recorded: 4 },
+    { kind: 'panel', t: t0 + 5000, frame: 0, closed: true, recorded: 4 },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
+  assert.match(report, /The panel followed another tab for 3\.0 s: what the quote did there is not in this recording/);
+  assert.match(report, /THE PANEL MOVED TO ANOTHER TAB/);
+  assert.match(report, /the panel is back on the recorded tab/);
+  assert.match(report, /THE RECORDED TAB WAS CLOSED/);
+  assert.match(report, /The recorded tab was closed, which ended the recording\./);
+  assert.ok(!/followed another tab/.test(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) })));
+});
