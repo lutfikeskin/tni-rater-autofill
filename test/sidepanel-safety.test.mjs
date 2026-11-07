@@ -1413,6 +1413,25 @@ test('current Luna decisions and completed retired corrections retain their revi
   assert.equal(context.pendingAi(1, 'Quote').length, 1, 'only the unresolved Luna answer blocks');
 });
 
+// Audit 2026-11-07, AI-11: a hold is stored under the model the panel asked for (the cache signature's),
+// not the dated snapshot the provider answered as, so a reload keeps it a current Luna hold.
+test('a pick the dated snapshot answered is saved under the configured model and restored as a current hold', async () => {
+  const state = { aiCache: new Map() };
+  const saved = [];
+  const context = { state, DEFAULT_MODEL, POLICY_VERSION, aiFingerprint: JSON.stringify, aiSafeText: String, snapshotFingerprint: JSON.stringify,
+    usage: { currentSession: () => ({ intakeId: 'intake' }) }, aiPendingStore: { get: async () => saved, set: async () => {} } };
+  vm.createContext(context);
+  vm.runInContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'restoreAiPending', 'aiDecisionBlocks', 'pendingAi'].map(extractFunction).join('\n'), context);
+  const sig = context.aiCacheSignature({ tabId: 1, page: 'Quote', model: DEFAULT_MODEL, policy: POLICY_VERSION, contextHash: 'context', itemHash: 'item' });
+  const pick = { model: `${DEFAULT_MODEL}-2026-10-01`, key: 'choice', label: 'Choice', choice: 'No', controlKind: 'radio', done: 'auto', pendingScope: 'intake' };
+  saved.push(context.aiPendingRecord(sig, pick, 'intake'));
+  assert.equal(saved[0].model, DEFAULT_MODEL);
+  await context.restoreAiPending();
+  const restored = state.aiCache.get(sig);
+  assert.deepEqual([restored.retired, restored.rejected, restored.autoOk], [false, false, true]);
+  assert.equal(context.pendingAi(1, 'Quote').length, 1);
+});
+
 test('safety metadata changes invalidate cached choice fingerprints', () => {
   const context = { aiFingerprint: JSON.stringify };
   vm.runInNewContext(extractFunction('aiItemFingerprint'), context);
