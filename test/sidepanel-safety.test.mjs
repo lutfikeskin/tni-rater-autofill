@@ -415,8 +415,8 @@ test('the fill hands the kit the named-form check and what this tab\'s fills gav
 
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
-  assert.match(body, /formUnit: unitNameFor\(carrier, extra\.expectPage \?\? pageOf\(state\.tab\?\.url\), active, state\.intake\?\.record\)/);
-  assert.ok(body.includes('givenBefore: { ...givenEarlier(state.tab?.id), ...Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },'));
+  assert.match(body, /formUnit: unitNameFor\(carrier, extra\.expectPage \?\? page, active, fill\.intake\?\.record\)/);
+  assert.ok(body.includes('givenBefore: { ...givenEarlier(fill.tabId), ...Object.fromEntries([...(maps.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },'));
 });
 
 
@@ -4441,6 +4441,36 @@ test('pages that are not stop pages are still filled and followed up', async () 
   assert.deepEqual(t.stops(), []);
 });
 
+// Audit 2026-11-07 (FLOW-08): the options were read from the tab in front, which may have changed
+// while the fill was prepared: tab A could be filled with tab B's done actions, done steps and AI holds.
+test('the fill options are the fill\'s own tab\'s, whichever tab is in front', () => {
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  const source = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4);
+  const carrier = { id: 'amwins', advance: { text: '^continue$', steps: ['Drivers'] }, keepTakenBack: ['Coverage'] };
+  const intakeA = { record: { vehicles: [{}, {}], drivers: [{}], trailers: [] } };
+  const pending = [];
+  const tabA = { filled: new Map([['ref:A', { path: 'a', shown: '1' }]]), doneActions: new Set(['addVehicle:0']), doneSteps: new Set(), visitedPages: new Set(['/quote-A']),
+    unitForms: { vehicles: { 0: 'form-a' }, drivers: {}, trailers: {} }, agentKeys: new Map([['/quote-A', new Set(['ref:A-agent'])]]) };
+  // Tab B in front: its own maps on `state`, tab A's kept aside.
+  const state = { tab: { id: 8, url: 'https://carrier.test/quote-B', carrier }, intake: { record: { vehicles: [], drivers: [], trailers: [] } }, recording: null,
+    filled: new Map([['ref:B', {}]]), doneActions: new Set(['addVehicle:1']), doneSteps: new Set(), visitedPages: new Set(['/quote-B']),
+    unitForms: { vehicles: { 0: 'form-b' }, drivers: {}, trailers: {} }, agentKeys: new Map([['/quote-B', new Set(['ref:B-agent'])]]), tabSessions: new Map([[7, tabA]]),
+    // What each tab's fills gave before the panel opened (givenEarlier).
+    givenEarlier: new Map([[7, { scope: 'intake-a', given: [['ref:A-early', { path: 'e', shown: '2' }]] }], [8, { scope: 'intake-a', given: [['ref:B-early', {}]] }]]) };
+  const context = { state, switchOn: () => false, pendingAi: (tabId, page) => { pending.push([tabId, page]); return []; }, advanceFor: () => ({ text: '^continue$' }),
+    stepScope: (page) => page, knownStep: () => null, unitNameFor: () => null, editScope: (page) => page, pageOf: (url) => new URL(url).pathname, firstUnits: () => ({}),
+    usage: { currentSession: () => ({ intakeId: 'intake-a' }) } };
+  vm.createContext(context);
+  vm.runInContext(`${source}\n${extractFunction('tabMaps')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, context);
+  const options = JSON.parse(JSON.stringify(context.fillOptions(carrier, {}, true, { vehicles: 1 }, false, { tabId: 7, tabUrl: 'https://carrier.test/quote-A', intake: intakeA })));
+  assert.deepEqual([options.filledBefore, options.doneActions, options.visitedPages, options.skip, options.units.bound.vehicles, options.units.count.vehicles, Object.keys(options.takenBack.keys)],
+    [['ref:A'], ['addVehicle:0'], ['/quote-A'], ['ref:A-agent'], { 0: 'form-a' }, 2, ['ref:A-early', 'ref:A']]);
+  assert.deepEqual(Object.keys(options.givenBefore), ['ref:A-early', 'ref:A'], 'tab A\'s answers, those given before the panel opened too');
+  assert.deepEqual(pending, [[7, '/quote-A']], 'tab A\'s AI holds');
+  // Without the fill's tab, the tab in front's, as before.
+  assert.deepEqual(JSON.parse(JSON.stringify(context.fillOptions(carrier, {}, true, {}, false))).doneActions, ['addVehicle:1']);
+});
+
 test('the fill options hand the carrier\'s stop pages to the page kit', () => {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
@@ -4849,6 +4879,20 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   } }];
   return { state, ui, seen, context, intakeA, started, release, reject, results };
 }
+
+// Audit 2026-11-07 (FLOW-08): the tab in front changed during the last wait before the kit was asked
+// (Chrome's read of the tab's address): the fill doesn't go ahead with that tab's options.
+test('a fill whose tab stopped being the panel\'s during its last wait is not sent to the kit', async () => {
+  for (const auto of [true, false]) {
+    const t = fillHarness();
+    let asked = 0;
+    t.context.runKit = async () => { asked++; return []; };
+    t.context.pageMoved = async () => { t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier }; return false; };
+    if (auto) { t.state.autoPages.add('/quote-A'); await t.context.autoFill('/quote-A'); } else await t.context.fillPage();
+    assert.equal(asked, 0, auto ? 'a follow-up' : 'a fill the agent asked for');
+    assert.equal(t.state.filling, false);
+  }
+});
 
 // Codex reproduction (stale-fill-reproduction.mjs): a fill's results came back after the agent had
 // loaded another intake and moved to its tab, and were remembered and logged as that intake's.
@@ -7449,7 +7493,7 @@ test('a GEICO unit list drawn gets a follow-up fill with either switch on', () =
 function fillOptionsOf(state, carrier, active, { autoAdvance = false, unitsListed = false } = {}) {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const context = { state, URL, knownStep, advanceFor, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
-  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\n${extractFunction('switchOn')}\nglobalThis.fillOptions = fillOptions;`, context);
+  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\n${extractFunction('switchOn')}\n${extractFunction('tabMaps')}\nglobalThis.fillOptions = fillOptions;`, context);
   return context.fillOptions(carrier, {}, autoAdvance, active, unitsListed);
 }
 
@@ -7493,7 +7537,7 @@ test('the kit is told the stop steps by name, and the plan\'s units with the for
     active: { vehicles: 0, drivers: 0, trailers: 0 }, count: { vehicles: 0, drivers: 0, trailers: 0 }, bound: { vehicles: {}, drivers: {}, trailers: {} } }]);
   // Both fills hand over the units their plan was built for.
   // and whether the unit list on screen holds every intake unit (GEICO's Looks Good: advanceFor).
-  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance, ctx\.active, ctx\.unitsListed\);/g) ?? []).length, 2);
+  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance, ctx\.active, ctx\.unitsListed, ctx\);/g) ?? []).length, 2);
   const start = SIDEPANEL.indexOf('const fillOptions =');
   assert.match(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start)), /stopSteps: Object\.keys\(carrier\.stopSteps \?\? \{\}\)/);
 });

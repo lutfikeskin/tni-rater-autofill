@@ -166,7 +166,9 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // by the agent's Fill this page too, as by an automatic fill (fillOptions' `takenBack`): what
     // the extension didn't write may be the agent's (the maintainer, 2026-11-07, in place of giving
     // it again, 2026-10-21). Replace existing answers still gives it again.
-    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    // The panel moved to another tab during that wait: nothing is filled (and the options are this tab's).
+    if (!fillCurrent(ctx)) return;
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed, ctx);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
