@@ -87,6 +87,11 @@ commit they were packaged from, `+dirty` otherwise), upload the new zip on the i
 tab, submit.
 Chrome updates installed copies by itself within a few hours of approval.
 
+Agents' own defaults ([spec](agent-defaults-spec.md)) ship hidden in the store build until TNI's
+managers approve them: that release's PR sets `RELEASED_TO_AGENTS` to `true` in
+`src/agent-defaults/index.js`. The unpacked copy has them on regardless (Settings → Advanced, for
+setup only, hides them there to see the panel as agents will).
+
 ## API keys for the pilot
 
 OpenAI access is TNI's: `OPENAI_API_KEY` on the usage server ([hosting](hosting.md)), in its own

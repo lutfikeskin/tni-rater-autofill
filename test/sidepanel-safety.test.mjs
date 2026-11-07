@@ -5543,6 +5543,56 @@ function dockHarness({ carrier, switches = {}, background = false, issue = null,
   return { dock: () => context.dockFor(), ui, state };
 }
 
+// Agents' own defaults: while the quote's question waits, Fill this page is held. On the page's
+// answers the question's card is above the dock; on the intake's checks it isn't drawn, so the dock
+// opens it (Show the question) instead of a held Fill with nothing above it.
+test('the defaults hold opens the quote\'s question from the intake\'s checks, and holds Fill under it', () => {
+  const held = (view) => {
+    const h = dockHarness({ carrier: { name: 'AmWINS' }, extra: { defaultsHold: () => true } });
+    h.state.view = view;
+    return h.dock();
+  };
+  const page = held('page');
+  assert.deepEqual([page.phase, page.title, page.button, page.disabled], ['hold', 'Answer the question above', 'fill', true]);
+  const check = held('check');
+  assert.deepEqual([check.phase, check.title, check.button, check.label, !!check.disabled], ['hold', 'Whose defaults does this quote take?', 'dock-defaults', 'Show the question', false]);
+  // The dock's button opens the page's answers, where the card is.
+  assert.match(SIDEPANEL, /defaults: \(\) => setView\('page'\),/);
+});
+
+// Answered, the page in front is filled as on opening when no fill has answered it yet and Fill
+// pages when they open is on; never while still held, with that switch off, or over a page filled.
+// Only the page whose opening fill the question held fills after it, once, for the same intake: never
+// a page nothing was waiting on, such as the last client's quote left in front when a new intake loads.
+test('after the defaults question, the page whose opening fill it held fills as on opening, once', () => {
+  const intake = {};
+  const run = ({ held = { key: 'key', intake }, hold = false, autoPages = true, report = false, filling = false, front = 'key', now = intake, twice = false } = {}) => {
+    const fills = [];
+    const state = { intake: now, filling, tab: { id: 7, url: 'Quote', carrier: { name: 'AmWINS' } }, reports: new Map(report ? [['key', {}]] : []), switches: { autoPages } };
+    const context = { state, heldForDefaults: held, $: () => null, defaultsHold: () => hold, onQuotePage: () => true, currentReportKey: () => front, fillPage: (o) => fills.push(o) };
+    vm.runInNewContext(extractFunction('fillAfterDefaults'), context);
+    context.fillAfterDefaults();
+    if (twice) context.fillAfterDefaults();
+    return { fills: JSON.parse(JSON.stringify(fills)), kept: context.heldForDefaults };
+  };
+  assert.deepEqual(run().fills, [{ auto: 'page' }]);
+  assert.deepEqual(run({ twice: true }).fills, [{ auto: 'page' }], 'once');
+  assert.deepEqual(run({ held: null }).fills, [], 'no fill waited on the question: the page in front is not filled');
+  assert.deepEqual(run({ now: {} }).fills, [], 'held for another intake');
+  assert.deepEqual(run({ front: 'other' }).fills, [], 'another page in front');
+  assert.deepEqual(run({ report: true }).fills, [], 'a page filled since keeps its answers');
+  const still = run({ hold: true });
+  assert.deepEqual(still.fills, []);
+  assert.ok(still.kept, 'still held: kept for the answer');
+  assert.deepEqual(run({ autoPages: false }).fills, []);
+  assert.deepEqual(run({ filling: true }).fills, []);
+  // Recorded only by a page's own opening fill the hold stopped.
+  assert.match(extractFunction('fillPage'), /if \(state\.intake && defaultsHold\(\)\) \{\s*\/\/[^\n]*\n\s*if \(auto === 'page'\) heldForDefaults = \{ key: currentReportKey\(\), intake: state\.intake \};/);
+  assert.match(SIDEPANEL, /onDefaultsAnswer\(async \(choice\) => \{ await answerDefaults\(choice\); logSettings\('changed', 'defaults'\); renderSteps\(\); fillAfterDefaults\(\); \}\);/);
+  // The developer hiding the feature lifts the hold too: the held page fills as in the store build.
+  assert.match(SIDEPANEL, /defaultsShown: async \(on\) => \{ await setDefaultsShown\(on\); renderSteps\(\); fillAfterDefaults\(\); \}/);
+});
+
 test('the fill hint says Continue is clicked for the agent only while that setting is on and the carrier has an advance pattern', () => {
   const geico = { name: 'GEICO', advance: { text: 'Next' }, unitLists: {} };
   const prog = { name: 'Progressive', advance: { text: 'Continue' } };

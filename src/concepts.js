@@ -30,6 +30,7 @@ export const CONCEPTS = Object.freeze({
   'quote.unit-entry': 'How the next vehicle or trailer is added (by VIN, or which unit next).',
   'quote.all-vehicles': "Whether the quote includes all the customer's commercially owned vehicles.",
   'quote.snapshot-pro': "Progressive's Snapshot Pro enrolment.",
+  'quote.telematics-commitment': "The client's commitment to install dashcams or the carrier's telematics devices, and consent to it.",
 
   // The business
   'business.name': 'The business or named insured name.',

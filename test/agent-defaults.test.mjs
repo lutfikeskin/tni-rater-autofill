@@ -17,7 +17,7 @@ import { STANDARD_IDS } from '../src/standards.js';
 import { REGISTRY } from '../src/agent-defaults/registry.js';
 import { makeOverlay, safeOverlay, liabilityAmount, amountSaid, AGENT_DEFAULT_SOURCE } from '../src/agent-defaults/overlay.js';
 import {
-  AGENT_DEFAULTS_ON, setActiveDefaults, overlayFor, rulebookRewriteFor, makeRulebookRewrite,
+  RELEASED_TO_AGENTS, agentDefaultsOn, setAgentDefaultsOn, setActiveDefaults, overlayFor, rulebookRewriteFor, makeRulebookRewrite,
   effectiveDefaults, carrierOverrides, defaultsForLog, isAgentDefault, profileFromLog, replayOverlay,
 } from '../src/agent-defaults/index.js';
 import { DEFAULTS_SHAPE, AGENT_DEFAULT_SOURCE as SERVER_SOURCE } from '../server/agent-defaults.mjs';
@@ -49,8 +49,26 @@ const changed = (id, effective, rec = record()) => {
   return new Map(before.map((s, i) => [s, after[i]]).filter(([a, b]) => JSON.stringify(a) !== JSON.stringify(b)).map(([a, b]) => [key(a), [a, b]]));
 };
 
-test('no profile confirmed for the quote: every plan and rulebook is the rules\' own; confirmed: the panel\'s plans take it', () => {
-  assert.equal(AGENT_DEFAULTS_ON, true, 'the TNI defaults page is on (phase 5)');
+// Agents' store build keeps the feature off until TNI's managers approve it; the module starts off.
+test('off until the panel turns it on, as agents\' store build keeps it until released: a confirmed profile changes nothing', () => {
+  assert.equal(RELEASED_TO_AGENTS, false, 'not released to agents until TNI\'s managers approve it');
+  assert.equal(agentDefaultsOn(), RELEASED_TO_AGENTS, 'the module starts as the store build has it');
+  setActiveDefaults({ values: EVERYTHING });
+  try {
+    for (const c of CARRIERS) {
+      assert.equal(overlayFor(c.id), null, c.id);
+      assert.equal(rulebookRewriteFor(c.id), null, c.id);
+      assert.deepEqual(data(planFor(record(), c, {})), data(buildPlan(record(), c, {})), c.id);
+    }
+  } finally {
+    setActiveDefaults(null);
+  }
+});
+
+test('no profile confirmed for the quote: every plan and rulebook is the rules\' own; confirmed: the panel\'s plans take it', (t) => {
+  // On for this test only, as the panel turns it on; back as the store build has it after.
+  setAgentDefaultsOn(true);
+  t.after(() => setAgentDefaultsOn(RELEASED_TO_AGENTS));
   for (const c of CARRIERS) {
     assert.equal(overlayFor(c.id), null);
     assert.equal(rulebookRewriteFor(c.id), null);

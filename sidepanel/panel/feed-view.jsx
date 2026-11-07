@@ -30,6 +30,8 @@ function placeThumb(rail) {
 
 // What the row tags and the rater page's marks (pagekit.js COLORS, the same colors: --mark-*) mean.
 function AnswerKey({ open }) {
+  // agent defaults: its tag and mark only where the feature is on (store.js loadDefaults).
+  const own = useStore(panelStore, (s) => !!s.defaultsOn);
   return (
     <div id="answer-key" className="answer-key" hidden={!open}>
       <div className="key-line">
@@ -37,7 +39,7 @@ function AnswerKey({ open }) {
         <span className="key-plain">none = from the intake</span>
         <span className="tag derived">Worked out</span>
         <span className="tag standard">TNI standard</span>
-        <span className="tag own">Your default</span>
+        {own ? <span className="tag own">Your default</span> : null}
         <span className="tag ai">AI</span>
         <span className="tag you">You</span>
         <span className="tag page">On the page</span>
@@ -46,7 +48,7 @@ function AnswerKey({ open }) {
         <span className="key-title">Marks on the rater page:</span>
         <span><span className="mark filled" />Filled</span>
         <span><span className="mark standard" />TNI standard</span>
-        <span><span className="mark own" />Your default</span>
+        {own ? <span><span className="mark own" />Your default</span> : null}
         <span><span className="mark needs" />Needs you</span>
         <span><span className="mark failed" />Couldn’t fill</span>
         <span><span className="mark ai" />AI answer</span>

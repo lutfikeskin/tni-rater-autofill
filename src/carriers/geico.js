@@ -511,6 +511,11 @@ const UM_SPLIT = '$100,000/$300,000';
 const texas = (r) => garagingIs(r, 'TX');
 const umLimit = (/** @type {number} */ a) => `${usd(a)} Combined Single Limit`;
 const UM_LIMIT = umLimit(STANDARDS.umCsl);
+// A state whose list has no combined single limit, only split limits (FL, 2026-11-06: I decline to
+// $100,000/$300,000): TNI's $100,000 is $100,000/$300,000 there too (TNI, 2026-11-06, W47-03), the
+// Texas split. Tried after the CSL, so a list offering it keeps the CSL. Only TNI's own amount has a
+// split here: an agent's other amount drops it, and its CSL missing is the agent's.
+const umSplitAlias = (/** @type {number} */ a) => (a === STANDARDS.umCsl ? [UM_SPLIT] : []);
 const PAY_PLAN = '11 Payments';
 
 // Farthest one-way distance: the intake's radius in miles, as GEICO's band; long haul ("Unlimited",
@@ -1435,17 +1440,18 @@ export const geico = {
       // TNI's $100,000 CSL, in every state (FL live run 4, 2026-10-21, W43-17: GEICO pre-selected
       // $750,000); Texas lists only split limits, $100,000/$300,000 there (W43-33), but CSL ones with
       // a CSL liability or NTL (2026-10-26 live run: no split option, UM left at GEICO's $300,000):
-      // $100,000 CSL then. A state without either option leaves it to the agent. After NTL is
+      // $100,000 CSL then. Elsewhere a list with split limits only takes $100,000/$300,000 (W47-03); a state
+      // without either option leaves it to the agent. After NTL is
       // accepted GEICO resets it; GEICO fills one answer a round in page order, so UM comes after. GA and SC caption it "(UMBI)", SC asks underinsured
       // separately: the same limit (W43-33, TNI, 2026-10-21).
       { concept: 'coverage.um', q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury (TNI: ${usd(STANDARDS.umCsl)} CSL; TX ${UM_SPLIT})`,
-        kind: 'choice', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT), choiceAliases: (r) => (texas(r) ? [UM_LIMIT] : []),
+        kind: 'choice', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT), choiceAliases: (r) => (texas(r) ? [UM_LIMIT] : umSplitAlias(STANDARDS.umCsl)),
         // Texas' split is its own exception: the standard amount applies elsewhere only.
-        std: { id: 'umCsl', applies: (r) => !texas(r), write: umLimit, name: (a) => `Uninsured motorist bodily injury (TNI: ${usd(a)} CSL; TX ${UM_SPLIT})` } },
+        std: { id: 'umCsl', applies: (r) => !texas(r), write: umLimit, aliases: umSplitAlias, name: (a) => `Uninsured motorist bodily injury (TNI: ${usd(a)} CSL; TX ${UM_SPLIT})` } },
       { concept: 'coverage.um', q: 'UninsuredMotoristUmbi', ask: 'Uninsured Motorist Bodily Injury (UMBI)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury, UMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
-        kind: 'choice', source: 'standard', value: () => UM_LIMIT, std: { id: 'umCsl', write: umLimit, name: (a) => `Uninsured motorist bodily injury, UMBI (TNI: ${usd(a)} CSL)` } },
+        kind: 'choice', source: 'standard', value: () => UM_LIMIT, choiceAliases: () => umSplitAlias(STANDARDS.umCsl), std: { id: 'umCsl', write: umLimit, aliases: umSplitAlias, name: (a) => `Uninsured motorist bodily injury, UMBI (TNI: ${usd(a)} CSL)` } },
       { concept: 'coverage.um', q: 'UnderinsuredMotorist', ask: 'Underinsured Motorist Bodily Injury (UIMBI)', control: 'select', tni: 'geico.um', name: `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
-        kind: 'choice', source: 'standard', value: () => UM_LIMIT, std: { id: 'umCsl', write: umLimit, name: (a) => `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(a)} CSL)` } },
+        kind: 'choice', source: 'standard', value: () => UM_LIMIT, choiceAliases: () => umSplitAlias(STANDARDS.umCsl), std: { id: 'umCsl', write: umLimit, aliases: umSplitAlias, name: (a) => `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(a)} CSL)` } },
       // TNI, 2026-10-27: when a state asks UM/UIM type or deductible (another form of the UM
       // questions), type is Add-On and deductible $1,000; the deductible isn't always shown.
       { concept: 'coverage.um', q: 'UninsuredMotoristDeductible', ask: 'Uninsured Motorist Deductible', control: 'select', tni: 'geico.um',

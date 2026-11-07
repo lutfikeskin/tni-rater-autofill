@@ -50,8 +50,8 @@ const MOCK_URL = 'http://localhost:8792/test/fixtures/amwins/application.html';
 // Agents' own defaults (above): '' (none), 'mine' or 'tni'.
 const DEFAULTS = process.env.E2E_DEFAULTS ?? '';
 if (DEFAULTS && !['mine', 'tni', 'advanced'].includes(DEFAULTS)) throw new Error(`E2E_DEFAULTS must be mine, tni or advanced, not ${DEFAULTS}`);
-// With E2E_DEFAULTS=advanced the profile also keeps AmWINS' own UM, $500K (Settings → TNI defaults →
-// Advanced), over the basic $300K.
+// With E2E_DEFAULTS=advanced the profile also keeps AmWINS' own UM, $500K (Settings → Your defaults →
+// Per carrier), over the basic $300K.
 const VALUES = { umCsl: { value: 300_000 }, compDeductible: { value: 500 } };
 const PROFILE = { v: 1, active: 'e2e-profile', activeFor: 'E2E', profiles: { 'e2e-profile': { name: 'Test Agent', values: VALUES, ...(DEFAULTS === 'advanced' ? { carriers: { amwins: { umCsl: { value: 500_000 } } } } : {}) } } };
 const MINE = DEFAULTS === 'mine' || DEFAULTS === 'advanced';
@@ -140,10 +140,14 @@ if (DEFAULTS) {
     }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-rater-autofill'] });
   });
   await panel.locator('#defaults-note button', { hasText: MINE ? 'Yes, mine' : 'Use TNI\'s' }).click();
-  const now = await panel.locator('#defaults-note .issue-title').textContent();
-  console.log('Defaults answered:', now);
-  defaultsAsked = asked === 'Fill this quote with Test Agent\'s defaults?' && held === 'hold' && fillOff !== false
-    && (MINE ? now === `Defaults: Test Agent, ${DEFAULTS === 'advanced' ? 3 : 2} changed` : now === 'TNI\'s standards for this quote');
+  // Answered: the card goes, and the client strip's pill says whose defaults the quote takes.
+  const chip = panel.locator('#defaults-chip');
+  await chip.waitFor({ state: 'visible', timeout: 10000 });
+  const now = await chip.getAttribute('aria-label');
+  const cardGone = await panel.locator('#defaults-note').isHidden();
+  console.log('Defaults answered:', JSON.stringify({ now, cardGone }));
+  defaultsAsked = asked === 'Fill this quote with Test Agent\'s defaults?' && held === 'hold' && fillOff !== false && cardGone
+    && (MINE ? now === `Test Agent's defaults: ${DEFAULTS === 'advanced' ? 3 : 2} in place of TNI's` : now === 'TNI\'s standards for this quote');
   if (!defaultsAsked) console.log('DEFAULTS: the quote did not ask and hold before filling, or the answer was not taken.');
 }
 // The sample intake answers every client fact AmWINS asks, and TNI's standards answer the rest,
