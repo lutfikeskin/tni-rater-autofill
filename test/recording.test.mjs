@@ -318,3 +318,23 @@ test('a box with no size is never marked above an answer, and the order goes on 
   assert.doesNotMatch(report, /↑ set "Lower question"/);
   assert.match(report, /↑ set "Middle question"/, 'above the lower one, the answer before it');
 });
+
+// REC-20 (audit 2026-11-07): the report showed a failed request as one that finished.
+test('a page request its server answered with an error is in the step\'s timeline, its table row and up front', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: t0 + 100, frame: 0, on: true },
+    { kind: 'kit', t: t0 + 200, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Year', label: 'Year' }, ok: true, start: t0 + 150, applyMs: 50 },
+    { kind: 'request', t: t0 + 300, seq: 3, frame: 0, path: '/api/rate', end: t0 + 1500, ms: 1200, via: 'fetch', status: 503 },
+    { kind: 'request', t: t0 + 400, seq: 4, frame: 0, path: '/api/save', end: t0 + 500, ms: 100, via: 'xhr', status: 200 },
+    { kind: 'request', t: t0 + 600, seq: 5, frame: 0, path: '/api/old', end: t0 + 700, ms: 100, via: 'xhr' },
+    { kind: 'fill', t: t0 + 2000, frame: 0, on: false },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:03.000Z' }, events });
+  assert.match(report, /the page's request to \/api\/rate failed: HTTP 503 after 1\.2 s/);
+  assert.equal(report.match(/failed: HTTP/g).length, 1, 'a 200 or a request with no status is no line');
+  assert.match(report, /\| 3 \(1\.4 s\), 1 failed \|/);
+  assert.match(report, /The page's server answered 1 request with an error \(HTTP 503 ×1\)/);
+  assert.ok(!/with an error/.test(recordingReport({ manifest: manifestFor(), events: events.filter((e) => e.status !== 503) })));
+});

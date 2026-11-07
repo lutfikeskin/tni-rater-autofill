@@ -309,13 +309,16 @@
   }
 
   // The page's own requests (fetch or XHR to its origin), each as it finishes: its path without the
-  // query or ids, when it started (the event's time) and ended. One still running isn't seen.
+  // query or ids, when it started (the event's time) and ended, and the HTTP status the server
+  // answered (`status`; 0 when the browser doesn't say, as for an opaque response), so a carrier's
+  // own error shows (REC-20, 2026-11-07). One still running isn't seen.
   const recordRequests = (entries) => {
     for (const r of entries) {
       if (!/^(fetch|xmlhttprequest)$/.test(r.initiatorType) || !String(r.name).startsWith(`${location.origin}/`)) continue;
       let p = '';
       try { p = new URL(r.name).pathname; } catch { continue; }
-      push('request', { path: idless(p), end: round(performance.timeOrigin + r.responseEnd), ms: round(r.responseEnd - r.startTime), via: r.initiatorType === 'fetch' ? 'fetch' : 'xhr' }, { timeStamp: r.startTime });
+      const status = Number.isInteger(r.responseStatus) ? { status: r.responseStatus } : {};
+      push('request', { path: idless(p), end: round(performance.timeOrigin + r.responseEnd), ms: round(r.responseEnd - r.startTime), via: r.initiatorType === 'fetch' ? 'fetch' : 'xhr', ...status }, { timeStamp: r.startTime });
     }
   };
   let requests = null;
