@@ -232,8 +232,10 @@
 
   // What the page does on its own. A run of DOM changes ends BURST_QUIET_MS after the last one, as
   // one `burst` (stamped when it began): its end, how many records, and the questions it drew
-  // (named as the recorder names them, at most MAX_DRAWN) or took away (counted). Only the light
-  // DOM: a component's shadow root (GEICO's gds-*) redraws unseen, its host's own changes aside.
+  // (named as the recorder names them, at most MAX_DRAWN) or took away (counted). Open shadow roots
+  // are watched too (GEICO's gds-* components draw their controls in them): each one on the page as
+  // the trace starts, and each one a change brings, once (REC-19, 2026-11-07: a control redrawn in
+  // its shadow root left no change, and a busy GEICO page read as quiet).
   const BURST_QUIET_MS = 100;
   const MAX_DRAWN = 12;
   const MAX_NODES = 500;
@@ -291,6 +293,27 @@
     push('burst', { end: b.end, records: b.records, ...(drawnCount ? { drawn, drawnCount } : {}), ...(removed ? { removed } : {}) }, { timeStamp: b.start });
   }
   let mutations = null;
+  const watchedRoots = new WeakSet();
+  const SHADOW_SCAN = 5000;
+  // The open shadow roots in and under `node` (its own, its descendants', theirs), each observed once.
+  const watchShadows = (node) => {
+    if (!mutations || !node) return;
+    const todo = [node];
+    let looked = 0;
+    while (todo.length && looked < SHADOW_SCAN) {
+      const at = todo.pop();
+      let inside = [];
+      try { inside = [...(at.querySelectorAll?.('*') ?? [])]; } catch { /* not queryable */ }
+      looked += inside.length;
+      for (const el of at.nodeType === 1 ? [at, ...inside] : inside) {
+        const root = el.shadowRoot;
+        if (!root || watchedRoots.has(root)) continue;
+        watchedRoots.add(root);
+        try { mutations.observe(root, { childList: true, subtree: true }); } catch { continue; }
+        todo.push(root);
+      }
+    }
+  };
   if (typeof MutationObserver === 'function') {
     mutations = new MutationObserver((records) => {
       const now = performance.now();
@@ -301,11 +324,14 @@
         // Added before this burst took it away: made in this burst, not moved (`created`).
         for (const n of r.addedNodes ?? []) if (burst.added.size < MAX_NODES) { burst.added.add(n); if (!burst.removed.has(n)) burst.created.add(n); }
         for (const n of r.removedNodes ?? []) if (burst.removed.size < MAX_NODES) burst.removed.add(n);
+        // A component drawn in this change attaches its shadow root as it is put in the page.
+        for (const n of r.addedNodes ?? []) watchShadows(n);
       }
       clearTimeout(burstTimer);
       burstTimer = setTimeout(endBurst, BURST_QUIET_MS);
     });
     try { mutations.observe(document.documentElement ?? document, { childList: true, subtree: true }); } catch { mutations = null; }
+    watchShadows(document);
   }
 
   // The page's own requests (fetch or XHR to its origin), each as it finishes: its path without the
