@@ -5,6 +5,7 @@ import { readIntakeFields, readIntakePlaces } from '../../src/intake.js';
 import { normalizeIntake, rederive } from '../../src/normalize.js';
 import { KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf } from '../../src/kept-work.js';
 import { get, set } from '../../src/util.js';
+import { ownerDrivesAnswered } from '../../src/answers/owner.js';
 import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
@@ -13,7 +14,7 @@ import { firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
 import { stopRecording } from './dev-recording.js';
-import { reviewIntake } from './assistant.js';
+import { ntlAnswerEdited, ntlCargoEdited, ntlNotesItem, ntlPrimaryEdited, reviewIntake } from './assistant.js';
 import { uploadNow } from './usage-panel.js';
 import { clientNote, keepPdf, workSaid } from './pdf-view.js';
 import { quoteStarting, refreshDefaults, settingsDefaults } from './agent-defaults/store.js';
@@ -227,9 +228,25 @@ async function restoreKeptWork(intake) {
   }
   intake.agentEdited = [...edited];
   for (const path of edited) rederive(intake.record, path, { keep: edited });
-  const done = new Set([...(intake.done ?? []), ...checksOn(intake.warnings ?? [], kept.checks)]);
+  // The checks a correction raises (NTL with cargo, say) are raised again before the kept checks are
+  // found, so a Looks right on one has it to land on.
+  for (const path of edited) editChecks(intake, path);
+  const back = checksOn(intake.warnings ?? [], kept.checks);
+  const done = new Set([...(intake.done ?? []), ...back]);
   intake.done = [...done];
+  // Looks right on "Does the owner drive?" answers it, as toggleDone does.
+  for (const i of back) if (intake.warnings[i]?.code === 'drivers.owner-excluded') ownerDrivesAnswered(intake, { check: { i, done: true } });
   return edited.size || done.size ? { edits: edited.size, checks: done.size } : null;
+}
+
+// What a correction made in the panel does to the intake's checks (agentEdit), done again for one
+// brought back: Owner drives answered, and the NTL items (the form's NTL note, NTL with primary auto
+// liability, NTL with cargo, the notes' NTL item). Luna's reviews are asked as the intake loads.
+function editChecks(intake, path) {
+  if (path === 'applicant.ownerDrives') ownerDrivesAnswered(intake, { edit: path });
+  if (['coverage.ntl', 'coverage.autoLiability'].includes(path)) { ntlAnswerEdited(intake, path); ntlPrimaryEdited(intake); }
+  if (['coverage.ntl', 'coverage.cargo', 'coverage.autoLiability'].includes(path)) ntlCargoEdited(intake);
+  if (path === 'claims.text' || path === 'notes.text') ntlNotesItem(intake);
 }
 
 // Each save keeps the agent's corrections and checks on this computer for a day from their last

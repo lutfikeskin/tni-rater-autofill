@@ -121,7 +121,7 @@ function extractFunction(name) {
           noteFollowed: '() => {}',
           // The agent's corrections and checks kept on this computer (FLOW-17) have their own test:
           // elsewhere nothing is kept or brought back.
-          forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}' };
+          forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}', editChecks: '() => {}', ownerDrivesAnswered: '() => false' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -2351,6 +2351,39 @@ test('the agent\'s corrections and checks of an intake come back after a browser
   assert.match(load, /restored \? `Same intake as earlier: you \$\{work\}, and that's back \(kept on this computer for a day\)\.`/);
   assert.match(extractFunction('clearClient'), /await forgetKeptWork\(\{ all: true \}\);/);
   assert.match(extractFunction('init'), /\n\s+forgetKeptWork\(\);\n/);
+});
+
+// #436 review: a correction can raise a check of its own (NTL set to Yes with cargo: agentEdit's
+// ntlCargoEdited). The PDF read again after a restart has no such check, so its kept Looks right had
+// nothing to land on, and the next save dropped it. The checks a correction raises are raised again
+// before the kept checks are matched, as agentEdit does; Owner drives answered likewise, by its edit
+// and by its check's Looks right.
+test('a correction brought back after a restart raises its own checks again, and keeps their Looks right', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); }, remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const replayed = [];
+  const context = { keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, get: getPath, set: setPath, rederive, JSON, Date, structuredClone,
+    ntlWithCargo: (r) => r.coverage.ntl === true && r.coverage.cargo === true, NTL_CARGO_MESSAGE: 'NTL and cargo',
+    ntlAnswerEdited: (intake, path) => replayed.push(['answer', path]), ntlPrimaryEdited: () => replayed.push(['primary']), ntlNotesItem: () => replayed.push(['notes']),
+    ownerDrivesAnswered: (intake, what) => { replayed.push(['owner', what]); return false; } };
+  const names = ['keepKeptWork', 'restoreKeptWork', 'ntlCargoEdited', 'editChecks'].filter((name) => name === 'ntlCargoEdited' || PANEL_SOURCE.includes(`function ${name}(`));
+  vm.runInNewContext(names.map(extractFunction).join('\n'), context);
+  const fresh = () => ({ intakeId: 'pdf-2', record: { coverage: { ntl: false, cargo: true, autoLiability: 'Yes' }, applicant: {} },
+    warnings: [{ code: 'drivers.owner-excluded', path: 'applicant.ownerDrives' }], agentEdited: [], done: [] });
+  // The agent set NTL to Yes (agentEdit raised the NTL-and-cargo check), then said Looks right on it and on the owner's.
+  const intake = fresh();
+  intake.record.coverage.ntl = true;
+  intake.agentEdited = ['coverage.ntl'];
+  context.ntlCargoEdited(intake);
+  intake.done = [0, 1];
+  await context.keepKeptWork(intake);
+  const again = fresh();
+  await context.restoreKeptWork(again);
+  assert.deepEqual(JSON.parse(JSON.stringify([again.warnings.map((w) => w.code), [...again.done].sort()])), [['drivers.owner-excluded', 'coverage.ntl-cargo'], [0, 1]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(replayed)), [['answer', 'coverage.ntl'], ['primary'], ['owner', { check: { i: 0, done: true } }]]);
 });
 
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
