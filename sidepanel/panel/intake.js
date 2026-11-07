@@ -9,7 +9,7 @@ import { ownerDrivesAnswered } from '../../src/answers/owner.js';
 import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { $, discardAiSuggestions, doneRestored, forgetKeptWork, keptWorkLocal, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes } from './core.js';
+import { $, discardAiSuggestions, doneRestored, forgetKeptWork, keptWorkCleared, keptWorkLocal, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes } from './core.js';
 import { firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
@@ -94,7 +94,7 @@ async function loadFile(file, { reset = false } = {}) {
     // A new client's intake: the last client's kept corrections and checks go (FLOW-17). The same
     // PDF after a browser restart (no copy of it in the session): its own, from the last day, come back.
     await forgetKeptWork({ except: summary.intakeId });
-    const restored = same ? null : await restoreKeptWork(state.intake);
+    const restored = same || !(await keptWorkCleared()) ? null : await restoreKeptWork(state.intake);
     state.view = firstView(state.intake);
     state.filter = 'all';
     state.aiDocks = new Map();

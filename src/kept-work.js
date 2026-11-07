@@ -57,18 +57,19 @@ export const keptFresh = (kept, now = Date.now()) => !!kept && Number.isFinite(k
 
 /**
  * Deletes what is kept past its day, and with `except` (an intake's fingerprint) or `all` every other
- * intake's too: a new client's intake keeps only its own, a cleared client keeps none.
+ * intake's too: a new client's intake keeps only its own, a cleared client keeps none. `before`: also
+ * what was last changed at or before that time (a Clear tried again: what was kept since stays).
  * @param {{ get: (k: any) => Promise<Record<string, any>>, remove: (k: string[]) => Promise<void>, getKeys?: () => Promise<string[]> }} local  chrome.storage.local
- * @param {{ now?: number, except?: string, all?: boolean }} [options]
+ * @param {{ now?: number, except?: string, all?: boolean, before?: number }} [options]
  */
-export async function pruneKeptWork(local, { now = Date.now(), except, all = false } = {}) {
+export async function pruneKeptWork(local, { now = Date.now(), except, all = false, before } = {}) {
   // The keys only where Chrome can (130 and later): the usage queue shares this storage.
   const keys = (typeof local.getKeys === 'function' ? await local.getKeys() : Object.keys(await local.get(null))).filter((k) => k.startsWith(KEPT_WORK_PREFIX));
   if (!keys.length) return [];
   const others = all ? keys : except !== undefined ? keys.filter((k) => k !== `${KEPT_WORK_PREFIX}${except}`) : [];
   const rest = keys.filter((k) => !others.includes(k));
   const values = rest.length ? await local.get(rest) : {};
-  const gone = [...others, ...rest.filter((k) => !keptFresh(values[k], now))];
+  const gone = [...others, ...rest.filter((k) => !keptFresh(values[k], now) || (before !== undefined && !(values[k].at > before)))];
   if (gone.length) await local.remove(gone);
   return gone;
 }

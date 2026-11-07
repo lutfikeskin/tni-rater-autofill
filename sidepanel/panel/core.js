@@ -54,7 +54,29 @@ const keptWorkLocal = inExtension && globalThis.chrome?.storage?.local
       set: async (o) => { Object.assign(memory, o); }, remove: async (k) => { for (const x of [].concat(k)) delete memory[x]; } };
 // Lets go of what is kept past its day, and with `except` or `all` the other intakes' (pruneKeptWork).
 // A failure leaves them for the next time.
-const forgetKeptWork = (options = {}) => pruneKeptWork(keptWorkLocal, options).catch(() => []);
+// Returns what went, or null when the storage refused.
+const forgetKeptWork = (options = {}) => pruneKeptWork(keptWorkLocal, options).catch(() => null);
+// Clear this client: all of it goes (as kept up to `before`, now). One that fails is remembered, in
+// memory and in local storage where it can be (KEPT_CLEAR_KEY), and tried again (keptWorkCleared)
+// for what was kept up to the first failure only, so a correction made since stays. False on failure.
+const KEPT_CLEAR_KEY = 'keptWorkClear';
+let keptClearAt = null;
+async function clearKeptWork(before = Date.now()) {
+  if (await forgetKeptWork({ before })) {
+    keptClearAt = null;
+    await keptWorkLocal.remove([KEPT_CLEAR_KEY]).catch(() => {});
+    return true;
+  }
+  keptClearAt = keptClearAt ?? before;
+  await keptWorkLocal.set({ [KEPT_CLEAR_KEY]: keptClearAt }).catch(() => {});
+  return false;
+}
+// Before anything kept is read back, and as the panel opens: a Clear that failed is tried again.
+// False while it still fails (nothing kept may come back then).
+async function keptWorkCleared() {
+  const at = keptClearAt ?? (await keptWorkLocal.get(KEPT_CLEAR_KEY).catch(() => ({})))?.[KEPT_CLEAR_KEY];
+  return !Number.isFinite(at) || clearKeptWork(at);
+}
 // Tab ids can be reused after Chrome restarts. Local edit/helper records belong to the
 // extension's current browser session, whose nonce survives panel reloads in storage.session.
 const TAB_RECORDS_SESSION_KEY = 'tabRecordsSession';
@@ -960,4 +982,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, logCrash, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, forgetKeptWork, keepReport, keptWorkLocal, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };
+export { $, logCrash, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, clearKeptWork, discardAiSuggestions, doneRestored, forgetKeptReports, forgetKeptWork, keepReport, keptWorkCleared, keptWorkLocal, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };

@@ -59,6 +59,16 @@ test('pruned: past its day, and every other intake\'s for a new client, all of t
   assert.deepEqual(Object.keys(store), ['usageLog']);
 });
 
+// #436 review: a Clear that failed is tried again later, for what was kept before it only (`before`):
+// a correction made since, for the next client, stays.
+test('a Clear tried again deletes what was kept before it, nothing kept since', async () => {
+  const now = Date.now();
+  const store = { [`${KEPT_WORK_PREFIX}a`]: { at: now - 5000, edits: [], checks: [] }, [`${KEPT_WORK_PREFIX}b`]: { at: now - 10, edits: [], checks: [] } };
+  const local = { getKeys: async () => Object.keys(store), get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in store).map((x) => [x, store[x]])), remove: async (k) => { for (const x of k) delete store[x]; } };
+  assert.deepEqual(await pruneKeptWork(local, { now, before: now - 1000 }), [`${KEPT_WORK_PREFIX}a`]);
+  assert.deepEqual(Object.keys(store), [`${KEPT_WORK_PREFIX}b`]);
+});
+
 test('Chrome starting deletes what is past its day, panel open or not', () => {
   const background = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
   assert.match(background, /import \{ pruneKeptWork \} from '\.\/src\/kept-work\.js';/);
