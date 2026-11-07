@@ -815,12 +815,12 @@ test('learning reviews a rule by the corrections of the current rules only, clea
   const review = (opts) => learn(events, { carriers: CARRIERS, minIntakes: 5, ...opts }).suggestions.review.find((s) => s.q === '2B9D');
   assert.equal(learn(events, { carriers: CARRIERS }).rules, 'bbbbbbbbbbbb', 'the newest fills\' rules');
   assert.equal(review(), undefined, 'fixed: no correction under today\'s rules');
-  assert.deepEqual([review({ rules: 'aaaaaaaaaaaa' }).corrected, review({ rules: 'aaaaaaaaaaaa' }).filled, review({ rules: 'aaaaaaaaaaaa' }).earlier], [6, 10, { filled: 5, corrected: 0 }]);
+  assert.deepEqual([review({ rules: 'aaaaaaaaaaaa' }).corrected, review({ rules: 'aaaaaaaaaaaa' }).filled, review({ rules: 'aaaaaaaaaaaa' }).otherRules], [6, 10, { filled: 5, corrected: 0 }]);
   assert.equal(review({ rules: null }).filled, 15, 'null: every build');
-  // A fill whose run the log doesn't hold: its rules aren't known, never "earlier" (CodeRabbit on PR #373).
+  // A fill whose run the log doesn't hold: its rules aren't known, never "other rules" (CodeRabbit on PR #373).
   const unknown = [...events, ...runs(week(1), 'aaaaaaaaaaaa', 'u').filter((e) => e.type !== 'fill_run')];
   const withUnknown = learn(unknown, { carriers: CARRIERS, minIntakes: 5, rules: 'aaaaaaaaaaaa' }).suggestions.review.find((s) => s.q === '2B9D');
-  assert.deepEqual([withUnknown.earlier, withUnknown.unknownRules], [{ filled: 5, corrected: 0 }, { filled: 1, corrected: 1 }]);
+  assert.deepEqual([withUnknown.otherRules, withUnknown.unknownRules], [{ filled: 5, corrected: 0 }, { filled: 1, corrected: 1 }]);
   // The newest fill by time, whatever its offset: 22:00Z is before 23:30Z.
   const at2 = (t, rules) => ({ id: rules, t, type: 'fill_run', carrier: 'progressive', page: 'AddVehicle', rules });
   assert.equal(learn([at2('2026-10-06T00:00:00+02:00', 'xxxxxxxxxxxx'), at2('2026-10-05T23:30:00Z', 'yyyyyyyyyyyy')]).rules, 'yyyyyyyyyyyy');

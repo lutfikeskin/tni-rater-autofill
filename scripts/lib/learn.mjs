@@ -326,7 +326,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9, 
         const counts = (list) => ({ filled: list.length, corrected: list.filter((o) => o.corrected).length });
         const others = all.filter((o) => !filled.includes(o));
         suggestions.review.push({ ...base, ...support(filled), filled: filled.length, corrected: corrected.length, rate: corrected.length / filled.length, changes: share(changes, corrected.length),
-          earlier: counts(others.filter((o) => o.rules)), unknownRules: counts(others.filter((o) => !o.rules)) });
+          otherRules: counts(others.filter((o) => o.rules)), unknownRules: counts(others.filter((o) => !o.rules)) });
       }
       continue;
     }
