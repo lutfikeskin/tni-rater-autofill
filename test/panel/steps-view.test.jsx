@@ -90,6 +90,19 @@ test('the dock shows dockFor\'s word, its one button and its alternative, with t
   expect(shown(container)).toEqual([]);
 });
 
+// Audit 2026-11-07, FLOW-13: automatic filling paused on the tab in front (renderDock's `paused`) is
+// said under the dock's word, as a status line, on whatever page the tab is on.
+test('the dock says when automatic filling is paused on the tab, and stops saying it once lifted', () => {
+  const { container } = render(<Dock act={acts().act} />);
+  const word = { phase: 'ready', eyebrow: 'Next', title: 'Fill the Vehicles page', sub: 'Clicks Continue once nothing is left for you.', button: 'fill', label: 'Fill this page', hidden: false, report: '', busy: false };
+  act(() => { state.dock = { ...word, paused: 'Automatic filling is paused on this tab. Your next Fill turns it back on.' }; });
+  const line = $(container, 'dock-paused');
+  expect([line.hidden, line.getAttribute('role'), line.textContent]).toEqual([false, 'status', 'Automatic filling is paused on this tab. Your next Fill turns it back on.']);
+  expect($(container, 'dock-sub').textContent).toBe('Clicks Continue once nothing is left for you.');
+  act(() => { state.dock = { ...word, paused: '' }; });
+  expect(line.hidden).toBe(true);
+});
+
 // From the safety test 'a page with nothing to fill and nothing left offers Continue, a fill that
 // replaces nothing' (renderDock set #fill's data-go; its listener read it) and the one holding Fill
 // while the quote's state differs: what Fill and the alternative ask the panel with.

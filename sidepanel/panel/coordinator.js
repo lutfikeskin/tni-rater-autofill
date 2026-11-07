@@ -1369,11 +1369,25 @@ function dockFor() {
 
 // What the dock says now (state.dock, drawn by steps-view.jsx): dockFor's word, hidden while Settings
 // is open, with the fill it is about (`report`: none while one runs) and whether a fill runs, which
-// holds its Fill (`busy`). The quote's tab in the tab strip and its toolbar badge follow it (markTab).
+// holds its Fill (`busy`), and `paused` (pausedSaid). The quote's tab in the tab strip and its toolbar
+// badge follow it (markTab).
 function renderDock() {
   const d = dockFor();
-  state.dock = { ...d, hidden: state.settingsOpen, report: state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '', busy: !!state.filling };
+  state.dock = { ...d, hidden: state.settingsOpen, report: state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '', busy: !!state.filling, paused: pausedSaid(d) };
   markTab(d);
+}
+
+// Automatic filling paused on the tab in front (`autoPaused`: a Stop, an agent edit during a fill, a
+// fill that failed or halted, a Continue that didn't take): no page fills as it opens and no
+// follow-up runs there until the agent's own Fill, which lifts it (fillPage). Said under the dock's
+// word on every page of that tab, not only the one it paused on (audit 2026-11-07, FLOW-13: on the
+// next page the dock read as if nothing were different, and agents said "it stopped filling").
+// Only where one of those switches is on, and not while a fill runs or where nothing is filled.
+const PAUSE_QUIET = new Set(['start', 'off', 'portal', 'stopped', 'finished', 'filling', 'elsewhere']);
+function pausedSaid(d) {
+  if (!state.intake || !state.tab?.carrier || !state.autoPaused || state.filling || PAUSE_QUIET.has(d.phase)) return '';
+  if (!switchOn('autoPages', 'auto-pages') && !switchOn('autoFollowUps', 'auto-followups')) return '';
+  return 'Automatic filling is paused on this tab. Your next Fill turns it back on.';
 }
 
 // The intake's current insurance is with the carrier the tab is on (util.js sameCarrier: GEICO or

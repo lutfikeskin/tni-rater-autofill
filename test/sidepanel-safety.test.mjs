@@ -8194,10 +8194,10 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   const state = { settingsOpen: false, filling: false, reportFor: { at: 1700 } };
   const word = { phase: 'ready-continue', title: 'Ready for Continue', button: 'fill', label: 'Continue', go: 'continue', alt: 'fill-again' };
   const marked = [];
-  const context = { state, dockFor: () => word, markTab: (d) => marked.push(d) };
+  const context = { state, dockFor: () => word, markTab: (d) => marked.push(d), pausedSaid: () => '' };
   vm.runInNewContext(extractFunction('renderDock'), context);
   context.renderDock();
-  assert.deepEqual({ ...state.dock }, { ...word, hidden: false, report: '1700', busy: false });
+  assert.deepEqual({ ...state.dock }, { ...word, hidden: false, report: '1700', busy: false, paused: '' });
   // The quote's tab in the tab strip follows the same word (tab-mark.js, test/tab-mark.test.mjs).
   assert.deepEqual(marked, [word]);
   // While a fill runs it is about no report and holds Fill; Settings open hides it.
@@ -8205,6 +8205,34 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   context.dockFor = () => ({ phase: 'filling', title: 'Reading the page…', button: 'fill-stop', label: 'Stop' });
   context.renderDock();
   assert.deepEqual([state.dock.report, state.dock.busy, state.dock.hidden], ['', true, true]);
+});
+
+// Audit 2026-11-07, FLOW-13: after a Stop or an error, every later page on that tab stopped filling
+// itself until the agent's own Fill, and on the next page the dock read as if nothing were different.
+test('automatic filling paused on the tab in front is said under the dock\'s word, on every page, until a Fill lifts it', () => {
+  const state = { intake: {}, tab: { id: 7, carrier: { id: 'progressive' } }, autoPaused: true, filling: false, switches: { autoPages: true, autoFollowUps: true } };
+  const context = { state, $: () => null };
+  vm.runInNewContext(['pausedSaid', 'switchOn'].map(extractFunction).join('\n') + `\n${SIDEPANEL.match(/const PAUSE_QUIET = [^\n]+/)[0]}`, context);
+  const said = 'Automatic filling is paused on this tab. Your next Fill turns it back on.';
+  for (const phase of ['ready', 'needs', 'ready-continue', 'check', 'stopped-fill', 'error', 'yours']) assert.equal(context.pausedSaid({ phase }), said, phase);
+  // Not where nothing fills, nor while a fill runs.
+  for (const phase of ['start', 'off', 'portal', 'stopped', 'finished', 'filling', 'elsewhere']) assert.equal(context.pausedSaid({ phase }), '', phase);
+  state.filling = true;
+  assert.equal(context.pausedSaid({ phase: 'ready' }), '');
+  state.filling = false;
+  // Nothing to pause with both switches off; nothing said once a Fill lifted it, or off the raters.
+  state.switches = { autoPages: false, autoFollowUps: false };
+  assert.equal(context.pausedSaid({ phase: 'ready' }), '');
+  state.switches = { autoPages: false, autoFollowUps: true };
+  assert.equal(context.pausedSaid({ phase: 'ready' }), said);
+  state.autoPaused = false;
+  assert.equal(context.pausedSaid({ phase: 'ready' }), '');
+  state.autoPaused = true;
+  state.tab = { id: 7, carrier: null };
+  assert.equal(context.pausedSaid({ phase: 'ready' }), '');
+  // The dock carries it (renderDock), and the agent's own Fill lifts it (fillPage).
+  assert.match(extractFunction('renderDock'), /busy: !!state\.filling, paused: pausedSaid\(d\) \};/);
+  assert.match(extractFunction('fillPage'), /if \(!auto\) state\.autoPaused = false;/);
 });
 
 // W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
