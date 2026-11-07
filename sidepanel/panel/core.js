@@ -736,24 +736,21 @@ const STORAGE_SAID = 'StorageSaid';
 // The intakes whose New quote may have removed some of the last quote's records and not all
 // (newQuote): the quote on screen lost them, so no fill runs for that intake, after a Clear, another
 // intake or the panel opening again too, until a New quote for it finishes (the maintainer,
-// 2026-11-07). Kept in chrome.storage.session (`store`), and in this panel's memory. New quote holds
-// its intake before it removes anything and doesn't start if that can't be saved, so a hold is never
-// only in memory; it lets go once the records are gone. A list that can't be read holds every intake
-// (fail closed), and is never written from a guess (CodeRabbit on PR #395).
-const FILLS_HELD_KEY = 'fillsHeld';
+// 2026-11-07). Kept in chrome.storage.session (`store`), one key per intake (`fillsHeld:<intake>`),
+// so two panels holding different intakes never write over each other's hold, and in this panel's
+// memory. New quote holds its intake before it removes anything and doesn't start if that can't be
+// saved, so a hold is never only in memory; it lets go once the records are gone. A hold that can't
+// be read holds its intake (fail closed) (CodeRabbit on PR #395).
+const FILLS_HELD_PREFIX = 'fillsHeld:';
 const FILLS_HELD_NOTE = 'The new quote didn’t start: this computer couldn’t let go of the last quote’s records. Nothing fills until it does: press New quote again.';
 const heldIntakes = new Set();
-// The stored list; a read that fails throws.
-async function storedHeld() {
-  const held = await store.get(FILLS_HELD_KEY);
-  return Array.isArray(held) ? held : [];
-}
+const heldKey = (intakeId) => `${FILLS_HELD_PREFIX}${intakeId}`;
 // Held, saved: true; false when it couldn't be saved (said, and logged).
 async function holdFills(intakeId) {
   if (!intakeId) return true;
   heldIntakes.add(intakeId);
   try {
-    await store.set(FILLS_HELD_KEY, [...new Set([...(await storedHeld()), intakeId])]);
+    await store.set(heldKey(intakeId), true);
     return true;
   } catch (err) {
     persistFailed('keep that this quote waits for New quote', err);
@@ -764,7 +761,7 @@ async function releaseFills(intakeId) {
   if (!intakeId) return;
   heldIntakes.delete(intakeId);
   try {
-    await store.set(FILLS_HELD_KEY, (await storedHeld()).filter((id) => id !== intakeId));
+    await store.remove(heldKey(intakeId));
   } catch (err) {
     persistFailed('forget that this quote waited for New quote', err);
   }
@@ -773,7 +770,7 @@ async function fillsHeld(intakeId) {
   if (!intakeId) return false;
   if (heldIntakes.has(intakeId)) return true;
   try {
-    return (await storedHeld()).includes(intakeId);
+    return (await store.get(heldKey(intakeId))) === true;
   } catch (err) {
     logCrash(err);
     return true;

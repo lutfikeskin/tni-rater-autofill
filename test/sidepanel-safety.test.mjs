@@ -8921,47 +8921,93 @@ test('a failed New quote holds its intake\'s fills through any load of it but Ne
   assert.ok(init.indexOf('await restoreHold();') > init.indexOf("state.intake = (await store.get('intake'))"), 'read once the saved intake is');
 });
 
-// The held intakes (core.js), as a panel and a panel opened again (its memory new) read them: kept
-// in the session store; a hold that can't be saved says so (and New quote doesn't start); a list
-// that can't be read holds every intake and is never written from a guess (CodeRabbit on PR #395).
-test('the intakes whose fills are held are kept in the session store; a list that can\'t be read holds them all', async () => {
+// The held intakes (core.js's whole section, as it is), as a panel, two panels and a panel opened
+// again (its memory new) read them: kept in the session store; a hold that can't be saved says so
+// (and New quote doesn't start); one that can't be read holds its intake; two panels holding two
+// intakes at once each keep theirs (CodeRabbit on PR #395).
+const HELD_SECTION = (() => {
+  const core = fs.readFileSync(new URL('../sidepanel/panel/core.js', import.meta.url), 'utf8');
+  return core.slice(core.indexOf('const FILLS_HELD'), core.indexOf('// A Clear\'s or New quote\'s catch'));
+})();
+function heldPanel(store, failed = []) {
+  const context = { store, Set, Array, logCrash: () => {}, persistFailed: (what) => failed.push(what), state: { intake: null } };
+  vm.createContext(context);
+  vm.runInContext(`${HELD_SECTION}\n${extractFunction('restoreHold')}\nObject.assign(globalThis, { holdFills, releaseFills, fillsHeld, restoreHold, FILLS_HELD_NOTE });`, context);
+  return context;
+}
+// A session store as chrome.storage.session answers: each call settles later, so two panels' calls
+// interleave; `broken` fails writes, `unreadable` fails reads.
+function sessionStore() {
   const kept = {};
+  const later = () => new Promise((resolve) => setTimeout(resolve, 1));
+  const store = { kept,
+    get: async (k) => { await later(); if (store.unreadable) throw new Error('storage read failed'); return kept[k]; },
+    set: async (k, v) => { await later(); if (store.broken) throw new Error('QUOTA_BYTES quota exceeded'); kept[k] = v; },
+    remove: async (k) => { await later(); if (store.broken) throw new Error('storage write failed'); delete kept[k]; } };
+  return store;
+}
+const openedOn = async (store, intakeId) => { const p = heldPanel(store); p.state.intake = { intakeId }; await p.restoreHold(); return [p.state.newQuoteFailed, p.state.clientNote ?? null]; };
+
+test('the intakes whose fills are held are kept in the session store; one that can\'t be read is held', async () => {
+  const store = sessionStore();
   const failed = [];
-  const store = { get: async (k) => { if (store.unreadable) throw new Error('storage read failed'); return kept[k]; },
-    set: async (k, v) => { if (store.broken) throw new Error('QUOTA_BYTES quota exceeded'); kept[k] = v; } };
-  // A panel: core.js's held intakes, and sidepanel.js's restoreHold on opening.
-  const panel = () => {
-    const context = { store, Set, Array, logCrash: () => {}, persistFailed: (what) => failed.push(what), state: { intake: null }, FILLS_HELD_NOTE: 'held' };
-    vm.createContext(context);
-    vm.runInContext(`const FILLS_HELD_KEY = 'fillsHeld'; const heldIntakes = new Set();\n${['storedHeld', 'holdFills', 'releaseFills', 'fillsHeld', 'restoreHold'].map(extractFunction).join('\n')}`, context);
-    return context;
-  };
-  const opened = async (intakeId) => { const p = panel(); p.state.intake = { intakeId }; await p.restoreHold(); return [p.state.newQuoteFailed, p.state.clientNote ?? null]; };
-  let p = panel();
+  let p = heldPanel(store, failed);
   assert.equal(await p.holdFills('a'), true);
-  assert.deepEqual([...kept.fillsHeld], ['a']);
   assert.deepEqual([await p.fillsHeld('a'), await p.fillsHeld('b'), await p.fillsHeld(undefined)], [true, false, false]);
   // Opened again: held for that intake, said; not for another.
-  assert.deepEqual(await opened('a'), [true, 'held']);
-  assert.deepEqual(await opened('b'), [false, null]);
+  assert.deepEqual(await openedOn(store, 'a'), [true, p.FILLS_HELD_NOTE]);
+  assert.deepEqual(await openedOn(store, 'b'), [false, null]);
   // A hold that can't be saved: false, said; held in this panel's memory only (New quote doesn't start).
   store.broken = true;
   assert.equal(await p.holdFills('b'), false);
   assert.deepEqual(failed, ['keep that this quote waits for New quote'], 'said');
   assert.equal(await p.fillsHeld('b'), true, 'held in memory');
+  // A release that can't be saved: still held when opened again.
+  await p.releaseFills('a');
   store.broken = false;
-  // A list that can't be read: every intake held, also on opening; nothing written from a guess.
+  assert.deepEqual(await openedOn(store, 'a'), [true, p.FILLS_HELD_NOTE], 'a release not saved lets nothing go');
+  // A hold that can't be read: held, also on opening.
   store.unreadable = true;
-  assert.deepEqual(await opened('b'), [true, 'held'], 'held when it can\'t be read');
-  assert.equal(await p.holdFills('c'), false);
-  await p.releaseFills('a');
+  assert.deepEqual(await openedOn(store, 'c'), [true, p.FILLS_HELD_NOTE], 'held when it can\'t be read');
   store.unreadable = false;
-  assert.deepEqual([...kept.fillsHeld], ['a'], 'a and nothing lost or guessed');
   // Released, saved: not held, also on opening.
-  p = panel();
+  p = heldPanel(store);
   await p.releaseFills('a');
-  assert.deepEqual([...kept.fillsHeld], []);
-  assert.deepEqual(await opened('a'), [false, null]);
+  assert.deepEqual(await openedOn(store, 'a'), [false, null]);
+});
+
+test('two panels holding two intakes at once each keep their hold, and letting one go keeps the other', async () => {
+  const store = sessionStore();
+  const [one, two] = [heldPanel(store), heldPanel(store)];
+  assert.deepEqual(await Promise.all([one.holdFills('a'), two.holdFills('b')]), [true, true]);
+  // The New quote for a then fails: its panel, opened again, is still held; so is b's.
+  assert.deepEqual(await openedOn(store, 'a'), [true, one.FILLS_HELD_NOTE], 'a, held by the first panel');
+  assert.deepEqual(await openedOn(store, 'b'), [true, two.FILLS_HELD_NOTE], 'b, held by the second');
+  // b's New quote finishes while a holds again: a stays held.
+  await Promise.all([one.holdFills('a'), two.releaseFills('b')]);
+  assert.deepEqual([await openedOn(store, 'a'), await openedOn(store, 'b')], [[true, one.FILLS_HELD_NOTE], [false, null]]);
+});
+
+// CodeRabbit on PR #395: a New quote whose hold can't be saved, then the panel opened again: the
+// last quote's records (edit keys, helper actions, unit forms) are all still there, so every
+// protection they give still holds, and nothing is held that needn't be.
+test('a New quote whose hold can\'t be saved removes nothing, and the panel opened again keeps every protection', async () => {
+  const store = sessionStore();
+  const records = { agentKeys: ['ref:Name'], doneActions: ['add-vehicle:1'], unitForms: { vehicle: 1 } };
+  const panel = heldPanel(store);
+  const state = { intake: { fileName: 'client.pdf', intakeId: 'abc' }, filling: false, tab: { id: 4, carrier: { id: 'geico' } }, tabSessions: new Map() };
+  const notes = [];
+  const context = { state, inExtension: true, File: class {}, intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
+    runKit: async () => { delete records.marks; return []; }, clearAgentKeys: async () => { for (const k of Object.keys(records)) delete records[k]; },
+    loadFile: async () => {}, clientNote: (t) => notes.push(t), render: () => {},
+    holdFills: panel.holdFills, releaseFills: panel.releaseFills, FILLS_HELD_NOTE: panel.FILLS_HELD_NOTE };
+  vm.runInNewContext(extractFunction('newQuote'), context);
+  store.broken = true;
+  await context.newQuote();
+  store.broken = false;
+  assert.deepEqual(records, { agentKeys: ['ref:Name'], doneActions: ['add-vehicle:1'], unitForms: { vehicle: 1 } }, 'nothing removed');
+  assert.match(notes.at(-1), /Nothing was changed: try New quote again/);
+  assert.deepEqual(await openedOn(store, 'abc'), [false, null], 'opened again: the records protect it, nothing held');
 });
 
 test('a fill that only gets its tab\'s word while the intake waits is stopped then; one that never ends doesn\'t hold the intake', async () => {
