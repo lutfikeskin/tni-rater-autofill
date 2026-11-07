@@ -369,7 +369,7 @@ test("without a key of the agent's own, the request goes to the server with its 
 // large", or 413 with the connection cut over twice that) before OpenAI or the daily count.
 const oldServer = (calls) => async (url, init) => {
   calls.push(init.body.length);
-  if (init.body.length > 2 * OLD_SERVER_CHARS) throw new TypeError('connection reset');
+  if (new TextEncoder().encode(init.body).length > 2 * OLD_SERVER_CHARS) throw new TypeError('connection reset');
   if (init.body.length > OLD_SERVER_CHARS) return { ok: false, status: 400, json: async () => ({ error: 'request too large' }) };
   const body = JSON.parse(init.body), state = JSON.parse(body.input[0].content);
   return { ok: true, status: 200, json: async () => (state.proposed ? groupCheck(body) : groupAnswer(body)) };
@@ -389,6 +389,13 @@ test("a server from before the larger bound refuses a request over its own: that
   await assert.rejects(callModel({ proxy, body: big, fetchImpl: other }), e => !(e instanceof OldServerLimit) && /could not review this page context/.test(e.message));
   await assert.rejects(callModel({ proxy, body: small, fetchImpl: async () => ({ ok: false, status: 413, json: async () => ({}) }) }), e => !(e instanceof OldServerLimit));
   await assert.rejects(callModel({ apiKey: 'own', body: big, fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: 'request too large' }) }) }), e => !(e instanceof OldServerLimit));
+  // A cut connection is the old server's only above its body limit (bytes, twice its bound): below
+  // that it is a network failure, as before (CodeRabbit on #357). Three-byte characters count three.
+  const reset = async () => { throw new TypeError('connection reset'); };
+  await assert.rejects(callModel({ proxy, body: big, fetchImpl: reset }), e => !(e instanceof OldServerLimit) && /Cannot reach Luna/.test(e.message));
+  const wide = buildRequest(questions(1).map(x => ({ ...x, label: '€'.repeat(OLD_SERVER_CHARS) })), context);
+  assert.ok(JSON.stringify(wide).length < 2 * OLD_SERVER_CHARS && new TextEncoder().encode(JSON.stringify(wide)).length > 2 * OLD_SERVER_CHARS);
+  await assert.rejects(callModel({ proxy, body: wide, fetchImpl: reset }), OldServerLimit);
 });
 
 test('against a server from before the larger bound, the page is planned again at its bound and every question is still reviewed', async () => {

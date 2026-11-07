@@ -565,7 +565,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) return done(415, { error: 'send application/json' });
     const luna = url.pathname === '/v1/luna';
     if (luna && !openaiKey) return done(501, { error: 'Luna is not set up on this server' });
-    const maxBody = luna ? LUNA_MAX_CHARS * 2 : MAX_BODY;
+    // In bytes: UTF-8 takes up to 3 per character of the check's count (JSON's length).
+    const maxBody = luna ? LUNA_MAX_CHARS * 3 : MAX_BODY;
 
     let size = 0;
     const chunks = [];

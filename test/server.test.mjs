@@ -748,14 +748,20 @@ test('/v1/luna takes the largest request the panel may send', async () => {
   assert.equal(JSON.stringify(largest).length, MAX_REQUEST_CHARS);
   assert.equal(lunaRequestError(largest), null);
   assert.equal(lunaRequestError(over), 'request too large');
+  // In three-byte characters, the largest request is more bytes than twice the bound (CodeRabbit on #357).
+  const bare = { ...body, input: [{ role: 'user', content: '' }] };
+  const wide = { ...bare, input: [{ role: 'user', content: '€'.repeat(MAX_REQUEST_CHARS - JSON.stringify(bare).length) }] };
+  assert.equal(JSON.stringify(wide).length, MAX_REQUEST_CHARS);
+  assert.ok(Buffer.byteLength(JSON.stringify(wide)) > 2 * LUNA_MAX_CHARS);
   const sent = [];
   const fetchImpl = async (url, init) => { sent.push(init.body.length); return new Response('{"status":"completed"}', { status: 200 }); };
   await withServer({ dataDir: tmp(), openaiKey: 'sk-server', fetchImpl }, async ({ base }) => {
     const luna = (b) => fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
     assert.equal((await luna(largest)).status, 200);
+    assert.equal((await luna(wide)).status, 200);
     assert.equal((await luna(over)).status, 400);
   });
-  assert.deepEqual(sent, [MAX_REQUEST_CHARS]);
+  assert.deepEqual(sent, [MAX_REQUEST_CHARS, MAX_REQUEST_CHARS]);
 });
 
 // Review of PR 179: RATER_LUNA_DAILY_LIMIT=0 started the server with the default 3000 a day

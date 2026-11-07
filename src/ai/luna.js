@@ -251,11 +251,13 @@ export async function callModel({ apiKey, proxy = null, body, fetchImpl = global
   const via = apiKey ? { url: API_URL, token: apiKey } : proxy?.url ? proxy : null;
   if (!via) throw new AssistError('Luna needs an OpenAI API key. Add it in Settings, under Assistant.');
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), timeoutMs);
-  const overOldServer = !apiKey && JSON.stringify(body).length > OLD_SERVER_CHARS;
+  const wire = JSON.stringify(body), overOldServer = !apiKey && wire.length > OLD_SERVER_CHARS;
+  // Only over the old server's body limit (twice its bound, in bytes) can it cut the connection.
+  const overOldBody = overOldServer && new TextEncoder().encode(wire).length > 2 * OLD_SERVER_CHARS;
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
       const res = await fetchImpl(via.url, { method: 'POST', headers: { 'content-type': 'application/json', ...(via.token ? { authorization: `Bearer ${via.token}` } : {}) },
-        body: JSON.stringify(body), signal: abort.signal });
+        body: wire, signal: abort.signal });
       if ([429, 500, 502, 503].includes(res.status) && attempt < 2) {
         const header = res.headers?.get('retry-after'), seconds = header == null ? NaN : Number(header);
         const delay = Number.isFinite(seconds) ? seconds * 1000 : 500 * 2 ** attempt;
@@ -283,7 +285,7 @@ export async function callModel({ apiKey, proxy = null, body, fetchImpl = global
     }
   } catch (error) {
     if (error instanceof AssistError) throw error;
-    if (overOldServer && !abort.signal.aborted) throw new OldServerLimit('Cannot reach Luna or read its response. Nothing was applied.');
+    if (overOldBody && !abort.signal.aborted) throw new OldServerLimit('Cannot reach Luna or read its response. Nothing was applied.');
     throw new AssistError(abort.signal.aborted ? 'Luna took too long. Nothing was applied.' : 'Cannot reach Luna or read its response. Nothing was applied.');
   } finally { clearTimeout(timer); }
 }
