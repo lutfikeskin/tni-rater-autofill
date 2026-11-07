@@ -315,12 +315,21 @@ export function createLocator(kit) {
     return out;
   }
 
+  // What a choice reads as: the answer, then its aliases (`choiceAliases`, in order). A yes/no
+  // answer is Yes or No (Y, true / N, false: an option's value) and its aliases, nothing else.
   function candidates(step) {
     const v = step.value;
-    if (step.kind === 'bool') return v ? ['yes', 'y', 'true'] : ['no', 'n', 'false'];
+    const aliases = (step.choiceAliases ?? []).map(squash);
+    if (step.kind === 'bool') return [...(v ? ['yes', 'y', 'true'] : ['no', 'n', 'false']), ...aliases];
     if (step.kind === 'state') return [squash(v), STATE_NAMES[String(v).toUpperCase()]].filter(Boolean);
-    return [v, ...(step.choiceAliases ?? [])].map(squash);
+    return [squash(v), ...aliases];
   }
+
+  // Whole words only: an option begins with `c`'s words ("Box Truck (Straight)" with "box truck"),
+  // or has them in a row; never part of a word ("no" does not begin "None" or "Not sure", "van"
+  // is not in "Caravan"). Both texts squashed (words joined by one space).
+  const beginsWith = (text, c) => text === c || text.startsWith(`${c} `);
+  const hasWords = (text, c) => ` ${text} `.includes(` ${c} `);
 
   const businessNameKey = (text) => squash(String(text).replace(/\((?:US)?DOT[^)]*\)/ig, ''));
 
@@ -362,7 +371,14 @@ export function createLocator(kit) {
   // `path`, from that question's among `pairs` (a question off the page offers none); none holding: null.
   const holdingCondition = (step, control, pairs) => step.onlyIf?.find((x) => offersLimit(x.path ? pairs.find((p) => p.step.path === x.path)?.control : control) === x.limit) ?? null;
 
-  function matchOption(options, step) {
+  // Which option is the answer, and how it was matched (`how`): `exact` (the answer or an alias,
+  // as an option's text or value), `start` (a `matchStart` rule's option beginning with it),
+  // `amount`, `band`, one of the kinds that pick by rule (`pick-not`, `selected-option`,
+  // `first-option`), or a fallback the engine isn't sure of: `prefix` (the one option beginning
+  // with the answer's words) or `contains` (the one having them). A fallback is still the answer
+  // written, and a check item for the agent (the maintainer, 2026-11-07). None: null.
+  function matchHow(options, step) {
+    const got = (option, how) => (option ? { option, how } : null);
     const usable = usableOptions(options);
     // "Any option except …" (e.g. the registered USDOT address instead of "Enter a different
     // address"), preferring one that matches `prefer` when there are several.
@@ -371,15 +387,15 @@ export function createLocator(kit) {
       if (step.registeredName && step.businessNames?.length) {
         // One registered name listed twice ("ACME LLC", "Acme, LLC") is still one match.
         const matches = uniqueBusinessNames(allowed.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name))));
-        return matches.length === 1 ? matches[0] : null;
+        return matches.length === 1 ? got(matches[0], 'pick-not') : null;
       }
-      return (step.value.prefer && allowed.find((o) => new RegExp(step.value.prefer, 'i').test(o.text))) || allowed[0]
-        || (step.value.fallback && usable.find((o) => new RegExp(step.value.fallback, 'i').test(o.text))) || null;
+      return got((step.value.prefer && allowed.find((o) => new RegExp(step.value.prefer, 'i').test(o.text))) || allowed[0]
+        || (step.value.fallback && usable.find((o) => new RegExp(step.value.fallback, 'i').test(o.text))) || null, 'pick-not');
     }
-    if (step.kind === 'selected-option') return usable.find((o) => /^selected\b/i.test(o.text)) ?? null;
+    if (step.kind === 'selected-option') return got(usable.find((o) => /^selected\b/i.test(o.text)), 'selected-option');
     // Always the page's first choice (e.g. the first offered home address).
     // Unless that first choice is no answer (`firstNot`): then none, and the question is the agent's.
-    if (step.kind === 'first-option') return step.firstNot && usable[0] && new RegExp(step.firstNot, 'i').test(usable[0].text) ? null : usable[0] ?? null;
+    if (step.kind === 'first-option') return step.firstNot && usable[0] && new RegExp(step.firstNot, 'i').test(usable[0].text) ? null : got(usable[0], 'first-option');
     const cands = candidates(step);
     // `matchStart`: the answer, else each alias in turn, as an option reading so or beginning so
     // (Progressive's business type lists: "General Freight Trucking Haul general goods…"); never one
@@ -388,8 +404,8 @@ export function createLocator(kit) {
       for (const c of cands.filter(Boolean)) {
         const exact = usable.find((o) => squash(o.text) === c || squash(o.value) === c);
         const starts = usable.filter((o) => squash(o.text).startsWith(c));
-        if (exact) return exact;
-        if (starts.length === 1) return starts[0];
+        if (exact) return got(exact, 'exact');
+        if (starts.length === 1) return got(starts[0], 'start');
         // Several begin with it: the answer is listed, but which one is the agent's; never the
         // next alias in its place (Claude review of PR #220).
         if (starts.length > 1) return null;
@@ -398,18 +414,21 @@ export function createLocator(kit) {
     }
     for (const c of cands) {
       const hit = usable.find((o) => squash(o.text) === c || squash(o.value) === c);
-      if (hit) return hit;
+      if (hit) return got(hit, 'exact');
     }
+    // A yes/no answer is only ever Yes or No (or an alias): never an option beginning with the
+    // word ("No" is not "None", "Not sure" or "Not applicable").
+    if (step.kind === 'bool') return null;
     // Dollar amounts: "$1M CSL" matches "$1 million CSL"; "$100000/$1000" matches
     // "$100k with a $1,000 Deductible".
-    if (step.kind !== 'bool' && step.kind !== 'state') {
+    if (step.kind !== 'state') {
       const want = typeof step.value === 'number' ? [step.value] : moneyTokens(step.value);
       if (want.length) {
         const hits = usable.filter((o) => { const t = moneyTokens(o.text); return t.length === want.length && t.every((n, i) => n === want[i]); });
-        if (hits.length === 1) return hits[0];
+        if (hits.length === 1) return got(hits[0], 'amount');
         if (hits.length > 1) {
           const csl = /csl|combined/.test(squash(step.value));
-          return hits.find((o) => /csl|combined/.test(squash(o.text)) === csl) ?? null;
+          return got(hits.find((o) => /csl|combined/.test(squash(o.text)) === csl), 'amount');
         }
       }
     }
@@ -420,28 +439,32 @@ export function createLocator(kit) {
       for (const o of usable) {
         const t = o.text.replace(/,/g, '');
         const range = t.match(/(\d+)\s*(?:-|–|to)\s*(\d+)/);
-        if (range && n >= Number(range[1]) && n <= Number(range[2])) return o;
+        if (range && n >= Number(range[1]) && n <= Number(range[2])) return got(o, 'band');
         const open = t.match(/(\d+)\s*\+|(?:over|more than|greater than)\s*(\d+)/i);
-        if (open && n > Number(open[1] ?? open[2]) - (open[1] ? 1 : 0)) return o;
+        if (open && n > Number(open[1] ?? open[2]) - (open[1] ? 1 : 0)) return got(o, 'band');
       }
       const single = usable
         .map((o) => ({ o, t: moneyTokens(o.text) }))
         .filter(({ o, t }) => t.length === 1 && !/(\d+)\s*\+|over|more than|greater than|-|–|\bto\b/i.test(o.text) && t[0] >= n)
         .sort((a, b) => a.t[0] - b.t[0]);
-      if (single.length) return single[0].o;
+      if (single.length) return got(single[0].o, 'band');
     }
     // A requested amount must match exactly; never turn $1,000 into $10,000 by substring.
-    if (step.kind !== 'bool' && moneyTokens(step.value).length) return null;
+    if (moneyTokens(step.value).length) return null;
+    // Fallbacks, word-wise: the one option beginning with the answer's (or an alias's) words, else
+    // the one having them.
     for (const c of cands.filter((x) => x.length >= 2)) {
-      const starts = usable.filter((o) => squash(o.text).startsWith(c));
-      if (starts.length === 1) return starts[0];
+      const starts = usable.filter((o) => beginsWith(squash(o.text), c));
+      if (starts.length === 1) return got(starts[0], 'prefix');
     }
     for (const c of cands.filter((x) => x.length >= 3)) {
-      const has = usable.filter((o) => squash(o.text).includes(c));
-      if (has.length === 1) return has[0];
+      const has = usable.filter((o) => hasWords(squash(o.text), c));
+      if (has.length === 1) return got(has[0], 'contains');
     }
     return null;
   }
 
-  return { assign, matchOption, holdingCondition, moneyTokens, businessNameKey, uniqueBusinessNames, heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName };
+  const matchOption = (options, step) => matchHow(options, step)?.option ?? null;
+
+  return { assign, matchOption, matchHow, holdingCondition, moneyTokens, businessNameKey, uniqueBusinessNames, heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName };
 }

@@ -61,6 +61,7 @@ export function summaryAccepted(step, controls) {
 export const {
   assign,
   matchOption,
+  matchHow,
   holdingCondition,
   moneyTokens,
   businessNameKey,
@@ -191,3 +192,32 @@ export function agreesWith(step, c) {
   const opt = matchOption(optionsOf(c), step);
   return !!opt && oneLine(opt.text) === oneLine(current ?? '');
 }
+
+/**
+ * The choice control c holds the answer only by a fallback the engine isn't sure of: the one option
+ * beginning with the answer's words (`prefix`) or having them (`contains`), none reading exactly so
+ * (nor as an alias). What it holds and how, for a check item; else null (an exact answer, another
+ * answer, or a text box). The maintainer, 2026-11-07: such an answer is written, and the agent checks it.
+ * @param {any} step
+ * @param {PageControl} c
+ * @returns {{ matched: 'prefix' | 'contains', shown: string } | null}
+ */
+export function looseMatch(step, c) {
+  const current = oneLine(selectedText(c) ?? '');
+  if (!current) return null;
+  // A type-ahead list's pick: the one result having the answer's words (applySearchSelect).
+  if (step.kind === 'search-select') return squash(current) !== squash(step.value) && agreesWith(step, c) ? { matched: 'contains', shown: current } : null;
+  if ((c.kind !== 'select' && c.kind !== 'radio') || /** @type {HTMLSelectElement} */ (c.el).multiple) return null;
+  const m = matchHow(optionsOf(c), step);
+  if (!m || (m.how !== 'prefix' && m.how !== 'contains') || oneLine(m.option.text) !== current) return null;
+  return { matched: m.how, shown: current };
+}
+
+/**
+ * A loose match's check note: the option chosen (or, `kept`, the one the page already had) and how it matched.
+ * @param {any} step
+ * @param {{ matched: 'prefix' | 'contains', shown: string }} loose
+ * @param {boolean} [kept]
+ * @returns {string}
+ */
+export const looseNote = (step, loose, kept = false) => `${step.name}: no option reads exactly "${step.value}", so ${kept ? `the page's "${loose.shown}" was kept` : `"${loose.shown}" was chosen`}, the only one ${loose.matched === 'prefix' ? 'beginning with' : 'containing'} ${step.choiceAliases?.length ? 'it or an alias' : 'it'}. Check it.`;

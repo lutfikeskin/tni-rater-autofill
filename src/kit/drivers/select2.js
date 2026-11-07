@@ -60,23 +60,46 @@ export function createSelect2Drivers(kit) {
     document.body.dispatchEvent(new (Mouse())('mousedown', { bubbles: true, button: 0 }));
   }
 
+  // A search-select's answer among texts (squashed): the one reading exactly `want`, else the one
+  // having its words (whole words: "Trucking" is in "Trucking - Hazmat", never "Truckings"); several
+  // or none is no confident match. The fill picks by it, and holds a pick to it.
+  const hasWords = (text, want) => ` ${text} `.includes(` ${want} `);
+  const searchHits = (texts, want) => {
+    const exact = texts.filter((t) => t === want);
+    return exact.length ? exact : texts.filter((t) => hasWords(t, want));
+  };
+
   // Type-ahead dropdowns the page fills from its server (AmWINS' classification): type
-  // `step.search`, and pick the one result containing `step.value`; no such result (or several)
-  // means no confident match, and the agent picks.
+  // `step.search`, and pick the one result reading `step.value`, else the one result having its
+  // words (a check item for the agent: looseMatch); no such result (or several) means no confident
+  // match, and the agent picks.
   async function applySearchSelect(step, c) {
     const found = await select2Search(c.el, step.search ?? step.value);
     if (found.reason) return { ok: false, reason: found.reason };
     const want = squash(step.value);
-    // The result that is exactly the wanted text wins over others that only contain it.
-    const exact = found.results.filter((n) => squash(n.textContent) === want);
-    const hits = exact.length ? exact : found.results.filter((n) => squash(n.textContent).includes(want));
+    const texts = found.results.map((n) => squash(n.textContent));
+    const picked = searchHits(texts, want);
+    const hits = found.results.filter((n, i) => picked.includes(texts[i]));
     if (hits.length !== 1) {
       closeSelect2(found.box);
       return { ok: false, reason: hits.length ? `${hits.length} results match "${step.value}"; pick the right one` : `no confident match for "${step.value}"; pick it yourself` };
     }
     press(hits[0]);
     await settle({ quietMs: 250, maxMs: 4000 });
-    return squash(selectedText(c) ?? '').includes(want) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
+    return searchAgrees(step, c) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
+  }
+
+  // The pick a search-select holds is its answer by the write's own rule (searchHits): it reads
+  // exactly so, or it has the answer's words and no option of its <select> reads exactly so. Which
+  // result was the only one having them was the write's to judge, among the live results: the
+  // <select> can keep stale options from an earlier search, which are no rivals (Claude review of
+  // PR #360).
+  function searchAgrees(step, c) {
+    const want = squash(step.value);
+    const current = squash(selectedText(c) ?? '');
+    if (!want || !current) return false;
+    if (current === want) return true;
+    return hasWords(current, want) && !optionsOf(c).some((o) => squash(o.text) === want);
   }
 
   // One option of a select2 list picked as the agent picks it: its text typed in the list's search
@@ -154,7 +177,7 @@ export function createSelect2Drivers(kit) {
       name: 'search-select',
       writes: (step) => step.kind === 'search-select',
       write: applySearchSelect,
-      agrees: (step, c) => (step.kind === 'search-select' ? squash(selectedText(c) ?? '').includes(squash(step.value)) : undefined),
+      agrees: (step, c) => (step.kind === 'search-select' ? searchAgrees(step, c) : undefined),
     },
   };
 }

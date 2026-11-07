@@ -3452,6 +3452,126 @@ test('type-ahead list (select2): types the search, picks the single result that 
   }
 });
 
+// Audit 2026-11-07, ENG-08; the maintainer, 2026-11-07: an option match the engine isn't sure of is
+// a check item (amber), never green. A yes/no answer is Yes or No (or an alias) only, and the
+// fallbacks match whole words.
+const choiceSelect = (h, id, texts, value = '') => {
+  const select = new SelectNode([{ text: '', value: '' }, ...texts.map((text) => ({ text, value: text }))], { id, ariaLabel: id, value });
+  h.document.body.append(select);
+  return select;
+};
+
+test('a yes/no answer never takes an option only beginning with the word: "No" is not "Not sure", "None" or "Not applicable"', async () => {
+  for (const other of ['Not sure', 'None', 'Not applicable']) {
+    const h = harness();
+    const select = choiceSelect(h, 'q', ['Yes', other]);
+    const report = await h.kit.fill([{ id: 'q', selector: '#q', path: 'x.q', name: 'Question', kind: 'bool', value: false }], { maxRounds: 3 });
+    assert.equal(select.value, '', `"${other}" is not No`);
+    assert.equal(report.filled.length, 0);
+    assert.match(report.failed[0]?.reason ?? '', /no option matches/);
+  }
+  // Yes and No themselves, and an explicit alias, still match (and are no check).
+  const h = harness();
+  const plain = choiceSelect(h, 'plain', ['Yes', 'No', 'Not sure']);
+  const aliased = choiceSelect(h, 'aliased', ['Yes', 'Not applicable']);
+  const report = await h.kit.fill([
+    { id: 'plain', selector: '#plain', path: 'x.plain', name: 'Plain', kind: 'bool', value: false },
+    { id: 'aliased', selector: '#aliased', path: 'x.aliased', name: 'Aliased', kind: 'bool', value: false, choiceAliases: ['Not applicable'] },
+  ], { maxRounds: 3 });
+  assert.deepEqual([plain.value, aliased.value], ['No', 'Not applicable']);
+  assert.equal(report.checks.length, 0);
+});
+
+test('a choice\'s fallbacks match whole words, and an option matched by one is filled and checked (amber), naming how and what', async () => {
+  const h = harness();
+  const caravan = choiceSelect(h, 'caravan', ['Caravan', 'Box Truck']);
+  const tower = choiceSelect(h, 'tower', ['Tower', 'Box Truck']);
+  const box = choiceSelect(h, 'box', ['Box Truck (Straight)', 'Tractor']);
+  const cargo = choiceSelect(h, 'cargo', ['Trucking - Hazmat', 'Towing']);
+  const exact = choiceSelect(h, 'exact', ['Box Truck', 'Box Truck (Straight)']);
+  const report = await h.kit.fill([
+    { id: 'caravan', selector: '#caravan', path: 'x.caravan', name: 'Van type', kind: 'choice', value: 'Van' },
+    { id: 'tow', selector: '#tower', path: 'x.tow', name: 'Tow', kind: 'choice', value: 'Tow' },
+    { id: 'box', selector: '#box', path: 'x.box', name: 'Vehicle type', kind: 'choice', value: 'Box Truck' },
+    { id: 'cargo', selector: '#cargo', path: 'x.cargo', name: 'Operations', kind: 'choice', value: 'Hazmat' },
+    { id: 'exact', selector: '#exact', path: 'x.exact', name: 'Exact type', kind: 'choice', value: 'Box Truck' },
+  ], { maxRounds: 4 });
+  assert.deepEqual([caravan.value, tower.value], ['', ''], '"Van" is no word of "Caravan", nor "Tow" of "Tower"');
+  assert.equal(box.value, 'Box Truck (Straight)');
+  assert.equal(cargo.value, 'Trucking - Hazmat');
+  assert.equal(exact.value, 'Box Truck');
+  const checked = Object.fromEntries(report.checks.map((x) => [x.path, x]));
+  assert.deepEqual(Object.keys(checked).sort(), ['x.box', 'x.cargo'], 'the exact answer is no check');
+  assert.equal(checked['x.box'].matched, 'prefix');
+  assert.match(checked['x.box'].note, /no option reads exactly "Box Truck", so "Box Truck \(Straight\)" was chosen, the only one beginning with it/);
+  assert.equal(checked['x.cargo'].matched, 'contains');
+  assert.match(checked['x.cargo'].note, /"Trucking - Hazmat" was chosen, the only one containing it/);
+  assert.equal(report.filled.find((x) => x.path === 'x.box')?.matched, 'prefix', 'the filled item says how too');
+  assert.equal(box.getAttribute('data-rater-autofill'), 'needs', 'marked amber on the page');
+  // The next fill finds it held: kept, and checked again.
+  const again = await h.kit.fill([{ id: 'box', selector: '#box', path: 'x.box', name: 'Vehicle type', kind: 'choice', value: 'Box Truck' }], { maxRounds: 3 });
+  assert.equal(again.kept.length, 1);
+  assert.match(again.checks[0]?.note ?? '', /the page's "Box Truck \(Straight\)" was kept, the only one beginning with it/);
+});
+
+test('Progressive\'s current BI limit: the intake\'s "State Minimum" fills "State Minimum or less" as its alias, with no check', async () => {
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [{ type: 'Commercial Auto', carrier: 'Acme Mutual', limit: 'State Minimum', expiration: '12/01/2099' }], coverage: {}, claims: {} };
+  const planned = buildPlan(record, progressive).find((s) => s.q === '95');
+  const h = harness();
+  const select = choiceSelect(h, 'bi', ['Physical Damage Only', 'State Minimum or less', '$25,000 person/$50,000 accident']);
+  const report = await h.kit.fill([{ ...planned, selector: '#bi', field: undefined, ask: undefined, pages: undefined }], { maxRounds: 3 });
+  assert.equal(select.value, 'State Minimum or less');
+  assert.equal(report.filled.length, 1);
+  assert.equal(report.filled[0].matched, undefined);
+  assert.equal(report.checks.length, 0, 'an alias is exact: green, not amber');
+});
+
+test('a type-ahead pick holds its answer by the write\'s rule: one reading exactly so wins, one only containing it is checked', async () => {
+  const typeAhead = (h, listed, held, results) => {
+    const select = new SelectNode([{ text: '', value: '' }, ...listed.map((text) => ({ text, value: text }))], { id: 'cls', ariaLabel: 'Classification', value: held });
+    const container = new FakeNode('span', { className: 'select2 select2-container' });
+    const opener = new FakeNode('span', { className: 'select2-selection' });
+    container.append(opener);
+    h.document.body.append(select, container);
+    opener.addEventListener('mousedown', () => {
+      const search = makeInput({ className: 'select2-search__field' });
+      search.addEventListener('keyup', () => {
+        for (const text of results) {
+          const li = new FakeNode('li', { className: 'select2-results__option', textContent: text });
+          li.addEventListener('mouseup', () => {
+            if (!select.options.some((o) => o.value === text)) { const o = new OptionNode(text); select.options.push(o); select.append(o); }
+            select.value = text;
+          });
+          h.document.body.append(li);
+        }
+      });
+      h.document.body.append(search);
+    });
+    return select;
+  };
+  const step = { id: 'cls', selector: '#cls', path: 'x.cls', name: 'Classification', kind: 'search-select', value: 'Trucking', search: 'Trucking' };
+  // Replace existing answers: "Trucking - Hazmat" beside an option reading "Trucking" is not the answer.
+  let h = harness();
+  let select = typeAhead(h, ['Trucking', 'Trucking - Hazmat'], 'Trucking - Hazmat', ['Trucking', 'Trucking - Hazmat']);
+  let report = await h.kit.fill([step], { maxRounds: 3, overwrite: true });
+  assert.equal(select.value, 'Trucking');
+  assert.equal(report.checks.length, 0);
+  // Only "Trucking - Hazmat" offered: picked as the one containing it, and checked.
+  h = harness();
+  select = typeAhead(h, [], '', ['Trucking - Hazmat', 'Towing']);
+  report = await h.kit.fill([step], { maxRounds: 3 });
+  assert.equal(select.value, 'Trucking - Hazmat');
+  assert.equal(report.checks[0]?.matched, 'contains');
+  // A stale option left in the <select> from an earlier search ("Trucking - Local") is no rival:
+  // the write judged the one result among the list's live results (Claude review of PR #360).
+  h = harness();
+  select = typeAhead(h, ['Trucking - Local'], '', ['Trucking - Hazmat', 'Towing']);
+  report = await h.kit.fill([step], { maxRounds: 3 });
+  assert.equal(select.value, 'Trucking - Hazmat');
+  assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+  assert.equal(report.checks[0]?.matched, 'contains');
+});
+
 test('a dropdown with no usable label is found by one of its options', async () => {
   const h = harness();
   const carrier = new SelectNode([{ text: '', value: '' }, { text: 'ALLIANZ', value: 'a' }, { text: 'NO PRIOR', value: 'np' }], { id: 'x1', ariaLabel: 'Delete Coverage' });

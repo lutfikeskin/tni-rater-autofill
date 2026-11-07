@@ -40,7 +40,11 @@ import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreig
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingIs } from '../answers/state.js';
 import { recentModel, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
-import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
+import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorLimit, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
+
+// The intake's current bodily injury limit in Progressive's words: its "State Minimum" is the
+// list's "State Minimum or less" (the maintainer, 2026-11-07), not a fallback match to check.
+const priorLimitAliases = (r) => (/^state minimum$/i.test(priorLimit(r) ?? '') ? ['State Minimum or less'] : []);
 
 // TNI's standard coverages (src/standards.js), as Progressive's options write them. The rules'
 // `std` (CarrierRule `std`) write any amount the same way; test/std-metadata.test.mjs holds them to
@@ -472,7 +476,7 @@ const SAFE_LABEL_RULES = [
   { concept: 'operations.hazmat-placard', path: 'operations.hazPlacard', label: 'placard', kind: 'bool', source: hazPlacardSource, tni: 'general.hazmat-placard', value: hazPlacard, note: hazPlacardNote },
   { concept: 'operations.personal-use', path: 'operations.personalUse', label: 'personal use' },
   { concept: 'coverage.liability', path: 'coverage.autoLiabLimit', label: '(auto |bodily injury |combined single |csl )?liability limit|^bi limit|combined single limit', not: 'general|cargo' },
-  { concept: 'prior.limit', path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'), ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
+  { concept: 'prior.limit', path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'), choiceAliases: priorLimitAliases, ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
   { concept: 'prior.expiration', path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration', clientFact: true, source: priorBoxSource, value: priorBoxValue('expiration'), ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'expiration') },
   { concept: 'coverage.fire-theft', tni: 'progressive.fire-theft', name: 'Fire / theft additional coverage (standard: Not selected)', label: 'fire\\s*/?\\s*theft', kind: 'choice', source: 'standard', value: () => 'Not selected' },
 ];
@@ -917,7 +921,7 @@ export const progressive = {
         note: (r) => (currentlyInsured(r) ? null : onlyNotAuto(r) ? `The intake's current insurance is ${notAutoType(r)}, not an auto policy, so whether the customer has had continuous coverage is yours to answer.`
           : priorPolicyExpired(r) ? `The intake's current policy expired ${r.priorInsurance[0].expiration}, so whether the customer has had continuous coverage is yours to answer.`
             : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
-      { concept: 'prior.limit', q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'),
+      { concept: 'prior.limit', q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'), choiceAliases: priorLimitAliases,
         ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
       { concept: 'prior.expiration', q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', clientFact: true, source: priorBoxSource, value: priorBoxValue('expiration'),
         ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'expiration') },
@@ -1172,7 +1176,9 @@ export const progressive = {
       { concept: 'coverage.cargo', q: '2158', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
       { concept: 'coverage.cargo', q: '215A', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },
       // TNI: an unselected Reefer option on the intake means this coverage is not requested.
-      { concept: 'coverage.reefer-breakdown', q: '215C', source: 'derived', cargo: true, ask: 'Does the customer require Refrigeration Breakdown coverage?', path: 'coverage.reeferBreakdown', kind: 'bool', value: (r) => r.coverage.reeferBreakdown === true },
+      { concept: 'coverage.reefer-breakdown', q: '215C', source: 'derived', cargo: true, ask: 'Does the customer require Refrigeration Breakdown coverage?', path: 'coverage.reeferBreakdown', kind: 'bool', value: (r) => r.coverage.reeferBreakdown === true,
+        // Its Yes reads "Yes, match Motor Truck Cargo limits" (a yes/no answer takes Yes, No or its aliases only).
+        choiceAliases: (r) => (r.coverage.reeferBreakdown === true ? ['Yes, match Motor Truck Cargo limits'] : []) },
       { concept: 'cargo.commodity', q: '216A', source: 'derived', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null, note: carPartsMixedNote },
       { concept: 'cargo.commodity', q: '216B', source: 'derived', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargoListOfCommodities', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
       // The cargo row's limit (its data-model name), then the cargo section's, which reads the same:
@@ -1229,7 +1235,9 @@ export const progressive = {
     ...onPage('ChangePaymentPlan', [
       { concept: 'quote.policy-term', q: '3E96', field: 'ChangePaymentPlanPage.PolicyTerm', ask: 'Policy length', name: 'Policy length (preserve prefilled value)', ignore: true },
       { concept: 'quote.payment', q: '3E97', field: 'ChangePaymentPlanPage.PaymentType', ask: 'How will the customer pay?', name: 'Installment plan (preserve prefilled value)', ignore: true },
-      { concept: 'quote.payment', q: '3E98', tni: 'progressive.payment-method', source: 'standard', field: 'BillingInfoInput.BillPlanEFTInd', ask: 'Payment method', name: 'Payment method (standard: automatic payments from checking account)', kind: 'choice', value: () => 'Automatic payments from checking account' },
+      { concept: 'quote.payment', q: '3E98', tni: 'progressive.payment-method', source: 'standard', field: 'BillingInfoInput.BillPlanEFTInd', ask: 'Payment method', name: 'Payment method (standard: automatic payments from checking account)', kind: 'choice', value: () => 'Automatic payments from checking account',
+        // Its option reads the method, then Progressive's tagline ("… checking account Save with lower fees – and a discount if eligible!").
+        matchStart: true },
       { concept: 'quote.payment', q: '3EA4', field: 'BillingInfoInput.TwelveMonthBillPlanOnUI', name: 'Payment schedule detail (preserve prefilled value)', ignore: true },
     ]),
 
