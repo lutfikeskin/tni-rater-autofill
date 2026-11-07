@@ -470,13 +470,19 @@ try {
   await mock.locator('#mockLunaChoice').selectOption('Yes');
   await mock.locator('#mockLunaChoice').focus();
   await mock.locator('#mockLunaChoice').press('Tab');
-  let corrected = false;
-  for (let attempt = 0; attempt < 24 && !corrected; attempt++) {
-    corrected = await panel.evaluate(async () => {
-      const { aiPendingDecisions } = await chrome.storage.local.get('aiPendingDecisions');
-      return aiPendingDecisions?.some(x => x.key === 'mockLunaChoice' && x.manual) === true;
+  // Waits for the panel's own record of the correction (trusted Tab, recorder, panel, storage), as
+  // extension-e2e waits for the recorder's acknowledgment, rather than a fixed 6 s of polls that a
+  // slow runner outlasted (audit 2026-11-07, QA-03). On a miss it prints what the chain did keep.
+  const corrected = await panel.waitForFunction(async () => {
+    const { aiPendingDecisions } = await chrome.storage.local.get('aiPendingDecisions');
+    return aiPendingDecisions?.some(x => x.key === 'mockLunaChoice' && x.manual) === true;
+  }, null, { timeout: 30000, polling: 100 }).then(() => true, () => false);
+  if (!corrected) {
+    const trace = await panel.evaluate(async () => {
+      const { aiPendingDecisions = [], agentEditedKeys = [] } = await chrome.storage.local.get(['aiPendingDecisions', 'agentEditedKeys']);
+      return { pending: aiPendingDecisions.map(x => ({ key: x.key, manual: !!x.manual, done: x.done ?? null })), edited: agentEditedKeys.map(x => x.keys) };
     });
-    if (!corrected) await panel.waitForTimeout(250);
+    console.error('manual correction trace (synthetic mock):', JSON.stringify(trace));
   }
   verify('manual correction clears the durable rejected hold', corrected, true);
   await panel.reload();

@@ -399,6 +399,33 @@ test('the driver a form named is the one entered once the list comes back; a for
   assert.deepEqual([...h.state.doneActions].sort(), ['driverEntered:0', 'driverEntered:1']);
 });
 
+// Audit 2026-11-07, QA-03: the kit is injected by one executeScript and called by a second, so a
+// tab that navigates between them has no kit; `globalThis.__raterKit.fill(...)` then threw on the
+// carrier's page. Every call the panel makes is optional, so a frame without the kit answers null,
+// and a fill whose top frame had none is a page that moved (kitGone).
+test('every kit call the panel makes is guarded: a frame without the kit answers null, never throws', async () => {
+  const unguarded = [...SIDEPANEL.matchAll(/__raterKit\.[A-Za-z]+/g)].map((m) => SIDEPANEL.slice(Math.max(0, m.index - 60), m.index + 40));
+  assert.deepEqual(unguarded, [], 'no __raterKit.<name> outside a guard (__raterKit?.<name>)');
+  const guarded = SIDEPANEL.match(/__raterKit\?\.[A-Za-z]+\(/g).length;
+  assert.ok(guarded >= 20, `the panel's kit calls, each guarded (${guarded})`);
+  // The fill's own call, in a page without the kit and in one with it.
+  const fillCall = SIDEPANEL.match(/runKit\(tabId, carrier, (\(p, o\) => globalThis\.__raterKit\?\.fill\(p, o\)), \[plan, options\]\)/)[1];
+  const page = {};
+  vm.createContext(page);
+  const fill = vm.runInContext(fillCall, page);
+  assert.equal(fill('plan', 'options') ?? null, null, 'no kit in the page');
+  page.__raterKit = { fill: (p, o) => ({ filled: [p, o] }) };
+  assert.deepEqual(JSON.parse(JSON.stringify(fill('plan', 'options'))), { filled: ['plan', 'options'] });
+  // Both fills take a top frame without the kit as a page that moved on.
+  const gone = /results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| (results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\))\)/;
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), gone, name);
+  const kitGone = vm.runInNewContext(`(results) => ${extractFunction('fillPage').match(gone)[1]}`);
+  assert.equal(kitGone([{ frameId: 0, result: { filled: [] } }]), false);
+  assert.equal(kitGone([{ frameId: 0, result: null }, { frameId: 3, result: { filled: [] } }]), true, 'the top frame had no kit');
+  assert.equal(kitGone([{ frameId: 0 }]), true, 'no result at all');
+  assert.equal(kitGone([{ frameId: 3, result: null }]), false, 'a child frame only');
+});
+
 test('the fill hands the kit the named-form check and what this tab\'s fills gave', () => {
   const context = {};
   vm.runInNewContext(`${extractFunction('unitNameFor')}\nglobalThis.unitNameFor = unitNameFor;`, context);
@@ -3728,7 +3755,7 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   // Fills ready their tab once they went through (tested with autoFill below; fillPage the same).
   // (After the stale check: a fill whose intake changed meanwhile proves nothing for the new one;
   // nor does one whose page had moved on, which filled nothing.)
-  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
+  assert.equal((extractFunction('fillPage').match(/__raterKit\?\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\)\) \{ notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
 });
 
 test('a queued capture is dropped for a later change on its page, which gets its reasons', async () => {
@@ -5754,7 +5781,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   u.release([{ frameId: 0, result: { ...u.results[0].result, pageMoved: '/quote-B' } }]);
   await run;
   assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
-  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
+  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
   // (runPendingPage then runs from every end of a fill, whichever tab is in front: FLOW-07.)
   assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n\s+\}/);
@@ -8467,7 +8494,7 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   // Settings' Filling note says a switch changed meanwhile reaches what is filled after, and the fill
   // under way only while it gets ready (reviews of #389): each fill, a follow-up's included, reads
   // Continue's switch again and Check answers before Continue (fillOptions' hold) as it asks the kit.
-  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /ctx\.settings\.autoAdvance = switchOn\('autoAdvance', 'auto-advance'\);[\s\S]*= fillOptions\(carrier, [\s\S]*?__raterKit\.fill\(p, o\), \[plan, options\]\)/, name);
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /ctx\.settings\.autoAdvance = switchOn\('autoAdvance', 'auto-advance'\);[\s\S]*= fillOptions\(carrier, [\s\S]*?__raterKit\?\.fill\(p, o\), \[plan, options\]\)/, name);
   assert.match(SIDEPANEL, /const fillOptions = [^\n]*\n(?:[^\n]*\n)*?  hold: switchOn\('checkBeforeContinue', 'check-continue'\),/);
   // Opening or closing Settings draws the dock again (showScreen).
   assert.match(extractFunction('showScreen'), /renderDock\(\);\n\}$/);

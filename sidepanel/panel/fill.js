@@ -54,30 +54,15 @@ async function injectKit(tabId, carrier) {
  * @param {any[]} [args]
  * @param {number[]} [frameIds]
  */
+// The kit is injected by one executeScript and called by a second, so a tab that navigated between
+// the two has none: every call of the panel's is optional (`globalThis.__raterKit?.name(...)`), and a
+// frame without the kit answers null rather than throwing on the carrier's page (audit 2026-11-07,
+// QA-03; sidepanel-safety holds every call to it). A fill whose top frame had no kit is a page that
+// moved on (fillPage, autoFill).
 async function runKit(tabId, carrier, func, args = [], frameIds) {
   await injectKit(tabId, carrier);
   return chrome.scripting.executeScript({ target: { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) }, world: worldFor(carrier), func, args });
 }
-
-// One of the kit's functions by name, in each frame (runKit): null in a frame without the kit. The
-// kit is injected by one executeScript and called by a second, and a tab that navigates between the
-// two has lost it; calling it there threw on the carrier's page, an error in the agents' console
-// (audit 2026-11-07, QA-03). Every call of the panel's goes through here (sidepanel-safety tests it).
-/**
- * @param {number} tabId
- * @param {CarrierConfig} carrier
- * @param {string} name  the kit's function (src/content/pagekit.js)
- * @param {any[]} [args]
- * @param {number[]} [frameIds]
- */
-function kitCall(tabId, carrier, name, args = [], frameIds) {
-  return runKit(tabId, carrier, (n, a) => {
-    const f = /** @type {any} */ (globalThis).__raterKit?.[n];
-    return typeof f === 'function' ? f(...a) : null;
-  }, [name, args], frameIds);
-}
-// The top frame's kit was gone (kitCall's null): the page moved before the call reached it.
-const kitGone = (results) => results.some((r) => r.frameId === 0) && results.find((r) => r.frameId === 0).result == null;
 
 // agent defaults: the page whose opening fill the quote's question held (fillPage), with the intake
 // it was held for. Only that page fills once the hold lifts: never another page that happens to be in
@@ -187,10 +172,10 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // the extension didn't write may be the agent's (the maintainer, 2026-11-07, in place of giving
     // it again, 2026-10-21). Replace existing answers still gives it again.
     const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
-    const results = await kitCall(tabId, carrier, 'fill', [plan, options]);
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (results.some((r) => r.result?.pageMoved) || kitGone(results)) { notePageMoved(ctx); return; }
+    if (results.some((r) => r.result?.pageMoved) || results.some((r) => r.frameId === 0 && r.result == null)) { notePageMoved(ctx); return; }
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
     // And its quote is this intake's (the agent's Fill this page on another intake's quote too).
@@ -1160,7 +1145,7 @@ async function changeAnswer(rec, { tabId, page, carrier }) {
   if (state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   if (rec.change) { rec.change = null; drawRow(rec); return; }
   let frames = null;
-  try { frames = await kitCall(tabId, carrier, 'decisionSnapshot'); } catch { /* the page is navigating */ }
+  try { frames = await runKit(tabId, carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null)); } catch { /* the page is navigating */ }
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   const matches = aiSnapshotFieldMatches(frames, { key: rec.key, label: rec.field });
   const field = matches.length === 1 ? matches[0].field : null;
@@ -1201,9 +1186,9 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
   await tellRecorder('pause', tabId);
   try {
     guarding = true;
-    await kitCall(tabId, carrier, 'answerEdits', ['begin', token]);
+    await runKit(tabId, carrier, (t) => globalThis.__raterKit?.answerEdits('begin', t), [token]);
     if (!current()) return;
-    const frames = await kitCall(tabId, carrier, 'decisionSnapshot');
+    const frames = await runKit(tabId, carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
     if (!current()) return;
     const matches = aiSnapshotFieldMatches(frames, x);
     if (matches.length !== 1) { say('The page changed: answer it on the page.'); return; }
@@ -1214,16 +1199,16 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
       say('The page doesn’t offer that answer now: answer it on the page.');
       return;
     }
-    const answered = await kitCall(tabId, carrier, 'answer',
+    const answered = await runKit(tabId, carrier, (a, t, o) => globalThis.__raterKit?.answer(a, null, t, o),
       [[{ key: field.key, label: field.label, value: choice, expected: { kind: field.kind, section: field.section, options, current: field.current } }],
-        null, token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent' }], [frame.frameId]);
+        token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent' }], [frame.frameId]);
     result = answered.flatMap((f) => f.result ?? []).find((r) => r?.key === field.key) ?? null;
   } catch {
     result = null;
   } finally {
     if (guarding) {
       try {
-        const frames = await kitCall(tabId, carrier, 'answerEdits', ['end', token]);
+        const frames = await runKit(tabId, carrier, (t) => globalThis.__raterKit?.answerEdits('end', t), [token]);
         // The agent's own edits while the answer went in stay theirs, as after a fill.
         edited = frames.flatMap((f) => f.result ?? []).filter((r) => r?.protected).map((r) => r.key);
       } catch { /* a removed or navigating frame no longer has live listeners */ }
@@ -1303,7 +1288,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
 
 async function clearMarks() {
   if (!state.tab?.carrier) return;
-  await kitCall(state.tab.id, state.tab.carrier, 'clear');
+  await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit?.clear());
   const key = currentReportKey();
   dropReports((entry) => entry.key === key);
   renderSite();
@@ -1375,7 +1360,7 @@ async function capturePage() {
   // What the capture is of; checked again once the page has been read (as layout jobs are).
   const asked = JSON.stringify([tabId, page, state.active, state.intakeRevision, usage.currentSession()?.id ?? null]);
   try {
-    const results = await kitCall(tabId, carrier, 'capture',
+    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit?.capture(p, r),
       [record ? planFor(record, carrier, state.active) : null, record ? redactionTerms(record) : []]);
     // Frames with questions, the top one, and any with messages or an open list (evidence only).
     const frames = results.map((r) => r.result).filter((f) => f && (f.controls.length || f.isTopFrame || f.messages?.length || f.openLists?.length));
@@ -1410,4 +1395,4 @@ async function capturePage() {
   }
 }
 
-export { kitCall, kitGone, afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillAfterDefaults, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };
+export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillAfterDefaults, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };
