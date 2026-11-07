@@ -122,8 +122,9 @@ export const ALERTS = {
   // A carrier page that reads as changed (a fill_run's pageChanged, or a known question renamed) on
   // at least this many installs: one agent's odd quote is noise, two agents' a redesign.
   pageChangeInstalls: 2,
-  // The newest build in the period failing more fields per 100 filled than the build before it, by
-  // at least this many points, with at least minFilled fields filled on each.
+  // The newest version of a channel in the period (store, unpacked) failing more fields per 100
+  // filled than that channel's version before it, by at least this many points, with at least
+  // minFilled fields filled on each (fewer on the newest: nothing said yet).
   failedRiseBy: 3,
   minFilled: 200,
   // The share of the period's sessions with a crash (client_error), with at least minSessions.
@@ -148,21 +149,26 @@ export function alerts(events, limits = ALERTS) {
     changed.set(key, c);
   }
   for (const c of changed.values()) if (c.installs.size >= limits.pageChangeInstalls) out.push({ ...c, installs: c.installs.size });
-  // Builds by version (then by when first seen): the newest against the one before it.
-  const builds = new Map();
+  // Each channel's versions (a developer's unpacked copy is never weighed against agents' store
+  // build), the newest first, whatever was filled on it: the newest against the one before it
+  // (CodeRabbit on PR #433).
+  const channels = new Map();
   for (const e of runs) {
-    const build = `${e.v ?? '?'}${e.channel ? ` ${e.channel}` : ''}${e.commit ? ` ${e.commit}` : ''}`;
-    const b = builds.get(build) ?? { build, v: String(e.v ?? ''), first: e.t ?? '', filled: 0, failed: 0 };
+    const channel = e.channel ?? null;
+    const versions = channels.get(channel) ?? new Map();
+    const v = String(e.v ?? '?');
+    const b = versions.get(v) ?? { build: `${v}${channel ? ` ${channel}` : ''}`, v, filled: 0, failed: 0 };
     b.filled += Number(e.filled) || 0;
     b.failed += Number(e.failed) || 0;
-    if ((e.t ?? '') < b.first) b.first = e.t;
-    builds.set(build, b);
+    versions.set(v, b);
+    channels.set(channel, versions);
   }
   const version = (v) => v.split('.').map((n) => Number(n) || 0);
-  const newer = (a, b) => { const x = version(a.v), y = version(b.v); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0); return a.first.localeCompare(b.first); };
-  const [latest, before] = [...builds.values()].filter((b) => b.filled >= limits.minFilled).sort((a, b) => newer(b, a));
-  if (latest && before) {
-    const rate = (b) => Math.round((b.failed / b.filled) * 1000) / 10;
+  const newer = (a, b) => { const x = version(a.v), y = version(b.v); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0); return 0; };
+  const rate = (b) => Math.round((b.failed / b.filled) * 1000) / 10;
+  for (const versions of channels.values()) {
+    const [latest, before] = [...versions.values()].sort((a, b) => newer(b, a));
+    if (!latest || !before || latest.filled < limits.minFilled || before.filled < limits.minFilled) continue;
     if (rate(latest) - rate(before) >= limits.failedRiseBy) out.push({ kind: 'failed-rise', build: latest.build, rate: rate(latest), before: before.build, beforeRate: rate(before) });
   }
   const sessions = new Set(events.map((e) => e.session).filter(Boolean));

@@ -244,6 +244,11 @@ test('daily: alerts for a page changed for two installs, a build failing more, c
   assert.deepEqual(alerts([...now, ...old]), [{ kind: 'failed-rise', build: '0.9.32 store', rate: 5, before: '0.9.31 store', beforeRate: 1 }]);
   assert.deepEqual(alerts([...now.slice(0, 1), ...old]), [], 'too few filled on the new build to say');
   assert.deepEqual(alerts([...old, ...[1, 2, 3].map((i) => run({ install: `n${i}`, v: '0.9.32', filled: 100, failed: 3 }))]), [], 'up 2, under 3');
+  // CodeRabbit on PR #433: the newest version is the one weighed, also while it has too few filled
+  // (nothing said yet, never the two before it), and only against its own channel.
+  assert.deepEqual(alerts([...old, ...now, run({ install: 'x', v: '0.9.33', filled: 50, failed: 10 })]), [], 'the newest under 200 filled: quiet, 0.9.32 against 0.9.31 not said');
+  const dev = [1, 2, 3].map((i) => run({ install: `d${i}`, v: '0.9.33', channel: 'unpacked', filled: 100, failed: 9 }));
+  assert.deepEqual(alerts([...old, ...dev]), [], 'an unpacked copy is never weighed against the store build');
   // Crashes in 2% of the sessions or more; and events lost before upload.
   const sessions = Array.from({ length: 60 }, (_, i) => ({ type: 'intake_loaded', session: `s${i}` }));
   assert.deepEqual(alerts([...sessions, { type: 'client_error', session: 's1' }]), [], '1 of 60');

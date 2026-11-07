@@ -237,8 +237,9 @@ opens one titled "Daily review" when none is open. New means:
   "### Alerts" (`alerts` and its thresholds `ALERTS` in `scripts/lib/daily.mjs`, proposed for the
   maintainer to tune; a section of this comment, no webhook, the maintainer's choice on 2026-11-07):
   a carrier page that reads as changed (a fill's `pageChanged`, or a known question renamed) for two
-  installs or more; the newest build failing 3 or more fields per 100 filled more than the build
-  before it, with 200 filled on each; crashes (`client_error`) in 2% of the period's sessions or
+  installs or more; the newest version of a channel (store, unpacked) failing 3 or more fields per 100
+  filled more than that channel's version before it, with 200 filled on each (fewer on the newest:
+  nothing said yet); crashes (`client_error`) in 2% of the period's sessions or
   more, with 20 sessions or more; and 50 or more events lost before upload (`usage_lost`). A page
   changed at 10:00 US time is still said only the next morning;
 - a deployed usage server that isn't the repository's (`scripts/server-check.mjs`, checked first
