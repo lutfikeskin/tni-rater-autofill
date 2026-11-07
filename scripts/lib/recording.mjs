@@ -42,6 +42,10 @@ const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const quote = (s) => `"${String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)}"`;
 // A request's path as code, on one line: decoded, it can hold a line break or Markdown (review of PR #379).
 const codePath = (s) => `\`${String(s ?? '').replace(/\s+/g, ' ').replace(/`/g, "'").trim().slice(0, 120)}\``;
+// Whose the kit's work was (REC-14): a fill's (none said), an AI apply's or the agent's own answer
+// from the panel.
+const BY = { ai: 'the AI\'s answer went into', agent: 'your answer from the panel went into' };
+const WORK = { fill: 'a fill', ai: 'an AI apply', agent: 'a panel answer' };
 const fieldName = (e) => quote(e.field?.label || e.field?.key || 'a question');
 // Where an answer is down the page; none for a box drawn with no size (a page's hidden status box,
 // Progressive's Current Page Errored), which is never above or below a question.
@@ -154,7 +158,7 @@ function actions(events) {
       const timing = e.timing ?? null;
       const after = [timing?.settleMs ? `then waited ${secs(timing.settleMs)} for the page` : '', timing?.ajax ? many(timing.ajax, 'request') : '',
         timing?.revealed ? `it drew ${timing.revealed}` : '', timing?.removed ? `took away ${timing.removed}` : ''].filter(Boolean).join(', ');
-      lines.push({ t: e.start ?? e.t, text: `the extension answered ${fieldName(e)} in ${secs(e.applyMs ?? 0)}${after ? `, ${after}` : ''}${e.ok === false ? ' (not kept)' : ''}` });
+      lines.push({ t: e.start ?? e.t, text: `${BY[e.source] ?? 'the extension answered'} ${fieldName(e)} in ${secs(e.applyMs ?? 0)}${after ? `, ${after}` : ''}${e.ok === false ? ' (not kept)' : ''}` });
     } else if (e.kind === 'kit' && e.what === 'wait' && e.why !== 'answer') {
       const held = e.held?.busy ? ', the page still busy' : e.held?.changing ? ', the page still changing' : e.held?.requests ? ', requests still finishing' : '';
       const ended = e.ended === 'quiet' ? 'the page was quiet' : `at its limit of ${secs(e.maxMs ?? 0)}${held}`;
@@ -167,7 +171,7 @@ function actions(events) {
       const drew = e.drawnCount ? `drew ${many(e.drawnCount, 'question')}${names ? ` (${names}${more})` : ''}` : '';
       const took = e.removed ? `took away ${many(e.removed, 'question')}` : '';
       lines.push({ t: e.t, text: `the page ${[drew, took].filter(Boolean).join(' and ')}${e.sinceAction != null ? `, ${secs(e.sinceAction)} after the last action` : ''}` });
-    } else if (e.kind === 'fill') lines.push({ t: e.t, text: e.on ? 'a fill started' : `the fill ended${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
+    } else if (e.kind === 'fill') lines.push({ t: e.t, text: e.on ? `${WORK[e.source] ?? 'a fill'} started` : `the ${(WORK[e.source] ?? 'a fill').replace(/^an? /, '')} ended${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
     // A request the carrier's server refused or failed (HTTP 400 and up): its own error, not the fill's.
     else if (e.kind === 'request' && failed(e)) lines.push({ t: e.t, text: `the page's request to ${codePath(e.path)} failed: HTTP ${e.status} after ${secs(e.ms ?? 0)}` });
     else if (e.kind === 'note') lines.push({ t: e.t, text: `NOTE: ${e.text}` });

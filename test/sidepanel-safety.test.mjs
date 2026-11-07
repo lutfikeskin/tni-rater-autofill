@@ -113,7 +113,10 @@ function extractFunction(name) {
           quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
-          stopFillFirst: 'async () => {}' };
+          stopFillFirst: 'async () => {}',
+          // What the panel's work is, and whether a recording runs on the tab (core.js, REC-14):
+          // elsewhere no recording runs.
+          fillingAs: '() => {}', traced: '() => false' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -10156,4 +10159,23 @@ test('a unit missing from the list with no helper for it is left for the agent i
   const none = [{ frameId: 0, result: { noData: [], blockers: [] } }];
   context.noteMissingUnit(none, { ...ctx, unitMissing: null });
   assert.equal(none[0].result.noData.length, 0);
+});
+
+// REC-14 (audit 2026-11-07): an AI apply and the agent's own panel answer wrote the same "fill"
+// marker as a fill, and their answers said nothing to the recording.
+test('a recording\'s fill marker says whose the work is, and AI applies and panel answers ask the kit to say what they do', () => {
+  assert.match(SIDEPANEL, /rec\.store\.add\(\[\{ kind: 'fill', t, frame: 0, on, source: fillingSource \}\]\);/);
+  const ai = extractFunction('applyAi');
+  assert.match(ai, /fillingAs\('ai'\);\s+state\.filling = true;/);
+  assert.match(ai, /\[\[a\], expected, guardToken, \{ stopSteps: Object\.keys\(ctx\.carrier\.stopSteps \?\? \{\}\), \.\.\.\(traced\(ctx\.tabId\) \? \{ trace: true \} : \{\}\) \}\]/);
+  const agent = extractFunction('agentAnswer');
+  assert.match(agent, /fillingAs\('agent'\);\s+state\.filling = true;/);
+  assert.match(agent, /by: 'agent', \.\.\.\(traced\(tabId\) \? \{ trace: true \} : \{\}\) \}\]/);
+  // The traced tab: only the recording's own, while it runs.
+  const at = SIDEPANEL.indexOf('const traced = ');
+  const context = { state: { recording: { tabId: 4, stopping: false } } };
+  vm.runInNewContext(SIDEPANEL.slice(at, SIDEPANEL.indexOf(';\n', at) + 1).replace('const traced', 'globalThis.traced'), context);
+  assert.deepEqual([context.traced(4), context.traced(5)], [true, false]);
+  context.state.recording.stopping = true;
+  assert.equal(context.traced(4), false);
 });

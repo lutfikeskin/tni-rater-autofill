@@ -344,7 +344,9 @@
     const nums = (from, keys) => Object.fromEntries(keys.filter((k) => isNum(from[k])).map((k) => [k, from[k]]));
     const yesNo = (from, keys) => Object.fromEntries(keys.filter((k) => typeof from[k] === 'boolean').map((k) => [k, from[k]]));
     const has = (x) => !!x && typeof x === 'object';
-    if (said.what === 'run') return { what: 'run', ...yesNo(said, ['on', 'halted']), ...nums(said, ['steps', 'filled']) };
+    // `source`: an AI apply's or the agent's panel answer's (the kit's `answer`), none for a fill.
+    const source = said.source === 'ai' || said.source === 'agent' ? { source: said.source } : {};
+    if (said.what === 'run') return { what: 'run', ...yesNo(said, ['on', 'halted']), ...nums(said, ['steps', 'filled']), ...source };
     if (said.what === 'press') return { what: 'press', button: { text: words(said.button?.text, 60) ?? '' }, ...(said.how === 'page' || said.how === 'kit' ? { how: said.how } : {}) };
     if (said.what === 'wait') {
       if (!isNum(said.start) || !isNum(said.ms) || (said.ended !== 'quiet' && said.ended !== 'limit')) return null;
@@ -357,7 +359,7 @@
       const timing = has(said.timing) ? { timing: { ...nums(said.timing, TIMING), ...yesNo(said.timing, ['batch']) } } : {};
       return { what: 'answer', field: { key: words(said.field.key, 200), label: words(said.field.label, 200) ?? '' },
         stepKind: STEP_KINDS.has(said.stepKind) ? said.stepKind : null, start: said.start,
-        ...yesNo(said, ['ok']), ...nums(said, ['applyMs']), ...timing };
+        ...yesNo(said, ['ok']), ...nums(said, ['applyMs']), ...timing, ...source };
     }
     return null;
   }

@@ -8,7 +8,7 @@ import * as usage from '../usage-log.js';
 import { collectItems, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
 import { claimsTruncated, firstNameOf } from '../../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../../src/ai/providers.js';
-import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
+import { $, fillingAs, traced, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
 import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
@@ -507,6 +507,7 @@ async function applyAi(list, ctx, decision) {
     page: editScope(ctx.page, ctx.carrier), keys: state.agentKeys, epoch: state.agentKeysEpochs?.get(usage.currentSession()?.intakeId) ?? 0 };
   let dispatched = false, prepared = false, guarding = false;
   const guardToken = crypto.randomUUID();
+  fillingAs('ai');
   state.filling = true;
   await tellRecorder('pause', ctx.tabId);
   try {
@@ -581,7 +582,7 @@ async function applyAi(list, ctx, decision) {
       dispatched = true;
       // The carrier's stop steps go along: after a reload no fill has told this document about them.
       const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit.answer(a, snapshots, t, o),
-        [[a], expected, guardToken, { stopSteps: Object.keys(ctx.carrier.stopSteps ?? {}) }], [frameId]);
+        [[a], expected, guardToken, { stopSteps: Object.keys(ctx.carrier.stopSteps ?? {}), ...(traced(ctx.tabId) ? { trace: true } : {}) }], [frameId]);
       for (const frame of answerFrames) for (const item of frame.result ?? []) {
         if (item && typeof item === 'object') results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
       }

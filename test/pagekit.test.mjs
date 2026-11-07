@@ -2772,6 +2772,30 @@ test('More about the business: a first option of "Enter a different address" is 
   assert.equal(clicks, 0);
 });
 
+// REC-14 (audit 2026-11-07): an AI apply in a recording read as "a fill started", with no answers.
+test('answer() asked with trace says what it does, and by whom; without it, nothing', async () => {
+  const h = harness();
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  const commodity = new SelectNode([{ text: 'Select one', value: '' }, { text: 'Consumer Goods', value: 'cg' }], { id: 'commodity', ariaLabel: 'Commodity category' });
+  h.document.body.append(commodity);
+  const item = (await h.kit.fill([], { maxRounds: 1 })).unknown.find((x) => x.label === 'Commodity category');
+  await h.kit.answer([{ key: item.key, label: item.label, value: 'Consumer Goods' }]);
+  assert.deepEqual(said, [], 'no recording: nothing said');
+  commodity.value = '';
+  await h.kit.answer([{ key: item.key, label: item.label, value: 'Consumer Goods' }], null, undefined, { trace: true });
+  assert.deepEqual(said.filter((x) => x.what !== 'wait').map((x) => [x.what, x.on ?? null, x.source, x.ok ?? null]),
+    [['run', true, 'ai', null], ['answer', null, 'ai', true], ['run', false, 'ai', null]]);
+  assert.deepEqual(said.filter((x) => x.what === 'wait').map((x) => x.why), ['answer']);
+  assert.equal(said.find((x) => x.what === 'answer').field.label, 'Commodity category');
+  // Tracing ends with the answers: a later fill without trace says nothing.
+  said.length = 0;
+  await h.kit.fill([], { maxRounds: 1 });
+  assert.deepEqual(said, []);
+});
+
 test('unfamiliar questions carry their options for the AI, and answer() puts in a choice and marks it purple', async () => {
   const h = harness();
   const commodity = new SelectNode([
@@ -5757,7 +5781,7 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
         if (scenario.startsWith('transport failure') && /\.answer\(/.test(String(func))) throw new Error('Transport unavailable after answer');
         return results.filter(Boolean);
       },
-      tellRecorder: async () => {}, persistAiPending: async () => {},
+      tellRecorder: async () => {}, persistAiPending: async () => {}, fillingAs: () => {}, traced: () => false,
       agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => {} },
       usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
     const source = PANEL_SOURCE;

@@ -476,7 +476,10 @@ const state = storeState({
 
 // A fill starting and ending, noted for the developer recording timeline.
 // Routed through panelStore subscription so state.filling updates remain reactive on the store.
+// `source`: what the work is, as its starter says (fillingAs): a fill, an AI apply ('ai') or the
+// agent's own answer from the panel ('agent'), so a recording tells them apart (REC-14, 2026-11-07).
 let fillingPrevious = !!panelStore.getState().filling;
+let fillingSource = 'fill';
 panelStore.subscribe((stateNow) => {
   const on = !!stateNow.filling;
   if (on !== fillingPrevious) {
@@ -485,11 +488,17 @@ panelStore.subscribe((stateNow) => {
       const t = Date.now();
       if (on) rec.fills.push({ start: t, end: null });
       else if (rec.fills.at(-1)) rec.fills.at(-1).end = t;
-      rec.store.add([{ kind: 'fill', t, frame: 0, on }]);
+      rec.store.add([{ kind: 'fill', t, frame: 0, on, source: fillingSource }]);
     }
+    if (!on) fillingSource = 'fill';
     fillingPrevious = on;
   }
 });
+/** Says what the work about to set `state.filling` is. @param {'fill' | 'ai' | 'agent'} source */
+function fillingAs(source) { fillingSource = source; }
+// Whether the kit is asked to say what it does: a developer recording runs on this tab.
+/** @param {number | null | undefined} tabId */
+const traced = (tabId) => !!state.recording && !state.recording.stopping && state.recording.tabId === tabId;
 
 /**
  * A filling switch: what Settings says (state.switches), else its box (the test harnesses' vm has
@@ -947,4 +956,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, logCrash, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };
+export { $, logCrash, fillingAs, traced, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };

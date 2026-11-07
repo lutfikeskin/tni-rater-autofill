@@ -11,7 +11,7 @@ import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../.
 import * as usage from '../usage-log.js';
 import { isStandard } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
-import { $, aiSnapshotFieldMatches, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
+import { $, fillingAs, traced, aiSnapshotFieldMatches, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
@@ -1173,6 +1173,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
   let result = null;
   let guarding = false;
   let edited = [];
+  fillingAs('agent');
   state.filling = true;
   if (button) button.disabled = true;
   // Our own answer isn't the agent's change on the page: the recorder is paused, as for a fill.
@@ -1194,7 +1195,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
     }
     const answered = await runKit(tabId, carrier, (a, t, o) => globalThis.__raterKit.answer(a, null, t, o),
       [[{ key: field.key, label: field.label, value: choice, expected: { kind: field.kind, section: field.section, options, current: field.current } }],
-        token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent' }], [frame.frameId]);
+        token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent', ...(traced(tabId) ? { trace: true } : {}) }], [frame.frameId]);
     result = answered.flatMap((f) => f.result ?? []).find((r) => r?.key === field.key) ?? null;
   } catch {
     result = null;

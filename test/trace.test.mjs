@@ -283,6 +283,12 @@ test('what the extension\'s fill says is kept by its own time; anything else on 
   assert.deepEqual(kit.map((e) => [e.what, e.t]), [['wait', ORIGIN + 3000.5], ['press', ORIGIN + 3200]]);
   assert.deepEqual([kit[0].ms, kit[0].why, kit[0].kind, kit[0].seq !== 99, 'frame' in kit[0], 'filling' in kit[0]], [120, 'answer', 'kit', true, false, false]);
   assert.deepEqual(kit[1].button, { text: 'Continue' });
+  // REC-14: whose an answer and a run were, as one of their words only.
+  say(JSON.stringify({ what: 'run', t: ORIGIN + 3600, on: true, steps: 1, source: 'ai' }));
+  say(JSON.stringify({ what: 'answer', t: ORIGIN + 3700, start: ORIGIN + 3650, field: { key: 'ref:X', label: 'X' }, ok: true, source: 'Sam Smith' }));
+  await h.advance(400);
+  const [run, answered] = h.events().filter((e) => e.kind === 'kit').slice(-2);
+  assert.deepEqual([run.source, 'source' in answered], ['ai', false]);
 });
 
 // Review of PR #257: the page can dispatch the same event, so what it holds is built afresh from
