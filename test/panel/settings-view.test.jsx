@@ -208,13 +208,13 @@ test('mountSettings and mountRecordingLine draw before they return', () => {
 // Audit 2026-11-07, UX-02: a switch flipped in Settings while a fill ran had no effect on the answers
 // going in (their options went to the kit as the fill began), and nothing said so. A follow-up after
 // them reads the switch again (review of #389), so the note says the change reaches what comes after.
-test('while answers go in, the Filling switches say a change doesn’t reach them, and that Stop keeps Continue from being clicked', () => {
+test('while answers go in, the Filling switches say a change reaches what is filled after, and that Stop keeps Continue from being clicked', () => {
   const calls = [];
   const { container } = render(<Settings act={acts(calls)} />);
   const note = $(container, '#filling-now-note');
   expect([note.hidden, note.getAttribute('role')]).toEqual([true, 'status']);
   act(() => { state.filling = true; });
-  expect([note.hidden, note.textContent]).toEqual([false, 'Answers are going in. A change here doesn’t reach them, only what is filled after (a follow-up on this page included). To keep Continue from being clicked now, press Stop below.']);
+  expect([note.hidden, note.textContent]).toEqual([false, 'Answers are going in. A change here reaches what is filled after (a follow-up on this page included), and this fill only if it is still getting ready. To keep Continue from being clicked now, press Stop below.']);
   // The switches still work: the change reaches what is filled after (each fill reads Continue's
   // switch again before it asks the kit: fillPage, autoFill).
   fireEvent.click($(container, '#auto-advance'));
