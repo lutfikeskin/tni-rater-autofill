@@ -8,7 +8,8 @@
 //   alone is one only when no cargo filing is named.
 // - A cargo filing (BMC-34, BMC-32, "cargo") isn't a liability filing, so "Federal BMC-34" or
 //   "Federal cargo filing" is a cargo filing only: whether a liability filing is needed too is the
-//   agent's (`liability` null), never ticked.
+//   agent's (`liability` null), never ticked. So it is beside a state filing ("State filing and
+//   BMC-34"): that box doesn't name only state filings.
 // - A state or intrastate filing is a state filing. A box naming only state filings has no federal
 //   liability filing (`liability` false).
 // - A cargo filing the text rules out ("no cargo filing", "without BMC-34", "cargo not needed") is a
@@ -54,7 +55,7 @@ export const filingsIntent = (text) => {
   const state = STATE.test(t);
   if (FED_LIAB.test(t)) return { liability: true, cargo, state, srFrOnly: false, open: cargoOpen };
   if (FEDERAL.test(t)) return cargo === false ? { liability: true, cargo, state, srFrOnly: false, open: null } : { liability: null, cargo, state, srFrOnly: false, open: cargoOpen ?? 'cargo' };
-  if (cargo !== false) return { liability: state ? false : null, cargo, state, srFrOnly: false, open: cargoOpen ?? (state ? null : 'cargo') };
+  if (cargo !== false) return { liability: null, cargo, state, srFrOnly: false, open: cargoOpen ?? 'cargo' };
   if (state) return { liability: false, cargo: false, state, srFrOnly: false, open: null };
   return { liability: null, cargo: ruledOut ? false : null, state, srFrOnly: false, open: 'unnamed' };
 };

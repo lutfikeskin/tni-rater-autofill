@@ -79,6 +79,10 @@ const CASES = [
   ['State and federal cargo', null, true],
   ['Federal cargo liability', null, true],
   ['BMC-34', null, true],
+  // Beside a state filing too: the cargo filing doesn't say whether a federal liability filing is
+  // needed, so it isn't a state-only request (CodeRabbit on #363).
+  ['State filing and BMC-34', null, true],
+  ['Intrastate, cargo filing', null, true],
   // A cargo filing ruled out is a cargo No; asked for elsewhere in the text, it stays a request; both
   // asked for and ruled out is the agent's (CodeRabbit on #355).
   ['Federal liability only, no cargo filing', true, false],
@@ -119,6 +123,10 @@ test('Progressive: a cargo-only request leaves the Federal filing to the agent, 
   assert.deepEqual([state.value, state.note ?? null], [false, null]);
   assert.match(state.warn ?? '', /"State filing".*State box is yours/);
   assert.equal(federal('Federal and state').warn ?? null, null, 'a federal filing beside the state one: no warning');
+  // A cargo filing beside the state one isn't state filings only: the agent's, with the cargo note, no warning.
+  const stateCargo = federal('State filing and BMC-34');
+  assert.deepEqual([stateCargo.value, stateCargo.warn ?? null], [null, null]);
+  assert.match(stateCargo.note ?? '', /"State filing and BMC-34".*cargo filing/);
   // No filing required, or left blank: the page doesn't show, and Federal keeps the intake's answer.
   for (const [required, value] of [[false, false], [null, null]]) {
     const r = record('Federal BMC-34');
