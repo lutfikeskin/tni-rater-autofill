@@ -160,7 +160,7 @@ function Settings({ act }) {
           <SwitchRow id="mark-tab" name="Mark the quote's tab" title="Groups the quote's tab, titled with what the panel is doing. Chrome asks to manage your tab groups." checked={!!switches.markTab} said={switches} onChange={flip('markTab')} />
         </div>
         <p className="fine">Never Binds or Submits.</p>
-        <p id="filling-now-note" className="fine" role="status" hidden={!filling}>Answers are going in. A change here applies from the next fill, not this one; Stop is below.</p>
+        <p id="filling-now-note" className="fine" role="status" hidden={!filling}>Answers are going in. A change here doesn’t reach them, only what is filled after (a follow-up on this page included). To keep Continue from being clicked now, press Stop below.</p>
       </div>
 
       {/* agent defaults: Settings → Your defaults, hidden while the feature is off. */}

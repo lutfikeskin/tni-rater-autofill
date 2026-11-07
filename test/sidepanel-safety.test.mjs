@@ -8464,6 +8464,9 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   context.dockFor = () => word;
   context.renderDock();
   assert.equal(state.dock.hidden, true, 'any other word is hidden under Settings');
+  // Settings' Filling note says a switch changed meanwhile reaches what is filled after (review of
+  // #389): each fill reads Continue's switch again before it asks the kit, a follow-up's included.
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /ctx\.settings\.autoAdvance = switchOn\('autoAdvance', 'auto-advance'\);[\s\S]*__raterKit\.fill\(p, o\)/, name);
   // Opening or closing Settings draws the dock again (showScreen).
   assert.match(extractFunction('showScreen'), /renderDock\(\);\n\}$/);
 });
