@@ -8589,7 +8589,36 @@ test('a list whose only option shows twice is still loading: waited for; a full 
   const t0 = Date.now();
   report = await h2.kit.fill([step], { maxRounds: 30 });
   assert.ok(Date.now() - t0 < 2000, 'no wait');
-  assert.deepEqual(plain(report.failed.map((x) => x.reason)), ['no option matches "$1,000 deductible"']);
+  assert.deepEqual(plain(report.failed.map((x) => [x.code, x.reason])), [['option.no-match', 'no option matches "$1,000 deductible"']]);
+});
+
+// Audit 2026-11-07, LEARN-09: the kit's failures carry a stable code (types.js FailCode), which the
+// kit branches on and the usage log keeps, so rewording a message changes neither. Every object the
+// kit or a carrier's page code gives with a `reason` key gives a `code` beside it.
+test('every failure the fill engine gives carries a code beside its reason', () => {
+  const root = new URL('../', import.meta.url);
+  const dir = (d) => fs.readdirSync(new URL(d, root)).filter((f) => f.endsWith('.js')).map((f) => `${d}${f}`);
+  const files = [...dir('src/kit/'), ...dir('src/kit/drivers/'), ...dir('src/content/carriers/')];
+  const codes = fs.readFileSync(new URL('types.js', root), 'utf8').match(/@typedef \{([^}]*)\} FailCode/)[1].match(/'[^']+'/g).map((c) => c.slice(1, -1));
+  const missing = [];
+  const used = new Set();
+  for (const f of files) {
+    // Comments out: a typedef or a note names `reason` too.
+    const src = fs.readFileSync(new URL(f, root), 'utf8').split('\n').map((l) => (/^\s*(\/\/|\*|\/\*\*)/.test(l) ? '' : l.replace(/\/\/ .*$/, ''))).join('\n');
+    for (const m of src.matchAll(/code: (?:\/\*\* @type \{FailCode\} \*\/ \()?'([a-z.-]+)'/g)) used.add(m[1]);
+    // `reason` as an object's key (`reason:`, or shorthand), not a value or an argument.
+    for (const m of src.matchAll(/(?<![.\w$]|\$\{|:\s{0,3})reason(?=\s*[:,}])/g)) {
+      let depth = 0, i = m.index, opener = null;
+      for (; i >= 0; i--) {
+        const ch = src[i];
+        if (ch === '}' || ch === ')') depth++;
+        else if (ch === '{' || ch === '(') { if (depth === 0) { opener = ch; break; } depth--; }
+      }
+      if (opener === '{' && !/\bcode\b/.test(src.slice(i, m.index))) missing.push(`${f}:${src.slice(0, m.index).split('\n').length}`);
+    }
+  }
+  assert.deepEqual(missing, [], 'a failure without a code');
+  assert.deepEqual([...used].filter((c) => !codes.includes(c)), [], 'a code types.js FailCode does not list');
 });
 
 // FL live run 5, 2026-10-21 (W43-21): GEICO cleared the business description when the agent

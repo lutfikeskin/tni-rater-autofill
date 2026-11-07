@@ -352,6 +352,11 @@ export function judgePattern(p, events, containsOf, testSessions = new Set(), hi
     for (const e of history) if (e.session && period.has(e.session) && containsOf(e) === 'yes' && matches(scenario, e)) reached.add(e.session);
   }
   const fixed = hit.yes;
+  // A text condition (`~`) no event of its type met in the whole history, before the fix too: the
+  // message it names may have been reworded, so a "verified" may only mean the words changed
+  // (audit 2026-11-07, LEARN-09). A `code=` condition doesn't depend on the wording.
+  const texts = p.conds.filter((c) => c.op === '~');
+  const unmatchedText = texts.length > 0 && !history.some((e) => (p.type === '*' || e.type === p.type) && texts.every((c) => holds(c, e)));
   const missing = p.kind === 'expect' && p.when ? [...reached].filter((s) => !fixed.has(s)).length : 0;
   let status;
   if (p.kind === 'symptom') status = fixed.size ? 'recurred' : reached.size ? 'verified' : 'not exercised';
@@ -373,6 +378,7 @@ export function judgePattern(p, events, containsOf, testSessions = new Set(), hi
     missing,
     older: hit.no.size,
     unplaced: hit.unknown.size,
+    unmatchedText,
   };
 }
 
@@ -537,7 +543,7 @@ function evidence(r) {
   if (r.builds?.length) parts.push(`fixed builds: ${r.builds.join(', ')} (${n(r.fixedQuotes, 'quote')})`);
   const other = (p) => `${p.older ? `; ${p.older} on older builds` : ''}${p.unplaced ? `; ${p.unplaced} on builds that can't be placed` : ''}`;
   for (const p of r.patterns ?? []) {
-    const only = p.testOnly ? ' (test runs only)' : '';
+    const only = `${p.testOnly ? ' (test runs only)' : ''}${p.unmatchedText ? ' (its text never matched an event, on any build: reworded? match on `code=`)' : ''}`;
     if (p.kind === 'symptom') parts.push(`\`${p.text}\`: ${p.quotes} of ${n(p.reached, 'quote')} that reached it${p.reachedTests ? `, ${p.reachedTests} test` : ''}${only}${other(p)}`);
     else if (p.missing) parts.push(`\`${p.text}\`: missing on ${p.missing} of ${n(p.reached, 'quote')}${only}${other(p)}`);
     else parts.push(`\`${p.text}\`: ${n(p.quotes, 'quote')}${p.tests ? `, ${p.tests} test` : ''}${only}${other(p)}`);

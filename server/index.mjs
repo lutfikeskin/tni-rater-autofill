@@ -176,7 +176,7 @@ export const EVENT_FIELDS = {
   // how: what found the field (field = data-model name, text, option, selector, label, name).
   // source: where the answer comes from (plan.js; FIELD_SOURCES below); standard, manualOnly,
   // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
-  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review'],
+  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'code', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review'],
   // A button the agent clicked themselves: its text (60 characters), and the step on screen.
   agent_click: ['text', 'step'],
   // The agent dismissed a "needs you" item (×): the question, and why it needed them.
@@ -455,6 +455,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     }
     if (out.source !== undefined && !FIELD_SOURCES.includes(out.source)) drop('source');
     for (const k of ['standard', 'manualOnly', 'review']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
+    // Why a fill's answer failed, as a code (types.js FailCode): words and dots, never text.
+    if (out.type === 'fill_field' && out.code !== undefined && !(typeof out.code === 'string' && /^[a-z]+\.[a-z-]{1,30}$/.test(out.code))) drop('code');
     if (out.type === 'check_dismissed' && out.mark !== undefined && !(out.mark === null || (typeof out.mark === 'string' && /^[a-z-]{1,20}$/.test(out.mark)))) drop('mark');
     if (out.install !== undefined && !(typeof out.install === 'string' && /^[0-9a-f-]{36}$/.test(out.install))) drop('install');
     if (out.platform !== undefined && !(out.platform && typeof out.platform === 'object' && !Array.isArray(out.platform) && Object.keys(out.platform).every((k) => ['os', 'chrome'].includes(k))

@@ -572,7 +572,7 @@ async function applyAi(list, ctx, decision) {
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
       const ok = !protectedKeys.includes(x.key) && mine.find((r) => r.ok);
-      const problem = mine.find((r) => !r.ok && !/no longer on this page/.test(r.reason ?? '')) ?? mine[0];
+      const problem = mine.find((r) => !r.ok && r.code !== 'field.missing') ?? mine[0];
       if (ok) {
         x.origin = aiOriginRecord({ frameId: ok.frameId, documentId: ok.documentId,
           questionHash: aiQuestionHash(x), fieldHash: aiLiveFieldHash({ ...x, current: ok.shown }) });

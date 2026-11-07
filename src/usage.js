@@ -458,6 +458,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     // check items (never logged), so it is the item's own `review`.
     ...fieldWhy(x, list),
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
+    ...(x.code ? { code: x.code } : {}),
     reason: x.reason ? redact(x.reason) : undefined,
     options: x.options?.map(redact),
     // Per-answer timing and side effects (filled answers only): see scripts/review.mjs, Speed.
