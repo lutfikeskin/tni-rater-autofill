@@ -726,3 +726,31 @@ test('learning never suggests reviewing a rule for corrections of the agent\'s o
   const standard = week(10).map((e) => (e.type === 'fill_field' && e.q === '2B9D' ? { ...e, source: 'standard' } : e));
   assert.equal(learn(standard, { carriers: CARRIERS, minIntakes: 5 }).suggestions.review.find((s) => s.q === '2B9D').corrected, 6);
 });
+
+// Audit 2026-11-07 LEARN-05: a rule review counts the answers the current rules filled (the fill
+// run's `rules` fingerprint), so a rule fixed since stops showing; and a cleared value is a
+// correction, as the review and the signals report count one.
+test('learning reviews a rule by the corrections of the current rules only, cleared values included', () => {
+  // Ten quotes filled with the old rules (2B9D corrected in 6), then five with the fixed ones, accepted.
+  const runs = (events, rules, offset) => events.flatMap((e) => (e.type === 'intake_loaded'
+    ? [e, { id: `${e.session}-run`, t: e.t, session: e.session, carrier: 'progressive', page: 'AddVehicle', type: 'fill_run', run: `r-${e.session}`, rules }]
+    : [e.type === 'fill_field' ? { ...e, run: `r-${e.session}` } : e])).map((e) => ({ ...e, session: `${offset}${e.session}`, ...(e.run ? { run: `${offset}${e.run}` } : {}),
+    t: new Date(Date.parse(e.t) + offset.length * 86_400_000).toISOString() }));
+  const old = runs(week(10), 'aaaaaaaaaaaa', '');
+  const fixed = runs(week(5).filter((e) => !(e.type === 'field_change' && e.q === '2B9D')), 'bbbbbbbbbbbb', 'n');
+  const events = [...old, ...fixed];
+  const review = (opts) => learn(events, { carriers: CARRIERS, minIntakes: 5, ...opts }).suggestions.review.find((s) => s.q === '2B9D');
+  assert.equal(learn(events, { carriers: CARRIERS }).rules, 'bbbbbbbbbbbb', 'the newest fills\' rules');
+  assert.equal(review(), undefined, 'fixed: no correction under today\'s rules');
+  assert.deepEqual([review({ rules: 'aaaaaaaaaaaa' }).corrected, review({ rules: 'aaaaaaaaaaaa' }).filled, review({ rules: 'aaaaaaaaaaaa' }).earlier], [6, 10, { filled: 5, corrected: 0 }]);
+  assert.equal(review({ rules: null }).filled, 15, 'null: every build');
+  // A cleared text box the fill had typed is a correction.
+  const cleared = [];
+  for (let i = 0; i < 5; i++) {
+    const base = { session: `c${i}`, carrier: 'progressive', page: 'AddVehicle', q: '2C77', label: 'Garaging county' };
+    cleared.push({ id: `c${i}a`, t: at(i * 2), ...base, type: 'fill_field', controlKind: 'text', result: 'filled', path: 'garaging.county' });
+    cleared.push({ id: `c${i}b`, t: at(i * 2 + 1), ...base, type: 'field_change', kind: 'text', by: 'agent', autofilled: 'garaging.county', change: 'cleared', vsAutofill: 'cleared' });
+  }
+  const r = learn(cleared, { carriers: noRules, minIntakes: 5 }).suggestions.review[0];
+  assert.deepEqual([r?.corrected, r?.changes[0].value], [5, 'cleared the value']);
+});
