@@ -6427,6 +6427,32 @@ test('GEICO\'s Recalculate rated 18 s after the click, nothing busy for 3 s: its
   assert.equal(slow.more._clicked, undefined, 'View More Payment Plans waits for the agent');
 });
 
+// Audit 2026-11-07 (LIVE-05): Stop during GEICO's redraw after the premium showed (the `rated` wait,
+// up to a minute on a page that stays busy) ends it too (the maintainer, 2026-11-07): nothing is put
+// back, nothing more is clicked.
+test('GEICO\'s Recalculate: Stop while the page redraws after its premium ends the wait at once, nothing put back', async () => {
+  let stoppedAt = null;
+  const p = recalcPage({ redraw: ({ h, comp }) => {
+    comp.value = '$500 deductible';
+    // GEICO's loader, a second in, never going: the wait after the premium would last its minute.
+    setTimeout(() => h.document.body.append(new FakeNode('div', { id: 'page-load', className: 'loader-container' })), 1000);
+    setTimeout(() => { stoppedAt = clock.Date.now(); h.kit.stop(); }, 3000);
+  } });
+  p.h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  p.h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 12, trace: true });
+  const after = clock.Date.now() - stoppedAt;
+  assert.ok(stoppedAt != null && after <= 100, `the fill ended ${after} ms after Stop`);
+  assert.equal(p.recalcs, 1);
+  assert.deepEqual(plain(said.filter((x) => x.what === 'wait' && x.why === 'rated').map((x) => x.ended)), ['stopped']);
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.equal(p.comp.value, '$500 deductible', 'nothing put back after Stop');
+  assert.equal(p.more._clicked, undefined, 'nothing more clicked');
+});
+
 // W43-41 (FL, 2026-10-22): after the fill's Recalculate, the liability limit, UM, road service and
 // cargo were marked red as changed by GEICO and put back, while the agent saw the right values the
 // whole time. The answers were read 250 ms after the premium showed. GEICO's own requests could

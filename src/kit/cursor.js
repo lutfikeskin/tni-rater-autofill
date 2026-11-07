@@ -1323,9 +1323,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       if (state.pendingAction?.trace && rated(state.pendingAction)) { state.pendingAction.trace.premiumMs = Math.round(perfNow() - state.pendingAction.trace.at); traceRead(state.pendingAction); }
       // Stopped, or the agent edited, while it rated: nothing more is done here.
       if (state.report.halted) { traceEnd(state.pendingAction); break; }
-      // The one wait here a Stop doesn't cut short (`abort: null`), as Continue's below: the page is
-      // still redrawing from the rating it was asked for, and no fill may start on it meanwhile.
-      if (!await settle({ quietMs: state.pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'rated', abort: null })) { traceEnd(state.pendingAction); stalled(LOAD_HALT); break; }
+      // A Stop during GEICO's redraw after the premium ends this wait too (the maintainer, 2026-11-07):
+      // nothing more is put back or read for the answers.
+      if (!await settle({ quietMs: state.pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'rated' })) { traceEnd(state.pendingAction); stalled(LOAD_HALT); break; }
+      if (state.report.halted) { traceEnd(state.pendingAction); break; }
       traceRead(state.pendingAction);
     }
     if (!await verifyAction()) break;
