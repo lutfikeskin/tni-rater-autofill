@@ -298,6 +298,7 @@ export async function eventFate(id) {
 // count the agent was asked about: deleted only if both lists still hold that many, counted under
 // the same lock, so an event another panel logs after the question is never deleted unasked. True
 // when deleted.
+/** @param {{ expected?: number }} [options] */
 export async function clearLog({ expected } = {}) {
   await queue;
   return exclusive(async () => {
