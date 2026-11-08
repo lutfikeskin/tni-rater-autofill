@@ -79,7 +79,7 @@ function probeReplay() {
         resolve({ status: res.statusCode, body });
       });
     });
-    req.on('error', (err) => resolve({ error: err.code || err.message }));
+    req.on('error', (/** @type {NodeJS.ErrnoException} */ err) => resolve({ error: err.code || err.message }));
     req.setTimeout(2000, () => {
       req.destroy();
       resolve({ error: 'timeout' });

@@ -42,6 +42,9 @@ test('this page\'s answers: the title, the filters with their counts, the key, C
     .toEqual(['Nothing needs you on this page.', false, false, 'true']);
   expect([$(container, 'report-age').textContent, $(container, 'report-age').hidden]).toEqual(['From the fill at 3:05 PM. Fill again if the page changed.', false]);
   expect($(container, 'answer-key').textContent).toContain('Marks on the rater page:');
+  // A mark is named with its tag's word: AI for the assistant's answers, You for the agent's.
+  const marks = [...container.querySelectorAll('.legend > span')].filter((s) => s.querySelector('.mark.ai, .mark.agent')).map((s) => s.textContent);
+  expect(marks).toEqual(['AI', 'You']);
   fireEvent.click(container.querySelector('#filters [data-filter="done"]'));
   fireEvent.click($(container, 'key-btn'));
   fireEvent.click($(container, 'unmark'));
