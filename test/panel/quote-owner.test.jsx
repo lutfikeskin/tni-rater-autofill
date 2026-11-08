@@ -184,7 +184,10 @@ test('a tab a rater\'s logo opened fills nothing by itself until the agent opens
   const APPLICATION = 'https://myagency.amwinsadmittedplacement.com/application/businessauto/123/insured';
   const created = [];
   const chromeBefore = globalThis.chrome;
-  globalThis.chrome = { ...chromeBefore, tabs: { ...chromeBefore?.tabs, create: async ({ url }) => { created.push(url); return { id: 9, url }; } } };
+  // Only what openPortal reads of the new tab: its id.
+  /** @type {any} */
+  const tabs = { ...chromeBefore?.tabs, create: async ({ url }) => { created.push(url); return { id: 9, url }; } };
+  globalThis.chrome = { ...chromeBefore, tabs };
   try {
     state.intake = intake('B');
     await openPortal(LINES);
