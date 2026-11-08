@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Settings in React, over everything but the header: the agent's initials, the Filling switches, the
 // AI's card and its key, the usage log, and Advanced (the test-run mark, the usage server, page
 // captures and the developer recording). Drawn from what the panel says: the switches (state.switches,
@@ -74,7 +75,7 @@ function Assistant({ act }) {
   }, [ai]);
   return (
     <details id="assistant" ref={fold} className="group fold">
-      <summary className="list-row"><svg className="fold-icon" aria-hidden="true"><use href="#brain" /></svg><span className="fold-name">AI</span><span id="ai-note" className={ai?.noteTone}>{ai?.note ?? ''}</span><span className="chev" aria-hidden="true">›</span></summary>
+      <summary className="list-row"><svg className="fold-icon" aria-hidden="true"><use href="#brain" /></svg><span className="fold-name">AI assistant</span><span id="ai-note" className={ai?.noteTone}>{ai?.note ?? ''}</span><span className="chev" aria-hidden="true">›</span></summary>
       <div id="agent-card" className={`card${ai?.warn ? ' warn' : ''}`}>
         <label className="opt"><span className="opt-text"><b>Suggest answers</b><span>For questions the intake doesn’t answer</span></span><Check id="ai-on" role="switch" className="switch" checked={!!ai?.on} said={ai} onChange={act.aiOn} /></label>
         <label id="ai-auto-option" className="opt" hidden={!!ai && !ai.autoShown}>
