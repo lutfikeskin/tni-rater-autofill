@@ -14,13 +14,13 @@ import { listed, unitList, unitListsNow, unitFormsNow } from './units.js';
 import { guardEdits, answerEdits, getAnswerEditSession, STOP_STEP_HALT, EDIT_HALT_ANSWERS } from './guard.js';
 import { capture, receipt, readBack, present, signature, decisionSnapshot } from './capture.js';
 import { apply, agreesWith } from './apply.js';
-import { fill, progress, stop } from './cursor.js';
+import { fill, progress, stop, stopRun } from './cursor.js';
 
 (() => {
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 95 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 96 && globalThis.__raterKit.build === BUILD) return;
 
   /**
    * Puts answers the agent accepted from the AI assistant (or that it was allowed to pick itself)
@@ -160,11 +160,12 @@ import { fill, progress, stop } from './cursor.js';
   }
 
   globalThis.__raterKit = {
-    version: 95,
+    version: 96,
     build: BUILD,
     fill: tracedFill,
     progress,
     stop,
+    stopRun,
     answer,
     answerEdits,
     listed,

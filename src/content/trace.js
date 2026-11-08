@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The developer recording's trace (docs/developer-recording.md): injected by the side panel next to
 // the recorder, in its isolated world and every frame, only while a recording runs (unpacked
 // builds). It watches and never acts: it clicks nothing, sets no value and dispatches no event.
@@ -120,7 +119,7 @@
     if (button) return { button: { text: read.buttonText(button).slice(0, 60), rect: box(button) } };
     return { other: { tag: String(el?.tagName ?? '').toLowerCase() || null } };
   }
-  const about = ({ field, button, other }) => (field ? { field } : button ? { button } : { other });
+  const about = (/** @type {{ field?: object, button?: object, other?: object }} */ { field, button, other }) => (field ? { field } : button ? { button } : { other });
 
   // The last trusted gesture on each control: a value event long after it (or with none) is the
   // page's or the extension's (the recorder's rule; the report judges, from `trusted` and this).
