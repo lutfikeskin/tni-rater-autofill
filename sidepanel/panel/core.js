@@ -293,6 +293,9 @@ const state = storeState({
   agentKeys: new Map(),
   agentKeysEpochs: new Map(), // Clear/pruning invalidate late writes for that intake only
   filling: false,
+  // What goes in while `filling` (the developer recording's span says it): 'fill' (Fill this page, an
+  // automatic fill), 'pick' (the agent's pick from a row), 'ai' (an AI answer applied).
+  fillingKind: null,
   autoTimer: null,
   // The page whose new questions the pending follow-up fill is for (scheduleAutoFill `drawn`).
   autoDrawn: null,
@@ -477,29 +480,28 @@ const state = storeState({
   closing: false,
 });
 
-// A fill starting and ending, noted for the developer recording timeline.
+// A fill starting and ending, noted for the developer recording timeline, with what went in (`what`:
+// state.fillingKind as it began), so the agent's pick from a row or an AI answer applied doesn't read
+// as a fill there (audit 2026-11-07, FLOW-15). Its end says what it began as.
 // Routed through panelStore subscription so state.filling updates remain reactive on the store.
-// `source`: what the work is, as its starter says (fillingAs): a fill, an AI apply ('ai') or the
-// agent's own answer from the panel ('agent'), so a recording tells them apart (REC-14, 2026-11-07).
 let fillingPrevious = !!panelStore.getState().filling;
-let fillingSource = 'fill';
+let fillingWhat = null;
 panelStore.subscribe((stateNow) => {
   const on = !!stateNow.filling;
   if (on !== fillingPrevious) {
+    if (on) fillingWhat = stateNow.fillingKind ?? 'fill';
     const rec = stateNow.recording ?? state.recording;
     if (rec && !rec.stopping) {
       const t = Date.now();
-      if (on) rec.fills.push({ start: t, end: null });
+      if (on) rec.fills.push({ start: t, end: null, what: fillingWhat });
       else if (rec.fills.at(-1)) rec.fills.at(-1).end = t;
-      rec.store.add([{ kind: 'fill', t, frame: 0, on, source: fillingSource }]);
+      rec.store.add([{ kind: 'fill', t, frame: 0, on, what: fillingWhat }]);
     }
-    if (!on) fillingSource = 'fill';
     fillingPrevious = on;
   }
 });
-/** Says what the work about to set `state.filling` is. @param {'fill' | 'ai' | 'agent'} source */
-function fillingAs(source) { fillingSource = source; }
-// Whether the kit is asked to say what it does: a developer recording runs on this tab.
+// Whether the kit is asked to say what it does (an AI answer or a pick from a row, as a fill is;
+// REC-14): a developer recording runs on this tab.
 /** @param {number | null | undefined} tabId */
 const traced = (tabId) => !!state.recording && !state.recording.stopping && state.recording.tabId === tabId;
 
@@ -531,16 +533,19 @@ async function migrateStoredData() {
   if (result.error) logCrash(new Error(`stored data not migrated${result.failedAt ? ` to version ${result.failedAt}` : ''}: ${result.error?.name ?? 'Error'}`));
 }
 
-function logCrash(err) {
+// `where`: 'panel', or 'recorder' for one the page's recorder caught and told (usage.js
+// onRecorderMessage).
+function logCrash(err, where = 'panel') {
   try {
     if (state.tab?.carrier?.practice) return;
     // An intake without a record (the very crash this log exists for) has no terms to redact. If
     // the redactor itself can't be built, the message is dropped rather than logged unredacted.
     let redact;
     try { redact = state.intake?.record ? redactor(redactionTerms(state.intake.record)) : (x) => x; } catch { redact = () => ''; }
-    const event = clientErrorEvent(err, { where: 'panel', redact });
-    if (loggedCrashes.has(event.error) || loggedCrashes.size >= 20) return;
-    loggedCrashes.add(event.error);
+    const event = clientErrorEvent(err, { where, redact });
+    const once = `${where}|${event.error}`;
+    if (loggedCrashes.has(once) || loggedCrashes.size >= 20) return;
+    loggedCrashes.add(once);
     usage.log({ ...event, carrier: state.tab?.carrier?.id ?? null, page: state.tab?.url ? pageOf(state.tab.url) : null });
   } catch { /* logging a crash must never crash */ }
 }
@@ -877,7 +882,7 @@ async function settleRejectedAi(page, changes, sender, tabId = state.tab?.id) {
   });
   let fresh = null;
   if (eligible.some(([, x]) => !x.origin && !x.originAmbiguous)) {
-    try { fresh = await runKit(tabId, tab.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); } catch { /* page navigating */ }
+    try { fresh = await runKit(tabId, tab.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null)); } catch { /* page navigating */ }
   }
   if (state.tab?.id !== tabId || state.tab?.url !== tab?.url || state.intake !== intake) return false;
   let changed = false;
@@ -925,7 +930,7 @@ async function retireAiOrigins(ctx, frames = null) {
     && x.done === 'auto' && (x.quoteHash || aiOriginRecord(x.origin)));
   if (!entries.length) return false;
   if (frames == null && entries.some(([, x]) => x.origin && (!x.quoteHash || x.quoteHash === quoteHash))) {
-    try { frames = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); }
+    try { frames = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null)); }
     catch { frames = null; }
   }
   if (!current()) return false;
@@ -959,4 +964,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, logCrash, fillingAs, traced, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };
+export { $, logCrash, traced, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };

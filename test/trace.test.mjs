@@ -42,14 +42,14 @@ class Button {
 }
 
 // `elements`: the page's other elements (a design-system host with its shadow root), as `*` finds them.
-function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.example/quote', pathname = '/quote', elements = [] } = {}) {
+function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.example/quote', pathname = '/quote', navigation = null, startAt = 0, elements = [] } = {}) {
   const controls = [];
   const listeners = new Map();
   const on = (target) => (type, fn) => { const key = `${target}:${type}`; (listeners.get(key) ?? (listeners.set(key, new Set()), listeners.get(key))).add(fn); };
   const off = (target) => (type, fn) => listeners.get(`${target}:${type}`)?.delete(fn);
   const messageListeners = new Set();
   const sent = [];
-  let now = 0;
+  let now = startAt;
   let nextId = 1;
   const timers = new Map();
   const document = {
@@ -64,7 +64,7 @@ function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.examp
   };
   // The page's own changes and requests, handed to the trace by the test (mutate, resource).
   // `observed`: what the mutation observer was asked to watch, in order.
-  const observers = { mutation: null, resource: null, observed: [] };
+  const observers = { mutation: null, resource: null, resourceOptions: null, observed: [] };
   const context = {
     document,
     location: { href, pathname, search: '', origin: 'https://synthetic.example' },
@@ -72,10 +72,10 @@ function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.examp
     URLSearchParams,
     MutationObserver: class { constructor(fn) { this.fn = fn; observers.mutation = this; } observe(target) { observers.observed.push(target); } disconnect() { observers.mutation = null; } },
     // `queued`: entries the browser finished but hasn't handed the callback yet (takeRecords).
-    PerformanceObserver: class { constructor(fn) { this.fn = fn; this.queued = []; observers.resource = this; } observe() {} takeRecords() { const q = this.queued; this.queued = []; return q; } disconnect() { this.queued = []; observers.resource = null; } },
+    PerformanceObserver: class { constructor(fn) { this.fn = fn; this.queued = []; observers.resource = this; } observe(options) { observers.resourceOptions = options; } takeRecords() { const q = this.queued; this.queued = []; return q; } disconnect() { this.queued = []; observers.resource = null; } },
     NodeFilter: { SHOW_TEXT: 4 },
     getComputedStyle: () => ({ visibility: 'visible' }),
-    performance: { timeOrigin: ORIGIN, now: () => now },
+    performance: { timeOrigin: ORIGIN, now: () => now, getEntriesByType: (type) => (type === 'navigation' && navigation ? [navigation] : []) },
     innerWidth: 1280,
     innerHeight: 800,
     devicePixelRatio: 1,
@@ -471,6 +471,31 @@ test('a page request carries the HTTP status its server answered, when the brows
   ]);
   await h.advance(400);
   assert.deepEqual(h.events().filter((e) => e.kind === 'request').map((e) => [e.path, e.status ?? null]), [['/api/rate', 500], ['/api/save', 200], ['/api/old', null]]);
+});
+
+// REC-03 (audit 2026-11-07): a new document's first page was stamped when the trace was put in,
+// seconds after its navigation began, and the requests it made before that were never seen: a full
+// page load's time was charged to the step before, or lost.
+test('a document the trace is in from its load: stamped at its navigation start, its load said, its earlier requests read', async () => {
+  const navigation = { type: 'navigate', responseEnd: 800, domContentLoadedEventEnd: 1500, loadEventEnd: 2100 };
+  const h = harness({ navigation, startAt: 2500 });
+  assert.deepEqual({ ...h.observers.resourceOptions }, { type: 'resource', buffered: true });
+  await h.advance(1000);
+  const [page, load] = h.events();
+  assert.deepEqual([page.kind, page.t, page.injectedAt], ['page', ORIGIN, ORIGIN + 2500]);
+  assert.deepEqual([load.kind, load.t, load.how, load.response, load.ready, load.loaded], ['load', ORIGIN, 'navigate', ORIGIN + 800, ORIGIN + 1500, ORIGIN + 2100]);
+  // Put in again in the same document (a trace the panel left, gone): no second load, no buffer.
+  h.context.__raterTrace.dispose();
+  vm.runInContext(TRACE, h.context);
+  assert.deepEqual({ ...h.observers.resourceOptions }, { type: 'resource', buffered: false });
+  await h.advance(1000);
+  assert.equal(h.events().filter((e) => e.kind === 'load').length, 1);
+  assert.equal(h.events().filter((e) => e.kind === 'page').at(-1).injectedAt, undefined);
+  // A page long loaded when the recording began (the trace put in a minute on): as before.
+  const later = harness({ navigation, startAt: 60_000 });
+  assert.deepEqual({ ...later.observers.resourceOptions }, { type: 'resource', buffered: false });
+  await later.advance(1000);
+  assert.deepEqual(later.events().map((e) => [e.kind, e.t]), [['page', ORIGIN + 60_000]]);
 });
 
 // REC-19 (audit 2026-11-07): GEICO draws its controls inside open shadow roots (gds-*), and the

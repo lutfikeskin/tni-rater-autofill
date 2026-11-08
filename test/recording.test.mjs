@@ -213,6 +213,29 @@ test('the report tells the flow and each step\'s actions: whose each is, typing 
 
 // The page's own changes and requests and the extension's account (docs/developer-recording.md):
 // what may name the client is redacted as a field's label is.
+// Audit 2026-11-07, FLOW-15: the agent's pick from a row and an AI answer applied set `filling` as
+// a fill does, and read as fills in the timeline. Each span says what went in (`what`); one with
+// none (an older recording) is a fill.
+test('the timeline says what went in while the panel was filling: a fill, the agent\'s pick, an AI answer', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0 + 100, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: t0 + 1000, frame: 0, on: true, what: 'fill' },
+    { kind: 'fill', t: t0 + 1500, frame: 0, on: false, what: 'fill' },
+    { kind: 'fill', t: t0 + 2000, frame: 0, on: true, what: 'pick' },
+    { kind: 'fill', t: t0 + 2200, frame: 0, on: false, what: 'pick' },
+    { kind: 'fill', t: t0 + 3000, frame: 0, on: true, what: 'ai' },
+    { kind: 'fill', t: t0 + 3400, frame: 0, on: false, what: 'ai' },
+    { kind: 'fill', t: t0 + 4000, frame: 0, on: true },
+    { kind: 'fill', t: t0 + 4100, frame: 0, on: false },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
+  // The pick's and the AI answer's ends say they ended, not that the answer went in: a pick that found
+  // no field, or an AI answer whose page had changed, ends the same way (#412 review).
+  assert.match(report, /0:01\.0 .*a fill started\n.*the fill ended \(it ran 0\.5 s\)\n.*the panel began putting in the agent's pick from a row\n.*the pick ended \(it ran 0\.2 s\)\n.*the panel began putting in an AI answer\n.*the AI answer ended \(it ran 0\.4 s\)\n.*a fill started\n.*the fill ended \(it ran 0\.1 s\)/);
+  assert.doesNotMatch(report, /was in/);
+});
+
 test('the questions a page drew, a request\'s path and what the fill answered are redacted as a field is', () => {
   const redact = (s) => s.replace(/Sam Smith/g, '[client]');
   const [burst, request, answer, press] = stampEvents([
@@ -381,25 +404,53 @@ test('a step is left by the last button pressed on it, the agent\'s or the exten
   assert.match(report, /\| 4 \| \/quote · Summary \|[^\n]*\| — \|/);
 });
 
-// REC-14 (audit 2026-11-07): an AI apply read as "a fill started", its answers as the page's.
-test('an AI apply and the agent\'s own panel answer are told apart from a fill', () => {
+// REC-14 (audit 2026-11-07): an AI apply read as "a fill started", its answers as the page's. The
+// span says what went in (`what`, FLOW-15); the kit's answers say whose they were (`source`).
+test('an AI apply and the agent\'s own pick from a row are told apart from a fill, their answers too', () => {
   const t0 = Date.parse('2026-10-23T14:12:00.000Z');
   const events = [
     { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
-    { kind: 'fill', t: t0 + 100, frame: 0, on: true, source: 'ai' },
+    { kind: 'fill', t: t0 + 100, frame: 0, on: true, what: 'ai' },
     { kind: 'kit', t: t0 + 300, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Use', label: 'Vehicle use' }, ok: true, start: t0 + 200, applyMs: 50, source: 'ai' },
-    { kind: 'fill', t: t0 + 400, frame: 0, on: false, source: 'ai' },
-    { kind: 'fill', t: t0 + 500, frame: 0, on: true, source: 'agent' },
+    { kind: 'fill', t: t0 + 400, frame: 0, on: false, what: 'ai' },
+    { kind: 'fill', t: t0 + 500, frame: 0, on: true, what: 'pick' },
     { kind: 'kit', t: t0 + 700, seq: 3, frame: 0, what: 'answer', field: { key: 'ref:Radius', label: 'Radius' }, ok: true, start: t0 + 600, applyMs: 50, source: 'agent' },
-    { kind: 'fill', t: t0 + 800, frame: 0, on: false, source: 'agent' },
-    { kind: 'fill', t: t0 + 900, frame: 0, on: true, source: 'fill' },
+    { kind: 'fill', t: t0 + 800, frame: 0, on: false, what: 'pick' },
+    { kind: 'fill', t: t0 + 900, frame: 0, on: true, what: 'fill' },
     { kind: 'kit', t: t0 + 1100, seq: 4, frame: 0, what: 'answer', field: { key: 'ref:Year', label: 'Year' }, ok: true, start: t0 + 1000, applyMs: 50 },
-    { kind: 'fill', t: t0 + 1200, frame: 0, on: false, source: 'fill' },
+    { kind: 'fill', t: t0 + 1200, frame: 0, on: false, what: 'fill' },
   ];
   const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:02.000Z' }, events });
-  assert.match(report, /an AI apply started\n.*the AI's answer went into "Vehicle use" in 0\.1 s\n.*the AI apply ended/);
-  assert.match(report, /a panel answer started\n.*your answer from the panel went into "Radius" in 0\.1 s\n.*the panel answer ended/);
+  assert.match(report, /the panel began putting in an AI answer\n.*the AI's answer went into "Vehicle use" in 0\.1 s\n.*the AI answer ended/);
+  assert.match(report, /the panel began putting in the agent's pick from a row\n.*your pick from the panel went into "Radius" in 0\.1 s\n.*the pick ended/);
   assert.match(report, /a fill started\n.*the extension answered "Year" in 0\.1 s\n.*the fill ended/);
+});
+
+// REC-03 (audit 2026-11-07): a page's load time was invisible, charged to the step before it.
+test('a page loaded with the trace in it says how long it took, in the Flow and its own lines', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'click', t: t0 + 5000, seq: 2, frame: 0, button: { text: 'Continue' }, trusted: true },
+    { kind: 'page', t: t0 + 5200, seq: 1, frame: 0, page: '/drivers', step: 'Drivers', top: true, injectedAt: t0 + 8000 },
+    { kind: 'load', t: t0 + 5200, seq: 2, frame: 0, how: 'navigate', response: t0 + 6100, ready: t0 + 7000, loaded: t0 + 7800 },
+    { kind: 'load', t: t0 + 5300, seq: 1, frame: 1, how: 'navigate', response: null, ready: null, loaded: t0 + 9000 },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:20.000Z' }, events });
+  assert.match(report, /\| 2 \| \/drivers · Drivers \| 0:05\.2 \(loaded in 2\.6 s\) \|/);
+  assert.match(report, /the page loaded \(a new page\): its server answered in 0\.9 s, ready at 1\.8 s, loaded at 2\.6 s/);
+  assert.equal(report.match(/the page loaded/g).length, 1, 'a frame\'s load is not the page\'s');
+  assert.match(report, /\| 1 \| \/quote · Vehicles \| 0:00\.0 \|/);
+  // Review of PR #397: a reload, the same page and step, is a step of its own with its load.
+  const reload = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:20.000Z' }, events: [...events,
+    { kind: 'page', t: t0 + 12_000, seq: 1, frame: 0, page: '/drivers', step: 'Drivers', top: true, injectedAt: t0 + 13_500 },
+    { kind: 'load', t: t0 + 12_000, seq: 2, frame: 0, how: 'reload', response: t0 + 12_400, ready: t0 + 12_900, loaded: t0 + 13_100 }] });
+  assert.match(reload, /\| 3 \| \/drivers · Drivers \| 0:12\.0 \(loaded in 1\.1 s\) \|/);
+  assert.match(reload, /the page loaded \(reloaded\): its server answered in 0\.4 s, ready at 0\.9 s, loaded at 1\.1 s/);
+  // The same page seen again by a trace put in again in that document (no injectedAt): no new step.
+  const again = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:20.000Z' }, events: [...events,
+    { kind: 'page', t: t0 + 12_000, seq: 1, frame: 0, page: '/drivers', step: 'Drivers', top: true }] });
+  assert.doesNotMatch(again, /^\| 3 \|/m);
 });
 
 // REC-04 (audit 2026-11-07): a recording whose panel followed another tab looked complete.

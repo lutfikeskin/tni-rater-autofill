@@ -213,6 +213,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   const left = new Map();
   const leftQuestions = new Map();
   const failed = new Map();
+  const failedCodes = new Map();
   for (const e of events) {
     if (e.type !== 'fill_field' || ['filled', 'kept'].includes(e.result)) continue;
     const once = `${e.session}|${e.page}|${e.view ?? ''}|${e.key ?? e.q ?? ''}|${e.label ?? ''}`;
@@ -223,7 +224,12 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     const q = leftQuestions.get(e.result) ?? new Map();
     tally(q, `${where(e)}: "${mask(e.label)}"`);
     leftQuestions.set(e.result, q);
-    if (e.result === 'failed') tally(failed, `${where(e)}: "${mask(e.label)}" · ${mask(e.reason)}`);
+    // By its code (types.js FailCode), so a reworded message stays one row; a build before codes by
+    // its masked text.
+    if (e.result === 'failed') {
+      tally(failed, `${where(e)}: "${mask(e.label)}" · ${e.code ?? mask(e.reason)}`);
+      tally(failedCodes, e.code ?? `no code: ${mask(e.reason)}`);
+    }
   }
 
   // What held Continue (fill_run blockerList), per quote.
@@ -360,7 +366,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
 
   // Crashes in the panel (client_error), by build and message; test runs too.
   const crashes = new Map();
-  for (const e of periodAll.filter((x) => x.type === 'client_error')) tally(crashes, `${build(e)} · ${mask(e.error)}${e.stack?.[0] ? ` @ ${e.stack[0]}` : ''}`);
+  for (const e of periodAll.filter((x) => x.type === 'client_error')) tally(crashes, `${build(e)} · ${e.where ?? 'panel'} · ${mask(e.error)}${e.stack?.[0] ? ` @ ${e.stack[0]}` : ''}`);
 
   // The settings in force for each quote: its last agent_settings; how many quotes had each on.
   const lastSettings = new Map();
@@ -425,6 +431,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     funnel: Object.fromEntries([...funnel].map(([c, list]) => [c, { quotes: list.quotes, pages: list.pages.slice(0, 25) }])),
     left: Object.fromEntries([...left].map(([result, s]) => [result, { answers: s.size, top: top(leftQuestions.get(result), n) }])),
     failed: top(failed, n),
+    failedCodes: top(failedCodes, n),
     blockers: [...blockers].map(([b, s]) => [b, s.size]).sort((a, b) => b[1] - a[1]).slice(0, n),
     blockedRuns: runs.filter((r) => r.blockers > 0).length,
     runs: runs.length,
@@ -493,13 +500,13 @@ export function markdown(s, { noTestList = false } = {}) {
   }
   L.push('## Left to the agent', '', 'Each question counted once per quote, page and unit. unfamiliar: no rule; leftRequired: required and unanswered; noData: the intake has no answer; failed: the fill could not set it.', '');
   for (const [result, x] of Object.entries(s.left)) L.push(`**${result}**: ${x.answers}`, '', ...list(x.top), '');
-  L.push('## Fill failures by reason', '', ...list(s.failed), '');
+  L.push('## Fill failures by reason', '', 'Each question once per quote, page and unit, by why it failed (its code; `kit.exception` is an error of the kit itself, a defect rather than a refusal; a build before codes by its text).', '', ...list(s.failedCodes), '', ...list(s.failed), '');
   L.push('## What held Continue', '', `Blockers at the end of fill runs, by the number of quotes they held.`, '', ...list(s.blockers, ' quotes'), '');
   L.push('## Restricted actions by the extension', '', s.restricted.length ? '**Safety finding: the extension clicked something that reads as a restricted action.**' : 'None: every click the extension made was a helper or a continuation.', ...(s.restricted.length ? list(s.restricted, ' runs') : []), '', `Its clicks: ${s.actions.map(([a, c]) => `${a} ×${c}`).join(', ') || 'none'}.`, '');
   L.push('## Signs a carrier changed a page', '', ...list(s.pageChanges, ' runs'), '');
   L.push('## Fills of a hidden tab', '', 'Fill runs while the quote tab was in the background or its page hidden, where Chrome slows timers: their median time against the other runs on that carrier.', '',
     ...(Object.keys(s.hiddenFills ?? {}).length ? Object.entries(s.hiddenFills).map(([c, h]) => `- ${c}: ${h.background} in the background, ${h.hidden} hidden, of ${h.runs} runs · median ${h.medianMs ?? '—'} ms against ${h.medianMsOthers ?? '—'} ms`) : ['None.']), '');
-  L.push('## Panel crashes', '', 'Errors nothing in the panel caught (client_error), by build; test runs included. Each one is a finding.', '', ...list(s.crashes), '');
+  L.push('## Crashes', '', 'Errors nothing in the panel caught (where panel), and exceptions the recorder on the page caught and reported (where recorder): client_error, by build and where; test runs included. Each one is a finding.', '', ...list(s.crashes), '');
   L.push('## Settings in force', '', `The last agent_settings of each quote (${s.settings.quotes} quotes reported one).`, '', ...list(s.settings.on, ' quotes'), '');
   L.push("## Agents' own defaults", '', `The defaults each quote's last agent_settings logged in place of TNI's (${s.ownDefaults.quotes} quotes reported them), by the number of quotes and who had them. An answer they filled reads as agent-default below, never as a TNI standard.`, '', ...(s.ownDefaults.defaults.length ? s.ownDefaults.defaults.map((d) => `- ${d.quotes} quotes · ${d.text} · ${d.agents.join(', ') || '?'}`) : ['None.']), '');
   L.push('## Buttons agents clicked themselves', '', 'By the number of quotes: a helper the extension has (Recalculate, Print, Lookup VIN) clicked by hand is one it didn\'t do.', '', ...list(s.agentClicks, ' quotes'), '');
