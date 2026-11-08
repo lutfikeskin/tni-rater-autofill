@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The cards at the top of the page view in React: the rater to open while the tab in front is none,
 // another rater's tab in front while the panel stays on the quote tab (showHeldNote),
 // then what's wrong or different about this tab's quote, above its answers: the client's current

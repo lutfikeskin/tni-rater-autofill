@@ -591,7 +591,7 @@ export const amwins = {
     // "Does the insured have a DOT or MC number?": the NONE, DOT and MC boxes.
     { concept: 'business.usdot', selector: '#hasDotNumber', tni: 'amwins.ntl', name: 'Has a DOT number', kind: 'bool', source: held(dotSource), value: (r) => !!dot(r), note: holdOr() },
     { concept: 'business.mc', selector: '#hasMcNumber', name: 'Has an MC number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.mc },
-    { concept: 'business.usdot', selector: '#noNumber', name: 'No DOT / MC number', kind: 'bool', source: (r) => (r.applicant.mc ? 'derived' : held(dotSource)(r)), value: (r) => !dot(r) && !r.applicant.mc,
+    { concept: 'business.usdot', selector: '#noNumber', tni: 'amwins.ntl', name: 'No DOT / MC number', kind: 'bool', source: (r) => (r.applicant.mc ? 'derived' : held(dotSource)(r)), value: (r) => !dot(r) && !r.applicant.mc,
       note: (r) => (r.applicant.mc ? null : ntlDotFilingsHold(r)) },
     { concept: 'business.usdot', selector: '#dotNumber', name: 'DOT number', source: held('derived'), value: (r) => digits(dot(r)), note: holdOr() },
     { concept: 'business.mc', selector: '#mcNumber', name: 'MC number', source: 'derived', value: (r) => digits(r.applicant.mc) },

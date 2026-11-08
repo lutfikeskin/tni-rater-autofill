@@ -5,7 +5,7 @@
 import * as usage from './usage-log.js';
 import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
-import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store, forgetKeptWork, keptWorkCleared } from './panel/core.js';
+import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store, forgetKeptWork, keptWorkCleared, forgetJournals } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
 import { firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty, showScreen } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
@@ -195,7 +195,7 @@ function wire() {
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); noteNewTab(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
-    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); state.tabSessions.delete(tabId); state.quoteStates.delete(tabId); forgetQuoteTab(tabId); dropReports((entry) => entry.tabId === tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); state.tabSessions.delete(tabId); state.quoteStates.delete(tabId); forgetJournals(tabId); forgetQuoteTab(tabId); dropReports((entry) => entry.tabId === tabId); });
     chrome.windows.onFocusChanged.addListener(refreshTab);
     // Settings' Mark the quote's tab follows the tabGroups permission, given or taken back anywhere.
     watchMarkSwitch();

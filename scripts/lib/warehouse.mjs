@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The quoting history warehouse: TNI's quotes as tables for SQL, in a DuckDB file on the
 // maintainer's computer (docs/quoting-history-database.md). Built from the usage log with the
 // reviews' own definitions, so it counts what the weekly review counts: what a quote is
