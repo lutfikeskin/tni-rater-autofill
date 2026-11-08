@@ -112,7 +112,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // after it (it used to be skipped: "it stopped here").
   // Kept with its tab: the fill running may be on another one (audit 2026-11-07, FLOW-07).
   if (state.filling && auto === 'page') { state.pagePending = { tabId: state.tab?.id, page: pageOf(state.tab?.url) }; return; }
-  if (state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
+  if (state.filling || state.closing || state.resetting || state.newQuoteFailed || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
   // Back on a step that takes follow-ups only for new questions (newQuestionsOnlySteps) after its
   // fill: only the agent, or new questions, fill it again.
   if (auto && state.tab.carrier.newQuestionsOnlySteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
