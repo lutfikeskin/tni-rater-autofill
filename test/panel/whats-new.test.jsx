@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 

@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Settings → Your defaults (docs/agent-defaults-spec.md, "TNI defaults (basic)" and "Advanced"): the
 // agent's own amounts in place of TNI's standards, kept in a profile the agent picks, never under their
 // initials alone. One folded row, as AI's, that says the profile and how many amounts it changes; Per
