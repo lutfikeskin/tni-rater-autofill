@@ -112,16 +112,19 @@ export const drivers = [
  * Applies a plan step value to control c using the matching driver.
  * @param {any} step
  * @param {PageControl} c
+ * @param {() => boolean} [stopped]  the caller's own stop, besides the fill's (waitsStopped): the
+ *   panel's answers stop at the agent's edit of a question on the page (pagekit `answer`)
  * @returns {Promise<WriteResult>}
  */
-export async function apply(step, c) {
+export async function apply(step, c, stopped = () => false) {
+  const halted = () => waitsStopped() || stopped();
   // Stopped (the agent's Stop, or their edit): nothing more is written.
-  if (waitsStopped()) return interrupted();
+  if (halted()) return interrupted();
   // The agent typing in another field (audit 2026-11-07, ENG-18): the write waits until they pause
   // (at most TYPING_WAIT_MS), and their field has its focus back after it, which the write's own
-  // focus and blur took.
-  for (const end = Date.now() + TYPING_WAIT_MS; typingElsewhere(c.el) && Date.now() < end && !waitsStopped();) await pause(TYPING_POLL_MS);
-  if (waitsStopped()) return interrupted();
+  // focus and blur took. An edit of theirs while it waits stops it there (CodeRabbit on #435).
+  for (const end = Date.now() + TYPING_WAIT_MS; typingElsewhere(c.el) && Date.now() < end && !halted();) await pause(TYPING_POLL_MS);
+  if (halted()) return interrupted();
   const theirs = focusedControl();
   try {
     return await write(step, c);

@@ -78,7 +78,13 @@ import { fill, progress, stop } from './cursor.js';
           ? { id, name, kind: 'bool', value: /^(checked|yes|true)$/i.test(String(a.value)) }
           : { id, name, value: String(a.value) };
         let result;
-        try { result = await apply(step, c); } catch (e) { result = { ok: false, code: 'kit.exception', reason: String(e?.message ?? e) }; }
+        // An edit of the agent's while this answer waits for them to stop typing elsewhere stops it
+        // before it is written, as one before it would (CodeRabbit on #435).
+        try { result = await apply(step, c, () => editedQuestions.size > 0); } catch (e) { result = { ok: false, code: 'kit.exception', reason: String(e?.message ?? e) }; }
+        if (!result.ok && result.code === 'fill.interrupted' && editedQuestions.size && !edited(a.key)) {
+          results.push({ key: a.key, label: a.label, ok: false, code: 'fill.interrupted', reason: EDIT_HALT_ANSWERS });
+          continue;
+        }
         if (result.ok) {
           const settled = await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
           const fresh = find(a.key, a.label);
