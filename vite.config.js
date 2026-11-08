@@ -86,9 +86,10 @@ export default defineConfig(({ command, mode }) => ({
   build: {
     outDir: path.join(here, 'dist/tni-rater-autofill/sidepanel'),
     emptyOutDir: false,
-    // Not minified, with source maps: the bundle reads like the source in DevTools.
+    // Not minified, with source maps: the bundle reads like the source in DevTools. The store build's
+    // don't go in its zip (scripts/package.mjs keeps them beside it), so its bundle doesn't name them.
     minify: false,
-    sourcemap: true,
+    sourcemap: mode === 'store' ? 'hidden' : true,
     target: 'chrome120',
     assetsDir: 'bundle',
     assetsInlineLimit: 0,
