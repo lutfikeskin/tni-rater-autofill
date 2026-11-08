@@ -1,5 +1,6 @@
 // @ts-check
 import { createTabMarker } from './src/tab-mark.js';
+import { pruneKeptWork } from './src/kept-work.js';
 
 // Clicking the toolbar icon opens the side panel.
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
@@ -29,3 +30,7 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   chrome.storage.local.set({ whatsNewSeen: chrome.runtime.getManifest().version })
     .catch((e) => console.warn("what's new start not saved:", e?.message ?? e));
 });
+
+// The agent's corrections and checks kept past their day (src/kept-work.js) are deleted as Chrome
+// starts, whether or not the panel is opened.
+chrome.runtime.onStartup.addListener(() => { pruneKeptWork(chrome.storage.local).catch((e) => console.warn('kept work not pruned:', e?.message ?? e)); });

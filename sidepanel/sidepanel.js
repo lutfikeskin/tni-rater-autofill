@@ -5,7 +5,7 @@
 import * as usage from './usage-log.js';
 import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
-import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store } from './panel/core.js';
+import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store, forgetKeptWork, keptWorkCleared } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
 import { firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty, showScreen } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
@@ -226,6 +226,10 @@ async function init() {
   // once its intake is known, for the copy giving way to hand over to (takeOver).
   announceCopy();
   await restoreAiPending();
+  // Corrections and checks kept past their day (src/kept-work.js, FLOW-17) go as the panel opens,
+  // and a Clear that failed is tried again.
+  forgetKeptWork();
+  keptWorkCleared();
   const saved = await usage.settings();
   // The Filling switches as saved, in their boxes before anything reads them (settings-view.jsx).
   flushSync(() => {
