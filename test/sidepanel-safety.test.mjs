@@ -3110,7 +3110,7 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
     syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
-  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('runAssist'), context);
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('lunaTrace') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
   return { state, context, ctx, report, logged, rendered, applied, session, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
 }
@@ -3227,6 +3227,35 @@ test("a question whose choices name a driver goes to Luna with placeholders and 
 
 // 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions
 // were left, as counts.
+// Audit 2026-11-07, AI-08: while a developer recording runs on the tab, each Luna call goes into it,
+// redacted with the recording's redactor; on another tab, or once it stops, nothing does.
+test("a developer recording on the tab keeps each Luna call, redacted, and nothing otherwise", async () => {
+  let opts;
+  const t = assistHarness({ suggest: async (items, context, cfg, o) => {
+    opts = o;
+    o.trace?.({ call: 'propose', ms: 5, request: { fields: { f1: { label: 'Years with Acme Trucking' } } }, answer: { decisions: {} }, tokensIn: 1 });
+    return { suggestions: [], tokensIn: 1, tokensOut: 1, modelCalls: 1 };
+  } });
+  const added = [];
+  const recording = { tabId: 1, stopping: false, redact: (s) => s.replace('Acme Trucking', '[client]'), store: { add: (events) => added.push(...events) } };
+  t.state.recording = recording;
+  await t.context.runAssist([{}], t.ctx);
+  assert.equal(added.length, 1);
+  assert.deepEqual([added[0].kind, added[0].frame, added[0].page, added[0].call, added[0].request.fields.f1.label, added[0].tokensIn],
+    ['luna', 0, 'CoveragesRates', 'propose', 'Years with [client]', 1]);
+  assert.ok(Number.isFinite(added[0].t));
+  // Stopped while Luna answered: nothing more goes in.
+  recording.stopping = true;
+  opts.trace({ call: 'verify', request: {}, answer: null });
+  assert.equal(added.length, 1);
+  for (const other of [{ ...recording, stopping: false, tabId: 2 }, null]) {
+    const u = assistHarness({ suggest: async (items, context, cfg, o) => { opts = o; return { suggestions: [], tokensIn: 1, tokensOut: 1, modelCalls: 1 }; } });
+    u.state.recording = other;
+    await u.context.runAssist([{}], u.ctx);
+    assert.equal(opts.trace, undefined, 'no trace without a recording on this tab');
+  }
+});
+
 test('Luna gets the page’s other answers from the snapshot, and the log counts why questions were left', async () => {
   let sent;
   const why = ['missing', 'unverified', 'unverified', 'chose', 'tooLarge', null];

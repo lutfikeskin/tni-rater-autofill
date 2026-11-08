@@ -991,7 +991,7 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel
+ *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel, and luna (one Luna call)
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
  * @property {boolean} [away]  panel: the panel follows another tab than the recorded one (true), or is back on it
  * @property {number | null} [followed]  panel: the tab the panel follows (a tab number)
@@ -1066,6 +1066,14 @@
  * @property {'page' | 'kit' | 'navigate' | 'reload' | 'back_forward' | 'prerender' | null} [how]  kit press: clicked from the page's own world, or by the kit; load: how the document came (its navigation entry's type)
  * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
  * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
+ * @property {'propose' | 'verify'} [call]  luna: the page review's first call or its evidence check (src/ai/luna.js `trace`)
+ * @property {object | null} [request]  luna: the request's state as sent (fields with their options, sources; the intake as Luna got it), redacted again
+ * @property {object | null} [answer]  luna: Luna's answer as it parsed (`decisions`), null when it gave none the contract accepts
+ * @property {string | null} [model]  luna: the model that answered
+ * @property {string | null} [outcome]  luna: the response's status as the provider said it (completed, incomplete…)
+ * @property {number | null} [tokensIn]  luna: the call's input tokens
+ * @property {number | null} [tokensOut]  luna: its output tokens
+ * @property {string | null} [error]  luna: why the call failed
  */
 
 /**
