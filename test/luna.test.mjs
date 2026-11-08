@@ -554,6 +554,48 @@ test("without a key of the agent's own, the request goes to the server with its 
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(501) }), /isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under AI./);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(424) }), /TNI's server right now/);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(401) }), error => /TNI's server refused/.test(error.message) && !/OpenAI API key/.test(error.message));
+  // Audit 2026-11-07, AI-09: the server gave up on OpenAI (its LUNA_TIMEOUT_MS, under the panel's own wait).
+  await assert.rejects(callModel({ proxy, body, fetchImpl: status(504) }), /The AI assistant took too long\. Nothing was applied\.$/);
+});
+
+// Audit 2026-11-07, AI-09: a page of several groups was its calls one after the other.
+test("groups are asked two at a time, each still with both its calls, and their answers go in the questions' order", async () => {
+  const pending = [], started = [];
+  let inFlight = 0, most = 0;
+  const call = ({ body }) => {
+    const state = JSON.parse(body.input[0].content);
+    const fields = Object.keys(state.proposed ?? state.fields);
+    started.push(`${state.proposed ? 'check' : 'ask'} ${fields.length}`);
+    most = Math.max(most, ++inFlight);
+    return new Promise((resolve) => pending.push(() => { inFlight--; resolve(state.proposed ? groupCheck(body) : groupAnswer(body)); }));
+  };
+  const fields = questions(30);
+  const review = suggest(fields, context, { apiKey: 'synthetic' }, { call });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  // The prompt hash is worked out (crypto.subtle) before the first call.
+  for (let i = 0; i < 200 && started.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 1));
+  for (let i = 0; i < 5; i++) await flush();
+  assert.deepEqual(started, ['ask 12', 'ask 12'], 'the first two groups are asked at once, the third waits');
+  // The second group answers first: its evidence check starts, and still the third waits for the wave.
+  pending.splice(1, 1)[0]();
+  await flush();
+  assert.deepEqual(started, ['ask 12', 'ask 12', 'check 12']);
+  while (pending.length) { pending.shift()(); await flush(); }
+  const result = await review;
+  assert.deepEqual(started.slice(3), ['check 12', 'ask 6', 'check 6']);
+  assert.equal(most, 2);
+  assert.equal(result.modelCalls, 6);
+  assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id), "in the questions' order");
+  assert.ok(result.suggestions.every(x => !x.leave && x.verified));
+  // The first failure in the questions' order is the review's, after the whole wave has ended.
+  let n = 0;
+  const failing = async ({ body }) => {
+    const state = JSON.parse(body.input[0].content);
+    if (!state.proposed && ++n === 1) throw new AssistError('Luna is rate-limited. Try again shortly.');
+    return state.proposed ? groupCheck(body) : groupAnswer(body);
+  };
+  const outcome = await suggest(questions(24), context, { apiKey: 'synthetic' }, { call: failing }).then(() => null, (e) => e);
+  assert.match(outcome.message, /rate-limited/);
 });
 
 // Audit 2026-11-07, AI-01: the panel's bound went from 48,000 characters to MAX_REQUEST_CHARS, and
@@ -596,11 +638,13 @@ test('against a server from before the larger bound, the page is planned again a
   const calls = [];
   const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
   const result = await suggest(fields, context, { apiKey: '', proxy }, { call: (args) => callModel({ ...args, fetchImpl: oldServer(calls) }) });
-  assert.ok(calls[0] > OLD_SERVER_CHARS, 'planned first at the larger bound');
-  assert.ok(calls.slice(1).every(n => n <= OLD_SERVER_CHARS), "then at the old server's");
+  // Two groups are asked at once (AI-09): both of the first wave may be refused, which costs nothing.
+  const over = calls.filter(n => n > OLD_SERVER_CHARS).length;
+  assert.ok(over >= 1 && over <= 2 && calls.slice(0, over).every(n => n > OLD_SERVER_CHARS), 'planned first at the larger bound');
+  assert.ok(calls.slice(over).every(n => n <= OLD_SERVER_CHARS), "then at the old server's");
   assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id));
   assert.ok(result.suggestions.every(x => !x.leave && x.choice === 'No'));
-  assert.equal(result.modelCalls, calls.length - 1, 'the refused request was never a model call');
+  assert.equal(result.modelCalls, calls.length - over, 'a refused request was never a model call');
   // The current server takes the larger groups: fewer calls.
   const current = [];
   await suggest(fields, context, { apiKey: '', proxy }, { call: async ({ body }) => {
