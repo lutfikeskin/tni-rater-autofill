@@ -46,6 +46,8 @@ const codePath = (s) => `\`${String(s ?? '').replace(/\s+/g, ' ').replace(/`/g, 
 // Whose the kit's answer was (REC-14): a fill's (none said), an AI answer's or the agent's pick from
 // a row (the kit's `source`, from answer()'s `by`).
 const BY = { ai: 'the AI\'s answer went into', agent: 'your pick from the panel went into' };
+// One that didn't take: tried, as it may not have been written at all.
+const TRIED = { ai: 'the panel tried to put the AI\'s answer into', agent: 'the panel tried to put your pick from the panel into' };
 // A document's load (trace.js `load`, stamped at its navigation start), each moment after it.
 const LOADED_HOW = { navigate: 'a new page', reload: 'reloaded', back_forward: 'by Back or Forward', prerender: 'prerendered' };
 const loadedIn = (e) => (typeof e?.loaded === 'number' ? e.loaded - e.t : null);
@@ -173,7 +175,7 @@ function actions(events) {
       const timing = e.timing ?? null;
       const after = [timing?.settleMs ? `then waited ${secs(timing.settleMs)} for the page` : '', timing?.ajax ? many(timing.ajax, 'request') : '',
         timing?.revealed ? `it drew ${timing.revealed}` : '', timing?.removed ? `took away ${timing.removed}` : ''].filter(Boolean).join(', ');
-      lines.push({ t: e.start ?? e.t, text: `${BY[e.source] ?? 'the extension answered'} ${fieldName(e)} in ${secs(e.applyMs ?? 0)}${after ? `, ${after}` : ''}${e.ok === false ? ' (not kept)' : ''}` });
+      lines.push({ t: e.start ?? e.t, text: `${(e.ok === false ? TRIED : BY)[e.source] ?? 'the extension answered'} ${fieldName(e)} in ${secs(e.applyMs ?? 0)}${after ? `, ${after}` : ''}${e.ok === false ? ' (not kept)' : ''}` });
     } else if (e.kind === 'kit' && e.what === 'wait' && e.why !== 'answer') {
       const held = e.held?.busy ? ', the page still busy' : e.held?.changing ? ', the page still changing' : e.held?.requests ? ', requests still finishing' : '';
       const ended = e.ended === 'quiet' ? 'the page was quiet' : `at its limit of ${secs(e.maxMs ?? 0)}${held}`;

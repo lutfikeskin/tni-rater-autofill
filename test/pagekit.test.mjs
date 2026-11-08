@@ -2801,6 +2801,9 @@ test('answer() asked with trace says what it does, and by whom; without it, noth
     [['run', true, 'ai', null], ['answer', null, 'ai', true], ['run', false, 'ai', null]]);
   assert.deepEqual(said.filter((x) => x.what === 'wait').map((x) => x.why), ['answer']);
   assert.equal(said.find((x) => x.what === 'answer').field.label, 'Commodity category');
+  // Its wait after it, as a fill's answer says its own (review of PR #434): the report's line.
+  const told = said.find((x) => x.what === 'answer').timing;
+  assert.equal(told?.settleMs, said.find((x) => x.what === 'wait').ms);
   // Tracing ends with the answers: a later fill without trace says nothing.
   said.length = 0;
   await h.kit.fill([], { maxRounds: 1 });

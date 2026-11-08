@@ -101,8 +101,10 @@ import { fill, progress, stop } from './cursor.js';
         const t0 = Date.now();
         try { result = await apply(step, c); } catch (e) { result = { ok: false, code: 'kit.exception', reason: String(e?.message ?? e) }; }
         const tApplied = Date.now();
+        let settleMs = null;
         if (result.ok) {
           const settled = await settle(serverBacked ? { why: 'answer' } : { quietMs: 250, maxMs: 3000, why: 'answer' });
+          settleMs = Date.now() - tApplied;
           const fresh = find(a.key, a.label);
           if (edited(a.key)) result = { ok: false, code: 'answer.agent-edited', reason: 'you changed this question yourself while the answer went in; your answer stays' };
           else if (!settled) result = { ok: false, code: 'page.unsettled', reason: 'the page did not settle after the answer' };
@@ -112,7 +114,9 @@ import { fill, progress, stop } from './cursor.js';
         }
         if (!result.ok && !edited(a.key)) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `${agent ? 'Your answer' : 'AI answer'} not accepted: ${result.reason}`); }
         results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, ...(result.ok ? {} : { code: result.code ?? 'kit.uncoded' }), reason: result.reason ?? null });
-        if (isTracing()) kitTrace('answer', { field: { key: a.key, label: c.label ?? '' }, stepKind: step.kind ?? null, ok: !!result.ok, start: t0, applyMs: tApplied - t0, source: by });
+        if (isTracing()) kitTrace('answer', { field: { key: a.key, label: c.label ?? '' }, stepKind: step.kind ?? null, ok: !!result.ok, start: t0, applyMs: tApplied - t0, source: by,
+          // The wait after it, as the fill's answers say theirs (the usage log's timing): the report's line.
+          ...(settleMs != null ? { timing: { ms: Date.now() - t0, settleMs } } : {}) });
       }
       for (const r of results) if (edited(r.key)) r.protected = true;
       for (const [key, label] of editedQuestions) {

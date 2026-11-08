@@ -411,7 +411,8 @@ test('an AI apply and the agent\'s own pick from a row are told apart from a fil
   const events = [
     { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
     { kind: 'fill', t: t0 + 100, frame: 0, on: true, what: 'ai' },
-    { kind: 'kit', t: t0 + 300, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Use', label: 'Vehicle use' }, ok: true, start: t0 + 200, applyMs: 50, source: 'ai' },
+    { kind: 'kit', t: t0 + 300, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Use', label: 'Vehicle use' }, ok: true, start: t0 + 200, applyMs: 50, source: 'ai', timing: { ms: 160, settleMs: 110 } },
+    { kind: 'kit', t: t0 + 350, seq: 5, frame: 0, what: 'answer', field: { key: 'ref:Garage', label: 'Garaging' }, ok: false, start: t0 + 320, applyMs: 20, source: 'ai' },
     { kind: 'fill', t: t0 + 400, frame: 0, on: false, what: 'ai' },
     { kind: 'fill', t: t0 + 500, frame: 0, on: true, what: 'pick' },
     { kind: 'kit', t: t0 + 700, seq: 3, frame: 0, what: 'answer', field: { key: 'ref:Radius', label: 'Radius' }, ok: true, start: t0 + 600, applyMs: 50, source: 'agent' },
@@ -421,7 +422,7 @@ test('an AI apply and the agent\'s own pick from a row are told apart from a fil
     { kind: 'fill', t: t0 + 1200, frame: 0, on: false, what: 'fill' },
   ];
   const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:02.000Z' }, events });
-  assert.match(report, /the panel began putting in an AI answer\n.*the AI's answer went into "Vehicle use" in 0\.1 s\n.*the AI answer ended/);
+  assert.match(report, /the panel began putting in an AI answer\n.*the AI's answer went into "Vehicle use" in 0\.1 s, then waited 0\.1 s for the page\n.*the panel tried to put the AI's answer into "Garaging" in 0\.0 s \(not kept\)\n.*the AI answer ended/);
   assert.match(report, /the panel began putting in the agent's pick from a row\n.*your pick from the panel went into "Radius" in 0\.1 s\n.*the pick ended/);
   assert.match(report, /a fill started\n.*the extension answered "Year" in 0\.1 s\n.*the fill ended/);
 });
