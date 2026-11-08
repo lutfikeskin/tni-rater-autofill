@@ -49,7 +49,7 @@ test('the replay pages load the vendored ExtJS, pinned by digest, and no test pa
 test('the replay server serves the vendored theme\'s images and fonts by their types', async () => {
   const { createReplayServer } = await import('../scripts/lib/replay-server.mjs');
   const server = createReplayServer(fileURLToPath(root));
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(undefined)));
   try {
     const { port } = /** @type {import('node:net').AddressInfo} */ (server.address());
     const res = await fetch(`http://127.0.0.1:${port}/${VENDOR}classic/theme-classic/resources/images/form/trigger.gif`);
