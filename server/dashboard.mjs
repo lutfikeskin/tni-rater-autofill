@@ -179,6 +179,10 @@ export function eventReader(eventsDir) {
     const first = new Date(now - days * DAY).toISOString().slice(0, 10);
     const files = fs.readdirSync(eventsDir).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n) && n.slice(0, 10) >= first).sort();
     for (const f of cache.keys()) if (!files.includes(f)) cache.delete(f);
+    // Each event once: a line written before a failed flush is in the files again after its retry
+    // (the review of #425), so the first line with an id is the event.
+    const ids = new Set();
+    const once = (e) => !e?.id || (!ids.has(e.id) && Boolean(ids.add(e.id)));
     return files.flatMap((f) => {
       const full = path.join(eventsDir, f);
       const size = fs.statSync(full).size;
@@ -190,7 +194,7 @@ export function eventReader(eventsDir) {
         cache.set(f, { size, events });
       }
       return cache.get(f).events;
-    });
+    }).filter(once);
   };
 }
 

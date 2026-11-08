@@ -102,6 +102,15 @@ test('a fill run says it ran in the background and how long its page was hidden,
   assert.deepEqual(['background' in front, 'hiddenMs' in front], [false, false]);
 });
 
+// Audit 2026-11-07, FLOW-11: the second click of a Continue that didn't take is said on its fill_run,
+// so the weekly review can judge whether the retry is still needed.
+test('a fill run that clicked a lost Continue again says so, and no other does', () => {
+  const ctx = { carrier: 'amwins', page: 'Step', overwrite: false, ms: 1, redact: (t) => t };
+  const [retried] = fillEvents([{ fields: 3, advanced: 'Save & Continue' }], { ...ctx, auto: 'page', retried: true });
+  const [plain] = fillEvents([{ fields: 3, advanced: 'Save & Continue' }], { ...ctx, auto: 'page' });
+  assert.deepEqual([retried.retried, 'retried' in plain], [true, false]);
+});
+
 test('dropdown changes keep the option text, minus client names', () => {
   const filled = new Map([['2B9D', { path: 'progressive.q2B9D', shown: 'More than 500 miles' }]]);
   const e = fieldChangeEvent({ key: '2B9D', q: '2B9D', label: 'Farthest distance', kind: 'select', before: 'More than 500 miles', after: '500 miles', agent: true }, { record, filled, redact });

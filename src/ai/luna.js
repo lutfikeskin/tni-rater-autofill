@@ -109,6 +109,48 @@ function blankFieldStep(field) {
   return `The intake leaves "${fieldInfo(field.intakePath).label}" blank${unit ? ` for ${UNIT_SAID[unit[1]]} ${Number(unit[2]) + 1}` : ''}: confirm it with the client, then add it under All client details.`;
 }
 
+// A cited source as the agent reads it on the suggestion's card: the intake field's label (with its
+// driver, vehicle or trailer) and the value Luna was given, or the TNI rule's text, both shortened
+// (audit 2026-11-07, AI-12: the card showed internal paths such as operations.hazPlacard).
+const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
+const RULE_PREVIEW = 120;
+export function citedSaid(source) {
+  const clip = (text, n) => (text.length > n ? `${text.slice(0, n - 1).trimEnd()}…` : text);
+  if (source?.basis === 'tni_rule') return `TNI rule: ${clip(oneLine(source.rule), RULE_PREVIEW)}`;
+  const path = String(source?.path ?? '');
+  const unit = /^(drivers|vehicles|trailers)\[(\d+)\]/.exec(path);
+  const value = source?.value === true ? 'Yes' : source?.value === false ? 'No' : clip(oneLine(source?.value), 80);
+  return `${citedLabel(path)}${unit ? ` (${UNIT_SAID[unit[1]]} ${Number(unit[2]) + 1})` : ''}: ${value}`;
+}
+
+// A cited TNI rule's whole text, for the card to open, when its preview above is shortened (null:
+// the preview is the whole rule). The agent checks a rule's exceptions against the client.
+export function citedRuleFull(source) {
+  if (source?.basis !== 'tni_rule') return null;
+  const text = oneLine(source.rule);
+  return text.length > RULE_PREVIEW ? `TNI rule: ${text}` : null;
+}
+
+// Facts Luna is given that the intake has no box for (common.js: an identifier as present or not,
+// what code works out from the prior policy, Luna's own NTL flag from the claims box).
+const DERIVED_LABELS = {
+  'applicant.hasDOT': 'Has a USDOT #',
+  'applicant.hasMC': 'Has an MC #',
+  'computed.priorPolicyExpired': 'Prior policy expired (worked out from the intake)',
+  'computed.noPriorInsurance': 'No prior insurance (worked out from the intake)',
+  'claims.aiNtl': "NTL in the claims box or notes (Luna's review)",
+};
+// A cited intake path's label: the schema's, else one of those, else its last part in words
+// ("aiNtl" → "Ai ntl"), never the path itself.
+function citedLabel(path) {
+  const derived = DERIVED_LABELS[path.replace(/\[\d+\]/g, '[]')];
+  if (derived) return derived;
+  const { label } = fieldInfo(path);
+  if (label !== path) return label;
+  const words = (path.split('.').pop() ?? '').replace(/\[\d+\]/g, '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().trim();
+  return words ? `${words[0].toUpperCase()}${words.slice(1)}` : 'Intake fact';
+}
+
 // Parse the HTTP envelope ourselves; output_text is an SDK convenience, not the wire contract.
 export function responseData(json) {
   if (json?.status !== 'completed' || !isLunaModel(json.model) || !Array.isArray(json.output)) {
@@ -162,7 +204,7 @@ export function parseResponse(json, items, body) {
     const clarification = [...x.missingInformation, ...x.conflicts].join(' · ');
     return { ...item, choice: leave ? null : state.fields[item.id].options[x.option], leave,
       basis: evidence?.basis ?? 'none', intakePath: evidenceSources.length === 1 && evidence?.basis === 'intake' ? evidence.path : null,
-      evidence, evidenceSources: leave ? [] : evidenceSources, model: json.model, provider: 'luna', policy: POLICY_VERSION,
+      evidence, evidenceSources: leave ? [] : evidenceSources, cited: leave ? [] : evidenceSources.map(citedSaid), citedRules: leave ? [] : evidenceSources.map(citedRuleFull).filter(Boolean), model: json.model, provider: 'luna', policy: POLICY_VERSION,
       probability: null, confidence: null, margin: null, evidenceProbability: null, support: null, autoOk: false,
       checks: leave ? [] : ['The choice is one of this field’s visible options.', 'Every cited source exists in the supplied context.'],
       leaveWhy, nextStep: leave ? blankFieldStep(state.fields[item.id]) ?? (x.nextStep.trim() || null) : null,
@@ -270,7 +312,7 @@ export function verifyResponse(json, suggestions) {
   }
   return suggestions.map(x => x.leave ? x : data.decisions[x.id].supported
     ? { ...x, verified: true, autoOk: automaticChoiceAllowed(x) }
-    : { ...x, choice: null, leave: true, autoOk: false, verified: false, evidence: null, evidenceSources: [], basis: 'none', intakePath: null, leaveWhy: 'unverified',
+    : { ...x, choice: null, leave: true, autoOk: false, verified: false, evidence: null, evidenceSources: [], cited: [], citedRules: [], basis: 'none', intakePath: null, leaveWhy: 'unverified',
       tip: data.decisions[x.id].gap.trim() ? `Luna could not verify an answer: ${data.decisions[x.id].gap.trim()}` : 'Luna could not verify this answer against the supplied facts. Review it on the page.' });
 }
 
@@ -303,7 +345,7 @@ export class OldServerLimit extends AssistError {}
 export async function callModel({ apiKey, proxy = null, body, fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   const via = apiKey ? { url: API_URL, token: apiKey } : proxy?.url ? proxy : null;
-  if (!via) throw new AssistError('Luna needs an OpenAI API key. Add it in Settings, under Assistant.');
+  if (!via) throw new AssistError('Luna needs an OpenAI API key. Add it in Settings, under AI.');
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), timeoutMs);
   const wire = JSON.stringify(body), overOldServer = !apiKey && wire.length > OLD_SERVER_CHARS;
   // Only over the old server's body limit (twice its bound, in bytes) can it cut the connection.
@@ -322,7 +364,7 @@ export async function callModel({ apiKey, proxy = null, body, fetchImpl = global
       }
       // Provider errors can echo inputs and credentials. Never expose their bodies. Through the
       // usage server, 404 is a server from before /v1/luna: Luna isn't set up there, as with no key.
-      const notSetUp = "Luna isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under Assistant.";
+      const notSetUp = "Luna isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under AI.";
       // The server's own refusal of the size (its error text, never OpenAI's: that comes back as a status).
       if (overOldServer && (res.status === 413
         || res.status === 400 && await Promise.resolve().then(() => res.json()).then(x => x?.error === 'request too large', () => false))) throw new OldServerLimit('Luna could not review this page context. Answer it manually.');
@@ -331,7 +373,7 @@ export async function callModel({ apiKey, proxy = null, body, fetchImpl = global
         424: "Luna isn't working on TNI's server right now. Tell TNI.", 400: 'Luna could not review this page context. Answer it manually.',
         429: 'Luna is rate-limited. Try again shortly.' })[res.status]
         ?? `Luna returned HTTP ${res.status}. Try again shortly.`);
-      if (!res.ok) throw new AssistError(({ 401: 'The OpenAI API key was refused. Check it in Settings, under Assistant.',
+      if (!res.ok) throw new AssistError(({ 401: 'The OpenAI API key was refused. Check it in Settings, under AI.',
         403: 'This OpenAI key cannot use Luna.', 400: 'Luna could not review this page context. Answer it manually.',
         404: 'GPT-6 Luna is unavailable for this OpenAI project.', 429: 'Luna is rate-limited. Try again shortly.' })[res.status]
         ?? `Luna returned HTTP ${res.status}. Try again shortly.`);

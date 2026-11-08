@@ -20,7 +20,7 @@ import { fill, progress, stop } from './cursor.js';
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 94 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 95 && globalThis.__raterKit.build === BUILD) return;
 
   /**
    * Puts answers the agent accepted from the AI assistant (or that it was allowed to pick itself)
@@ -131,7 +131,7 @@ import { fill, progress, stop } from './cursor.js';
   }
 
   globalThis.__raterKit = {
-    version: 94,
+    version: 95,
     build: BUILD,
     fill: tracedFill,
     progress,
