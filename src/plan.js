@@ -280,6 +280,10 @@ function fieldSteps(rules, record, carrier, active, overlay) {
       q: rule.q ?? null,
       // The TNI rulebook entry its answer follows (CarrierRule `tni`), for the report and the log.
       tni: rule.tni ?? null,
+      // The rule's concept (CarrierRule `concept`: what the question means, the same on every
+      // carrier and in every quote), for the usage log, where the step's id and its path for a rule
+      // without a path or q are its place in the plan.
+      concept: rule.concept ?? null,
       // the field's data-model name (Duck Creek fieldref),
       field: rule.field ?? null,
       // else its question on the page: exact text(s), or `label` (re) on these pages,

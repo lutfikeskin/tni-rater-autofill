@@ -4878,7 +4878,7 @@ test('fills take their view before waiting, stop pages log theirs, and a reopene
   for (const name of ['fillPage', 'autoFill']) {
     const body = extractFunction(name);
     assert.ok(body.indexOf('const ctx = fillContext(') < body.indexOf('await pickListItem('), `${name} takes its context (with the view) before any waiting`);
-    assert.match(body, /logFill\(ctx, frames, results, started\)/, `${name} logs that view`);
+    assert.match(body, /logFill\(ctx, frames, results, started, plan\)/, `${name} logs that view`);
   }
   assert.match(extractFunction('fillContext'), /view: viewOf\(tabId, page, carrier\)/);
   assert.match(extractFunction('logFill'), /fillEvents\(ctx\.listNote \? \[\.\.\.frames, \{ blockers: \[ctx\.listNote\] \}\] : frames, \{[^}]*\bview: ctx\.view\b/);

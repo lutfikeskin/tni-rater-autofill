@@ -92,6 +92,36 @@ test('change and fill events name the control, so repeated vehicle rows stay apa
   assert.deepEqual([filled.q, filled.key], ['2B9D', '2B9D@3']);
 });
 
+// Audit 2026-11-07, DATA-10: a step without a path or q has a path that is its place in the plan
+// (amwins.q73 with one driver, amwins.q80 with two). Its fill_field says what the answer means, its
+// rule's concept and TNI entry, which are the same in every quote.
+test('a fill_field names its rule\'s concept and TNI entry from the plan it was given', async () => {
+  const { buildPlan } = await import('../src/plan.js');
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const two = { ...record, drivers: [...record.drivers, { ...record.drivers[0], first: 'Second' }] };
+  const gender = (plan) => plan.find((s) => s.concept === 'driver.gender' || /gender/i.test(s.name ?? ''));
+  const one = gender(buildPlan(record, amwins, {}));
+  const other = gender(buildPlan(two, amwins, {}));
+  assert.ok(one?.concept, 'AmWINS has a gender question with a concept');
+  assert.equal(one.concept, other.concept);
+  const plan = buildPlan(record, amwins, {});
+  const tnied = plan.find((s) => s.tni && s.concept);
+  const frames = [{ filled: [{ stepId: one.id, key: 'k1', label: 'Gender', controlKind: 'select', shown: 'MALE', path: one.path }, { stepId: tnied.id, key: 'k2', label: 'X', controlKind: 'select', shown: 'No', path: tnied.path }, { key: 'k3', label: 'No step' }] }];
+  const [, a, b, c] = fillEvents(frames, { carrier: 'amwins', page: '/app', view: 't1', overwrite: false, ms: 1, redact, plan });
+  assert.equal(a.concept, one.concept);
+  assert.deepEqual([b.concept, b.tni], [tnied.concept, tnied.tni]);
+  assert.deepEqual([c.concept, c.tni], [undefined, undefined]);
+  const [, without] = fillEvents(frames, { carrier: 'amwins', page: '/app', view: 't1', overwrite: false, ms: 1, redact });
+  assert.equal(without.concept, undefined, 'no plan, no concept');
+  // The panel gives fillEvents the plan the fill was given, at every logFill.
+  const coordinator = fs.readFileSync(new URL('../sidepanel/panel/coordinator.js', import.meta.url), 'utf8');
+  const fill = fs.readFileSync(new URL('../sidepanel/panel/fill.js', import.meta.url), 'utf8');
+  const calls = [...coordinator.matchAll(/\blogFill\(([^)]*)\)/g), ...fill.matchAll(/\blogFill\(([^)]*)\)/g)].map((m) => m[1]).filter((args) => !args.includes('plan = null'));
+  assert.ok(calls.length >= 3);
+  for (const args of calls) assert.match(args, /, plan$/, `logFill(${args})`);
+  assert.match(coordinator, /keptLogged: state\.keptLogged\.seen, plan,/);
+});
+
 // Audit 2026-11-07, FLOW-12: a fill of the quote tab while the agent was on another, and how long its
 // page was hidden (the longest a frame saw), so the weekly review can tell throttled fills apart.
 test('a fill run says it ran in the background and how long its page was hidden, only when so', () => {

@@ -546,6 +546,21 @@ test('keeps a panel crash with its bounded message and extension frames only', a
   assert.deepEqual(bad.dropped.sort(), ['error', 'stack', 'where']);
 });
 
+test('a fill_field keeps its rule\'s concept and TNI entry in their shape only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'fill_field', filled: undefined, result: 'filled', q: null, key: 'k', label: 'Gender', path: 'amwins.q73', controlKind: 'select', concept: 'driver.gender', tni: 'amwins.gender' }),
+      ev({ type: 'fill_field', filled: undefined, result: 'filled', q: null, key: 'k', label: 'Gender', path: 'amwins.q73', controlKind: 'select', concept: 'Jane Doe', tni: 'x'.repeat(81) }),
+    ] })).json();
+    assert.equal(r.accepted, 2);
+  });
+  const [ok, bad] = stored(dataDir);
+  assert.deepEqual([ok.concept, ok.tni], ['driver.gender', 'amwins.gender']);
+  assert.deepEqual([bad.concept, bad.tni], [undefined, undefined]);
+  assert.deepEqual(bad.dropped.sort(), ['concept', 'tni']);
+});
+
 test('a page layout keeps the page\'s messages, bounded', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {
