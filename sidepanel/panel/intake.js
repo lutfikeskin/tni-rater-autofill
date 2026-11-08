@@ -1,17 +1,21 @@
+// @ts-check
 // The side panel: loading the intake PDF.
 // One part of the panel; sidepanel.js wires the parts together.
 import * as pdfjs from '../../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../../src/intake.js';
-import { normalizeIntake } from '../../src/normalize.js';
+import { normalizeIntake, rederive } from '../../src/normalize.js';
+import { KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf } from '../../src/kept-work.js';
+import { get, set } from '../../src/util.js';
+import { ownerDrivesAnswered } from '../../src/answers/owner.js';
 import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes } from './core.js';
+import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes, forgetKeptWork, keptWorkCleared, keptWorkLocal } from './core.js';
 import { firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
 import { stopRecording } from './dev-recording.js';
-import { reviewIntake } from './assistant.js';
+import { ntlAnswerEdited, ntlCargoEdited, ntlNotesItem, ntlPrimaryEdited, reviewIntake } from './assistant.js';
 import { uploadNow } from './usage-panel.js';
 import { clientNote, keepPdf, workSaid } from './pdf-view.js';
 import { quoteStarting, refreshDefaults, settingsDefaults } from './agent-defaults/store.js';
@@ -38,7 +42,7 @@ async function loadFile(file, { reset = false } = {}) {
     return showLoadError('No fillable fields: it looks like a scan or printed copy. Ask for the fillable TNI application.', file.name);
   }
   const result = normalizeIntake(raw);
-  if (result.error) return showLoadError(result.error, file.name);
+  if ('error' in result) return showLoadError(result.error, file.name);
   const summary = await intakeSummary(bytes, raw, result);
   const test = (await testIntakes.get()).includes(summary.intakeId);
   // Where each answer is on the PDF, so check items and filled answers can be shown on it. A PDF
@@ -92,6 +96,14 @@ async function loadFile(file, { reset = false } = {}) {
     // agent defaults: nothing fills with the last quote's answer until this one is set up and asked.
     quoteStarting();
     if (same) keepWork(state.intake, same);
+    // A new client's intake: the last client's kept corrections and checks go (FLOW-17). The same
+    // PDF after a browser restart (no copy of it in the session): its own, from the last day, come back.
+    await forgetKeptWork({ except: summary.intakeId });
+    // A Clear that failed is tried again first; while it still fails only what was kept after it
+    // comes back, and when that can't be known nothing does, nor is the kept copy saved over.
+    const gate = same ? null : await keptWorkCleared();
+    const restored = gate?.known ? await restoreKeptWork(state.intake, gate.after) : null;
+    if (gate && !gate.known) holdKeptWork(state.intake.intakeId);
     state.view = firstView(state.intake);
     state.filter = 'all';
     state.aiDocks = new Map();
@@ -101,8 +113,9 @@ async function loadFile(file, { reset = false } = {}) {
     state.fileConfirm = null;
     state.pdf = null;
     dropReports();
-    const work = same ? workSaid(same.agentEdited?.length ?? 0, same.done?.length ?? 0) : '';
-    clientNote(same ? `${reset ? 'New quote with the same intake' : 'Same intake'}${work ? `: you ${work}, and that stays` : ''}.` : null);
+    const work = same ? workSaid(same.agentEdited?.length ?? 0, same.done?.length ?? 0) : restored ? workSaid(restored.edits, restored.checks) : '';
+    clientNote(same ? `${reset ? 'New quote with the same intake' : 'Same intake'}${work ? `: you ${work}, and that stays` : ''}.`
+      : restored ? `Same intake as earlier: you ${work}, and that's back (kept on this computer for a day).` : null);
     await keepPdf(bytes);
     state.active = firstUnits();
     state.activeTab = null;
@@ -208,6 +221,66 @@ async function markTestRun(test) {
 // The agent's work on an intake loaded again from the same PDF: the record with their corrections
 // (and what was derived from them), the items with their checks (checked by position, Luna's
 // claims-box items included), Luna's claims-box review, and Add NTL done on its quote.
+// The agent's corrections and checks of this intake, kept on this computer (src/kept-work.js), put
+// back on it as made in the panel: each corrected value set and marked the agent's, the values derived
+// from it following (as agentEdit does), and each check found again marked done. Returns how many
+// came back ({ edits, checks }), or null when nothing was kept for it within the day. `after`: only
+// what was kept after then (a Clear that still fails: keptWorkCleared). A kept copy that can't be
+// read is held (keptHeld): no save overwrites or deletes it.
+const keptHeld = new Set();
+const holdKeptWork = (intakeId) => { keptHeld.add(intakeId); };
+async function restoreKeptWork(intake, after = -Infinity) {
+  const key = `${KEPT_WORK_PREFIX}${intake.intakeId}`;
+  let kept;
+  try { kept = (await keptWorkLocal.get(key))?.[key]; } catch { keptHeld.add(intake.intakeId); return null; }
+  keptHeld.delete(intake.intakeId);
+  if (!kept) return null;
+  if (!keptFresh(kept)) { await keptWorkLocal.remove([key]).catch(() => {}); return null; }
+  if (!(kept.at > after)) return null;
+  const edited = new Set(intake.agentEdited ?? []);
+  for (const [path, value] of Array.isArray(kept.edits) ? kept.edits : []) {
+    if (typeof path !== 'string' || !path) continue;
+    set(intake.record, path, value);
+    edited.add(path);
+  }
+  intake.agentEdited = [...edited];
+  for (const path of edited) rederive(intake.record, path, { keep: edited });
+  // The checks a correction raises (NTL with cargo, say) are raised again before the kept checks are
+  // found, so a Looks right on one has it to land on.
+  for (const path of edited) editChecks(intake, path);
+  const back = checksOn(intake.warnings ?? [], kept.checks);
+  const done = new Set([...(intake.done ?? []), ...back]);
+  intake.done = [...done];
+  // Looks right on "Does the owner drive?" answers it, as toggleDone does.
+  for (const i of back) if (intake.warnings[i]?.code === 'drivers.owner-excluded') ownerDrivesAnswered(intake, { check: { i, done: true } });
+  return edited.size || done.size ? { edits: edited.size, checks: done.size } : null;
+}
+
+// What a correction made in the panel does to the intake's checks (agentEdit), done again for one
+// brought back: Owner drives answered, and the NTL items (the form's NTL note, NTL with primary auto
+// liability, NTL with cargo, the notes' NTL item). Luna's reviews are asked as the intake loads.
+function editChecks(intake, path) {
+  if (path === 'applicant.ownerDrives') ownerDrivesAnswered(intake, { edit: path });
+  if (['coverage.ntl', 'coverage.autoLiability'].includes(path)) { ntlAnswerEdited(intake, path); ntlPrimaryEdited(intake); }
+  if (['coverage.ntl', 'coverage.cargo', 'coverage.autoLiability'].includes(path)) ntlCargoEdited(intake);
+  if (path === 'claims.text' || path === 'notes.text') ntlNotesItem(intake);
+}
+
+// Each save keeps the agent's corrections and checks on this computer for a day from their last
+// change (FLOW-17), or lets them go when there are none left. A save that changed neither (the
+// vehicle picked, say) leaves their day as it was.
+async function keepKeptWork(intake) {
+  if (!intake?.intakeId || keptHeld.has(intake.intakeId)) return;
+  const key = `${KEPT_WORK_PREFIX}${intake.intakeId}`;
+  const kept = keptWorkOf(intake, get);
+  try {
+    if (!kept) { await keptWorkLocal.remove([key]); return; }
+    const was = (await keptWorkLocal.get(key))?.[key];
+    if (keptFresh(was) && JSON.stringify([was.edits, was.checks]) === JSON.stringify([kept.edits, kept.checks])) return;
+    await keptWorkLocal.set({ [key]: kept });
+  } catch { /* kept in the session as before */ }
+}
+
 function keepWork(intake, was) {
   Object.assign(intake, { record: was.record ?? intake.record, warnings: was.warnings ?? intake.warnings, done: [...(was.done ?? [])], agentEdited: [...(was.agentEdited ?? [])],
     notesReview: was.notesReview ?? null, namesReview: was.namesReview ?? null, ntlAdded: !!was.ntlAdded });
@@ -221,6 +294,7 @@ function showLoadError(msg, name = '') {
 
 async function save() {
   await store.set('intake', state.intake);
+  await keepKeptWork(state.intake);
   await store.set('active', state.active);
   await store.set('activeTab', state.tab?.id ?? null);
 }
