@@ -272,12 +272,13 @@ export function parseAddress(raw) {
 // is the deductible by its label ("ded", "deductible"), wherever it is: "$1,000 ded / $100k" and
 // "100K w/ 1K ded" are a $100,000 limit and a $1,000 deductible, and "$250K - $2,500 ded" too. Amounts
 // without a label are the limit, then the deductible, in their order. Nothing is swapped: a
-// deductible not below the limit is said by a check (cargoChecks).
+// deductible not below the limit is said by a check (cargoChecks). A comma right before a "$" parts two
+// amounts ("$100,000,$1,000 deductible"); one between digits is the amount's own.
 const DED_LABEL = /\bded(?:uctible)?\b\.?/gi;
 export function parseLimitDeductible(v) {
   const s = clean(v);
   if (s == null) return { limit: null, deductible: null };
-  const parts = s.replace(/\bw\/\s*/gi, ' with ').split(/\s*(?:\/|\bwith\b|\s[-–]\s|,\s+|;|&|\band\b)\s*/i);
+  const parts = s.replace(/\bw\/\s*/gi, ' with ').split(/\s*(?:\/|\bwith\b|\s[-–]\s|,\s+|,(?=\$)|;|&|\band\b)\s*/i);
   let deductible = null;
   const plain = [];
   for (const part of parts) {

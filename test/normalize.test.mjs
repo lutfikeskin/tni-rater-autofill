@@ -288,7 +288,7 @@ test('split trailer ownership notes never become vehicle ownership on either car
 // never by position alone; what it says is kept; a deductible not below the limit is said, not swapped.
 test('the cargo box: amounts read by their label, kept as written, and a deductible not below the limit said', () => {
   for (const [box, limit, deductible] of [['$100K/$1K Ded', 100000, 1000], ['$100K/$2.5K Ded', 100000, 2500], ['$100K', 100000, null],
-    ['$1,000 ded / $100k', 100000, 1000], ['100K w/ 1K ded', 100000, 1000], ['$250K - $2,500 ded', 250000, 2500],
+    ['$1,000 ded / $100k', 100000, 1000], ['100K w/ 1K ded', 100000, 1000], ['$250K - $2,500 ded', 250000, 2500], ['$100,000,$1,000 deductible', 100000, 1000],
     ['$100,000 limit, $1,000 deductible', 100000, 1000], ['Other', null, null]]) {
     assert.deepEqual(parseLimitDeductible(box), { limit, deductible }, box);
   }
