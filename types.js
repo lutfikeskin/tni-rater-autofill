@@ -1341,6 +1341,8 @@
  * @property {any} [audio]
  * @property {boolean} [showEmpty]
  * @property {Set<string>} [detailsClosed]
+ * @property {string} [detailsQuery] client details' filter box: fields whose label or section has it
+ * @property {boolean} [detailsEditedOnly] client details' Your corrections: only the fields the agent changed
  * @property {Uint8Array | null} [pdfBytes]
  * @property {any} [pdfDoc]
  * @property {number} [pdfDraw]
