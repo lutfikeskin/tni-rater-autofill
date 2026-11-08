@@ -237,6 +237,8 @@ test('the driver-name check has its own switch, on while Suggest answers is off'
   act(() => { state.ai = { on: false, auto: false, names: true, autoOff: true, autoShown: true, keyStatus: 'Saved on this computer', keyTone: 'ok', keyEdit: 'Change', warn: false, note: 'On. Checks driver names.', noteTone: 'on' }; });
   const names = $(container, '#ai-names');
   expect([names.getAttribute('role'), names.checked, names.disabled, $(container, '#ai-on').checked]).toEqual(['switch', true, false, false]);
+  // What it does is said beside it, as for the other switches (CodeRabbit on #444), not only in a title.
+  expect(names.closest('label').textContent).toBe('Check driver namesFlags a first name more often a woman’s. You set the gender on its Intake check item.');
   fireEvent.click(names);
   expect(calls).toEqual([['aiNames', false]]);
   act(() => { state.ai = { ...state.ai, names: false, note: 'Off', noteTone: 'off' }; });

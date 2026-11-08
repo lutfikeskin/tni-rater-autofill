@@ -80,7 +80,7 @@ function Assistant({ act }) {
           <span className="opt-text"><b>Put checked picks in</b><span>Shown in purple. You still approve them before Continue.</span></span>
           <Check id="ai-auto" role="switch" className="switch" checked={!!ai?.auto} said={ai} disabled={!!ai?.autoOff} onChange={act.aiAuto} />
         </label>
-        <label className="opt" title="From first names only. You set the gender on its Intake check item."><span className="opt-text"><b>Check driver names</b></span><Check id="ai-names" role="switch" className="switch" checked={!!ai?.names} said={ai} onChange={act.aiNames} /></label>
+        <label className="opt"><span className="opt-text"><b>Check driver names</b><span>Flags a first name more often a woman’s. You set the gender on its Intake check item.</span></span><Check id="ai-names" role="switch" className="switch" checked={!!ai?.names} said={ai} onChange={act.aiNames} /></label>
         <div className="key-row">
           <div className="opt">
             <span className="opt-text"><b id="key-label">OpenAI key</b><span id="key-status" className={ai?.keyTone}>{ai?.keyStatus ?? ''}</span></span>
