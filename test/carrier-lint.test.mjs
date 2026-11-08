@@ -25,9 +25,21 @@ const RECORDS = [base(), { ...base(), coverage: { ...base().coverage, ntl: true,
   { ...base(), applicant: { ...base().applicant, dot: null, mc: null }, garaging: { ...base().garaging, state: 'TX' }, trailers: [] }];
 const ACTIVE = [{}, { vehicles: 1, drivers: 0, trailers: 0 }];
 // A field's values: itself, or what its function returns on the records (one that throws on a
-// record it isn't meant for gives nothing there).
-const values = (v) => (typeof v !== 'function' ? [v] : RECORDS.flatMap((r) => ACTIVE.map((a) => { try { return v(r, a); } catch { return undefined; } })));
-const strings = (v) => values(v).flat().filter((x) => typeof x === 'string');
+// record it isn't meant for gives nothing there). A function that throws on every record would go
+// unchecked, so it is a problem itself (THREW).
+const THREW = Symbol('threw');
+const values = (v) => {
+  if (typeof v !== 'function') return [v];
+  let threw = 0;
+  const out = RECORDS.flatMap((r) => ACTIVE.map((a) => { try { return v(r, a); } catch { threw++; return undefined; } }));
+  return threw === RECORDS.length * ACTIVE.length ? THREW : out;
+};
+// The strings a field holds; a field whose function always throws is reported in `bad` as `where`.
+const strings = (v, bad = null, where = '') => {
+  const out = values(v);
+  if (out === THREW) { bad?.push(`${where} throws on every record`); return []; }
+  return out.flat().filter((x) => typeof x === 'string');
+};
 
 const { document } = new JSDOM('<!doctype html><body></body>').window;
 const parses = (selector) => { try { document.querySelector(selector); return true; } catch { return false; } };
@@ -44,13 +56,16 @@ const ACTION_SELECTORS = ['within', 'unlessSelector', 'ratedBy'];
 function patternProblems(carrier) {
   const bad = [];
   for (const rule of carrier.rules) {
-    for (const k of RULE_PATTERNS) for (const p of strings(rule[k])) if (!compiles(p)) bad.push(`rule ${name(rule)}: ${k} /${p}/`);
-    for (const k of RULE_SELECTORS) for (const s of strings(rule[k])) if (!parses(s)) bad.push(`rule ${name(rule)}: ${k} "${s}"`);
+    for (const k of RULE_PATTERNS) for (const p of strings(rule[k], bad, `rule ${name(rule)}: ${k}`)) if (!compiles(p)) bad.push(`rule ${name(rule)}: ${k} /${p}/`);
+    for (const k of RULE_SELECTORS) for (const s of strings(rule[k], bad, `rule ${name(rule)}: ${k}`)) if (!parses(s)) bad.push(`rule ${name(rule)}: ${k} "${s}"`);
+    if (rule.witness && !parses(rule.witness.selector)) bad.push(`rule ${name(rule)}: witness.selector "${rule.witness.selector}"`);
   }
   for (const a of carrier.actions ?? []) {
-    for (const k of ACTION_PATTERNS) for (const p of strings(a[k])) if (!compiles(p)) bad.push(`action ${a.id}: ${k} /${p}/`);
-    for (const k of ACTION_SELECTORS) for (const s of strings(a[k])) if (!parses(s)) bad.push(`action ${a.id}: ${k} "${s}"`);
-    for (const s of values(a.verify).map((v) => v?.appears).filter(Boolean)) if (!parses(s)) bad.push(`action ${a.id}: verify.appears "${s}"`);
+    for (const k of ACTION_PATTERNS) for (const p of strings(a[k], bad, `action ${a.id}: ${k}`)) if (!compiles(p)) bad.push(`action ${a.id}: ${k} /${p}/`);
+    for (const k of ACTION_SELECTORS) for (const s of strings(a[k], bad, `action ${a.id}: ${k}`)) if (!parses(s)) bad.push(`action ${a.id}: ${k} "${s}"`);
+    const verify = values(a.verify);
+    if (verify === THREW) bad.push(`action ${a.id}: verify throws on every record`);
+    else for (const s of verify.map((v) => v?.appears).filter(Boolean)) if (!parses(s)) bad.push(`action ${a.id}: verify.appears "${s}"`);
   }
   if (carrier.advance) for (const p of [carrier.advance.text, carrier.advance.listed].filter(Boolean)) if (!compiles(p)) bad.push(`advance /${p}/`);
   if (carrier.advance?.notWithin && !parses(carrier.advance.notWithin)) bad.push(`advance.notWithin "${carrier.advance.notWithin}"`);
@@ -101,7 +116,8 @@ for (const carrier of CARRIERS) {
 test('the lint catches a broken pattern, an unparsed selector, a dangling reference and helpers waiting on each other', () => {
   const broken = {
     id: 'x', hosts: [], useGenericRules: false,
-    rules: [{ name: 'A', path: 'applicant.name', label: '^+$' }, { name: 'B', selector: '#a >> b' }, { name: 'C', path: 'applicant.dot' }],
+    rules: [{ name: 'A', path: 'applicant.name', label: '^+$' }, { name: 'B', selector: '#a >> b' }, { name: 'C', path: 'applicant.dot' },
+      { name: 'D', path: 'vehicles[].vin', witness: { selector: '[data-id=', path: 'vehicles[].vin' } }, { name: 'E', path: 'applicant.mc', label: (r) => r.applicant.gone.name }],
     actions: [
       { id: 'one', text: '^\\+$', afterActions: ['two'], after: ['applicant.dot'] },
       { id: 'two', text: (r) => (r.applicant.dot ? '^(' : '^ok$'), afterActions: ['one'], unless: ['applicant.mcc'] },
@@ -109,7 +125,8 @@ test('the lint catches a broken pattern, an unparsed selector, a dangling refere
     ],
     advance: { text: '^continue$', notWithin: '#ok' },
   };
-  assert.deepEqual(patternProblems(broken), ['rule A: label /^+$/', 'rule B: selector "#a >> b"', 'action two: text /^(/', 'action three: within "div["']);
+  assert.deepEqual(patternProblems(broken), ['rule A: label /^+$/', 'rule B: selector "#a >> b"', 'rule D: witness.selector "[data-id="', 'rule E: label throws on every record',
+    'action two: text /^(/', 'action three: within "div["']);
   assert.deepEqual(referenceProblems(broken), ['two: unless names "applicant.mcc", which no rule of x answers', 'three: unlessActions names "missing:driver", no action of x',
     'one: afterActions go round (one > two > one)', 'two: afterActions go round (two > one > two)']);
 });
