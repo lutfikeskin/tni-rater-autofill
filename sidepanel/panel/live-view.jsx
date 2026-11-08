@@ -8,7 +8,7 @@ import { memo, useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
-import { liveEntries, phaseSaid } from './live.js';
+import { fillShown, liveEntries, phaseSaid } from './live.js';
 // agent defaults: an answer the agent's own default gave.
 import { isOwnDefault } from './agent-defaults/store.js';
 
@@ -80,7 +80,7 @@ function LiveView({ view }) {
   // scrolled up back down).
   const drawn = useRef([]);
   const shown = useRef(false);
-  const on = !!f && !!filling && f.tabId === tabId && (!f.auto || !!f.rows?.length);
+  const on = !!filling && fillShown(f) && f.tabId === tabId;
   const rows = on ? f.rows ?? [] : [];
   const follow = on && (!shown.current || view.scrollHeight - view.scrollTop - view.clientHeight < 80);
   // The answer that just went in (the last one new since the list was drawn) is marked fresh.
