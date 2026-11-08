@@ -12,6 +12,8 @@
 FROM node:22-alpine
 WORKDIR /app
 COPY server/index.mjs server/dashboard.mjs server/agent-defaults.mjs server/privacy.html server/
+# The event contract the server shares with the extension (src/usage-schema.js, no imports).
+COPY src/usage-schema.js src/
 # Railway's edge names the client in X-Real-IP: the upload rate limit counts by that address
 # (otherwise every agent would share the edge's).
 ENV HOST=0.0.0.0 DATA_DIR=/data NODE_ENV=production RATER_CLIENT_IP_HEADER=x-real-ip

@@ -6,6 +6,7 @@ import path from 'node:path';
 import * as usage from '../sidepanel/usage-log.js';
 import { createServer } from '../server/index.mjs';
 import { sha256Hex, fillEvents, fieldChangeEvent, agentSettingsEvent, clientErrorEvent, checkDismissedEvent, intakeProfile } from '../src/usage.js';
+import { SCHEMA_VERSION } from '../src/usage-schema.js';
 
 // Node's own fetch, before the tests below replace it with fake servers.
 const realFetch = globalThis.fetch;
@@ -35,6 +36,33 @@ test('events an older server refused as unknown types are sent again to a newer 
   await usage.upload();
   assert.equal(bodies.length, 2, 'accepted on the retry: not sent a third time');
   assert.equal(await usage.count(), 0);
+});
+
+// Audit 2026-11-07, SRV-14: an extension released before its server is deployed. Its events carry
+// the schema they were logged under; a server with an older one refuses them, and they are sent
+// again until a server that knows the schema takes them, new fields and all.
+test('events a server refused as of a newer schema are sent again until a server that knows it takes them', async () => {
+  const bodies = [];
+  let serverSchema = SCHEMA_VERSION - 1;
+  globalThis.fetch = async (url, init) => {
+    if (!init?.body) return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    const rejected = body.events.map((e, index) => (e.schema > serverSchema ? { index, error: `schema newer than server (${e.schema} > ${serverSchema})` } : null)).filter(Boolean);
+    return { ok: true, status: 200, json: async () => ({ accepted: body.events.length - rejected.length, duplicates: 0, rejected }) };
+  };
+  await usage.saveSettings({ serverUrl: 'http://usage.test' });
+  await usage.clearLog();
+  await usage.log({ type: 'page_view', page: 'S1', fields: 3 });
+  await usage.upload();
+  assert.equal(bodies[0].events[0].schema, SCHEMA_VERSION, 'every event names its schema');
+  assert.deepEqual(await usage.counts(), { queued: 0, rejected: 1 }, 'kept aside, not lost');
+  await usage.upload();
+  assert.equal(bodies.length, 2, 'sent again while the server is older');
+  serverSchema = SCHEMA_VERSION;
+  await usage.upload();
+  assert.deepEqual(bodies.at(-1).events.map((e) => [e.page, e.fields, e.rejectedBecause]), [['S1', 3, undefined]]);
+  assert.deepEqual(await usage.counts(), { queued: 0, rejected: 0 });
 });
 
 test('uploads go to the central server with the built-in token unless the agent set their own', async () => {
