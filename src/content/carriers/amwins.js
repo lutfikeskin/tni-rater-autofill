@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // AmWINS' page adapter: what its application pages draw that no other carrier does, injected on
 // AmWINS' tabs only (the carrier config's `pageAdapter`), in the kit's world and the usage
 // recorder's. Classic script, no imports; it registers itself as globalThis.__raterAdapter. All of

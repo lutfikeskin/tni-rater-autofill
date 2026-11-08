@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // GEICO commercial auto (src/carriers/geico.js): the plan the page kit gets, for synthetic intakes.
 // What the kit does with it on GEICO's pages (steps read from the progress bar, the forms told by
 // `whenShown`) is tested with the page kit; here: what each rule answers, from what, and when the

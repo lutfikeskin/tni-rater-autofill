@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The report's list in React: each answer and each item left for the agent, one row each, drawn from
 // its record (report-rows.js). The panel changes a record and drawRow (fill.js) has the list draw
 // that row again; a row that didn't change isn't drawn again, so the button the agent is on keeps its
