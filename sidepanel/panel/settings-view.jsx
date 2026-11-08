@@ -81,6 +81,7 @@ function Assistant({ act }) {
           <span className="opt-text"><b>Put checked picks in</b><span>Shown in purple. You still approve them before Continue.</span></span>
           <Check id="ai-auto" role="switch" className="switch" checked={!!ai?.auto} said={ai} disabled={!!ai?.autoOff} onChange={act.aiAuto} />
         </label>
+        <label className="opt"><span className="opt-text"><b>Check driver names</b><span>Flags a first name more often a woman’s. You set the gender on its Intake check item.</span></span><Check id="ai-names" role="switch" className="switch" checked={!!ai?.names} said={ai} onChange={act.aiNames} /></label>
         <div className="key-row">
           <div className="opt">
             <span className="opt-text"><b id="key-label">OpenAI key</b><span id="key-status" className={ai?.keyTone}>{ai?.keyStatus ?? ''}</span></span>
@@ -118,7 +119,7 @@ function DevRecording({ act }) {
 }
 
 // `act`: done; the Filling switches (switch(name, on)); agent, serverUrl, serverToken (a box's new
-// value); upload, exportLog, clearLog, capture; testRun(on); the AI's aiOn(on), aiAuto(on), keyEdit,
+// value); upload, exportLog, clearLog, capture; testRun(on); the AI's aiOn(on), aiAuto(on), aiNames(on), keyEdit,
 // keySave and keyKey (a key pressed in the key's box); and the developer recording's (devrec: start,
 // note, stop, recover), or null where it isn't offered.
 function Settings({ act }) {

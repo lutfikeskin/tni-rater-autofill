@@ -235,7 +235,8 @@ async function reviewDriverGender({ retry = false } = {}) {
   let again = false;
   try {
     const cfg = await aiSettings();
-    if (!cfg.on || !cfg.ready || state.intake !== intake) return;
+    // Its own switch (Check driver names), not Suggest answers: TNI approved it apart (AI-15).
+    if (!cfg.names || !cfg.ready || state.intake !== intake) return;
     const started = Date.now();
     const read = driverNamesContext(intake.record);
     const origin = usage.currentSession();
@@ -459,12 +460,13 @@ function leaveCounts(suggestions) {
 // are any, the page's Continue is never clicked automatically. Picks made before the agent
 // changed the intake or the driver/vehicle are included: they're still on the page, unapproved,
 // so they keep blocking until the agent approves or rejects them (the card always offers both).
-function pendingAi(tabId, page) {
+// `url`: the tab's address, whose quote a pick must be of (the tab in front's unless given).
+function pendingAi(tabId, page, url = state.tab?.url) {
   const out = [];
   for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
     if (t === String(tabId) && p === page && aiDecisionBlocks(x)
-      && (!x.quoteHash || x.quoteHash === aiFingerprint(state.tab?.url))) out.push(x);
+      && (!x.quoteHash || x.quoteHash === aiFingerprint(url))) out.push(x);
   }
   return out;
 }
@@ -870,7 +872,7 @@ function renderAi(holder, suggestions, ctx) {
 }
 
 // What the AI's controls in Settings do (settings-view.jsx asks for them: sidepanel.js passes these
-// in its `act`): the two switches, the key's button, Save, and a key pressed in the key's box.
+// in its `act`): the three switches, the key's button, Save, and a key pressed in the key's box.
 function aiActs() {
   const save = async patch => {
     // Answers to requests made before are discarded, never kept for a later one (runAssist).
@@ -881,7 +883,7 @@ function aiActs() {
     }
     // Keep pending approvals; their cache keys remain bound to the original model and context.
     await usage.saveSettings(patch);
-    logSettings('changed', Object.keys(patch).map((k) => ({ aiOn: 'aiOn', lunaAuto: 'aiAuto', lunaKey: 'aiKey' })[k] ?? k).join(','));
+    logSettings('changed', Object.keys(patch).map((k) => ({ aiOn: 'aiOn', lunaAuto: 'aiAuto', lunaNames: 'aiNames', lunaKey: 'aiKey' })[k] ?? k).join(','));
     await renderAiSettings();
     // Luna just turned on or got a key: read the open intake's claims box and driver names if not done yet.
     reviewIntake({ retry: true });
@@ -897,6 +899,7 @@ function aiActs() {
   return {
     aiOn: (on) => save({ aiOn: on }),
     aiAuto: (on) => save({ lunaAuto: on }),
+    aiNames: (on) => save({ lunaNames: on }),
     keyEdit: () => openKeyForm(!state.keyFormOpen),
     keySave: saveKey,
     // Escape closes the box without saving, and not Settings with it (stopPropagation).
@@ -919,6 +922,7 @@ async function renderAiSettings() {
   state.ai = {
     on: cfg.on,
     auto: cfg.auto,
+    names: cfg.names,
     autoOff: !cfg.on || !provider.automatic,
     autoShown: !!provider.automatic,
     keyStatus: cfg.apiKey ? 'Saved on this computer' : cfg.proxy ? `Not needed: ${lender} provides it` : 'Not added yet',
@@ -927,10 +931,11 @@ async function renderAiSettings() {
     keyEdit: cfg.apiKey ? 'Change' : cfg.proxy ? 'Use my own key' : 'Add key',
     // On without a key: it can't help yet, said on its card and with a dot on the Settings button.
     // Folded otherwise; opened so that warning isn't hidden.
-    warn: cfg.on && !cfg.ready,
-    note: !cfg.on ? 'Off' : !cfg.ready ? 'Needs a key'
-      : cfg.auto ? 'On. Picks answers you approve.' : 'On. Suggests answers.',
-    noteTone: !cfg.on ? 'off' : !cfg.ready ? 'warn' : 'on',
+    // The driver-name check alone on counts as on (its own switch).
+    warn: (cfg.on || cfg.names) && !cfg.ready,
+    note: !cfg.on && !cfg.names ? 'Off' : !cfg.ready ? 'Needs a key'
+      : !cfg.on ? 'On. Checks driver names.' : cfg.auto ? 'On. Picks answers you approve.' : 'On. Suggests answers.',
+    noteTone: !cfg.on && !cfg.names ? 'off' : !cfg.ready ? 'warn' : 'on',
   };
   renderUsage();
 }
