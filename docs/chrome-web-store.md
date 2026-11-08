@@ -12,6 +12,9 @@ npm test
 npm run package          # -> dist/tni-rater-autofill-<version>.zip
 ```
 
+A version tagged on `main` has this zip, built from its tagged commit, on its GitHub Release
+([updates](#5-updates)); upload that one when it exists.
+
 A build made to try out rather than upload (a test build for the correction loop) is named by the
 script: `npm run package -- --label test-build` writes
 `dist/tni-rater-autofill-<version>-test-build-<commit>.zip` (`-dirty` when the packaged files had
@@ -87,9 +90,11 @@ pin the extension → click it to open the side panel. Then, once each:
 
 ## 5. Updates
 
-Raise the version, `npm run package` from a clean, committed tree (the usage events name the
-commit they were packaged from, `+dirty` otherwise), upload the new zip on the item's **Package**
-tab, submit.
+Raise the version and merge it to `main`. Upload the zip its GitHub Release carries (below):
+`tni-rater-autofill-<version>.zip`, built from the tagged commit. Upload it on the item's **Package**
+tab, then submit. Only for a version whose release has no zip, run `npm run package` from a clean,
+committed tree (the usage events name the commit they were packaged from, `+dirty` otherwise) and
+upload that zip.
 Chrome updates installed copies by itself within a few hours of approval.
 
 When the version bump reaches `main`, [release-tag.yml](../.github/workflows/release-tag.yml)
@@ -99,10 +104,11 @@ here without changing anything: `node scripts/release-notes.mjs --version 0.9.32
 that brings the version bump tags it: a version already on `main` before that push is never
 tagged, and there is no manual run, so versions released before the workflow stay untagged. A tag
 that already names the same commit is left as it is; one that names another commit fails the run,
-to be checked by hand. The workflow's second job then checks out the tagged commit, runs
-`npm run package` and attaches `tni-rater-autofill-<version>.zip` to the release, with the
-source maps' zip beside it when the package makes one; an asset the release already has is left as
-it is. The tag says which commit a store version came from, the notes what changed, and the
+to be checked by hand. A second job then checks out the tagged commit and runs `npm run package`. It can only read, since
+packaging runs the project's dependencies. A third job, which runs nothing of the project, attaches
+`tni-rater-autofill-<version>.zip` to the release, with the source maps' zip beside it when the
+package makes one. A missing store zip fails the run, and an asset the release already has is left
+as it is. The tag says which commit a store version came from, the notes what changed, and the
 release's zip is the one built from that commit, the one to upload; the workflow uploads nothing to
 the store.
 

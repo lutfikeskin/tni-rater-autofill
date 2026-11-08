@@ -40,17 +40,29 @@ test('the release workflow tags only what a push to main brought, from main\'s h
 // commit and attaches the zip, never replacing one the release has, and uploads nothing to the store.
 test('the release workflow attaches the tagged commit\'s packaged zip to its release', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/release-tag.yml', import.meta.url), 'utf8');
-  const job = workflow.slice(workflow.indexOf('\n  package:\n'));
-  assert.ok(job.length > 20, 'a package job');
+  const pkg = workflow.slice(workflow.indexOf('\n  package:\n'), workflow.indexOf('\n  attach:\n'));
+  const attach = workflow.slice(workflow.indexOf('\n  attach:\n'));
+  assert.ok(pkg.length > 20 && attach.length > 20, 'a package job and an attach job');
   assert.match(workflow, /outputs:\n {6}tag: \$\{\{ steps\.release\.outputs\.tag \}\}\n {6}target: \$\{\{ steps\.release\.outputs\.target \}\}\n {6}version: \$\{\{ steps\.release\.outputs\.version \}\}/);
-  assert.match(job, /needs: tag\n {4}if: needs\.tag\.outputs\.tag != ''/);
-  assert.match(job, /ref: \$\{\{ needs\.tag\.outputs\.target \}\}/, 'the commit the tag names, not main\'s head');
-  assert.match(job, /persist-credentials: false/);
-  assert.match(job, /- run: npm ci\n {6}- run: npm run package\n/);
-  assert.match(job, /"dist\/tni-rater-autofill-\$VERSION\.zip" "dist\/tni-rater-autofill-\$VERSION-sourcemaps\.zip"/);
-  assert.match(job, /gh release upload "\$TAG" "\$zip" --repo "\$GITHUB_REPOSITORY"\n/);
-  assert.doesNotMatch(job, /--clobber/, 'an asset the release has is left as it is');
-  assert.match(job, /grep -qxF "\$\(basename "\$zip"\)"/);
+  // Packaging runs the dependencies: it reads only, and builds the commit the tag names.
+  assert.match(pkg, /needs: tag\n {4}if: needs\.tag\.outputs\.tag != ''/);
+  assert.match(pkg, /permissions:\n {6}contents: read\n/);
+  assert.doesNotMatch(pkg, /contents: write|GH_TOKEN|github\.token/, 'the review of #469: no write token where the project runs');
+  assert.match(pkg, /ref: \$\{\{ needs\.tag\.outputs\.target \}\}/, 'the commit the tag names, not main\'s head');
+  assert.match(pkg, /persist-credentials: false/);
+  assert.match(pkg, /- run: npm ci\n {6}- run: npm run package\n/);
+  // The review of #469: a missing store zip fails; only the maps' zip may be absent.
+  assert.match(pkg, /if \[ ! -f "dist\/tni-rater-autofill-\$VERSION\.zip" \]; then\n[^\n]*\n {12}exit 1/);
+  assert.match(pkg, /if-no-files-found: error/);
+  // Attaching runs nothing of the project: no checkout, no npm.
+  assert.match(attach, /needs: \[tag, package\]/);
+  assert.match(attach, /permissions:\n {6}contents: write/);
+  assert.doesNotMatch(attach, /actions\/checkout|npm |node /);
+  assert.match(attach, /if \[ ! -f "release-zips\/tni-rater-autofill-\$VERSION\.zip" \]; then\n[^\n]*\n {12}exit 1/);
+  assert.match(attach, /"release-zips\/tni-rater-autofill-\$VERSION\.zip" "release-zips\/tni-rater-autofill-\$VERSION-sourcemaps\.zip"/);
+  assert.match(attach, /gh release upload "\$TAG" "\$zip" --repo "\$GITHUB_REPOSITORY"\n/);
+  assert.doesNotMatch(attach, /--clobber/, 'an asset the release has is left as it is');
+  assert.match(attach, /grep -qxF "\$\(basename "\$zip"\)"/);
   assert.doesNotMatch(workflow, /chromewebstore|webstore\/upload|CHROME_|client_secret|refresh_token/i, 'nothing goes to the Chrome Web Store');
   // The zip it attaches is the one npm run package names for the store (scripts/lib/package.mjs).
   assert.match(fs.readFileSync(new URL('../scripts/lib/package.mjs', import.meta.url), 'utf8'), /return `tni-rater-autofill-\$\{version\}\.zip`;/);
