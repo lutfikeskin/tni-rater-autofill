@@ -10124,6 +10124,9 @@ test('a panel edit of "No" into the USDOT box saves no number, and says the row 
   // Reviews of PR #376: the number clears the No and retires its note (rederive), said again.
   assert.deepEqual([intake.record.applicant.noDot, intake.warnings[0].msg.startsWith('No longer applies after your edit: ')], [null, true]);
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['renderSections', ['applicant.noDot']], ['renderWarnings'], ['log', 'applicant.dot']]);
+  // Review of PR #376 (CodeRabbit): words near a No ("none yet") are not one: kept as typed, no No.
+  await sandbox.agentEdit('applicant.dot', 'none yet', 'text');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, sandbox.state.fieldRevs.get('applicant.dot')], ['none yet', null, 1]);
 });
 
 // Review of PR #170: a field the agent emptied in the drawer went with the blank ones (hidden at the
