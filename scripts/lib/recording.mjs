@@ -78,7 +78,9 @@ const WAITS = { answer: 'after an answer', round: 'after a round of answers', lo
   helper: 'for a lookup\'s answer' };
 // How a wait ended, and its slack, in words.
 const endedSaid = (e) => {
-  const held = e.held?.busy ? ', the page still busy' : e.held?.changing ? ', the page still changing' : e.held?.requests ? ', requests still finishing' : '';
+  // Each thing that still held it: the page busy, changing, its requests (any of them together).
+  const holding = [e.held?.busy && 'the page still busy', e.held?.changing && 'the page still changing', e.held?.requests && 'requests still finishing'].filter(Boolean);
+  const held = holding.length ? `, ${holding.join(' and ')}` : '';
   return e.ended === 'quiet' ? 'the page was quiet' : e.ended === 'stopped' ? 'the fill stopped' : `at its limit of ${secs(e.maxMs ?? 0)}${held}`;
 };
 const slackSaid = (e) => (e.slack == null ? '' : e.slack >= (e.ms ?? 0) ? 'the page did nothing during it' : `${secs(e.slack)} after the page's last change`);
@@ -295,25 +297,27 @@ export function recordingReport({ manifest, events }) {
     else if (began != null) { e.ms = e.t - began; began = null; }
   }
   // Each wait's slack: how long it went on after the page's last change or request (all of it when
-  // the page was quiet from its start). A burst's time since the last action before it.
+  // the page was quiet from its start), in its own frame: a wait watches its own document, so another
+  // frame's change didn't hold it. A burst's time since the last action before it.
   // An answer is an action from when it began (its event comes once its wait is over).
-  const activity = ordered.filter((e) => e.kind === 'burst' || e.kind === 'request').map((e) => e.end ?? e.t);
+  const activity = ordered.filter((e) => e.kind === 'burst' || e.kind === 'request').map((e) => ({ at: e.end ?? e.t, frame: e.frame ?? 0 }));
   const actionTimes = ordered.filter(isAction).map((e) => (e.kind === 'kit' && e.what === 'answer' ? e.start ?? e.t : e.t));
   for (const e of ordered) {
     if (e.kind === 'kit' && e.what === 'wait' && typeof e.start === 'number' && typeof e.ms === 'number') {
       const waitEnd = e.start + e.ms;
-      e.slack = waitEnd - activity.reduce((m, a) => (a <= waitEnd && a > m ? a : m), e.start);
+      e.slack = waitEnd - activity.reduce((m, a) => (a.frame === (e.frame ?? 0) && a.at <= waitEnd && a.at > m ? a.at : m), e.start);
     }
     if (e.kind === 'burst') {
       const last = actionTimes.reduce((m, a) => (a < e.t && (m == null || a > m) ? a : m), null);
       if (last != null) e.sinceAction = e.t - last;
     }
   }
-  // Each answer's own wait: the frame's answer wait that ran between the answer's start and its event.
+  // Each answer's own wait: the frame's answer wait that ran between the answer's start and its event,
+  // said by then (a wait said after the answer is the next answer's, though it began in the same ms).
   const answerWaits = ordered.filter((e) => e.kind === 'kit' && e.what === 'wait' && e.why === 'answer' && typeof e.start === 'number');
   for (const e of ordered) {
     if (e.kind !== 'kit' || e.what !== 'answer' || typeof e.start !== 'number') continue;
-    e.answerWait = answerWaits.findLast((w) => (w.frame ?? 0) === (e.frame ?? 0) && w.start >= e.start && w.start <= e.t) ?? null;
+    e.answerWait = answerWaits.findLast((w) => (w.frame ?? 0) === (e.frame ?? 0) && w.start >= e.start && w.start <= e.t && w.t <= e.t) ?? null;
   }
   const t0 = Date.parse(manifest.started) || ordered[0]?.t || 0;
   const end = Date.parse(manifest.ended) || ordered.at(-1)?.t || t0;

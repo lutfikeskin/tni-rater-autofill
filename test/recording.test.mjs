@@ -255,6 +255,26 @@ test('the questions a page drew, a request\'s path and what the fill answered ar
   assert.deepEqual([change.field.key, drew.drawn[0].key], ['name:[client]-dob', 'id:[client]_license']);
 });
 
+// Review of PR #439: a wait held by several things said only the first, its slack counted another
+// frame's change, and an answer could take the next answer's wait begun in the same ms.
+test('a wait says all that held it, its slack is its own frame\'s, and an answer keeps its own wait', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const at = (ms) => t0 + ms;
+  const events = [
+    { kind: 'page', t: at(100), seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'kit', t: at(2000), seq: 2, frame: 0, what: 'wait', why: 'rated', quietMs: 250, maxMs: 1000, requests: true, start: at(1000), ms: 1000, ended: 'limit', settled: false, held: { busy: true, changing: false, requests: true } },
+    { kind: 'request', t: at(1500), seq: 3, frame: 1, path: '/api/other', end: at(1900), ms: 400, via: 'xhr' },
+    { kind: 'kit', t: at(3200), seq: 4, frame: 0, what: 'answer', field: { key: 'ref:A', label: 'First' }, stepKind: 'text', ok: true, start: at(3000), applyMs: 50, timing: { ms: 200, settleMs: 150, ajax: 0, revealed: 0, removed: 0, changed: 0 } },
+    { kind: 'kit', t: at(3400), seq: 5, frame: 0, what: 'wait', why: 'answer', quietMs: 150, maxMs: 3000, requests: false, start: at(3200), ms: 200, ended: 'quiet' },
+    { kind: 'kit', t: at(3400), seq: 6, frame: 0, what: 'answer', field: { key: 'ref:B', label: 'Second' }, stepKind: 'text', ok: true, start: at(3200), applyMs: 10, timing: { ms: 200, settleMs: 200, ajax: 0, revealed: 0, removed: 0, changed: 0 } },
+  ];
+  const report = recordingReport({ manifest: manifestFor(), events });
+  assert.match(report, /at its limit of 1\.0 s, the page still busy and requests still finishing; the page did nothing during it/);
+  assert.match(report, /\| for the premium \| 1 \| 1\.0 s \| 1\.0 s \| 0 \| 1 \| 0 \| 1\.0 s \|/);
+  assert.match(report, /the extension answered "First" in 0\.1 s, then waited 0\.1 s for the page\n/, 'the wait said after it is not its own');
+  assert.match(report, /the extension answered "Second" in 0\.0 s, then waited 0\.2 s for the page \(the page was quiet; the page did nothing during it\)\n/);
+});
+
 test('the report tells what the fill answered and waited for, what the page drew and when, and where each step\'s time went', () => {
   const t0 = Date.parse('2026-10-23T14:12:00.000Z');
   const at = (ms) => t0 + ms;
