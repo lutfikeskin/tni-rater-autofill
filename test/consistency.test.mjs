@@ -261,6 +261,7 @@ const NOT_TRACKED = {
   'test/fixtures/recording': "developer-recording.md's proposal, not built",
   'summary.json': "a file inside a developer recording's zip",
   'recording.json': "a file inside a developer recording's zip",
+  '.claude/worktrees': 'local git worktrees agents work in, ignored',
   'THIRD_PARTY_NOTICES.txt': 'written into each packaged copy by scripts/package.mjs',
 };
 // A document's paths that aren't in the repository: backticked ones under its own folders, backticked
