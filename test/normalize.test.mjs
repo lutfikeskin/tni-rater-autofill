@@ -586,6 +586,10 @@ test('progressive: standard answers for follow-up questions', () => {
   const noDot = structuredClone(record);
   noDot.applicant.dot = null;
   noDot.applicant.mcDotWithin60Days = false;
+  // With an MC number that No is the agent's, as on GEICO (the maintainer, 2026-11-07, audit CARR-02).
+  noDot.applicant.mc = 'MC-765432';
+  assert.equal(byQ('1ED', noDot).value, null);
+  noDot.applicant.mc = null;
   assert.equal(byQ('1ED', noDot).value, 'No - and the customer will not have a USDOT number');
   assert.equal(byQ('20F', noDot).ignore, true);
   assert.equal(byQ('20F').value, true, 'TNI\'s standard Yes once the lookup found the number (2026-10-20)');
@@ -2068,11 +2072,17 @@ test('"no" in the USDOT box answers GEICO\'s USDOT question No also with an MC n
   assert.equal(progressiveDot(coming), 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days');
   // Counterexamples: a blank USDOT box with an MC number is still the agent's, also with the
   // 60-day No; a real USDOT number is Yes.
+  // Progressive the same (the maintainer, 2026-11-07, audit CARR-02).
   for (const fields of [{ dot_number: '' }, { dot_number: '', mc_dot_60days: 'No' }]) {
     const r = intake(fields);
     assert.equal(geicoStep(r).value, null, JSON.stringify(fields));
     assert.match(geicoStep(r).note, /MC number but no USDOT number/, JSON.stringify(fields));
+    const step = buildPlan(r.record, progressive).find((s) => s.q === '1ED');
+    assert.equal(step.value, null, `Progressive: ${JSON.stringify(fields)}`);
+    assert.match(step.note, /MC number but no USDOT number/, `Progressive: ${JSON.stringify(fields)}`);
   }
+  // Without an MC number the 60-day No is still No on Progressive.
+  assert.equal(progressiveDot(intake({ dot_number: '', mc_number: '', mc_dot_60days: 'No' })), 'No - and the customer will not have a USDOT number');
   assert.equal(geicoStep(intake({ dot_number: '1234567' })).value, 'Yes');
 });
 
