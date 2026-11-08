@@ -6556,7 +6556,7 @@ test('Settings\' usage boxes and buttons: a server that isn\'t a URL is refused,
   // Clear log asks in the panel (state.usageAsk), never with a browser dialog (audit 2026-11-07, UX-17).
   t.context.confirm = () => { throw new Error('no browser dialog'); };
   await t.acts.clearLog();
-  assert.deepEqual({ ...t.state.usageAsk }, { text: '3 events aren\'t uploaded or exported. Delete them anyway?', yes: 'Delete them' });
+  assert.deepEqual({ ...t.state.usageAsk }, { n: 3, text: '3 events aren\'t uploaded or exported. Delete them anyway?', yes: 'Delete them' });
   assert.ok(!t.calls.some(([c]) => c === 'clearLog'), 'not cleared without a yes');
   t.acts.clearLogNo();
   assert.equal(t.state.usageAsk, null, 'Cancel takes the question down');
@@ -6567,7 +6567,15 @@ test('Settings\' usage boxes and buttons: a server that isn\'t a URL is refused,
   assert.deepEqual([t.calls.at(-2), t.calls.at(-1), t.state.usageNote, t.state.usageAsk], [['clearLog'], ['renderUsage'], 'Usage log cleared.', null]);
   t.context.usage.settings = async () => ({ lastExportCount: 3 });
   await t.acts.clearLog();
-  assert.deepEqual({ ...t.state.usageAsk }, { text: 'Delete the 3 exported events from this computer?', yes: 'Delete' });
+  assert.deepEqual({ ...t.state.usageAsk }, { n: 3, text: 'Delete the 3 exported events from this computer?', yes: 'Delete' });
+  // Events logged after the question: the yes asks again with the new count, and deletes nothing yet.
+  t.context.usage.count = async () => 5;
+  const cleared = t.calls.filter(([c]) => c === 'clearLog').length;
+  await t.acts.clearLogYes();
+  assert.deepEqual([{ ...t.state.usageAsk }, t.calls.filter(([c]) => c === 'clearLog').length],
+    [{ n: 5, text: '5 events aren\'t uploaded or exported. Delete them anyway?', yes: 'Delete them' }, cleared]);
+  await t.acts.clearLogYes();
+  assert.deepEqual([t.state.usageAsk, t.calls.filter(([c]) => c === 'clearLog').length], [null, cleared + 1]);
 });
 
 test('the panel opens no browser dialog: its questions are asked in the panel', () => {

@@ -12,6 +12,7 @@ import { panelStore } from '../state-store.js';
 import { REGISTRY, RELEASED_TO_AGENTS, amountSaid, defaultsForLog, effectiveDefaults } from '../../../src/agent-defaults/index.js';
 import { STANDARD_IDS } from '../../../src/standards.js';
 import { DEFAULTS_CARRIERS } from './store.js';
+import { useAskFocus } from '../ask-focus.js';
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -104,6 +105,7 @@ export function TniDefaults({ act }) {
   // The profile Delete profile asks about, until Delete or Cancel: asked here, as the client's file
   // tools ask (client-view.jsx), never with a browser dialog, which holds the panel and a fill's Stop.
   const [deleting, setDeleting] = useState(null);
+  const askFocus = useAskFocus(!!deleting && deleting === stored?.active);
   if (!on) return null;
   const profiles = Object.entries(stored?.profiles ?? {});
   const active = stored?.active ? stored.profiles[stored.active] : null;
@@ -123,11 +125,11 @@ export function TniDefaults({ act }) {
                 </select>
               </label>
               {active && deleting === stored.active ? (
-                <div id="defaults-confirm" className="file-confirm" role="group" aria-labelledby="defaults-confirm-text">
+                <div id="defaults-confirm" ref={askFocus.group} className="file-confirm" role="group" aria-labelledby="defaults-confirm-text">
                   <p id="defaults-confirm-text" className="small">{`Delete ${active.name}'s defaults?`}</p>
                   <div className="actions">
                     <button type="button" id="defaults-confirm-yes" className="ghost danger" onClick={() => { setDeleting(null); act.remove(stored.active); }}>Delete</button>
-                    <button type="button" id="defaults-confirm-no" className="ghost" onClick={() => setDeleting(null)}>Cancel</button>
+                    <button type="button" id="defaults-confirm-no" ref={askFocus.cancel} className="ghost" onClick={() => setDeleting(null)}>Cancel</button>
                   </div>
                 </div>
               ) : naming ? (
@@ -140,7 +142,7 @@ export function TniDefaults({ act }) {
               ) : (
                 <div className="defaults-actions">
                   <button type="button" id="defaults-new" className="ghost small-btn" onClick={() => setNaming(true)}>New profile</button>
-                  {active ? <button type="button" id="defaults-delete" className="ghost small-btn danger" onClick={() => setDeleting(stored.active)}>Delete profile</button> : null}
+                  {active ? <button type="button" id="defaults-delete" ref={askFocus.opener} className="ghost small-btn danger" onClick={() => setDeleting(stored.active)}>Delete profile</button> : null}
                 </div>
               )}
               {active ? REGISTRY.filter((e) => !e.locked).map((entry) => (

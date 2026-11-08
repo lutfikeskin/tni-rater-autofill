@@ -173,6 +173,11 @@ test('Advanced: the test-run mark with an intake, the server boxes on their chan
   act(() => { state.usageAsk = { text: "3 events aren't uploaded or exported. Delete them anyway?", yes: 'Delete them' }; });
   expect([ask.hidden, ask.getAttribute('role'), $(container, '#usage-confirm-text').textContent, $(container, '#usage-confirm-yes').textContent, $(container, '#clear-usage').getAttribute('aria-expanded')])
     .toEqual([false, 'group', "3 events aren't uploaded or exported. Delete them anyway?", 'Delete them', 'true']);
+  // The focus goes to Cancel, and back to Clear log once the question closes (a keyboard user's).
+  expect(document.activeElement?.id).toBe('usage-confirm-no');
+  act(() => { state.usageAsk = null; });
+  expect([ask.hidden, document.activeElement?.id]).toEqual([true, 'clear-usage']);
+  act(() => { state.usageAsk = { n: 3, text: 'Delete the 3 exported events from this computer?', yes: 'Delete' }; });
   fireEvent.click($(container, '#usage-confirm-no'));
   fireEvent.click($(container, '#usage-confirm-yes'));
   expect(calls.slice(7)).toEqual([['clearLogNo'], ['clearLogYes']]);

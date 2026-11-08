@@ -116,8 +116,10 @@ test('Delete profile asks first, in the panel: Cancel keeps the profile, Delete 
     fireEvent.click(getByText('Delete profile'));
     expect(container.querySelector('#defaults-confirm-text').textContent).toBe("Delete Jordan K.'s defaults?");
     expect(container.querySelector('#defaults-delete')).toBeNull();
+    // The focus goes to Cancel, and back to Delete profile once the question closes (a keyboard user's).
+    expect(document.activeElement?.id).toBe('defaults-confirm-no');
     fireEvent.click(container.querySelector('#defaults-confirm-no'));
-    expect([container.querySelector('#defaults-confirm'), calls]).toEqual([null, []]);
+    expect([container.querySelector('#defaults-confirm'), calls, document.activeElement?.id]).toEqual([null, [], 'defaults-delete']);
     fireEvent.click(getByText('Delete profile'));
     fireEvent.click(container.querySelector('#defaults-confirm-yes'));
     expect(calls).toEqual([['remove', 'p1']]);

@@ -96,6 +96,14 @@ function settingsActs() {
     // agent for here (tab-mark.js). Never logged.
     markTab: (on) => markSwitch(on),
   };
+  // Clear log's question, with the count it names (`n`).
+  const askClearLog = async () => {
+    const { lastExportCount = 0 } = await usage.settings();
+    const n = await usage.count();
+    state.usageAsk = n > lastExportCount
+      ? { n, text: `${n} events aren't uploaded or exported. Delete them anyway?`, yes: 'Delete them' }
+      : { n, text: `Delete the ${n} exported events from this computer?`, yes: 'Delete' };
+  };
   return {
     // A Filling switch: what Settings draws follows it at once (Let me look first is off with
     // Continue when the page is done); the panel reads the switch from its box.
@@ -125,15 +133,13 @@ function settingsActs() {
     },
     // Clear log asks first, in the panel under its button (state.usageAsk, as the client's file tools
     // ask: askFile), never with a browser dialog, which would hold the panel and a fill's Stop while open.
-    clearLog: async () => {
-      const { lastExportCount = 0 } = await usage.settings();
-      const n = await usage.count();
-      state.usageAsk = n > lastExportCount
-        ? { text: `${n} events aren't uploaded or exported. Delete them anyway?`, yes: 'Delete them' }
-        : { text: `Delete the ${n} exported events from this computer?`, yes: 'Delete' };
-    },
+    clearLog: () => askClearLog(),
+    // A yes deletes what the question named: events logged since it was asked (`n` changed) are asked
+    // about again, with the new count, instead.
     clearLogYes: async () => {
-      if (!state.usageAsk) return;
+      const asked = state.usageAsk;
+      if (!asked) return;
+      if (await usage.count() !== asked.n) { await askClearLog(); return; }
       state.usageAsk = null;
       await usage.clearLog();
       state.usageNote = 'Usage log cleared.';
