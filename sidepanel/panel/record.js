@@ -315,7 +315,8 @@ async function agentEdit(path, after, kind, { restore = false } = {}) {
   state.intake.agentEdited = [...edited];
   // The agent's own Owner drives answers "Does the owner drive?" (W46-02: answers/owner.js ownerNoPending), and
   // its check is done (answers/owner.js ownerDrivesAnswered).
-  if (path === 'applicant.ownerDrives') { ownerDrivesAnswered(state.intake, { edit: path }); renderWarnings(); }
+  // Restored, it is the intake's again and the check is open (ownerDrivesAnswered `restore`).
+  if (path === 'applicant.ownerDrives') { ownerDrivesAnswered(state.intake, restore ? { restore: path } : { edit: path }); renderWarnings(); }
   // A value derived from this one (radius → miles, year established → years in business)
   // follows the edit, unless the agent set it here themselves; its row in the client details
   // shows the new value, shown as it fills in. One that empties stays until the drawer is said
