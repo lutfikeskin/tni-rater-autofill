@@ -12,10 +12,11 @@ import { panelStore } from './state-store.js';
 // A field's box (fieldSaid in record.js). Its edit is made as the box's own change event says it: a
 // text box's when the agent leaves it or presses Enter, not each key. The record's value is shown
 // again when it changes (a derived value following an edit, a check card's edit) in the same box, so
-// the agent's focus and what they are typing elsewhere stay.
+// the agent's focus and what they are typing elsewhere stay. So is a value the edit saved as it was
+// (`rev`: "No" typed into an empty USDOT box is saved empty, record.js agentEdit).
 function FieldBox({ field }) {
   const ref = useRef(null);
-  const { id, control, value, options, edit, maxLength } = field;
+  const { id, control, value, options, edit, maxLength, rev } = field;
   useEffect(() => {
     const box = ref.current;
     const changed = () => edit(box.value);
@@ -24,7 +25,7 @@ function FieldBox({ field }) {
   }, [edit]);
   useLayoutEffect(() => {
     if (ref.current.value !== value) ref.current.value = value;
-  }, [value]);
+  }, [value, rev]);
   if (control === 'select') {
     return <select ref={ref} id={id} defaultValue={value}>{options.map(([v, text], n) => <option key={n} value={v}>{text}</option>)}</select>;
   }

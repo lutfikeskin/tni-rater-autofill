@@ -481,6 +481,9 @@ const state = storeState({
   // Client details' filter box and its Your corrections switch (UX-07).
   detailsQuery: '',
   detailsEditedOnly: false,
+  // Client details: how many times an edit saved a field otherwise than typed (path -> count; "No"
+  // in the USDOT box is saved empty), so its box shows the record's value again (details-view.jsx).
+  fieldRevs: new Map(),
   // The intake PDF: its bytes (also kept in session storage, keepPdf), the document pdf.js opened,
   // and the viewer's page, zoom and the item marked on it ({ path, label, kind, place }); null
   // while the viewer is closed.

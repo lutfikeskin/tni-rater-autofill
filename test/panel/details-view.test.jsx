@@ -81,6 +81,27 @@ test('a box\'s edit is its change, not each key; a value said again shows in the
   expect(radius.value).toBe('Unlimi');
 });
 
+// Review of PR #376 (CodeRabbit): "No" typed into a USDOT box that was empty is saved empty
+// (noNumberEdit), the same value as before, so the box went on showing "No". The edit says the
+// field again (`rev`): its box shows the record's value, and what the agent is typing elsewhere stays.
+test('a field said again after its edit shows the record\'s value, though the value is the same as before', () => {
+  const { container } = render(<Details act={{}} />);
+  const say = (rev) => act(() => {
+    state.details = { showEmpty: false, toggle: null, fold() {}, sections: [{ id: 'applicant', title: 'Business', open: true, allEmpty: false, flags: 0, hiddenSaid: null, rows: [
+      field('applicant.dot', '', { rev }), field('operations.radius', '100')] }] };
+  });
+  say(0);
+  const dot = $(container, '#f-applicant_dot');
+  const radius = $(container, '#f-operations_radius');
+  fireEvent.input(dot, { target: { value: 'No' } });
+  fireEvent.change(dot);
+  fireEvent.input(radius, { target: { value: 'Unlim' } });
+  say(0);
+  expect([dot.value, radius.value], 'said again unchanged: nothing moves').toEqual(['No', 'Unlim']);
+  say(1);
+  expect([$(container, '#f-applicant_dot'), dot.value, radius.value]).toEqual([dot, '', 'Unlim']);
+});
+
 test('a dropdown shows the record\'s value, one off the list kept; a long answer is a text area', () => {
   const edits = [];
   const { container } = render(<Details act={{}} />);

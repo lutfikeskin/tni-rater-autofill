@@ -221,7 +221,7 @@ async function markTestRun(test) {
 }
 
 // The agent's work on an intake loaded again from the same PDF: the record with their corrections
-// (and what was derived from them), the items with their checks (checked by position, Luna's
+// (and what was derived from them, with the boxes it was read from), the items with their checks (checked by position, Luna's
 // claims-box items included), Luna's claims-box review, and Add NTL done on its quote.
 // The agent's corrections and checks of this intake, kept on this computer (src/kept-work.js), put
 // back on it as made in the panel: each corrected value set and marked the agent's, the values derived
@@ -284,7 +284,7 @@ async function keepKeptWork(intake) {
 }
 
 function keepWork(intake, was) {
-  Object.assign(intake, { record: was.record ?? intake.record, warnings: was.warnings ?? intake.warnings, done: [...(was.done ?? [])], agentEdited: [...(was.agentEdited ?? [])],
+  Object.assign(intake, { record: was.record ?? intake.record, warnings: was.warnings ?? intake.warnings, readFrom: was.readFrom ?? intake.readFrom, done: [...(was.done ?? [])], agentEdited: [...(was.agentEdited ?? [])],
     notesReview: was.notesReview ?? null, namesReview: was.namesReview ?? null, ntlAdded: !!was.ntlAdded });
 }
 
