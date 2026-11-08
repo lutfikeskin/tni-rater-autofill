@@ -69,7 +69,8 @@ Each usage event the extension logs, when, and the fields the collection server 
 | `problem_report` | the agent's report from the panel | `text`, `run`, `step`, `blockerList`, `since` |
 | `client_error` | a crash nothing in the panel caught (`where: panel`), or an exception the page's recorder caught and told the panel (`where: recorder`) | `where`, `error`, `stack` |
 | `ai_suggest` | one review by the AI assistant (a page's, or the intake's claims box or driver names), which may make several model calls across batches (proposal and verification): `modelCalls` counts the calls that returned, including those of a review that then failed or was dropped | `model`, `ms`, `items`, `suggested`, `leave`, `autoOk`, `blocked`, `error`, `tokensIn`, `tokensOut`, `modelCalls`, `reasoningTokens`, `cachedTokens`, `cacheWriteTokens`, `promptHash`, `leaveMissing`, `leaveConflict`, `leaveChose`, `leaveNoSource`, `leaveUnverified`, `leaveTooLarge` |
-| `ai_decision` | one AI suggestion acted on, by the agent or the automatic setting | `model`, `policy`, `promptHash`, `probability`, `support`, `evidenceProbability`, `confidence`, `q`, `label`, `controlKind`, `decision`, `choice`, `basis`, `intakePath`, `reason` |
+| `ai_decision` | one AI suggestion acted on, by the agent or the automatic setting | `model`, `policy`, `promptHash`, `probability`, `support`, `evidenceProbability`, `confidence`, `q`, `label`, `controlKind`, `decision`, `choice`, `basis`, `intakePath`, `reason`, `ruleIds` (the TNI rules the pick cited, by rulebook id) |
+| `ai_leave` | one question a page review left to the agent, with why (its label redacted) | `q`, `label`, `controlKind`, `leaveWhy`, `intakePath` |
 
 ## What the learner actually infers
 
