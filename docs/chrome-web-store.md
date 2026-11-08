@@ -90,11 +90,13 @@ pin the extension → click it to open the side panel. Then, once each:
 
 ## 5. Updates
 
-Raise the version and merge it to `main`. Upload the zip its GitHub Release carries (below):
-`tni-rater-autofill-<version>.zip`, built from the tagged commit. Upload it on the item's **Package**
-tab, then submit. Only for a version whose release has no zip, run `npm run package` from a clean,
-committed tree (the usage events name the commit they were packaged from, `+dirty` otherwise) and
-upload that zip.
+Raise the version and merge it to `main`, then wait for that push's **Release tag** run to finish
+all its jobs: the release is made before its zip is built and attached. Upload the zip the release
+then carries (below), `tni-rater-autofill-<version>.zip`, built from the tagged commit, on the
+item's **Package** tab, and submit. Only when that run finished and the release has no zip, check
+out the version's own commit (`git checkout v<version>`, or for an untagged version the commit that
+set it in `manifest.json`), run `npm run package` there from a clean tree (the usage events name the
+commit they were packaged from, `+dirty` otherwise), and upload that zip.
 In the version's PR, add what agents will see differently to `src/whats-new.js` under the new
 version: one to five short lines in the agent's words. The panel shows them once, as "What's new in
 v<version>", the first time it opens after the update, with every version's lines since the one it
@@ -113,9 +115,11 @@ to be checked by hand. A second job then checks out the tagged commit and runs `
 packaging runs the project's dependencies. A third job, which runs nothing of the project, attaches
 `tni-rater-autofill-<version>.zip` to the release, with the source maps' zip beside it when the
 package makes one. A missing store zip fails the run, and an asset the release already has is left
-as it is. The tag says which commit a store version came from, the notes what changed, and the
-release's zip is the one built from that commit, the one to upload; the workflow uploads nothing to
-the store.
+as it is, unchecked: the workflow vouches only for a zip it attached itself, which its attach job's
+log names ("gh release upload"), not for one uploaded to the release by hand. The tag says which
+commit a store version came from, the notes what changed, and the release's zip, when that run
+attached it, is the one built from that commit and the one to upload; the workflow uploads nothing
+to the store.
 
 Agents' own defaults ([spec](agent-defaults-spec.md)) ship hidden in the store build until TNI's
 managers approve them: that release's PR sets `RELEASED_TO_AGENTS` to `true` in
