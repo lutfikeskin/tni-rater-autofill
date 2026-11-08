@@ -1,0 +1,46 @@
+// @ts-check
+// The side panel: "What's new in vX", said once per version (audit 2026-11-07, UX-12 c). The lines are
+// src/whats-new.js's; the version last said is kept in chrome.storage.local (`whatsNewSeen`), which
+// background.js starts at the version installed on a new install (a new agent isn't told what
+// changed since a version they never had), and on an update with none said yet at the version
+// updated from (every version since is said).
+// One part of the panel; sidepanel.js calls showWhatsNew as the panel opens.
+/** @typedef {{ version: string, lines: string[] }} WhatsNewEntry */
+import { compareVersions, whatsNewSince } from '../../src/whats-new.js';
+import { inExtension } from './env.js';
+import { state } from './core.js';
+import { issueSaid } from './coordinator.js';
+
+const SEEN_KEY = 'whatsNewSeen';
+
+// Says what's new since the version last said, in #whats-new (state.notes.whatsNew), and marks this
+// version said at once: the card stays until Got it or the panel closes, and isn't said again. A
+// version with nothing new is marked said without a card; a rollback changes nothing. Storage that can't be read or written says
+// nothing (the card is a courtesy, never in the way).
+async function showWhatsNew() {
+  if (!inExtension) return;
+  try {
+    const version = chrome.runtime.getManifest().version;
+    const stored = (await chrome.storage.local.get(SEEN_KEY))[SEEN_KEY];
+    const seen = typeof stored === 'string' ? stored : null;
+    // Already said, or a rollback to an older version: the newer version said stays, so updating to
+    // it again says nothing twice.
+    if (seen && compareVersions(seen, version) >= 0) return;
+    const entries = whatsNewSince(seen, version);
+    await chrome.storage.local.set({ [SEEN_KEY]: version });
+    if (!entries.length) return;
+    state.notes = { ...state.notes, whatsNew: whatsNewCard(version, entries) };
+  } catch (e) {
+    console.warn("what's new not shown:", e?.message ?? e);
+  }
+}
+
+// The card: this version's lines, then each earlier version's under its name.
+/** @param {string} version @param {WhatsNewEntry[]} entries */
+function whatsNewCard(version, entries) {
+  const notes = entries.flatMap((e) => (e.version === version ? e.lines : [`In v${e.version}:`, ...e.lines]));
+  return issueSaid({ tone: 'info', title: `What's new in v${version}`, notes,
+    actions: [{ label: 'Got it', className: 'ghost small-btn', onClick: () => { state.notes = { ...state.notes, whatsNew: null }; } }] });
+}
+
+export { showWhatsNew, whatsNewCard };

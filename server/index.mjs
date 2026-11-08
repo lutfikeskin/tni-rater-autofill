@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Usage-log collection server for the rater autofill extension.
 //
 //   node server/index.mjs                  # http://127.0.0.1:8787, data in ./server-data
@@ -18,8 +19,11 @@
 // The extension never sends client data (see src/usage.js); as a second line of defence the
 // server only accepts known event types and drops fields it doesn't expect. What it drops is
 // named on the stored event (`dropped`), so a review can tell a field the extension never sent
-// from one an older server threw away. /v1/health names this file's version (`server`, a hash of
-// it), so the daily review sees when the deployed server isn't the one in the repository.
+// from one an older server threw away. Which types and fields it keeps is the event contract it
+// shares with the extension (src/usage-schema.js); an event logged under a newer schema than the
+// server's is refused, kept by the extension and sent again after the deploy. /v1/health names
+// this file's version (`server`, a hash of it and the files it imports) and the schema's
+// (`schema`), so the daily review sees when the deployed server isn't the one in the repository.
 //
 // Listens on 127.0.0.1 unless HOST says otherwise. Without RATER_TOKEN every upload is accepted,
 // which is fine on this computer only: bound to any other address the server refuses to start
@@ -52,6 +56,8 @@ import { fileURLToPath } from 'node:url';
 import { MIN_DASHBOARD_TOKEN, WINDOWS, eventReader, renderDashboard, summarize, testIntakesFrom } from './dashboard.mjs';
 // agent defaults: everything about them is in that module (removal steps at its top).
 import { AGENT_DEFAULT_FIELDS, AGENT_DEFAULT_RUN_FIELDS, AGENT_DEFAULT_SOURCE, cleanAgentDefaults } from './agent-defaults.mjs';
+// The event contract, shared with the extension (the image copies src/usage-schema.js).
+import { COMMON, EVENT_FIELDS as SHARED_FIELDS, ID_LIKE, LIMIT, PROFILE_UNITS, SCHEMA_VERSION } from '../src/usage-schema.js';
 
 const MAX_BODY = 4 * 1024 * 1024;
 const MAX_EVENTS_PER_REQUEST = 2000;
@@ -62,12 +68,13 @@ const MAX_LAYOUT_BYTES = 128 * 1024;
 // days of events on the process that takes uploads, and each open tab reloads it every minute.
 const DASHBOARD_CACHE_MS = 30_000;
 // Which version of the server is running (every file the image copies, in server/Dockerfile's
-// order; test/server.test.mjs holds the two in step): the daily review compares it with the
-// repository's.
+// order, the shared event contract included; test/server.test.mjs holds the two in step): the
+// daily review compares it with the repository's.
 export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url)))
   .update(fs.readFileSync(new URL('./dashboard.mjs', import.meta.url)))
   .update(fs.readFileSync(new URL('./agent-defaults.mjs', import.meta.url)))
-  .update(fs.readFileSync(new URL('./privacy.html', import.meta.url))).digest('hex').slice(0, 12);
+  .update(fs.readFileSync(new URL('./privacy.html', import.meta.url)))
+  .update(fs.readFileSync(new URL('../src/usage-schema.js', import.meta.url))).digest('hex').slice(0, 12);
 // Uploads from one address (audit 2026-11-07, SRV-13: the upload token ships in the extension, so
 // anyone could fill the volume). Two token buckets per address, in memory: requests and bytes. An
 // agent's panel posts at most once a minute plus a few prompt uploads (an intake loaded, a problem
@@ -157,68 +164,12 @@ export function startupError({ host, token }) {
   return `RATER_TOKEN is not set and HOST=${host} is not loopback: refusing to start an open upload endpoint. Set RATER_TOKEN (docs/hosting.md), or bind HOST to 127.0.0.1 for local use.`;
 }
 
-// Event type -> fields kept. Anything else in an event is dropped.
-// install: a random id for one copy of the extension on one computer (with seq: gaps show loss).
-export const COMMON = ['id', 't', 'v', 'channel', 'commit', 'agent', 'install', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page', 'view'];
-export const EVENT_FIELDS = {
-  // test: the agent marked this intake as a test run before (on this computer).
-  // platform: the computer's system and Chrome's major version.
-  intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings', 'test', 'platform'],
-  // What the client's business looks like, never who it is (src/usage.js intakeProfile): when the
-  // intake is loaded and after the agent corrects it. Each group is kept in its shape (PROFILE).
-  intake_profile: ['business', 'operations', 'vehicles', 'trailers', 'trailerInfo', 'drivers', 'coverage', 'priorInsurance', 'hasClaims'],
-  // Events the computer's log dropped (full, oldest first): how many.
-  usage_lost: ['count'],
-  intake_closed: ['reason'],
-  // The agent marked the loaded intake as a test run, or unmarked it.
-  intake_marked: ['test'],
-  // The agent's settings, all of them each time (values: booleans and where usage goes).
-  agent_settings: ['reason', 'changed', 'values'],
-  intake_edit: ['path', 'kind', 'change', 'warnings'],
-  warning_checked: ['code', 'path', 'checked'],
-  page_view: ['from', 'fields'],
-  // messages: what the page said about the answers (validation, errors, help), redacted by the panel.
-  page_layout: ['context', 'fields', 'buttons', 'reason', 'step', 'messages'],
-  // The premium a carrier page quoted (src/premium.js): amounts, the term in months and the payments.
-  quote_premium: ['step', 'total', 'termMonths', 'dueToday', 'payments', 'payment'],
-  // A page layout the panel couldn't record (why it was asked for, and the error's first words).
-  layout_error: ['reason', 'error'],
-  // pageChanged: the carrier probably changed the page; reworded: known fields whose question reads
-  // differently; renamed: known questions whose data-model name isn't on the page (rule, names).
-  // run: one fill invocation, shared with its fill_field events; rules: the rule files'
-  // fingerprint; settings: the panel's filling switches; step: a one-address application's step
-  // (AmWINS). Their shapes are checked below (RUN_FIELDS): a malformed value refuses the event.
-  // retried: the second click of a Continue whose page stayed unchanged (true only), on its fill_run or fill_error.
-  // background: the quote tab filled while the agent was on another; hiddenMs: how long its page was
-  // hidden meanwhile (Chrome slows a hidden tab's timers).
-  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'retried', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
-  // how: what found the field (field = data-model name, text, option, selector, label, name).
-  // source: where the answer comes from (plan.js; FIELD_SOURCES below); standard, manualOnly,
-  // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
-  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'code', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review'],
-  // A button the agent clicked themselves: its text (60 characters), and the step on screen.
-  agent_click: ['text', 'step'],
-  // The agent dismissed a "needs you" item (×): the question, and why it needed them.
-  check_dismissed: ['q', 'key', 'label', 'mark'],
-  fill_error: ['run', 'rules', 'settings', 'auto', 'retried', 'error'],
-  field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
-  // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
-  // many seconds before the report).
-  problem_report: ['text', 'run', 'step', 'blockerList', 'since'],
-  // An error nothing in the panel or the page's recorder caught: where (panel, recorder), its message (redacted, 300 characters)
-  // and up to four frames inside the extension's own files.
-  client_error: ['where', 'error', 'stack'],
-  // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
-  // setting) acted on. Choices are option texts; typed text suggestions are never logged.
-  // leave*: why questions were left, as counts (missing information, a conflict, Luna's own leave,
-  // no usable citation, an answer the evidence check refused, a question too large to ask).
-  // promptHash: which instructions and rules the review got (src/ai/luna.js promptHash).
-  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens', 'promptHash',
-    'leaveMissing', 'leaveConflict', 'leaveChose', 'leaveNoSource', 'leaveUnverified', 'leaveTooLarge'],
-  // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
-  ai_decision: ['model', 'policy', 'promptHash', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
-};
-// agent defaults: their fields on agent_settings, fill_run and fill_error.
+// The event contract (event types, the fields each keeps, the schema's version) is shared with the
+// extension: src/usage-schema.js, which the image copies. A copy here, so agent defaults can add
+// their fields (agent_settings, fill_run and fill_error) without changing the shared lists.
+export { COMMON, SCHEMA_VERSION };
+/** @type {Record<string, string[]>} */
+export const EVENT_FIELDS = Object.fromEntries(Object.entries(SHARED_FIELDS).map(([type, fields]) => [type, [...fields]]));
 for (const [type, fields] of Object.entries(AGENT_DEFAULT_FIELDS)) EVENT_FIELDS[type].push(...fields);
 
 // The run-identity fields (audit 2026-10-08, finding 7; Contract 1): their exact shapes, since a
@@ -274,18 +225,11 @@ export const FIELD_SOURCES = ['intake', 'derived', 'standard', 'fact', 'attestat
 // spaces, dashes, dots, slashes or brackets between them, as in a phone, SSN, licence or policy
 // number; five digits in a row; a word of eight or more letters and digits mixed, as in a VIN). A
 // limit may also be a limit as written (LIMIT: $1M CSL, $1,000,000, 1000000, $1M/$2M, 25/50/25,
-// State Minimum), which can hold such digits. src/usage.js applies the same tests before sending.
+// State Minimum), which can hold such digits. Both tests are the shared contract's
+// (src/usage-schema.js), which src/usage.js applies before sending.
 // A value that isn't in its shape is left out and its group named in `dropped`; a group that isn't
 // the right kind of object or list is dropped whole.
-export const ID_LIKE = /@|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d(?:[\s()./-]{0,2}\d){6,}|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/i;
-// An amount: with thousands commas, round thousands written plainly, or up to four digits with an
-// optional K or M; a pair of amounts with a slash ($1M/$2M); a split limit (25/50/25, 100/300/100,
-// whose first part is 15 or more, so a date isn't one); a word; & + -.
-const MONEY = String.raw`\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$?\d{1,6}000|\$?\d{1,4}(?:\.\d+)?[km]?`;
-const LIMIT_PART = String.raw`(?:1[5-9]|[2-9]\d|[1-9]\d{2})(?:\/\d{1,3}){1,2}|(?:${MONEY})(?:\s*\/\s*(?:${MONEY}))?|[a-z]+\.?|[&+-]`;
-// Two numbers with only a space, &, + or - between them aren't a limit (an SSN or a phone written
-// with spaces: 123 45 6789).
-export const LIMIT = new RegExp(String.raw`^(?![\s\S]*\d[\s&+-]+\$?\d)(?:${LIMIT_PART})(?:\s+(?:${LIMIT_PART}))*$`, 'i');
+export { ID_LIKE, LIMIT, PROFILE_UNITS };
 const yesNo = (v) => v === null || typeof v === 'boolean';
 const whole = (min, max) => (v) => v === null || (Number.isSafeInteger(v) && v >= min && v <= max);
 const text = (max) => (v) => v === null || (typeof v === 'string' && v.length > 0 && v.length <= max && !ID_LIKE.test(v));
@@ -296,7 +240,6 @@ const dollars = whole(0, 99_999_999);
 const year = whole(1900, 2100);
 const given = oneOf('given', 'other', 'blank');
 const UNIT = { type: text(40), year, make: text(40), model: text(40), value: dollars };
-export const PROFILE_UNITS = 50;
 export const PROFILE = {
   business: {
     state: usState, businessClass: text(80), dot: given, mc: given, fein: given, dotWithin60Days: yesNo,
@@ -441,6 +384,13 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
 
   function clean(e, agent) {
     if (!e || typeof e !== 'object' || Array.isArray(e)) return { error: 'event is not an object' };
+    // The schema it was logged under (src/usage-schema.js; none before 2026-11-07): one newer than
+    // this server's may carry fields it would drop, so it is refused in words the extension knows
+    // (sidepanel/usage-log.js keeps such an event and sends it again after the deploy).
+    if (e.schema !== undefined) {
+      if (!(Number.isSafeInteger(e.schema) && e.schema >= 1)) return { error: 'schema is not a valid schema version' };
+      if (e.schema > SCHEMA_VERSION) return { error: `schema newer than server (${e.schema} > ${SCHEMA_VERSION})` };
+    }
     // Own keys only: a type such as constructor or __proto__ is unknown, not Object.prototype's member.
     const keep = typeof e.type === 'string' && Object.hasOwn(EVENT_FIELDS, e.type) ? EVENT_FIELDS[e.type] : null;
     if (!keep) return { error: `unknown event type "${String(e.type).slice(0, 40)}"` };
@@ -727,7 +677,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     // What the daily server check reads (scripts/lib/central.mjs: `server`) and the panel's "is it
     // there" probe need, for anyone; how many events are stored, for TNI only.
     if (req.method === 'GET' && url.pathname === '/v1/health') {
-      return done(200, { ok: true, server: SERVER_HASH, ...(isAdmin(req) ? { events: seen.size } : {}) });
+      return done(200, { ok: true, server: SERVER_HASH, schema: SCHEMA_VERSION, ...(isAdmin(req) ? { events: seen.size } : {}) });
     }
     // The maintainer's usage page: 404 when it is off, so the server says nothing of it.
     if (url.pathname === '/dashboard') {
