@@ -5,6 +5,7 @@
 import { GENERIC_RULES } from './rules.js';
 import { stepResolution } from './resolution.js';
 import { fieldInfo } from './schema.js';
+import { toDate, toMoney, toPhone } from './normalize.js';
 import { get, listOf } from './util.js';
 
 /** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, ListCondition, PlanOptions, PlanStep, StepOverlay } from '../types.js' */
@@ -192,6 +193,23 @@ function onlyIfOf(conditions) {
   return conditions?.length ? conditions.map((x) => ({ path: x.path ?? null, limit: !!x.limit, value: x.value ?? null })) : null;
 }
 
+// A value read straight from the intake that its field's kind can't hold: the text as written,
+// which normalizeIntake (or an agent's edit, parseEdit) keeps in the typed slot when it doesn't
+// parse ("13/45/1980" for a date, "around 40k" for an amount, "20O1" for a year). Never
+// typed onto the page as an answer: the step is the agent's, with the text quoted. The Intake
+// step's check card names the same value (dob.invalid, vehicle-value.invalid, ...).
+const UNREADABLE = {
+  date: (v) => (toDate(v) ? null : 'a valid date'),
+  int: (v) => (Number.isInteger(v) || /^\d+$/.test(String(v).trim()) ? null : 'a whole number'),
+  money: (v) => (Number.isFinite(v) || toMoney(v) != null ? null : 'a dollar amount'),
+  phone: (v) => (toPhone(v) ? null : 'a 10-digit US phone number'),
+};
+/** @param {any} kind  the schema kind of the field (fieldInfo) @param {any} value @returns {string | null} what the value should be, when it is not that */
+function unreadable(kind, value) {
+  if (value === null || value === undefined || value === '') return null;
+  return UNREADABLE[kind]?.(value) ?? null;
+}
+
 /**
  * @param {CarrierRule[]} rules
  * @param {ClientRecord} record
@@ -251,11 +269,17 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null) {
         value = null;
       }
     }
+    const ignore = typeof rule.ignore === 'function' ? !!rule.ignore(record, active) : !!rule.ignore;
+    const verifyOnly = typeof rule.verifyOnly === 'function' ? !!rule.verifyOnly(record, active) : !!rule.verifyOnly;
+    // An intake value its field can't hold (UNREADABLE above) is the agent's, never filled. A step
+    // that only checks the page against it, or leaves the page's answer, is left as it is.
+    const unreadableAs = source === 'intake' && !rule.value && !note && !ignore && !verifyOnly ? unreadable(info.kind, value) : null;
+    const unreadableNote = unreadableAs ? `${name}: the intake says "${value}", which isn't ${unreadableAs}. Answer it yourself.` : null;
+    if (unreadableAs) value = null;
     // A derived answer's evidence: the intake facts its rule read (the panel shows them on the PDF).
     const from = source === 'derived' && rule.value && value != null && value !== '' ? readsOf(rule.value, record, active, value) : null;
-    const ignore = typeof rule.ignore === 'function' ? !!rule.ignore(record, active) : !!rule.ignore;
     // The agent's, never the AI's: a fact or attestation, or a client fact the intake didn't answer.
-    const manualOnly = agents || (!!rule.clientFact && (value === null || value === undefined || value === ''));
+    const manualOnly = agents || !!unreadableAs || (!!rule.clientFact && (value === null || value === undefined || value === ''));
     const scope = typeof rule.scope === 'function' ? rule.scope(record, active) : rule.scope ?? null;
     const scopeIndex = typeof rule.scopeIndex === 'function' ? rule.scopeIndex(record, active) : rule.scopeIndex;
     // Per-vehicle questions repeat once per vehicle, labelled "2021 MERCEDES-BENZ SPRINTER" (a
@@ -320,12 +344,12 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null) {
       ex: rule.not ?? null,
       // A label rule that never answers a field inside these (the carrier's `rowSections`).
       notWithin: rule.notWithin ?? null,
-      note,
+      note: note ?? unreadableNote,
       ignore,
       // An ignored selector rule that takes every match it finds, not only its first.
       every: !!rule.every,
       // Checked against the intake, never typed (a VIN decode's year): may depend on the unit.
-      verifyOnly: typeof rule.verifyOnly === 'function' ? !!rule.verifyOnly(record, active) : !!rule.verifyOnly,
+      verifyOnly,
       // Our answer replaces what the page put there (e.g. a lookup's body type); may depend on the
       // client (AmWINS' hazard exposure: only the intake's Yes replaces Default all answers to No's No).
       replace: typeof rule.replace === 'function' ? !!rule.replace(record, active) : !!rule.replace,

@@ -97,7 +97,7 @@ export function collectItems(frames) {
       // A client fact or attestation the rules leave to the agent (plan.js manualOnly): never the AI's.
       const why = item.reviewOnly ? 'lookup identity mismatch requires agent review'
         : item.manualOnly ? 'TNI leaves this client fact to the agent' : neverReason(item)
-        || (!item.applyable ? 'The assistant needs visible choices; enter this answer on the page' : null)
+        || (!item.applyable ? 'The AI assistant needs visible choices; enter this answer on the page' : null)
         || (options.length > MAX_OPTIONS ? 'too many choices; narrow the list on the page first' : null);
       if (why) blocked.push({ ...item, why });
       else items.push({ ...item, id: `f${items.length + 1}` });

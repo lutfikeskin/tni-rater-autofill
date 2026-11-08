@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Usage-log collection server for the rater autofill extension.
 //
 //   node server/index.mjs                  # http://127.0.0.1:8787, data in ./server-data
@@ -18,8 +19,11 @@
 // The extension never sends client data (see src/usage.js); as a second line of defence the
 // server only accepts known event types and drops fields it doesn't expect. What it drops is
 // named on the stored event (`dropped`), so a review can tell a field the extension never sent
-// from one an older server threw away. /v1/health names this file's version (`server`, a hash of
-// it), so the daily review sees when the deployed server isn't the one in the repository.
+// from one an older server threw away. Which types and fields it keeps is the event contract it
+// shares with the extension (src/usage-schema.js); an event logged under a newer schema than the
+// server's is refused, kept by the extension and sent again after the deploy. /v1/health names
+// this file's version (`server`, a hash of it and the files it imports) and the schema's
+// (`schema`), so the daily review sees when the deployed server isn't the one in the repository.
 //
 // Listens on 127.0.0.1 unless HOST says otherwise. Without RATER_TOKEN every upload is accepted,
 // which is fine on this computer only: bound to any other address the server refuses to start
@@ -52,6 +56,8 @@ import { fileURLToPath } from 'node:url';
 import { MIN_DASHBOARD_TOKEN, WINDOWS, eventReader, renderDashboard, summarize, testIntakesFrom } from './dashboard.mjs';
 // agent defaults: everything about them is in that module (removal steps at its top).
 import { AGENT_DEFAULT_FIELDS, AGENT_DEFAULT_RUN_FIELDS, AGENT_DEFAULT_SOURCE, cleanAgentDefaults } from './agent-defaults.mjs';
+// The event contract, shared with the extension (the image copies src/usage-schema.js).
+import { COMMON, EVENT_FIELDS as SHARED_FIELDS, ID_LIKE, LIMIT, PROFILE_UNITS, SCHEMA_VERSION } from '../src/usage-schema.js';
 
 const MAX_BODY = 4 * 1024 * 1024;
 const MAX_EVENTS_PER_REQUEST = 2000;
@@ -62,12 +68,43 @@ const MAX_LAYOUT_BYTES = 128 * 1024;
 // days of events on the process that takes uploads, and each open tab reloads it every minute.
 const DASHBOARD_CACHE_MS = 30_000;
 // Which version of the server is running (every file the image copies, in server/Dockerfile's
-// order; test/server.test.mjs holds the two in step): the daily review compares it with the
-// repository's.
+// order, the shared event contract included; test/server.test.mjs holds the two in step): the
+// daily review compares it with the repository's.
 export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url)))
   .update(fs.readFileSync(new URL('./dashboard.mjs', import.meta.url)))
   .update(fs.readFileSync(new URL('./agent-defaults.mjs', import.meta.url)))
-  .update(fs.readFileSync(new URL('./privacy.html', import.meta.url))).digest('hex').slice(0, 12);
+  .update(fs.readFileSync(new URL('./privacy.html', import.meta.url)))
+  .update(fs.readFileSync(new URL('../src/usage-schema.js', import.meta.url))).digest('hex').slice(0, 12);
+// The log: one JSON object a line (audit 2026-11-07, SRV-11), so Railway's log search can filter by
+// field (`@level:error`, `@route:/v1/luna`, `@status:507`): when (`t`), `level` (info, or error on
+// console.error), and what happened as fields, with `msg` for a sentence. Names, counts and ids
+// only: never a token, an event's or a Luna request's content, OpenAI's answer, or a request's
+// path beyond the routes this server has.
+// Where an error was thrown: its first `n` stack frames. A stack starts with the error's header
+// (`Name: message`), and the message can run over several lines, quote event text or a path, and
+// hold a line that reads like a frame. So the header is cut off whole first, and a stack that
+// doesn't start with it (a changed `stack`, a thrown non-Error) gives no frames at all.
+const framesOf = (e, n) => {
+  if (typeof e?.stack !== 'string') return '';
+  let head;
+  try { head = Error.prototype.toString.call(e); } catch { return ''; }
+  if (!e.stack.startsWith(head)) return '';
+  return e.stack.slice(head.length).split('\n').map((s) => s.trim()).filter((s) => s.startsWith('at ')).slice(0, n).join(' | ');
+};
+
+export function logLine(fields, level = 'info') {
+  const line = JSON.stringify({ t: new Date().toISOString(), level, ...fields });
+  if (level === 'error') console.error(line);
+  else console.log(line);
+}
+// A route for the log and the counters: one of this server's, or `other`, never what was asked.
+const ROUTES = new Set(['/v1/events', '/v1/luna', '/v1/health', '/v1/days', '/v1/export', '/dashboard', '/privacy']);
+// A refusal's reason as a counter's name: what the server said, without the event's own text (an
+// unknown type's name, quotes inside it included: from the first quote to the last) or numbers,
+// so a client can't make up names of its own.
+const reasonKey = (error) => String(error).replace(/"[\s\S]*"/, '"…"').replace(/\d+/g, 'N').slice(0, 80);
+const MAX_REASONS = 50;
+
 // Uploads from one address (audit 2026-11-07, SRV-13: the upload token ships in the extension, so
 // anyone could fill the volume). Two token buckets per address, in memory: requests and bytes. An
 // agent's panel posts at most once a minute plus a few prompt uploads (an intake loaded, a problem
@@ -155,69 +192,12 @@ export function startupError({ host, token }) {
   return `RATER_TOKEN is not set and HOST=${host} is not loopback: refusing to start an open upload endpoint. Set RATER_TOKEN (docs/hosting.md), or bind HOST to 127.0.0.1 for local use.`;
 }
 
-// Event type -> fields kept. Anything else in an event is dropped.
-// install: a random id for one copy of the extension on one computer (with seq: gaps show loss).
-export const COMMON = ['id', 't', 'v', 'channel', 'commit', 'agent', 'install', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page', 'view'];
-export const EVENT_FIELDS = {
-  // test: the agent marked this intake as a test run before (on this computer).
-  // platform: the computer's system and Chrome's major version.
-  intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings', 'test', 'platform'],
-  // What the client's business looks like, never who it is (src/usage.js intakeProfile): when the
-  // intake is loaded and after the agent corrects it. Each group is kept in its shape (PROFILE).
-  intake_profile: ['business', 'operations', 'vehicles', 'trailers', 'trailerInfo', 'drivers', 'coverage', 'priorInsurance', 'hasClaims'],
-  // Events the computer's log dropped (full, oldest first): how many.
-  usage_lost: ['count'],
-  intake_closed: ['reason'],
-  // The agent marked the loaded intake as a test run, or unmarked it.
-  intake_marked: ['test'],
-  // The agent's settings, all of them each time (values: booleans and where usage goes).
-  agent_settings: ['reason', 'changed', 'values'],
-  intake_edit: ['path', 'kind', 'change', 'warnings'],
-  warning_checked: ['code', 'path', 'checked'],
-  page_view: ['from', 'fields'],
-  // messages: what the page said about the answers (validation, errors, help), redacted by the panel.
-  page_layout: ['context', 'fields', 'buttons', 'reason', 'step', 'messages'],
-  // The premium a carrier page quoted (src/premium.js): amounts, the term in months and the payments.
-  quote_premium: ['step', 'total', 'termMonths', 'dueToday', 'payments', 'payment'],
-  // A page layout the panel couldn't record (why it was asked for, and the error's first words).
-  layout_error: ['reason', 'error'],
-  // pageChanged: the carrier probably changed the page; reworded: known fields whose question reads
-  // differently; renamed: known questions whose data-model name isn't on the page (rule, names).
-  // run: one fill invocation, shared with its fill_field events; rules: the rule files'
-  // fingerprint; settings: the panel's filling switches; step: a one-address application's step
-  // (AmWINS). Their shapes are checked below (RUN_FIELDS): a malformed value refuses the event.
-  // retried: the second click of a Continue whose page stayed unchanged (true only), on its fill_run or fill_error.
-  // background: the quote tab filled while the agent was on another; hiddenMs: how long its page was
-  // hidden meanwhile (Chrome slows a hidden tab's timers).
-  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'retried', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
-  // how: what found the field (field = data-model name, text, option, selector, label, name).
-  // source: where the answer comes from (plan.js; FIELD_SOURCES below); standard, manualOnly,
-  // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
-  // edited: the answer read a value the agent set or corrected in the panel.
-  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'code', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review', 'edited'],
-  // A button the agent clicked themselves: its text (60 characters), and the step on screen.
-  agent_click: ['text', 'step'],
-  // The agent dismissed a "needs you" item (×): the question, and why it needed them.
-  check_dismissed: ['q', 'key', 'label', 'mark'],
-  fill_error: ['run', 'rules', 'settings', 'auto', 'retried', 'error'],
-  field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
-  // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
-  // many seconds before the report).
-  problem_report: ['text', 'run', 'step', 'blockerList', 'since'],
-  // An error nothing in the panel or the page's recorder caught: where (panel, recorder), its message (redacted, 300 characters)
-  // and up to four frames inside the extension's own files.
-  client_error: ['where', 'error', 'stack'],
-  // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
-  // setting) acted on. Choices are option texts; typed text suggestions are never logged.
-  // leave*: why questions were left, as counts (missing information, a conflict, Luna's own leave,
-  // no usable citation, an answer the evidence check refused, a question too large to ask).
-  // promptHash: which instructions and rules the review got (src/ai/luna.js promptHash).
-  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens', 'promptHash',
-    'leaveMissing', 'leaveConflict', 'leaveChose', 'leaveNoSource', 'leaveUnverified', 'leaveTooLarge'],
-  // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
-  ai_decision: ['model', 'policy', 'promptHash', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
-};
-// agent defaults: their fields on agent_settings, fill_run and fill_error.
+// The event contract (event types, the fields each keeps, the schema's version) is shared with the
+// extension: src/usage-schema.js, which the image copies. A copy here, so agent defaults can add
+// their fields (agent_settings, fill_run and fill_error) without changing the shared lists.
+export { COMMON, SCHEMA_VERSION };
+/** @type {Record<string, string[]>} */
+export const EVENT_FIELDS = Object.fromEntries(Object.entries(SHARED_FIELDS).map(([type, fields]) => [type, [...fields]]));
 for (const [type, fields] of Object.entries(AGENT_DEFAULT_FIELDS)) EVENT_FIELDS[type].push(...fields);
 
 // The run-identity fields (audit 2026-10-08, finding 7; Contract 1): their exact shapes, since a
@@ -273,18 +253,11 @@ export const FIELD_SOURCES = ['intake', 'derived', 'standard', 'fact', 'attestat
 // spaces, dashes, dots, slashes or brackets between them, as in a phone, SSN, licence or policy
 // number; five digits in a row; a word of eight or more letters and digits mixed, as in a VIN). A
 // limit may also be a limit as written (LIMIT: $1M CSL, $1,000,000, 1000000, $1M/$2M, 25/50/25,
-// State Minimum), which can hold such digits. src/usage.js applies the same tests before sending.
+// State Minimum), which can hold such digits. Both tests are the shared contract's
+// (src/usage-schema.js), which src/usage.js applies before sending.
 // A value that isn't in its shape is left out and its group named in `dropped`; a group that isn't
 // the right kind of object or list is dropped whole.
-export const ID_LIKE = /@|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d(?:[\s()./-]{0,2}\d){6,}|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/i;
-// An amount: with thousands commas, round thousands written plainly, or up to four digits with an
-// optional K or M; a pair of amounts with a slash ($1M/$2M); a split limit (25/50/25, 100/300/100,
-// whose first part is 15 or more, so a date isn't one); a word; & + -.
-const MONEY = String.raw`\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$?\d{1,6}000|\$?\d{1,4}(?:\.\d+)?[km]?`;
-const LIMIT_PART = String.raw`(?:1[5-9]|[2-9]\d|[1-9]\d{2})(?:\/\d{1,3}){1,2}|(?:${MONEY})(?:\s*\/\s*(?:${MONEY}))?|[a-z]+\.?|[&+-]`;
-// Two numbers with only a space, &, + or - between them aren't a limit (an SSN or a phone written
-// with spaces: 123 45 6789).
-export const LIMIT = new RegExp(String.raw`^(?![\s\S]*\d[\s&+-]+\$?\d)(?:${LIMIT_PART})(?:\s+(?:${LIMIT_PART}))*$`, 'i');
+export { ID_LIKE, LIMIT, PROFILE_UNITS };
 const yesNo = (v) => v === null || typeof v === 'boolean';
 const whole = (min, max) => (v) => v === null || (Number.isSafeInteger(v) && v >= min && v <= max);
 const text = (max) => (v) => v === null || (typeof v === 'string' && v.length > 0 && v.length <= max && !ID_LIKE.test(v));
@@ -295,7 +268,6 @@ const dollars = whole(0, 99_999_999);
 const year = whole(1900, 2100);
 const given = oneOf('given', 'other', 'blank');
 const UNIT = { type: text(40), year, make: text(40), model: text(40), value: dollars };
-export const PROFILE_UNITS = 50;
 export const PROFILE = {
   business: {
     state: usState, businessClass: text(80), dot: given, mc: given, fein: given, dotWithin60Days: yesNo,
@@ -380,15 +352,16 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (!minFreeBytes) return false;
     let free;
     try { free = freeSpace(); } catch (e) {
-      if (!unreadableSaid) console.error(`${new Date().toISOString()} free space on ${dataDir} unreadable (${e?.name ?? 'error'}): uploads go on without the disk guard`);
+      if (!unreadableSaid) logLine({ msg: `free space on ${dataDir} unreadable: uploads go on without the disk guard`, disk: 'unreadable', error: e?.name ?? 'error' }, 'error');
       unreadableSaid = true;
       return false;
     }
     const low = free < minFreeBytes;
     if (low !== diskLow) {
       const said = `free space on ${dataDir} is ${Math.round(free / MB)} MB, the guard ${Math.round(minFreeBytes / MB)} MB (RATER_MIN_FREE_MB)`;
-      if (low) console.error(`${new Date().toISOString()} DISK LOW: ${said}: refusing uploads (507) until space is freed`);
-      else console.log(`${new Date().toISOString()} disk ok again: ${said}: taking uploads`);
+      const sizes = { freeMB: Math.round(free / MB), guardMB: Math.round(minFreeBytes / MB) };
+      if (low) logLine({ msg: `DISK LOW: ${said}: refusing uploads (507) until space is freed`, disk: 'low', ...sizes }, 'error');
+      else logLine({ msg: `disk ok again: ${said}: taking uploads`, disk: 'ok', ...sizes });
       diskLow = low;
     }
     return low;
@@ -440,6 +413,13 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
 
   function clean(e, agent) {
     if (!e || typeof e !== 'object' || Array.isArray(e)) return { error: 'event is not an object' };
+    // The schema it was logged under (src/usage-schema.js; none before 2026-11-07): one newer than
+    // this server's may carry fields it would drop, so it is refused in words the extension knows
+    // (sidepanel/usage-log.js keeps such an event and sends it again after the deploy).
+    if (e.schema !== undefined) {
+      if (!(Number.isSafeInteger(e.schema) && e.schema >= 1)) return { error: 'schema is not a valid schema version' };
+      if (e.schema > SCHEMA_VERSION) return { error: `schema newer than server (${e.schema} > ${SCHEMA_VERSION})` };
+    }
     // Own keys only: a type such as constructor or __proto__ is unknown, not Object.prototype's member.
     const keep = typeof e.type === 'string' && Object.hasOwn(EVENT_FIELDS, e.type) ? EVENT_FIELDS[e.type] : null;
     if (!keep) return { error: `unknown event type "${String(e.type).slice(0, 40)}"` };
@@ -553,7 +533,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     const receivedAt = new Date().toISOString();
     const file = path.join(eventsDir, `${receivedAt.slice(0, 10)}.jsonl`);
     const lines = events.map((e) => JSON.stringify({ ...e, receivedAt })).join('\n');
-    if (!lines) return;
+    if (!lines) return receivedAt;
     // On the disk before the 200 (audit 2026-11-07, SRV-05): the extension deletes its copy on that
     // answer, so a crash between the write and the disk would lose the events for good. A day's
     // first upload creates its file, whose name is in the folder: the folder is flushed too, or the
@@ -569,6 +549,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       const dir = fs.openSync(eventsDir, 'r');
       try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
     }
+    return receivedAt;
   }
 
   // Browsers may ask permission (CORS preflight) before an extension posts JSON. Only browser
@@ -605,7 +586,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (lunaDay.day === day) return lunaDay;
     let saved = {};
     try { saved = JSON.parse(fs.readFileSync(lunaFile(day), 'utf8')); } catch (e) {
-      if (e?.code !== 'ENOENT') console.error(`${new Date().toISOString()} Luna usage for ${day} unreadable (${e?.name ?? 'error'}): counting from 0`);
+      if (e?.code !== 'ENOENT') logLine({ msg: `Luna usage for ${day} unreadable (${e?.name ?? 'error'}): counting from 0`, luna: 'usage unreadable', day, error: e?.name ?? 'error' }, 'error');
     }
     Object.assign(lunaDay, { day }, ...LUNA_COUNTS.map((k) => ({ [k]: Number.isSafeInteger(saved?.[k]) && saved[k] >= 0 ? saved[k] : 0 })));
     return lunaDay;
@@ -617,11 +598,11 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(['day', ...LUNA_COUNTS].map((k) => [k, lunaDay[k]]))));
       fs.renameSync(tmp, lunaFile(lunaDay.day));
     } catch (e) {
-      console.error(`${new Date().toISOString()} Luna usage not saved (${e?.name ?? 'error'}): the count goes on in memory`);
+      logLine({ msg: 'Luna usage not saved: the count goes on in memory', luna: 'usage not saved', error: e?.name ?? 'error' }, 'error');
     }
   };
   const lunaTokens = () => lunaDay.inputTokens + lunaDay.outputTokens;
-  const lunaSaid = () => `luna ${lunaDay.requests}/${lunaDailyLimit} tokens ${lunaTokens()}/${lunaDailyTokens}`;
+  const lunaSaid = () => ({ requests: lunaDay.requests, limit: lunaDailyLimit, tokens: lunaTokens(), budget: lunaDailyTokens });
   // A whole number of tokens OpenAI says it used, or null.
   const tokenCount = (n) => (Number.isSafeInteger(n) && n >= 0 ? n : null);
   async function askLuna(body, done, res) {
@@ -631,8 +612,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (day.requests >= lunaDailyLimit || lunaTokens() >= lunaDailyTokens) {
       res.setHeader('retry-after', '3600');
       return day.requests >= lunaDailyLimit
-        ? done(429, { error: 'daily Luna limit reached' }, `luna limit ${lunaDailyLimit}`)
-        : done(429, { error: 'daily Luna token budget reached' }, `luna token budget ${lunaTokens()}/${lunaDailyTokens}`);
+        ? done(429, { error: 'daily Luna limit reached' }, { luna: 'limit', ...lunaSaid() })
+        : done(429, { error: 'daily Luna token budget reached' }, { luna: 'budget', ...lunaSaid() });
     }
     // Counted before the call: a request OpenAI refuses or doesn't answer still counts.
     day.requests++;
@@ -642,7 +623,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       upstream = await fetchImpl(openaiUrl, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${openaiKey}` },
         body: JSON.stringify(body), signal: AbortSignal.timeout(LUNA_TIMEOUT_MS) });
     } catch (e) {
-      return done(504, { error: 'OpenAI did not answer' }, `luna ${e?.name ?? 'error'}`);
+      return done(504, { error: 'OpenAI did not answer' }, { luna: 'no answer', error: e?.name ?? 'error' });
     }
     // OpenAI's error bodies can echo the request: only the status goes back, and only its error code
     // (an identifier such as insufficient_quota) is read, for the mapping and the log. The server's
@@ -654,10 +635,10 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       const status = [401, 403, 404].includes(upstream.status) || code === 'insufficient_quota' ? 424 : upstream.status;
       const retry = upstream.headers.get('retry-after');
       if (retry && status !== 424) res.setHeader('retry-after', retry);
-      return done(status, { error: `OpenAI returned HTTP ${upstream.status}` }, `luna upstream ${upstream.status}${code ? ` ${code}` : ''}`);
+      return done(status, { error: `OpenAI returned HTTP ${upstream.status}` }, { luna: 'upstream', upstream: upstream.status, ...(code ? { code } : {}) });
     }
     let json;
-    try { json = await upstream.json(); } catch { return done(502, { error: 'OpenAI sent an unreadable answer' }, 'luna unreadable'); }
+    try { json = await upstream.json(); } catch { return done(502, { error: 'OpenAI sent an unreadable answer' }, { luna: 'unreadable' }); }
     // What it cost: OpenAI's usage counts (never the answer). An answer without them is counted at
     // the most it could have cost: a token is at least one byte of the request as sent (a token per
     // 4 characters undercounted other scripts and punctuation: CodeRabbit on #375), plus the
@@ -671,18 +652,58 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     now.outputTokens += used.output;
     if (estimated) now.estimated++;
     saveLuna();
-    done(200, json, `${lunaSaid()} +${used.input}/${used.output}${estimated ? ' estimated' : ''}`);
+    done(200, json, { luna: 'answered', ...lunaSaid(), in: used.input, out: used.output, ...(estimated ? { estimated: true } : {}) });
   }
+
+  // What the server has done since it started, for TNI (admin /v1/health; audit 2026-11-07, SRV-11):
+  // requests by route and status, exceptions, events stored, already stored and refused (by the
+  // server's own reason, numbers and names left out), stored with a field dropped, and when the
+  // last was stored. Counts only, in memory: a restart starts them again (the day's Luna counts are
+  // on the volume). Luna's and the disk's are read when asked.
+  const metrics = {
+    startedAt: new Date().toISOString(), requests: {}, exceptions: 0,
+    events: { accepted: 0, duplicates: 0, rejected: 0, withDropped: 0, lastStoredAt: null },
+    rejects: {},
+  };
+  const routeOf = (req) => { try { const p = new URL(req.url, 'http://x').pathname; return ROUTES.has(p) ? p : 'other'; } catch { return 'other'; } };
+  const countRequest = (route, status) => {
+    const byStatus = (metrics.requests[route] ??= {});
+    byStatus[status] = (byStatus[status] ?? 0) + 1;
+  };
+  const countReject = (error) => {
+    const k = reasonKey(error);
+    const key = Object.hasOwn(metrics.rejects, k) || Object.keys(metrics.rejects).length < MAX_REASONS ? k : 'other';
+    metrics.rejects[key] = (metrics.rejects[key] ?? 0) + 1;
+  };
+  const health = () => {
+    let freeMB = null;
+    try { freeMB = Math.round(freeSpace() / MB); } catch { /* unreadable: null */ }
+    const luna = openaiKey ? { ...lunaToday(), limit: lunaDailyLimit, budget: lunaDailyTokens } : null;
+    return { ...metrics, uptimeS: Math.round((Date.now() - Date.parse(metrics.startedAt)) / 1000), disk: { freeMB, guardMB: Math.round(minFreeBytes / MB) }, luna };
+  };
 
   // One request's exception is that request's 500, never the end of the server (audit 2026-11-07,
   // SRV-01: a single request used to stop it for every agent). The log gets the error's name and
   // where it was thrown, not its message.
+  // A 500 it answers is counted and logged with its status and time like any answer; one that came
+  // after the answer had begun (an export streaming out) only closes the connection.
   const failed = (req, res, e) => {
-    const where = String(e?.stack ?? '').split('\n').slice(1, 3).map((s) => s.trim()).join(' | ');
-    console.error(`${new Date().toISOString()} ${req.method} ${req.url} failed: ${e?.name ?? 'error'}${where ? ` ${where}` : ''}`);
-    if (res.headersSent) res.destroy();
-    else send(res, 500, { error: 'server error' }, corsHeaders(req));
+    const where = framesOf(e, 2);
+    const route = routeOf(req);
+    metrics.exceptions++;
+    const line = { msg: 'request failed', method: req.method, route, error: e?.name ?? 'error', ...(where ? { where } : {}) };
+    if (res.headersSent) {
+      logLine(line, 'error');
+      res.destroy();
+      return;
+    }
+    send(res, 500, { error: 'server error' }, corsHeaders(req));
+    countRequest(route, 500);
+    const started = arrived.get(res);
+    logLine({ ...line, status: 500, ...(started === undefined ? {} : { ms: Date.now() - started }) }, 'error');
   };
+  // When each request arrived, for its 500's `ms`.
+  const arrived = new WeakMap();
   // A request callback (sync or async) with that guard.
   const guarded = (req, res, fn) => (...args) => {
     try {
@@ -695,10 +716,17 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
 
   function respond(req, res) {
     const started = Date.now();
+    arrived.set(res, started);
     const cors = corsHeaders(req);
-    const done = (status, body, note = '') => {
+    const route = routeOf(req);
+    // Every answer is logged and counted once, with what it was about (`fields`).
+    const logged = (status, fields = {}) => {
+      countRequest(route, status);
+      logLine({ method: req.method, route, status, ms: Date.now() - started, ...fields }, status >= 500 ? 'error' : 'info');
+    };
+    const done = (status, body, fields = {}) => {
       send(res, status, body, cors);
-      console.log(`${new Date().toISOString()} ${req.method} ${req.url} ${status} ${Date.now() - started}ms ${note}`);
+      logged(status, fields);
     };
     // A request target that isn't a URL (GET http://[::1/) is the client's mistake, before any check.
     let url;
@@ -708,18 +736,20 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       if (!cors['access-control-allow-origin']) return done(403, { error: 'not allowed' });
       res.writeHead(204, cors);
       res.end();
+      logged(204);
       return;
     }
     // Public privacy policy page (linked from the Chrome Web Store listing).
     if (req.method === 'GET' && url.pathname === '/privacy') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600' });
       res.end(fs.readFileSync(new URL('./privacy.html', import.meta.url)));
+      logged(200);
       return;
     }
     // What the daily server check reads (scripts/lib/central.mjs: `server`) and the panel's "is it
     // there" probe need, for anyone; how many events are stored, for TNI only.
     if (req.method === 'GET' && url.pathname === '/v1/health') {
-      return done(200, { ok: true, server: SERVER_HASH, ...(isAdmin(req) ? { events: seen.size } : {}) });
+      return done(200, { ok: true, server: SERVER_HASH, schema: SCHEMA_VERSION, ...(isAdmin(req) ? { events: seen.size, metrics: health() } : {}) });
     }
     // The maintainer's usage page: 404 when it is off, so the server says nothing of it.
     if (url.pathname === '/dashboard') {
@@ -740,7 +770,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
         try {
           page = { at: now, html: renderDashboard(summarize(readRecent(Math.max(...Object.values(WINDOWS)) + 1, now), { now, window, includeTests, testIntakes })) };
         } catch (e) {
-          return done(500, { error: 'could not build the dashboard' }, `dashboard ${e?.name ?? 'error'}`);
+          return done(500, { error: 'could not build the dashboard' }, { error: e?.name ?? 'error' });
         }
         dashboardPages.set(key, page);
       }
@@ -750,7 +780,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
         'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
       });
       res.end(page.html);
-      console.log(`${new Date().toISOString()} GET dashboard ${window}${includeTests ? ' tests' : ''} 200 ${Date.now() - started}ms${page.at === now ? '' : ' cached'}`);
+      logged(200, { window, tests: includeTests, cached: page.at !== now });
       return;
     }
     if (req.method === 'GET' && (url.pathname === '/v1/days' || url.pathname === '/v1/export')) {
@@ -765,7 +795,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
       for (const f of files) res.write(fs.readFileSync(path.join(eventsDir, f)));
       res.end();
-      console.log(`${new Date().toISOString()} GET export ${since}..${until} ${files.length} days ${Date.now() - started}ms`);
+      logged(200, { since, until, days: files.length });
       return;
     }
     if (url.pathname !== '/v1/events' && url.pathname !== '/v1/luna') return done(404, { error: 'not found' });
@@ -781,14 +811,14 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     const ip = clientIp(req);
     const tooMany = (wait, what) => {
       res.setHeader('retry-after', String(wait));
-      return done(429, { error: `too many uploads from this address (${what}); try again in ${wait} s` }, `rate limit ${what} ${ip}`);
+      return done(429, { error: `too many uploads from this address (${what}); try again in ${wait} s` }, { limit: what, ip, wait });
     };
     if (!luna) {
       const wait = requestLimit(ip, 1);
       if (wait) return tooMany(wait, 'requests');
       if (tooFull()) {
         res.setHeader('retry-after', '3600');
-        return done(507, { error: 'the server is out of space for uploads; the events stay queued' }, 'disk low');
+        return done(507, { error: 'the server is out of space for uploads; the events stay queued' }, { disk: 'low' });
       }
     }
 
@@ -822,13 +852,21 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
         seen.add(event.id);
         accepted.push(event);
       }
+      let storedAt;
       try {
-        store(accepted);
+        storedAt = store(accepted);
       } catch (e) {
         for (const ev of accepted) seen.delete(ev.id);
-        return done(500, { error: 'could not store events' }, String(e.message));
+        return done(500, { error: 'could not store events' }, { error: e?.name ?? 'error', code: typeof e?.code === 'string' ? e.code : undefined });
       }
-      done(200, { accepted: accepted.length, duplicates, rejected }, `agent=${agent ?? '-'} +${accepted.length} dup=${duplicates} bad=${rejected.length}`);
+      const counted = metrics.events;
+      counted.accepted += accepted.length;
+      counted.duplicates += duplicates;
+      counted.rejected += rejected.length;
+      counted.withDropped += accepted.filter((e) => e.dropped).length;
+      if (accepted.length) counted.lastStoredAt = storedAt;
+      for (const r of rejected) countReject(r.error);
+      done(200, { accepted: accepted.length, duplicates, rejected }, { agent, accepted: accepted.length, duplicates, rejected: rejected.length });
     }));
   }
 }
@@ -839,26 +877,26 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const token = process.env.RATER_TOKEN || '';
   const problem = startupError({ host, token });
   if (problem) {
-    console.error(problem);
+    logLine({ msg: problem }, 'error');
     process.exit(1);
   }
   const dataDir = path.resolve(process.env.DATA_DIR || 'server-data');
   const lunaDailyLimit = lunaDailyLimitFrom(process.env.RATER_LUNA_DAILY_LIMIT);
   const lunaDailyTokens = lunaDailyTokensFrom(process.env.RATER_LUNA_DAILY_TOKENS);
   const dashboardToken = process.env.RATER_DASHBOARD_TOKEN || '';
-  if (dashboardToken && dashboardToken.length < MIN_DASHBOARD_TOKEN) console.error(`RATER_DASHBOARD_TOKEN is shorter than ${MIN_DASHBOARD_TOKEN} characters: the dashboard stays off.`);
+  if (dashboardToken && dashboardToken.length < MIN_DASHBOARD_TOKEN) logLine({ msg: `RATER_DASHBOARD_TOKEN is shorter than ${MIN_DASHBOARD_TOKEN} characters: the dashboard stays off.` }, 'error');
   const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '', openaiKey: process.env.OPENAI_API_KEY || '', lunaDailyLimit, lunaDailyTokens,
     dashboardToken, testIntakes: testIntakesFrom(process.env.RATER_TEST_INTAKES),
     clientIpHeader: process.env.RATER_CLIENT_IP_HEADER || '', minFreeBytes: minFreeBytesFrom(process.env.RATER_MIN_FREE_MB) });
   server.listen(port, host, () => {
-    console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit} requests and ${lunaDailyTokens} tokens a day)` : ''}${dashboardToken.length >= MIN_DASHBOARD_TOKEN ? '  (dashboard on: /dashboard)' : ''}`);
+    logLine({ msg: `rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit} requests and ${lunaDailyTokens} tokens a day)` : ''}${dashboardToken.length >= MIN_DASHBOARD_TOKEN ? '  (dashboard on: /dashboard)' : ''}`, port: server.address().port });
   });
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => server.close(() => process.exit(0)));
   // Anything outside a request's guard still stops the server, visibly: a timestamped log line and a
   // non-zero exit, so the platform restarts it.
   for (const kind of ['uncaughtException', 'unhandledRejection']) {
     process.on(kind, (e) => {
-      console.error(`${new Date().toISOString()} ${kind}: ${e?.stack ?? e}`);
+      logLine({ msg: kind, error: e?.name ?? 'error', stack: framesOf(e, 5) }, 'error');
       process.exit(1);
     });
   }

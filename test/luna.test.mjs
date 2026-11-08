@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intakePathOf } from '../src/ai/common.js';
@@ -161,7 +162,7 @@ test('each cited source is said as the agent reads it: the field label with its 
   assert.equal(citedSaid({ basis: 'intake', path: 'computed.priorPolicyExpired', value: true }), 'Prior policy expired (worked out from the intake): Yes');
   assert.equal(citedSaid({ basis: 'intake', path: 'computed.noPriorInsurance', value: false }), 'No prior insurance (worked out from the intake): No');
   assert.equal(citedSaid({ basis: 'intake', path: 'applicant.hasDOT', value: true }), 'Has a USDOT #: Yes');
-  assert.equal(citedSaid({ basis: 'intake', path: 'claims.aiNtl', value: true }), "NTL in the claims box or notes (Luna's review): Yes");
+  assert.equal(citedSaid({ basis: 'intake', path: 'claims.aiNtl', value: true }), "NTL in the claims box or notes (the AI assistant's review): Yes");
   assert.equal(citedSaid({ basis: 'intake', path: 'operations.notes', value: 'No placards.' }), 'Notes: No placards.');
   assert.equal(citedSaid({ basis: 'intake', path: 'trailers[1].someNewThing', value: 'x' }), 'Some new thing (trailer 2): x');
   // A left question cites nothing.
@@ -231,6 +232,33 @@ test('suggestions wait for both calls; stale verification responses are discarde
   assert.equal(result.modelCalls, 2);
   count = 0;
   await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call, isStale: () => count >= 2 }), /changed/);
+});
+
+// Audit 2026-11-07, AI-08: a developer recording keeps what Luna was asked and answered, per call.
+test('with a trace, each call says what Luna was asked and answered, failures too, and a failing trace stops nothing', async () => {
+  const seen = [];
+  let count = 0;
+  const call = async ({ body }) => ++count === 1 ? answer(body) : envelope({ decisions: { f1: { supported: true, gap: '' } } });
+  const result = await suggest(items, context, { apiKey: 'synthetic' }, { call, trace: (x) => seen.push(x) });
+  assert.equal(result.suggestions[0].choice, 'No');
+  assert.deepEqual(seen.map((x) => [x.call, x.model, x.outcome, x.tokensIn, x.tokensOut, x.error]),
+    [['propose', DEFAULT_MODEL, 'completed', 100, 30, null], ['verify', DEFAULT_MODEL, 'completed', 100, 30, null]]);
+  assert.equal(seen[0].request.fields.f1.label, 'Hazardous materials requiring placards?');
+  assert.ok(Object.values(seen[0].request.sources).some((s) => s.path === 'operations.hazPlacard' && s.value === false));
+  assert.equal(seen[0].answer.decisions.f1.explanation, 'The intake explicitly says No.');
+  assert.deepEqual(seen[1].answer.decisions.f1, { supported: true, gap: '' });
+  assert.ok(seen.every((x) => Number.isFinite(x.ms) && x.ms >= 0));
+  // A call that fails is said with its error; an answer Luna's contract refuses has no answer.
+  const failed = [];
+  await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async () => { throw new AssistError('Luna is rate-limited. Try again shortly.'); }, trace: (x) => failed.push(x) }), /rate-limited/);
+  assert.deepEqual([failed.length, failed[0].call, failed[0].answer, failed[0].error], [1, 'propose', null, 'Luna is rate-limited. Try again shortly.']);
+  const odd = [];
+  await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async () => ({ ...envelope({}), model: 'other' }), trace: (x) => odd.push(x) }));
+  assert.deepEqual([odd[0].answer, odd[0].model], [null, 'other']);
+  // Without a trace nothing is built; with one that throws, the review goes on.
+  count = 0;
+  const kept = await suggest(items, context, { apiKey: 'synthetic' }, { call, trace: () => { throw new Error('recording gone'); } });
+  assert.equal(kept.suggestions[0].choice, 'No');
 });
 
 test('twelve questions need two calls with complete facts and deduplicated verification evidence', async () => {
@@ -384,7 +412,7 @@ test('a question too large even alone is left to the agent, said so, and the res
   assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id), "in the page's order");
   for (const x of result.suggestions.filter(x => ['f2', 'f4'].includes(x.id))) {
     assert.deepEqual([x.leave, x.leaveWhy, x.choice, x.autoOk, x.nextStep], [true, 'tooLarge', null, false, null]);
-    assert.match(x.tip, /Too long for Luna.*Answer it on the page/);
+    assert.match(x.tip, /Too long for the AI assistant.*Answer it on the page/);
   }
   assert.ok(result.suggestions.filter(x => ['f1', 'f3', 'f5'].includes(x.id)).every(x => x.choice === 'No'));
   assert.equal(result.modelCalls, 2, 'one proposal and one evidence check; nothing for the questions left');
@@ -556,7 +584,7 @@ test("a server from before the larger bound refuses a request over its own: that
   // A cut connection is the old server's only above its body limit (bytes, twice its bound): below
   // that it is a network failure, as before (CodeRabbit on #357). Three-byte characters count three.
   const reset = async () => { throw new TypeError('connection reset'); };
-  await assert.rejects(callModel({ proxy, body: big, fetchImpl: reset }), e => !(e instanceof OldServerLimit) && /Cannot reach Luna/.test(e.message));
+  await assert.rejects(callModel({ proxy, body: big, fetchImpl: reset }), e => !(e instanceof OldServerLimit) && /Cannot reach the AI assistant/.test(e.message));
   const wide = buildRequest(questions(1).map(x => ({ ...x, label: '€'.repeat(OLD_SERVER_CHARS) })), context);
   assert.ok(JSON.stringify(wide).length < 2 * OLD_SERVER_CHARS && new TextEncoder().encode(JSON.stringify(wide)).length > 2 * OLD_SERVER_CHARS);
   await assert.rejects(callModel({ proxy, body: wide, fetchImpl: reset }), OldServerLimit);
@@ -858,7 +886,7 @@ test('driver names: only first names are sent, the answer is a bounded guess, li
   const reply = (d0, d1 = 'likely_male') => envelope({ drivers: { d0, d1 } });
   const items = nameWarnings(parseNameReview(reply('likely_female'), review), review, record);
   assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.driver-gender', 'drivers[0].gender', 'check']]);
-  assert.match(items[0].msg, /^Luna: driver 1 is filled Male \(TNI standard\), but "Maria" is more often a woman's name: a guess from the first name only\. Check\./);
+  assert.match(items[0].msg, /^AI assistant: driver 1 is filled Male \(TNI standard\), but "Maria" is more often a woman's name: a guess from the first name only\. Check\./);
   assert.deepEqual(items[0].choices, [{ label: 'Use Female', path: 'drivers[0].gender', value: 'FEMALE' }, { label: 'Keep Male', path: 'drivers[0].gender', value: 'MALE' }]);
   assert.deepEqual(nameWarnings(parseNameReview(reply('unclear'), review), review, record), [], 'unclear: the standard stands');
   // Set meanwhile, or a renamed driver: no item.
@@ -987,7 +1015,7 @@ test('leave reasons: missing information, conflict, no source and a refused evid
   const parsed = parseResponse(answer(body), items, body);
   const [refused] = verifyResponse(envelope({ decisions: { f1: { supported: false, gap: 'The notes mention placarded loads.' } } }), parsed);
   assert.equal(refused.leaveWhy, 'unverified');
-  assert.equal(refused.tip, 'Luna could not verify an answer: The notes mention placarded loads.');
+  assert.equal(refused.tip, 'The AI assistant could not verify an answer: The notes mention placarded loads.');
   assert.match(buildVerification(parsed, context).instructions, /gap says/);
   // The gap is required, a string, and bounded.
   for (const gap of [undefined, null, 'x'.repeat(501)]) {
