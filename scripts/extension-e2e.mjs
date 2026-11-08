@@ -95,14 +95,14 @@ let [sw] = ctx.serviceWorkers();
 if (!sw) sw = await ctx.waitForEvent('serviceworker');
 const id = new URL(sw.url()).host;
 console.log('ext id', id);
-// The agent's Server setting, set before the panel first loads (and uploads). Luna, on by default,
+// The agent's Server setting, set before the panel first loads (and uploads). Luna, on by default (Suggest answers and its driver-name check, each its own switch),
 // is turned off: this run checks filling, and the local server has no OpenAI key (npm run mock:luna
 // checks Luna). Let me look before Continue and Fill each page as soon as it opens, on by default,
 // are off: the run presses Fill this page itself and waits for the panel's own Continue.
 await sw.evaluate(async ({ serverUrl, profile }) => {
   const { settings = {} } = await chrome.storage.local.get('settings');
   // With a defaults run, the agent's initials and TNI defaults profile, as Settings would keep them.
-  await chrome.storage.local.set({ settings: { ...settings, serverUrl, aiOn: false, checkBeforeContinue: false, autoPages: false, ...(profile ? { agent: 'E2E' } : {}) }, ...(profile ? { agentDefaults: profile } : {}) });
+  await chrome.storage.local.set({ settings: { ...settings, serverUrl, aiOn: false, lunaNames: false, checkBeforeContinue: false, autoPages: false, ...(profile ? { agent: 'E2E' } : {}) }, ...(profile ? { agentDefaults: profile } : {}) });
 }, { serverUrl: usageUrl, profile: DEFAULTS ? PROFILE : null });
 console.log('usage server', usageUrl);
 const mock = await ctx.newPage();
