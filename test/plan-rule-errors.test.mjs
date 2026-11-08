@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { buildPlan } from '../src/plan.js';
+import { buildPlan as plainBuild } from '../src/plan.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
@@ -21,6 +21,9 @@ const record = () => ({
   coverage: { autoLiabLimit: '$1M CSL', cargo: false },
   claims: { hasClaims: false },
 });
+// The plan's steps as the tests read them (field steps' own keys, without narrowing).
+/** @type {(...args: Parameters<typeof plainBuild>) => any[]} */
+const buildPlan = plainBuild;
 const boom = () => { throw new Error('a record shape the rule did not expect'); };
 const data = (plan) => JSON.parse(JSON.stringify(plan));
 
@@ -32,7 +35,7 @@ for (const carrier of [progressive, amwins, geico]) {
       const rule = carrier.rules[at];
       const broken = { ...carrier, rules: carrier.rules.map((r, i) => (i === at ? { ...r, [part]: boom } : r)) };
       const told = [];
-      const plan = buildPlan(record(), broken, {}, { onRuleError: (error, where) => told.push([error.message, where]) });
+      const plan = buildPlan(record(), broken, {}, { onRuleError: (/** @type {any} */ error, where) => told.push([error.message, where]) });
       const plain = buildPlan(record(), carrier, {});
       assert.equal(plan.length, plain.length, 'every step is still there');
       const step = plan.find((s) => s.ruleError);
@@ -55,6 +58,19 @@ test('a throw in the overlay hook of another step, or in telling the error, neve
   const broken = { ...amwins, rules: amwins.rules.map((r, i) => (i === at ? { ...r, value: boom } : r)) };
   const plan = buildPlan(record(), broken, {}, { onRuleError: () => { throw new Error('logging failed'); } });
   assert.equal(plan.filter((s) => s.ruleError).length, 1);
+});
+
+test('a rule whose scope throws null or 0 is still the agent\'s (the failure is a flag, not the thrown value)', () => {
+  for (const thrown of [null, 0, '']) {
+    const at = amwins.rules.findIndex((r) => typeof r.value === 'function' && !r.repeat && !r.scope);
+    const broken = { ...amwins, rules: amwins.rules.map((r, i) => (i === at ? { ...r, scope: () => { throw thrown; } } : r)) };
+    const told = [];
+    const plan = buildPlan(record(), broken, {}, { onRuleError: (e) => told.push(e) });
+    const steps = plan.filter((s) => s.ruleError);
+    assert.equal(steps.length, 1, String(thrown));
+    assert.equal(steps[0].resolution.status, 'agent');
+    assert.equal(told.length, 1, 'told once');
+  }
 });
 
 test('no rule throws on an empty record (nothing is reported for a silent intake)', () => {
