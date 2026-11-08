@@ -3651,8 +3651,10 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   const { rederive } = await import('../src/normalize.js');
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake: { record: { claims: { text: 'No' }, notes: { text: null }, applicant: {} }, warnings: [] } },
     get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, usage: { log: () => {} }, save: async () => {}, profileLater() {},
+    renderSections() {}, renderWarnings() {},
     claimsTextEdited: () => calls.push('claimsTextEdited'), reviewClaimsBox: () => calls.push('reviewClaimsBox'), reviewDriverGender: () => {},
   };
   vm.createContext(sandbox);
@@ -3663,6 +3665,39 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   assert.deepEqual(calls.splice(0), ['claimsTextEdited', 'reviewClaimsBox']);
   await sandbox.agentEdit('applicant.name', 'X', 'text');
   assert.deepEqual(calls, []);
+});
+
+// Audit 2026-11-07, DATA-04: a correction in the panel left what was derived from the corrected box
+// as the intake had it. The edit recomputes it from the corrected record (the claims answer, the
+// ownership its notes give), the checks follow in place, and the check list is said again.
+test('a panel edit of the claims box recomputes what derives from it and says the checks again', async () => {
+  const { get, set } = await import('../src/util.js');
+  const { rederive } = await import('../src/normalize.js');
+  const calls = [];
+  const intake = {
+    record: { claims: { text: 'Clean MVR', hasClaims: false, notes: null }, notes: { text: null }, applicant: { yearEstablished: 2021, yearsInBusiness: 5 },
+      operations: { vehicleOwnership: null }, vehicles: [{ type: 'Box Truck' }], coverage: {} },
+    warnings: [{ code: 'ownership.missing', path: 'operations.vehicleOwnership', level: 'check', msg: 'Not selected.' }], done: [], agentEdited: [], readFrom: {},
+  };
+  const sandbox = {
+    state: { intake }, get, set, rederive, noNumberEdit: () => false, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    usage: { log: (e) => calls.push(['log', e.path, e.warnings]) },
+    renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings', intake.warnings[0].level]),
+    claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  await sandbox.agentEdit('claims.text', 'Yes - 1 accident 2024\nFinanced', 'textarea');
+  assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes, intake.record.operations.vehicleOwnership], [true, 'Financed', 'Financed']);
+  assert.deepEqual(intake.readFrom, { 'operations.vehicleOwnership': ['claims_details'] });
+  assert.equal(intake.warnings.length, 1, 'kept by position');
+  assert.deepEqual(calls.map(([what]) => what), ['renderSections', 'renderWarnings', 'log']);
+  assert.ok(['claims.hasClaims', 'claims.notes', 'operations.vehicleOwnership'].every((p) => calls[0][1].includes(p)), 'the recomputed rows stay shown');
+  assert.equal(calls[1][1], 'info', 'the check list is said again with the ownership check retired');
+  // An edit that changes no check says nothing again.
+  calls.length = 0;
+  await sandbox.agentEdit('applicant.name', 'X', 'text');
+  assert.deepEqual(calls.map(([what]) => what), ['log']);
 });
 
 // Codex on PR #22: an edit retires Luna's old items even when no new review can run.
@@ -6788,6 +6823,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   const record = { operations: { radius: '100', radiusMiles: 100 }, applicant: {} };
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake: { record, warnings: [], done: [] }, detailsClosed: new Set(), showEmpty: false, details: null },
     get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES,
     intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
@@ -7418,6 +7454,7 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   ] };
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake, view: 'check' }, $, get, set, rederive, ownerDrivesAnswered, fieldInfo: (p) => ({ label: p }), sourcePlace: () => null, pdfPageSaid: () => '',
     document: { getElementById: () => null, querySelector: () => null },
     renderSteps() {}, renderSections: () => calls.push(['renderSections', get(record, 'drivers[0].gender') ?? null]), jumpTo() {}, openPdf() {},
@@ -10221,6 +10258,37 @@ test('an agent change on the finishing step after the print, or a stopped fill, 
   assert.match(SIDEPANEL, /const byAgent = msg\.changes\.filter\(\(c\) => c\.agent\);\s+if \(byAgent\.length\) \{\s+const page = samePage\(msg\.page\);\s+if \(noteChangedAfterDone\(state\.tab\.carrier, page, step, sender\.tab\.id\)\) renderSteps\(\);/);
   assert.match(SIDEPANEL, /for \(const a of frames\.flatMap\(\(f\) => f\.actions \?\? \[\]\)\) \{ maps\.doneActions\.add\(a\.id\); maps\.doneActions\.delete\(`\$\{a\.id\}:changed`\); \}/);
   assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;/);
+});
+
+// The maintainer, 2026-11-07 (answer 1 on PR #367): "No" typed into the USDOT box in the panel is
+// saved as no number, as the intake's own No: the box empty, noDot true, the note said, and the row
+// and the checks said again.
+test('a panel edit of "No" into the USDOT box saves no number, and says the row and the note again', async () => {
+  const { get, set } = await import('../src/util.js');
+  const { noNumberEdit, rederive } = await import('../src/normalize.js');
+  const calls = [];
+  const intake = { record: { applicant: { dot: '1234567', noDot: null } }, warnings: [], done: [], agentEdited: [] };
+  const sandbox = {
+    state: { intake, fieldRevs: new Map() }, get, set, noNumberEdit, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    usage: { log: (e) => calls.push(['log', e.path]) }, renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings']),
+    claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  await sandbox.agentEdit('applicant.dot', 'No', 'text');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, [...intake.agentEdited]], [null, true, ['applicant.dot']]);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['dot.none', 'info']]);
+  assert.equal(sandbox.state.fieldRevs.get('applicant.dot'), 1, 'its box is said again with the record value (details-view.jsx rev)');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['renderSections', ['applicant.dot']], ['renderWarnings'], ['log', 'applicant.dot']]);
+  calls.length = 0;
+  await sandbox.agentEdit('applicant.dot', '7654321', 'text');
+  assert.equal(intake.record.applicant.dot, '7654321', 'a number stays as typed');
+  // Reviews of PR #376: the number clears the No and retires its note (rederive), said again.
+  assert.deepEqual([intake.record.applicant.noDot, intake.warnings[0].msg.startsWith('No longer applies after your edit: ')], [null, true]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['renderSections', ['applicant.noDot']], ['renderWarnings'], ['log', 'applicant.dot']]);
+  // Review of PR #376 (CodeRabbit): words near a No ("none yet") are not one: kept as typed, no No.
+  await sandbox.agentEdit('applicant.dot', 'none yet', 'text');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, sandbox.state.fieldRevs.get('applicant.dot')], ['none yet', null, 1]);
 });
 
 // Review of PR #170: a field the agent emptied in the drawer went with the blank ones (hidden at the

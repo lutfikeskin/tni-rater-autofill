@@ -478,6 +478,9 @@ const state = storeState({
   // always are), and the sections the agent folded (by id).
   showEmpty: false,
   detailsClosed: new Set(),
+  // Client details: how many times an edit saved a field otherwise than typed (path -> count; "No"
+  // in the USDOT box is saved empty), so its box shows the record's value again (details-view.jsx).
+  fieldRevs: new Map(),
   // The intake PDF: its bytes (also kept in session storage, keepPdf), the document pdf.js opened,
   // and the viewer's page, zoom and the item marked on it ({ path, label, kind, place }); null
   // while the viewer is closed.
