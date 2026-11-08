@@ -18,7 +18,8 @@ export const DOCK = {
   checksLeft: (open) => `${open} intake ${plural(open, 'item')} not looked at yet. You can still fill.`,
   preview: { eyebrow: 'Preview', title: 'Filling works only in the Chrome extension' },
   unreadable: { eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.' },
-  openRater: { eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: 'Progressive, GEICO or AmWINS.' },
+  // Its line names the raters the panel fills (ratersSaid, from the carriers' registry).
+  openRater: { eyebrow: 'Next', title: 'Open the client’s quote on a rater' },
   stopped: (carrier) => ({ eyebrow: `Stopped by ${carrier}`, title: 'Nothing to fill on this rater', sub: 'Nothing on this page was filled or clicked.' }),
   // A step or screen that is the agent's (`what`: its name; `screen`: a screen, not a step).
   yours: (what, screen) => ({ eyebrow: 'This step is yours', title: `Finish ${what ?? 'this step'} yourself`, sub: `Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.` }),
@@ -31,7 +32,7 @@ export const DOCK = {
   fillAgain: 'Fill this page again',
   error: { eyebrow: 'Didn’t finish', title: 'Check the page, then fill again', sub: 'Your changes are kept.' },
   // The quote done where TNI stops on the rater (the carrier's own words first: finishedAt, finishedSaid).
-  finished: (carrier) => ({ eyebrow: 'Quote done', title: 'The quote proposal is printed', sub: `This is where TNI stops on ${carrier}. Nothing is submitted or bound.`, altLabel: 'Fill this page again' }),
+  finished: (carrier) => ({ eyebrow: 'Quote done', title: 'The quote proposal is printed', sub: `This is where TNI stops on ${carrier}. Nothing is submitted or bound.`, label: 'Quote summary', altLabel: 'Fill this page again' }),
   stoppedFill: (filled) => ({ eyebrow: 'Stopped', title: `${filled} filled before you stopped`, sub: 'Fill again to finish. Your changes are kept.', label: 'Fill this page again' }),
   // AI picks waiting for the agent's approval (`n` of them, `waiting` not rejected; `continues`:
   // approving also continues; `canContinue`: Continue would be next).
