@@ -26,7 +26,7 @@ import {
   assign, matchOption, holdingCondition, moneyTokens, businessNameKey, uniqueBusinessNames,
   heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName, apply, agreesWith, looseMatch, looseNote,
   summaryAccepted, waitedOut, unpicked, waitedOutUndrawn, WAIT_MS, WAIT_ROUND_MS,
-  AFTER_WAIT_QUIET_MS, LOAD_MS, LOAD_RESULT_MS, LOAD_QUIET_MS, LOAD_HALT, KEPT_WATCH_MS,
+  AFTER_WAIT_QUIET_MS, LOAD_MS, LOAD_RESULT_MS, LOAD_QUIET_MS, LOAD_HALT, KEPT_WATCH_MS, FILL_BUDGET_MS, BUDGET_HALT,
   ONCE_UNVERIFIED, NOTHING_LEFT, AGENT_PRESSED, CONTINUE_REFUSED, RESET_QUIET_MS,
 } from "./apply.js";
 import { itemResolution, LIST_STATUS } from "../resolution.js";
@@ -40,7 +40,9 @@ export const getRunning = () => running;
 let running = null;
 // The running fill stopped (Stop, or the agent's edit): every wait of the kit's ends at its next
 // wake (adapter.js settle and pause), the driver's too, and nothing more is written or clicked.
-stopWaitsWhen(() => !!running?.report.halted);
+// Its time in all spent (`budgetMs`) stops it there too, read at every answer and wait, so a page
+// that blocks past the deadline gets no answer more before the timer runs (CodeRabbit on #398).
+stopWaitsWhen(() => !!running && (running.report.halted || running.timeUp()));
 // Fills the agent stopped before they began here (`run`: the panel's id for the fill; Stop can
 // come while the panel still prepares, before fill() starts): such a fill halts as it starts.
 const stoppedRuns = new Set();
@@ -230,7 +232,7 @@ export function resolveItems(report, plan) {
  * @param {FillOptions} [options]
  * @returns {Promise<FillReport>}
  */
-export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
+export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, budgetMs = FILL_BUDGET_MS, deadline = null, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
   /** @type {RunState} */
   const state = /** @type {any} */ ({});
   // The plan as given (helpers included, which the fill sets apart below), for a fill begun again.
@@ -469,9 +471,21 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // null while it answers, else { name, what }: 'reading' the page as it begins, 'waiting' for the
   // page after an answer, a 'helper' it clicked (`what`: the button), the 'premium' it rates, or
   // 'continue'. Said so a fill waiting on GEICO's Recalculate doesn't read as stuck (2026-10-23).
-  const thisFill = { report: state.report, halt, run, phase: null };
+  // Set below with the fill's deadline: whether its time is spent, halting it if so.
+  const thisFill = { report: state.report, halt, run, phase: null, timeUp: () => false };
   const phase = (name, what = null) => { thisFill.phase = name ? { name, what } : null; };
   running = thisFill;
+  // Its time in all (`budgetMs`): once it is spent, the fill stops as on Stop, its waits with it, and
+  // the report says why (`outOfTime`). A fill begun again in its frame (below) keeps this one's end
+  // (`deadline`), not a new budget.
+  const ends = deadline ?? Date.now() + budgetMs;
+  const outOfTime = () => {
+    if (state.report.halted) return;
+    halt(budgetMs === FILL_BUDGET_MS ? BUDGET_HALT : BUDGET_HALT.replace('5 minutes', `${Math.round(budgetMs / 1000)} s`));
+    state.report.outOfTime = true;
+  };
+  thisFill.timeUp = () => { if (Date.now() >= ends) outOfTime(); return state.report.halted; };
+  const budget = setTimeout(outOfTime, Math.max(0, ends - Date.now()));
   // Stopped by the agent before it began (the panel was still preparing): nothing is done.
   if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
   // A real user edit during a fill must survive even while the recorder is paused: its field is
@@ -488,13 +502,14 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   phase('reading');
   const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
   let settled;
-  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); throw e; }
+  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); clearTimeout(budget); throw e; }
   phase(null);
   // Stopped while the page settled: nothing was done.
   if (!settled || state.report.halted) {
     releaseEditGuard();
     if (!settled) stalled('The page is still waiting on its server. Review and retry.');
     state.report.stepKey = stepKey();
+    clearTimeout(budget);
     if (running === thisFill) running = null;
     return state.report;
   }
@@ -506,8 +521,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   if (!restarted && window !== window.top && currentPage() !== startPage && currentPage() === topPageNow()) {
     adapter().offRequest(countAjax);
     releaseEditGuard();
+    clearTimeout(budget);
     if (running === thisFill) running = null;
-    return fill(givenPlan, { ...arguments[1], restarted: true });
+    return fill(givenPlan, { ...arguments[1], restarted: true, deadline: ends });
   }
   // The step on screen as the fill begins, on a page with a step progress bar (null elsewhere:
   // AmWINS' headings change with its dialogs). Read once the page has settled.
@@ -612,7 +628,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     const controls = collectControls();
     state.roundControls = controls;
     state.report.fields = Math.max(state.report.fields, controls.length);
-    if (state.report.halted) break;
+    if (thisFill.timeUp()) break;
     const allPairs = assign(controls, plan);
     // The agent's edits made where the kit is now, before anything asks whether a field is theirs.
     if (skipBy) skipWhere(allPairs.units);
@@ -1205,7 +1221,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // the round read it is no question: judgeControls passes over it).
     const judgeTo = batch || !thisRound.acted ? Infinity : thisRound.changed ? thisRound.stopAt : Math.min(thisRound.stopAt, thisRound.lagBound);
     judged(judgeTo, judgeTo === thisRound.pendingAt);
-    if (state.report.halted) break;
+    if (thisFill.timeUp()) break;
     // The next round's start ends the fill (or stops it on a step that is the agent's).
     if (thisRound.stepMoved) continue;
     // A choice never offered once the helper that shows every option has been clicked (`orMost`:
@@ -1218,6 +1234,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // Another group of units (`pager`), before any helper: Recalculate or the bill plan must not
     // go before every unit's rows were answered.
     const turn = !thisRound.changed && !thisRound.retry && !thisRound.waited && unitGroups.on && window === window.top && !state.agentPressed ? unitGroups.next() : null;
+    // Its time spent while the round chose: no other group is shown.
+    if (turn && thisFill.timeUp()) break;
     if (turn) {
       state.report.paged = unitGroups.paged;
       phase('helper', turn.text);
@@ -1950,6 +1968,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       if (!button && a.nudge && !state.nudged.has(a.action) && a.after.every(has) && a.afterActions.every((id) => state.clicked.has(id))) {
         const pair = pairs.find(({ step }) => step.path === a.nudge && step.value != null);
         if (pair && agreesWith(pair.step, pair.control)) {
+          // Its time spent meanwhile: nothing more is written.
+          if (thisFill.timeUp()) return false;
           state.nudged.add(a.action);
           // A widget is picked again its own way (the page adapter's reselect), a field set again.
           const { widget } = pair.control;
@@ -2005,6 +2025,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         if (!opener) continue;
         // Something open over it (a dialog, a message): not clicked through it.
         if (coveredBy(opener)) { holdCovered(a, opener); continue; }
+        // Its time spent meanwhile: nothing more is clicked.
+        if (thisFill.timeUp()) return false;
         state.openersTried.add(a.action);
         state.report.actions.push({ id: `${a.action}:menu`, text: buttonText(opener).slice(0, 60) });
         pressButton(opener);
@@ -2013,6 +2035,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       if ((a.loads || a.quietMs) && !(state.quiet?.action === a.action && state.quiet.sig === signature())) { state.loadDue = a.action; return false; }
       // Something open over it (a dialog, a message): not clicked through it; clicked once it's gone.
       if (coveredBy(button)) { holdCovered(a, button); continue; }
+      // Its time spent meanwhile: nothing more is clicked.
+      if (thisFill.timeUp()) return false;
       state.quiet = null;
       state.clicked.add(a.action);
       state.report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
@@ -2319,7 +2343,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // go through it. Continue waits until the agent closes it.
           state.report.covered = true;
           state.report.blockers.push(COVERED);
-        } else if (button && approved) {
+        } else if (button && approved && !thisFill.timeUp()) {
           const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           state.report.signatureBefore = signature();
@@ -2379,6 +2403,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     adapter().offRequest(countAjax);
     releaseEditGuard();
     document.removeEventListener('click', notePress, true);
+    clearTimeout(budget);
     if (running === thisFill) running = null;
   }
 }
