@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
 import { answerRecord, needRecord, settleRow } from '../../sidepanel/panel/report-rows.js';
-import { quoteSummary, summaryFileName, summaryHtml } from '../../sidepanel/panel/quote-summary.js';
+import { openSummary, quoteSummary, summaryFileName, summaryHtml } from '../../sidepanel/panel/quote-summary.js';
 import { Summary } from '../../sidepanel/panel/summary-view.jsx';
 import { ClientHead } from '../../sidepanel/panel/client-view.jsx';
 import { Dock } from '../../sidepanel/panel/steps-view.jsx';
@@ -81,6 +81,17 @@ test('the overrides, the AI decisions and what was marked done without an answer
     ['edited', 'GEICO', 'Owner name', 'Jo Doe', 'Your edit'], ['you', 'GEICO', 'Phone', '555', 'You'], ['you', 'GEICO', 'Team driving', 'Yes', 'Your answer, put in from the panel']]);
   expect(s.ai.map((r) => [r.page, r.label, r.value])).toEqual([['Quote & Coverages', 'Hauls livestock', 'No'], ['Quote & Coverages', 'Cargo limit', '$100,000']]);
   expect(s.marked.map((r) => [r.carrier, r.label, r.note])).toEqual([['GEICO', 'Prior claims', 'Not on the intake.']]);
+});
+
+test('an intake field the agent emptied is Blank, not missing; nothing opens while the intake is being replaced', () => {
+  const s = quoteSummary({ intake: { agentEdited: ['applicant.phone', 'applicant.email'], record: { applicant: { name: 'Acme', phone: '', email: null } } } });
+  expect(s.overrides.map((o) => [o.label, o.value])).toEqual([['Phone', 'Blank'], ['Email', 'Blank']]);
+  // A Change file or New quote under way (`resetting`): the reports may still be the last client's.
+  state.intake = { agentEdited: [], record: { applicant: { name: 'Acme' } } };
+  state.resetting = true;
+  state.reports = reports();
+  openSummary();
+  expect(state.summary).toBe(null);
 });
 
 test('Save summary\'s file: one HTML page, no scripts, every value escaped, named for the client and the time', () => {

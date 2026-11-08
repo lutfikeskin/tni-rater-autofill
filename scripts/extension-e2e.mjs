@@ -483,13 +483,19 @@ if (!earlierOk) console.log('EARLIER PAGES: the page menu did not show Insured I
 let summaryOk = false;
 let at = 'open';
 try {
-  const mockBefore = await mock.evaluate(() => JSON.stringify(window.__amwinsMock));
+  // The carrier page as it is: the mock's own record and every control's value.
+  const pageNow = () => mock.evaluate(() => JSON.stringify([window.__amwinsMock,
+    [...document.querySelectorAll('input, select, textarea')].map((el) => [el.id || el.name || '', el.type === 'checkbox' || el.type === 'radio' ? el.checked : el.value])]));
+  const mockBefore = await pageNow();
   await panel.click('#quote-summary');
   at = 'shown';
   await panel.locator('#summary-view').waitFor({ state: 'visible', timeout: 5000 });
   const pages = await panel.locator('.summary-page > summary .title').allTextContents();
   const rows = await panel.locator('.summary-row').count();
   const boxes = await panel.locator('#summary-view input, #summary-view select, #summary-view textarea').count();
+  // A known answer with its source: Coverage's medical payment, TNI's standard $5,000.
+  const medical = await panel.locator('.summary-row').evaluateAll((els) => els.map((el) => [el.querySelector('.summary-q')?.textContent, el.querySelector('.summary-a')?.textContent, el.querySelector('.summary-tag')?.textContent])
+    .find(([q]) => /^medical payment$/i.test(q ?? '')) ?? null);
   const download = panel.waitForEvent('download', { timeout: 10000 });
   download.catch(() => {});
   at = 'save';
@@ -500,10 +506,11 @@ try {
   const saved = await panel.locator('#summary-saved').textContent();
   await panel.click('#summary-back');
   await panel.locator('#summary-view').waitFor({ state: 'hidden', timeout: 5000 });
-  const mockAfter = await mock.evaluate(() => JSON.stringify(window.__amwinsMock));
-  console.log('Quote summary:', JSON.stringify({ pages, rows, boxes, file: file.suggestedFilename(), bytes: html.length, saved, pageUnchanged: mockBefore === mockAfter }));
+  const mockAfter = await pageNow();
+  console.log('Quote summary:', JSON.stringify({ pages, rows, boxes, medical, file: file.suggestedFilename(), bytes: html.length, saved, pageUnchanged: mockBefore === mockAfter }));
   summaryOk = pages.includes('Insured Info') && rows > 10 && boxes === 0 && /^quote-summary-.+\.html$/.test(file.suggestedFilename())
-    && html.startsWith('<!doctype html>') && !/<script/i.test(html) && html.includes('AmWINS') && /Saved quote-summary-/.test(saved ?? '') && mockBefore === mockAfter;
+    && html.startsWith('<!doctype html>') && !/<script/i.test(html) && html.includes('AmWINS') && /Saved quote-summary-/.test(saved ?? '') && mockBefore === mockAfter
+    && medical?.[1] === '$5,000' && medical?.[2] === 'TNI standard' && /<td>medical payment<\/td><td>\$5,000<\/td><td>TNI standard<\/td>/i.test(html);
 } catch (e) { console.log('QUOTE SUMMARY:', at, String(e.message).split(String.fromCharCode(10)).slice(0, 12).join(' | ')); }
 if (!summaryOk) console.log('QUOTE SUMMARY: the summary did not list the steps read-only, save its HTML file, or left the carrier page changed.');
 // The events the panel uploaded (it sends right after the intake loads, then every minute).
