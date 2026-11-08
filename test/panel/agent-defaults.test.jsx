@@ -107,7 +107,7 @@ test('a new profile is named, then created', () => {
 
 // Delete profile asks in the panel, never with a browser dialog (audit 2026-11-07, UX-17).
 test('Delete profile asks first, in the panel: Cancel keeps the profile, Delete removes it', () => {
-  storeState({ defaultsOn: true, agentDefaults: { v: 1, active: 'p1', profiles: { p1: { name: 'Jordan K.', values: {} } } }, defaultsInitials: 'JK' });
+  const s = storeState({ defaultsOn: true, agentDefaults: { v: 1, active: 'p1', profiles: { p1: { name: 'Jordan K.', values: {} } } }, defaultsInitials: 'JK' });
   const calls = [];
   const dialog = globalThis.confirm;
   globalThis.confirm = () => { throw new Error('no browser dialog'); };
@@ -124,7 +124,10 @@ test('Delete profile asks first, in the panel: Cancel keeps the profile, Delete 
     fireEvent.click(getByText('Delete profile'));
     fireEvent.click(container.querySelector('#defaults-confirm-yes'));
     expect(calls).toEqual([['remove', 'p1']]);
-    expect(container.querySelector('#defaults-confirm')).toBeNull();
+    expect([container.querySelector('#defaults-confirm'), document.activeElement?.id]).toEqual([null, 'defaults-delete']);
+    // The deletion saved takes Delete profile away: the focus goes to the Profile menu, which stays.
+    act(() => { s.agentDefaults = { v: 1, active: null, profiles: {} }; });
+    expect([container.querySelector('#defaults-delete'), document.activeElement?.id]).toEqual([null, 'defaults-profile']);
   } finally { globalThis.confirm = dialog; }
 });
 

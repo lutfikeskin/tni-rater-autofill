@@ -106,6 +106,13 @@ export async function count() {
   const { queued, rejected } = await counts();
   return queued + rejected;
 }
+// What Clear log's question names: the events waiting (`n`) and the number of the last event logged
+// (`seq`), which a new event changes even when the capped queue's count doesn't (MAX_EVENTS: the
+// oldest go for it). clearLog({ expected }) deletes only while both are still these.
+export async function logMark() {
+  const n = await count();
+  return { n, seq: (await local.get(SEQ_KEY)) ?? 0 };
+}
 
 export async function exportLog() {
   await queue;
@@ -294,17 +301,17 @@ export async function eventFate(id) {
 }
 
 // Deletes the upload queue and the events kept aside for export: what Export wrote (audit
-// 2026-10-08: Clear left the refused events, which Export kept including). With `expected`, the
-// count the agent was asked about: deleted only if both lists still hold that many, counted under
-// the same lock, so an event another panel logs after the question is never deleted unasked. True
-// when deleted.
-/** @param {{ expected?: number }} [options] */
+// 2026-10-08: Clear left the refused events, which Export kept including). With `expected`, what the
+// agent was asked about (logMark): deleted only if both lists still hold that many events and no
+// event was logged since (`seq`), checked under the same lock, so an event another panel logs after
+// the question is never deleted unasked, a full queue's included. True when deleted.
+/** @param {{ expected?: { n: number, seq: number } }} [options] */
 export async function clearLog({ expected } = {}) {
   await queue;
   return exclusive(async () => {
     if (expected !== undefined) {
-      const now = ((await local.get(LOG_KEY)) ?? []).length + ((await local.get(REJECTED_KEY)) ?? []).length;
-      if (now !== expected) return false;
+      const n = ((await local.get(LOG_KEY)) ?? []).length + ((await local.get(REJECTED_KEY)) ?? []).length;
+      if (n !== expected.n || ((await local.get(SEQ_KEY)) ?? 0) !== expected.seq) return false;
     }
     await local.set(LOG_KEY, []);
     await local.set(REJECTED_KEY, []);

@@ -120,7 +120,7 @@ export function TniDefaults({ act }) {
             <>
               <label className="opt" htmlFor="defaults-profile">
                 <span className="opt-text"><b>Profile</b></span>
-                <select id="defaults-profile" value={stored?.active ?? ''} onChange={(e) => act.pick(e.target.value || null)}>
+                <select id="defaults-profile" ref={askFocus.fallback} value={stored?.active ?? ''} onChange={(e) => act.pick(e.target.value || null)}>
                   <option value="">{"None: TNI's everywhere"}</option>
                   {profiles.map(([id, p]) => <option key={id} value={id}>{p.name}</option>)}
                 </select>

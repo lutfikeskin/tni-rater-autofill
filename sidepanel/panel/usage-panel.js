@@ -97,13 +97,13 @@ function settingsActs() {
     // agent for here (tab-mark.js). Never logged.
     markTab: (on) => markSwitch(on),
   };
-  // Clear log's question, with the count it names (`n`).
+  // Clear log's question, with what it names (usage.logMark: the count `n` and the last event's `seq`).
   const askClearLog = async () => {
     const { lastExportCount = 0 } = await usage.settings();
-    const n = await usage.count();
+    const { n, seq } = await usage.logMark();
     state.usageAsk = n > lastExportCount
-      ? { n, text: `${n} events aren't uploaded or exported. Delete them anyway?`, yes: 'Delete them' }
-      : { n, text: `Delete the ${n} exported events from this computer?`, yes: 'Delete' };
+      ? { n, seq, text: `${n} events aren't uploaded or exported. Delete them anyway?`, yes: 'Delete them' }
+      : { n, seq, text: `Delete the ${n} exported events from this computer?`, yes: 'Delete' };
   };
   return {
     // A Filling switch: what Settings draws follows it at once (Let me look first is off with
@@ -135,13 +135,13 @@ function settingsActs() {
     // Clear log asks first, in the panel under its button (state.usageAsk, as the client's file tools
     // ask: askFile), never with a browser dialog, which would hold the panel and a fill's Stop while open.
     clearLog: () => askClearLog(),
-    // A yes deletes what the question named: the log checks the count it asked about (`n`) under its
+    // A yes deletes what the question named: the log checks what it asked about (`n`, `seq`) under its
     // lock as it deletes (usage.clearLog `expected`), and events logged since are asked about again,
     // with the new count, instead.
     clearLogYes: async () => {
       const asked = state.usageAsk;
       if (!asked) return;
-      if (!await usage.clearLog({ expected: asked.n })) { await askClearLog(); return; }
+      if (!await usage.clearLog({ expected: { n: asked.n, seq: asked.seq } })) { await askClearLog(); return; }
       state.usageAsk = null;
       state.usageNote = 'Usage log cleared.';
       renderUsage();

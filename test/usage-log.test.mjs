@@ -178,15 +178,30 @@ test('Clear deletes the events set aside too, and the count includes them', asyn
 // Audit 2026-11-07, UX-17 (review of #463): Clear log's yes deletes only the events its question
 // counted. The count is checked under the log's lock as it deletes, so an event logged after the
 // question (by this panel or another window's) is kept and asked about.
-test('Clear with the count asked about deletes nothing once more events are logged', async () => {
+test('Clear with what was asked about deletes nothing once more events are logged', async () => {
   await usage.clearLog();
   await usage.log({ type: 'page_view', page: 'A' }, { type: 'page_view', page: 'B' });
-  const asked = await usage.count();
+  const asked = await usage.logMark();
+  assert.equal(asked.n, 2);
   await usage.log({ type: 'page_view', page: 'C' });
   assert.equal(await usage.clearLog({ expected: asked }), false);
   assert.equal(await usage.count(), 3, 'nothing deleted');
-  assert.equal(await usage.clearLog({ expected: 3 }), true);
+  assert.equal(await usage.clearLog({ expected: await usage.logMark() }), true);
   assert.equal(await usage.count(), 0);
+});
+
+// A full queue keeps its count when an event is logged (the oldest go for it, MAX_EVENTS): the
+// event's number still tells Clear that something was logged since the question.
+test('Clear with what was asked about deletes nothing after an event logged into a full queue', async () => {
+  const { MAX_EVENTS } = await import('../src/usage.js');
+  await usage.clearLog();
+  await usage.log(...Array.from({ length: MAX_EVENTS }, (_, i) => ({ type: 'page_view', page: `P${i}` })));
+  const asked = await usage.logMark();
+  await usage.log({ type: 'page_view', page: 'late' });
+  assert.equal(await usage.count(), asked.n, 'the count alone did not change');
+  assert.equal(await usage.clearLog({ expected: asked }), false);
+  assert.equal(await usage.count(), asked.n, 'nothing deleted');
+  await usage.clearLog();
 });
 
 test('a reply that does not account for every event sent keeps them in the queue', async () => {
