@@ -34,7 +34,7 @@ The extension's files are plain ES modules that run as written, except two that 
 | Quoting history warehouse | `test/warehouse.test.mjs`: synthetic events through the transform, a real DuckDB file in a temporary folder, `npm run warehouse` end to end, and every query in [quoting history database](quoting-history-database.md)'s Example SQL. Locally, `npm run warehouse` after `npm run pull` builds from the real log |
 | Manual page captures and their report | `test/pagekit.test.mjs` (capture), `test/sidepanel-safety.test.mjs` (panel), `test/captures.test.mjs` (`npm run captures`) |
 | Developer recording ([developer recording](developer-recording.md)) | `test/trace.test.mjs` (the trace with the recorder, on a fake page and a virtual clock), `test/recording.test.mjs` (stamping, the panel's store on a stand-in file system, the zip, `npm run recording`), the recording tests in `test/sidepanel-safety.test.mjs` |
-| Documentation only | Link/command checks, current-code audit, and `git diff --check`; no browser run or version bump |
+| Documentation only | `test/consistency.test.mjs` (every `npm run` the README, AGENTS.md and hosting guide name exists; every repository path the README, AGENTS.md and `docs/` name in backticks or link to is tracked, or listed in its `NOT_TRACKED` as local or built), a current-code audit, and `git diff --check`; no browser run or version bump |
 
 Run `npm test` for code changes, plus affected integration checks. Repeat or broaden only for new changes, failures, or unresolved concerns. Do not add tests that merely mirror a low-impact edit.
 
