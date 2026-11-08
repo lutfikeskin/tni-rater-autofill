@@ -6532,7 +6532,9 @@ function settingsActsHarness() {
   const state = { switches: { autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true }, usageNote: '' };
   const record = (name) => (...args) => { calls.push([name, ...args]); };
   const context = { state, calls, confirm: () => true,
-    usage: { saveSettings: async (patch) => { calls.push(['save', { ...patch }]); }, settings: async () => ({}), count: async () => 3, exportLog: async () => 3, clearLog: async () => { calls.push(['clearLog']); } },
+    usage: { saveSettings: async (patch) => { calls.push(['save', { ...patch }]); }, settings: async () => ({}), count: async () => 3, exportLog: async () => 3, 
+      // As usage-log.js: with `expected`, deleted only if the count is still that.
+      clearLog: async function ({ expected } = {}) { if (expected !== undefined && expected !== await this.count()) return false; calls.push(['clearLog']); return true; } },
     logSettings: record('logSettings'), renderSite: record('renderSite'), renderSteps: record('renderSteps'), uploadNow: record('uploadNow'), renderAiSettings: record('renderAiSettings'), renderUsage: record('renderUsage') };
   vm.runInNewContext(`${extractFunction('settingsActs')}\nvar acts = settingsActs();`, context);
   return { acts: context.acts, calls, state, context };

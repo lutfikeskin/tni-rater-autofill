@@ -134,14 +134,14 @@ function settingsActs() {
     // Clear log asks first, in the panel under its button (state.usageAsk, as the client's file tools
     // ask: askFile), never with a browser dialog, which would hold the panel and a fill's Stop while open.
     clearLog: () => askClearLog(),
-    // A yes deletes what the question named: events logged since it was asked (`n` changed) are asked
-    // about again, with the new count, instead.
+    // A yes deletes what the question named: the log checks the count it asked about (`n`) under its
+    // lock as it deletes (usage.clearLog `expected`), and events logged since are asked about again,
+    // with the new count, instead.
     clearLogYes: async () => {
       const asked = state.usageAsk;
       if (!asked) return;
-      if (await usage.count() !== asked.n) { await askClearLog(); return; }
+      if (!await usage.clearLog({ expected: asked.n })) { await askClearLog(); return; }
       state.usageAsk = null;
-      await usage.clearLog();
       state.usageNote = 'Usage log cleared.';
       renderUsage();
     },

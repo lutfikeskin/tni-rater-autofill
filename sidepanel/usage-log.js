@@ -292,11 +292,19 @@ export async function eventFate(id) {
 }
 
 // Deletes the upload queue and the events kept aside for export: what Export wrote (audit
-// 2026-10-08: Clear left the refused events, which Export kept including).
-export async function clearLog() {
+// 2026-10-08: Clear left the refused events, which Export kept including). With `expected`, the
+// count the agent was asked about: deleted only if both lists still hold that many, counted under
+// the same lock, so an event another panel logs after the question is never deleted unasked. True
+// when deleted.
+export async function clearLog({ expected } = {}) {
   await queue;
-  await exclusive(async () => {
+  return exclusive(async () => {
+    if (expected !== undefined) {
+      const now = ((await local.get(LOG_KEY)) ?? []).length + ((await local.get(REJECTED_KEY)) ?? []).length;
+      if (now !== expected) return false;
+    }
     await local.set(LOG_KEY, []);
     await local.set(REJECTED_KEY, []);
+    return true;
   });
 }

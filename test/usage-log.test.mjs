@@ -146,6 +146,20 @@ test('Clear deletes the events set aside too, and the count includes them', asyn
   assert.equal(await usage.count(), 0);
 });
 
+// Audit 2026-11-07, UX-17 (review of #463): Clear log's yes deletes only the events its question
+// counted. The count is checked under the log's lock as it deletes, so an event logged after the
+// question (by this panel or another window's) is kept and asked about.
+test('Clear with the count asked about deletes nothing once more events are logged', async () => {
+  await usage.clearLog();
+  await usage.log({ type: 'page_view', page: 'A' }, { type: 'page_view', page: 'B' });
+  const asked = await usage.count();
+  await usage.log({ type: 'page_view', page: 'C' });
+  assert.equal(await usage.clearLog({ expected: asked }), false);
+  assert.equal(await usage.count(), 3, 'nothing deleted');
+  assert.equal(await usage.clearLog({ expected: 3 }), true);
+  assert.equal(await usage.count(), 0);
+});
+
 test('a reply that does not account for every event sent keeps them in the queue', async () => {
   let requests = fakeServer(() => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('an HTML page'); } }));
   await usage.saveSettings({ serverUrl: 'http://usage.test' });
