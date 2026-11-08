@@ -134,7 +134,8 @@
  *   SOURCES (Contract 2, docs/intake-and-rules.md), which test/provenance.test.mjs checks for every rule
  * @property {string} [tni]  the id of the TNI rulebook entry that states this answer (src/ai/rulebook/:
  *   general.js or this carrier's part); every rule that can be `standard` has one, which
- *   test/rulebook.test.mjs checks with the entry's kind and part. Nothing at fill time reads it
+ *   test/rulebook.test.mjs checks with the entry's kind and part (a function source counts when it
+ *   returns `standard` for any record of the test's matrix, through a wrapper too). Nothing at fill time reads it
  * @property {string} [kind]  a value kind (src/schema.js: bool, choice, date, int, money, state, text), or
  *   how the page kit picks it (address-suggest, first-option, pick-not, search-select, selected-option)
  * @property {string} [q]  the carrier's question id (Duck Creek)
