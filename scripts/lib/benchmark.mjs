@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Replay benchmark: today's rules against the answers agents left in recorded quotes.
 //
 // For each recorded quote whose intake PDF is on this computer (matched by its fingerprint), the

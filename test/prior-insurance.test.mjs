@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Prior insurance (TNI, 2026-10-26, W44-29; W44-12; W44-02 as the standard): any box of the
 // intake's current insurance filled (policy type, carrier, limit or expiration date) is proof of
 // prior insurance, 1-3 years at least, and the Intake step names the boxes left blank. A longer
