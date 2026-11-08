@@ -75,7 +75,12 @@ test('every registry names each carrier with rules, or says here why not', async
   const { raterNames } = await import('../src/carriers.js');
   const dashboard = /const CARRIERS = (\{[^}]*\})/.exec(read('server/dashboard.mjs'))?.[1] ?? '';
   const nameKeys = [.../const CARRIER_NAMES = \{([\s\S]*?)\n\};/.exec(read('src/util.js'))?.[1].matchAll(/^ {2}(\w+): \{/gm) ?? []].map((m) => m[1]);
-  const intakeMocks = /arg\('carrier', 'both'\) === 'both' \? \[([^\]]*)\]/.exec(read('scripts/intake-mocks.mjs'))?.[1] ?? '';
+  // The runner's default carriers and the ones it accepts: a carrier counts only in both.
+  const mocksText = read('scripts/intake-mocks.mjs');
+  const runs = /arg\('carrier', 'both'\) === 'both' \? \[([^\]]*)\]/.exec(mocksText)?.[1] ?? '';
+  const accepts = /carriers\.some\(c => !\[([^\]]*)\]\.includes\(c\)\)/.exec(mocksText)?.[1] ?? '';
+  assert.ok(runs && accepts, 'scripts/intake-mocks.mjs: its carrier lists are found');
+  const intakeMocks = runs.split(',').filter((id) => accepts.includes(id.trim())).join(',');
   const scripts = JSON.parse(read('package.json')).scripts;
   const has = (where, id, yes) => assert.ok(yes || LEFT_OUT[where]?.[id], `${id}: missing from ${where}, and LEFT_OUT doesn't say why`);
   const carriers = CARRIERS.filter((c) => c.rules?.length);
@@ -94,5 +99,7 @@ test('every registry names each carrier with rules, or says here why not', async
   // A reason only for what is really left out.
   for (const [where, ids] of Object.entries(LEFT_OUT)) for (const id of Object.keys(ids)) assert.ok(carriers.some((c) => c.id === id), `${where}: ${id} is a carrier`);
   assert.ok(!nameKeys.includes('amwins') && !intakeMocks.includes("'geico'") && !scripts['mock:progressive'], 'LEFT_OUT is still true');
-  assert.equal(raterNames(), 'Progressive, GEICO or AmWINS');
+  // "A, B or C": every carrier with rules, in CARRIERS' order.
+  const names = carriers.map((c) => c.name);
+  assert.equal(raterNames(), names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0]);
 });
