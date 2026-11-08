@@ -977,7 +977,7 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel, usage, moment
+ *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel, usage, moment, and luna (one Luna call)
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
  * @property {string} [run]  fill, as it ends: the fill run's id, the usage log's fill_run and fill_field `run`
  * @property {UsageEvent} [event]  usage: an event the usage log logged while the recording ran, as logged (redacted)
@@ -985,7 +985,7 @@
  * @property {number} [fields]  moment: how many questions that layout holds
  * @property {string} [note]  moment taken for a note: the note's words
  * @property {string} [capture]  note for an Alt+Shift+C capture taken while recording: the capture's file name
- * @property {string} [error]  moment that couldn't take its layout: the error's name
+ * @property {string | null} [error]  moment that couldn't take its layout: the error's name; luna: why the call failed
  * @property {boolean} [away]  panel: the panel follows another tab than the recorded one (true), or is back on it
  * @property {number | null} [followed]  panel: the tab the panel follows (a tab number)
  * @property {number} [recorded]  panel: the recorded tab (a tab number)
@@ -1067,6 +1067,13 @@
  *   page, 'page': as the page opened, 'follow-up', 'looks-right', 'continue')
  * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
  * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
+ * @property {'propose' | 'verify'} [call]  luna: the page review's first call or its evidence check (src/ai/luna.js `trace`)
+ * @property {object | null} [request]  luna: the request's state as sent (fields with their options, sources; the intake as Luna got it), redacted again
+ * @property {object | null} [answer]  luna: Luna's answer as it parsed (`decisions`), null when it gave none the contract accepts
+ * @property {string | null} [model]  luna: the model that answered
+ * @property {string | null} [outcome]  luna: the response's status as the provider said it (completed, incomplete…)
+ * @property {number | null} [tokensIn]  luna: the call's input tokens
+ * @property {number | null} [tokensOut]  luna: its output tokens
  */
 
 /**
