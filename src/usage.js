@@ -13,7 +13,29 @@ import { noPriorInsurance } from './util.js';
 import { isStandard, resolutionOf } from './resolution.js';
 import { redactionPattern } from './redaction.js';
 
-/** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, IntakeProfileEvent, IntakeResult, IntakeSummary, UsageEvent } from '../types.js' */
+
+// A fill's waits by what they were for, summed over its frames (each frame's report's `waits`):
+// at most WAIT_KINDS kinds, each { n, ms, limit, slack } in whole numbers; null when it had none.
+const WAIT_KINDS = 12;
+/**
+ * @param {Partial<FillReport>[]} frames
+ * @returns {FillRunWaits | null}
+ */
+export function waitSummary(frames) {
+  /** @type {FillRunWaits} */
+  const out = {};
+  for (const f of frames) {
+    for (const [why, w] of Object.entries(f?.waits ?? {})) {
+      if (!/^[a-z-]{1,20}$/.test(why) || !w || !['n', 'ms', 'limit', 'slack'].every((k) => Number.isSafeInteger(w[k]) && w[k] >= 0)) continue;
+      const t = out[why] ?? (Object.keys(out).length < WAIT_KINDS ? (out[why] = { n: 0, ms: 0, limit: 0, slack: 0 }) : null);
+      if (!t) continue;
+      t.n += w.n; t.ms += w.ms; t.limit += w.limit; t.slack += w.slack;
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, FillRunWaits, IntakeProfileEvent, IntakeResult, IntakeSummary, UsageEvent } from '../types.js' */
 
 export const LOG_KEY = 'usageLog';
 export const MAX_EVENTS = 20000;
@@ -434,6 +456,9 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   const stepField = stepOf(step, redact);
   // The longest a frame's page was hidden during the fill (pagekit tracedFill).
   const hiddenMs = Math.max(0, ...frames.map((f) => (Number.isFinite(f.hiddenMs) ? f.hiddenMs : 0)));
+  // The fill's waits by what they were for, summed over its frames (pagekit tracedFill's
+  // `waits`; REC-09, audit 2026-11-07): counts and ms only.
+  const waits = waitSummary(frames);
   /** @type {UsageEvent[]} */
   const events = [{
     type: 'fill_run', carrier, page, view, overwrite, auto, ms,
@@ -445,6 +470,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     // The second click of a Continue whose page stayed unchanged (the panel's watchNextStep, audit 2026-11-07,
     // FLOW-11): the weekly review counts them to judge whether the retry is still needed.
     ...(retried ? { retried: true } : {}),
+    ...(waits ? { waits } : {}),
     fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0),
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,

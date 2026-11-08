@@ -7,7 +7,7 @@
 /** @import { FillOptions, FillReport, PlanStep } from '../../types.js' */
 
 import { kitTrace, setTracing } from './trace.js';
-import { adapter, pageBusy, perfNow, stepKey, stopStepOn, settle, getKnownStopSteps } from './adapter.js';
+import { adapter, pageBusy, perfNow, stepKey, stopStepOn, settle, getKnownStopSteps, tallyWaits, waitsTallied } from './adapter.js';
 import { collectControls, fieldKey, describe, invalidControl } from './dom.js';
 import { mark, clear, markKey, reveal, aiBanner } from './marks.js';
 import { listed, unitList, unitListsNow, unitFormsNow } from './units.js';
@@ -118,13 +118,18 @@ import { fill, progress, stop } from './cursor.js';
       else if (hiddenSince != null) { hiddenMs += perfNow() - hiddenSince; hiddenSince = null; }
     };
     document.addEventListener('visibilitychange', seen);
+    tallyWaits();
     try {
       const report = await fill(plan, options);
+      // Its waits by what they were for (REC-09): the usage log's fill_run sums them over its frames.
+      const waits = waitsTallied();
+      if (report && waits) report.waits = waits;
       kitTrace('run', { on: false, filled: report?.filled?.length ?? 0, halted: !!report?.halted });
       if (hiddenSince != null) hiddenMs += perfNow() - hiddenSince;
       if (report && hiddenMs >= 1) report.hiddenMs = Math.round(hiddenMs);
       return report;
     } finally {
+      waitsTallied();
       document.removeEventListener('visibilitychange', seen);
       setTracing(false);
     }

@@ -8774,6 +8774,24 @@ test('every failure the fill engine gives carries a code beside its reason', () 
   assert.equal((kit.match(/code \?\? 'kit\.uncoded'/g) ?? []).length, 2);
 });
 
+// REC-09 (audit 2026-11-07): an agent's fill said nothing of its waits; only a recording did.
+test('a fill tallies its waits by what they were for, as counts and ms only, recorded or not', async () => {
+  const h = harness();
+  const commodity = new SelectNode([{ text: 'Select one', value: '' }, { text: 'Consumer Goods', value: 'cg' }], { id: 'commodity', ariaLabel: 'Commodity category' });
+  h.document.body.append(commodity);
+  const report = await h.kit.fill([{ id: 'c', name: 'Commodity', label: 'Commodity category', value: 'Consumer Goods' }], { maxRounds: 2 });
+  const waits = plain(report.waits);
+  assert.ok(waits && Object.keys(waits).length >= 1, 'it waited, and says so');
+  for (const [why, w] of Object.entries(waits)) {
+    assert.match(why, /^[a-z-]{1,20}$/);
+    assert.deepEqual(Object.keys(w).sort(), ['limit', 'ms', 'n', 'slack']);
+    assert.ok(Object.values(w).every(Number.isSafeInteger) && w.n > 0 && w.limit <= w.n && w.slack <= w.ms, JSON.stringify(w));
+  }
+  // The tally ends with the fill: an answer the panel puts in afterwards adds nothing to it.
+  const again = await h.kit.fill([], { maxRounds: 1 });
+  assert.ok(!again.waits || Object.values(again.waits).every((w) => w.n >= 1));
+});
+
 // FL live run 5, 2026-10-21 (W43-21): GEICO cleared the business description when the agent
 // answered the USDOT record question, and the next fill gave it again a second later: the page
 // showed For Hire Trucking, but GEICO's Next refused it ("Please make a selection"). An answer an

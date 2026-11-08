@@ -9,7 +9,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { EVENT_FIELDS, COMMON, COMMON_SHAPES, RUN_FIELDS, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT } from '../server/index.mjs';
+import { EVENT_FIELDS, COMMON, COMMON_SHAPES, RUN_FIELDS, fillWaits, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT } from '../server/index.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms, SOURCES } from '../src/plan.js';
@@ -34,7 +34,7 @@ test('every usage event type the extension sends is one the server accepts', () 
 test('fill events carry only fields the server keeps (nothing silently dropped)', () => {
   const frames = [{ fields: 3, rounds: 2, filled: [{ label: 'A', key: 'a', q: '1', path: 'x', controlKind: 'text', shown: 'v', timing: { ms: 1 } }],
     unknown: [{ label: 'B', key: 'b', controlKind: 'radio', options: ['Yes', 'No'] }], failed: [], noData: [], kept: [], leftRequired: [],
-    actions: [{ id: 'act', text: 'Go' }], blockers: ['unfamiliar: B'], advanced: 'Continue', checks: [] }];
+    actions: [{ id: 'act', text: 'Go' }], blockers: ['unfamiliar: B'], advanced: 'Continue', checks: [], waits: { answer: { n: 2, ms: 300, limit: 0, slack: 120 } } }];
   // With the run-identity fields too (Contract 1, audit 2026-10-08): the server must keep them.
   const settings = { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false };
   for (const e of fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 5, redact: (s) => s, run: '4c1e0b7a-run-id', rules: 'abcdef012345', settings, step: 'Vehicles' })) {
@@ -44,6 +44,9 @@ test('fill events carry only fields the server keeps (nothing silently dropped)'
     for (const [k, valid] of Object.entries(RUN_FIELDS)) if (e[k] !== undefined) assert.ok(valid(e[k]), `${e.type}.${k} as the extension sends it would be refused`);
   }
   assert.deepEqual(Object.keys(RUN_FIELDS).sort(), ['defaultsHash', 'rules', 'run', 'settings', 'step']);
+  // A fill's waits as the extension sends them are the shape the server keeps (REC-09).
+  const [run] = fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 5, redact: (s) => s });
+  assert.ok(fillWaits(run.waits), 'fill_run.waits as the extension sends it would be dropped');
   for (const f of ['run', 'rules', 'settings', 'step']) assert.ok(EVENT_FIELDS.fill_run.includes(f), `fill_run keeps ${f}`);
   for (const f of ['run', 'step']) assert.ok(EVENT_FIELDS.fill_field.includes(f), `fill_field keeps ${f}`);
   for (const f of ['run', 'rules', 'settings']) assert.ok(EVENT_FIELDS.fill_error.includes(f), `fill_error keeps ${f} without a fill_run result`);

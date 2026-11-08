@@ -769,6 +769,7 @@
  * @property {string} [navigatedTo]
  * @property {boolean} [pageChanged]
  * @property {number} [hiddenMs]  how long the page was hidden while it filled (pagekit tracedFill), only when it was
+ * @property {FillRunWaits} [waits]  this frame's waits by what they were for (adapter.js settle, tallied by pagekit tracedFill), only when it waited
  * @property {[string, string][]} [labels]  field key, question text
  * @property {[string, string[]][]} [choices]  field key, a combo's options
  * @property {{ label: string | null, key: string | null }[]} [skipped]
@@ -878,6 +879,7 @@
  * @property {string} [step]
  * @property {boolean} [background]  the panel filled the quote tab while the agent was on another tab
  * @property {number} [hiddenMs]  how long the quote tab's page was hidden during the fill, only when it was
+ * @property {FillRunWaits} [waits]  the fill's waits by what they were for, summed over its frames (src/usage.js waitSummary), only when it waited
  * @property {boolean} [retried]  the second click of a Continue whose page stayed unchanged for about 6 s (watchNextStep)
  * @property {number} fields
  * @property {number} rounds
@@ -1320,3 +1322,12 @@
  * @typedef {import('zustand/vanilla').StoreApi<PanelState>} PanelStore
  */
 
+/**
+ * A fill's waits for the page, by what each was for (its `why`: answer, round, load, continue, …;
+ * `other` for one without): how many (`n`), their total ms (`ms`), how many ran to their limit
+ * (`limit`), and their total slack in ms (`slack`: the part of each wait that ended quiet after the
+ * last change, busy page, undefined component or request it saw). At most 12 kinds; whole numbers
+ * only, nothing of the page. The kit tallies them per frame (adapter.js settle); fill_run sums them
+ * (src/usage.js waitSummary), and the server keeps them in that shape (server/index.mjs RUN_FIELDS).
+ * @typedef {Record<string, { n: number, ms: number, limit: number, slack: number }>} FillRunWaits
+ */
