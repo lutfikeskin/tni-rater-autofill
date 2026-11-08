@@ -1370,6 +1370,24 @@ test('Progressive: the fill after a helper opened the page begins sooner; answer
   assert.deepEqual(starts(), [400, 100, 400]);
 });
 
+// REC-02 (audit 2026-11-07): a recording's slack came from the trace's observer alone, which sees
+// neither the attributes a wait watches nor a busy page: each wait says what it saw itself.
+test('a traced wait says the last change and the last moment it was held that it saw itself', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  addExtText(h, 'c', '2BA1');
+  await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }], { maxRounds: 2, trace: true });
+  const waits = said.filter((x) => x.what === 'wait');
+  assert.ok(waits.length >= 2, `${waits.length} waits`);
+  for (const w of waits) {
+    assert.ok(typeof w.lastChange === 'number' && w.lastChange >= w.start && w.lastChange <= w.start + w.ms, `${w.why}: lastChange within the wait`);
+    assert.ok(typeof w.lastHeld === 'number' && w.lastHeld >= w.start && w.lastHeld <= w.start + w.ms, `${w.why}: lastHeld within the wait`);
+  }
+});
+
 // Review of PR 284: the answer wait counts its quiet from the page's last request too, in a frame
 // inside the page as well as the top one. A request ending 160 ms after the answer is waited after.
 test('Progressive: in a frame inside the page, an answer waits 150 ms after the request it set off', async () => {
@@ -1393,6 +1411,8 @@ test('Progressive: in a frame inside the page, an answer waits 150 ms after the 
   await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }], { maxRounds: 2, trace: true });
   const wait = said.find((x) => x.what === 'wait' && x.why === 'answer');
   assert.ok(wait.ms >= 300, `${wait.ms} ms: past the request's end and 150 ms after it`);
+  // Review of PR 430: what held the wait is the request's end, not the 150 ms it waited after it.
+  assert.ok(wait.start + wait.ms - wait.lastHeld >= 120, `held until ${wait.lastHeld - wait.start} ms of ${wait.ms}`);
 });
 
 test('Progressive: the page changed after the helper\'s fill, so the next one waits the full 400 ms', async () => {
@@ -8457,6 +8477,28 @@ test('a quiet page is one whose components are all defined, each waited for up t
   const other = await run({ tags: ['grammarly-extension', 'grammarly-popups'] });
   assert.deepEqual([other.clicks, other.halted], [['Next'], false]);
   assert.ok(other.took < 3000, `took ${other.took} ms`);
+});
+
+// Review of PR 430: a recording's look at the components (lastHeld) started their 3 s from the
+// wait's first poll, not from when the page went quiet, so a recorded fill stopped waiting for a
+// component sooner than an unrecorded one. Recording a fill doesn't change how long it waits.
+test('a recorded fill waits for an undefined component as long as an unrecorded one', async () => {
+  const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
+  const run = async (trace) => {
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+    geicoBar(h, 'Business Class & USDOT');
+    h.document.body.append(geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?'), notDefinedYet(new FakeNode('gds-address-check')));
+    // The page keeps drawing for 2 s before it goes quiet.
+    const start = clock.Date.now();
+    h.context.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return clock.Date.now() - start < 2000 ? [{}] : []; } };
+    await h.kit.fill(plan, { maxRounds: 2, ...(trace ? { trace: true } : {}) });
+    return clock.Date.now() - start;
+  };
+  const plainRun = await run(false);
+  const traced = await run(true);
+  assert.ok(plainRun >= 4500, `unrecorded: ${plainRun} ms, 3 s after the page went quiet`);
+  assert.ok(Math.abs(traced - plainRun) < 500, `recorded ${traced} ms, unrecorded ${plainRun} ms`);
 });
 
 // A wait with a limit of 3 s (after a helper click, after an answer) and a component that appears
