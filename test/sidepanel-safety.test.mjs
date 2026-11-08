@@ -143,7 +143,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'continuedKey']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'continuedKey']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -292,6 +292,26 @@ test('a rejected automatic choice keeps blocking until manual change or explicit
   state.aiCache.get(sig).manual = false;
   state.aiCache.get(sig).confirmed = true;
   assert.equal(context.pendingAi(1, 'Quote').length, 0, 'explicit confirmation releases the blocker');
+});
+
+// CodeRabbit on #410: the fill's own tab's AI picks hold its Continue, read by that tab's quote,
+// whichever tab is in front.
+test('the fill options hold Continue for the fill\'s own tab\'s AI picks, by that tab\'s quote', () => {
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  const source = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4);
+  const carrier = { id: 'amwins', advance: { text: '^continue$' } };
+  // Tab 7's pick, made on its quote A; tab 8 (quote B) is in front.
+  const state = { tab: { id: 8, url: 'https://carrier.test/quote?id=B', carrier }, intake: { record: {} }, recording: null, tabSessions: new Map(),
+    aiCache: new Map([['7\n/quote\nm\np\nc\nitem', { done: 'auto', key: 'k', quoteHash: 'https://carrier.test/quote?id=A' }]]) };
+  const context = { state, switchOn: () => false, advanceFor: () => ({ text: '^continue$' }), stepScope: (page) => page, knownStep: () => null, unitNameFor: () => null,
+    editScope: (page) => page, pageOf: (url) => new URL(url).pathname, firstUnits: () => ({}), usage: { currentSession: () => null }, aiFingerprint: (url) => url };
+  vm.createContext(context);
+  vm.runInContext(`${source}\n${['tabMaps', 'givenEarlier', 'aiDecisionBlocks', 'pendingAi'].map(extractFunction).join('\n')}\nglobalThis.fillOptions = fillOptions;`, context);
+  const options = context.fillOptions(carrier, {}, true, {}, false, { tabId: 7, tabUrl: 'https://carrier.test/quote?id=A', intake: state.intake });
+  assert.equal(options.advance, null, 'tab 7\'s pick holds its Continue');
+  // A pick from another quote that tab showed before: not this quote's.
+  const other = context.fillOptions(carrier, {}, true, {}, false, { tabId: 7, tabUrl: 'https://carrier.test/quote?id=C', intake: state.intake });
+  assert.deepEqual(other.advance, { text: '^continue$' });
 });
 
 test('a persisted manual correction is protected after the panel reloads', () => {
@@ -492,8 +512,8 @@ test('the fill hands the kit the named-form check and what this tab\'s fills gav
 
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
-  assert.match(body, /formUnit: unitNameFor\(carrier, extra\.expectPage \?\? pageOf\(state\.tab\?\.url\), active, state\.intake\?\.record\)/);
-  assert.ok(body.includes('givenBefore: { ...givenEarlier(state.tab?.id), ...Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },'));
+  assert.match(body, /formUnit: unitNameFor\(carrier, extra\.expectPage \?\? page, active, fill\.intake\?\.record\)/);
+  assert.ok(body.includes('givenBefore: { ...givenEarlier(fill.tabId), ...Object.fromEntries([...(maps.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },'));
 });
 
 
@@ -977,7 +997,7 @@ test('an automatic follow-up on a step without a report fills it as a new page, 
   // autoFill alone: its helpers (fillContext and the rest) are the stubs above; its stop check is
   // the panel's own (no stop here).
   context.renderSteps ??= () => {};
-  vm.runInNewContext(`${extractFunction('autoFill').split('\nfunction ')[0]}\n${extractFunction('stopNoteFor')}`, context);
+  vm.runInNewContext(`${extractFunction('autoFill').split('\nfunction ')[0]}\n${extractFunction('stopNoteFor')}\n${extractFunction('filledReport')}`, context);
   await context.autoFill('Quote');
   assert.deepEqual(JSON.parse(JSON.stringify(fills)), [{ auto: 'page' }]);
   // Back on the step that has its report: a follow-up there stays a follow-up.
@@ -4991,6 +5011,36 @@ test('pages that are not stop pages are still filled and followed up', async () 
   assert.deepEqual(t.stops(), []);
 });
 
+// Audit 2026-11-07 (FLOW-08): the options were read from the tab in front, which may have changed
+// while the fill was prepared: tab A could be filled with tab B's done actions, done steps and AI holds.
+test('the fill options are the fill\'s own tab\'s, whichever tab is in front', () => {
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  const source = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4);
+  const carrier = { id: 'amwins', advance: { text: '^continue$', steps: ['Drivers'] }, keepTakenBack: ['Coverage'] };
+  const intakeA = { record: { vehicles: [{}, {}], drivers: [{}], trailers: [] } };
+  const pending = [];
+  const tabA = { filled: new Map([['ref:A', { path: 'a', shown: '1' }]]), doneActions: new Set(['addVehicle:0']), doneSteps: new Set(), visitedPages: new Set(['/quote-A']),
+    unitForms: { vehicles: { 0: 'form-a' }, drivers: {}, trailers: {} }, agentKeys: new Map([['/quote-A', new Set(['ref:A-agent'])]]) };
+  // Tab B in front: its own maps on `state`, tab A's kept aside.
+  const state = { tab: { id: 8, url: 'https://carrier.test/quote-B', carrier }, intake: { record: { vehicles: [], drivers: [], trailers: [] } }, recording: null,
+    filled: new Map([['ref:B', {}]]), doneActions: new Set(['addVehicle:1']), doneSteps: new Set(), visitedPages: new Set(['/quote-B']),
+    unitForms: { vehicles: { 0: 'form-b' }, drivers: {}, trailers: {} }, agentKeys: new Map([['/quote-B', new Set(['ref:B-agent'])]]), tabSessions: new Map([[7, tabA]]),
+    // What each tab's fills gave before the panel opened (givenEarlier).
+    givenEarlier: new Map([[7, { scope: 'intake-a', given: [['ref:A-early', { path: 'e', shown: '2' }]] }], [8, { scope: 'intake-a', given: [['ref:B-early', {}]] }]]) };
+  const context = { state, switchOn: () => false, pendingAi: (tabId, page) => { pending.push([tabId, page]); return []; }, advanceFor: () => ({ text: '^continue$' }),
+    stepScope: (page) => page, knownStep: () => null, unitNameFor: () => null, editScope: (page) => page, pageOf: (url) => new URL(url).pathname, firstUnits: () => ({}),
+    usage: { currentSession: () => ({ intakeId: 'intake-a' }) } };
+  vm.createContext(context);
+  vm.runInContext(`${source}\n${extractFunction('tabMaps')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, context);
+  const options = JSON.parse(JSON.stringify(context.fillOptions(carrier, {}, true, { vehicles: 1 }, false, { tabId: 7, tabUrl: 'https://carrier.test/quote-A', intake: intakeA })));
+  assert.deepEqual([options.filledBefore, options.doneActions, options.visitedPages, options.skip, options.units.bound.vehicles, options.units.count.vehicles, Object.keys(options.takenBack.keys)],
+    [['ref:A'], ['addVehicle:0'], ['/quote-A'], ['ref:A-agent'], { 0: 'form-a' }, 2, ['ref:A-early', 'ref:A']]);
+  assert.deepEqual(Object.keys(options.givenBefore), ['ref:A-early', 'ref:A'], 'tab A\'s answers, those given before the panel opened too');
+  assert.deepEqual(pending, [[7, '/quote-A']], 'tab A\'s AI holds');
+  // Without the fill's tab, the tab in front's, as before.
+  assert.deepEqual(JSON.parse(JSON.stringify(context.fillOptions(carrier, {}, true, {}, false))).doneActions, ['addVehicle:1']);
+});
+
 test('the fill options hand the carrier\'s stop pages to the page kit', () => {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
@@ -5399,6 +5449,79 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   } }];
   return { state, ui, seen, context, intakeA, started, release, reject, results };
 }
+
+// Audit 2026-11-07 (FLOW-08): the tab in front changed during the last wait before the kit was asked
+// (Chrome's read of the tab's address): the fill doesn't go ahead with that tab's options.
+test('a fill whose tab stopped being the panel\'s during its last wait is not sent to the kit', async () => {
+  for (const auto of [true, false]) {
+    const t = fillHarness();
+    let asked = 0;
+    t.context.runKit = async () => { asked++; return []; };
+    t.context.pageMoved = async () => { t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier }; return false; };
+    if (auto) { t.state.autoPages.add('/quote-A'); await t.context.autoFill('/quote-A'); } else await t.context.fillPage();
+    assert.equal(asked, 0, auto ? 'a follow-up' : 'a fill the agent asked for');
+    assert.equal(t.state.filling, false);
+    // The agent's own fill says on its own tab's report that it didn't run (CodeRabbit on #410); a
+    // follow-up ends quietly.
+    assert.deepEqual(t.seen.problems, auto ? [] : [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+  }
+});
+
+// CodeRabbit on #410: a page's opening fill dropped so isn't started again when the agent goes back
+// (the recorder there announces no page), so it says to fill the page; an earlier fill's error on
+// that report stays; and an intake corrected during the wait is said as a stale fill, not a tab change.
+test('a dropped fill says why on its page, keeping an earlier error there', async () => {
+  const moved = (t) => async () => { t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier }; return false; };
+  const opening = fillHarness();
+  opening.context.pageMoved = moved(opening);
+  await opening.context.fillPage({ auto: 'page' });
+  assert.deepEqual(opening.seen.problems, [{ tabId: 7, text: 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.' }]);
+  const failed = fillHarness();
+  failed.state.reports.set('7|report', { error: 'Automatic filling paused after an error. Check the page, then fill again.' });
+  failed.context.pageMoved = moved(failed);
+  await failed.context.fillPage();
+  assert.deepEqual(failed.seen.problems, [], 'the earlier error stays on the report');
+  const corrected = fillHarness();
+  corrected.context.pageMoved = async () => { corrected.state.intakeRevision++; return false; };
+  await corrected.context.fillPage();
+  assert.equal(corrected.seen.problems.length, 1);
+  assert.match(corrected.seen.problems[0].text, /You corrected the intake during the fill/);
+  assert.deepEqual(corrected.seen.logged.map((e) => e.error), ['stale: intake changed during the fill']);
+  // CodeRabbit on #410: the tab switched while the unit list was read (pickListItem), the fill's
+  // first wait, is said the same way.
+  const listed = fillHarness();
+  listed.context.pickListItem = async () => { listed.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: listed.state.tab.carrier }; };
+  await listed.context.fillPage();
+  assert.deepEqual(listed.seen.problems, [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+});
+
+// CodeRabbit on #410: a report made only to say a fill was dropped isn't a filled page's, so the
+// page's next fill (an earlier AmWINS step at the same address filled, a later edit) is its opening
+// fill with its report, not a follow-up.
+test('a page whose only report says its fill was dropped gets an opening fill next, not a follow-up', async () => {
+  const t = fillHarness();
+  t.state.reports = new Map();
+  t.context.fillProblem = (ctx, text, kind) => { t.state.reports.set(`${ctx.tabId}|report`, { key: `${ctx.tabId}|report`, [kind]: text }); };
+  t.context.pageMoved = async () => { t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier }; return false; };
+  await t.context.fillPage({ auto: 'page' });
+  assert.equal(t.state.reports.get('7|report').unfilled, true);
+  // Back on tab 7: the follow-up there fills the page as a new one.
+  t.state.tab = { id: 7, url: 'https://carrier.test/quote-A', carrier: t.state.tab.carrier };
+  t.state.autoPages.add('/quote-A');
+  let opening = 0;
+  const fillPage = t.context.fillPage;
+  t.context.fillPage = (o) => { if (o?.auto === 'page') opening++; return fillPage(o); };
+  t.context.pageMoved = async () => false;
+  t.context.runKit = async () => [];
+  await t.context.autoFill('/quote-A');
+  assert.equal(opening, 1, 'filled as the page\'s opening fill');
+  // A report a fill made is a filled page's: a follow-up there stays one.
+  t.state.reports.set('7|report', { key: '7|report', fields: 3 });
+  opening = 0;
+  t.context.runKit = async () => [];
+  await t.context.autoFill('/quote-A');
+  assert.equal(opening, 0);
+});
 
 // Codex reproduction (stale-fill-reproduction.mjs): a fill's results came back after the agent had
 // loaded another intake and moved to its tab, and were remembered and logged as that intake's.
@@ -8305,7 +8428,7 @@ test('a GEICO unit list drawn gets a follow-up fill with either switch on', () =
 function fillOptionsOf(state, carrier, active, { autoAdvance = false, unitsListed = false } = {}) {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const context = { state, URL, knownStep, advanceFor, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
-  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\n${extractFunction('switchOn')}\nglobalThis.fillOptions = fillOptions;`, context);
+  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\n${extractFunction('switchOn')}\n${extractFunction('tabMaps')}\nglobalThis.fillOptions = fillOptions;`, context);
   return context.fillOptions(carrier, {}, autoAdvance, active, unitsListed);
 }
 
@@ -8349,7 +8472,7 @@ test('the kit is told the stop steps by name, and the plan\'s units with the for
     active: { vehicles: 0, drivers: 0, trailers: 0 }, count: { vehicles: 0, drivers: 0, trailers: 0 }, bound: { vehicles: {}, drivers: {}, trailers: {} } }]);
   // Both fills hand over the units their plan was built for.
   // and whether the unit list on screen holds every intake unit (GEICO's Looks Good: advanceFor).
-  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance, ctx\.active, ctx\.unitsListed\);/g) ?? []).length, 2);
+  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance, ctx\.active, ctx\.unitsListed, ctx\);/g) ?? []).length, 2);
   const start = SIDEPANEL.indexOf('const fillOptions =');
   assert.match(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start)), /stopSteps: Object\.keys\(carrier\.stopSteps \?\? \{\}\)/);
 });
