@@ -615,7 +615,10 @@ const NEGATED = /\b(?:not|never|no)\b|n't\b/i;
 // Also the business started or opened ("started the business a few years ago"), and
 // "operating": "Operating for 4 years" may mean the trucks, not the business, so it is a statement
 // the reader doesn't take, the agent's with the line quoted (the maintainer, 2026-11-08: audit DATA-15).
-const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded|operating|${STARTED}\\s+(?:the\\s+)?(?:business|biz|company)|(?:business|biz|company)\\s+${STARTED})\\b|\\bold\\s+${AGE_OF_BUSINESS}`, 'i');
+// "Operating" and "Est." say the business's time only with a duration or "since" right after them:
+// "Operating long haul" or "Operating 3 trucks, 2020 Freightliner" is not years in business.
+const DURATION = '(?:(?:a\\s+few|a|an|several|many|some|over|about|almost|nearly|\\d+\\+?)\\s+)*(?:years?|yrs?|months?|mos?|decades?)\\b';
+const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded|${STARTED}\\s+(?:(?:the|a|my|our|his|her|their)\\s+)?(?:business|biz|company)|(?:business|biz|company)\\s+${STARTED})\\b|\\b(?:operating(?:\\s+for)?|est\\b\\.?)\\s+(?:since\\b|${DURATION})|\\bold\\s+${AGE_OF_BUSINESS}`, 'i');
 const BIZ_TIME = /\b(?:years?|yrs?|months?|mos?|decades?|since|ago|long|while|(?:19|20)\d{2})\b/i;
 const statesBusinessTime = (clause) => BIZ_MENTION.test(clause) && BIZ_TIME.test(clause);
 // A qualifier just before the match that the match itself doesn't hold (",less than 3 years").
