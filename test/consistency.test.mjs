@@ -260,6 +260,7 @@ const NOT_TRACKED = {
   'src/content/page-watch.js': "developer-recording.md's proposal, not built",
   'test/fixtures/recording': "developer-recording.md's proposal, not built",
   'summary.json': "a file inside a developer recording's zip",
+  '.claude/worktrees': "other sessions' worktrees, local and never tracked (named by testing.md's lint note)",
   'recording.json': "a file inside a developer recording's zip",
 };
 // A document's paths that aren't in the repository: backticked ones under its own folders, backticked
