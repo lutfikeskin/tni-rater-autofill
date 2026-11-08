@@ -846,6 +846,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // Where its answer comes from (plan.js `source`) and whether review mode asks the agent to
           // confirm it, for the usage log (a TNI standard or an intake fact; a check item or not).
           source: step.source ?? null, review: !!step.reviewRequired,
+          // Its answer read a value the agent corrected in the panel (plan.js `edited`).
+          ...(step.edited ? { edited: true } : {}),
           // A field another step of a one-address application holds (AmWINS keeps every step's
           // section in the page, hidden): filled again here, but not this step's question.
           ...(step.hidden && otherStep(c.el) ? { otherStep: true } : {}) });

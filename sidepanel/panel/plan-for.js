@@ -21,5 +21,12 @@ import { overlayFor } from '../../src/agent-defaults/index.js';
  * @returns {PlanStep[]}
  */
 export function planFor(record, carrier, active = {}) {
-  return buildPlan(record, carrier, active, { overlay: overlayFor(carrier?.id) });
+  return buildPlan(record, carrier, active, { overlay: overlayFor(carrier?.id), edited: editedOf(record) });
 }
+
+// The record paths the agent set or corrected in the panel for this record (the intake's
+// agentEdited), told by the panel's core: each step reading one is marked `edited` for the log.
+/** @type {(record: ClientRecord) => string[]} */
+let editedOf = () => [];
+/** @param {(record: ClientRecord) => string[]} fn */
+export function onPlanEdits(fn) { editedOf = fn; }

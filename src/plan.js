@@ -50,15 +50,16 @@ export function reviewWarn(record, carrier) {
  * @param {PlanOptions} [options]  overlay: a hook given each field step with its rule, before the
  *   step's resolution is decided; the step it returns is the plan's. None (the default) leaves every
  *   step as the rules give it. plan.js knows nothing of what plugs in (docs/agent-defaults-spec.md).
+ *   edited: the record paths the agent set or corrected in the panel (the intake's agentEdited).
  * @returns {PlanStep[]}
  */
-export function buildPlan(record, carrier, active = {}, { overlay = null } = {}) {
+export function buildPlan(record, carrier, active = {}, { overlay = null, edited = null } = {}) {
   // A carrier's `rowSections`: repeating sections its own rules answer row by row, where a generic
   // label rule never answers (a row the intake doesn't describe stays the agent's).
   const generic = carrier?.useGenericRules === false ? [] : carrier?.rowSections?.length
     ? GENERIC_RULES.map((rule) => ({ ...rule, notWithin: carrier.rowSections })) : GENERIC_RULES;
   const rules = [...(carrier?.rules ?? []), ...generic];
-  return [...fieldSteps(rules, record, carrier, active, overlay), ...actionSteps(carrier, record, active)];
+  return [...fieldSteps(rules, record, carrier, active, overlay, edited), ...actionSteps(carrier, record, active)];
 }
 
 const withIndex = (path, active) => {
@@ -199,7 +200,8 @@ function onlyIfOf(conditions) {
  * @param {StepOverlay | null} overlay
  * @returns {FieldStep[]}
  */
-function fieldSteps(rules, record, carrier, active, overlay) {
+function fieldSteps(rules, record, carrier, active, overlay, edited = null) {
+  const agentSet = new Set(edited ?? []);
   const review = !supportedClass(record, carrier);
   const reviewNote = review ? reviewWarn(record, carrier) : null;
   const expanded = rules.flatMap((rule) => {
@@ -391,6 +393,9 @@ function fieldSteps(rules, record, carrier, active, overlay) {
       withOption: typeof rule.withOption === 'function' ? rule.withOption(record, active) : rule.withOption ?? null,
       value: value === undefined || value === '' ? null : value,
       from: from?.length ? from : null,
+      // Its answer reads a record path the agent set or corrected in the panel (its own path, or one
+      // a derived answer was worked out from): the agent's value, not the parser's, for the log.
+      ...(agentSet.size && [path, ...(from ?? [])].some((p) => agentSet.has(p)) ? { edited: true } : {}),
       // Which row of a repeated question is this unit's: the one holding a control matching
       // `selector` that reads as the unit's `value` (AmWINS' vehicle rows by their VIN). The path
       // is resolved for the unit so the page kit can name it ("vehicle 2"); never its position.

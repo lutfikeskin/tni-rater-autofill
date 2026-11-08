@@ -386,6 +386,7 @@
  * @property {boolean} standard
  * @property {boolean} reviewRequired
  * @property {boolean} manualOnly
+ * @property {true} [edited]  its answer reads a record path the agent set or corrected in the panel
  * @property {string | null} q
  * @property {string | null} tni  the TNI rulebook entry its rule names (CarrierRule `tni`)
  * @property {{ id: string, amount?: string, tni?: string, ask?: boolean }} [agentDefault]  the agent's own default
@@ -554,6 +555,7 @@
  * buildPlan's options.
  * @typedef {object} PlanOptions
  * @property {StepOverlay | null} [overlay]
+ * @property {string[] | null} [edited]  the record paths the agent set or corrected in the panel
  */
 
 // Agents' own defaults (src/agent-defaults/, docs/agent-defaults-spec.md)
@@ -674,6 +676,7 @@
  * what happened. Which keys are set depends on the list it is in.
  * @typedef {object} FillItem
  * @property {number | null} [stepId]
+ * @property {boolean} [edited]  filled: its plan step's answer read a value the agent corrected in the panel
  * @property {string | null} [label]  the question as the page shows it
  * @property {string | null} [path]
  * @property {string} [name]
@@ -915,6 +918,7 @@
  * @property {true} [standard]
  * @property {true} [manualOnly]
  * @property {true} [review]
+ * @property {true} [edited]  the answer read a value the agent set or corrected in the panel
  * @property {string} [shown]
  * @property {FailCode} [code]  failed: why, as a code (FailCode)
  * @property {string} [reason]

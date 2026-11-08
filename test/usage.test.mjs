@@ -92,6 +92,26 @@ test('change and fill events name the control, so repeated vehicle rows stay apa
   assert.deepEqual([filled.q, filled.key], ['2B9D', '2B9D@3']);
 });
 
+// Audit 2026-11-07, DATA-14: an answer from a value the agent corrected in the panel is logged as
+// such, so the parser's accuracy isn't counted with the agent's corrections.
+test('a fill_field says when its answer read the agent\'s correction, and the panel tells the plan', async () => {
+  const [, edited, plain] = fillEvents([{ filled: [
+    { key: 'k1', label: 'Date of birth', controlKind: 'text', source: 'intake', path: 'drivers[0].dob', edited: true },
+    { key: 'k2', label: 'Date of birth', controlKind: 'text', source: 'intake', path: 'drivers[1].dob' },
+  ] }], { carrier: 'progressive', page: 'AddDriver', view: 't1', overwrite: false, ms: 1, redact });
+  assert.deepEqual([edited.source, edited.edited], ['intake', true]);
+  assert.equal(plain.edited, undefined);
+  const { buildPlan } = await import('../src/plan.js');
+  const { progressive } = await import('../src/carriers/progressive.js');
+  const steps = buildPlan(record, progressive, {}, { edited: ['drivers[0].dob'] }).filter((s) => s.path === 'drivers[0].dob');
+  assert.ok(steps.length && steps.every((s) => s.edited === true));
+  assert.ok(buildPlan(record, progressive, {}).every((s) => !('edited' in s)), 'no edits, no mark');
+  const planFor = fs.readFileSync(new URL('../sidepanel/panel/plan-for.js', import.meta.url), 'utf8');
+  const core = fs.readFileSync(new URL('../sidepanel/panel/core.js', import.meta.url), 'utf8');
+  assert.match(planFor, /edited: editedOf\(record\)/);
+  assert.match(core, /onPlanEdits\(\(record\) => \(state\.intake\?\.record === record \? state\.intake\.agentEdited \?\? \[\] : \[\]\)\)/);
+});
+
 // Audit 2026-11-07, FLOW-12: a fill of the quote tab while the agent was on another, and how long its
 // page was hidden (the longest a frame saw), so the weekly review can tell throttled fills apart.
 test('a fill run says it ran in the background and how long its page was hidden, only when so', () => {

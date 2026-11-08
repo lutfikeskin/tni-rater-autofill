@@ -546,6 +546,21 @@ test('keeps a panel crash with its bounded message and extension frames only', a
   assert.deepEqual(bad.dropped.sort(), ['error', 'stack', 'where']);
 });
 
+test('a fill_field keeps whether its answer read the agent\'s correction, as a boolean only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'fill_field', filled: undefined, result: 'filled', q: null, key: 'k', label: 'Date of birth', path: 'drivers[0].dob', controlKind: 'text', source: 'intake', edited: true }),
+      ev({ type: 'fill_field', filled: undefined, result: 'filled', q: null, key: 'k', label: 'Date of birth', path: 'drivers[0].dob', controlKind: 'text', source: 'intake', edited: '01/02/1980' }),
+    ] })).json();
+    assert.equal(r.accepted, 2);
+  });
+  const [ok, bad] = stored(dataDir);
+  assert.equal(ok.edited, true);
+  assert.equal(bad.edited, undefined);
+  assert.deepEqual(bad.dropped, ['edited']);
+});
+
 test('a page layout keeps the page\'s messages, bounded', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {

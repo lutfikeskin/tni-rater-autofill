@@ -86,6 +86,8 @@ Every carrier rule with a `value` declares where its answer comes from ([test/pr
 | `agent-default` | An agent's own default in place of a TNI standard ([agents' own defaults](agent-defaults-spec.md)); set by the module's overlay, never by a rule, only where the rule's own source is `standard` and the agent said for this quote to use their defaults | Filled, `standard: false`; the carrier page marks it teal and the panel's fill report tags it "Your default". Where the carrier doesn't list the amount, or a check stops it (UM above the liability limit), the step is the agent's instead, never TNI's answer in its place |
 | `attestation` | Something the agent must assert (the AmWINS declaration, Progressive continuous coverage when the intake doesn't show the customer currently insured, Progressive "USDOT belongs to the business" when the intake has no business or owner name to check) | Never filled, as `fact` |
 
+A step whose answer reads a record path the agent set or corrected in the panel (its own `path`, or one in a derived answer's `from`) carries `edited: true`: `buildPlan`'s `edited` option takes the intake's `agentEdited`, which the panel's `planFor` passes for the intake on screen. Its `source` is unchanged; the fill report's item and its `fill_field` event say `edited` ([learning](learning.md)).
+
 ### Resolution
 
 Every field step and every fill report item also carries one `resolution` ([resolution.js](../src/resolution.js), typed in [types.js](../types.js)): `answer`, `method`, `explanation` and `status`. It is built only from the fields above and says the same thing in one place. The panel and the AI read it through `resolutionOf`:

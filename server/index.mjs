@@ -193,7 +193,8 @@ export const EVENT_FIELDS = {
   // how: what found the field (field = data-model name, text, option, selector, label, name).
   // source: where the answer comes from (plan.js; FIELD_SOURCES below); standard, manualOnly,
   // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
-  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'code', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review'],
+  // edited: the answer read a value the agent set or corrected in the panel.
+  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'code', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review', 'edited'],
   // A button the agent clicked themselves: its text (60 characters), and the step on screen.
   agent_click: ['text', 'step'],
   // The agent dismissed a "needs you" item (×): the question, and why it needed them.
@@ -484,7 +485,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       if (out.since !== undefined && !(Number.isSafeInteger(out.since) && out.since >= 0)) drop('since');
     }
     if (out.source !== undefined && !FIELD_SOURCES.includes(out.source)) drop('source');
-    for (const k of ['standard', 'manualOnly', 'review']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
+    for (const k of ['standard', 'manualOnly', 'review', 'edited']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
     // Why a fill's answer failed, as a code (types.js FailCode): words and dots, never text.
     if (out.type === 'fill_field' && out.code !== undefined && !(typeof out.code === 'string' && /^[a-z]+\.[a-z-]{1,30}$/.test(out.code))) drop('code');
     if (out.background !== undefined && out.background !== true) drop('background');
