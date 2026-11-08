@@ -135,7 +135,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction', 'continuedKey']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -5196,6 +5196,21 @@ test('a recorder already in the page is told to resume, unless a fill or AI appl
   assert.match(extractFunction('fillPage'), /await ensureRecorder\(\);\s+await tellRecorder\('pause', tabId\);/, 'a fill pauses right after, with filling already set');
 });
 
+// #404 review: AmWINS' next step opens at the same address, so a retry fill that found the step
+// already moved on clicked that step's Continue, its first, and logged it as a retry. A fill is a
+// retry only when the step it continued is the one the retry was for.
+test('a retry fill that continued another step is not logged as a retry', async () => {
+  for (const [continued, expected] of [['Step||Vehicles', true], ['Step||Drivers', undefined]]) {
+    const t = fillHarness();
+    t.context.continuedKey = () => continued;
+    const run = t.context.fillPage({ auto: 'page', retried: 'Step||Vehicles' });
+    await t.started;
+    t.release(t.results);
+    await run;
+    assert.equal(t.seen.logged.find((e) => e.type === 'fill_run')?.retried, expected, continued);
+  }
+});
+
 // Audit 2026-10-08, finding 6: a Continue that didn't take went unreported after the silent retry.
 test('a Continue that did not take after its retry pauses automatic filling, tells the agent and is logged', async () => {
   const logged = [], appended = [], asked = [];
@@ -5209,8 +5224,9 @@ test('a Continue that did not take after its retry pauses automatic filling, tel
   assert.equal(fills, 1, 'the lost Continue is clicked once more, silently');
   // Logged as the retry it is (audit 2026-11-07, FLOW-11): fillPage marks its fill (ctx.retried),
   // and its fill_run and fill_error say `retried`.
-  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [{ auto: 'page', retried: true }]);
-  assert.match(extractFunction('fillPage'), /const ctx = fillContext\([^\n]*\n\s*if \(retried\) ctx\.retried = true;/);
+  // Its retry names the step it is for (#404 review): only a fill that continues that step is one.
+  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [{ auto: 'page', retried: 'Step||Vehicles' }]);
+  assert.match(extractFunction('afterFill'), /const doneKey = continuedKey\(frames, page, carrier, active\);/);
   assert.match(extractFunction('logFill'), /retried: !!ctx\.retried,/);
   assert.match(extractFunction('logFillError'), /\.\.\.\(ctx\.retried \? \{ retried: true \} : \{\}\)/);
   assert.deepEqual([[...state.advanceRetried], state.doneSteps.has('Step||Vehicles'), state.autoPaused, logged], [['Step||Vehicles'], false, false, []]);

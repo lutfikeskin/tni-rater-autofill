@@ -87,8 +87,9 @@ function resumeHeldFill() {
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
-// `retried`: the second click of a Continue whose page stayed unchanged (watchNextStep), logged as such.
-/** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean, retried?: boolean }} [options] */
+// `retried`: the second click of a Continue whose page stayed unchanged (watchNextStep): the step it is
+// for (its doneSteps key), logged as a retry only when this fill continued that step.
+/** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean, retried?: string | false }} [options] */
 async function fillPage({ auto = false, confirmed = null, continuing = false, retried = false } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
   if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
@@ -136,7 +137,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
-  if (retried) ctx.retried = true;
+  if (retried) ctx.retried = retried;
   await pickListItem(carrier, page, ctx);
   // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
   if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); resumeHeldFill(); return; }
@@ -195,6 +196,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     const retrying = rememberFill(frames, ctx);
     tabMaps(tabId).autoPages.add(page);
     followUp = afterFill(frames, ctx);
+    // AmWINS' next step at the same address: its own first Continue isn't the retry.
+    if (ctx.retried && continuedKey(frames, page, carrier, ctx.active) !== ctx.retried) ctx.retried = false;
     logFill(ctx, frames, results, started);
     // The report is its own tab's: kept for it when the agent has moved to another tab meanwhile.
     // Stopped by the agent before the kit was done (a frame halted): said so, and the dock offers to
@@ -453,6 +456,15 @@ function unitArrival(carrier, from, page) {
   }
 }
 
+// The step a fill continued from, as its doneSteps entry, or null: scoped by the step as the kit read
+// it (the tab's step is noted later), per form and button where the carrier continues a step so
+// (advance `byForm`: advanceKey).
+/** @param {FillReport[]} frames */
+function continuedKey(frames, page, carrier, active) {
+  const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
+  return advanced?.stepKey ? stepScope(page, carrier, active, carrier?.layoutSteps ? knownStep(carrier, advanced.stepKey) : undefined) + (advanced.advanceKey ?? advanced.stepKey) : null;
+}
+
 // Bookkeeping after a fill: a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
@@ -466,7 +478,7 @@ function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, i
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
   // Scoped by the step the fill continued from, as the kit read it (the tab's step is noted later);
   // per form and button where the carrier continues a step so (advance `byForm`: advanceKey).
-  const doneKey = advanced?.stepKey ? stepScope(page, carrier, active, carrier?.layoutSteps ? knownStep(carrier, advanced.stepKey) : undefined) + (advanced.advanceKey ?? advanced.stepKey) : null;
+  const doneKey = continuedKey(frames, page, carrier, active);
   if (doneKey) maps.doneSteps.add(doneKey);
   // Keep the origin's bookkeeping, but never start helpers or Continue work in another tab.
   if (!fillCurrent(ctx)) return false;
@@ -540,7 +552,7 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     if (retries && unchanged >= patience && doneKey && !state.filling && !state.advanceRetried.has(doneKey)) {
       state.advanceRetried.add(doneKey);
       state.doneSteps.delete(doneKey);
-      fillPage({ auto: 'page', retried: true });
+      fillPage({ auto: 'page', retried: doneKey });
       return;
     }
     if (unchanged >= patience && doneKey && !state.filling && (!retries || state.advanceRetried.has(doneKey))) {
