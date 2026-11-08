@@ -466,3 +466,28 @@ test('the report says when the panel followed another tab, and for how long, and
   assert.match(report, /The recorded tab was closed, which ended the recording\./);
   assert.ok(!/followed another tab/.test(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) })));
 });
+
+// Audit 2026-11-07, AI-08: what Luna was asked and answered, in the timeline and its own section.
+test('the report tells each Luna call in the timeline, and what it was asked, cited and answered', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const state = { fields: { f1: { label: 'Hazmat placards?', current: '', options: { o0: 'Yes', o1: 'No' } }, f2: { label: 'Years with prior carrier', current: '', options: { o0: '1', o1: '2+' } } },
+    sources: { 'general.hazmat-blank': { basis: 'tni_rule', rule: 'A blank hazmat placard is No.' }, s1: { basis: 'intake', path: 'operations.hazPlacard', value: false } } };
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Operations', top: true },
+    { kind: 'luna', t: t0 + 4000, frame: 0, page: '/quote', call: 'propose', ms: 3200, model: 'gpt-6-luna', tokensIn: 900, tokensOut: 40, request: state, error: null,
+      answer: { decisions: { f1: { option: 'o1', sourceIds: ['s1', 'general.hazmat-blank'], explanation: 'The intake says no placards.', missingInformation: [], conflicts: [] },
+        f2: { option: '__leave__', sourceIds: [], explanation: '', missingInformation: ['how long with the prior carrier'], conflicts: [] } } } },
+    { kind: 'luna', t: t0 + 6000, frame: 0, page: '/quote', call: 'verify', ms: 1500, model: 'gpt-6-luna', tokensIn: 300, tokensOut: 10, error: null,
+      request: { sources: state.sources, proposed: { f1: { label: 'Hazmat placards?', answer: 'No', sourceIds: ['s1'] } } }, answer: { decisions: { f1: { supported: true, gap: '' } } } },
+    { kind: 'luna', t: t0 + 7000, frame: 0, page: '/quote', call: 'propose', ms: 45000, model: null, request: state, answer: null, error: 'Luna took too long. Nothing was applied.' },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:10.000Z' }, events });
+  assert.match(report, /Luna answered 2 questions: 1 picked, 1 left \(3\.2 s, 900 tokens in, 40 out\)/);
+  assert.match(report, /Luna checked 1 answer: 1 supported \(1\.5 s, 300 tokens in, 10 out\)/);
+  assert.match(report, /Luna's review failed after 45\.0 s: Luna took too long\. Nothing was applied\./);
+  assert.match(report, /## Luna\n/);
+  assert.match(report, /- "Hazmat placards\?": picked "No"\n {2}- cited: operations\.hazPlacard = false; general\.hazmat-blank: "A blank hazmat placard is No\."\n {2}- why: The intake says no placards\./);
+  assert.match(report, /- "Years with prior carrier": left\n {2}- missing: how long with the prior carrier/);
+  assert.match(report, /- "Hazmat placards\?": "No" on operations\.hazPlacard = false → supported/);
+  assert.doesNotMatch(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) }), /## Luna/);
+});
