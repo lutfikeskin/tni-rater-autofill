@@ -979,6 +979,18 @@
  */
 
 /**
+ * @typedef {object} AiLeaveEvent  sidepanel.js runAssist: one question Luna left (audit 2026-11-07, AI-07)
+ * @property {'ai_leave'} type
+ * @property {string} carrier
+ * @property {string} [page]
+ * @property {string | null} q  the question's code, when it has one
+ * @property {string} label  redacted
+ * @property {string} [controlKind]
+ * @property {'restricted' | 'missing' | 'conflict' | 'chose' | 'noSource' | 'unverified' | 'tooLarge' | null} leaveWhy
+ * @property {string | null} intakePath  the intake field the question maps to, if any
+ */
+
+/**
  * The events src/usage.js builds. The panel logs others of its own (sidepanel.js).
  * @typedef {IntakeProfileEvent | CheckDismissedEvent | AgentSettingsEvent | ClientErrorEvent | FieldChangeEvent | FillRunEvent | FillFieldEvent | RecalcLayoutEvent} UsageEvent
  */
@@ -1378,5 +1390,12 @@
 /**
  * Zustand vanilla store for the side panel state.
  * @typedef {import('zustand/vanilla').StoreApi<PanelState>} PanelStore
+ */
+
+/**
+ * A fill the panel says is running, over its 'fill-watch' port to the service worker
+ * (sidepanel/panel/fill-watch.js to src/fill-watch.js): the worker stops that run (the kit's
+ * stopRun) if the port goes while it runs. The panel says `{ tabId: null }` once the fill ended.
+ * @typedef {{ tabId: number, run: string, world: 'MAIN' | 'ISOLATED' }} WatchedRun
  */
 

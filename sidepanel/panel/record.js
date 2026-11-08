@@ -72,7 +72,10 @@ function openSettings(focusId = null) {
   state.settingsOpen = true;
   showScreen();
   if (!focusId) { $('view').scrollTop = 0; return; }
+  // The fold that holds the box is opened first (Home's setup checklist asks for ai-on, in the AI
+  // fold, which the agent may have closed).
   if ($('advanced').contains($(focusId))) $('advanced').open = true;
+  if ($('assistant').contains($(focusId))) $('assistant').open = true;
   if (focusId === 'ai-openai-key') openKeyForm(true);
   else $(focusId).focus();
   $(focusId).scrollIntoView({ block: 'center', behavior: 'smooth' });

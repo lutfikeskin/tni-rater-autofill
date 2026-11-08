@@ -46,6 +46,8 @@ stopWaitsWhen(() => !!running && (running.report.halted || running.timeUp()));
 // Fills the agent stopped before they began here (`run`: the panel's id for the fill; Stop can
 // come while the panel still prepares, before fill() starts): such a fill halts as it starts.
 const stoppedRuns = new Set();
+// How long a fill that begins waits for one it stopped in its frame to end (fill).
+const TAKEOVER_MS = 15000;
 // The page a fill left settled as it ended, on a page that waits on its server (Progressive): a
 // helper (Add Vehicle, Cargo Van, View bill plan options) opened the next page and the fill's wait
 // held until that page and its requests were done. The next fill, a moment later, finds the same page,
@@ -85,6 +87,15 @@ export function progress(seen = null) {
 export function stop(run = null) {
   if (run != null && (!running || running.run !== run)) stoppedRuns.add(run);
   if (!running) return false;
+  running.halt(STOP_HALT);
+  return true;
+}
+// One run stopped, as Stop does, and no other (audit 2026-11-07, UX-03): the service worker's, for
+// a fill whose panel went away (src/fill-watch.js). A fill another panel began since is left alone;
+// one with that id that hasn't begun here yet halts as it starts.
+export function stopRun(run) {
+  if (run == null) return false;
+  if (!running || running.run !== run) { stoppedRuns.add(run); return false; }
   running.halt(STOP_HALT);
   return true;
 }
@@ -233,6 +244,22 @@ export function resolveItems(report, plan) {
  * @returns {Promise<FillReport>}
  */
 export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, budgetMs = FILL_BUDGET_MS, deadline = null, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
+  // A fill still running here as this one begins was left by a panel that went away (closed while it
+  // ran, or reloaded): it stops as on Stop, and this one begins only once it has ended, so two fills
+  // never run in one frame: its waits, drivers and cleanup (the hidden selectors, the fill's units)
+  // stay its own, and this one's Stop reaches all that runs (audit 2026-11-07, UX-03; CodeRabbit on
+  // #478). A halted fill ends at its next wake; one still not ended after TAKEOVER_MS is said. The
+  // fill running is read again after each wait: another fill waiting too may have begun first, and
+  // it is stopped and waited for in turn (nothing awaits between here and `running = thisFill`), so
+  // the newest fill is the one that runs.
+  for (const end = Date.now() + TAKEOVER_MS; running;) {
+    const previous = running;
+    previous.halt(STOP_HALT);
+    while (running === previous) {
+      if (Date.now() >= end) throw new Error('An earlier fill on this page is still ending. Fill again in a moment.');
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
   /** @type {RunState} */
   const state = /** @type {any} */ ({});
   // The plan as given (helpers included, which the fill sets apart below), for a fill begun again.
@@ -500,9 +527,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     halt(EDIT_HALT);
   });
   phase('reading');
-  const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
+  // The page's own calls (pageBusy: Progressive's Ext.Ajax.isLoading) can throw in the fresh-page
+  // check as in the wait: either way the fill lets go as it throws (CodeRabbit on #478).
   let settled;
-  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); clearTimeout(budget); throw e; }
+  try {
+    const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
+    settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' });
+  } catch (e) { releaseEditGuard(); clearTimeout(budget); if (running === thisFill) running = null; throw e; }
   phase(null);
   // Stopped while the page settled: nothing was done.
   if (!settled || state.report.halted) {

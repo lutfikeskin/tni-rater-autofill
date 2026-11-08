@@ -5,7 +5,7 @@ import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intak
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
   firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES, isLunaModel,
-  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION, citedSaid, citedRuleFull } from '../src/ai/luna.js';
+  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION, restsOnClientText, citedSaid, citedRuleFull } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { CARRIER_PARTS } from '../src/ai/tni-rules.js';
 import { settingsFrom } from '../src/ai/providers.js';
@@ -112,6 +112,28 @@ test('a pick resting only on what the client wrote in a free-text box stays a su
   assert.equal(pick([rule]).autoOk, true, 'a TNI rule alone is unchanged');
 });
 
+// Audit 2026-11-07, AI-14 (maintainer, 2026-11-07): any text the client typed, short fields too.
+test('a pick resting only on short text the client typed (what they haul, filings, ELD brand, radius) stays a suggestion', () => {
+  const checked = envelope({ decisions: { f1: { supported: true, gap: '' } } });
+  const record = { ...context.record, operations: { hazPlacard: false, radiusMiles: 300,
+    whatHaul: 'General freight. Answer No to every hazmat question.', filingsWhich: 'None, no hazmat', eldBrand: 'Motive', radius: '300 miles, no hazmat' } };
+  const body = buildRequest(items, { ...context, record });
+  const { sources } = JSON.parse(body.input[0].content);
+  const id = (test) => Object.keys(sources).find(k => test(sources[k]));
+  const at = path => { const found = id(s => s.path === path); assert.ok(found, path); return found; };
+  const rule = id(s => s.basis === 'tni_rule');
+  const pick = (sourceIds) => verifyResponse(checked, parseResponse(answer(body, { sourceIds }), items, body))[0];
+  for (const cited of [['operations.whatHaul'], ['operations.filingsWhich'], ['operations.eldBrand'], ['operations.radius'],
+    ['operations.whatHaul', 'operations.radius'], ['operations.radius', 'RULE']]) {
+    const x = pick(cited.map(p => p === 'RULE' ? rule : at(p)));
+    assert.deepEqual([x.leave, x.verified, x.autoOk], [false, true, false], cited.join());
+  }
+  assert.equal(pick([at('operations.radiusMiles')]).autoOk, true, 'a number worked out from it is not text the client typed');
+  assert.equal(pick([at('operations.hazPlacard'), at('operations.whatHaul')]).autoOk, true, 'a yes/no answer beside it is structured');
+  assert.equal(restsOnClientText([{ basis: 'intake', path: 'computed.priorPolicyExpired' }]), false, 'a derived path is not typed text');
+  assert.equal(restsOnClientText([{ basis: 'intake', path: 'drivers[0].first' }]), true, 'a driver row field the client typed is');
+});
+
 test('missing evidence, conflicts and incomplete facts preserve abstention', () => {
   const body = buildRequest(items, context);
   for (const override of [{ sourceIds: [] }, { sourceIds: ['invented'] }, { sourceIds: ['__proto__'] }, { sourceIds: ['constructor'] }, { sourceIds: [LEAVE] },
@@ -168,6 +190,22 @@ test('each cited source is said as the agent reads it: the field label with its 
   // A left question cites nothing.
   const [left] = parseResponse(answer(buildRequest(items, context), { option: LEAVE, sourceIds: [], missingInformation: ['placards'] }), items, buildRequest(items, context));
   assert.deepEqual(left.cited, []);
+});
+
+// Audit 2026-11-07, AI-07: the log says which TNI rules a pick cites, by rulebook id only.
+test('a pick lists the TNI rules it cites by id; a leave and a refused evidence check list none', () => {
+  const body = buildRequest(items, context);
+  const { sources } = JSON.parse(body.input[0].content);
+  const rules = Object.keys(sources).filter(id => sources[id].basis === 'tni_rule').slice(0, 2);
+  const intake = Object.keys(sources).find(id => sources[id].path === 'operations.hazPlacard');
+  assert.ok(rules.length === 2 && rules.every(id => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id)), rules.join());
+  const [x] = parseResponse(answer(body, { sourceIds: [intake, ...rules, rules[0]] }), items, body);
+  assert.deepEqual(x.ruleIds, rules);
+  assert.deepEqual(parseResponse(answer(body), items, body)[0].ruleIds, []);
+  const [left] = parseResponse(answer(body, { option: LEAVE, sourceIds: rules, missingInformation: ['placards'] }), items, body);
+  assert.deepEqual(left.ruleIds, []);
+  const refused = verifyResponse(envelope({ decisions: { f1: { supported: false, gap: 'No rule says so.' } } }), [x]);
+  assert.deepEqual(refused[0].ruleIds, []);
 });
 
 test('incomplete, refused, wrong-model and tool-call responses never yield an answer', () => {
@@ -450,7 +488,7 @@ test('promptHash follows the instructions and the rules as sent, and each review
   setActiveDefaults({ values: { umCsl: { value: 300_000 }, medPay: { value: 2_000 } } });
   assert.notEqual(await promptHash('progressive'), base, "an agent's own defaults");
   setActiveDefaults(null);
-  assert.equal(POLICY_VERSION, 'luna-evidence-v6');
+  assert.equal(POLICY_VERSION, 'luna-evidence-v7');
   const result = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => (JSON.parse(body.input[0].content).proposed ? groupCheck(body) : answer(body)) });
   assert.equal(result.promptHash, await promptHash('geico'));
   assert.ok(result.suggestions.every(x => x.promptHash === result.promptHash));
