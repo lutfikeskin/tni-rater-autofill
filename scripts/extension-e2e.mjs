@@ -492,6 +492,8 @@ try {
   at = 'shown';
   await panel.locator('#summary-view').waitFor({ state: 'visible', timeout: 5000 });
   const pages = await panel.locator('.summary-page > summary .title').allTextContents();
+  // Every step the quote went through on the mock, each a page of the summary (and of its file).
+  const visited = [...new Set(await mock.evaluate(() => window.__amwinsMock.steps))];
   const rows = await panel.locator('.summary-row').count();
   const boxes = await panel.locator('#summary-view input, #summary-view select, #summary-view textarea').count();
   // A known answer with its source: Coverage's medical payment, TNI's standard $5,000.
@@ -508,9 +510,9 @@ try {
   await panel.click('#summary-back');
   await panel.locator('#summary-view').waitFor({ state: 'hidden', timeout: 5000 });
   const mockAfter = await pageNow();
-  console.log('Quote summary:', JSON.stringify({ pages, rows, boxes, medical, file: file.suggestedFilename(), bytes: html.length, saved, pageUnchanged: mockBefore === mockAfter }));
-  summaryOk = pages.includes('Insured Info') && rows > 10 && boxes === 0 && /^quote-summary-.+\.html$/.test(file.suggestedFilename())
-    && html.startsWith('<!doctype html>') && !/<script/i.test(html) && html.includes('AmWINS') && /Saved quote-summary-/.test(saved ?? '') && mockBefore === mockAfter
+  console.log('Quote summary:', JSON.stringify({ visited, pages, rows, boxes, medical, file: file.suggestedFilename(), bytes: html.length, saved, pageUnchanged: mockBefore === mockAfter }));
+  summaryOk = visited.length >= 4 && visited.every((step) => pages.includes(step)) && rows > 10 && boxes === 0 && /^quote-summary-.+\.html$/.test(file.suggestedFilename())
+    && visited.every((step) => html.includes(`<h3>${step}</h3>`)) && html.startsWith('<!doctype html>') && !/<script/i.test(html) && html.includes('AmWINS') && /Saved quote-summary-/.test(saved ?? '') && mockBefore === mockAfter
     && medical?.[1] === '$5,000' && medical?.[2] === 'TNI standard' && /<td>medical payment<\/td><td>\$5,000<\/td><td>TNI standard<\/td>/i.test(html);
 } catch (e) { console.log('QUOTE SUMMARY:', at, String(e.message).split(String.fromCharCode(10)).slice(0, 12).join(' | ')); }
 if (!summaryOk) console.log('QUOTE SUMMARY: the summary did not list the steps read-only, save its HTML file, or left the carrier page changed.');
