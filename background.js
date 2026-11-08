@@ -21,3 +21,11 @@ try {
 // gave in Settings) and on the toolbar icon (a badge): what the panel says over its 'tab-mark' port,
 // let go when the panel closes (src/tab-mark.js).
 createTabMarker(chrome).listen();
+
+// A new install has nothing new to be told: the panel's "What's new" card (sidepanel/panel/whats-new.js)
+// starts from the version installed. An update leaves it, so the panel says what changed once.
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason !== 'install') return;
+  chrome.storage.local.set({ whatsNewSeen: chrome.runtime.getManifest().version })
+    .catch((e) => console.warn("what's new start not saved:", e?.message ?? e));
+});

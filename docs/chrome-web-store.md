@@ -85,6 +85,10 @@ pin the extension → click it to open the side panel. Then, once each:
 Raise the version, `npm run package` from a clean, committed tree (the usage events name the
 commit they were packaged from, `+dirty` otherwise), upload the new zip on the item's **Package**
 tab, submit.
+In the version's PR, add what agents will see differently to `src/whats-new.js` under the new
+version: one to five short lines in the agent's words. The panel shows them once, as "What's new in
+v<version>", the first time it opens after the update; a version with no lines shows nothing, and a
+new install isn't told. `test/whats-new.test.mjs` checks the lines' shape.
 Chrome updates installed copies by itself within a few hours of approval.
 
 Agents' own defaults ([spec](agent-defaults-spec.md)) ship hidden in the store build until TNI's

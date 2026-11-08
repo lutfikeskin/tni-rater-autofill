@@ -400,11 +400,12 @@ const state = storeState({
   cards: {},
   // The panel's other notes, as notes-view.jsx draws them: `usage`, a usage log that can't be saved
   // (renderHealth, in #notices), `window`, a Pop out or Dock that didn't work (windowProblem, in
-  // #window-note), and `storage`, what the panel couldn't save or forget on this computer (persistFailed, in
-  // #storage-note), each a card as issueSaid puts it or null; and why the PDF couldn't be read
+  // #window-note), `storage`, what the panel couldn't save or forget on this computer (persistFailed, in
+  // #storage-note), and `whatsNew`, what's new in this version (whats-new.js, in #whats-new), each a
+  // card as issueSaid puts it or null; and why the PDF couldn't be read
   // (showLoadError: { title, text }, in #load-error), null until then. And the quote's steps in the
   // header's strip (renderSite: { name, at } each), as site-view.jsx draws them: none off a quote.
-  notes: { usage: null, window: null, storage: null },
+  notes: { usage: null, window: null, storage: null, whatsNew: null },
   loadError: null,
   siteTrack: [],
   // Step 1's checks (renderWarnings: the title, the cards, the cleanup notes), as checks-view.jsx
