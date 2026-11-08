@@ -3769,6 +3769,10 @@ test('a fill that begins stops one still running in its frame; stopRun stops onl
   const left = await orphan;
   assert.equal(left.halted, true, 'the fill left running stops');
   assert.match(left.reason, /You stopped the fill/);
+  // The new fill began only once the old one had ended (CodeRabbit on #478: two fills in one frame
+  // shared its waits and cleanup); a moment later it runs.
+  assert.equal(h.kit.progress(), null, 'not begun while the old one ran');
+  await new Promise((r) => setTimeout(r, 100));
   // The worker's stop for the old run: the new fill keeps going.
   assert.equal(h.kit.stopRun('old'), false);
   assert.equal(h.kit.progress() != null, true, 'the new fill still runs');

@@ -46,6 +46,8 @@ stopWaitsWhen(() => !!running && (running.report.halted || running.timeUp()));
 // Fills the agent stopped before they began here (`run`: the panel's id for the fill; Stop can
 // come while the panel still prepares, before fill() starts): such a fill halts as it starts.
 const stoppedRuns = new Set();
+// How long a fill that begins waits for one it stopped in its frame to end (fill).
+const TAKEOVER_MS = 15000;
 // The page a fill left settled as it ended, on a page that waits on its server (Progressive): a
 // helper (Add Vehicle, Cargo Van, View bill plan options) opened the next page and the fill's wait
 // held until that page and its requests were done. The next fill, a moment later, finds the same page,
@@ -242,6 +244,18 @@ export function resolveItems(report, plan) {
  * @returns {Promise<FillReport>}
  */
 export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, budgetMs = FILL_BUDGET_MS, deadline = null, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
+  // A fill still running here as this one begins was left by a panel that went away (closed while it
+  // ran, or reloaded): it stops as on Stop, and this one begins only once it has ended, so two fills
+  // never run in one frame: its waits, drivers and cleanup (the hidden selectors, the fill's units)
+  // stay its own, and this one's Stop reaches all that runs (audit 2026-11-07, UX-03; CodeRabbit on
+  // #478). A halted fill ends at its next wake; one still not ended after TAKEOVER_MS is said.
+  if (running) {
+    const previous = running;
+    previous.halt(STOP_HALT);
+    for (const end = Date.now() + TAKEOVER_MS; running === previous; await new Promise((r) => setTimeout(r, 50))) {
+      if (Date.now() >= end) throw new Error('An earlier fill on this page is still ending. Fill again in a moment.');
+    }
+  }
   /** @type {RunState} */
   const state = /** @type {any} */ ({});
   // The plan as given (helpers included, which the fill sets apart below), for a fill begun again.
@@ -483,10 +497,6 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // Set below with the fill's deadline: whether its time is spent, halting it if so.
   const thisFill = { report: state.report, halt, run, phase: null, timeUp: () => false };
   const phase = (name, what = null) => { thisFill.phase = name ? { name, what } : null; };
-  // A fill still running here as this one begins was left by a panel that went away (closed while it
-  // ran, or reloaded): it stops as on Stop, so two fills never type in one frame and this one's Stop
-  // reaches all that runs (audit 2026-11-07, UX-03).
-  if (running && running !== thisFill) running.halt(STOP_HALT);
   running = thisFill;
   // Its time in all (`budgetMs`): once it is spent, the fill stops as on Stop, its waits with it, and
   // the report says why (`outOfTime`). A fill begun again in its frame (below) keeps this one's end
