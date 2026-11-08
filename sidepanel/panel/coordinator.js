@@ -1134,11 +1134,13 @@ function renderSteps() {
   // (`review`: the panel's confirm).
   const finished = filled && quoteFinished(carrier, report, page) && !pendingAi(state.tab.id, page).length;
   step('fill', {
-    tone: !onRater ? '' : error || (stopped && !filled) ? 'bad' : !filled ? 'active' : finished || report.advanced || !left ? 'done' : 'active',
+    // A fill that stopped short (`halted`: "Filling stopped", or the agent's Stop) is never done,
+    // whatever is left (review of #454).
+    tone: !onRater ? '' : error || (stopped && !filled) ? 'bad' : !filled ? 'active' : report.halted ? 'warn' : finished || report.advanced || !left ? 'done' : 'active',
     note: !onRater ? 'Open a rater' : filling ? `Filling… ${state.fillingFor.filled ?? 0} in` : error ? 'Didn’t finish'
       : !filled ? (stopped ? 'Stopped' : 'Ready to fill')
         : finished ? 'Quote done' : report.advanced ? 'Continued' : left ? `${left} need${left === 1 ? 's' : ''} you`
-          : `${report.filled} filled${report.auto ? ' automatically' : ''}`,
+          : report.halted ? 'Filling stopped' : `${report.filled} filled${report.auto ? ' automatically' : ''}`,
     current: state.view === 'page',
     review: filled,
   });

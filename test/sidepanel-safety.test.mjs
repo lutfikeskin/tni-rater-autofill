@@ -10412,6 +10412,14 @@ test('Buttons left to click says Looks right comes after with Let me look on, an
   assert.equal(goes.sub, 'Continue clicks the ones it can in turn, and the page’s Continue once none is left. Never Bind or Submit.');
 });
 
+// Review of #454 (CodeRabbit): a fill that read fields and stopped short with nothing left gave This
+// page a done bar and "n filled"; a halted fill is never done there.
+test('This page never says a halted fill is done', () => {
+  const steps = extractFunction('renderSteps');
+  assert.match(steps, /: !filled \? 'active' : report\.halted \? 'warn' : finished \|\| report\.advanced \|\| !left \? 'done' : 'active',/);
+  assert.match(steps, /: report\.halted \? 'Filling stopped' : `\$\{report\.filled\} filled/);
+});
+
 // Review of PR #170 (Claude): "Quote done" over a fill that halted (its list says "Filling stopped"),
 // and over a report that found no questions, where the strip said "After the fill"; and the finishing
 // action's `page` or `steps` read as one name only (CarrierAction: a name or a list).
