@@ -39,7 +39,7 @@ const TURN_PHASES = new Set(['ready', 'portal', 'needs', 'check', 'ai', 'hold', 
 /**
  * The mark for the dock's word (dockFor): 'filling' while answers go in, 'turn' while the dock
  * waits on the agent, 'done' at the end of the quote; 'keep' while the page moves on after a
- * Continue the panel clicked (the next page's word follows); null for no mark (no client, or not
+ * Continue the panel clicked (the next page's word follows), or while a fill runs on another tab; null for no mark (no client, or not
  * on a rater: the tab is let go). `marked`: this panel has already marked that tab for this quote.
  * Without it there is no mark to keep: the dock's "Continue clicked" is a report seen again (a
  * panel opened again or popped out on that page, or the agent back on it), which offers Fill this
@@ -52,6 +52,8 @@ export function markFor(dock, marked = true) {
   const phase = dock?.phase;
   // The page isn't answering: a message box on it may wait for the agent.
   if (phase === 'filling') return dock.tone === 'warn' ? 'turn' : 'filling';
+  // A fill on another tab than the one in front: the tab in front's mark stays as it was.
+  if (phase === 'elsewhere') return 'keep';
   if (phase === 'finished') return 'done';
   if (phase === 'done') return marked ? 'keep' : 'turn';
   return TURN_PHASES.has(phase) ? 'turn' : null;

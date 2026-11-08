@@ -25,8 +25,9 @@
 
   const isTop = window === window.top;
   const round = (n) => Math.round(n * 10) / 10;
-  // When an event happened, on the page's clock (wall-clock ms), not when this saw it.
-  const when = (e) => round(performance.timeOrigin + (typeof e?.timeStamp === 'number' && e.timeStamp > 0 ? e.timeStamp : performance.now()));
+  // When an event happened, on the page's clock (wall-clock ms), not when this saw it (`at`: a
+  // moment given as wall-clock ms, as a document's navigation start).
+  const when = (e) => round(typeof e?.at === 'number' ? e.at : performance.timeOrigin + (typeof e?.timeStamp === 'number' && e.timeStamp > 0 ? e.timeStamp : performance.now()));
   const BATCH_MS = 250;
   // Kept while no panel takes them (closed, reloading); past this the oldest go, and the next batch
   // says how many (`dropped`). With no panel taking them for a minute, the trace stops: a panel opened
@@ -216,7 +217,26 @@
   const pathOf = () => idless(location.pathname);
   let page = read.pageKey();
   let step = stepNow();
-  push('page', { page, path: pathOf(), title: document.title, step, top: isTop, viewport: viewport(), scroll: scroll() });
+  // A document the trace is in from its load (`fresh`: put in within LOAD_MS of its navigation,
+  // as the panel does on each load, and the first trace in it): its first `page` is stamped at its
+  // navigation start (`injectedAt`: when the trace was put in), a `load` says how it loaded, and
+  // the requests it made before the trace are read from the browser's buffer (REC-03, 2026-11-07:
+  // a full page load's time and its first requests, often the slow part, were charged to the step
+  // before or lost). Once per document: a trace put in again doesn't read them twice.
+  const LOAD_MS = 30_000;
+  let nav = null;
+  try { nav = performance.getEntriesByType?.('navigation')?.[0] ?? null; } catch { /* no timing */ }
+  const fresh = !!nav && performance.now() < LOAD_MS && !globalThis.__raterTraceLoaded;
+  globalThis.__raterTraceLoaded = true;
+  const navAt = (ms) => (typeof ms === 'number' && ms > 0 ? round(performance.timeOrigin + ms) : null);
+  push('page', { page, path: pathOf(), title: document.title, step, top: isTop, viewport: viewport(), scroll: scroll(), ...(fresh ? { injectedAt: round(performance.timeOrigin + performance.now()) } : {}) },
+    fresh ? { at: performance.timeOrigin } : undefined);
+  // `how`: navigate, reload or back_forward; when the server's answer ended (`response`), the
+  // document was ready (DOMContentLoaded) and loaded (load), each null while not yet.
+  if (fresh) {
+    push('load', { how: /^(navigate|reload|back_forward|prerender)$/.test(String(nav.type)) ? nav.type : null, response: navAt(nav.responseEnd),
+      ready: navAt(nav.domContentLoadedEventEnd), loaded: navAt(nav.loadEventEnd) }, { at: performance.timeOrigin });
+  }
   const watch = setInterval(() => {
     if (!chrome.runtime?.id) { dispose(); return; }
     const nowPage = read.pageKey();
@@ -229,20 +249,25 @@
       push('step', { step: nowStep, from: step });
       step = nowStep;
     }
+    // A component that has its shadow root only now (below).
+    lateRoots();
   }, 500);
 
   // What the page does on its own. A run of DOM changes ends BURST_QUIET_MS after the last one, as
   // one `burst` (stamped when it began): its end, how many records, and the questions it drew
-  // (named as the recorder names them, at most MAX_DRAWN) or took away (counted). Only the light
-  // DOM: a component's shadow root (GEICO's gds-*) redraws unseen, its host's own changes aside.
+  // (named as the recorder names them, at most MAX_DRAWN) or took away (counted). Open shadow roots
+  // are watched too (GEICO's gds-* components draw their controls in them): each one on the page as
+  // the trace starts, and each one a change brings, once (REC-19, 2026-11-07: a control redrawn in
+  // its shadow root left no change, and a busy GEICO page read as quiet).
   const BURST_QUIET_MS = 100;
   const MAX_DRAWN = 12;
   const MAX_NODES = 500;
   const CONTROLS = 'input, select, textarea';
   let burst = null;
   let burstTimer = null;
+  // In an element, or in a shadow root a change brought (11).
   const controlsIn = (node) => {
-    if (node?.nodeType !== 1) return [];
+    if (node?.nodeType !== 1 && node?.nodeType !== 11) return [];
     let inside = [];
     try { inside = [...(node.querySelectorAll?.(CONTROLS) ?? [])]; } catch { /* not queryable */ }
     return node.matches?.(CONTROLS) ? [node, ...inside] : inside;
@@ -292,21 +317,109 @@
     push('burst', { end: b.end, records: b.records, ...(drawnCount ? { drawn, drawnCount } : {}), ...(removed ? { removed } : {}) }, { timeStamp: b.start });
   }
   let mutations = null;
+  // A change now (`records` of them): the burst it is part of, begun or carried on.
+  const changeNow = (records) => {
+    const now = performance.now();
+    burst ??= { start: now, records: 0, added: new Set(), removed: new Set(), created: new Set() };
+    burst.end = round(performance.timeOrigin + now);
+    burst.records += records;
+    clearTimeout(burstTimer);
+    burstTimer = setTimeout(endBurst, BURST_QUIET_MS);
+  };
+  // The open shadow roots in and under the page as the trace starts and each node a change adds
+  // (theirs too), each observed once. Looked through in turns of at most SHADOW_SCAN elements, the
+  // rest on the next tick, so a large page or redraw never stalls the page and none is left unlooked
+  // (review of PR #377). A node added under one still waiting its turn waits on that one's look.
+  // A root a change brought is part of that change: its controls, drawn before it was watched,
+  // count as drawn (`drawn`). A component whose root came after it was looked at (one defined
+  // later: its upgrade attaches the root, and no change says so) is looked at again each half
+  // second while it has none, at most MAX_BARE of them (`bare`).
+  const watchedRoots = new WeakSet();
+  const SHADOW_SCAN = 5000;
+  const MAX_BARE = 1000;
+  const shadowWork = [];
+  const waiting = new Set();
+  const bare = new Set();
+  let looking = null;
+  let shadowTimer = null;
+  const toLook = (node, drawn) => { shadowWork.push({ node, drawn }); waiting.add(node); };
+  const waitsAbove = (node) => {
+    for (let p = node.parentNode ?? node.host; p; p = p.parentNode ?? p.host) if (waiting.has(p)) return true;
+    return false;
+  };
+  // The elements under a node one at a time (a tree walker, so a turn's look stops where its budget
+  // does, never listing a large subtree first); a list of them where there is no walker.
+  const SHOW_ELEMENT = (typeof NodeFilter === 'object' && NodeFilter?.SHOW_ELEMENT) || 1;
+  const elementsIn = (node) => {
+    try {
+      const walker = document.createTreeWalker?.(node, SHOW_ELEMENT);
+      if (typeof walker?.nextNode === 'function') return () => walker.nextNode();
+    } catch { /* not walkable */ }
+    let list = [];
+    try { list = node.querySelectorAll?.('*') ?? []; } catch { /* not queryable */ }
+    let i = 0;
+    return () => (i < list.length ? list[i++] : null);
+  };
+  const rootOf = (el, drawn) => {
+    const root = el?.shadowRoot;
+    if (!root) {
+      if (String(el?.localName ?? '').includes('-') && bare.size < MAX_BARE) bare.add(el);
+      return;
+    }
+    bare.delete(el);
+    if (watchedRoots.has(root)) return;
+    watchedRoots.add(root);
+    try { mutations.observe(root, { childList: true, subtree: true }); } catch { return; }
+    if (drawn) {
+      changeNow(0);
+      if (burst.added.size < MAX_NODES) { burst.added.add(root); burst.created.add(root); }
+    }
+    toLook(root, drawn);
+  };
+  const lookForShadows = () => {
+    shadowTimer = null;
+    if (!mutations || disposed) return;
+    let budget = SHADOW_SCAN;
+    while (budget > 0) {
+      if (!looking) {
+        const next = shadowWork.shift();
+        if (!next) break;
+        waiting.delete(next.node);
+        looking = { next: elementsIn(next.node), drawn: next.drawn };
+        if (next.node.nodeType === 1) { rootOf(next.node, next.drawn); budget--; }
+      }
+      while (budget > 0) {
+        const el = looking.next();
+        if (!el) { looking = null; break; }
+        rootOf(el, looking.drawn);
+        budget--;
+      }
+    }
+    if (looking || shadowWork.length) shadowTimer = setTimeout(lookForShadows, 0);
+  };
+  // The components seen with no root, again: one that has one now is a change that drew it.
+  const lateRoots = () => {
+    if (!mutations || disposed) return;
+    for (const el of bare) {
+      if (el.shadowRoot) rootOf(el, true);
+      else if (el.isConnected === false) bare.delete(el);
+    }
+    if (shadowWork.length && !shadowTimer) lookForShadows();
+  };
   if (typeof MutationObserver === 'function') {
     mutations = new MutationObserver((records) => {
-      const now = performance.now();
-      burst ??= { start: now, records: 0, added: new Set(), removed: new Set(), created: new Set() };
-      burst.end = round(performance.timeOrigin + now);
-      burst.records += records.length;
+      changeNow(records.length);
       for (const r of records) {
         // Added before this burst took it away: made in this burst, not moved (`created`).
         for (const n of r.addedNodes ?? []) if (burst.added.size < MAX_NODES) { burst.added.add(n); if (!burst.removed.has(n)) burst.created.add(n); }
         for (const n of r.removedNodes ?? []) if (burst.removed.size < MAX_NODES) burst.removed.add(n);
+        // A component drawn in this change attaches its shadow root as it is put in the page.
+        for (const n of r.addedNodes ?? []) if (n?.nodeType === 1 && !waiting.has(n) && !waitsAbove(n)) toLook(n, true);
       }
-      clearTimeout(burstTimer);
-      burstTimer = setTimeout(endBurst, BURST_QUIET_MS);
+      if (!shadowTimer) lookForShadows();
     });
     try { mutations.observe(document.documentElement ?? document, { childList: true, subtree: true }); } catch { mutations = null; }
+    if (mutations) { toLook(document, false); lookForShadows(); }
   }
 
   // The page's own requests (fetch or XHR to its origin), each as it finishes: its path without the
@@ -325,7 +438,7 @@
   let requests = null;
   try {
     requests = new PerformanceObserver((list) => recordRequests(list.getEntries()));
-    requests.observe({ type: 'resource' });
+    requests.observe({ type: 'resource', buffered: fresh });
   } catch { requests = null; }
 
   // What the extension's fill says (pagekit.js `kitTrace`), by its own time: a JSON string from
@@ -351,7 +464,7 @@
       if (!isNum(said.start) || !isNum(said.ms) || (said.ended !== 'quiet' && said.ended !== 'limit')) return null;
       const held = has(said.held) ? { held: { busy: said.held.busy === true, changing: said.held.changing === true, requests: said.held.requests === true } } : {};
       return { what: 'wait', why: WAITS_FOR.has(said.why) ? said.why : null, start: said.start, ms: said.ms, ended: said.ended,
-        ...nums(said, ['quietMs', 'maxMs']), ...yesNo(said, ['requests', 'settled']), ...held };
+        ...nums(said, ['quietMs', 'maxMs', 'lastChange', 'lastHeld']), ...yesNo(said, ['requests', 'settled']), ...held };
     }
     if (said.what === 'answer') {
       if (!has(said.field) || !isNum(said.start)) return null;
@@ -390,6 +503,7 @@
     clearTimeout(timer);
     clearTimeout(resizing);
     clearTimeout(burstTimer);
+    clearTimeout(shadowTimer);
     mutations?.disconnect();
     requests?.disconnect();
     for (const t of scrolling.values()) clearTimeout(t);

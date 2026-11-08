@@ -5,13 +5,13 @@
 import * as usage from './usage-log.js';
 import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
-import { $, migrateStoredData, restoreAiPending, state, store } from './panel/core.js';
+import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store, forgetKeptWork, keptWorkCleared } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
 import { firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty, showScreen } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
-import { captureFromShortcut, capturePage, checkItems, clearMarks, fillAfterDefaults, fillPage, lookRight, noteLiveItems, refreshAnswers, showNextNeed } from './panel/fill.js';
+import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, resumeHeldFill, showNextNeed } from './panel/fill.js';
 import { noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording } from './panel/dev-recording.js';
 import { aiActs, renderAiSettings, reviewIntake } from './panel/assistant.js';
 import { renderUsage, settingsActs, uploadNow, wireUsage } from './panel/usage-panel.js';
@@ -48,6 +48,7 @@ function wire() {
   // that didn't work, and a PDF that couldn't be read.
   mountSiteTrack($('site-track'));
   mountNote($('notices'), 'usage');
+  mountNote($('storage-note'), 'storage');
   mountNote($('window-note'), 'window');
   mountLoadError($('load-error'));
   // Settings: Done, the switches and boxes (settingsActs), the AI's (aiActs), the test-run mark,
@@ -61,7 +62,7 @@ function wire() {
     testRun: (on) => { state.testRun = on; markTestRun(on); },
     defaults: defaultsActs(), // agent defaults
     // agent defaults: the developer's switch (unpacked copies only; store.js ignores it in the store build).
-    defaultsShown: async (on) => { await setDefaultsShown(on); renderSteps(); fillAfterDefaults(); },
+    defaultsShown: async (on) => { await setDefaultsShown(on); renderSteps(); resumeHeldFill(); },
     capture: () => capturePage(),
     devrec: recordable ? { start: () => startRecording(), note: () => noteRecording(), stop: () => stopRecording(), recover: () => recoverRecording() } : null,
   });
@@ -95,8 +96,8 @@ function wire() {
       state.fileConfirm = null;
       render();
       if (what === 'replace') replacing.answered(true);
-      if (what === 'clear') clearClient();
-      if (what === 'new-quote') newQuote();
+      if (what === 'clear') clearClient().catch(storageSaid);
+      if (what === 'new-quote') newQuote().catch(storageSaid);
     },
   });
   // Step 1's checks and their All client details row.
@@ -190,7 +191,7 @@ function wire() {
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); noteNewTab(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
-    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); forgetQuoteTab(tabId); dropReports((entry) => entry.tabId === tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); state.tabSessions.delete(tabId); state.quoteStates.delete(tabId); forgetQuoteTab(tabId); dropReports((entry) => entry.tabId === tabId); });
     chrome.windows.onFocusChanged.addListener(refreshTab);
     // Settings' Mark the quote's tab follows the tabGroups permission, given or taken back anywhere.
     watchMarkSwitch();
@@ -211,6 +212,7 @@ async function init() {
   holdLayouts();
   state.intake = (await store.get('intake')) ?? null;
   if (state.intake) state.view = firstView(state.intake);
+  await restoreHold();
   state.active = (await store.get('active')) ?? state.active;
   // The selection saved for that tab, kept should the panel reach another tab first.
   state.savedActive = state.active;
@@ -222,6 +224,10 @@ async function init() {
   // once its intake is known, for the copy giving way to hand over to (takeOver).
   announceCopy();
   await restoreAiPending();
+  // Corrections and checks kept past their day (src/kept-work.js, FLOW-17) go as the panel opens,
+  // and a Clear that failed is tried again.
+  forgetKeptWork();
+  keptWorkCleared();
   const saved = await usage.settings();
   // The Filling switches as saved, in their boxes before anything reads them (settings-view.jsx).
   flushSync(() => {
@@ -232,7 +238,7 @@ async function init() {
   // agent defaults: the stored profiles and this quote's answer, before the settings are logged; the
   // agent's answer is logged and the page's dock and cards follow it.
   await loadDefaults();
-  onDefaultsAnswer(async (choice) => { await answerDefaults(choice); logSettings('changed', 'defaults'); renderSteps(); fillAfterDefaults(); });
+  onDefaultsAnswer(async (choice) => { await answerDefaults(choice); logSettings('changed', 'defaults'); renderSteps(); resumeHeldFill(); });
   // The panel opened on a saved intake: the settings in force for the rest of its quote.
   if (state.intake && usage.currentSession()) logSettings('opened');
   // A correction's profile the panel closed before logging (or an intake loaded by an earlier version).
@@ -243,6 +249,13 @@ async function init() {
   renderAiSettings();
   reviewIntake();
   await refreshTab();
+}
+
+// The panel opened again: an intake whose New quote failed still holds its fills (fillsHeld, also
+// when the list can't be read), said again.
+async function restoreHold() {
+  state.newQuoteFailed = await fillsHeld(state.intake?.intakeId);
+  if (state.newQuoteFailed) state.clientNote = FILLS_HELD_NOTE;
 }
 
 init();
