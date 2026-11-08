@@ -3078,7 +3078,7 @@ test('the business type popup with no list: Trucking typed in its own box, its o
   assert.equal(other.cont._clicked, undefined);
   const left = report.noData.find((x) => x.path === 'progressive.q36');
   assert.ok(left && !left.manualOnly, 'left for Luna\'s suggestion, never the agent\'s alone');
-  assert.match(left.note ?? '', /Luna suggests the closest business/);
+  assert.match(left.note ?? '', /The AI assistant suggests the closest business/);
 });
 
 // AZ live recording, 2026-11-05: Progressive's business type popup (no list until searched, as KY's;

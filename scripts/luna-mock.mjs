@@ -362,7 +362,7 @@ try {
   await loadPdf();
   phase = 'missing-key';
   await clickFill();
-  await panel.getByText(/GPT-6 Luna needs an OpenAI API key/).waitFor();
+  await panel.getByText(/The AI assistant needs an OpenAI API key/).waitFor();
   verify('Luna never reuses legacy or TypeSafe keys', requests + claimsRequests + namesRequests, 0);
   await panel.locator('#report').getByRole('button', { name: 'Add the key', exact: true }).click();
   await panel.locator('#ai-openai-key').waitFor({ state: 'visible' });
@@ -601,7 +601,7 @@ try {
   await panel.getByText('Conflicting intake facts require clarification.', { exact: false }).waitFor();
   verify('conflicting evidence leaves the field unanswered', await mock.locator('#mockLunaChoice').inputValue(), '');
   verify('conflicting evidence offers no approval button', await approve.isVisible(), false);
-  verify('a field Luna left shows its recommendation', await panel.getByText('Luna recommends: Confirm placard use with the client.', { exact: false }).count() > 0, true);
+  verify('a field Luna left shows its recommendation', await panel.getByText('The AI assistant recommends: Confirm placard use with the client.', { exact: false }).count() > 0, true);
   // The page's other answers went along, bounded, without typed values or private questions.
   const typed = await mock.evaluate(() => [...document.querySelectorAll('input[type=text], input:not([type]), textarea')].map((el) => el.value.trim()).filter(Boolean));
   const sentAnswers = pageAnswersSent.flat();
