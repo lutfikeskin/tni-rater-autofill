@@ -13,15 +13,16 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { quoteSessions } from './events.mjs';
 import { reportsOf } from './carrier-reports.mjs';
+import { NEVER_ADVANCE } from '../../src/restricted.js';
 import { receivedAt } from './daily.mjs';
 import { defaultsInForce, isOwnDefault } from './agent-defaults.mjs';
 
 // Numbers and quoted values masked, so one problem across vehicles, amounts and options counts once.
 export const mask = (s) => String(s ?? '').replace(/"[^"]*"/g, '"…"').replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
-// Actions the extension must never take itself: every word of pagekit's NEVER_ADVANCE (a test keeps
-// them in step), signing and discarding a form among them. "Save & Continue" is not one, as in
-// pagekit, which reads it as Continue.
-export const RESTRICTED = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|logout|log out|sign out|order|sign|signature|esign|esignature)\b/i;
+// Actions the extension must never take itself: the fill engine's own list (src/restricted.js
+// NEVER_ADVANCE), signing, paying and discarding a form among them. "Save & Continue" is not one, as
+// in pagekit, which reads it as Continue.
+export const RESTRICTED = NEVER_ADVANCE;
 // The retry tally's lines (below) name a page, not a button: never a restricted action themselves.
 const RETRIED = 'Continue clicked again on ';
 const clickedAction = (action) => !action.startsWith(RETRIED) && isRestricted(action);

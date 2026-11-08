@@ -6162,6 +6162,31 @@ test('discarding a form, ordering reports and signing are never clicked, as a he
   assert.deepEqual(plain(report.actions), []);
 });
 
+// Audit 2026-11-07, CARR-13: the words of a commit button a new carrier or product may use are never
+// clicked either, as a helper or as Continue, however loose the pattern; and an icon button a helper
+// finds by its token is held to its aria-label and title. GEICO's View More Payment Plans still is.
+test('issuing, paying, accepting, agreeing, confirming and finalizing are never clicked; an icon button by its name too', async () => {
+  const words = ['Issue Policy', 'Pay Now', 'Make a Payment', 'Accept & Continue', 'I Agree', 'Confirm Quote', 'Finalize Application', 'Complete Purchase', 'Authorize', 'Certify and Continue', 'Attest'];
+  const h = harness({ pathname: '/quote' });
+  const clicks = [];
+  for (const text of words) {
+    const button = new FakeNode('button', { textContent: text });
+    button.onclick = () => clicks.push(text);
+    h.document.body.append(button);
+  }
+  const icon = new FakeNode('span', { attrs: { 'data-testid': 'goIcon', tabindex: '0', 'aria-label': 'Bind policy' } });
+  icon.onclick = () => clicks.push('icon');
+  const plans = new FakeNode('button', { textContent: 'View More Payment Plans' });
+  plans.onclick = () => clicks.push('plans');
+  h.document.body.append(icon, plans);
+  const actions = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [
+    { id: 'any', text: '.' }, { id: 'icon', token: 'goIcon' }, { id: 'plans', text: '^view more payment plans$' },
+  ] }).filter((s) => s.kind === 'action');
+  const report = await h.kit.fill(actions, { maxRounds: 6, advance: { text: '^(issue|pay|make|accept|i agree|confirm|finali|complete|authori|certify|attest)' } });
+  assert.deepEqual([...new Set(clicks)], ['plans'], 'only View More Payment Plans (also by the loose helper)');
+  assert.equal(report.advanced, undefined);
+});
+
 // GEICO's add rows and the chooser behind Add Vehicle or Trailer (FL live run, 2026-10-21): a helper
 // kept to a container (`within`) clicks only there, and with `moveOn` a Next there (it opens a form,
 // no step's move) is clicked, never one elsewhere, nor Cancel, Save, Discard in the same container.

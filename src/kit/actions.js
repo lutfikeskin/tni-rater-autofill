@@ -5,9 +5,10 @@ import { drawnParent, deepQueryAll, buttonText, hostDisabled } from './dom.js';
 import { closestOwn, withAdapter } from './adapter.js';
 import { BANNER_ID } from './marks.js';
 import { kitTrace, isTracing } from './trace.js';
+import { NEVER_ADVANCE, NEVER_CLICK } from '../restricted.js';
 
-export const NEVER_ADVANCE = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out|order)\b/i;
-export const NEVER_CLICK = /\b(continue|next|start quote|finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|order|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out)\b/i;
+// The commit words a button never has when the fill clicks it: one list, src/restricted.js.
+export { NEVER_ADVANCE, NEVER_CLICK };
 export const COVERED = 'something on the page is open over Continue: close it, then fill again';
 export const COVERED_HELPER = 'something on the page is open over it';
 
@@ -126,7 +127,10 @@ export function findButton(step, { disabledToo = false } = {}) {
     if (step.within && !insideOf(el, step.within)) continue;
     if (!disabledToo && (/** @type {HTMLButtonElement} */ (el).disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el))) continue;
     const text = buttonText(el);
-    if (step.moveOn && step.within ? NEVER_ADVANCE.test(text) : NEVER_CLICK.test(text)) continue;
+    // Its words, and the name an icon button has instead (aria-label, title): a button found by its
+    // `token` (id, href, onclick, data-*) is checked by them too (audit 2026-11-07, CARR-13).
+    const named = [text, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ');
+    if (step.moveOn && step.within ? NEVER_ADVANCE.test(named) : NEVER_CLICK.test(named)) continue;
     const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
       ...[...el.attributes].filter((a) => a.name.startsWith('data-')).map((a) => a.value)].join(' ');
     const hit = (re && text.length <= 80 && re.test(text)) || (step.token && attrs.includes(step.token));
