@@ -201,3 +201,29 @@ test('keyboard focus stays in the dock as its button changes, and is never taken
   say({ phase: 'filling', button: 'fill-stop', label: 'Stop', busy: true });
   expect(document.activeElement.id).toBe('elsewhere');
 });
+
+// Audit 2026-11-07, FLOW-05: while a quiet automatic fill ran (no answer in yet), the dock still
+// offered Looks right, Show the next one or Fill this page again, and a click did nothing. While
+// answers go in every button but Stop waits, and says why.
+test('while answers go in, every dock button but Stop is held and says why', () => {
+  const t = acts();
+  const { container } = render(<Dock act={t.act} />);
+  const why = 'Wait for the answers going in to finish.';
+  for (const word of [
+    { phase: 'check', button: 'look-right', label: 'Looks right, continue', alt: 'fill-again', altLabel: 'Fill this page again' },
+    { phase: 'needs', button: 'dock-next', label: 'Show the next one', alt: 'fill-again', altLabel: 'Fill this page again' },
+    { phase: 'ready', button: 'fill', label: 'Fill this page again', alt: 'fill-again', altLabel: 'Fill this page again' },
+  ]) {
+    act(() => { state.dock = { ...word, title: 'x', hidden: false, report: '1700', busy: true }; });
+    const button = $(container, word.button);
+    expect([button.hidden, button.disabled, button.title]).toEqual([false, true, why]);
+    expect([$(container, 'dock-alt').disabled, $(container, 'dock-alt').title]).toEqual([true, why]);
+    act(() => { state.dock = { ...state.dock, busy: false }; });
+    expect([button.disabled, button.title, $(container, 'dock-alt').disabled]).toEqual([false, '', false]);
+  }
+  // Stop never waits.
+  act(() => { state.dock = { phase: 'elsewhere', title: 'Filling your other GEICO tab', button: 'fill-stop', label: 'Stop', disabled: false, hidden: false, report: '', busy: true }; });
+  expect([$(container, 'fill-stop').disabled, $(container, 'fill-stop').title]).toEqual([false, '']);
+  fireEvent.click($(container, 'fill-stop'));
+  expect(t.calls.at(-1)?.[0]).toBe('stop');
+});

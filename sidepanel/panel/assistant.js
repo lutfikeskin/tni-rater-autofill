@@ -5,7 +5,7 @@ import { redactionTerms } from '../../src/plan.js';
 import { get } from '../../src/util.js';
 import { redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { collectItems, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
+import { collectItems, pseudonymizeChoices, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
 import { claimsTruncated, firstNameOf } from '../../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../../src/ai/providers.js';
 import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
@@ -314,8 +314,12 @@ async function runAssist(frames, ctx) {
   const provider = PROVIDERS[cfg.provider];
   // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
-  const items = collected.items.filter(x => !agentEdited(ctx.page, x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
-  const blocked = collected.blocked;
+  // A question whose choices name the client goes to Luna with placeholders, and its pick comes back
+  // as the page's own choice; one whose choices code can't tell apart stays with the agent
+  // (pseudonymizeChoices, common.js).
+  const named = pseudonymizeChoices(collected.items, record);
+  const items = collected.items.filter(x => !named.held.includes(x) && !agentEdited(ctx.page, x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
+  const blocked = [...collected.blocked, ...named.held];
   // Messages, the approval card and suggestions without a list item go above "Needs you", in the
   // report's holder (aiHolder in ai-view.jsx), which draws what it is told (`say`).
   const head = $('report').querySelector('.needs-head');
@@ -390,8 +394,8 @@ async function runAssist(frames, ctx) {
     sigs.forEach((sig) => state.aiAsking.set(sig, pending));
     try {
       // Stopped between model calls only for an answer that would be discarded.
-      const result = await suggest(missing, context, cfg, { isStale: () => !!discardWhy() });
-      const fresh = result.suggestions;
+      const result = await suggest(missing.map(named.toSend), context, cfg, { isStale: () => !!discardWhy() });
+      const fresh = result.suggestions.map(named.restore);
       // An answer that came too late is still logged (its tokens were spent), with the reason.
       const why = discardWhy();
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,

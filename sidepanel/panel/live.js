@@ -33,9 +33,18 @@ function phaseSaid(phase, n = 0) {
 // would flicker with "Just filled").
 const DOCK_PHASES = new Set(['reading', 'helper', 'premium', 'continue']);
 
+// Whether a running fill (`state.fillingFor`) is said as one: the live list in place of the report,
+// and the dock's Stop. The agent's own at once; an automatic one from its first answer in, or once it
+// has run QUIET_MS with none (`shown`, set by watchFill: a follow-up waiting on a helper, Recalculate
+// or the premium, W43-42: 29 s), so a quick follow-up that answers nothing doesn't blink the panel.
+const QUIET_MS = 1500;
+function fillShown(f) {
+  return !!f && (!f.auto || !!f.rows?.length || !!f.shown);
+}
+
 // An item's reading among liveItems', by its key and label as it was asked.
 function liveOf(live, key, label) {
   return live.find((y) => y.key === key && (y.label || null) === (label || null)) ?? null;
 }
 
-export { DOCK_PHASES, liveEntries, liveOf, phaseSaid };
+export { DOCK_PHASES, QUIET_MS, fillShown, liveEntries, liveOf, phaseSaid };

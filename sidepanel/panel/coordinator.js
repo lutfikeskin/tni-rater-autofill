@@ -23,7 +23,7 @@ import { pendingAi } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNameFor, unitScope } from './scope.js';
 import { fillCurrent, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded } from './fill-checks.js';
-import { DOCK_PHASES, phaseSaid } from './live.js';
+import { DOCK_PHASES, QUIET_MS, fillShown, phaseSaid } from './live.js';
 import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
 import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
@@ -214,6 +214,12 @@ function watchFill(ctx) {
   let reading = null;
   const timer = setInterval(async () => {
     if (state.fillingFor?.run !== ctx.run) { clearInterval(timer); return; }
+    // A quiet automatic fill that has gone on a while is said as a fill from now (fillShown).
+    const quiet = state.fillingFor;
+    if (quiet.auto && !quiet.shown && Date.now() - (quiet.started ?? 0) >= QUIET_MS) {
+      state.fillingFor = { ...quiet, shown: true };
+      renderSteps();
+    }
     if (reading != null) {
       if (Date.now() - reading >= UNANSWERED_MS && !state.fillingFor.unanswered) {
         state.fillingFor = { ...state.fillingFor, unanswered: true };
@@ -352,7 +358,7 @@ async function autoFill(page) {
   const drawn = state.autoDrawn === page;
   state.autoDrawn = null;
   // The client may have been cleared while this fill was waiting to run.
-  if (state.autoPaused || state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
+  if (state.autoPaused || state.filling || state.closing || state.resetting || state.newQuoteFailed || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   // Nor on a tab whose quote wasn't started with this intake (quote-owner.js).
   if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue()) return;
   const { id: tabId, carrier } = state.tab;
@@ -375,6 +381,8 @@ async function autoFill(page) {
   state.fillingKind = 'fill';
   state.filling = true;
   state.autoPending = false;
+  // The dock's buttons wait while it runs (`busy`), from now, not from its first answer.
+  renderSteps();
   const started = Date.now();
   let assistFrames = null;
   let followUp = false;
@@ -404,7 +412,7 @@ async function autoFill(page) {
     // Its answers listed as they go in, as a fill the agent asked for, from the first one in (`auto`:
     // a follow-up that answers nothing never replaces the report; W43-42, 2026-10-22: a 29-second
     // automatic fill showed nothing until it ended).
-    state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false, auto: true };
+    state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false, auto: true, started: Date.now() };
     unwatch = watchFill(ctx);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -1107,8 +1115,9 @@ function renderSteps() {
   const stopped = !!stopNoteFor(carrier, page);
   const report = showReport();
   // The fill running on this tab: its answers in so far, in place of the report.
-  // A quiet automatic fill (no rows yet) leaves the report in place, as the live list and the dock do.
-  const filling = state.filling && !!state.fillingFor && state.fillingFor.tabId === state.tab?.id && (!state.fillingFor.auto || !!state.fillingFor.rows?.length);
+  // A quick quiet automatic fill (no rows yet) leaves the report in place, as the live list and the
+  // dock do (fillShown).
+  const filling = state.filling && fillShown(state.fillingFor) && state.fillingFor.tabId === state.tab?.id;
   const filled = !filling && !!report?.fields;
   // Why the last fill didn't finish, or what it found instead of questions (a portal page).
   const error = filling ? null : report?.error ?? null;
@@ -1301,23 +1310,14 @@ function dockFor() {
   const checksSaid = state.view === 'check' && open ? `${open} intake item${open === 1 ? '' : 's'} not looked at yet. You can still fill.` : null;
   const carrier = state.tab?.carrier;
   if (!inExtension) return { phase: 'off', eyebrow: 'Preview', title: 'Filling works only in the Chrome extension' };
+  // A fill running, here or on another tab, is said with its Stop (audit 2026-11-07, FLOW-05: a
+  // quiet follow-up, or one on another quote tab, ran with no Stop under buttons that did nothing).
+  const f = state.fillingFor;
+  if (state.filling && fillShown(f)) return fillingSaid(f);
   if (!carrier) {
     return state.tab && !state.tab.url
       ? { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.' }
       : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? 'Progressive, GEICO or AmWINS.' };
-  }
-  const f = state.fillingFor;
-  if (state.filling && f?.tabId === state.tab.id && (!f.auto || !!f.rows?.length)) {
-    const last = f.rows?.at(-1);
-    // The page hasn't answered for a while (watchFill): a message box open on it waits for the agent.
-    if (f.unanswered) {
-      return { phase: 'filling', tone: 'warn', progress: true, eyebrow: f.stopping ? 'Stopping' : `Filling · ${f.filled ?? 0} in`,
-        title: 'The page isn’t answering', sub: 'If it shows a message box, answer it there. The fill goes on after.',
-        button: 'fill-stop', label: f.stopping ? 'Stopping…' : 'Stop', disabled: !!f.stopping };
-    }
-    return { phase: 'filling', tone: 'blue', progress: true, eyebrow: f.stopping ? 'Stopping' : `Filling · ${f.filled ?? 0} in`,
-      title: f.stopping ? 'Stopping after the answer going in now…' : f.phase && DOCK_PHASES.has(f.phase.name) ? `${phaseSaid(f.phase)[0]}…` : last ? `Just filled: ${last.label || 'an answer'}` : 'Reading the page…',
-      sub: 'Keep this tab open.', button: 'fill-stop', label: f.stopping ? 'Stopping…' : 'Stop', disabled: !!f.stopping };
   }
   const page = pageOf(state.tab.url);
   const step = tabStep(carrier);
@@ -1394,6 +1394,25 @@ function dockFor() {
     : 'Nothing is submitted. Review, then click Next yourself.';
   const progress = quoteProgress(carrier, page, state.tabSteps.get(state.tab.id));
   return { phase: 'ready', eyebrow: 'Next', title: progress ? `Fill the ${progress.name} page` : 'Fill this page', sub: checksSaid ?? hint, ...fill };
+}
+
+// The dock while a fill runs (fillShown), with Stop. On another tab than the one in front (the agent
+// moved on while it ran): named, as that tab's ('elsewhere': the tab in front keeps its mark).
+function fillingSaid(f) {
+  const stop = { button: 'fill-stop', label: f.stopping ? 'Stopping…' : 'Stop', disabled: !!f.stopping };
+  const eyebrow = f.stopping ? 'Stopping' : `Filling · ${f.filled ?? 0} in`;
+  if (f.tabId !== state.tab?.id) {
+    return { phase: 'elsewhere', tone: 'blue', progress: true, eyebrow, title: f.stopping ? 'Stopping after the answer going in now…' : `Filling your other ${f.carrier?.name ?? 'quote'} tab`,
+      sub: 'Its answers show when you go back to it.', ...stop };
+  }
+  // The page hasn't answered for a while (watchFill): a message box open on it waits for the agent.
+  if (f.unanswered) {
+    return { phase: 'filling', tone: 'warn', progress: true, eyebrow, title: 'The page isn’t answering', sub: 'If it shows a message box, answer it there. The fill goes on after.', ...stop };
+  }
+  const last = f.rows?.at(-1);
+  return { phase: 'filling', tone: 'blue', progress: true, eyebrow,
+    title: f.stopping ? 'Stopping after the answer going in now…' : f.phase && DOCK_PHASES.has(f.phase.name) ? `${phaseSaid(f.phase)[0]}…` : last ? `Just filled: ${last.label || 'an answer'}` : 'Reading the page…',
+    sub: 'Keep this tab open.', ...stop };
 }
 
 // What the dock says now (state.dock, drawn by steps-view.jsx): dockFor's word, hidden while Settings

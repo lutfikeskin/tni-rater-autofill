@@ -59,6 +59,8 @@ test('tab mark: the dock\'s word as the tab\'s mark', () => {
   // Nothing marked on that tab for this quote yet (a panel opened again on a page it continued):
   // no mark to keep, and the page offers Fill this page again, so it is the agent's turn.
   assert.equal(markFor({ phase: 'done', tone: 'good' }, false), 'turn');
+  // A fill on another tab than the one in front (audit 2026-11-07, FLOW-05): the tab in front's mark stays.
+  assert.equal(markFor({ phase: 'elsewhere', tone: 'blue' }), 'keep');
   for (const phase of ['start', 'off', undefined]) assert.equal(markFor({ phase }), null, String(phase));
   assert.equal(markFor(null), null);
 });
