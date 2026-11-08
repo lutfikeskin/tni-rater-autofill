@@ -25,12 +25,14 @@ import { mountChecks, mountPickers } from './panel/checks-view.jsx';
 import { mountClient } from './panel/client-view.jsx';
 import { mountDetails } from './panel/details-view.jsx';
 import { mountPdf } from './panel/pdf-sheet-view.jsx';
+import { mountSummary } from './panel/summary-view.jsx';
+import { closeSummary, openSummary, saveSummary } from './panel/quote-summary.js';
 import { mountLoadError, mountNote } from './panel/notes-view.jsx';
 import { mountSiteTrack } from './panel/site-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaultsShown } from './panel/agent-defaults/store.js';
 import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
-import { forgetQuoteTab, noteNewTab, restoreQuoteOwners } from './panel/quote-owner.js';
+import { forgetQuoteTab, noteNewTab, openPortal, restoreQuoteOwners } from './panel/quote-owner.js';
 import { fileReplacer } from './panel/file-drop.js';
 import { showWhatsNew } from './panel/whats-new.js';
 import { flushSync } from 'react-dom';
@@ -83,6 +85,7 @@ function wire() {
   mountClient($('client-root'), {
     details: () => (state.detailsOpen ? closeDetails() : openDetails()),
     pdf: () => openPdf(),
+    summary: () => (state.summary ? closeSummary() : openSummary()),
     replace: () => replacing.replace(),
     newQuote: () => {
       if (state.filling) return;
@@ -106,9 +109,13 @@ function wire() {
   mountChecks($('check-view'), { openDetails: () => openDetails() });
   // Client details: Close, the scrim, and the empty fields shown or hidden.
   mountDetails($('details-view'), { close: () => closeDetails(), showEmpty: () => showEmpty() });
+  // The quote summary (read only): Back, Close and the scrim; Save summary.
+  mountSummary($('summary-view'), { close: () => closeSummary(), save: () => saveSummary() });
   // The page's answers: their filters, an earlier page's answers on this tab (read-only) and back to
   // this page's, what the tags mean, and Clear the marks.
-  mountCards($('cards-root'));
+  // A rater's logo on the "open a rater" card opens its agent site in a new tab, where nothing fills
+  // by itself (quote-owner.js openPortal).
+  mountCards($('cards-root'), { portal: (url) => { if (inExtension) openPortal(url); } });
   mountPickers($('pickers'), { pick: (list, i) => pickUnit(list, i) });
   mountFeed($('feed-root'), {
     setFilter: (filter) => setFilter(filter),
@@ -135,13 +142,15 @@ function wire() {
     if (w !== width && state.pdf && width) drawPdf();
     width = w;
   }).observe($('pdf-scroll'));
-  // Escape closes the PDF sheet, the client details drawer, then Settings; the sheet or the drawer
-  // keeps keyboard focus while it's open.
+  // Escape closes the PDF sheet, the quote summary, the client details drawer, then Settings; the
+  // sheet or the drawer keeps keyboard focus while it's open.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && state.pdf && !$('pdf-view').hidden) { e.preventDefault(); closePdf(); return; }
+    if (e.key === 'Escape' && state.summary && !$('summary-view').hidden) { e.preventDefault(); closeSummary(); return; }
     if (e.key === 'Escape' && state.detailsOpen && !$('details-view').hidden) { e.preventDefault(); closeDetails(); return; }
     if (e.key === 'Escape' && state.settingsOpen) { e.preventDefault(); state.settingsOpen = false; showScreen(); $('settings-btn').focus(); return; }
-    const modal = state.pdf && !$('pdf-view').hidden ? $('pdf-view') : state.detailsOpen && !$('details-view').hidden ? $('details-view') : null;
+    const modal = state.pdf && !$('pdf-view').hidden ? $('pdf-view') : state.summary && !$('summary-view').hidden ? $('summary-view')
+      : state.detailsOpen && !$('details-view').hidden ? $('details-view') : null;
     if (e.key !== 'Tab' || !modal) return;
     const stops = [...modal.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')].filter((n) => n.offsetParent !== null);
     if (!stops.length) return;
@@ -167,6 +176,8 @@ function wire() {
     approve: () => state.aiDocks.get(`${state.tab?.id}|${pageOf(state.tab?.url)}`)?.go(),
     // agent defaults: the quote's question, on the page's answers (the dock's hold off them).
     defaults: () => setView('page'),
+    // The quote done: its summary (UX-05).
+    summary: () => openSummary(),
     alt: (go) => {
       if (go === 'fill-anyway') dismissState();
       fillPage();

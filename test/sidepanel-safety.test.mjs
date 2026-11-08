@@ -19,7 +19,7 @@ import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
-import { quoteProgress, stopScreen } from '../src/carriers.js';
+import { quoteProgress, ratersSaid, stopScreen } from '../src/carriers.js';
 import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
@@ -113,7 +113,7 @@ function extractFunction(name) {
           initialsChanged: 'async () => {}', refreshDefaults: '() => {}', quoteStarting: '() => {}', settingsDefaults: '() => undefined',
           // Whose quote a tab is (quote-owner.js) has its own tests (test/panel/quote-owner.test.jsx):
           // elsewhere every tab is this intake's, unless the harness says otherwise.
-          quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
+          quoteOwnerIssue: '() => null', portalHold: '() => false', releasePortal: '() => {}', openPortal: 'async () => {}', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
           stopFillFirst: 'async () => {}',
@@ -143,7 +143,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'continuedKey']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'continuedKey']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -292,6 +292,26 @@ test('a rejected automatic choice keeps blocking until manual change or explicit
   state.aiCache.get(sig).manual = false;
   state.aiCache.get(sig).confirmed = true;
   assert.equal(context.pendingAi(1, 'Quote').length, 0, 'explicit confirmation releases the blocker');
+});
+
+// CodeRabbit on #410: the fill's own tab's AI picks hold its Continue, read by that tab's quote,
+// whichever tab is in front.
+test('the fill options hold Continue for the fill\'s own tab\'s AI picks, by that tab\'s quote', () => {
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  const source = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4);
+  const carrier = { id: 'amwins', advance: { text: '^continue$' } };
+  // Tab 7's pick, made on its quote A; tab 8 (quote B) is in front.
+  const state = { tab: { id: 8, url: 'https://carrier.test/quote?id=B', carrier }, intake: { record: {} }, recording: null, tabSessions: new Map(),
+    aiCache: new Map([['7\n/quote\nm\np\nc\nitem', { done: 'auto', key: 'k', quoteHash: 'https://carrier.test/quote?id=A' }]]) };
+  const context = { state, switchOn: () => false, advanceFor: () => ({ text: '^continue$' }), stepScope: (page) => page, knownStep: () => null, unitNameFor: () => null,
+    editScope: (page) => page, pageOf: (url) => new URL(url).pathname, firstUnits: () => ({}), usage: { currentSession: () => null }, aiFingerprint: (url) => url };
+  vm.createContext(context);
+  vm.runInContext(`${source}\n${['tabMaps', 'givenEarlier', 'aiDecisionBlocks', 'pendingAi'].map(extractFunction).join('\n')}\nglobalThis.fillOptions = fillOptions;`, context);
+  const options = context.fillOptions(carrier, {}, true, {}, false, { tabId: 7, tabUrl: 'https://carrier.test/quote?id=A', intake: state.intake });
+  assert.equal(options.advance, null, 'tab 7\'s pick holds its Continue');
+  // A pick from another quote that tab showed before: not this quote's.
+  const other = context.fillOptions(carrier, {}, true, {}, false, { tabId: 7, tabUrl: 'https://carrier.test/quote?id=C', intake: state.intake });
+  assert.deepEqual(other.advance, { text: '^continue$' });
 });
 
 test('a persisted manual correction is protected after the panel reloads', () => {
@@ -492,8 +512,8 @@ test('the fill hands the kit the named-form check and what this tab\'s fills gav
 
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
-  assert.match(body, /formUnit: unitNameFor\(carrier, extra\.expectPage \?\? pageOf\(state\.tab\?\.url\), active, state\.intake\?\.record\)/);
-  assert.ok(body.includes('givenBefore: { ...givenEarlier(state.tab?.id), ...Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },'));
+  assert.match(body, /formUnit: unitNameFor\(carrier, extra\.expectPage \?\? page, active, fill\.intake\?\.record\)/);
+  assert.ok(body.includes('givenBefore: { ...givenEarlier(fill.tabId), ...Object.fromEntries([...(maps.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },'));
 });
 
 
@@ -977,7 +997,7 @@ test('an automatic follow-up on a step without a report fills it as a new page, 
   // autoFill alone: its helpers (fillContext and the rest) are the stubs above; its stop check is
   // the panel's own (no stop here).
   context.renderSteps ??= () => {};
-  vm.runInNewContext(`${extractFunction('autoFill').split('\nfunction ')[0]}\n${extractFunction('stopNoteFor')}`, context);
+  vm.runInNewContext(`${extractFunction('autoFill').split('\nfunction ')[0]}\n${extractFunction('stopNoteFor')}\n${extractFunction('filledReport')}`, context);
   await context.autoFill('Quote');
   assert.deepEqual(JSON.parse(JSON.stringify(fills)), [{ auto: 'page' }]);
   // Back on the step that has its report: a follow-up there stays a follow-up.
@@ -5014,6 +5034,36 @@ test('pages that are not stop pages are still filled and followed up', async () 
   assert.deepEqual(t.stops(), []);
 });
 
+// Audit 2026-11-07 (FLOW-08): the options were read from the tab in front, which may have changed
+// while the fill was prepared: tab A could be filled with tab B's done actions, done steps and AI holds.
+test('the fill options are the fill\'s own tab\'s, whichever tab is in front', () => {
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  const source = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4);
+  const carrier = { id: 'amwins', advance: { text: '^continue$', steps: ['Drivers'] }, keepTakenBack: ['Coverage'] };
+  const intakeA = { record: { vehicles: [{}, {}], drivers: [{}], trailers: [] } };
+  const pending = [];
+  const tabA = { filled: new Map([['ref:A', { path: 'a', shown: '1' }]]), doneActions: new Set(['addVehicle:0']), doneSteps: new Set(), visitedPages: new Set(['/quote-A']),
+    unitForms: { vehicles: { 0: 'form-a' }, drivers: {}, trailers: {} }, agentKeys: new Map([['/quote-A', new Set(['ref:A-agent'])]]) };
+  // Tab B in front: its own maps on `state`, tab A's kept aside.
+  const state = { tab: { id: 8, url: 'https://carrier.test/quote-B', carrier }, intake: { record: { vehicles: [], drivers: [], trailers: [] } }, recording: null,
+    filled: new Map([['ref:B', {}]]), doneActions: new Set(['addVehicle:1']), doneSteps: new Set(), visitedPages: new Set(['/quote-B']),
+    unitForms: { vehicles: { 0: 'form-b' }, drivers: {}, trailers: {} }, agentKeys: new Map([['/quote-B', new Set(['ref:B-agent'])]]), tabSessions: new Map([[7, tabA]]),
+    // What each tab's fills gave before the panel opened (givenEarlier).
+    givenEarlier: new Map([[7, { scope: 'intake-a', given: [['ref:A-early', { path: 'e', shown: '2' }]] }], [8, { scope: 'intake-a', given: [['ref:B-early', {}]] }]]) };
+  const context = { state, switchOn: () => false, pendingAi: (tabId, page) => { pending.push([tabId, page]); return []; }, advanceFor: () => ({ text: '^continue$' }),
+    stepScope: (page) => page, knownStep: () => null, unitNameFor: () => null, editScope: (page) => page, pageOf: (url) => new URL(url).pathname, firstUnits: () => ({}),
+    usage: { currentSession: () => ({ intakeId: 'intake-a' }) } };
+  vm.createContext(context);
+  vm.runInContext(`${source}\n${extractFunction('tabMaps')}\n${extractFunction('givenEarlier')}\nglobalThis.fillOptions = fillOptions;`, context);
+  const options = JSON.parse(JSON.stringify(context.fillOptions(carrier, {}, true, { vehicles: 1 }, false, { tabId: 7, tabUrl: 'https://carrier.test/quote-A', intake: intakeA })));
+  assert.deepEqual([options.filledBefore, options.doneActions, options.visitedPages, options.skip, options.units.bound.vehicles, options.units.count.vehicles, Object.keys(options.takenBack.keys)],
+    [['ref:A'], ['addVehicle:0'], ['/quote-A'], ['ref:A-agent'], { 0: 'form-a' }, 2, ['ref:A-early', 'ref:A']]);
+  assert.deepEqual(Object.keys(options.givenBefore), ['ref:A-early', 'ref:A'], 'tab A\'s answers, those given before the panel opened too');
+  assert.deepEqual(pending, [[7, '/quote-A']], 'tab A\'s AI holds');
+  // Without the fill's tab, the tab in front's, as before.
+  assert.deepEqual(JSON.parse(JSON.stringify(context.fillOptions(carrier, {}, true, {}, false))).doneActions, ['addVehicle:1']);
+});
+
 test('the fill options hand the carrier\'s stop pages to the page kit', () => {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
@@ -5422,6 +5472,79 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   } }];
   return { state, ui, seen, context, intakeA, started, release, reject, results };
 }
+
+// Audit 2026-11-07 (FLOW-08): the tab in front changed during the last wait before the kit was asked
+// (Chrome's read of the tab's address): the fill doesn't go ahead with that tab's options.
+test('a fill whose tab stopped being the panel\'s during its last wait is not sent to the kit', async () => {
+  for (const auto of [true, false]) {
+    const t = fillHarness();
+    let asked = 0;
+    t.context.runKit = async () => { asked++; return []; };
+    t.context.pageMoved = async () => { t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier }; return false; };
+    if (auto) { t.state.autoPages.add('/quote-A'); await t.context.autoFill('/quote-A'); } else await t.context.fillPage();
+    assert.equal(asked, 0, auto ? 'a follow-up' : 'a fill the agent asked for');
+    assert.equal(t.state.filling, false);
+    // The agent's own fill says on its own tab's report that it didn't run (CodeRabbit on #410); a
+    // follow-up ends quietly.
+    assert.deepEqual(t.seen.problems, auto ? [] : [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+  }
+});
+
+// CodeRabbit on #410: a page's opening fill dropped so isn't started again when the agent goes back
+// (the recorder there announces no page), so it says to fill the page; an earlier fill's error on
+// that report stays; and an intake corrected during the wait is said as a stale fill, not a tab change.
+test('a dropped fill says why on its page, keeping an earlier error there', async () => {
+  const moved = (t) => async () => { t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier }; return false; };
+  const opening = fillHarness();
+  opening.context.pageMoved = moved(opening);
+  await opening.context.fillPage({ auto: 'page' });
+  assert.deepEqual(opening.seen.problems, [{ tabId: 7, text: 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.' }]);
+  const failed = fillHarness();
+  failed.state.reports.set('7|report', { error: 'Automatic filling paused after an error. Check the page, then fill again.' });
+  failed.context.pageMoved = moved(failed);
+  await failed.context.fillPage();
+  assert.deepEqual(failed.seen.problems, [], 'the earlier error stays on the report');
+  const corrected = fillHarness();
+  corrected.context.pageMoved = async () => { corrected.state.intakeRevision++; return false; };
+  await corrected.context.fillPage();
+  assert.equal(corrected.seen.problems.length, 1);
+  assert.match(corrected.seen.problems[0].text, /You corrected the intake during the fill/);
+  assert.deepEqual(corrected.seen.logged.map((e) => e.error), ['stale: intake changed during the fill']);
+  // CodeRabbit on #410: the tab switched while the unit list was read (pickListItem), the fill's
+  // first wait, is said the same way.
+  const listed = fillHarness();
+  listed.context.pickListItem = async () => { listed.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: listed.state.tab.carrier }; };
+  await listed.context.fillPage();
+  assert.deepEqual(listed.seen.problems, [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+});
+
+// CodeRabbit on #410: a report made only to say a fill was dropped isn't a filled page's, so the
+// page's next fill (an earlier AmWINS step at the same address filled, a later edit) is its opening
+// fill with its report, not a follow-up.
+test('a page whose only report says its fill was dropped gets an opening fill next, not a follow-up', async () => {
+  const t = fillHarness();
+  t.state.reports = new Map();
+  t.context.fillProblem = (ctx, text, kind) => { t.state.reports.set(`${ctx.tabId}|report`, { key: `${ctx.tabId}|report`, [kind]: text }); };
+  t.context.pageMoved = async () => { t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier }; return false; };
+  await t.context.fillPage({ auto: 'page' });
+  assert.equal(t.state.reports.get('7|report').unfilled, true);
+  // Back on tab 7: the follow-up there fills the page as a new one.
+  t.state.tab = { id: 7, url: 'https://carrier.test/quote-A', carrier: t.state.tab.carrier };
+  t.state.autoPages.add('/quote-A');
+  let opening = 0;
+  const fillPage = t.context.fillPage;
+  t.context.fillPage = (o) => { if (o?.auto === 'page') opening++; return fillPage(o); };
+  t.context.pageMoved = async () => false;
+  t.context.runKit = async () => [];
+  await t.context.autoFill('/quote-A');
+  assert.equal(opening, 1, 'filled as the page\'s opening fill');
+  // A report a fill made is a filled page's: a follow-up there stays one.
+  t.state.reports.set('7|report', { key: '7|report', fields: 3 });
+  opening = 0;
+  t.context.runKit = async () => [];
+  await t.context.autoFill('/quote-A');
+  assert.equal(opening, 0);
+});
 
 // Codex reproduction (stale-fill-reproduction.mjs): a fill's results came back after the agent had
 // loaded another intake and moved to its tab, and were remembered and logged as that intake's.
@@ -6924,11 +7047,100 @@ test('editing a source field in the panel recomputes what derives from it and re
   assert.equal(stored.record.operations.radiusMiles, 77, 'and saved that way');
   sandbox.state.intake = { record, warnings: [], done: [] };
   // A new intake starts clean: its derived values follow their source again.
-  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places, test, intakeId: summary\.intakeId \};/, 'a loaded intake starts with no edits');
+  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places, test, intakeId: summary\.intakeId, intakeRecord: JSON\.parse\(JSON\.stringify\(result\.record\)\) \};/, 'a loaded intake starts with no edits, the record as read kept');
   sandbox.renderSections();
   await edit('operations.radius', '250');
   assert.equal(record.operations.radiusMiles, 250, 'another intake: the miles follow the edit');
   assert.equal(row('operations.radiusMiles').value, '250');
+});
+
+// Audit 2026-11-07, UX-07: a correction in client details looked like an intake value afterwards,
+// what the client wrote was gone, and undoing a typo meant retyping it from the PDF; 96 fields had no
+// search. An edited row says so, with the intake's value and Restore; a box finds fields, and Your
+// corrections lists only the agent's.
+test('client details mark the agent\'s corrections, show the intake\'s value with Restore, and find fields', async () => {
+  const { get, set, STATES } = await import('../src/util.js');
+  const { parseEdit, rederive } = await import('../src/normalize.js');
+  const read = { operations: { radius: '100', radiusMiles: 100 }, applicant: { name: 'Acme Freight', yearEstablished: 2010, yearsInBusiness: 15 } };
+  const record = structuredClone(read);
+  const logged = [];
+  const sandbox = {
+    state: { intake: { record, intakeRecord: read, warnings: [], done: [], agentEdited: [] }, detailsClosed: new Set(['operations']), showEmpty: false, details: null, detailsQuery: '', detailsEditedOnly: false },
+    get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES, flushSync: (fn) => fn(), noNumberEdit: () => false, renderWarnings() {},
+    intakeEdited() {}, usage: { log: (e) => logged.push([e.path, e.change]) }, save: async () => {},
+    claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {}, profileLater() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'restoreField', 'restoreNoNumber', 'agentEdit'].map(extractFunction).join('\n'), sandbox);
+  sandbox.renderSections();
+  const rows = () => JSON.parse(JSON.stringify(sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path)));
+  const live = () => sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path);
+  const row = (path) => live().find((r) => r.path === path);
+  assert.deepEqual([row('operations.radius').edited, row('operations.radius').original, sandbox.state.details.edited], [false, undefined, null], 'nothing corrected: no mark, no Your corrections');
+
+  await row('operations.radius').edit('Unlimited');
+  sandbox.renderSections();
+  assert.deepEqual([row('operations.radius').edited, row('operations.radius').original, record.operations.radiusMiles], [true, '100', null]);
+  assert.equal(row('operations.radiusMiles').edited, false, 'a derived value that followed is not the agent\'s');
+  assert.equal(sandbox.state.details.edited, 'Your corrections (1)');
+  // Restore: the intake's value back, no longer the agent's, the miles following it again.
+  await row('operations.radius').restore();
+  assert.deepEqual([record.operations.radius, record.operations.radiusMiles, [...sandbox.state.intake.agentEdited]], ['100', 100, []]);
+  assert.deepEqual([row('operations.radius').edited, row('operations.radius').original], [false, undefined]);
+  assert.deepEqual(logged, [['operations.radius', 'changed'], ['operations.radius', 'restored']], 'logged as undone, without the value');
+  // A field the intake left blank, corrected: its original is said as blank.
+  await row('applicant.name').edit('');
+  sandbox.renderSections();
+  assert.equal(row('applicant.name').original, 'Acme Freight');
+  sandbox.state.intake.agentEdited = ['applicant.fein'];
+  set(record, 'applicant.fein', '12-3456789');
+  sandbox.renderSections();
+  assert.equal(row('applicant.fein').original, 'blank on the form');
+  // An intake saved by an older build (no record as read): marked, but nothing to restore to.
+  sandbox.state.intake.intakeRecord = undefined;
+  sandbox.renderSections();
+  assert.deepEqual([row('applicant.fein').edited, row('applicant.fein').restore], [true, undefined]);
+  sandbox.state.intake.intakeRecord = read;
+
+  // Find: by label, empty fields too, folded sections opened; nothing else listed.
+  sandbox.state.details.search('radius');
+  assert.deepEqual(rows().map((r) => [r.path, r.empty]), [['operations.radius', false], ['operations.radiusMiles', false]]);
+  assert.equal(sandbox.state.details.sections[0].open, true, 'a folded section with a match is open');
+  assert.equal(sandbox.state.details.toggle, null, 'no empty-fields button while finding');
+  sandbox.state.details.fold('operations', false);
+  assert.ok(sandbox.state.detailsClosed.has('operations') && sandbox.state.detailsClosed.size === 1, 'folding while finding leaves the drawer\'s folds as they were');
+  sandbox.state.details.search('no such field');
+  assert.deepEqual([rows().length, sandbox.state.details.nothing], [0, 'No field matches.']);
+  sandbox.state.details.search('');
+  // Your corrections: only the agent's.
+  sandbox.state.details.editedToggle();
+  assert.deepEqual(rows().map((r) => r.path), ['applicant.fein']);
+  assert.equal(sandbox.state.details.editedOnly, true);
+  sandbox.state.details.editedToggle();
+  assert.ok(rows().length > 3, 'all of them again');
+  // The intake keeps its record as read from the PDF, before any correction.
+  assert.match(SIDEPANEL, /intakeRecord: JSON\.parse\(JSON\.stringify\(result\.record\)\)/);
+
+  // CodeRabbit on #474: restoring the USDOT box put back the empty box but not the intake's "no
+  // number". The intake said No (noDot, its note); the agent typed a number (rederive cleared both);
+  // Restore brings both back. And an intake with a blank box, after the agent's typed No: Restore
+  // takes the No and its note away again, the checks after it keeping their Looks right.
+  const noDot = (applicant, warnings, done) => {
+    const rec = { applicant: { ...applicant } };
+    sandbox.state.intake = { record: rec, intakeRecord: { applicant: { ...applicant } }, warnings, done, agentEdited: ['applicant.dot'] };
+    return rec;
+  };
+  const said = noDot({ dot: null, noDot: true }, [{ code: 'dot.none', path: 'applicant.dot', level: 'info', msg: 'x' }], []);
+  said.applicant.dot = '1234567';
+  said.applicant.noDot = null;
+  sandbox.state.intake.warnings = [];
+  await sandbox.restoreField('applicant.dot', null, 'text');
+  assert.deepEqual(JSON.parse(JSON.stringify([said.applicant, sandbox.state.intake.warnings.map((w) => w.code), sandbox.state.intake.agentEdited])),
+    [{ dot: null, noDot: true }, ['dot.none'], []]);
+  const blank = noDot({ dot: null, noDot: null }, [{ code: 'dot.none', path: 'applicant.dot', level: 'info', msg: 'typed No' }, { code: 'mc.none', path: 'applicant.mc', level: 'info', msg: 'm' }], [1]);
+  blank.applicant.noDot = true;
+  await sandbox.restoreField('applicant.dot', null, 'text');
+  assert.deepEqual(JSON.parse(JSON.stringify([blank.applicant.noDot, sandbox.state.intake.warnings.map((w) => w.code), sandbox.state.intake.done])), [null, ['mc.none'], [0]]);
 });
 
 for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transport of ['complete', 'failure']) {
@@ -7401,7 +7613,7 @@ function namesHarness() {
   const context = {
     state, AssistError, Date, get: (obj, path) => path.split(/[.[\]]+/).filter(Boolean).reduce((o, k) => o?.[k], obj),
     firstNameOf: (v) => String(v ?? '').trim().split(/\s+/)[0] || null,
-    aiSettings: async () => ({ on: !state.offline, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, names: !state.namesOff, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
     reviewDriverNames: async (record, cfg) => {
       requests.push({ record: structuredClone(record), cfg });
       const reply = t.reply;
@@ -7418,17 +7630,30 @@ function namesHarness() {
 }
 const namesIntake = () => ({ record: { drivers: [{ first: 'Maria', last: 'Sample' }, { first: 'John', last: 'Sample' }], coverage: {} }, warnings: [{ code: 'other', level: 'check' }], done: [] });
 
-test('Luna checks driver first names once per intake, never with the assistant off, and fails to an info note', async () => {
-  // Off, or no key: nothing is sent, nothing changes (gender stays the TNI standard).
-  for (const flag of ['offline', 'noKey']) {
+test('Luna checks driver first names once per intake, never with its switch off, and fails to an info note', async () => {
+  // The check's own switch off, or no key: nothing is sent, nothing changes (gender stays the TNI standard).
+  for (const flag of ['namesOff', 'noKey']) {
     const t = namesHarness();
     const intake = namesIntake();
     t.state.intake = intake;
     t.state[flag] = true;
-    await t.review({ retry: true });
+    // Not awaited: a request sent would wait on its answer (gates) and hold the test.
+    t.review({ retry: true });
+    for (let i = 0; i < 5; i++) await t.settle();
     assert.equal(t.requests.length, 0, flag);
     assert.deepEqual(intake.warnings.map((w) => w.code), ['other'], flag);
     assert.equal(intake.namesReview, undefined, flag);
+  }
+  // Maintainer, 2026-11-07 (AI-15): the check has its own switch, so Suggest answers off doesn't stop it.
+  {
+    const t = namesHarness();
+    const intake = namesIntake();
+    t.state.intake = intake;
+    t.state.offline = true;
+    t.review({ retry: true });
+    await t.answer();
+    assert.equal(t.requests.length, 1, 'Suggest answers off: the names are still checked');
+    assert.equal(intake.namesReview.done, true);
   }
   const t = namesHarness();
   const intake = namesIntake();
@@ -7904,6 +8129,28 @@ function siteHarness(carrier, step, filled = false) {
   return Object.assign(ui, { siteTrack: plain(state.siteTrack) });
 }
 
+// Audit 2026-11-07, UX-14: the header's logo and caption, the dock's raters and review mode's words
+// come from the carrier's `display`, not from the panel's code.
+test('the header, the dock and review mode say the carrier as its display says it', () => {
+  const page = siteHarness({ ...amwins, quoteSteps: undefined });
+  assert.equal(page['site-caption'].textContent, 'Commercial auto');
+  assert.doesNotMatch(extractFunction('renderSite'), /assets\/raters|'Commercial auto'/);
+  assert.match(extractFunction('renderSite'), /const src = carrier\?\.display\?\.logo \|\| null;/);
+  const off = dockHarness({ carrier: null, extra: { ratersSaid } });
+  assert.equal(off.dock().sub, 'Progressive, GEICO or AmWINS.');
+  const review = (carrier) => {
+    const state = { tab: { carrier }, intake: { record: { operations: { businessClass: 'Towing' } } }, cards: {} };
+    const context = { state, supportedClass: () => false, issueSaid: (c) => c };
+    vm.runInNewContext(extractFunction('showReviewMode'), context);
+    context.showReviewMode();
+    return state.cards.review.text;
+  };
+  assert.equal(review(geico), 'GEICO\'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.');
+  assert.equal(review({ name: 'New carrier' }), 'New carrier\'s rules weren’t written for this business class. Confirm the marked answers: Continue waits on each page.');
+  // A logo opens the agent site in a new tab, only in the extension.
+  assert.match(SIDEPANEL, /mountCards\(\$\('cards-root'\), \{ portal: \(url\) => \{ if \(inExtension\) openPortal\(url\); \} \}\);/);
+});
+
 test('on a stop step the panel offers no fill; on the other steps it names the step', () => {
   // The dock: on a stop step no button at all, and why; elsewhere Fill, named after the step.
   const dock = (step) => dockHarness({ carrier: geico, url: 'https://sales.geico.com/quote', step, switches: { 'auto-advance': { checked: false } }, extra: { quoteProgress } }).dock();
@@ -8204,7 +8451,7 @@ test('a GEICO unit list drawn gets a follow-up fill with either switch on', () =
 function fillOptionsOf(state, carrier, active, { autoAdvance = false, unitsListed = false } = {}) {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const context = { state, URL, knownStep, advanceFor, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
-  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\n${extractFunction('switchOn')}\nglobalThis.fillOptions = fillOptions;`, context);
+  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\n${extractFunction('givenEarlier')}\n${extractFunction('switchOn')}\n${extractFunction('tabMaps')}\nglobalThis.fillOptions = fillOptions;`, context);
   return context.fillOptions(carrier, {}, autoAdvance, active, unitsListed);
 }
 
@@ -8248,7 +8495,7 @@ test('the kit is told the stop steps by name, and the plan\'s units with the for
     active: { vehicles: 0, drivers: 0, trailers: 0 }, count: { vehicles: 0, drivers: 0, trailers: 0 }, bound: { vehicles: {}, drivers: {}, trailers: {} } }]);
   // Both fills hand over the units their plan was built for.
   // and whether the unit list on screen holds every intake unit (GEICO's Looks Good: advanceFor).
-  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance, ctx\.active, ctx\.unitsListed\);/g) ?? []).length, 2);
+  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance, ctx\.active, ctx\.unitsListed, ctx\);/g) ?? []).length, 2);
   const start = SIDEPANEL.indexOf('const fillOptions =');
   assert.match(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start)), /stopSteps: Object\.keys\(carrier\.stopSteps \?\? \{\}\)/);
 });
@@ -9278,6 +9525,7 @@ test('automatic filling paused on the tab in front is said under the dock\'s wor
   // The dock carries it (renderDock), and the agent's own Fill lifts it (fillPage).
   assert.match(extractFunction('renderDock'), /busy: !!state\.filling, paused: pausedSaid\(d\) \};/);
   assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false;/);
+  assert.match(extractFunction('fillPage'), /if \(!auto\) releasePortal\(state\.tab\.id\);/);
 });
 
 // W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
@@ -10218,11 +10466,12 @@ test('the quote is done where TNI stops on the rater: the finishing action click
   const prog = { name: 'Progressive', finishedBy: 'print', actions: [{ id: 'print', page: 'CoveragesRates' }] };
   assert.equal(context.quoteFinished(prog, report, 'CoveragesRates', undefined, new Set(['print'])), true);
   assert.equal(context.quoteFinished(prog, report, 'Drivers', undefined, new Set(['print'])), false, 'another page\'s report');
-  // The dock says so, with Fill this page again beside it; the strip's Review page says Quote done.
+  // The dock says so, with the quote's summary to open (UX-05) and Fill this page again beside it;
+  // the strip's Review page says Quote done.
   const d = dockHarness({ carrier: geicoLike, step: 'Quote & Coverages', extra: { showReport: () => report, quoteFinished: context.quoteFinished } });
   d.state.doneActions = done;
   const word = d.dock();
-  assert.deepEqual([word.phase, word.eyebrow, word.title, word.button ?? null, word.alt], ['finished', 'Quote done', 'The quote proposal is printed', null, 'fill-again']);
+  assert.deepEqual([word.phase, word.eyebrow, word.title, word.button ?? null, word.label, word.alt], ['finished', 'Quote done', 'The quote proposal is printed', 'dock-summary', 'Quote summary', 'fill-again']);
   assert.equal(word.sub, 'This is where TNI stops on GEICO. Nothing is submitted or bound.');
   // (quoteFinished reads the done actions of the state it was extracted with: the same Set.)
   done.delete('printProposal');
@@ -10829,7 +11078,7 @@ test('AmWINS\'s quote is done at the declaration: Underwriting with nothing else
   const d = dockHarness({ carrier: amwins, step: 'Underwriting', extra: { showReport: () => report, quoteFinished: context.quoteFinished } });
   const word = d.dock();
   assert.deepEqual([word.phase, word.eyebrow, word.title, word.sub, word.button ?? null, word.alt],
-    ['finished', 'Quote done', 'Tick the declaration, then click Submit', 'Both are yours on AmWINS. Nothing is ticked, submitted or bound for you.', null, 'fill-again']);
+    ['finished', 'Quote done', 'Tick the declaration, then click Submit', 'Both are yours on AmWINS. Nothing is ticked, submitted or bound for you.', 'dock-summary', 'fill-again']);
 });
 
 test('the AmWINS fill that reaches the declaration chimes once; one that leaves more doesn\'t', () => {
@@ -11067,8 +11316,13 @@ test('Assistant names whose key Luna uses: the agent\'s, TNI\'s server, or anoth
   // On without a key: it says so, and its fold opens (warn). The picks switch is disabled only while
   // AI is off (or with a provider that can't pick).
   assert.deepEqual([none.ai.keyEdit, none.ai.keyTone, none.ai.warn, none.ai.note, none.ai.noteTone, none.ai.autoOff], ['Add key', 'warn', true, 'Needs a key', 'warn', false]);
-  const off = await said({ on: false });
-  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown], [false, 'Off', 'off', true, true]);
+  const off = await said({ on: false, names: false });
+  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown, off.ai.names], [false, 'Off', 'off', true, true, false]);
+  // Maintainer, 2026-11-07 (AI-15): the driver-name check has its own switch; on alone, the card says so.
+  const names = await said({ on: false, names: true, apiKey: 'sk-own', ready: true });
+  assert.deepEqual([names.ai.on, names.ai.names, names.ai.warn, names.ai.note, names.ai.noteTone], [false, true, false, 'On. Checks driver names.', 'on']);
+  const namesNoKey = await said({ on: false, names: true });
+  assert.deepEqual([namesNoKey.ai.warn, namesNoKey.ai.note], [true, 'Needs a key'], 'the check on without a key: it can\'t run yet');
 });
 
 // The AI key (CLAUDE.md: credentials stay out of logs): Add key opens its box with the saved key in
@@ -11101,13 +11355,17 @@ test('the AI key is put in its box and read from it, never into the panel\'s sta
   assert.deepEqual(calls.find((c) => c[0] === 'logSettings'), ['logSettings', 'changed', 'aiKey']);
   assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, focused.at(-1), prevented], ['', false, 'key-edit', 1]);
   assert.deepEqual([...state.aiCache.keys()], ['b'], 'answers asked with the old key are dropped');
+  // The driver-name check's switch (AI-15) saves its own setting and logs it by its name.
+  await context.acts.aiNames(false);
+  assert.deepEqual(calls.filter((c) => c[0] === 'save').at(-1), ['save', { lunaNames: false }]);
+  assert.deepEqual(calls.filter((c) => c[0] === 'logSettings').at(-1), ['logSettings', 'changed', 'aiNames']);
   // Escape: emptied and closed without saving; stopped, so Settings stays open.
   await context.acts.keyEdit();
   el('ai-openai-key').value = 'typed';
   let stopped = 0;
   context.acts.keyKey({ key: 'Escape', preventDefault() {}, stopPropagation: () => { stopped++; } });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 1]);
+  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 2]);
   assert.doesNotMatch(JSON.stringify([...Object.entries(state)]), /sk-/, 'no key in the panel\'s state');
   // The box and its button in Settings (settings-view.jsx): a password box, never given a value by React.
   const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
