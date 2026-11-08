@@ -24,7 +24,10 @@ const ratio = (a, b) => {
 };
 
 test('muted text is 4.5:1 on every surface it sits on (WCAG 1.4.3)', () => {
-  for (const ground of ['surface', 'canvas', 'surface-sunken']) {
+  // Every light surface token the panel has, the AI's tints too (#ai-note.off sits on --ai-soft;
+  // CodeRabbit on #459).
+  const grounds = ['surface', 'canvas', 'surface-sunken', 'surface-hover', 'surface-selected', 'surface-open', 'ai-soft', 'ai-badge', 'brand-soft', 'brand-faint'];
+  for (const ground of grounds) {
     assert.ok(ratio(token('ink-muted'), token(ground)) >= 4.5, `--ink-muted on --${ground}: ${ratio(token('ink-muted'), token(ground)).toFixed(2)}`);
   }
 });
