@@ -1,3 +1,4 @@
+// @ts-check
 // The side panel: loading the intake PDF.
 // One part of the panel; sidepanel.js wires the parts together.
 import * as pdfjs from '../../lib/pdf.min.mjs';
@@ -38,7 +39,7 @@ async function loadFile(file, { reset = false } = {}) {
     return showLoadError('No fillable fields: it looks like a scan or printed copy. Ask for the fillable TNI application.', file.name);
   }
   const result = normalizeIntake(raw);
-  if (result.error) return showLoadError(result.error, file.name);
+  if ('error' in result) return showLoadError(result.error, file.name);
   const summary = await intakeSummary(bytes, raw, result);
   const test = (await testIntakes.get()).includes(summary.intakeId);
   // Where each answer is on the PDF, so check items and filled answers can be shown on it. A PDF
