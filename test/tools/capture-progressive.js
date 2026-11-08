@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Read-only capture for Progressive's ForAgentsOnly commercial quote pages (ExtJS 6 + Duck Creek
 // "dct" components). Uses each component's own caption (dctCaption) and the question id at the
 // end of the field name (e.g. "string_2C05|..." -> 2C05). Records choices that are selected,
