@@ -24,6 +24,9 @@ test('npm run recording takes the recording as the first argument, with or witho
   // Two recordings side by side (REC-12).
   assert.deepEqual(cliArgs(['--compare', 'a.zip', 'b.zip']), { source: null, out: null, compare: ['a.zip', 'b.zip'] });
   assert.deepEqual(cliArgs(['--compare', 'a.zip', '--out', 'c.md', 'b.zip']), { source: null, out: 'c.md', compare: ['a.zip', 'b.zip'] });
+  // A typo or a missing file is said, never run as something else (review of PR #481).
+  assert.deepEqual([cliArgs(['a.zip', '--out']), cliArgs(['--out', '--compare', 'a', 'b']), cliArgs(['--compre', 'a', 'b'])].map((x) => x.error),
+    ['--out needs a file name', '--out needs a file name', 'unknown option --compre']);
 });
 
 test('only builds that aren\'t the store\'s may record', () => {
@@ -531,6 +534,10 @@ test('--compare flags what A answered and kept that B didn\'t, and sets the butt
   assert.match(report, /The same, in the same order: "Continue"\./);
   assert.match(report, /\| before pressing Continue \| 1 \| 2\.0 s \| 1 \| 0\.8 s \| −1\.2 s \|/);
   assert.match(report, /\| Answers \| 4 \| 4 \|/);
+  // One key kept for two vehicles in A, for one in B (review of PR #481): flagged, not hidden.
+  const two = recordingSummary({ manifest: manifestFor('a-2'), events: [page, answer(100, 'ref:Year', 'Year'), answer(500, 'ref:Year', 'Year')] });
+  const one = recordingSummary({ manifest: manifestFor('b-2'), events: [page, answer(100, 'ref:Year', 'Year')] });
+  assert.match(compareReport(two, one), /- \*\*KEPT FEWER TIMES IN B\*\*: "Year", 2 times in A, 1 in B/);
   // The same answers both times: said so, nothing flagged.
   const same = compareReport(a, a);
   assert.match(same, /Every answer A's fill gave and the page kept, B's gave and the page kept too\./);

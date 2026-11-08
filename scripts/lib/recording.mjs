@@ -97,8 +97,13 @@ const isAction = (e) => ['click', 'key', 'change'].includes(e.kind) || (e.kind =
  * recording, 2026-10-23). With `--compare`, its recordings (REC-12): every argument but --out's.
  */
 export function cliArgs(argv) {
+  // Only --out (with its file) and --compare: a typo or a missing file is said, never run as
+  // something else (review of PR #481).
+  const unknown = argv.find((a) => a.startsWith('--') && a !== '--out' && a !== '--compare');
+  if (unknown) return { error: `unknown option ${unknown}` };
   const outAt = argv.indexOf('--out');
-  const out = outAt >= 0 ? argv[outAt + 1] ?? null : null;
+  if (outAt >= 0 && (argv[outAt + 1] == null || argv[outAt + 1].startsWith('--'))) return { error: '--out needs a file name' };
+  const out = outAt >= 0 ? argv[outAt + 1] : null;
   const given = argv.filter((a, i) => !a.startsWith('--') && (outAt < 0 || i !== outAt + 1));
   if (argv.includes('--compare')) return { source: null, out, compare: given };
   return { source: given[0] ?? null, out };
@@ -489,14 +494,21 @@ export function compareReport(a, b) {
   const onlyB = [...B.keys()].filter((k) => kept(B, k) && !A.has(k));
   const lostInB = [...A.keys()].filter((k) => kept(A, k) && B.has(k) && !kept(B, k));
   const gainedInB = [...B.keys()].filter((k) => kept(B, k) && A.has(k) && !kept(A, k));
+  // A key the fill kept more often in A than in B (GEICO gives each vehicle's form the same keys, so
+  // one vehicle's answer missing in B leaves the key answered): flagged by how many times each kept it.
+  // A refill of a kept answer counts too, so a flag here is a question to look at, not proof.
+  const keptTimes = (s) => s.answers.reduce((m, x) => (x.ok ? m.set(keyOf(x), (m.get(keyOf(x)) ?? 0) + 1) : m), new Map());
+  const timesA = keptTimes(a), timesB = keptTimes(b);
+  const fewerInB = [...timesA.keys()].filter((k) => kept(A, k) && kept(B, k) && (timesB.get(k) ?? 0) < timesA.get(k));
   const out = [`# Recordings compared: A ${a.id} · B ${b.id}`, '',
     `A: ${a.carrier} · ${quote(a.scenario)} · build ${a.build?.version ?? '?'}${a.build?.commit ? ` (${a.build.commit})` : ''} · ${many(a.answers.length, 'answer')} · ${secs(a.all.onScreenMs)}`,
     `B: ${b.carrier} · ${quote(b.scenario)} · build ${b.build?.version ?? '?'}${b.build?.commit ? ` (${b.build.commit})` : ''} · ${many(b.answers.length, 'answer')} · ${secs(b.all.onScreenMs)}`, ''];
   if (a.carrier !== b.carrier) out.push('**Not the same carrier: the answers can\'t be compared.**', '');
   out.push('## Answers', '');
-  if (!onlyA.length && !lostInB.length) out.push('Every answer A\'s fill gave and the page kept, B\'s gave and the page kept too.');
+  if (!onlyA.length && !lostInB.length && !fewerInB.length) out.push('Every answer A\'s fill gave and the page kept, B\'s gave and the page kept too.');
   for (const k of onlyA) out.push(`- **NOT ANSWERED IN B**: ${name(A.get(k))} (step ${A.get(k).step} in A)`);
   for (const k of lostInB) out.push(`- **NOT KEPT IN B**: ${name(B.get(k))}${B.get(k).code ? ` (\`${B.get(k).code}\`)` : ''}, kept in A`);
+  for (const k of fewerInB) out.push(`- **KEPT FEWER TIMES IN B**: ${name(A.get(k))}, ${timesA.get(k)} times in A, ${timesB.get(k) ?? 0} in B (one for each vehicle, driver or trailer, or a refill)`);
   for (const k of onlyB) out.push(`- answered in B only: ${name(B.get(k))} (step ${B.get(k).step} in B)`);
   for (const k of gainedInB) out.push(`- kept in B, not in A: ${name(A.get(k))}${A.get(k).code ? ` (\`${A.get(k).code}\` in A)` : ''}`);
   out.push('', '## Buttons the fill pressed', '');

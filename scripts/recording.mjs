@@ -15,7 +15,11 @@ import { fileURLToPath } from 'node:url';
 import { cliArgs, compareReport, readRecording, recordingReport, recordingSummary } from './lib/recording.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const { source, out, compare } = cliArgs(process.argv.slice(2));
+const { source, out, compare, error } = cliArgs(process.argv.slice(2));
+if (error) {
+  console.error(`${error}. Usage: npm run recording -- <recording> [--out file.md], or --compare <a> <b> [--out file.md]`);
+  process.exit(1);
+}
 if (compare) {
   if (compare.length !== 2) {
     console.error('Usage: npm run recording -- --compare <a recording> <b recording> [--out file.md]');
