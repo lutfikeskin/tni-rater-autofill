@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Guards for things that broke (or would break) silently when one part changes without another:
 // event types the server doesn't accept, carrier hosts the manifest doesn't allow, versions out of
 // step, committed fixtures with client data, docs naming commands that don't exist.
@@ -9,7 +10,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { EVENT_FIELDS, COMMON, COMMON_SHAPES, RUN_FIELDS, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT } from '../server/index.mjs';
+import crypto from 'node:crypto';
+import { EVENT_FIELDS, COMMON, COMMON_SHAPES, RUN_FIELDS, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT, SCHEMA_VERSION as SERVER_SCHEMA } from '../server/index.mjs';
+import * as SCHEMA from '../src/usage-schema.js';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms, SOURCES } from '../src/plan.js';
@@ -81,6 +84,33 @@ test('carrier ids and the extension\'s version are in the shapes the server keep
   assert.ok(COMMON_SHAPES.v(JSON.parse(read('package.json')).version));
   assert.deepEqual(Object.keys(COMMON_SHAPES).sort(), COMMON.filter((k) => ['t', 'agent', 'session', 'intakeId', 'carrier', 'page', 'v'].includes(k)).sort(),
     'id, channel, commit, install, seq, type and view keep their own checks');
+});
+
+// Audit 2026-11-07, SRV-14: the event contract is one module both sides import
+// (src/usage-schema.js). A change to it (an event type, a field, a profile group or field) changes
+// the fingerprint, and the schema's version must go up with it: an extension that sends the new
+// fields is then refused by an older server in words it retries, never stored with them dropped.
+const profileShape = (spec) => (typeof spec === 'function' ? true : Array.isArray(spec) ? [profileShape(spec[0])]
+  : Object.fromEntries(Object.keys(spec).sort().map((k) => [k, profileShape(spec[k])])));
+const schemaFingerprint = () => crypto.createHash('sha256').update(JSON.stringify({
+  common: COMMON, events: Object.keys(EVENT_FIELDS).sort().map((t) => [t, EVENT_FIELDS[t]]), profile: profileShape(PROFILE),
+})).digest('hex').slice(0, 12);
+// Every schema version's fingerprint, one entry a version. A version's entry is never rewritten:
+// a contract that changed is a new version with its own entry, so the fingerprint can't be brought
+// up to date while the version stays (the review of #378).
+const VERSION_FINGERPRINTS = { 1: '4e730dd257f0' };
+test('the event contract is shared, and its version goes up whenever it changes', () => {
+  assert.equal(COMMON, SCHEMA.COMMON, 'the server keeps the shared COMMON');
+  assert.deepEqual(Object.keys(EVENT_FIELDS), Object.keys(SCHEMA.EVENT_FIELDS), 'the server knows every shared event type, and only those');
+  for (const [type, fields] of Object.entries(SCHEMA.EVENT_FIELDS)) assert.deepEqual(EVENT_FIELDS[type].slice(0, fields.length), [...fields], type);
+  assert.equal(EXTENSION_ID_LIKE, SCHEMA.ID_LIKE);
+  assert.equal(SERVER_SCHEMA, SCHEMA.SCHEMA_VERSION);
+  const versions = Object.keys(VERSION_FINGERPRINTS).map(Number);
+  assert.deepEqual(versions, Array.from({ length: SCHEMA.SCHEMA_VERSION }, (_, i) => i + 1), 'one fingerprint for each version up to the current one');
+  assert.equal(new Set(Object.values(VERSION_FINGERPRINTS)).size, versions.length, 'each version a different contract');
+  const next = SCHEMA.SCHEMA_VERSION + 1;
+  assert.equal(VERSION_FINGERPRINTS[SCHEMA.SCHEMA_VERSION], schemaFingerprint(),
+    `the event contract changed: raise SCHEMA_VERSION in src/usage-schema.js to ${next} and add ${next}: '${schemaFingerprint()}' to VERSION_FINGERPRINTS here, leaving the earlier entries as they are`);
 });
 
 // The business profile: every value the extension sends fits the server's shape for it, and each
@@ -248,4 +278,56 @@ test('commands named in AGENTS.md and the README exist', () => {
     if (!fs.existsSync(path.join(root, doc))) continue;
     for (const [, name] of read(doc).matchAll(/npm run ([a-z][\w:-]*)/g)) assert.ok(scripts[name], `${doc} names "npm run ${name}", which package.json doesn't have`);
   }
+});
+
+// Audit 2026-11-07, ORG-12: the README named capture folders that were never committed. A
+// repository path a document names in backticks (one under the repository's own folders, with no
+// placeholder) or links to is a tracked file or folder, or one of these, each named as what it is.
+const NOT_TRACKED = {
+  'src/content/pagekit.js': 'built from src/kit/ by scripts/lib/kit.mjs',
+  'docs/HANDOFF.md': 'a local note, named as local',
+  'docs/kesif-plani.md': 'a local file outside the repository, named as such',
+  'src/content/page-watch.js': "developer-recording.md's proposal, not built",
+  'test/fixtures/recording': "developer-recording.md's proposal, not built",
+  'summary.json': "a file inside a developer recording's zip",
+  'recording.json': "a file inside a developer recording's zip",
+  '.claude/worktrees': 'local git worktrees agents work in, ignored',
+};
+// A document's paths that aren't in the repository: backticked ones under its own folders, backticked
+// file names with no folder (a root file, or a tracked file's own name), and relative links.
+function unknownPaths(text, doc, tracked, names) {
+  const ticked = [...text.matchAll(/`([^`\s]+)`/g)].map((m) => m[1].replace(/[),.;:]+$/, '').replace(/#L?\d.*$/, '').replace(/:\d+(-\d+)?$/, ''))
+    .filter((p) => !/[<>*{}$|]/.test(p));
+  const named = ticked.filter((p) => /^(src|scripts|test|docs|server|sidepanel|lib|icons|captures|\.github|\.claude)\//.test(p));
+  // A file name: one of the repository's extensions, or a root file's stem with another one
+  // (`manifest.jso`), never a property like `state.aiAsking`.
+  const stems = new Set([...tracked].filter((f) => !f.includes('/') && f.includes('.')).map((n) => n.replace(/\.[^.]+$/, '')));
+  const bare = ticked.filter((p) => /^[\w-]+(\.[\w-]+)*\.\w+$/.test(p) && !tracked.has(p) && !names.has(p)
+    && (/\.(?:js|mjs|cjs|jsx|json|md|ya?ml|html|toml|txt)$/.test(p) || stems.has(p.replace(/\.[^.]+$/, ''))));
+  const linked = [...text.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]).filter((l) => !/^[a-z]+:|^#/.test(l))
+    // A link starting with / is from the repository's root, as GitHub reads it.
+    .map((l) => decodeURIComponent(l.replace(/#.*$/, '')))
+    .map((l) => path.posix.normalize(l.startsWith('/') ? l.slice(1) : path.posix.join(path.posix.dirname(doc), l)));
+  return [...named, ...linked, ...bare].map((x) => x.replace(/\/$/, '')).filter((p) => !tracked.has(p) && !NOT_TRACKED[p]);
+}
+test('a misspelled path is found, in a folder, at the root or in a link', () => {
+  const tracked = new Set(['manifest.json', 'src', 'src/usage.js', 'docs', 'docs/testing.md']);
+  const names = new Set(['manifest.json', 'usage.js', 'testing.md']);
+  const text = '`src/usag.js`, `manifest.jso`, `usage.js`, `manifest.json`, `fill_run`, `README.md` [x](testng.md) [y](testing.md) [z](/manifest.json) [w](/docs/testng.md)';
+  assert.deepEqual(unknownPaths(text, 'docs/a.md', tracked, names), ['src/usag.js', 'docs/testng.md', 'docs/testng.md', 'manifest.jso', 'README.md']);
+});
+test('paths the README, AGENTS.md and docs/ name are in the repository', (t) => {
+  let files;
+  try {
+    files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\0').filter(Boolean);
+  } catch {
+    t.skip('git is not available here (a packaged copy, or no repository)');
+    return;
+  }
+  const tracked = new Set(files);
+  for (const f of files) for (let i = f.indexOf('/'); i > 0; i = f.indexOf('/', i + 1)) tracked.add(f.slice(0, i));
+  const names = new Set(files.map((f) => path.posix.basename(f)));
+  const docs = ['README.md', 'AGENTS.md', ...files.filter((f) => /^docs\/[^/]+\.md$/.test(f))];
+  const missing = docs.flatMap((doc) => unknownPaths(read(doc), doc, tracked, names).map((p) => `${doc}: ${p}`));
+  assert.deepEqual([...new Set(missing)], [], 'not in the repository: fix the path, or say it is local or built and add it to NOT_TRACKED');
 });

@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
@@ -69,6 +70,12 @@ test('the list shows for the fill on the tab in front, an automatic one once a r
   expect(shown()).toBe(false);
   act(() => { Object.assign(state, { filling: true, fillingFor: { run: 'r2', tabId: 3, rows: [] } }); });
   expect(said(container)).toEqual([['row typing', 'Reading the page', 'Working…', null]]);
+  // Audit 2026-11-07, FLOW-05: an automatic one that has gone on a while with no answer in (watchFill
+  // marks it `shown`: waiting on a helper or the premium) is listed too, with what it waits on.
+  act(() => { state.fillingFor = { run: 'r3', auto: true, tabId: 3, rows: [], phase: { name: 'premium' } }; });
+  expect(shown()).toBe(false);
+  act(() => { state.fillingFor = { ...state.fillingFor, shown: true }; });
+  expect(said(container)).toEqual([['row typing', 'Waiting for the premium', 'The rater is rating the quote…', null]]);
 });
 
 // From the safety tests 'a fill whose page stops answering is said in the dock…' and 'the live list

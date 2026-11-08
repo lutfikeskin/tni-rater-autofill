@@ -3,6 +3,7 @@
 // never contain client data.
 
 import { LOG_KEY, MAX_EVENTS } from '../src/usage.js';
+import { SCHEMA_VERSION } from '../src/usage-schema.js';
 
 const hasChrome = !!globalThis.chrome?.storage?.local;
 const memory = { [LOG_KEY]: [], settings: {} };
@@ -73,7 +74,7 @@ export function log(...events) {
     const install = await installId();
     let list = (await local.get(LOG_KEY)) ?? [];
     let seq = (await local.get(SEQ_KEY)) ?? 0;
-    const stamp = () => ({ id: crypto.randomUUID(), t, v: version, channel: PROVENANCE.channel, ...(PROVENANCE.commit ? { commit: PROVENANCE.commit } : {}), agent, install, session: sessionId, intakeId, seq: ++seq });
+    const stamp = () => ({ id: crypto.randomUUID(), t, v: version, schema: SCHEMA_VERSION, channel: PROVENANCE.channel, ...(PROVENANCE.commit ? { commit: PROVENANCE.commit } : {}), agent, install, session: sessionId, intakeId, seq: ++seq });
     for (const e of events) list.push({ ...stamp(), ...e });
     // Oldest events go first if nobody has exported in a long time; how many is logged in their
     // place (usage_lost), so a review knows the log is missing some.
@@ -187,6 +188,15 @@ async function park(events) {
   await local.set(REJECTED_KEY, [...((await local.get(REJECTED_KEY)) ?? []), ...events].slice(-MAX_EVENTS));
 }
 
+// The ids of events the server's receipt took (stored, or already stored), this browser session,
+// the latest CONFIRMED_MAX: what eventFate calls sent.
+const CONFIRMED_MAX = 500;
+const confirmed = new Set();
+function noteConfirmed(ids) {
+  for (const id of ids) { confirmed.delete(id); confirmed.add(id); }
+  for (const id of confirmed) { if (confirmed.size <= CONFIRMED_MAX) break; confirmed.delete(id); }
+}
+
 // Sends pending events in batches. Events leave this computer's list only after the server has
 // stored them (or already had them), so a server outage loses nothing.
 // `timeoutMs`: per request (tests shorten it).
@@ -196,10 +206,11 @@ export function upload({ timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
     const { serverUrl, serverToken } = await serverConfig();
     if (!serverUrl) { uploadStatus = { state: 'off' }; return; }
     let sent = 0;
-    // Events an older server refused because it didn't know their type yet (e.g. the AI events)
-    // go back in the queue: a newer server takes them, an old one refuses them again.
+    // Events an older server refused because it didn't know their type yet (e.g. the AI events), or
+    // because they were logged under a newer schema than its own (src/usage-schema.js: it would drop
+    // their new fields), go back in the queue: a newer server takes them, an old one refuses them again.
     const parked = (await local.get(REJECTED_KEY)) ?? [];
-    const retry = parked.filter((e) => /unknown event type/.test(e.rejectedBecause ?? ''));
+    const retry = parked.filter((e) => /unknown event type|schema newer than server/.test(e.rejectedBecause ?? ''));
     if (retry.length) {
       const queued = (await local.get(LOG_KEY)) ?? [];
       const ids = new Set(queued.map((e) => e.id));
@@ -263,11 +274,23 @@ export function upload({ timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
       }
       const ids = new Set(batch.map((e) => e.id));
       await local.set(LOG_KEY, list.filter((e) => !ids.has(e.id)));
+      const refusedAt = new Set((body.rejected ?? []).map((r) => r.index));
+      noteConfirmed(batch.filter((e, i) => !refusedAt.has(i)).map((e) => e.id));
       sent += batch.length - refused.length;
     }
     uploadStatus = { state: 'ok', at: new Date().toISOString(), sent };
   })).catch((e) => { uploadStatus = { state: 'error', message: String(e.message) }; });
   return queue;
+}
+
+// Where one event is now, by its id (the panel's problem report): still waiting here (`queued`), set
+// aside as refused or too large (`refused`), stored by the server (`sent`: its receipt named it,
+// this browser session), or none of these (`unknown`: cleared, or dropped by the queue's cap). The
+// upload's own `ok` says none of it: it ends so with events refused, and with nothing to send.
+export async function eventFate(id) {
+  if (((await local.get(LOG_KEY)) ?? []).some((e) => e.id === id)) return 'queued';
+  if (((await local.get(REJECTED_KEY)) ?? []).some((e) => e.id === id)) return 'refused';
+  return confirmed.has(id) ? 'sent' : 'unknown';
 }
 
 // Deletes the upload queue and the events kept aside for export: what Export wrote (audit

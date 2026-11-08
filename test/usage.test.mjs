@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -100,6 +101,15 @@ test('a fill run says it ran in the background and how long its page was hidden,
   const [front] = fillEvents([{ fields: 3 }], ctx);
   assert.deepEqual([back.background, back.hiddenMs], [true, 1200]);
   assert.deepEqual(['background' in front, 'hiddenMs' in front], [false, false]);
+});
+
+// Audit 2026-11-07, FLOW-11: the second click of a Continue that didn't take is said on its fill_run,
+// so the weekly review can judge whether the retry is still needed.
+test('a fill run that clicked a lost Continue again says so, and no other does', () => {
+  const ctx = { carrier: 'amwins', page: 'Step', overwrite: false, ms: 1, redact: (t) => t };
+  const [retried] = fillEvents([{ fields: 3, advanced: 'Save & Continue' }], { ...ctx, auto: 'page', retried: true });
+  const [plain] = fillEvents([{ fields: 3, advanced: 'Save & Continue' }], { ...ctx, auto: 'page' });
+  assert.deepEqual([retried.retried, 'retried' in plain], [true, false]);
 });
 
 test('dropdown changes keep the option text, minus client names', () => {

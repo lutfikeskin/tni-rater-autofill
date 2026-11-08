@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The developer recording's trace (docs/developer-recording.md): injected by the side panel next to
 // the recorder, in its isolated world and every frame, only while a recording runs (unpacked
 // builds). It watches and never acts: it clicks nothing, sets no value and dispatches no event.
@@ -464,7 +465,7 @@
       if (!isNum(said.start) || !isNum(said.ms) || (said.ended !== 'quiet' && said.ended !== 'limit')) return null;
       const held = has(said.held) ? { held: { busy: said.held.busy === true, changing: said.held.changing === true, requests: said.held.requests === true } } : {};
       return { what: 'wait', why: WAITS_FOR.has(said.why) ? said.why : null, start: said.start, ms: said.ms, ended: said.ended,
-        ...nums(said, ['quietMs', 'maxMs']), ...yesNo(said, ['requests', 'settled']), ...held };
+        ...nums(said, ['quietMs', 'maxMs', 'lastChange', 'lastHeld']), ...yesNo(said, ['requests', 'settled']), ...held };
     }
     if (said.what === 'answer') {
       if (!has(said.field) || !isNum(said.start)) return null;

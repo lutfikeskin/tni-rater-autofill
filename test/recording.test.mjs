@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -404,6 +405,23 @@ test('a step is left by the last button pressed on it, the agent\'s or the exten
   assert.match(report, /\| 4 \| \/quote · Summary \|[^\n]*\| — \|/);
 });
 
+// REC-02 (audit 2026-11-07): a wait held by GEICO's `active-index`, a radio's `checked` or a busy page
+// read as "the page did nothing during it", a safe speed-up to the review, from the trace's observer.
+test('a wait\'s slack counts what the wait saw itself, and says when the trace saw less', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const wait = { kind: 'kit', t: t0 + 3000, seq: 2, frame: 0, what: 'wait', why: 'continue', quietMs: 500, maxMs: 6000, requests: false, start: t0 + 1000, ms: 2000, ended: 'quiet' };
+  const page = { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true };
+  const report = (more) => recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:04.000Z' }, events: [page, { ...wait, ...more }] });
+  // The page changed an attribute until 2.4 s: 0.6 s of slack, not 2.0 s.
+  const seen = report({ lastChange: t0 + 2400, lastHeld: t0 + 1000 });
+  assert.match(seen, /the extension waited 2\.0 s before pressing Continue \(quiet 500 ms\): the page was quiet; 0\.6 s after the page's last change \(the wait saw the page change or busy 1\.4 s after the trace's last change: not slack\)/);
+  // Busy until 2.2 s, no change seen.
+  assert.match(report({ lastChange: t0 + 1000, lastHeld: t0 + 2200 }), /; 0\.8 s after the page's last change \(the wait saw/);
+  // Nothing seen by either: all slack, as before; and a recording from before REC-02: the trace's alone.
+  assert.match(report({ lastChange: t0 + 1000, lastHeld: t0 + 1000 }), /the page did nothing during it\n/);
+  assert.match(report({}), /the page did nothing during it\n/);
+});
+
 // REC-03 (audit 2026-11-07): a page's load time was invisible, charged to the step before it.
 test('a page loaded with the trace in it says how long it took, in the Flow and its own lines', () => {
   const t0 = Date.parse('2026-10-23T14:12:00.000Z');
@@ -447,4 +465,29 @@ test('the report says when the panel followed another tab, and for how long, and
   assert.match(report, /THE RECORDED TAB WAS CLOSED/);
   assert.match(report, /The recorded tab was closed, which ended the recording\./);
   assert.ok(!/followed another tab/.test(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) })));
+});
+
+// Audit 2026-11-07, AI-08: what Luna was asked and answered, in the timeline and its own section.
+test('the report tells each Luna call in the timeline, and what it was asked, cited and answered', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const state = { fields: { f1: { label: 'Hazmat placards?', current: '', options: { o0: 'Yes', o1: 'No' } }, f2: { label: 'Years with prior carrier', current: '', options: { o0: '1', o1: '2+' } } },
+    sources: { 'general.hazmat-blank': { basis: 'tni_rule', rule: 'A blank hazmat placard is No.' }, s1: { basis: 'intake', path: 'operations.hazPlacard', value: false } } };
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Operations', top: true },
+    { kind: 'luna', t: t0 + 4000, frame: 0, page: '/quote', call: 'propose', ms: 3200, model: 'gpt-6-luna', tokensIn: 900, tokensOut: 40, request: state, error: null,
+      answer: { decisions: { f1: { option: 'o1', sourceIds: ['s1', 'general.hazmat-blank'], explanation: 'The intake says no placards.', missingInformation: [], conflicts: [] },
+        f2: { option: '__leave__', sourceIds: [], explanation: '', missingInformation: ['how long with the prior carrier'], conflicts: [] } } } },
+    { kind: 'luna', t: t0 + 6000, frame: 0, page: '/quote', call: 'verify', ms: 1500, model: 'gpt-6-luna', tokensIn: 300, tokensOut: 10, error: null,
+      request: { sources: state.sources, proposed: { f1: { label: 'Hazmat placards?', answer: 'No', sourceIds: ['s1'] } } }, answer: { decisions: { f1: { supported: true, gap: '' } } } },
+    { kind: 'luna', t: t0 + 7000, frame: 0, page: '/quote', call: 'propose', ms: 45000, model: null, request: state, answer: null, error: 'Luna took too long. Nothing was applied.' },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:10.000Z' }, events });
+  assert.match(report, /Luna answered 2 questions: 1 picked, 1 left \(3\.2 s, 900 tokens in, 40 out\)/);
+  assert.match(report, /Luna checked 1 answer: 1 supported \(1\.5 s, 300 tokens in, 10 out\)/);
+  assert.match(report, /Luna's review failed after 45\.0 s: Luna took too long\. Nothing was applied\./);
+  assert.match(report, /## Luna\n/);
+  assert.match(report, /- "Hazmat placards\?": picked "No"\n {2}- cited: operations\.hazPlacard = false; general\.hazmat-blank: "A blank hazmat placard is No\."\n {2}- why: The intake says no placards\./);
+  assert.match(report, /- "Years with prior carrier": left\n {2}- missing: how long with the prior carrier/);
+  assert.match(report, /- "Hazmat placards\?": "No" on operations\.hazPlacard = false → supported/);
+  assert.doesNotMatch(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) }), /## Luna/);
 });

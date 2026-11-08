@@ -97,7 +97,7 @@ export function collectItems(frames) {
       // A client fact or attestation the rules leave to the agent (plan.js manualOnly): never the AI's.
       const why = item.reviewOnly ? 'lookup identity mismatch requires agent review'
         : item.manualOnly ? 'TNI leaves this client fact to the agent' : neverReason(item)
-        || (!item.applyable ? 'The assistant needs visible choices; enter this answer on the page' : null)
+        || (!item.applyable ? 'The AI assistant needs visible choices; enter this answer on the page' : null)
         || (options.length > MAX_OPTIONS ? 'too many choices; narrow the list on the page first' : null);
       if (why) blocked.push({ ...item, why });
       else items.push({ ...item, id: `f${items.length + 1}` });
@@ -147,6 +147,76 @@ export function rowsFor(items, record, active = {}) {
     if (!rows[m[1]].includes(Number(m[2])) && rows[m[1]].length < MAX_EXTRA_ROWS) rows[m[1]].push(Number(m[2]));
   }
   return rows;
+}
+
+// Questions whose choices name the client's people or place: a driver, an owner, or the garaging
+// street, unit, city or ZIP, as the redactor would replace them (redactionTerms). Luna gets those facts
+// as [client], so such a choice goes as a placeholder naming whose it is ("Driver 1 (intake
+// drivers[0])", "Owner (intake applicant.owner1)", "Garaging city"), and code maps the pick back by its
+// place in the list: no name or address is sent (the maintainer, 2026-11-07; audit AI-13). A choice
+// is a driver's when it holds each word of their first and last name, an owner's when it holds each
+// word of the name. A question stays with the agent, never asked, when code can't tell whose a choice
+// is: part of a name only, two drivers or two owners, a person and the address, two choices for the
+// same placeholder, or a current answer naming the client that is none of its choices. Picking
+// between people is an identity match, so a pick made so is never an automatic one. The business's
+// own name doesn't count: its words are often a business class or cargo ("Reefer Express").
+//   items:   what to send (the others as they are)
+//   held:    questions kept from Luna
+//   restore: a suggestion back with the page's own choices
+//   toSend:  what goes to Luna for one of `items`' originals (itself unless its choices name the client)
+const wordsOf = (s) => String(s ?? '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2);
+export function pseudonymizeChoices(items, record) {
+  const a = record?.applicant ?? {}, g = record?.garaging ?? {};
+  const drivers = record?.drivers ?? [];
+  const names = redactor(redactionTerms({ applicant: { owner1: a.owner1, owner2: a.owner2 },
+    drivers: drivers.map((d) => ({ first: d?.first, middle: d?.middle, last: d?.last })) }));
+  const people = [
+    ...drivers.map((d, i) => ({ driver: true, said: `Driver ${i + 1} (intake drivers[${i}])`, words: [...wordsOf(d?.first), ...wordsOf(d?.last)] })),
+    { driver: false, said: 'Owner (intake applicant.owner1)', words: wordsOf(a.owner1) },
+    { driver: false, said: 'Owner 2 (intake applicant.owner2)', words: wordsOf(a.owner2) },
+  ].filter((p) => p.words.length);
+  // A garaging value as a value of its own, never part of a larger number or an amount: unit 100 is
+  // in "Suite 100", not in "$100,000/$300,000" (CodeRabbit on PR #418). A ZIP with its four more
+  // digits ("62704-1234") is the ZIP.
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const places = [['street', 'Garaging street'], ['unit', 'Garaging unit'], ['city', 'Garaging city'], ['zip', 'Garaging ZIP']]
+    .map(([k, said]) => [k, String(g[k] ?? '').replace(/\s+/g, ' ').trim(), said]).filter(([, v]) => v.length >= 2)
+    .map(([k, v, said]) => ({ said, re: new RegExp(`(?<![\\p{L}\\p{N}$.,/-])${escape(v).replace(/ /g, '\\s+')}${k === 'zip' ? '(?:-\\d{4})?' : ''}(?![\\p{L}\\p{N}]|[.,/-]\\p{N})`, 'iu') }));
+  const named = (o) => typeof o === 'string' && (names(o) !== o || places.some((p) => p.re.test(o)));
+  // A choice's placeholder; the choice itself when it names no one; null when code can't tell whose.
+  const placeholder = (o) => {
+    if (!named(o)) return o;
+    const words = new Set(wordsOf(o));
+    const who = people.filter((p) => p.words.every((w) => words.has(w)));
+    const where = places.filter((p) => p.re.test(o));
+    const [drv, own] = [who.filter((p) => p.driver), who.filter((p) => !p.driver)];
+    if (drv.length > 1 || own.length > 1 || (who.length && where.length)) return null;
+    if (where.length) return where.length === 1 ? where[0].said : 'Garaging address';
+    if (!who.length) return null;
+    return drv.length ? `${drv[0].said}${own.length ? `, also ${own[0].said}` : ''}` : own[0].said;
+  };
+  const sent = [], held = [], back = new Map(), copies = new Map();
+  const sig = (x) => `${x?.id ?? ''}|${x?.key}|${x?.label}`;
+  for (const x of items) {
+    const options = x.options ?? [];
+    if (!options.some(named) && !named(x.current)) { sent.push(x); continue; }
+    const shown = options.map(placeholder);
+    const at = options.indexOf(x.current);
+    const current = at >= 0 ? shown[at] : x.current;
+    if (shown.includes(null) || new Set(shown).size !== shown.length || named(current)) { held.push(x); continue; }
+    const copy = { ...x, options: shown, current };
+    sent.push(copy);
+    copies.set(x, copy);
+    back.set(sig(x), { options, shown, current: x.current });
+  }
+  const restore = (s) => {
+    const b = back.get(sig(s));
+    if (!b) return s;
+    const at = s.choice == null ? -1 : b.shown.indexOf(s.choice);
+    return { ...s, options: b.options, current: b.current, choice: at >= 0 ? b.options[at] : null, autoOk: false, pseudonymized: true,
+      ...(s.choice != null && at < 0 ? { leave: true } : {}) };
+  };
+  return { items: sent, held, restore, toSend: (x) => copies.get(x) ?? x };
 }
 
 // The page's other choice questions and what they show now, as the agent sees them: context for

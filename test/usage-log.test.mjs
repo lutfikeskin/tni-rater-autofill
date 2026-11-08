@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,6 +7,7 @@ import path from 'node:path';
 import * as usage from '../sidepanel/usage-log.js';
 import { createServer } from '../server/index.mjs';
 import { sha256Hex, fillEvents, fieldChangeEvent, agentSettingsEvent, clientErrorEvent, checkDismissedEvent, intakeProfile } from '../src/usage.js';
+import { SCHEMA_VERSION } from '../src/usage-schema.js';
 
 // Node's own fetch, before the tests below replace it with fake servers.
 const realFetch = globalThis.fetch;
@@ -35,6 +37,33 @@ test('events an older server refused as unknown types are sent again to a newer 
   await usage.upload();
   assert.equal(bodies.length, 2, 'accepted on the retry: not sent a third time');
   assert.equal(await usage.count(), 0);
+});
+
+// Audit 2026-11-07, SRV-14: an extension released before its server is deployed. Its events carry
+// the schema they were logged under; a server with an older one refuses them, and they are sent
+// again until a server that knows the schema takes them, new fields and all.
+test('events a server refused as of a newer schema are sent again until a server that knows it takes them', async () => {
+  const bodies = [];
+  let serverSchema = SCHEMA_VERSION - 1;
+  globalThis.fetch = async (url, init) => {
+    if (!init?.body) return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    const rejected = body.events.map((e, index) => (e.schema > serverSchema ? { index, error: `schema newer than server (${e.schema} > ${serverSchema})` } : null)).filter(Boolean);
+    return { ok: true, status: 200, json: async () => ({ accepted: body.events.length - rejected.length, duplicates: 0, rejected }) };
+  };
+  await usage.saveSettings({ serverUrl: 'http://usage.test' });
+  await usage.clearLog();
+  await usage.log({ type: 'page_view', page: 'S1', fields: 3 });
+  await usage.upload();
+  assert.equal(bodies[0].events[0].schema, SCHEMA_VERSION, 'every event names its schema');
+  assert.deepEqual(await usage.counts(), { queued: 0, rejected: 1 }, 'kept aside, not lost');
+  await usage.upload();
+  assert.equal(bodies.length, 2, 'sent again while the server is older');
+  serverSchema = SCHEMA_VERSION;
+  await usage.upload();
+  assert.deepEqual(bodies.at(-1).events.map((e) => [e.page, e.fields, e.rejectedBecause]), [['S1', 3, undefined]]);
+  assert.deepEqual(await usage.counts(), { queued: 0, rejected: 0 });
 });
 
 test('uploads go to the central server with the built-in token unless the agent set their own', async () => {
@@ -401,4 +430,31 @@ test('every event names its install; a full log says how many oldest events it d
   } finally {
     delete globalThis.chrome;
   }
+});
+
+// #422 review: the footer said a problem report reached TNI for any upload that ended `ok`, though
+// one the server refused is parked, and an empty queue's health check ends `ok` too. Where the report
+// itself is now says it: still waiting here, set aside as refused, or gone, which only a confirmed
+// upload does.
+test('an event is found waiting, set aside as refused, or sent', async () => {
+  await usage.clearLog();
+  await usage.saveSettings({ serverUrl: 'http://usage.test' });
+  let refuse = true;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const rejected = refuse ? body.events.map((e, index) => ({ index, error: 'unknown field' })) : [];
+    return { ok: true, json: async () => ({ accepted: body.events.length - rejected.length, duplicates: 0, rejected }) };
+  };
+  await usage.log({ id: 'report-1', type: 'problem_report', text: 'x' });
+  assert.equal(await usage.eventFate('report-1'), 'queued');
+  await usage.upload();
+  assert.deepEqual([usage.lastUpload().state, await usage.eventFate('report-1')], ['ok', 'refused']);
+  refuse = false;
+  await usage.log({ id: 'report-2', type: 'problem_report', text: 'y' });
+  await usage.upload();
+  assert.equal(await usage.eventFate('report-2'), 'sent');
+  // Gone from this computer with no receipt for it (Clear, or the queue's cap): not known to be sent.
+  await usage.log({ id: 'report-3', type: 'problem_report', text: 'z' });
+  await usage.clearLog();
+  assert.equal(await usage.eventFate('report-3'), 'unknown');
 });

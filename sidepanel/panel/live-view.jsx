@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The side panel's live fill view in React: the answers going in now, one row each as the page takes
 // them, the items left for the agent as the fill judges them (top to bottom: only questions above
 // where it has got to), all in the page's order (liveEntries), and a row for the one coming: read
@@ -8,7 +9,7 @@ import { memo, useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
-import { liveEntries, phaseSaid } from './live.js';
+import { fillShown, liveEntries, phaseSaid } from './live.js';
 // agent defaults: an answer the agent's own default gave.
 import { isOwnDefault } from './agent-defaults/store.js';
 
@@ -80,7 +81,7 @@ function LiveView({ view }) {
   // scrolled up back down).
   const drawn = useRef([]);
   const shown = useRef(false);
-  const on = !!f && !!filling && f.tabId === tabId && (!f.auto || !!f.rows?.length);
+  const on = !!filling && fillShown(f) && f.tabId === tabId;
   const rows = on ? f.rows ?? [] : [];
   const follow = on && (!shown.current || view.scrollHeight - view.scrollTop - view.clientHeight < 80);
   // The answer that just went in (the last one new since the list was drawn) is marked fresh.

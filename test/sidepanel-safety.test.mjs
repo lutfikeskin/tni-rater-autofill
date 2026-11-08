@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -5,14 +6,16 @@ import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { assistContextKey, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
+import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
-import { intakeNotes } from '../src/normalize.js';
+import { intakeNotes, rederive } from '../src/normalize.js';
+import { KEPT_WORK_MS, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, pruneKeptWork } from '../src/kept-work.js';
+import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
@@ -117,6 +120,11 @@ function extractFunction(name) {
           // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
           // elsewhere none is running.
           noteFollowed: '() => {}',
+          // A tab's journal (FLOW-06) has its own tests: elsewhere nothing is kept.
+          keepJournal: '() => Promise.resolve()', forgetJournals: '() => Promise.resolve()', restoreJournal: 'async () => {}',
+          // The agent's corrections and checks kept on this computer (FLOW-17) have their own test:
+          // elsewhere nothing is kept or brought back.
+          forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}', editChecks: '() => {}', ownerDrivesAnswered: '() => false', clearKeptWork: 'async () => "cleared"', keptWorkCleared: 'async () => ({ known: true, after: -Infinity })', holdKeptWork: '() => {}',
           // A page a hold kept back (resumeHeldFill) has its own test: elsewhere none waits.
           resumeHeldFill: '() => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
@@ -135,7 +143,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'continuedKey']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -1549,6 +1557,69 @@ test('ordinary manual keys survive reload and remain scoped to the intake, tab a
   assert.deepEqual(Object.keys(records[0]).sort(), ['keys', 'page', 'scope', 'tabId']);
 });
 
+// Audit 2026-11-07, LEARN-08: a store that can't be written (full, broken) was silent, and the
+// panel reopened would add units again or refill answers the agent changed. Now each failed write
+// says so where the agent works (state.notes.storage) and is logged as the panel's error, and its
+// queue goes on to the next write.
+test('a write the panel cannot save on this computer is said and logged, and the next write still runs', async () => {
+  const state = { tab: { id: 1 }, agentKeys: new Map([['Quote', new Set(['manual-choice'])]]), doneActions: new Set(['addVehicle:0']), notes: { usage: null, window: null, storage: null } };
+  const crashes = [];
+  let broken = true;
+  const writes = [];
+  const set = (what) => async (...args) => { if (broken) { const e = new Error('QUOTA_BYTES quota exceeded'); e.name = 'QuotaExceededError'; throw e; } writes.push([what, args]); };
+  const context = { state, unsaved: new Set(), agentKeysQueue: Promise.resolve(), doneActionsQueue: Promise.resolve(), usage: { currentSession: () => ({ intakeId: 'intake-a' }) },
+    agentKeysStore: { get: async () => [], set: set('keys') }, doneActionsStore: { set: set('done') }, logCrash: (err) => crashes.push(err.message) };
+  vm.createContext(context);
+  vm.runInContext(['persistFailed', 'persistAgentKeys', 'persistDoneActions'].map(extractFunction).join('\n'), context);
+  await context.persistAgentKeys();
+  await context.persistDoneActions();
+  await context.persistAgentKeys();
+  assert.equal(state.notes.storage?.tone, 'warn');
+  assert.equal(state.notes.storage.role, 'alert');
+  assert.match(state.notes.storage.title, /may not be remembered/);
+  // Every write that failed is named, not only the last (CodeRabbit on PR #395).
+  assert.match(state.notes.storage.text, /^The panel couldn't save which answers you changed or save the buttons and vehicles already done on this computer\./);
+  assert.deepEqual(crashes, ["storage: couldn't save which answers you changed: QuotaExceededError", "storage: couldn't save the buttons and vehicles already done: QuotaExceededError",
+    "storage: couldn't save which answers you changed: QuotaExceededError"], 'logCrash itself logs each message once');
+  assert.equal(state.notes.usage, null, 'the other notes are kept');
+  broken = false;
+  await context.persistAgentKeys();
+  await context.persistDoneActions();
+  assert.deepEqual(writes.map(([what]) => what), ['keys', 'done'], 'each queue still writes after a failure');
+});
+
+// CodeRabbit on PR #395: a Clear or New quote whose removal of the helper records failed fails too,
+// rather than finishing as if they were gone (the same PDF then gets them back: a vehicle skipped).
+// Its queue goes on; loading another intake, which prunes old intakes' records, isn't stopped by it.
+test('a Clear whose helper records could not be removed fails, and the next write still runs', async () => {
+  const state = { notes: { usage: null, window: null, storage: null } };
+  const crashes = [];
+  let broken = true;
+  const cleared = [];
+  const clear = (what) => async (scope) => { if (broken) throw new Error('IO error at /Users/Jordan Avery'); cleared.push([what, scope]); };
+  const context = { state, unsaved: new Set(), agentKeysQueue: Promise.resolve(), doneActionsQueue: Promise.resolve(), logCrash: (err) => crashes.push(err.message),
+    agentKeysStore: { get: async () => [{ scope: 'intake-a' }, { scope: 'intake-b' }], set: async () => {} },
+    doneActionsStore: { clear: clear('done'), set: async (scope, tabId, ids) => cleared.push(['set', scope]), scopes: async () => [] },
+    unitFormsStore: { clear: clear('forms'), scopes: async () => [] }, usage: { currentSession: () => ({ intakeId: 'intake-a' }) },
+    intakesSeenStore: { get: async () => ({ 'intake-a': '2026-01-01T00:00:00Z' }), set: async () => {} }, KEEP_INTAKES: 20, KEEP_INTAKE_DAYS: 30 };
+  vm.createContext(context);
+  vm.runInContext(`const STORAGE_SAID = 'StorageSaid';\n${['persistFailed', 'clearAgentKeys', 'storageSaid', 'persistDoneActions', 'pruneAgentRecords'].map(extractFunction).join('\n')}`, context);
+  // It fails as already said, without the store's message, which the crash log would take again
+  // (unredacted once the client is cleared: CodeRabbit on PR #395); its caller lets that go only.
+  const failed = await context.clearAgentKeys('intake-a').then(() => null, (err) => err);
+  assert.deepEqual([failed?.name, /IO error|Jordan/.test(failed?.message)], ['StorageSaid', false]);
+  assert.doesNotThrow(() => context.storageSaid(failed));
+  assert.throws(() => context.storageSaid(new Error('another')), /another/);
+  assert.match(state.notes.storage.text, /couldn't forget the buttons and vehicles already done/);
+  assert.deepEqual(crashes, ["storage: couldn't forget the buttons and vehicles already done: Error"]);
+  // An old intake's records pruned on a load: the failure is said, the load goes on.
+  assert.deepEqual([...await context.pruneAgentRecords('intake-c', Date.parse('2026-11-07T00:00:00Z'))], ['intake-a'], 'its 30 days are over');
+  broken = false;
+  state.tab = { id: 1 }; state.doneActions = new Set(['addVehicle:0']);
+  await context.persistDoneActions();
+  assert.deepEqual(cleared, [['set', 'intake-a']], 'the queue still writes after a failure');
+});
+
 test('canonical AI snapshots ignore Chromium metadata and frame ordering but retain identity', () => {
   const context = { aiFingerprint: JSON.stringify };
   vm.runInNewContext([
@@ -1840,7 +1911,7 @@ test('a question Luna left shows its recommendation; an answered one shows none'
   context.renderAi(holder, [left], ctx);
   // Drawn as "AI: this one is yours to decide.", its tip, then "Luna recommends: …" (ai-view.jsx).
   const { card } = holder.said.orphans[0];
-  assert.deepEqual({ ...card }, { kind: 'tip', says: 'AI: this one is yours to decide.', tip: 'Not on the intake.',
+  assert.deepEqual({ ...card }, { kind: 'tip', says: 'The AI assistant leaves this one to you.', tip: 'Not on the intake.',
     next: 'The intake leaves "Needs SR-22" blank: confirm it with the client, then add it under All client details.' });
   assert.equal(card.use, undefined, 'a recommendation is no answer to put in');
   context.renderAi(holder, [{ ...left, leave: false, choice: 'No', nextStep: null, evidenceSources: [] }], ctx);
@@ -1861,9 +1932,10 @@ test('renderAi puts each suggestion\'s card on its question\'s row, and the rest
     aiDecisionEvent: (x, c, decision) => ({ type: 'ai_decision', decision }) };
   vm.runInNewContext(AI_ACTION_FUNCTIONS, context, { filename: 'sidepanel/sidepanel.js' });
   const ctx = { tabId: 1, page: '/quote', carrier: { id: 'synthetic' } };
-  const base = { controlKind: 'radio', options: ['Yes', 'No'], applyable: true, autoOk: false, checks: ['"Yes" is one of the page\'s choices'], evidenceSources: [{ basis: 'intake', path: 'operations.hazmat' }] };
+  const base = { controlKind: 'radio', options: ['Yes', 'No'], applyable: true, autoOk: false, checks: ['"Yes" is one of the page\'s choices'], evidenceSources: [{ basis: 'intake', path: 'operations.hazmat' }],
+    cited: ['Hazmat placards: No', 'TNI rule: No hazmat unless the intake says so.'] };
   const sure = { ...base, key: 'k1', label: 'Hazmat', choice: 'No', tip: 'The intake says no hazmat.', autoOk: true };
-  const typed = { ...base, key: 'k2', label: 'Years', controlKind: 'text', choice: '7', autoOk: true, tip: '' };
+  const typed = { ...base, key: 'k2', label: 'Years', controlKind: 'text', choice: '7', autoOk: true, tip: '', citedRules: ['TNI rule: the whole rule, exceptions included.'] };
   const done = { ...base, key: 'k3', label: 'Placards', choice: 'No', done: 'accepted' };
   const error = { ...base, key: 'k4', label: 'Radius', choice: '300', error: 'the page changed' };
   const mine = { ...base, key: 'k5', label: 'Cargo', choice: 'Yes', manual: true };
@@ -1875,10 +1947,11 @@ test('renderAi puts each suggestion\'s card on its question\'s row, and the rest
   assert.deepEqual(rows.map((r) => r.aiCard.kind), ['suggest', 'suggest', 'done', 'error', 'mine'], 'each on its row');
   // Each row drawn again (drawRow, report-view.jsx): its record's draw count.
   assert.deepEqual([rows.map((r) => r.v), state.rowsDrawn], [[1, 1, 1, 1, 1], 5], 'each row drawn again');
-  const { use, noThanks, checks, ...said } = rows[0].aiCard;
-  assert.deepEqual(said, { kind: 'suggest', choice: 'No', tip: 'The intake says no hazmat.', why: 'cited evidence: operations.hazmat · Evidence checked · needs your review' });
-  assert.deepEqual([...checks], ['"Yes" is one of the page\'s choices']);
+  const { use, noThanks, ...said } = rows[0].aiCard;
+  // Audit 2026-11-07, AI-12: what the pick rests on, as the agent reads it; no raw paths or fixed "checked" lines.
+  assert.deepEqual(said, { kind: 'suggest', choice: 'No', tip: 'The intake says no hazmat.', why: 'Based on Hazmat placards: No · TNI rule: No hazmat unless the intake says so.' });
   assert.deepEqual([rows[1].aiCard.choice, rows[1].aiCard.tip], ['typing “7”', null], 'a typed answer says so');
+  assert.deepEqual([...rows[1].aiCard.rules], ['TNI rule: the whole rule, exceptions included.'], 'a shortened rule, whole, to open (CodeRabbit on PR #393)');
   assert.equal(rows[2].aiCard.text, 'Put in “No” (purple on the page).');
   assert.equal(rows[3].aiCard.text, 'The page didn\'t take the AI answer (the page changed). Answer it on the page.');
   // The AI's pick among the row's own choices; picking it there accepts it.
@@ -2124,7 +2197,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
     store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     profileTimer: null, logProfile: () => false,
-    save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {} };
+    save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {}, fillsHeld: async () => false };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
     'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'firstView', 'loadFile', 'keepWork', 'workSaid'].map(extractFunction).join('\n'), context);
   await context.persistAiPending();
@@ -2362,6 +2435,324 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   const back = make();
   await back.restoreDoneActions(7);
   assert.deepEqual([...back.state.doneActions].sort(), ['lookupVin:0', 'trailerEntered:0'], 'tab 7 kept');
+});
+
+// Audit 2026-11-07, FLOW-06: a panel opened again forgot the steps it had continued from (an
+// automatic fill on a step the agent went back to clicked Next again), a pause, the pages whose
+// follow-ups fill by themselves and the tab's quote-state hold. Each tab's journal is kept in
+// storage.session (the panel's `store`), keys and ids only, and read as the panel comes to the tab.
+// `memory`: the store's contents; `writes`: each key written.
+function journalHarness(memory, { session = { intakeId: 'intake-a' }, tabId = 7 } = {}) {
+  const writes = [];
+  const state = { tab: { id: tabId }, tabSessions: new Map(), quoteStates: new Map(), doneSteps: new Set(), autoPages: new Set(), autoPaused: false, advanceRetried: new Set() };
+  const context = {
+    state, usage: { currentSession: () => session },
+    store: { get: async (k) => structuredClone(memory[k]), set: async (k, v) => { writes.push(k); memory[k] = structuredClone(v); }, remove: async (k) => { delete memory[k]; }, keys: async () => Object.keys(memory) },
+  };
+  const block = SIDEPANEL.slice(SIDEPANEL.indexOf("const JOURNAL_PREFIX = 'journal:';"), SIDEPANEL.indexOf('function journalOf('));
+  const names = ['journalOf', 'journalMerged', 'keepJournal', 'forgetJournals', 'restoreJournal'].filter((name) => SIDEPANEL.includes(`function ${name}(`));
+  vm.runInNewContext(`${block}\n${names.map(extractFunction).join('\n')}`, context);
+  return { context, state, writes };
+}
+
+test('a tab’s continued steps, pause, filled pages and quote state outlive the panel (FLOW-06)', async () => {
+  // Made in the harness's realm: compared as plain data.
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+  const memory = {};
+  const session = { intakeId: 'intake-a' };
+  const pick = { carrier: 'progressive', code: 'CA', session: 's1', dismissed: null };
+  const before = journalHarness(memory, { session });
+  Object.assign(before.state, { doneSteps: new Set(['application|v0|Vehicles@next']), autoPages: new Set(['application']), autoPaused: true, advanceRetried: new Set(['application|v1|Vehicles@next']) });
+  before.state.quoteStates.set(7, pick);
+  await before.context.keepJournal(7);
+  await before.context.keepJournal(7);
+  assert.deepEqual(before.writes, ['journal:7'], 'written once while nothing changed');
+  // Another tab's, from its kept session: its own key.
+  before.state.tabSessions.set(8, { doneSteps: new Set(['Drivers|d0|next']), autoPages: new Set(), autoPaused: false });
+  await before.context.keepJournal(8);
+  assert.deepEqual(plain([memory['journal:8'].doneSteps, memory['journal:8'].quoteState]), [['Drivers|d0|next'], null]);
+  // No answer or client text: keys, pages and the state's code only.
+  assert.deepEqual(Object.keys(memory['journal:7']).sort(), ['advanceRetried', 'autoPages', 'autoPaused', 'doneSteps', 'quoteState', 'scope']);
+
+  // The panel opened again on that tab: all of it is back, once.
+  const after = journalHarness(memory, { session });
+  await after.context.restoreJournal(7);
+  assert.deepEqual(plain([[...after.state.doneSteps], [...after.state.autoPages], after.state.autoPaused, [...after.state.advanceRetried], after.state.quoteStates.get(7)]),
+    [['application|v0|Vehicles@next'], ['application'], true, ['application|v1|Vehicles@next'], pick]);
+  after.state.autoPaused = false;
+  after.state.doneSteps.clear();
+  await after.context.restoreJournal(7);
+  assert.deepEqual([after.state.autoPaused, after.state.doneSteps.size], [false, 0], 'once: what the panel did since stays');
+  // A tab no longer in front by the time the journal is read: left for its own arrival.
+  const moved = journalHarness(memory, { session });
+  const reading = moved.context.restoreJournal(7);
+  moved.state.tab = { id: 9 };
+  await reading;
+  assert.deepEqual([moved.state.doneSteps.size, moved.state.quoteStates.size], [0, 0]);
+  // Another intake: the tab's quote state only (it outlives the intake), no fill's record.
+  const other = journalHarness(memory, { session: { intakeId: 'intake-b' } });
+  await other.context.restoreJournal(7);
+  assert.deepEqual(plain([other.state.doneSteps.size, other.state.autoPages.size, other.state.autoPaused, other.state.quoteStates.get(7)]), [0, 0, false, pick]);
+
+  // A new, cleared or reloaded client: every journal keeps its quote state only; a closed tab's goes.
+  await after.context.forgetJournals();
+  assert.deepEqual([plain(memory['journal:7']), memory['journal:8']], [{ scope: null, quoteState: pick }, undefined]);
+  const reloaded = journalHarness(memory, { session });
+  await reloaded.context.restoreJournal(7);
+  assert.deepEqual(plain([reloaded.state.doneSteps.size, reloaded.state.autoPaused, reloaded.state.quoteStates.get(7)]), [0, false, pick]);
+  await after.context.forgetJournals(7);
+  assert.equal(memory['journal:7'], undefined);
+
+  // Read as the panel comes to a tab, before the page's layout is asked for; kept as each fill ends,
+  // as Continue is clicked again or pauses, as the agent's Fill lifts a pause, and as the quote state
+  // changes. Forgotten on a new or cleared client and a closed tab.
+  assert.match(extractFunction('refreshTab'), /await restoreJournal\(state\.tab\?\.id\);[\s\S]*scheduleLayout\(/);
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /\} finally \{[\s\S]*?state\.filling = false;[\s\S]*?keepJournal\(tabId\);/, name);
+  assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false; keepJournal\(state\.tab\.id, \{ dropped: \['autoPaused'\] \}\); \}/);
+  assert.equal(extractFunction('watchNextStep').match(/keepJournal\(tabId(, \{ dropped: [^\n]*\})?\);/g)?.length, 2);
+  for (const name of ['noteQuoteState', 'inheritQuoteState', 'stateIssue', 'dismissState']) assert.match(extractFunction(name), /keepJournal\(/, name);
+  assert.match(extractFunction('loadFile'), /state\.doneSteps = new Set\(\);[\s\S]*await forgetJournals\(\);/);
+  assert.match(extractFunction('clearClient'), /await forgetJournals\(\);/);
+  assert.match(SIDEPANEL, /chrome\.tabs\.onRemoved\.addListener\(\(tabId\) => \{[^\n]*forgetJournals\(tabId\);/);
+});
+
+// #401 review: a journal written before the panel read it back (a recorder message reaching
+// noteQuoteState while refreshTab waited) replaced the stored one; the Continues clicked again were
+// the panel's, not the tab's; and a write that failed was taken as written.
+test('a tab’s journal written before it is read back keeps what was stored, each tab its own retried Continues', async () => {
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+  const pick = { carrier: 'progressive', code: 'CA', session: 's1', dismissed: null };
+  const memory = { 'journal:7': { scope: 'intake-a', doneSteps: ['application|v0|Vehicles@next'], autoPages: ['application'], autoPaused: true, advanceRetried: ['application|v1|Vehicles@next'], quoteState: null } };
+  const early = journalHarness(memory);
+  early.state.quoteStates.set(7, pick);
+  await early.context.keepJournal(7);
+  assert.deepEqual(plain(memory['journal:7']), { scope: 'intake-a', doneSteps: ['application|v0|Vehicles@next'], autoPages: ['application'], autoPaused: true,
+    advanceRetried: ['application|v1|Vehicles@next'], quoteState: pick }, 'the stored journal stays, with the quote state added');
+  await early.context.restoreJournal(7);
+  assert.deepEqual(plain([[...early.state.doneSteps], [...early.state.autoPages], early.state.autoPaused, [...early.state.advanceRetried]]),
+    [['application|v0|Vehicles@next'], ['application'], true, ['application|v1|Vehicles@next']]);
+
+  // Each tab's own retried Continues: tab 8's kept session, not the tab in front.
+  early.state.tabSessions.set(8, { doneSteps: new Set(), autoPages: new Set(), autoPaused: false, advanceRetried: new Set(['Drivers|d0|next']) });
+  await early.context.keepJournal(8);
+  assert.deepEqual(plain(memory['journal:8'].advanceRetried), ['Drivers|d0|next']);
+  assert.match(extractFunction('refreshTab'), /const keys = \[[^\]]*'advanceRetried'[^\]]*\];/);
+  assert.match(extractFunction('refreshTab'), /Object\.assign\(state, previous \?\? \{[\s\S]*?advanceRetried: new Set\(\)[\s\S]*?\}\);/);
+  assert.match(extractFunction('tabMaps'), /saved = \{[\s\S]*?advanceRetried: new Set\(\)[\s\S]*?\};/);
+
+  // A write that fails is written again by the next call, unchanged as the journal is.
+  const failing = journalHarness({});
+  failing.state.doneSteps.add('application|v0|Vehicles@next');
+  const set = failing.context.store.set;
+  failing.context.store.set = async () => { throw new Error('quota'); };
+  await failing.context.keepJournal(7);
+  failing.context.store.set = set;
+  await failing.context.keepJournal(7);
+  assert.deepEqual(failing.writes, ['journal:7']);
+});
+
+// #401 review: a journal merged before it was read back could only add, so a quote state the panel
+// forgot (another carrier, no state), a pause the agent's Fill lifted, or a step to continue from
+// again came back from the stored copy, and a stale pick then held every fill on the tab.
+test('what the panel takes out of a tab’s journal before reading it back stays out', async () => {
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+  const pick = { carrier: 'progressive', code: 'CA', session: 's1', dismissed: null };
+  const memory = { 'journal:7': { scope: 'intake-a', doneSteps: ['application|v0|Vehicles@next', 'Drivers|d0|next'], autoPages: ['application'], autoPaused: true, advanceRetried: [], quoteState: pick } };
+  const early = journalHarness(memory);
+  // The panel had the pick, then forgot it; Fill lifted the pause; a lost Continue is to be clicked again.
+  await early.context.keepJournal(7, { dropped: ['quoteState', 'autoPaused', 'step:Drivers|d0|next'] });
+  assert.deepEqual(plain([memory['journal:7'].quoteState, memory['journal:7'].autoPaused, memory['journal:7'].doneSteps]), [null, false, ['application|v0|Vehicles@next']]);
+  // Stored before the change (the write failed, or another copy's): the read-back leaves them out too.
+  memory['journal:7'] = { scope: 'intake-a', doneSteps: ['Drivers|d0|next'], autoPages: [], autoPaused: true, advanceRetried: [], quoteState: pick };
+  const later = journalHarness(memory);
+  later.context.store.set = async () => { throw new Error('quota'); };
+  await later.context.keepJournal(7, { dropped: ['quoteState', 'autoPaused', 'step:Drivers|d0|next'] });
+  await later.context.restoreJournal(7);
+  assert.deepEqual([later.state.quoteStates.has(7), later.state.autoPaused, later.state.doneSteps.size], [false, false, 0]);
+  // #401 review: a write before the read-back merged the stored pick in, but cached the copy's own
+  // journal, so forgetting the pick, which leaves that journal as it was, wrote nothing, and a panel
+  // opened later brought the pick back. The cache holds what was stored.
+  memory['journal:7'] = { scope: 'intake-a', doneSteps: [], autoPages: [], autoPaused: false, advanceRetried: [], quoteState: pick };
+  const cached = journalHarness(memory);
+  await cached.context.keepJournal(7);
+  assert.deepEqual(plain(memory['journal:7'].quoteState), pick, 'a fill ending first keeps the stored pick');
+  await cached.context.keepJournal(7, { dropped: ['quoteState'] });
+  assert.equal(memory['journal:7'].quoteState, null, 'the pick forgotten is written out');
+  await cached.context.restoreJournal(7);
+  const reopened = journalHarness(memory);
+  await reopened.context.restoreJournal(7);
+  assert.equal(reopened.state.quoteStates.has(7), false, 'and a panel opened later has none');
+  // Another copy wrote the old pick back after this one forgot it, before this one read the tab's
+  // journal back: the read-back leaves it out here and writes it out there, whatever was cached.
+  const raced = journalHarness(memory);
+  await raced.context.keepJournal(7, { dropped: ['quoteState'] });
+  memory['journal:7'] = { ...memory['journal:7'], quoteState: pick };
+  await raced.context.restoreJournal(7);
+  assert.deepEqual([raced.state.quoteStates.has(7), memory['journal:7'].quoteState], [false, null]);
+  // Where they are taken out.
+  assert.match(extractFunction('noteQuoteState'), /else state\.quoteStates\.delete\(tabId\);\n\s*keepJournal\(tabId, code \? \{\} : \{ dropped: \['quoteState'\] \}\);/);
+  assert.match(extractFunction('stateIssue'), /state\.quoteStates\.delete\(tabId\); pick = null; keepJournal\(tabId, \{ dropped: \['quoteState'\] \}\);/);
+  assert.match(extractFunction('fillPage'), /state\.autoPaused = false; keepJournal\(state\.tab\.id, \{ dropped: \['autoPaused'\] \}\);/);
+  assert.match(extractFunction('watchNextStep'), /state\.doneSteps\.delete\(doneKey\);\n\s*keepJournal\(tabId, \{ dropped: \[`step:\$\{doneKey\}`\] \}\);/);
+});
+
+// Audit 2026-11-07, FLOW-17 (the maintainer: 24 hours on this computer): after a browser restart the
+// same PDF came back with none of the agent's corrections and checks. Each save keeps them in local
+// storage (keepKeptWork); the same intake loaded with no copy in the session gets them back
+// (restoreKeptWork), the derived values following; a new client's intake or Clear lets them go.
+test('the agent\'s corrections and checks of an intake come back after a browser restart, for a day', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); }, remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const context = { keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, get: getPath, set: setPath, rederive, JSON, Date, structuredClone, keptHeld: new Set() };
+  vm.runInNewContext(['keepKeptWork', 'restoreKeptWork'].map(extractFunction).join('\n'), context);
+  const warnings = [{ code: 'drivers.cdl', path: 'drivers[0].cdl' }, { code: 'garaging.zip', path: 'garaging.zip' }];
+  const fresh = () => ({ intakeId: 'pdf-1', record: { garaging: { zip: '33101' }, drivers: [{ cdl: null }] }, warnings: warnings.map((w) => ({ ...w })), agentEdited: [], done: [] });
+  const intake = fresh();
+  intake.record.garaging.zip = '33139';
+  intake.agentEdited = ['garaging.zip'];
+  intake.done = [0];
+  await context.keepKeptWork(intake);
+  const key = `${KEPT_WORK_PREFIX}pdf-1`;
+  const at = memory[key].at;
+  assert.deepEqual([memory[key].edits, memory[key].checks], [[['garaging.zip', '33139']], [{ code: 'drivers.cdl', path: 'drivers[0].cdl', n: 0 }]]);
+  // A save that changed neither leaves their day as it was.
+  memory[key].at = at - 1000;
+  await context.keepKeptWork(intake);
+  assert.equal(memory[key].at, at - 1000);
+  // The same PDF read again with no session copy: they are back.
+  const again = fresh();
+  assert.equal(JSON.stringify(await context.restoreKeptWork(again)), JSON.stringify({ edits: 1, checks: 1 }));
+  assert.deepEqual([again.record.garaging.zip, [...again.agentEdited], [...again.done]], ['33139', ['garaging.zip'], [0]]);
+  // Past the day: nothing comes back, and the kept copy goes.
+  memory[key].at = Date.now() - KEPT_WORK_MS - 1;
+  assert.equal(await context.restoreKeptWork(fresh()), null);
+  assert.equal(memory[key], undefined);
+  // Undone: nothing left to keep, so nothing is kept.
+  const undone = fresh();
+  await context.keepKeptWork({ ...undone, agentEdited: ['garaging.zip'] });
+  assert.ok(memory[key]);
+  await context.keepKeptWork(undone);
+  assert.equal(memory[key], undefined);
+  // Kept with each save; brought back only where no copy of the same intake was in the session, after
+  // the last client's go; Clear this client and the panel opening let theirs go.
+  assert.match(extractFunction('save'), /await store\.set\('intake', state\.intake\);\n\s+await keepKeptWork\(state\.intake\);/);
+  const load = extractFunction('loadFile');
+  assert.match(load, /if \(same\) keepWork\(state\.intake, same\);[\s\S]{0,400}await forgetKeptWork\(\{ except: summary\.intakeId \}\);[\s\S]{0,400}const restored = gate\?\.known \? await restoreKeptWork\(state\.intake, gate\.after\) : null;[\s\S]{0,200}state\.view = firstView\(state\.intake\);/);
+  assert.match(load, /restored \? `Same intake as earlier: you \$\{work\}, and that's back \(kept on this computer for a day\)\.`/);
+  assert.match(extractFunction('clearClient'), /await clearKeptWork\(\)/);
+  assert.match(extractFunction('init'), /\n\s+forgetKeptWork\(\);\n/);
+});
+
+// #436 review: Clear this client said nothing when the kept corrections couldn't be deleted, and the
+// same PDF loaded before their day ran out brought them back. A failed Clear is said, remembered (in
+// memory, and in local storage where it can be), and tried again, for what was kept before it,
+// before anything kept is read back; while it still fails, nothing comes back.
+test('a Clear that could not delete the kept corrections says so, and is tried again before any come back', async () => {
+  const memory = { 'keptWork:pdf-1': { at: 1, edits: [['garaging.zip', '33139']], checks: [] } };
+  let failing = true;
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, memory[x]])),
+    set: async (o) => { Object.assign(memory, o); },
+    remove: async (k) => { if (failing && k.some((x) => x.startsWith('keptWork:'))) throw new Error('storage'); for (const x of k) delete memory[x]; },
+    getKeys: async () => Object.keys(memory),
+  };
+  // forgetKeptWork as core.js has it (null when the storage refused).
+  assert.match(SIDEPANEL, /const forgetKeptWork = \(options = \{\}\) => pruneKeptWork\(keptWorkLocal, options\)\.catch\(\(\) => null\);/);
+  const context = { keptWorkLocal: local, forgetKeptWork: (options = {}) => pruneKeptWork(local, options).catch(() => null), Date, Number };
+  vm.runInNewContext(`let keptClearAt = null;\nconst KEPT_CLEAR_KEY = 'keptWorkClear';\n${['clearKeptWork', 'keptWorkCleared'].map(extractFunction).join('\n')}`, context);
+  assert.equal(await context.clearKeptWork(), 'retry');
+  assert.ok(memory['keptWork:pdf-1'], 'still there');
+  const at = memory.keptWorkClear;
+  assert.ok(Number.isFinite(at), 'the failed Clear is remembered');
+  // Still failing: only what was kept since the Clear may come back.
+  assert.deepEqual({ ...(await context.keptWorkCleared()) }, { known: true, after: at });
+  failing = false;
+  assert.deepEqual({ ...(await context.keptWorkCleared()) }, { known: true, after: -Infinity });
+  assert.deepEqual(Object.keys(memory), []);
+  // #436 review: the failed Clear can't be noted either: it says the work may come back.
+  const unnoted = { ...context, keptWorkLocal: { ...local, set: async () => { throw new Error('storage'); } } };
+  failing = true;
+  memory['keptWork:pdf-1'] = { at: 1, edits: [], checks: [] };
+  vm.runInNewContext(`let keptClearAt = null;\nconst KEPT_CLEAR_KEY = 'keptWorkClear';\n${['clearKeptWork', 'keptWorkCleared'].map(extractFunction).join('\n')}`, unnoted);
+  assert.equal(await unnoted.clearKeptWork(), 'unsure');
+  // The note can't be read: not known, so nothing comes back.
+  const unread = { ...context, keptWorkLocal: { ...local, get: async () => { throw new Error('storage'); } } };
+  vm.runInNewContext(`let keptClearAt = null;\nconst KEPT_CLEAR_KEY = 'keptWorkClear';\n${['clearKeptWork', 'keptWorkCleared'].map(extractFunction).join('\n')}`, unread);
+  assert.deepEqual({ ...(await unread.keptWorkCleared()) }, { known: false });
+  // Said where Clear leaves the panel, as it stands, and tried again before the same PDF's work is
+  // read back, which brings back only what was kept after the Clear.
+  const clear = extractFunction('clearClient');
+  assert.match(clear, /const cleared = await clearKeptWork\(\);\n\s+if \(cleared !== 'cleared'\) \{[\s\S]{0,700}\$\('load-error'\)\.hidden = false;/);
+  assert.match(clear, /cleared === 'unsure'/);
+  const load = extractFunction('loadFile');
+  assert.match(load, /const gate = same \? null : await keptWorkCleared\(\);\n\s+const restored = gate\?\.known \? await restoreKeptWork\(state\.intake, gate\.after\) : null;/);
+  assert.match(load, /if \(gate && !gate\.known\) holdKeptWork\(state\.intake\.intakeId\);/);
+  assert.match(extractFunction('init'), /\n\s+keptWorkCleared\(\);\n/);
+});
+
+// #436 review: after a failed Clear, the next client's corrections were made and kept; the same PDF
+// loaded again while the Clear still failed brought nothing back, and the save after it deleted
+// them. What was kept after the Clear comes back; where the kept copy can't be read, saves leave
+// it alone.
+test('corrections kept after a failed Clear come back, and an unreadable kept copy is never overwritten', async () => {
+  const memory = {};
+  let unreadable = false;
+  const local = {
+    get: async (k) => { if (unreadable) throw new Error('storage'); return Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])); },
+    set: async (o) => { Object.assign(memory, structuredClone(o)); }, remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const context = { keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, get: getPath, set: setPath, rederive, JSON, Date, structuredClone, keptHeld: new Set() };
+  vm.runInNewContext(['keepKeptWork', 'restoreKeptWork'].map(extractFunction).join('\n'), context);
+  const fresh = () => ({ intakeId: 'pdf-1', record: { garaging: { zip: '33101' } }, warnings: [], agentEdited: [], done: [] });
+  const now = Date.now();
+  memory['keptWork:pdf-1'] = { at: now - 10, edits: [['garaging.zip', '33139']], checks: [] };
+  const again = fresh();
+  assert.ok(await context.restoreKeptWork(again, now - 1000), 'kept after the Clear: back');
+  assert.equal(again.record.garaging.zip, '33139');
+  assert.equal(await context.restoreKeptWork(fresh(), now), null, 'kept before it: not back');
+  // Unreadable: nothing comes back, and a save leaves the kept copy as it is.
+  unreadable = true;
+  const held = fresh();
+  assert.equal(await context.restoreKeptWork(held), null);
+  unreadable = false;
+  await context.keepKeptWork(held);
+  assert.deepEqual(memory['keptWork:pdf-1'].edits, [['garaging.zip', '33139']]);
+});
+
+// #436 review: a correction can raise a check of its own (NTL set to Yes with cargo: agentEdit's
+// ntlCargoEdited). The PDF read again after a restart has no such check, so its kept Looks right had
+// nothing to land on, and the next save dropped it. The checks a correction raises are raised again
+// before the kept checks are matched, as agentEdit does; Owner drives answered likewise, by its edit
+// and by its check's Looks right.
+test('a correction brought back after a restart raises its own checks again, and keeps their Looks right', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); }, remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const replayed = [];
+  const context = { keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, get: getPath, set: setPath, rederive, JSON, Date, structuredClone, keptHeld: new Set(),
+    ntlWithCargo: (r) => r.coverage.ntl === true && r.coverage.cargo === true, NTL_CARGO_MESSAGE: 'NTL and cargo',
+    ntlAnswerEdited: (intake, path) => replayed.push(['answer', path]), ntlPrimaryEdited: () => replayed.push(['primary']), ntlNotesItem: () => replayed.push(['notes']),
+    ownerDrivesAnswered: (intake, what) => { replayed.push(['owner', what]); return false; } };
+  const names = ['keepKeptWork', 'restoreKeptWork', 'ntlCargoEdited', 'editChecks'].filter((name) => name === 'ntlCargoEdited' || PANEL_SOURCE.includes(`function ${name}(`));
+  vm.runInNewContext(names.map(extractFunction).join('\n'), context);
+  const fresh = () => ({ intakeId: 'pdf-2', record: { coverage: { ntl: false, cargo: true, autoLiability: 'Yes' }, applicant: {} },
+    warnings: [{ code: 'drivers.owner-excluded', path: 'applicant.ownerDrives' }], agentEdited: [], done: [] });
+  // The agent set NTL to Yes (agentEdit raised the NTL-and-cargo check), then said Looks right on it and on the owner's.
+  const intake = fresh();
+  intake.record.coverage.ntl = true;
+  intake.agentEdited = ['coverage.ntl'];
+  context.ntlCargoEdited(intake);
+  intake.done = [0, 1];
+  await context.keepKeptWork(intake);
+  const again = fresh();
+  await context.restoreKeptWork(again);
+  assert.deepEqual(JSON.parse(JSON.stringify([again.warnings.map((w) => w.code), [...again.done].sort()])), [['drivers.owner-excluded', 'coverage.ntl-cargo'], [0, 1]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(replayed)), [['answer', 'coverage.ntl'], ['primary'], ['owner', { check: { i: 0, done: true } }]]);
 });
 
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
@@ -2709,7 +3100,7 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
   const state = { intake: { record }, active: { drivers: 0, vehicles: 0 }, tab: { id: 1, url: 'https://rater.test/Default.aspx?pageName=CoveragesRates' },
     aiRun: 0, aiCache: new Map(), aiSettingsRun: 0, aiAsking: new Map(), agentKeys: new Map(), filling: false };
   const context = {
-    state, assistContextKey, pageOf: (url) => new URL(url).searchParams.get('pageName'), aiHolder, $: () => report,
+    state, assistContextKey, pseudonymizeChoices, pageOf: (url) => new URL(url).searchParams.get('pageName'), aiHolder, $: () => report,
     aiSettings: async () => ({ on: true, apiKey: 'synthetic', ready: true, model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
     PROVIDERS: { luna: { name: 'Luna', policy: 'synthetic-policy' } },
     collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
@@ -2719,7 +3110,7 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
     syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
-  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('runAssist'), context);
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('lunaTrace') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
   return { state, context, ctx, report, logged, rendered, applied, session, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
 }
@@ -2753,7 +3144,7 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   } });
   await t.context.runAssist([{}], t.ctx);
   const text = JSON.stringify(t.holder().said);
-  assert.match(text, /Luna: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
+  assert.match(text, /AI assistant: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
   assert.doesNotMatch(text, /Asking/);
   assert.equal(t.rendered.length, 0, 'stale suggestions are never shown as current');
   assert.equal(t.state.aiCache.size, 0, 'nor cached');
@@ -2776,7 +3167,7 @@ test('Luna without a key says so above the list, and a failed review says it fai
   keyless.context.openSettings = (id) => opened.push(id);
   await keyless.context.runAssist([{}], keyless.ctx);
   const { needsKey } = keyless.holder().said;
-  assert.equal(needsKey.text, 'Luna needs an OpenAI API key. ');
+  assert.equal(needsKey.text, 'The AI assistant needs an OpenAI API key. ');
   needsKey.add();
   assert.deepEqual([opened, keyless.logged], [['ai-openai-key'], []], 'Add the key opens its field; nothing is asked');
   const failed = assistHarness({ suggest: async () => { throw new failed.context.AssistError('Luna is rate-limited. Try again shortly.'); } });
@@ -2808,8 +3199,63 @@ test('Luna without a key says so above the list, and a failed review says it fai
   assert.deepEqual([...waiting.rendered[0][1]], [pick], 'the waiting pick is what renderAi draws again');
 });
 
+// Audit 2026-11-07, AI-13 (the maintainer, 2026-11-07: pseudonymize): a question whose choices name
+// the client goes to Luna with placeholders and its pick comes back as the page's choice, never as an
+// automatic one; one code can't map stays with the agent.
+test("a question whose choices name a driver goes to Luna with placeholders and its pick comes back as the page's", async () => {
+  let asked = null;
+  const t = assistHarness({ record: { vehicles: [], drivers: [{ first: 'Maria', last: 'Lopez' }, { first: 'Juan', last: 'Lopez' }] }, cfg: { auto: true },
+    suggest: async (items) => {
+      asked = items.map((x) => [x.key, x.options]);
+      return { suggestions: items.filter((x) => x.key !== 'haz').map((x) => ({ ...x, choice: x.options[1], leave: false, autoOk: true })), tokensIn: 1, tokensOut: 1, modelCalls: 1 };
+    } });
+  t.context.collectItems = () => ({ blocked: [], items: [
+    { id: 'f1', key: 'operator', label: 'Principal operator', controlKind: 'select', options: ['Maria Lopez', 'Juan Lopez', 'Other'] },
+    { id: 'f2', key: 'haz', label: 'Hazmat', controlKind: 'radio', options: ['Yes', 'No'] },
+    { id: 'f3', key: 'part', label: 'Who signs', controlKind: 'select', options: ['Maria', 'Other'] },
+  ] });
+  await t.context.runAssist([{}], t.ctx);
+  assert.deepEqual(asked, [['operator', ['Driver 1 (intake drivers[0])', 'Driver 2 (intake drivers[1])', 'Other']], ['haz', ['Yes', 'No']]],
+    'no driver name is sent; a question code cannot map is not asked');
+  assert.equal(t.logged[0].blocked, 1);
+  assert.equal(t.logged[0].items, 2);
+  const [, shown] = t.rendered[0];
+  const operator = shown.find((x) => x.key === 'operator');
+  assert.deepEqual([operator.choice, [...operator.options], operator.autoOk], ['Juan Lopez', ['Maria Lopez', 'Juan Lopez', 'Other'], false]);
+  assert.equal(t.applied.length, 0, 'never put in automatically: picking a person is an identity match');
+});
+
 // 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions
 // were left, as counts.
+// Audit 2026-11-07, AI-08: while a developer recording runs on the tab, each Luna call goes into it,
+// redacted with the recording's redactor; on another tab, or once it stops, nothing does.
+test("a developer recording on the tab keeps each Luna call, redacted, and nothing otherwise", async () => {
+  let opts;
+  const t = assistHarness({ suggest: async (items, context, cfg, o) => {
+    opts = o;
+    o.trace?.({ call: 'propose', ms: 5, request: { fields: { f1: { label: 'Years with Acme Trucking' } } }, answer: { decisions: {} }, tokensIn: 1 });
+    return { suggestions: [], tokensIn: 1, tokensOut: 1, modelCalls: 1 };
+  } });
+  const added = [];
+  const recording = { tabId: 1, stopping: false, redact: (s) => s.replace('Acme Trucking', '[client]'), store: { add: (events) => added.push(...events) } };
+  t.state.recording = recording;
+  await t.context.runAssist([{}], t.ctx);
+  assert.equal(added.length, 1);
+  assert.deepEqual([added[0].kind, added[0].frame, added[0].page, added[0].call, added[0].request.fields.f1.label, added[0].tokensIn],
+    ['luna', 0, 'CoveragesRates', 'propose', 'Years with [client]', 1]);
+  assert.ok(Number.isFinite(added[0].t));
+  // Stopped while Luna answered: nothing more goes in.
+  recording.stopping = true;
+  opts.trace({ call: 'verify', request: {}, answer: null });
+  assert.equal(added.length, 1);
+  for (const other of [{ ...recording, stopping: false, tabId: 2 }, null]) {
+    const u = assistHarness({ suggest: async (items, context, cfg, o) => { opts = o; return { suggestions: [], tokensIn: 1, tokensOut: 1, modelCalls: 1 }; } });
+    u.state.recording = other;
+    await u.context.runAssist([{}], u.ctx);
+    assert.equal(opts.trace, undefined, 'no trace without a recording on this tab');
+  }
+});
+
 test('Luna gets the page’s other answers from the snapshot, and the log counts why questions were left', async () => {
   let sent;
   const why = ['missing', 'unverified', 'unverified', 'chose', 'tooLarge', null];
@@ -2871,7 +3317,7 @@ test('a Luna answer that comes after a fill of the same page redrew it is kept, 
   await settle();
   assert.equal(luna.calls.length, 1, 'the same questions are not asked twice while the first request answers them');
   assert.equal(luna.calls[0].opts.isStale(), false, 'Luna is not stopped between its calls for a newer request of the same page');
-  assert.match(JSON.stringify(t.holder().said), /Asking Luna about 1 question left for you/);
+  assert.match(JSON.stringify(t.holder().said), /Asking the AI assistant about 1 question left for you/);
   luna.calls[0].resolve();
   await Promise.all([first, second]);
   assert.equal(t.logged.length, 1);
@@ -3234,8 +3680,10 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   const { rederive } = await import('../src/normalize.js');
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake: { record: { claims: { text: 'No' }, notes: { text: null }, applicant: {} }, warnings: [] } },
     get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, usage: { log: () => {} }, save: async () => {}, profileLater() {},
+    renderSections() {}, renderWarnings() {},
     claimsTextEdited: () => calls.push('claimsTextEdited'), reviewClaimsBox: () => calls.push('reviewClaimsBox'), reviewDriverGender: () => {},
   };
   vm.createContext(sandbox);
@@ -3246,6 +3694,39 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   assert.deepEqual(calls.splice(0), ['claimsTextEdited', 'reviewClaimsBox']);
   await sandbox.agentEdit('applicant.name', 'X', 'text');
   assert.deepEqual(calls, []);
+});
+
+// Audit 2026-11-07, DATA-04: a correction in the panel left what was derived from the corrected box
+// as the intake had it. The edit recomputes it from the corrected record (the claims answer, the
+// ownership its notes give), the checks follow in place, and the check list is said again.
+test('a panel edit of the claims box recomputes what derives from it and says the checks again', async () => {
+  const { get, set } = await import('../src/util.js');
+  const { rederive } = await import('../src/normalize.js');
+  const calls = [];
+  const intake = {
+    record: { claims: { text: 'Clean MVR', hasClaims: false, notes: null }, notes: { text: null }, applicant: { yearEstablished: 2021, yearsInBusiness: 5 },
+      operations: { vehicleOwnership: null }, vehicles: [{ type: 'Box Truck' }], coverage: {} },
+    warnings: [{ code: 'ownership.missing', path: 'operations.vehicleOwnership', level: 'check', msg: 'Not selected.' }], done: [], agentEdited: [], readFrom: {},
+  };
+  const sandbox = {
+    state: { intake }, get, set, rederive, noNumberEdit: () => false, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    usage: { log: (e) => calls.push(['log', e.path, e.warnings]) },
+    renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings', intake.warnings[0].level]),
+    claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  await sandbox.agentEdit('claims.text', 'Yes - 1 accident 2024\nFinanced', 'textarea');
+  assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes, intake.record.operations.vehicleOwnership], [true, 'Financed', 'Financed']);
+  assert.deepEqual(intake.readFrom, { 'operations.vehicleOwnership': ['claims_details'] });
+  assert.equal(intake.warnings.length, 1, 'kept by position');
+  assert.deepEqual(calls.map(([what]) => what), ['renderSections', 'renderWarnings', 'log']);
+  assert.ok(['claims.hasClaims', 'claims.notes', 'operations.vehicleOwnership'].every((p) => calls[0][1].includes(p)), 'the recomputed rows stay shown');
+  assert.equal(calls[1][1], 'info', 'the check list is said again with the ownership check retired');
+  // An edit that changes no check says nothing again.
+  calls.length = 0;
+  await sandbox.agentEdit('applicant.name', 'X', 'text');
+  assert.deepEqual(calls.map(([what]) => what), ['log']);
 });
 
 // Codex on PR #22: an edit retires Luna's old items even when no new review can run.
@@ -5133,8 +5614,8 @@ test('loading another intake keeps the first intake\'s edit keys and helper reco
   assert.match(extractFunction('loadFile'), /doneRestored\.clear\(\);/);
   assert.match(extractFunction('loadFile'), /await pruneAgentRecords\(summary\.intakeId\);/);
   assert.doesNotMatch(SIDEPANEL, /clearAgentKeys\(\)/);
-  assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,900}usage\.restoreSession\(null\);[\s\S]{0,300}await clearAgentKeys\(scope\);/);
-  assert.match(SIDEPANEL, /if \(what === 'clear'\) clearClient\(\);/, 'Clear runs once the agent confirms it');
+  assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,900}usage\.restoreSession\(null\);[\s\S]{0,500}await clearAgentKeys\(scope\);/);
+  assert.match(SIDEPANEL, /if \(what === 'clear'\) clearClient\(\)\.catch\(storageSaid\);/, 'Clear runs once the agent confirms it');
 });
 
 // Codex on PR #65 (2c8eeb9): Clear was done once the edit keys were gone, while the helper records'
@@ -5196,17 +5677,39 @@ test('a recorder already in the page is told to resume, unless a fill or AI appl
   assert.match(extractFunction('fillPage'), /await ensureRecorder\(\);\s+await tellRecorder\('pause', tabId\);/, 'a fill pauses right after, with filling already set');
 });
 
+// #404 review: AmWINS' next step opens at the same address, so a retry fill that found the step
+// already moved on clicked that step's Continue, its first, and logged it as a retry. A fill is a
+// retry only when the step it continued is the one the retry was for.
+test('a retry fill that continued another step is not logged as a retry', async () => {
+  for (const [continued, expected] of [['Step||Vehicles', true], ['Step||Drivers', undefined]]) {
+    const t = fillHarness();
+    t.context.continuedKey = () => continued;
+    const run = t.context.fillPage({ auto: 'page', retried: 'Step||Vehicles' });
+    await t.started;
+    t.release(t.results);
+    await run;
+    assert.equal(t.seen.logged.find((e) => e.type === 'fill_run')?.retried, expected, continued);
+  }
+});
+
 // Audit 2026-10-08, finding 6: a Continue that didn't take went unreported after the silent retry.
 test('a Continue that did not take after its retry pauses automatic filling, tells the agent and is logged', async () => {
-  const logged = [], appended = [];
+  const logged = [], appended = [], asked = [];
   let fills = 0;
   const state = { tab: { id: 1, url: 'Step' }, intake: {}, filling: false, pagePending: null, autoPaused: false, advanceRetried: new Set(), doneSteps: new Set(['Step||Vehicles']) };
   const context = { state, pageOf: (u) => u, $: () => ({ checked: true }), setTimeout: (fn) => fn(), fillProblem: (ctx, text) => appended.push(text),
-    runKit: async () => [{ frameId: 0, result: 'same' }], fillPage: () => { fills++; }, usage: { log: (e) => logged.push(e) } };
+    runKit: async () => [{ frameId: 0, result: 'same' }], fillPage: (o) => { fills++; asked.push(o); }, usage: { log: (e) => logged.push(e) } };
   vm.runInNewContext(extractFunction('watchNextStep'), context);
   const carrier = { id: 'amwins', practice: false };
   await context.watchNextStep(carrier, 'Step', 'same', 'Step||Vehicles', 'run-1');
   assert.equal(fills, 1, 'the lost Continue is clicked once more, silently');
+  // Logged as the retry it is (audit 2026-11-07, FLOW-11): fillPage marks its fill (ctx.retried),
+  // and its fill_run and fill_error say `retried`.
+  // Its retry names the step it is for (#404 review): only a fill that continues that step is one.
+  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [{ auto: 'page', retried: 'Step||Vehicles' }]);
+  assert.match(extractFunction('afterFill'), /const doneKey = continuedKey\(frames, page, carrier, active\);/);
+  assert.match(extractFunction('logFill'), /retried: !!ctx\.retried,/);
+  assert.match(extractFunction('logFillError'), /\.\.\.\(ctx\.retried \? \{ retried: true \} : \{\}\)/);
   assert.deepEqual([[...state.advanceRetried], state.doneSteps.has('Step||Vehicles'), state.autoPaused, logged], [['Step||Vehicles'], false, false, []]);
   // The retried fill clicked Continue again and watches again; the step still doesn't change.
   await context.watchNextStep(carrier, 'Step', 'same', 'Step||Vehicles', 'run-2');
@@ -5257,7 +5760,97 @@ test('a Continue on a carrier without the retry is never clicked again: waited f
 // panel was often closed before.
 test('a problem report is uploaded as soon as it is logged', () => {
   // The line under the usage card is said as data (state.usageNote; settings-view.jsx draws it).
-  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,400}state\.usageNote = 'Thanks — saved with the usage log\.';\s+\/\/[^\n]*\n\s+uploadNow\(\);/);
+  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,900}state\.usageNote = 'Thanks — saved with the usage log\.';\s+sayProblem\([^\n]*\);\s+\}\s+\/\/[^\n]*\n\s+await uploadNow\(\);/);
+});
+
+// Audit 2026-11-07, UX-11: Save report closed the box with no word but the screen reader's. The
+// footer says it was saved, then whether it reached TNI, and whether the page's last fill goes with
+// it; the line goes when the box opens again. Reviews of #422: "sent" is this report's own fate
+// (usage.eventFate: gone from this computer only by an upload the server confirmed), not the
+// upload's `ok`, which a refused report or an empty queue's health check also ends in; a report not
+// saved says so and keeps its text; and a report's upload that ends after the box opened again, or
+// after a newer report, says nothing.
+test('a saved problem report says in the footer whether it reached TNI', async () => {
+  const at = new Date(2026, 10, 7, 15, 42);
+  const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const said = {};
+  vm.runInNewContext(extractFunction('problemSaid'), said);
+  assert.equal(said.problemSaid('sent', { state: 'ok' }, true, at), `Report saved and sent to TNI at ${time}, with this page's last fill.`);
+  assert.equal(said.problemSaid('sent', { state: 'ok' }, false, at), `Report saved and sent to TNI at ${time}.`);
+  assert.equal(said.problemSaid('refused', { state: 'ok', sent: 0 }, false, at), "Report saved on this computer, but the usage server didn't take it: it stays here, and goes with Export.");
+  assert.equal(said.problemSaid('queued', { state: 'ok', sent: 0 }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
+  assert.equal(said.problemSaid('queued', { state: 'error' }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
+  assert.equal(said.problemSaid('queued', { state: 'off' }, true, at), "Report saved on this computer, with this page's last fill. No usage server is set, so it isn't sent.");
+  assert.equal(said.problemSaid('unknown', { state: 'ok' }, false, at), "Report saved. Whether it reached TNI couldn't be confirmed.");
+
+  // The handlers, as wired.
+  const make = ({ saved = true, fate = 'sent', logGate = null } = {}) => {
+    const handlers = {};
+    const el = (id) => ({ id, value: '', hidden: true, disabled: false, textContent: '', attrs: {}, focus() {}, setAttribute(k, v) { this.attrs[k] = v; }, addEventListener: (type, fn) => { handlers[id] = fn; } });
+    const els = Object.fromEntries(['report-problem', 'problem-form', 'problem-text', 'cancel-problem', 'send-problem', 'problem-said'].map((id) => [id, el(id)]));
+    let release;
+    const logged = [];
+    const context = { state: { intake: null, tab: null }, $: (id) => els[id], document: { addEventListener() {} }, setInterval() {}, setTimeout: () => 1, clearTimeout() {},
+      unlockAudio() {}, renderUsage() {}, announce() {}, redactor: () => (x) => x, redactionTerms: () => [], pageOf: (u) => u, problemContext: () => ({}),
+      crypto: { randomUUID: () => `id-${logged.length}` }, problemSaidTimer: null, PROBLEM_SAID_MS: 10_000, problemRun: 0,
+      uploadNow: () => new Promise((r) => { release = r; }),
+      usage: { log: async (e) => { logged.push(e); await logGate; }, lastSave: () => (saved ? { state: 'ok' } : { state: 'error', message: 'quota' }), lastUpload: () => ({ state: 'ok', sent: 0 }),
+        eventFate: async () => { if (fate instanceof Error) throw fate; return fate; } } };
+    vm.runInNewContext(['problemSaid', 'sayProblem', 'wireUsage'].map(extractFunction).join('\n'), context);
+    context.wireUsage();
+    return { els, handlers, logged, release: () => release?.(), context };
+  };
+  // Refused by the server, though the upload ended ok: not said as sent.
+  const refused = make({ fate: 'refused' });
+  refused.els['problem-text'].value = 'The vehicle page froze';
+  const sending = refused.handlers['send-problem']();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(refused.els['problem-said'].textContent, 'Report saved. Sending it to TNI…');
+  refused.release();
+  await sending;
+  assert.match(refused.els['problem-said'].textContent, /didn't take it/);
+  assert.equal(refused.logged[0].id, 'id-0', 'logged with the id its fate is read by');
+  // Not saved: said, its text kept and the box left open; nothing is sent.
+  const lost = make({ saved: false });
+  lost.els['problem-text'].value = 'The vehicle page froze';
+  lost.els['problem-form'].hidden = false;
+  await lost.handlers['send-problem']();
+  assert.deepEqual([lost.els['problem-text'].value, lost.els['problem-form'].hidden, lost.els['send-problem'].disabled], ['The vehicle page froze', false, false]);
+  assert.match(lost.els['problem-said'].textContent, /couldn't be saved/);
+  // The box opened again while the report went: its outcome isn't said over it.
+  const reopened = make();
+  reopened.els['problem-text'].value = 'The vehicle page froze';
+  const going = reopened.handlers['send-problem']();
+  await new Promise((r) => setImmediate(r));
+  reopened.handlers['report-problem']();
+  reopened.release();
+  await going;
+  assert.deepEqual([reopened.els['problem-said'].textContent, reopened.els['problem-said'].hidden], ['', true]);
+  // Where the report is couldn't be read: not said as sent, nor as waiting.
+  const unread = make({ fate: new Error('storage') });
+  unread.els['problem-text'].value = 'The vehicle page froze';
+  const reading = unread.handlers['send-problem']();
+  await new Promise((r) => setImmediate(r));
+  unread.release();
+  await reading;
+  assert.equal(unread.els['problem-said'].textContent, "Report saved. Whether it reached TNI couldn't be confirmed.");
+  // The box opened again while the report was still being saved: what the agent types there stays.
+  let saveDone;
+  const slow = make({ logGate: new Promise((r) => { saveDone = r; }) });
+  slow.els['problem-text'].value = 'The vehicle page froze';
+  slow.els['problem-form'].hidden = false;
+  const saving = slow.handlers['send-problem']();
+  slow.handlers['report-problem']();
+  slow.handlers['report-problem']();
+  slow.els['problem-text'].value = 'And the drivers page';
+  saveDone();
+  await new Promise((r) => setImmediate(r));
+  slow.release();
+  await saving;
+  assert.deepEqual([slow.els['problem-text'].value, slow.els['problem-form'].hidden, slow.els['problem-said'].textContent], ['And the drivers page', false, '']);
+  assert.equal(slow.logged.length, 1, 'the first report is still saved, and sent');
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.match(html, /<div id="problem-form"[\s\S]*?<\/div>\n\s+<\/div>\n\s+<!--[^\n]*-->\n\s+<p id="problem-said" class="problem-said" role="status" hidden><\/p>/);
 });
 
 // Contract 1 (audit 2026-10-08): a field change on a one-address application names its step.
@@ -6259,6 +6852,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   const record = { operations: { radius: '100', radiusMiles: 100 }, applicant: {} };
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake: { record, warnings: [], done: [] }, detailsClosed: new Set(), showEmpty: false, details: null },
     get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES,
     intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
@@ -6347,7 +6941,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
         startSession: fingerprint => { scope = fingerprint; return { intakeId: fingerprint }; } },
       agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => structuredClone(records),
         set: async value => { records = structuredClone(value); } },
-      doneActionsQueue: Promise.resolve(), doneActionsStore: { clear: async () => {} },
+      doneActionsQueue: Promise.resolve(), doneActionsStore: { clear: async () => {} }, unitFormsStore: { clear: async () => {} },
       tellRecorder: async () => {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
       aiRetiredSignatures: new Set(),
       runKit: async (tabId, c, func, args = []) => {
@@ -6361,7 +6955,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
       readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, normalizeIntake: () => ({ record: nextRecord, warnings: [] }),
       intakeSummary: async () => ({ intakeId: nextFingerprint }), pdfjs: {},
       cancelLayouts() {}, holdLayouts() {}, resetViews() {}, discardAiSuggestions() {}, uploadNow() {},
-      store: { set: async () => {} }, render() {}, reviewClaimsBox() {}, reviewIntake() {}, refreshTab() {},
+      store: { set: async () => {} }, render() {}, reviewClaimsBox() {}, reviewIntake() {}, refreshTab() {}, fillsHeld: async () => false,
     });
     const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
@@ -6456,7 +7050,7 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
       store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
       discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
       uploadNow() {}, render() {}, reviewClaimsBox() {}, reviewIntake() {},
-      refreshTab: () => { refreshed = h.refreshTab(); return refreshed; },
+      refreshTab: () => { refreshed = h.refreshTab(); return refreshed; }, fillsHeld: async () => false,
     });
     vm.runInNewContext(['firstView', 'loadFile', 'persistDoneActions', 'persistUnitForms', 'restoreDoneActions'].map(extractFunction).join('\n'), context);
     return { h, context, state, load: async id => {
@@ -6673,7 +7267,7 @@ test('a problem report names the fill it is about: view, run, step and what held
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), { view: 't1' });
   state.intake = null;
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
-  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
+  assert.match(extractFunction('wireUsage'), /const context = problemContext\(state\.tab, page\);[\s\S]{0,300}await usage\.log\(\{ id, type: 'problem_report'[^\n]*\.\.\.context \}\);/);
 });
 
 // CodeRabbit on PR #403: the recorder tells its exception again until the panel says it logged
@@ -6889,6 +7483,7 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   ] };
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake, view: 'check' }, $, get, set, rederive, ownerDrivesAnswered, fieldInfo: (p) => ({ label: p }), sourcePlace: () => null, pdfPageSaid: () => '',
     document: { getElementById: () => null, querySelector: () => null },
     renderSteps() {}, renderSections: () => calls.push(['renderSections', get(record, 'drivers[0].gender') ?? null]), jumpTo() {}, openPdf() {},
@@ -8659,7 +9254,7 @@ test('automatic filling paused on the tab in front is said under the dock\'s wor
   assert.equal(context.pausedSaid({ phase: 'ready' }), '');
   // The dock carries it (renderDock), and the agent's own Fill lifts it (fillPage).
   assert.match(extractFunction('renderDock'), /busy: !!state\.filling, paused: pausedSaid\(d\) \};/);
-  assert.match(extractFunction('fillPage'), /if \(!auto\) state\.autoPaused = false;/);
+  assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false;/);
 });
 
 // W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
@@ -8722,9 +9317,53 @@ test('an automatic fill lists its answers as they go in, from the first one', as
   await run;
   assert.equal(t.state.fillingFor, null);
   assert.match(watched, /:stopped$/);
-  // Shown once a row is in, never for a follow-up that has answered nothing yet: the dock here, the
-  // live list in test/panel/live-view.test.jsx.
-  assert.match(extractFunction('dockFor'), /if \(state\.filling && f\?\.tabId === state\.tab\.id && \(!f\.auto \|\| !!f\.rows\?\.length\)\) \{/);
+  // Shown once a row is in, or once it has gone on a while (fillShown, below), never for a quick
+  // follow-up that has answered nothing yet: the dock here, the live list in test/panel/live-view.test.jsx.
+  assert.match(extractFunction('dockFor'), /if \(state\.filling && fillShown\(f\)\) return fillingSaid\(f\);/);
+});
+
+// Audit 2026-11-07, FLOW-05: a quiet automatic follow-up (waiting on a helper, Recalculate or the
+// premium, W43-42: 29 s) ran with no Stop under the last report's buttons, and a fill on another quote
+// tab couldn't be stopped from the tab in front.
+test('a fill running is said with its Stop: a quiet follow-up once it has gone on a while, one on another tab by its carrier', () => {
+  const pick = (d, keys) => Object.fromEntries(keys.map((k) => [k, d[k]]));
+  const carrier = { name: 'GEICO', advance: { text: 'Next' } };
+  const h = dockHarness({ carrier, extra: { QUIET_MS: 1500, DOCK_PHASES: new Set(['premium']), phaseSaid: (p) => [p.name === 'premium' ? 'Waiting for the premium' : 'x'] } });
+  h.state.filling = true;
+  // A quick follow-up with nothing in yet: the page's own word stays (its buttons held: renderDock's busy).
+  h.state.fillingFor = { run: 'r', tabId: 7, carrier, auto: true, rows: [], filled: 0, started: Date.now(), phase: { name: 'premium' } };
+  assert.equal(h.dock().phase, 'ready');
+  // Gone on a while (watchFill marks it `shown`): the fill, with Stop and what it waits on.
+  h.state.fillingFor = { ...h.state.fillingFor, shown: true };
+  assert.deepEqual(pick(h.dock(), ['phase', 'title', 'button', 'label', 'disabled']), { phase: 'filling', title: 'Waiting for the premium…', button: 'fill-stop', label: 'Stop', disabled: false });
+  // On another tab than the one in front, a rater's or not: named, with Stop.
+  h.state.fillingFor = { run: 'r', tabId: 9, carrier, rows: [{ label: 'Gender' }], filled: 1 };
+  assert.deepEqual(pick(h.dock(), ['phase', 'eyebrow', 'title', 'button', 'label']), { phase: 'elsewhere', eyebrow: 'Filling · 1 in', title: 'Filling your other GEICO tab', button: 'fill-stop', label: 'Stop' });
+  h.state.tab = { id: 3, url: 'https://news.example/', carrier: null };
+  assert.equal(h.dock().phase, 'elsewhere');
+  h.state.fillingFor = { ...h.state.fillingFor, stopping: true };
+  assert.deepEqual(pick(h.dock(), ['eyebrow', 'label', 'disabled']), { eyebrow: 'Stopping', label: 'Stopping…', disabled: true });
+  // The tab in front keeps its mark while another fills (src/tab-mark.js markFor: 'keep').
+});
+
+test('watchFill says a quiet automatic fill as one once it has gone on QUIET_MS, and autoFill holds the dock from its start', async () => {
+  const ticks = [];
+  let drawn = 0;
+  const state = { fillingFor: { run: 'r', auto: true, rows: [], started: 1000 } };
+  let now = 1000;
+  const context = { state, inExtension: true, QUIET_MS: 1500, UNANSWERED_MS: 5000, Date: { now: () => now }, renderSteps: () => { drawn++; },
+    setInterval: (fn) => { ticks.push(fn); return 1; }, clearInterval() {}, worldFor: () => 'ISOLATED',
+    chrome: { scripting: { executeScript: async () => [] } } };
+  vm.runInNewContext(extractFunction('watchFill'), context);
+  context.watchFill({ run: 'r', tabId: 7, carrier: {} });
+  now = 2000;
+  await ticks[0]();
+  assert.equal(!!state.fillingFor.shown, false);
+  now = 2600;
+  await ticks[0]();
+  assert.deepEqual([state.fillingFor.shown, drawn > 0], [true, true]);
+  assert.match(extractFunction('autoFill'), /state\.filling = true;\n\s+state\.autoPending = false;\n\s+\/\/[^\n]*\n\s+renderSteps\(\);/);
+  assert.match(extractFunction('autoFill'), /auto: true, started: Date\.now\(\) \};/);
 });
 
 test('the business profile is logged on load, after a correction settles, and on opening, only when it changed', async () => {
@@ -8782,7 +9421,7 @@ test('a profile still waiting when another intake is loaded goes to its own quot
     normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
     store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
-    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile, redactor, redactionTerms,
+    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile, redactor, redactionTerms, fillsHeld: async () => false,
     setTimeout: (fn) => { timers.set(timers.size + 1, fn); return timers.size; }, clearTimeout: (id) => timers.delete(id) };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks', 'persistAiPending', 'restoreAiPending',
     'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid', 'logProfile', 'profileLater', 'firstView'].map(extractFunction).join('\n'), context);
@@ -8942,7 +9581,7 @@ test('loading another client\'s intake stops and saves the recording, redacted w
     normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
     store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
-    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile: () => null, redactor, redactionTerms, logProfile() {}, profileLater() {},
+    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile: () => null, redactor, redactionTerms, logProfile() {}, profileLater() {}, fillsHeld: async () => false,
     stopRecording: async (why) => { stopped.push([why, state.intake?.record.garaging.state]); state.recording = null; },
     setTimeout: () => 1, clearTimeout() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks', 'persistAiPending', 'restoreAiPending',
@@ -8979,7 +9618,7 @@ function intakeChangeHarness({ fillEndMs = 15000 } = {}) {
     normalizeIntake: () => ({ record: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] }, warnings: [] }), intakeSummary: async () => ({ intakeId: 'b' }),
     store: { set: async () => {}, remove: async () => {} }, pruneAgentRecords: async () => [], clearAgentKeys: async () => {}, testIntakes: { get: async () => [] }, logSettings: async () => {},
     platformOf: () => ({ os: null, chrome: null }), uploadNow() {}, save: async () => {}, render() {}, renderSite() {}, renderSteps() {}, refreshTab() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
-    profileTimer: null, logProfile() {}, stopRecording: async () => {}, worldFor: () => 'ISOLATED',
+    profileTimer: null, logProfile() {}, stopRecording: async () => {}, worldFor: () => 'ISOLATED', fillsHeld: async () => false, holdFills: async () => true, releaseFills: async () => {}, FILLS_HELD_NOTE: 'held',
     chrome: { scripting: { executeScript: async ({ target }, ...rest) => { seen.stops.push([target.tabId, target.allFrames, state.intake === intakeA, state.resetting]); ends(); return []; } } } };
   // The stop goes with its run id (`args`), as Stop's does.
   context.chrome.scripting.executeScript = async (spec) => { seen.stops.push([spec.target.tabId, spec.args, state.intake === intakeA, state.resetting]); if (spec.args) ends(); return []; };
@@ -9035,6 +9674,139 @@ test('overlapping Change file and Clear hold resetting until the last is done, t
   vm.runInNewContext(extractFunction('newQuote'), t.context);
   await t.context.newQuote();
   assert.deepEqual([t.state.resetting, t.state.resetDepth], [false, 0]);
+});
+
+// CodeRabbit on PR #395, the maintainer 2026-11-07: after a New quote that failed, the intake's fills
+// stay held (fillsHeld) through the same PDF loaded again, after a Clear or another intake too, and
+// only New quote's own load lifts it; another intake isn't held.
+test('a failed New quote holds its intake\'s fills through any load of it but New quote\'s own', async () => {
+  const pdf = { name: 'client.pdf', arrayBuffer: async () => new ArrayBuffer(1) };
+  const held = new Set(['a']);
+  const harness = (intakeId) => {
+    const t = intakeChangeHarness();
+    t.state.filling = false;
+    t.state.fillingFor = null;
+    Object.assign(t.context, { intakeSummary: async () => ({ intakeId }), fillsHeld: async (id) => held.has(id) });
+    return t;
+  };
+  let t = harness('a');
+  await t.context.loadFile(pdf);
+  assert.equal(t.state.newQuoteFailed, true, 'the same PDF again');
+  await t.context.clearClient();
+  await t.context.loadFile(pdf);
+  assert.equal(t.state.newQuoteFailed, true, 'the same PDF after a Clear');
+  await t.context.loadFile(pdf, { reset: true });
+  assert.equal(t.state.newQuoteFailed, false, 'New quote\'s own load');
+  t = harness('b');
+  t.state.newQuoteFailed = true;
+  await t.context.loadFile(pdf);
+  assert.equal(t.state.newQuoteFailed, false, 'another intake, not held');
+  // The panel opened again reads the hold once the saved intake is (restoreHold, below).
+  const init = extractFunction('init');
+  assert.ok(init.indexOf('await restoreHold();') > init.indexOf("state.intake = (await store.get('intake'))"), 'read once the saved intake is');
+});
+
+// The held intakes (core.js's whole section, as it is), as a panel, two panels and a panel opened
+// again (its memory new) read them: kept in the session store; a hold that can't be saved says so
+// (and New quote doesn't start); one that can't be read holds its intake; two panels holding two
+// intakes at once each keep theirs (CodeRabbit on PR #395).
+const HELD_SECTION = (() => {
+  const core = fs.readFileSync(new URL('../sidepanel/panel/core.js', import.meta.url), 'utf8');
+  return core.slice(core.indexOf('const FILLS_HELD'), core.indexOf('// A Clear\'s or New quote\'s catch'));
+})();
+function heldPanel(store, failed = []) {
+  const context = { store, Set, Array, logCrash: () => {}, persistFailed: (what) => failed.push(what), state: { intake: null } };
+  vm.createContext(context);
+  vm.runInContext(`${HELD_SECTION}\n${extractFunction('restoreHold')}\nObject.assign(globalThis, { holdFills, releaseFills, fillsHeld, restoreHold, FILLS_HELD_NOTE });`, context);
+  return context;
+}
+// A session store as chrome.storage.session answers: each call settles later, so two panels' calls
+// interleave; `broken` fails writes, `unreadable` fails reads.
+function sessionStore() {
+  const kept = {};
+  const later = () => new Promise((resolve) => setTimeout(resolve, 1));
+  const store = { kept,
+    get: async (k) => { await later(); if (store.unreadable) throw new Error('storage read failed'); return kept[k]; },
+    set: async (k, v) => { await later(); if (store.broken) throw new Error('QUOTA_BYTES quota exceeded'); kept[k] = v; },
+    remove: async (k) => { await later(); if (store.broken) throw new Error('storage write failed'); delete kept[k]; } };
+  return store;
+}
+const openedOn = async (store, intakeId) => { const p = heldPanel(store); p.state.intake = { intakeId }; await p.restoreHold(); return [p.state.newQuoteFailed, p.state.clientNote ?? null]; };
+
+test('the intakes whose fills are held are kept in the session store; one that can\'t be read is held', async () => {
+  const store = sessionStore();
+  const failed = [];
+  let p = heldPanel(store, failed);
+  assert.equal(await p.holdFills('a'), true);
+  assert.deepEqual([await p.fillsHeld('a'), await p.fillsHeld('b'), await p.fillsHeld(undefined)], [true, false, false]);
+  // Opened again: held for that intake, said; not for another.
+  assert.deepEqual(await openedOn(store, 'a'), [true, p.FILLS_HELD_NOTE]);
+  assert.deepEqual(await openedOn(store, 'b'), [false, null]);
+  // A hold that can't be saved: false, said; held in this panel's memory only (New quote doesn't start).
+  store.broken = true;
+  assert.equal(await p.holdFills('b'), false);
+  assert.deepEqual(failed, ['keep that this quote waits for New quote'], 'said');
+  assert.equal(await p.fillsHeld('b'), true, 'held in memory');
+  // A release that can't be saved: still held when opened again.
+  await p.releaseFills('a');
+  store.broken = false;
+  assert.deepEqual(await openedOn(store, 'a'), [true, p.FILLS_HELD_NOTE], 'a release not saved lets nothing go');
+  // A hold that can't be read: held, also on opening.
+  store.unreadable = true;
+  assert.deepEqual(await openedOn(store, 'c'), [true, p.FILLS_HELD_NOTE], 'held when it can\'t be read');
+  store.unreadable = false;
+  // Released, saved: not held, also on opening.
+  p = heldPanel(store);
+  await p.releaseFills('a');
+  assert.deepEqual(await openedOn(store, 'a'), [false, null]);
+});
+
+test('two panels holding two intakes at once each keep their hold, and letting one go keeps the other', async () => {
+  const store = sessionStore();
+  const [one, two] = [heldPanel(store), heldPanel(store)];
+  assert.deepEqual(await Promise.all([one.holdFills('a'), two.holdFills('b')]), [true, true]);
+  // The New quote for a then fails: its panel, opened again, is still held; so is b's.
+  assert.deepEqual(await openedOn(store, 'a'), [true, one.FILLS_HELD_NOTE], 'a, held by the first panel');
+  assert.deepEqual(await openedOn(store, 'b'), [true, two.FILLS_HELD_NOTE], 'b, held by the second');
+  // b's New quote finishes while a holds again: a stays held.
+  await Promise.all([one.holdFills('a'), two.releaseFills('b')]);
+  assert.deepEqual([await openedOn(store, 'a'), await openedOn(store, 'b')], [[true, one.FILLS_HELD_NOTE], [false, null]]);
+});
+
+// CodeRabbit on PR #395: a New quote whose hold can't be saved, then the panel opened again: the
+// last quote's stored records (edit keys, helper actions) are all still there, the panel opened again
+// restores them (core.js's own restore), and its next fill leaves the agent's edit alone and doesn't
+// redo a helper already done; nothing is held that needn't be.
+test('a New quote whose hold can\'t be saved removes nothing, and the panel opened again keeps every protection', async () => {
+  const store = sessionStore();
+  const session = { intakeId: 'abc' };
+  // The stored records, as core.js keeps them (agentKeysStore, doneActionsStore).
+  let keyRecords = [{ scope: 'abc', tabId: 4, page: 'Quote', keys: ['ref:Name'] }];
+  const done = { 'abc:4': ['addVehicle:0'] };
+  const panel = heldPanel(store);
+  const state = { intake: { fileName: 'client.pdf', intakeId: 'abc' }, filling: false, tab: { id: 4, carrier: { id: 'geico' } }, tabSessions: new Map() };
+  const notes = [];
+  const context = { state, inExtension: true, File: class {}, intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => session },
+    runKit: async () => [], clearAgentKeys: async () => { keyRecords = []; delete done['abc:4']; },
+    loadFile: async () => {}, clientNote: (t) => notes.push(t), render: () => {},
+    holdFills: panel.holdFills, releaseFills: panel.releaseFills, FILLS_HELD_NOTE: panel.FILLS_HELD_NOTE };
+  vm.runInNewContext(extractFunction('newQuote'), context);
+  store.broken = true;
+  await context.newQuote();
+  store.broken = false;
+  assert.deepEqual([keyRecords.length, done['abc:4']], [1, ['addVehicle:0']], 'nothing removed');
+  assert.match(notes.at(-1), /Nothing was changed: try New quote again/);
+  // The panel opened again: not held, and its records back from the store.
+  assert.deepEqual(await openedOn(store, 'abc'), [false, null], 'opened again: nothing held');
+  const reopened = { state: { tab: { id: 4 }, agentKeys: new Map(), doneActions: new Set() }, usage: { currentSession: () => session }, Promise, Set,
+    agentKeysStore: { get: async () => keyRecords }, doneActionsStore: { get: async (scope, tabId) => done[`${scope}:${tabId}`] ?? [] }, unitFormsStore: { get: async () => null } };
+  vm.runInNewContext(`var doneActionsQueue = Promise.resolve();\n${SIDEPANEL.match(/const doneRestored = new Set\(\);/)[0]}\n${['restoreAgentKeys', 'restoreDoneActions', 'fillSkip'].map(extractFunction).join('\n')}\nObject.assign(globalThis, { fillSkip });`, reopened);
+  await reopened.restoreAgentKeys(4);
+  await reopened.restoreDoneActions(4);
+  // Its next fill: the agent's edit is skipped (formScoped is false for this carrier), the helper isn't done again.
+  reopened.formScoped = () => false;
+  assert.deepEqual([...reopened.fillSkip(reopened.state.agentKeys, 'Quote', 'Quote', {})], ['ref:Name'], 'the agent\'s edit is left alone');
+  assert.equal(reopened.state.doneActions.has('addVehicle:0'), true, 'the vehicle already added isn\'t added again');
 });
 
 test('a fill that only gets its tab\'s word while the intake waits is stopped then; one that never ends doesn\'t hold the intake', async () => {
@@ -9325,10 +10097,12 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
   const context = { state, inExtension: true, File: class { constructor(parts, name, opts) { Object.assign(this, { parts, name, type: opts?.type }); } },
     intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
     runKit: async (tabId) => { calls.push(['clear', tabId]); return []; }, clearAgentKeys: async (scope) => { calls.push(['keys', scope]); },
-    loadFile: async (file, opts) => { calls.push(['load', file.name, file.type, opts]); }, clientNote: (t) => calls.push(['note', t]) };
+    loadFile: async (file, opts) => { calls.push(['load', file.name, file.type, opts]); }, clientNote: (t) => calls.push(['note', t]),
+    holdFills: async (scope) => { calls.push(['hold', scope]); return true; }, releaseFills: async (scope) => { calls.push(['release', scope]); }, FILLS_HELD_NOTE: 'Nothing fills until it does' };
   vm.runInNewContext(extractFunction('newQuote'), context);
   await context.newQuote();
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['clear', 4], ['keys', 'abc'], ['load', 'client.pdf', 'application/pdf', { reset: true }]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['hold', 'abc'], ['clear', 4], ['keys', 'abc'], ['release', 'abc'], ['load', 'client.pdf', 'application/pdf', { reset: true }]],
+    'held before anything goes, and let go once a New quote finishes');
   assert.equal(state.intake.ntlAdded, false, 'NTL is added again on the new quote');
   // While answers go in, or without the PDF kept: said, nothing done.
   calls.length = 0;
@@ -9338,9 +10112,30 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
   context.intakePdfBytes = async () => null;
   await context.newQuote();
   assert.deepEqual(calls.map((c) => c[0]), ['note', 'note']);
+  // CodeRabbit on PR #395: records that couldn't be removed fail the New quote, and the quote on
+  // screen, without the panel's records of it, gets no fill until a New quote or a load finishes.
+  calls.length = 0;
+  context.intakePdfBytes = async () => new Uint8Array([1, 2]);
+  context.clearAgentKeys = async () => { throw Object.assign(new Error('storage: said in the panel'), { name: 'StorageSaid' }); };
+  context.render = () => calls.push(['render']);
+  await assert.rejects(context.newQuote(), { name: 'StorageSaid' });
+  assert.equal(calls.some((c) => c[0] === 'load'), false, 'no new quote loaded');
+  assert.equal(state.newQuoteFailed, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['hold', 'abc'], ['clear', 4], ['note', 'Nothing fills until it does'], ['render']], 'still held for its intake, said, and drawn');
+  // A hold that can't be saved: the New quote doesn't start, and nothing is let go.
+  calls.length = 0;
+  state.newQuoteFailed = false;
+  context.holdFills = async (scope) => { calls.push(['hold', scope]); return false; };
+  await context.newQuote();
+  assert.deepEqual(calls.map((c) => c[0]), ['hold', 'note', 'render'], 'nothing cleared, said');
+  assert.match(calls[1][1], /couldn’t save that it was starting\. Nothing was changed/);
+  assert.equal(state.newQuoteFailed, false);
+  assert.match(extractFunction('fillPage'), /state\.resetting \|\| state\.newQuoteFailed \|\| !state\.intake/);
+  assert.match(extractFunction('autoFill'), /state\.resetting \|\| state\.newQuoteFailed \|\| !state\.intake/);
+  state.newQuoteFailed = false;
   // Asked first, under the client's name; loadFile says what stays and logs the reset.
   assert.match(extractFunction('wire'), /\n    newQuote: \(\) => \{\s+if \(state\.filling\) return;\s+askFile\('new-quote'/);
-  assert.match(extractFunction('wire'), /if \(what === 'new-quote'\) newQuote\(\);/);
+  assert.match(extractFunction('wire'), /if \(what === 'new-quote'\) newQuote\(\)\.catch\(storageSaid\);/);
   assert.match(extractFunction('loadFile'), /reset \? 'New quote with the same intake' : 'Same intake'/);
 });
 
@@ -9492,6 +10287,37 @@ test('an agent change on the finishing step after the print, or a stopped fill, 
   assert.match(SIDEPANEL, /const byAgent = msg\.changes\.filter\(\(c\) => c\.agent\);\s+if \(byAgent\.length\) \{\s+const page = samePage\(msg\.page\);\s+if \(noteChangedAfterDone\(state\.tab\.carrier, page, step, sender\.tab\.id\)\) renderSteps\(\);/);
   assert.match(SIDEPANEL, /for \(const a of frames\.flatMap\(\(f\) => f\.actions \?\? \[\]\)\) \{ maps\.doneActions\.add\(a\.id\); maps\.doneActions\.delete\(`\$\{a\.id\}:changed`\); \}/);
   assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;/);
+});
+
+// The maintainer, 2026-11-07 (answer 1 on PR #367): "No" typed into the USDOT box in the panel is
+// saved as no number, as the intake's own No: the box empty, noDot true, the note said, and the row
+// and the checks said again.
+test('a panel edit of "No" into the USDOT box saves no number, and says the row and the note again', async () => {
+  const { get, set } = await import('../src/util.js');
+  const { noNumberEdit, rederive } = await import('../src/normalize.js');
+  const calls = [];
+  const intake = { record: { applicant: { dot: '1234567', noDot: null } }, warnings: [], done: [], agentEdited: [] };
+  const sandbox = {
+    state: { intake, fieldRevs: new Map() }, get, set, noNumberEdit, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    usage: { log: (e) => calls.push(['log', e.path]) }, renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings']),
+    claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  await sandbox.agentEdit('applicant.dot', 'No', 'text');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, [...intake.agentEdited]], [null, true, ['applicant.dot']]);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['dot.none', 'info']]);
+  assert.equal(sandbox.state.fieldRevs.get('applicant.dot'), 1, 'its box is said again with the record value (details-view.jsx rev)');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['renderSections', ['applicant.dot']], ['renderWarnings'], ['log', 'applicant.dot']]);
+  calls.length = 0;
+  await sandbox.agentEdit('applicant.dot', '7654321', 'text');
+  assert.equal(intake.record.applicant.dot, '7654321', 'a number stays as typed');
+  // Reviews of PR #376: the number clears the No and retires its note (rederive), said again.
+  assert.deepEqual([intake.record.applicant.noDot, intake.warnings[0].msg.startsWith('No longer applies after your edit: ')], [null, true]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['renderSections', ['applicant.noDot']], ['renderWarnings'], ['log', 'applicant.dot']]);
+  // Review of PR #376 (CodeRabbit): words near a No ("none yet") are not one: kept as typed, no No.
+  await sandbox.agentEdit('applicant.dot', 'none yet', 'text');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, sandbox.state.fieldRevs.get('applicant.dot')], ['none yet', null, 1]);
 });
 
 // Review of PR #170: a field the agent emptied in the drawer went with the blank ones (hidden at the
@@ -9747,7 +10573,7 @@ test('New quote lets go of the panel\'s own records before the stored ones, star
   const notes = [];
   const context = { state, inExtension: true, File: class { constructor(parts, name, opts) { Object.assign(this, { parts, name, type: opts?.type }); } },
     intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
-    runKit: async () => [], clearAgentKeys: async () => snapshot('keys'), loadFile: async () => snapshot('load'), clientNote: (t) => notes.push(t) };
+    runKit: async () => [], clearAgentKeys: async () => snapshot('keys'), loadFile: async () => snapshot('load'), clientNote: (t) => notes.push(t), holdFills: async () => true, releaseFills: async () => {} };
   vm.runInNewContext(extractFunction('newQuote'), context);
   await context.newQuote();
   assert.deepEqual(JSON.parse(JSON.stringify(seen)), [['keys', [], 0, 0, 0, true], ['load', [], 0, 0, 0, true]]);

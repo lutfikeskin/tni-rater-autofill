@@ -1,6 +1,7 @@
 // @ts-check
 // The side panel: its state, what it keeps in Chrome's storage, and the helpers every part uses.
 // One part of the panel; sidepanel.js wires the parts together.
+import { pruneKeptWork } from '../../src/kept-work.js';
 import { redactionTerms } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
 import { clientErrorEvent, redactor } from '../../src/usage.js';
@@ -45,6 +46,43 @@ const testIntakes = inExtension && globalThis.chrome?.storage?.local
       set: (v) => chrome.storage.local.set({ [TEST_INTAKES_KEY]: v }),
     }
   : { get: async () => memory[TEST_INTAKES_KEY] ?? [], set: async (v) => { memory[TEST_INTAKES_KEY] = v; } };
+// The agent's corrections and checks of an intake, kept on this computer for a day (src/kept-work.js,
+// FLOW-17): the storage, as chrome.storage.local's get, set and remove, or in memory outside it.
+const keptWorkLocal = inExtension && globalThis.chrome?.storage?.local
+  ? chrome.storage.local
+  : { get: async (k) => (k == null ? { ...memory } : Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, memory[x]]))),
+      set: async (o) => { Object.assign(memory, o); }, remove: async (k) => { for (const x of [].concat(k)) delete memory[x]; } };
+// Lets go of what is kept past its day, and with `except` or `all` the other intakes' (pruneKeptWork).
+// A failure leaves them for the next time.
+// Returns what went, or null when the storage refused.
+const forgetKeptWork = (options = {}) => pruneKeptWork(keptWorkLocal, options).catch(() => null);
+// Clear this client: all of it goes (as kept up to `before`, now). One that fails is remembered, in
+// memory and in local storage (KEPT_CLEAR_KEY), and tried again (keptWorkCleared) for what was kept
+// up to the first failure only, so a correction made since stays. `cleared`; `retry` when it failed
+// and is noted; `unsure` when it couldn't be noted either (a panel opened again doesn't know of it).
+const KEPT_CLEAR_KEY = 'keptWorkClear';
+let keptClearAt = null;
+async function clearKeptWork(before = Date.now()) {
+  if (await forgetKeptWork({ before })) {
+    keptClearAt = null;
+    await keptWorkLocal.remove([KEPT_CLEAR_KEY]).catch(() => {});
+    return 'cleared';
+  }
+  keptClearAt = keptClearAt ?? before;
+  return keptWorkLocal.set({ [KEPT_CLEAR_KEY]: keptClearAt }).then(() => 'retry', () => 'unsure');
+}
+// Before anything kept is read back, and as the panel opens: a Clear that failed is tried again.
+// `{ known: true, after }`: what was kept after `after` may come back (-Infinity: all of it); while
+// the Clear still fails, only what was kept since. `{ known: false }`: its note couldn't be read, so
+// nothing may come back.
+async function keptWorkCleared() {
+  let at = keptClearAt;
+  if (at == null) {
+    try { at = (await keptWorkLocal.get(KEPT_CLEAR_KEY))?.[KEPT_CLEAR_KEY]; } catch { return { known: false }; }
+  }
+  if (!Number.isFinite(at) || (await clearKeptWork(at)) === 'cleared') return { known: true, after: -Infinity };
+  return { known: true, after: at };
+}
 // Tab ids can be reused after Chrome restarts. Local edit/helper records belong to the
 // extension's current browser session, whose nonce survives panel reloads in storage.session.
 const TAB_RECORDS_SESSION_KEY = 'tabRecordsSession';
@@ -281,7 +319,7 @@ const state = storeState({
   autoPages: new Set(),
   // Steps already continued from, keyed by stepScope (AmWINS steps, Progressive's per-vehicle pages).
   doneSteps: new Set(),
-  advanceRetried: new Set(), // steps whose lost Continue was clicked a second time (once each)
+  advanceRetried: new Set(), // the tab's steps whose lost Continue was clicked a second time (once each)
   assistPage: null, // a page whose Luna request waits for a helper's follow-up fill (per tab, like the above)
   notesAsking: null, // the intake whose claims box Luna is reading now
   notesRetry: null, // that intake again, when the settings changed meanwhile
@@ -399,11 +437,13 @@ const state = storeState({
   // it says nothing.
   cards: {},
   // The panel's other notes, as notes-view.jsx draws them: `usage`, a usage log that can't be saved
-  // (renderHealth, in #notices), and `window`, a Pop out or Dock that didn't work (windowProblem, in
-  // #window-note), each a card as issueSaid puts it or null; and why the PDF couldn't be read
+  // (renderHealth, in #notices), `window`, a Pop out or Dock that didn't work (windowProblem, in
+  // #window-note), `storage`, what the panel couldn't save or forget on this computer (persistFailed, in
+  // #storage-note), and `whatsNew`, what's new in this version (whats-new.js, in #whats-new), each a
+  // card as issueSaid puts it or null; and why the PDF couldn't be read
   // (showLoadError: { title, text }, in #load-error), null until then. And the quote's steps in the
   // header's strip (renderSite: { name, at } each), as site-view.jsx draws them: none off a quote.
-  notes: { usage: null, window: null },
+  notes: { usage: null, window: null, storage: null, whatsNew: null },
   loadError: null,
   siteTrack: [],
   // Step 1's checks (renderWarnings: the title, the cards, the cleanup notes), as checks-view.jsx
@@ -427,6 +467,9 @@ const state = storeState({
   details: null,
   // An intake change under way (New quote, Change file, Clear: newQuote, loadFile, clearClient): no fill starts.
   resetting: false,
+  // This intake's New quote couldn't remove the records (newQuote, fillsHeld): no fill starts until
+  // a New quote for it finishes. Set by loadFile and on opening from the held intakes.
+  newQuoteFailed: false,
   // How many intake changes hold `resetting` (loadFile, clearClient, newQuote), so overlapping ones lift it only once all are done.
   resetDepth: 0,
   // The quote-done chime's audio element (noteQuoteDone).
@@ -435,6 +478,9 @@ const state = storeState({
   // always are), and the sections the agent folded (by id).
   showEmpty: false,
   detailsClosed: new Set(),
+  // Client details: how many times an edit saved a field otherwise than typed (path -> count; "No"
+  // in the USDOT box is saved empty), so its box shows the record's value again (details-view.jsx).
+  fieldRevs: new Map(),
   // The intake PDF: its bytes (also kept in session storage, keepPdf), the document pdf.js opened,
   // and the viewer's page, zoom and the item marked on it ({ path, label, kind, place }); null
   // while the viewer is closed.
@@ -594,6 +640,23 @@ function aiPendingRecord(sig, x, scope) {
   };
 }
 
+// A write to this computer's storage that failed (a full or broken store): the panel goes on, but
+// what it keeps across a reload, or forgets for a new quote, may not be so. It says so where the
+// agent works (state.notes.storage, in #storage-note), naming every write that failed since the
+// panel opened (`unsaved`), and logs each once as the panel's error, by what failed and the error's
+// name (audit 2026-11-07, LEARN-08). Its queue goes on to the next write. `what`: what the panel
+// couldn't do ("save which answers you changed"); `err`: the store's error.
+const unsaved = new Set();
+function persistFailed(what, err) {
+  unsaved.add(what);
+  const all = [...unsaved];
+  const said = all.length > 1 ? `${all.slice(0, -1).join(', ')} or ${all.at(-1)}` : all[0];
+  state.notes = { ...state.notes, storage: { tone: 'warn', role: 'alert', title: 'Your edits on this quote may not be remembered',
+    text: `The panel couldn't ${said} on this computer. If the panel closes or reloads, or the quote starts again, check the page before filling it: it may add vehicles again, skip ones not added yet or refill answers you changed.`,
+    notes: [], compare: [], actions: [] } };
+  logCrash(new Error(`storage: couldn't ${what}: ${err?.name ?? 'Error'}`));
+}
+
 function persistAiPending() {
   const task = aiPersistQueue.then(async () => {
     const scope = usage.currentSession()?.intakeId;
@@ -607,7 +670,7 @@ function persistAiPending() {
     await aiPendingStore.set([...others, ...records].slice(-200));
     retired.forEach(sig => aiRetiredSignatures.delete(sig));
   });
-  aiPersistQueue = task.catch(() => {});
+  aiPersistQueue = task.catch((err) => persistFailed('save the AI answers waiting for you', err));
   return task;
 }
 
@@ -654,7 +717,7 @@ function persistAgentKeys(tabId = state.tab?.id, agentKeys = state.agentKeys) {
     const existing = await agentKeysStore.get();
     await agentKeysStore.set([...existing.filter(x => x.scope !== scope || x.tabId !== tabId), ...records]);
   });
-  agentKeysQueue = task.catch(() => {});
+  agentKeysQueue = task.catch((err) => persistFailed('save which answers you changed', err));
   return agentKeysQueue;
 }
 
@@ -686,7 +749,7 @@ function persistGuardedEdits(origin, editedKeys) {
     await agentKeysStore.set([...existing.filter(record => !matches(record)),
       { scope: origin.scope, tabId: origin.tabId, page: origin.page, keys: [...merged] }]);
   });
-  agentKeysQueue = task.catch(() => {});
+  agentKeysQueue = task.catch((err) => persistFailed('save which answers you changed', err));
   return agentKeysQueue;
 }
 
@@ -712,11 +775,66 @@ function clearAgentKeys(scope) {
   const epochs = state.agentKeysEpochs ??= new Map();
   epochs.set(scope, (epochs.get(scope) ?? 0) + 1);
   const task = agentKeysQueue.then(async () => agentKeysStore.set((await agentKeysStore.get()).filter((x) => x.scope !== scope)));
-  agentKeysQueue = task.catch(() => {});
-  doneActionsQueue = doneActionsQueue.then(() => Promise.all([doneActionsStore.clear(scope), unitFormsStore.clear(scope)])).then(() => {}).catch(() => {});
+  agentKeysQueue = task.catch((err) => persistFailed('forget which answers you changed', err));
+  const done = doneActionsQueue.then(() => Promise.all([doneActionsStore.clear(scope), unitFormsStore.clear(scope)])).then(() => {});
+  doneActionsQueue = done.catch((err) => persistFailed('forget the buttons and vehicles already done', err));
   // Done once the helper records are gone too: the same PDF loaded again right after a Clear must
   // not get the cleared intake's helper ids back (units taken as already added; Codex on PR #65).
-  return Promise.all([task, doneActionsQueue]);
+  // A removal that failed fails the Clear or New quote too, rather than finishing as if it worked
+  // (CodeRabbit on PR #395); the queues go on. persistFailed has said and logged it, so it fails
+  // with STORAGE_SAID, which the caller lets go (storageSaid), rather than the store's own message,
+  // which a crash log would take again, unredacted once the client is cleared.
+  return Promise.all([task, done]).catch(() => { throw Object.assign(new Error('storage: said in the panel'), { name: STORAGE_SAID }); });
+}
+const STORAGE_SAID = 'StorageSaid';
+
+// The intakes whose New quote may have removed some of the last quote's records and not all
+// (newQuote): the quote on screen lost them, so no fill runs for that intake, after a Clear, another
+// intake or the panel opening again too, until a New quote for it finishes (the maintainer,
+// 2026-11-07). Kept in chrome.storage.session (`store`), one key per intake (`fillsHeld:<intake>`),
+// so two panels holding different intakes never write over each other's hold, and in this panel's
+// memory. New quote holds its intake before it removes anything and doesn't start if that can't be
+// saved, so a hold is never only in memory; it lets go once the records are gone. A hold that can't
+// be read holds its intake (fail closed) (CodeRabbit on PR #395).
+const FILLS_HELD_PREFIX = 'fillsHeld:';
+const FILLS_HELD_NOTE = 'The new quote didn’t start: this computer couldn’t let go of the last quote’s records. Nothing fills until it does: press New quote again.';
+const heldIntakes = new Set();
+const heldKey = (intakeId) => `${FILLS_HELD_PREFIX}${intakeId}`;
+// Held, saved: true; false when it couldn't be saved (said, and logged).
+async function holdFills(intakeId) {
+  if (!intakeId) return true;
+  heldIntakes.add(intakeId);
+  try {
+    await store.set(heldKey(intakeId), true);
+    return true;
+  } catch (err) {
+    persistFailed('keep that this quote waits for New quote', err);
+    return false;
+  }
+}
+async function releaseFills(intakeId) {
+  if (!intakeId) return;
+  heldIntakes.delete(intakeId);
+  try {
+    await store.remove(heldKey(intakeId));
+  } catch (err) {
+    persistFailed('forget that this quote waited for New quote', err);
+  }
+}
+async function fillsHeld(intakeId) {
+  if (!intakeId) return false;
+  if (heldIntakes.has(intakeId)) return true;
+  try {
+    return (await store.get(heldKey(intakeId))) === true;
+  } catch (err) {
+    logCrash(err);
+    return true;
+  }
+}
+// A Clear's or New quote's catch: a failure persistFailed already said goes no further; any other
+// is thrown again (a crash, logged as one).
+function storageSaid(err) {
+  if (err?.name !== STORAGE_SAID) throw err;
 }
 
 // On loading an intake: its own records stay (a PDF dropped again is the same intake, and its
@@ -733,7 +851,9 @@ async function pruneAgentRecords(current, now = Date.now()) {
   const gone = others.filter((scope, i) => i >= KEEP_INTAKES - 1 || now - Date.parse(seen[scope]) > KEEP_INTAKE_DAYS * 86_400_000);
   for (const scope of gone) delete seen[scope];
   await intakesSeenStore.set(seen);
-  await Promise.all(gone.map((scope) => clearAgentKeys(scope)));
+  // An older intake's records that couldn't be removed stay until the next load: that never stops
+  // this intake loading (persistFailed has said it).
+  await Promise.all(gone.map((scope) => clearAgentKeys(scope).catch(() => {})));
   return gone;
 }
 
@@ -741,7 +861,7 @@ function persistDoneActions(tabId = state.tab?.id, doneActions = state.doneActio
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
   const ids = [...doneActions].filter((id) => typeof id === 'string');
-  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set(scope, tabId, ids)).catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set(scope, tabId, ids)).catch((err) => persistFailed('save the buttons and vehicles already done', err));
   return doneActionsQueue;
 }
 
@@ -750,7 +870,7 @@ function persistUnitForms(tabId = state.tab?.id, unitForms = state.unitForms) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
   const forms = JSON.parse(JSON.stringify(unitForms ?? {}));
-  doneActionsQueue = doneActionsQueue.then(() => unitFormsStore.set(scope, tabId, forms)).catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => unitFormsStore.set(scope, tabId, forms)).catch((err) => persistFailed('save which vehicle each form is for', err));
   return doneActionsQueue;
 }
 
@@ -782,7 +902,7 @@ function keepReport(tabId, saved) {
     let size = entries.reduce((n, e) => n + JSON.stringify(e).length, 0);
     while (entries.length > 1 && size > REPORTS_BYTES) size -= JSON.stringify(entries.shift()).length;
     await store.set(`${REPORTS_PREFIX}${tabId}`, { scope, entries });
-  }).catch(() => {});
+  }).catch((err) => persistFailed("save this page's report", err));
 }
 // Forgets kept reports as dropReports forgets shown ones (`drop` gets each with its tabId): a new
 // or cleared client, a closed tab, one page's.
@@ -794,7 +914,7 @@ function forgetKeptReports(drop) {
       const entries = (Array.isArray(was?.entries) ? was.entries : []).filter((e) => !drop({ ...e, tabId }));
       await (entries.length ? store.set(k, { ...was, entries }) : store.remove(k));
     }
-  }).catch(() => {});
+  }).catch((err) => persistFailed("forget the pages' reports", err));
 }
 async function restoreReports(tabId) {
   const scope = usage.currentSession()?.intakeId;
@@ -830,6 +950,108 @@ async function restoreReports(tabId) {
     renderReport(liveFrames(e.frames, live), { tabId, page: e.page, carrier, active, plan, stopped: !!e.stopped, keptKey: e.key, restoredAt: e.at ?? Date.now(), filledBefore: e.filledBefore });
   }
   refreshAnswers();
+}
+
+// What a quote tab's fills have been through, kept for the browser session (`store`, storage.session)
+// so the panel opened again goes on as it was (audit 2026-11-07, FLOW-06): the steps continued from
+// (`doneSteps`: a step the agent goes back to isn't continued again), the pages filled (`autoPages`:
+// their follow-up questions fill by themselves), automatic filling paused (`autoPaused`), the lost
+// Continues clicked a second time (`advanceRetried`), and the state the tab's quote was picked for
+// (`quoteState`, with "<state> is right"). Keys and ids only, no answer. One storage key per tab;
+// all but the quote state are the loaded intake's (`scope`), as the tab's quote state outlives the
+// intake (state.quoteStates). The tab's step and stop screen aren't kept: the page is read for them
+// as the panel opens (scheduleLayout, noteStep), and one kept could be one the agent has left.
+const JOURNAL_PREFIX = 'journal:';
+const journalWritten = new Map(); // tab id -> the journal as last stored (merged, before its read-back), as JSON
+const journalRestored = new Set();
+// tab id -> what this copy took out of the tab's journal before reading it back (keepJournal's
+// `dropped`: 'quoteState', 'autoPaused', or `step:<doneSteps key>`), so the stored copy doesn't
+// bring it back.
+const journalDropped = new Map();
+let journalQueue = Promise.resolve();
+const journalIds = (list) => (Array.isArray(list) ? list : []).filter((x) => typeof x === 'string' && x);
+function journalOf(tabId) {
+  const maps = state.tab?.id === tabId ? state : state.tabSessions.get(tabId);
+  const pick = state.quoteStates.get(tabId);
+  return { scope: usage.currentSession()?.intakeId ?? null, doneSteps: [...(maps?.doneSteps ?? [])], autoPages: [...(maps?.autoPages ?? [])],
+    autoPaused: !!maps?.autoPaused, advanceRetried: [...(maps?.advanceRetried ?? [])], quoteState: pick ? { ...pick } : null };
+}
+// A tab's journal not yet read back for this intake (restoreJournal) adds to the stored one rather
+// than replacing it: a recorder message or a fill ending before the panel came to the tab would
+// otherwise leave it with only what this copy learned. What this copy took out meanwhile
+// (`dropped`) isn't taken from the stored one.
+function journalMerged(was, journal, dropped = new Set()) {
+  if (!was || typeof was !== 'object') return journal;
+  const same = !!journal.scope && was.scope === journal.scope;
+  const union = (key, prefix = '') => (same ? [...new Set([...journalIds(was[key]).filter((x) => !dropped.has(`${prefix}${x}`)), ...journal[key]])] : journal[key]);
+  const pick = !dropped.has('quoteState') && was.quoteState && typeof was.quoteState.carrier === 'string' && typeof was.quoteState.code === 'string' && was.quoteState.code ? was.quoteState : null;
+  return { ...journal, doneSteps: union('doneSteps', 'step:'), autoPages: union('autoPages'), autoPaused: journal.autoPaused || (same && was.autoPaused === true && !dropped.has('autoPaused')),
+    advanceRetried: union('advanceRetried'), quoteState: journal.quoteState ?? pick };
+}
+// Called where a tab's fill ends and where its quote state changes; written only when it changed.
+// `dropped`: what the caller just took out (a quote state forgotten, a pause lifted, a step to
+// continue from again), kept from coming back while the tab's journal isn't read back yet.
+function keepJournal(tabId, { dropped = [] } = {}) {
+  if (!Number.isInteger(tabId)) return journalQueue;
+  const journal = journalOf(tabId);
+  const restored = journalRestored.has(`${journal.scope}|${tabId}`);
+  // A removal is always written: what is stored may still hold it.
+  if (dropped.length) journalWritten.delete(tabId);
+  if (!restored && dropped.length) journalDropped.set(tabId, new Set([...(journalDropped.get(tabId) ?? []), ...dropped]));
+  const json = JSON.stringify(journal);
+  if (journalWritten.get(tabId) === json) return journalQueue;
+  const key = `${JOURNAL_PREFIX}${tabId}`;
+  journalQueue = journalQueue.then(async () => {
+    const out = restored ? journal : journalMerged(await store.get(key), journal, journalDropped.get(tabId));
+    await store.set(key, out);
+    journalWritten.set(tabId, JSON.stringify(out));
+  }).catch(() => { journalWritten.delete(tabId); }); // not stored: the next call writes it again
+  return journalQueue;
+}
+// A new or cleared client, or the same PDF loaded again, starts the fills over: every tab's
+// journal keeps only its quote state. A closed tab's goes (`tabId`).
+function forgetJournals(tabId = null) {
+  journalQueue = journalQueue.then(async () => {
+    for (const k of (await store.keys()).filter((key) => key.startsWith(JOURNAL_PREFIX))) {
+      const id = Number(k.slice(JOURNAL_PREFIX.length));
+      if (tabId != null && id !== tabId) continue;
+      journalWritten.delete(id);
+      if (tabId != null) journalDropped.delete(id);
+      const was = tabId == null ? await store.get(k) : null;
+      await (was?.quoteState ? store.set(k, { scope: null, quoteState: was.quoteState }) : store.remove(k));
+    }
+  }).catch(() => {});
+  return journalQueue;
+}
+// Once per tab and intake while the panel is open, as the panel comes to the tab (refreshTab): what
+// the panel has learned since it opened stays, and the journal adds to it.
+async function restoreJournal(tabId) {
+  const scope = usage.currentSession()?.intakeId ?? null;
+  const done = `${scope}|${tabId}`;
+  if (!Number.isInteger(tabId) || journalRestored.has(done)) return;
+  await journalQueue; // a reset's forgetting still queued is done first
+  const was = await store.get(`${JOURNAL_PREFIX}${tabId}`).catch(() => null);
+  if (state.tab?.id !== tabId || (usage.currentSession()?.intakeId ?? null) !== scope || journalRestored.has(done)) return;
+  journalRestored.add(done);
+  // What this copy took out before now (keepJournal's `dropped`) stays out.
+  const dropped = journalDropped.get(tabId) ?? new Set();
+  journalDropped.delete(tabId);
+  if (!was || typeof was !== 'object') return;
+  const pick = was.quoteState;
+  if (!state.quoteStates.has(tabId) && !dropped.has('quoteState') && pick && typeof pick.carrier === 'string' && typeof pick.code === 'string' && pick.code) {
+    state.quoteStates.set(tabId, { carrier: pick.carrier, code: pick.code, session: pick.session ?? null, dismissed: typeof pick.dismissed === 'string' ? pick.dismissed : null });
+  }
+  if (scope && was.scope === scope) {
+    for (const key of journalIds(was.doneSteps)) if (!dropped.has(`step:${key}`)) state.doneSteps.add(key);
+    for (const page of journalIds(was.autoPages)) state.autoPages.add(page);
+    for (const key of journalIds(was.advanceRetried)) state.advanceRetried.add(key);
+    if (was.autoPaused === true && !dropped.has('autoPaused')) state.autoPaused = true;
+  }
+  // What this copy learned before reading it, stored with it; nothing written when they agree.
+  const json = JSON.stringify(journalOf(tabId));
+  // Stored otherwise (another copy wrote it since, say): written out whatever was cached.
+  if (JSON.stringify(was) === json) journalWritten.set(tabId, json);
+  else { journalWritten.delete(tabId); await keepJournal(tabId); }
 }
 
 async function restoreDoneActions(tabId) {
@@ -960,4 +1182,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, logCrash, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes };
+export { $, logCrash, storageSaid, FILLS_HELD_NOTE, fillsHeld, holdFills, releaseFills, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes, clearKeptWork, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals, keepJournal, restoreJournal };

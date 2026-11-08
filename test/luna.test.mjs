@@ -1,10 +1,11 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intakePathOf } from '../src/ai/common.js';
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
   firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES, isLunaModel,
-  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION } from '../src/ai/luna.js';
+  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION, citedSaid, citedRuleFull } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { CARRIER_PARTS } from '../src/ai/tni-rules.js';
 import { settingsFrom } from '../src/ai/providers.js';
@@ -141,6 +142,34 @@ test('multiple citations remain visible without attributing support to the first
   assert.deepEqual(x.evidenceSources.map(x => x.path), ['operations.hazPlacard', 'operations.notes']);
 });
 
+// Audit 2026-11-07, AI-12: the card said "cited evidence: operations.hazPlacard" and never the value.
+test('each cited source is said as the agent reads it: the field label with its row and value, or the rule text', () => {
+  const [x] = parseResponse(answer(buildRequest(items, context)), items, buildRequest(items, context));
+  assert.deepEqual(x.cited, ['Hazmat placard: No']);
+  assert.equal(citedSaid({ basis: 'intake', path: 'drivers[1].licenseState', value: 'TX' }), 'License state (driver 2): TX');
+  assert.equal(citedSaid({ basis: 'intake', path: 'vehicles[0].vin', value: '1FT  ABC\n' }), 'VIN (vehicle 1): 1FT ABC');
+  assert.equal(citedSaid({ basis: 'intake', path: 'operations.usesEld', value: true }), 'Uses ELD: Yes');
+  const long = citedSaid({ basis: 'intake', path: 'claims.text', value: 'word '.repeat(40) });
+  assert.ok(long.startsWith('Claims box, as written: word word') && long.endsWith('…') && long.length < 120, long);
+  const rule = citedSaid({ basis: 'tni_rule', id: 'r1', rule: `No hazmat\nunless ${'the intake says so '.repeat(10)}` });
+  assert.ok(rule.startsWith('TNI rule: No hazmat unless the intake') && rule.endsWith('…') && rule.length <= 'TNI rule: '.length + 120, rule);
+  // CodeRabbit on PR #393: a shortened rule stays whole for the card to open; a short one needs none.
+  const longRule = { basis: 'tni_rule', id: 'r1', rule: `No hazmat\nunless ${'the intake says so '.repeat(10)}` };
+  assert.equal(citedRuleFull(longRule), `TNI rule: No hazmat unless ${'the intake says so '.repeat(10).trim()}`);
+  assert.equal(citedRuleFull({ basis: 'tni_rule', id: 'r2', rule: 'No hazmat unless the intake says so.' }), null);
+  assert.equal(citedRuleFull({ basis: 'intake', path: 'claims.text', value: 'word '.repeat(40) }), null);
+  // Facts Luna is given that the intake has no box for, and any other path, read as words, never as a path.
+  assert.equal(citedSaid({ basis: 'intake', path: 'computed.priorPolicyExpired', value: true }), 'Prior policy expired (worked out from the intake): Yes');
+  assert.equal(citedSaid({ basis: 'intake', path: 'computed.noPriorInsurance', value: false }), 'No prior insurance (worked out from the intake): No');
+  assert.equal(citedSaid({ basis: 'intake', path: 'applicant.hasDOT', value: true }), 'Has a USDOT #: Yes');
+  assert.equal(citedSaid({ basis: 'intake', path: 'claims.aiNtl', value: true }), "NTL in the claims box or notes (the AI assistant's review): Yes");
+  assert.equal(citedSaid({ basis: 'intake', path: 'operations.notes', value: 'No placards.' }), 'Notes: No placards.');
+  assert.equal(citedSaid({ basis: 'intake', path: 'trailers[1].someNewThing', value: 'x' }), 'Some new thing (trailer 2): x');
+  // A left question cites nothing.
+  const [left] = parseResponse(answer(buildRequest(items, context), { option: LEAVE, sourceIds: [], missingInformation: ['placards'] }), items, buildRequest(items, context));
+  assert.deepEqual(left.cited, []);
+});
+
 test('incomplete, refused, wrong-model and tool-call responses never yield an answer', () => {
   const body = buildRequest(items, context), good = answer(body);
   for (const json of [{ ...good, status: 'incomplete' }, { ...good, model: 'other-model' },
@@ -203,6 +232,33 @@ test('suggestions wait for both calls; stale verification responses are discarde
   assert.equal(result.modelCalls, 2);
   count = 0;
   await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call, isStale: () => count >= 2 }), /changed/);
+});
+
+// Audit 2026-11-07, AI-08: a developer recording keeps what Luna was asked and answered, per call.
+test('with a trace, each call says what Luna was asked and answered, failures too, and a failing trace stops nothing', async () => {
+  const seen = [];
+  let count = 0;
+  const call = async ({ body }) => ++count === 1 ? answer(body) : envelope({ decisions: { f1: { supported: true, gap: '' } } });
+  const result = await suggest(items, context, { apiKey: 'synthetic' }, { call, trace: (x) => seen.push(x) });
+  assert.equal(result.suggestions[0].choice, 'No');
+  assert.deepEqual(seen.map((x) => [x.call, x.model, x.outcome, x.tokensIn, x.tokensOut, x.error]),
+    [['propose', DEFAULT_MODEL, 'completed', 100, 30, null], ['verify', DEFAULT_MODEL, 'completed', 100, 30, null]]);
+  assert.equal(seen[0].request.fields.f1.label, 'Hazardous materials requiring placards?');
+  assert.ok(Object.values(seen[0].request.sources).some((s) => s.path === 'operations.hazPlacard' && s.value === false));
+  assert.equal(seen[0].answer.decisions.f1.explanation, 'The intake explicitly says No.');
+  assert.deepEqual(seen[1].answer.decisions.f1, { supported: true, gap: '' });
+  assert.ok(seen.every((x) => Number.isFinite(x.ms) && x.ms >= 0));
+  // A call that fails is said with its error; an answer Luna's contract refuses has no answer.
+  const failed = [];
+  await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async () => { throw new AssistError('Luna is rate-limited. Try again shortly.'); }, trace: (x) => failed.push(x) }), /rate-limited/);
+  assert.deepEqual([failed.length, failed[0].call, failed[0].answer, failed[0].error], [1, 'propose', null, 'Luna is rate-limited. Try again shortly.']);
+  const odd = [];
+  await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async () => ({ ...envelope({}), model: 'other' }), trace: (x) => odd.push(x) }));
+  assert.deepEqual([odd[0].answer, odd[0].model], [null, 'other']);
+  // Without a trace nothing is built; with one that throws, the review goes on.
+  count = 0;
+  const kept = await suggest(items, context, { apiKey: 'synthetic' }, { call, trace: () => { throw new Error('recording gone'); } });
+  assert.equal(kept.suggestions[0].choice, 'No');
 });
 
 test('twelve questions need two calls with complete facts and deduplicated verification evidence', async () => {
@@ -356,7 +412,7 @@ test('a question too large even alone is left to the agent, said so, and the res
   assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id), "in the page's order");
   for (const x of result.suggestions.filter(x => ['f2', 'f4'].includes(x.id))) {
     assert.deepEqual([x.leave, x.leaveWhy, x.choice, x.autoOk, x.nextStep], [true, 'tooLarge', null, false, null]);
-    assert.match(x.tip, /Too long for Luna.*Answer it on the page/);
+    assert.match(x.tip, /Too long for the AI assistant.*Answer it on the page/);
   }
   assert.ok(result.suggestions.filter(x => ['f1', 'f3', 'f5'].includes(x.id)).every(x => x.choice === 'No'));
   assert.equal(result.modelCalls, 2, 'one proposal and one evidence check; nothing for the questions left');
@@ -495,7 +551,7 @@ test("without a key of the agent's own, the request goes to the server with its 
   assert.equal((await callModel({ apiKey: '', proxy, body, fetchImpl })).model, DEFAULT_MODEL);
   assert.deepEqual(seen, { url: proxy.url, auth: 'Bearer upload', body });
   const status = (s) => async () => ({ ok: false, status: s, json: () => { throw new Error('echoed-private-input'); } });
-  await assert.rejects(callModel({ proxy, body, fetchImpl: status(501) }), /isn't set up on TNI's server/);
+  await assert.rejects(callModel({ proxy, body, fetchImpl: status(501) }), /isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under AI./);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(424) }), /TNI's server right now/);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(401) }), error => /TNI's server refused/.test(error.message) && !/OpenAI API key/.test(error.message));
 });
@@ -528,7 +584,7 @@ test("a server from before the larger bound refuses a request over its own: that
   // A cut connection is the old server's only above its body limit (bytes, twice its bound): below
   // that it is a network failure, as before (CodeRabbit on #357). Three-byte characters count three.
   const reset = async () => { throw new TypeError('connection reset'); };
-  await assert.rejects(callModel({ proxy, body: big, fetchImpl: reset }), e => !(e instanceof OldServerLimit) && /Cannot reach Luna/.test(e.message));
+  await assert.rejects(callModel({ proxy, body: big, fetchImpl: reset }), e => !(e instanceof OldServerLimit) && /Cannot reach the AI assistant/.test(e.message));
   const wide = buildRequest(questions(1).map(x => ({ ...x, label: '€'.repeat(OLD_SERVER_CHARS) })), context);
   assert.ok(JSON.stringify(wide).length < 2 * OLD_SERVER_CHARS && new TextEncoder().encode(JSON.stringify(wide)).length > 2 * OLD_SERVER_CHARS);
   await assert.rejects(callModel({ proxy, body: wide, fetchImpl: reset }), OldServerLimit);
@@ -591,8 +647,8 @@ test('HTTP integration sends the key only to OpenAI and hides provider errors', 
   assert.equal(calls, 2);
   const refused = async () => ({ ok: false, status: 401, json: () => { throw new Error('echoed-private-input'); } });
   await assert.rejects(callModel({ apiKey: 'synthetic', body, fetchImpl: refused }), error =>
-    /OpenAI API key was refused/.test(error.message) && !error.message.includes('private'));
-  await assert.rejects(callModel({ body, fetchImpl }), /needs an OpenAI API key/);
+    /OpenAI API key was refused. Check it in Settings, under AI/.test(error.message) && !error.message.includes('private'));
+  await assert.rejects(callModel({ body, fetchImpl }), /needs an OpenAI API key. Add it in Settings, under AI./);
 });
 
 // Synthetic claims box. PR #17 moved from Jev to Luna: flags only, one call, nothing applied.
@@ -830,7 +886,7 @@ test('driver names: only first names are sent, the answer is a bounded guess, li
   const reply = (d0, d1 = 'likely_male') => envelope({ drivers: { d0, d1 } });
   const items = nameWarnings(parseNameReview(reply('likely_female'), review), review, record);
   assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.driver-gender', 'drivers[0].gender', 'check']]);
-  assert.match(items[0].msg, /^Luna: driver 1 is filled Male \(TNI standard\), but "Maria" is more often a woman's name: a guess from the first name only\. Check\./);
+  assert.match(items[0].msg, /^AI assistant: driver 1 is filled Male \(TNI standard\), but "Maria" is more often a woman's name: a guess from the first name only\. Check\./);
   assert.deepEqual(items[0].choices, [{ label: 'Use Female', path: 'drivers[0].gender', value: 'FEMALE' }, { label: 'Keep Male', path: 'drivers[0].gender', value: 'MALE' }]);
   assert.deepEqual(nameWarnings(parseNameReview(reply('unclear'), review), review, record), [], 'unclear: the standard stands');
   // Set meanwhile, or a renamed driver: no item.
@@ -959,7 +1015,7 @@ test('leave reasons: missing information, conflict, no source and a refused evid
   const parsed = parseResponse(answer(body), items, body);
   const [refused] = verifyResponse(envelope({ decisions: { f1: { supported: false, gap: 'The notes mention placarded loads.' } } }), parsed);
   assert.equal(refused.leaveWhy, 'unverified');
-  assert.equal(refused.tip, 'Luna could not verify an answer: The notes mention placarded loads.');
+  assert.equal(refused.tip, 'The AI assistant could not verify an answer: The notes mention placarded loads.');
   assert.match(buildVerification(parsed, context).instructions, /gap says/);
   // The gap is required, a string, and bounded.
   for (const gap of [undefined, null, 'x'.repeat(501)]) {

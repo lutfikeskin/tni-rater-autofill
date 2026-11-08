@@ -175,7 +175,8 @@ function actions(events) {
       const held = e.held?.busy ? ', the page still busy' : e.held?.changing ? ', the page still changing' : e.held?.requests ? ', requests still finishing' : '';
       const ended = e.ended === 'quiet' ? 'the page was quiet' : `at its limit of ${secs(e.maxMs ?? 0)}${held}`;
       const slack = e.slack == null ? '' : e.slack >= (e.ms ?? 0) ? '; the page did nothing during it' : `; ${secs(e.slack)} after the page's last change`;
-      lines.push({ t: e.start ?? e.t, text: `the extension waited ${secs(e.ms ?? 0)} ${WAITS[e.why] ?? 'for the page'} (quiet ${e.quietMs ?? '?'} ms${e.requests ? ' and its requests' : ''}): ${ended}${slack}` });
+      const unseen = e.slackTrace != null && e.slackTrace - e.slack >= 250 ? ` (the wait saw the page change or busy ${secs(e.slackTrace - e.slack)} after the trace's last change: not slack)` : '';
+      lines.push({ t: e.start ?? e.t, text: `the extension waited ${secs(e.ms ?? 0)} ${WAITS[e.why] ?? 'for the page'} (quiet ${e.quietMs ?? '?'} ms${e.requests ? ' and its requests' : ''}): ${ended}${slack}${unseen}` });
     } else if (e.kind === 'kit' && e.what === 'press') lines.push({ t: e.t, text: `the extension pressed the ${quote(e.button?.text)} button` });
     else if (e.kind === 'burst' && (e.drawnCount || e.removed)) {
       const names = (e.drawn ?? []).map((d) => quote(d.label || d.key || 'a question')).join(', ');
@@ -194,6 +195,7 @@ function actions(events) {
     // A document's load, from its navigation start (REC-03): its server's answer, ready, loaded.
     else if (e.kind === 'load' && (e.frame ?? 0) === 0) lines.push({ t: e.t, text: loadLine(e) });
     else if (e.kind === 'note') lines.push({ t: e.t, text: `NOTE: ${e.text}` });
+    else if (e.kind === 'luna') lines.push({ t: e.t, text: lunaLine(e) });
     else if (e.kind === 'gap') lines.push({ t: e.t, text: `GAP: ${e.dropped} event(s) lost while no panel took them` });
     // The panel following another tab than the recorded one (REC-04): the quote may go on there, unrecorded.
     else if (e.kind === 'panel') lines.push({ t: e.t, text: e.closed ? 'THE RECORDED TAB WAS CLOSED: the recording ends here'
@@ -252,6 +254,52 @@ function timeTable(ordered, told, end) {
   return out;
 }
 
+// Luna's calls (kind `luna`, the panel's while a recording runs; audit 2026-11-07, AI-08): one line
+// each in the timeline, and what each was asked and answered in the Luna section.
+const LEAVE = '__leave__';
+// Luna's own words on one line: a line break in them would start Markdown of its own.
+const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+const lunaDecisions = (e) => Object.entries(e.answer?.decisions ?? {});
+function lunaLine(e) {
+  const took = `${secs(e.ms ?? 0)}${e.tokensIn != null ? `, ${e.tokensIn} tokens in, ${e.tokensOut ?? '?'} out` : ''}`;
+  if (e.error) return `Luna's ${e.call === 'verify' ? 'evidence check' : 'review'} failed after ${took}: ${oneLine(e.error)}`;
+  const all = lunaDecisions(e);
+  if (e.call === 'verify') return `Luna checked ${many(all.length, 'answer')}: ${all.filter(([, d]) => d?.supported).length} supported (${took})`;
+  const left = all.filter(([, d]) => d?.option === LEAVE).length;
+  return `Luna answered ${many(all.length, 'question')}: ${all.length - left} picked, ${left} left (${took})`;
+}
+function lunaSection(ordered, t0) {
+  const calls = ordered.filter((e) => e.kind === 'luna');
+  if (!calls.length) return [];
+  const out = ['## Luna', '', 'Each call as Luna got it and answered (the intake as sent, redacted; the questions and their options as the page showed them).', ''];
+  const cited = (state, id) => {
+    const s = state?.sources?.[id];
+    if (!s) return `${id} (not a source)`;
+    return s.basis === 'tni_rule' ? `${id}: ${quote(String(s.rule ?? '').slice(0, 120))}` : `${s.path} = ${oneLine(JSON.stringify(s.value))}`;
+  };
+  for (const e of calls) {
+    out.push(`### ${clock(e.t - t0)} · ${e.call === 'verify' ? 'evidence check' : 'review'} · ${e.page ?? '?'} · ${e.model ?? '?'}`, '', `- ${lunaLine(e)}`);
+    const decisions = Object.fromEntries(lunaDecisions(e));
+    if (e.call === 'verify') {
+      for (const [id, p] of Object.entries(e.request?.proposed ?? {})) {
+        const d = decisions[id];
+        out.push(`- ${quote(p.label)}: ${quote(p.answer)} on ${(p.sourceIds ?? []).map((s) => cited(e.request, s)).join('; ') || 'nothing'} → ${d ? (d.supported ? 'supported' : `not supported: ${oneLine(d.gap) || 'no reason given'}`) : 'no answer'}`);
+      }
+    } else {
+      for (const [id, f] of Object.entries(e.request?.fields ?? {})) {
+        const d = decisions[id];
+        const pick = !d ? 'no answer' : d.option === LEAVE ? 'left' : `picked ${quote(f.options?.[d.option] ?? d.option)}`;
+        out.push(`- ${quote(f.label)}${f.current ? ` (on the page: ${quote(f.current)})` : ''}: ${pick}`);
+        if (d?.sourceIds?.length) out.push(`  - cited: ${d.sourceIds.map((s) => cited(e.request, s)).join('; ')}`);
+        if (d?.explanation) out.push(`  - why: ${oneLine(d.explanation)}`);
+        for (const [k, said] of [['missingInformation', 'missing'], ['conflicts', 'conflict']]) if (d?.[k]?.length) out.push(`  - ${said}: ${d[k].map(oneLine).join(' · ')}`);
+      }
+    }
+    out.push('');
+  }
+  return out;
+}
+
 /** The report, as Markdown. */
 export function recordingReport({ manifest, events }) {
   const ordered = [...events].sort((a, b) => a.t - b.t || (a.frame ?? 0) - (b.frame ?? 0) || (a.seq ?? 0) - (b.seq ?? 0));
@@ -271,6 +319,13 @@ export function recordingReport({ manifest, events }) {
     if (e.kind === 'kit' && e.what === 'wait' && typeof e.start === 'number' && typeof e.ms === 'number') {
       const waitEnd = e.start + e.ms;
       e.slack = waitEnd - activity.reduce((m, a) => (a <= waitEnd && a > m ? a : m), e.start);
+      // What the wait saw itself (REC-02): the attributes it watches, a busy page, an undefined
+      // component, a request going; the trace sees none of them. The later of the two counts, and a
+      // disagreement is said (`slackTrace`). A recording from before has the trace's alone.
+      if (typeof e.lastChange === 'number' || typeof e.lastHeld === 'number') {
+        const kitLast = Math.min(waitEnd, Math.max(e.start, e.lastChange ?? e.start, e.lastHeld ?? e.start));
+        if (waitEnd - kitLast < e.slack) { e.slackTrace = e.slack; e.slack = waitEnd - kitLast; }
+      }
     }
     if (e.kind === 'burst') {
       const last = actionTimes.reduce((m, a) => (a < e.t && (m == null || a > m) ? a : m), null);
@@ -329,6 +384,7 @@ export function recordingReport({ manifest, events }) {
   }
   out.push('');
   if (ordered.some((e) => e.kind === 'kit')) out.push(...timeTable(ordered, told, end));
+  out.push(...lunaSection(ordered, t0));
 
   for (const { s, lines, n } of told) {
     out.push(`## ${n}. ${s.page}${s.step ? ` · ${s.step}` : ''}`, '');

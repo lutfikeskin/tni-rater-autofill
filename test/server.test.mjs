@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -7,11 +8,12 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom, SCHEMA_VERSION } from '../server/index.mjs';
 import { MAX_EVENTS } from '../src/usage.js';
 import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
+import { imageFiles } from '../scripts/lib/deploy.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
 const ev = (over = {}) => ({ id: crypto.randomUUID(), t: new Date().toISOString(), type: 'fill_run', carrier: 'progressive', page: 'AddVehicle', filled: 3, ...over });
@@ -43,6 +45,82 @@ test('stores events once, even when an upload is retried', async () => {
   // A restarted server still knows which ids it has.
   await withServer({ dataDir }, async ({ post }) => {
     assert.equal((await (await post({ events: [ev({ id: rows[0].id })] })).json()).duplicates, 1);
+  });
+});
+
+// Audit 2026-11-07, SRV-05: the extension deletes its copy of an upload once the server says 200,
+// so the day file is flushed to the disk (fsync) before that answer. A flush that fails is a 500:
+// the extension keeps the events and sends them again.
+test('an upload is on the disk before its 200; a failed flush is a 500 and the events can be sent again', async (t) => {
+  const dataDir = tmp();
+  const synced = [];
+  const sync = t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(fd); });
+  const events = [ev(), ev()];
+  await withServer({ dataDir }, async ({ post }) => {
+    synced.length = 0; // what the start flushed: its own test, below
+    assert.equal((await post({ events: events.slice(0, 1) })).status, 200);
+    assert.equal(synced.length, process.platform === 'win32' ? 1 : 2, 'flushed before the answer (on Linux, its folder too)');
+    assert.equal(typeof synced[0], 'number');
+    sync.mock.mockImplementation(() => { throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); });
+    assert.equal((await post({ events: events.slice(1) })).status, 500);
+    sync.mock.mockImplementation((fd) => { synced.push(fd); });
+    const again = await (await post({ events: events.slice(1) })).json();
+    assert.deepEqual([again.accepted, again.duplicates], [1, 0], 'not counted as stored: sent again, it is accepted');
+  });
+  assert.deepEqual(stored(dataDir).map((e) => e.id), [events[0].id, events[1].id, events[1].id], 'a line written before its failed flush may be on the disk twice');
+});
+
+// The review of #425: fsync on a new file doesn't keep its directory entry, so an upload also flushes
+// the events folder (on Linux, where the server runs; Windows can't open one). Every upload does:
+// one whose folder flush failed was a 500, and its retry finds the day file there already.
+test('an upload also flushes the events folder, so a new day file survives a crash, retries included', async (t) => {
+  const dataDir = tmp();
+  const opened = new Map();
+  const open = fs.openSync;
+  t.mock.method(fs, 'openSync', (p, ...rest) => { const fd = open(p, ...rest); opened.set(fd, path.relative(dataDir, String(p))); return fd; });
+  const synced = [];
+  const sync = t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(opened.get(fd)); });
+  await withServer({ dataDir }, async ({ post }) => {
+    synced.length = 0;
+    assert.equal((await post({ events: [ev()] })).status, 200);
+    const day = `${new Date().toISOString().slice(0, 10)}.jsonl`;
+    const dayFile = path.join('events', day);
+    const both = process.platform === 'win32' ? [dayFile] : [dayFile, 'events'];
+    assert.deepEqual(synced, both, 'the file, then its folder');
+    synced.length = 0;
+    assert.equal((await post({ events: [ev()] })).status, 200);
+    assert.deepEqual(synced, both, 'a day file that was there already: the same');
+    if (process.platform === 'win32') return;
+    // The folder's flush fails: a 500. The retry, with the day file there, flushes the folder again.
+    synced.length = 0;
+    sync.mock.mockImplementation((fd) => { if (opened.get(fd) === 'events') throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); synced.push(opened.get(fd)); });
+    const retried = ev();
+    assert.equal((await post({ events: [retried] })).status, 500);
+    sync.mock.mockImplementation((fd) => { synced.push(opened.get(fd)); });
+    synced.length = 0;
+    assert.equal((await post({ events: [retried] })).status, 200);
+    assert.deepEqual(synced, [dayFile, 'events'], 'the retry flushes the folder before its 200');
+  });
+});
+
+// The review of #425: after a failed flush and a restart, the retry is a duplicate of a line the
+// start read, answered 200 without a write. So the start flushes every day file it reads, and the
+// folder (on Linux), before it takes an upload.
+test('a restarted server flushes the events it reads, so a retry answered as a duplicate is on the disk', async (t) => {
+  const dataDir = tmp();
+  const kept = ev();
+  const day = `${new Date().toISOString().slice(0, 10)}.jsonl`;
+  fs.mkdirSync(path.join(dataDir, 'events'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'events', day), `${JSON.stringify({ ...kept, receivedAt: new Date().toISOString() })}\n`);
+  const opened = new Map();
+  const open = fs.openSync;
+  t.mock.method(fs, 'openSync', (p, ...rest) => { const fd = open(p, ...rest); opened.set(fd, path.relative(dataDir, String(p))); return fd; });
+  const synced = [];
+  t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(opened.get(fd)); });
+  await withServer({ dataDir }, async ({ post }) => {
+    assert.deepEqual(synced, process.platform === 'win32' ? [path.join('events', day)] : [path.join('events', day), 'events'], 'flushed at the start');
+    const again = await (await post({ events: [kept] })).json();
+    assert.equal(again.duplicates, 1);
   });
 });
 
@@ -219,10 +297,13 @@ test('dropped fields are named on the event (names only, bounded), and health na
   await withServer({ dataDir }, async ({ post, base }) => {
     await post({ events: [ev({ seq: -1, ...many, 'Jordan Sample': 'x' })] });
     const health = await (await fetch(`${base}/v1/health`)).json();
-    // The server's own files, as the image copies them (server/Dockerfile): index.mjs, the
-    // dashboard's, then agent defaults'.
+    // Every file the image copies (server/Dockerfile), in its order: a change to any of them, the
+    // privacy page included, is another server (the review of #426).
     const hash = crypto.createHash('sha256');
-    for (const f of ['index.mjs', 'dashboard.mjs', 'agent-defaults.mjs']) hash.update(fs.readFileSync(new URL(`../server/${f}`, import.meta.url)));
+    const copied = imageFiles(fs.readFileSync(new URL('../server/Dockerfile', import.meta.url), 'utf8')).filter((f) => f !== 'server/Dockerfile');
+    assert.ok(copied.includes('server/privacy.html'));
+    assert.ok(copied.includes('src/usage-schema.js'), 'the shared event contract too');
+    for (const f of copied) hash.update(fs.readFileSync(new URL(`../${f}`, import.meta.url)));
     assert.equal(health.server, hash.digest('hex').slice(0, 12));
     assert.equal(health.server, SERVER_HASH);
   });
@@ -245,6 +326,17 @@ test('a fill run keeps whether it ran in the background and how long its page wa
     [[true, 4200, []], [null, null, ['background', 'hiddenMs']], [null, null, ['hiddenMs']]]);
 });
 
+// Audit 2026-11-07, FLOW-11: a fill run or error from a lost Continue's second click keeps `retried`
+// (true only); anything else there is dropped and named.
+test('a Continue retry is kept on its fill_run and fill_error, true only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [ev({ retried: true }), ev({ type: 'fill_error', error: 'continue did not take', retried: true }), ev({ retried: 'yes' })] });
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((e) => [e.type, e.retried ?? null, (e.dropped ?? []).includes('retried')]), [['fill_run', true, false], ['fill_error', true, false], ['fill_run', null, true]]);
+});
+
 // Codex on PR #47: stored events uploaded again (npm run push-logs) keep what was dropped before.
 test('a re-uploaded event keeps the names an earlier server dropped', async () => {
   const dataDir = tmp();
@@ -264,14 +356,65 @@ test('health names the server version for anyone; how many events are stored onl
   await withServer({ dataDir, token: 'up' }, async ({ post, base }) => {
     await post({ events: [ev()] }, { authorization: 'Bearer up' });
     const anyone = await (await fetch(`${base}/v1/health`)).json();
-    assert.deepEqual(anyone, { ok: true, server: SERVER_HASH }, 'no admin token configured: never a count');
+    assert.deepEqual(anyone, { ok: true, server: SERVER_HASH, schema: SCHEMA_VERSION }, 'no admin token configured: never a count');
     const uploader = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer up' } })).json();
     assert.equal(uploader.events, undefined, 'the token every extension carries is not enough');
   });
   await withServer({ dataDir, token: 'up', adminToken: 'admin' }, async ({ base }) => {
     assert.equal((await (await fetch(`${base}/v1/health`)).json()).events, undefined);
-    assert.deepEqual(await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json(), { ok: true, server: SERVER_HASH, events: 1 });
+    const { metrics, ...admin } = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json();
+    assert.deepEqual(admin, { ok: true, server: SERVER_HASH, schema: SCHEMA_VERSION, events: 1 });
+    assert.ok(metrics && typeof metrics.uptimeS === 'number', 'and the counters (below)');
   });
+});
+
+// Audit 2026-11-07, SRV-11: the log was free text, and nothing counted requests, errors or refused
+// events. Each line is one JSON object now, and the admin's health has the counters.
+test('the log is one JSON object a line, with names and counts only, never a token or an event\'s text', async () => {
+  const lines = [];
+  const [log, error] = [console.log, console.error];
+  console.log = (...a) => { lines.push(a.join(' ')); };
+  console.error = (...a) => { lines.push(a.join(' ')); };
+  try {
+    await withServer({ dataDir: tmp(), token: 'upload-secret-token' }, async ({ post, base }) => {
+      await post({ agent: 'JC', events: [ev({ type: 'problem_report', text: 'Jane Roe at 555-0142', filled: undefined }), ev({ type: 'no_such_type_Jane' })] }, { authorization: 'Bearer upload-secret-token' });
+      await post({ events: [] }, { authorization: 'Bearer wrong' });
+      await fetch(`${base}/v1/events/Jane%20Roe?client=Jane`);
+      await fetch(`${base}/v1/health`);
+    });
+  } finally { [console.log, console.error] = [log, error]; }
+  const parsed = lines.map((l) => JSON.parse(l));
+  assert.ok(parsed.every((x) => typeof x.t === 'string' && ['info', 'error'].includes(x.level)), 'every line is JSON with a time and a level');
+  assert.deepEqual(parsed.map((x) => [x.method, x.route, x.status]), [['POST', '/v1/events', 200], ['POST', '/v1/events', 401], ['GET', 'other', 404], ['GET', '/v1/health', 200]]);
+  assert.deepEqual([parsed[0].agent, parsed[0].accepted, parsed[0].duplicates, parsed[0].rejected], ['JC', 1, 0, 1]);
+  assert.ok(lines.every((l) => !/upload-secret-token|Jane|555-0142/.test(l)), `no token, event text or asked-for path: ${lines.join('\n')}`);
+});
+
+test('the admin\'s health counts requests by route and status, exceptions, stored, duplicate and refused events, and Luna today', async () => {
+  const dataDir = tmp();
+  const quiet = [console.log, console.error];
+  console.log = () => {};
+  console.error = () => {};
+  const fetchImpl = async () => new Response(JSON.stringify({ usage: { input_tokens: 10, output_tokens: 5 } }), { status: 200 });
+  try {
+    await withServer({ dataDir, adminToken: 'admin', openaiKey: 'sk-server', fetchImpl, freeSpace: () => 2048 * 1024 * 1024 }, async ({ post, base }) => {
+      const first = ev();
+      await post({ events: [first, ev({ type: 'a_made_up_type' }), ev({ type: 'another_made_up' }), ev({ type: 'a"Jane Roe' }), ev({ id: 'x' })] });
+      await post({ events: [first, ev({ junk: 1 })] });
+      await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
+      await fetch(`${base}/v1/health`);
+      const anyone = await (await fetch(`${base}/v1/health`)).json();
+      assert.equal(anyone.metrics, undefined, 'the counters are TNI\'s only');
+      const { metrics: m } = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json();
+      assert.deepEqual(m.requests, { '/v1/events': { 200: 2 }, '/v1/luna': { 200: 1 }, '/v1/health': { 200: 2 } });
+      assert.deepEqual({ ...m.events, lastStoredAt: typeof m.events.lastStoredAt }, { accepted: 2, duplicates: 1, rejected: 4, withDropped: 1, lastStoredAt: 'string' });
+      assert.deepEqual(m.rejects, { 'unknown event type "…"': 3, 'event id missing or invalid': 1 }, 'by the server\'s reason, never the event\'s own words');
+      assert.equal(m.exceptions, 0);
+      assert.deepEqual(m.disk, { freeMB: 2048, guardMB: 500 });
+      assert.deepEqual([m.luna.requests, m.luna.inputTokens, m.luna.outputTokens, m.luna.limit, m.luna.budget], [1, 10, 5, 5000, 10_000_000]);
+      assert.ok(m.uptimeS >= 0 && Date.parse(m.startedAt) <= Date.now());
+    });
+  } finally { [console.log, console.error] = quiet; }
 });
 
 // Audit 2026-10-08: without RATER_TOKEN the server took anyone's uploads, wherever it listened.
@@ -287,8 +430,8 @@ test('without a token the server starts on loopback only', () => {
 
 // The server as deployed (node server/index.mjs): its own environment, never this shell's tokens.
 const SERVER = fileURLToPath(new URL('../server/index.mjs', import.meta.url));
-function startServer(env) {
-  const child = spawn(process.execPath, [SERVER], { env: { PATH: process.env.PATH, DATA_DIR: tmp(), PORT: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+function startServer(env, nodeArgs = []) {
+  const child = spawn(process.execPath, [...nodeArgs, SERVER], { env: { PATH: process.env.PATH, DATA_DIR: tmp(), PORT: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '', stderr = '';
   child.stdout.on('data', (c) => { stdout += c; });
   child.stderr.on('data', (c) => { stderr += c; });
@@ -1003,6 +1146,47 @@ test('an exception inside one request is a 500, logged by name, and the server k
   assert.ok(logged.every((l) => !/clock broke/.test(l)), 'not its message');
 });
 
+// SRV-11 review: the 500 an exception answers is an answer like any other, counted by route and
+// status and logged with them; where it was thrown is its frames, never a message's later lines.
+test('an exception\'s 500 is counted and logged with its status and time, by frames only', crashTest, async () => {
+  const logged = [];
+  const error = console.error;
+  console.error = (...a) => { logged.push(a.join(' ')); };
+  const dashboardToken = 'd'.repeat(32);
+  let broken = true;
+  // A message line that reads like a frame ("at …") is still the message.
+  const clock = () => { if (broken) throw new RangeError('clock broke\nsecond line of the message\n    at Jane Roe 555-0142'); return Date.now(); };
+  try {
+    await withServer({ dataDir: tmp(), dashboardToken, adminToken: 'admin', clock }, async ({ base }) => {
+      assert.equal((await fetch(`${base}/dashboard`, { headers: { authorization: `Bearer ${dashboardToken}` } })).status, 500);
+      broken = false;
+      const { metrics: m } = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json();
+      assert.deepEqual(m.requests['/dashboard'], { 500: 1 });
+      assert.equal(m.exceptions, 1);
+    });
+  } finally { console.error = error; }
+  const failure = logged.map((l) => JSON.parse(l)).find((x) => x.msg === 'request failed');
+  assert.deepEqual([failure.level, failure.method, failure.route, failure.status, typeof failure.ms, failure.error], ['error', 'GET', '/dashboard', 500, 'number', 'RangeError']);
+  assert.match(failure.where, /^at /);
+  assert.ok(logged.every((l) => !/clock broke|second line|Jane|555-0142/.test(l)), `no line of the message: ${logged.join('\n')}`);
+});
+
+test('an uncaught exception exits non-zero with its name and frames, never its message', crashTest, async () => {
+  // The message comes from the environment, so the frame naming this preload doesn't quote it.
+  const throwLater = 'setTimeout(() => { throw new SyntaxError(process.env.THROWN); }, 1500);';
+  const s = startServer({ HOST: '127.0.0.1', THROWN: 'Unexpected token in "Jane Roe 555-0142"\nsecond line Jane\n    at Jane Roe (555-0142)' },
+    ['--import', `data:text/javascript,${encodeURIComponent(throwLater)}`]);
+  try {
+    assert.ok(await within(s.started, 'the server did not start'));
+    assert.notEqual(await within(s.exit, 'the server did not exit'), 0);
+  } finally { s.child.kill(); }
+  const { stdout, stderr } = s.out();
+  const line = stderr.split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((x) => x.msg === 'uncaughtException');
+  assert.equal(line.error, 'SyntaxError');
+  assert.match(line.stack, /^at /, 'where it was thrown');
+  assert.ok(!/Jane|555-0142/.test(stdout + stderr), `no message in the log: ${stderr}`);
+});
+
 // Audit 2026-11-07, SRV-13: the upload token ships in the extension, so anyone could fill the
 // volume. Uploads are limited per address (requests and bytes), and stop while the disk is low.
 test('uploads from one address over its limit are refused with 429 and retry-after, nothing stored; another address has its own', async () => {
@@ -1159,4 +1343,24 @@ test('the request\'s agent is used only in the shape of an event\'s', async () =
     for (const agent of ['AYAZ', 'x'.repeat(40), { initials: 'AB' }, 'a@b.c']) await post({ agent, events: [ev()] });
   });
   assert.deepEqual(stored(dataDir).map((e) => e.agent), ['AYAZ', null, null, null]);
+});
+
+// Audit 2026-11-07, SRV-14: an extension released before its server sent fields the server dropped
+// for good. Events carry the schema they were logged under; one newer than the server's is refused
+// in words the extension retries, so it waits for the deploy instead of losing its new fields.
+test('an event of a newer schema than the server\'s is refused, saying so; this one and older ones are kept with their schema', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ schema: SCHEMA_VERSION + 1, newField: 'x' }), ev({ schema: SCHEMA_VERSION }), ev(), ev({ schema: 0 }), ev({ schema: '1' }), ev({ type: 'a_new_type', schema: SCHEMA_VERSION + 1 }),
+    ] })).json();
+    assert.deepEqual(r.rejected, [
+      { index: 0, error: `schema newer than server (${SCHEMA_VERSION + 1} > ${SCHEMA_VERSION})` },
+      { index: 3, error: 'schema is not a valid schema version' },
+      { index: 4, error: 'schema is not a valid schema version' },
+      { index: 5, error: `schema newer than server (${SCHEMA_VERSION + 1} > ${SCHEMA_VERSION})` },
+    ]);
+    assert.equal(r.accepted, 2);
+  });
+  assert.deepEqual(stored(dataDir).map((e) => [e.schema, e.dropped]), [[SCHEMA_VERSION, undefined], [undefined, undefined]], 'kept, never in dropped; an older client\'s has none');
 });

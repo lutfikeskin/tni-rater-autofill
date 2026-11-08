@@ -1,10 +1,11 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createServer } from '../server/index.mjs';
-import { summarize, renderDashboard, quoteSessions, testSessions, testIntakesFrom, prepare } from '../server/dashboard.mjs';
+import { summarize, renderDashboard, quoteSessions, testSessions, testIntakesFrom, prepare, eventReader } from '../server/dashboard.mjs';
 import { quoteSessions as reviewQuotes } from '../scripts/lib/events.mjs';
 import { signals, testSessionsOf } from '../scripts/lib/signals.mjs';
 
@@ -189,6 +190,16 @@ test('the deployed image has every file the server imports', () => {
   const local = [...index.matchAll(/from '\.\/([^']+)'/g)].map((m) => m[1]);
   assert.ok(local.includes('dashboard.mjs'));
   for (const f of local) assert.match(docker, new RegExp(`COPY [^\\n]*server/${f.replace('.', '\\.')}`), f);
+  // The event contract shared with the extension (src/usage-schema.js): copied to the same place,
+  // and with no imports of its own, since the image has nothing else of src/.
+  const shared = [...index.matchAll(/from '\.\.\/(src\/[^']+)'/g)].map((m) => m[1]);
+  assert.deepEqual(shared, ['src/usage-schema.js']);
+  for (const f of shared) {
+    assert.match(docker, new RegExp(`COPY [^\\n]*${f.replace('.', '\\.')} src/`), f);
+    assert.doesNotMatch(fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'), /^\s*import\s/m, `${f} imports nothing`);
+  }
+  const ignored = fs.readFileSync(new URL('../.railwayignore', import.meta.url), 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  assert.ok(!ignored.some((p) => p === 'src' || p.startsWith('src/')), 'railway up uploads src/usage-schema.js');
 });
 
 // Review of #261: the upload token ships in the extension, so a stored event may carry any JSON as
@@ -249,4 +260,15 @@ test('the chart: no busiest day without quotes, and every day the period reaches
   assert.equal(lit('7d')[0], '2026-10-26');
   assert.equal(lit('7d').length, 8);
   assert.equal(lit('30d').length, 30);
+});
+
+// The review of #425: a line written before a failed flush is in the files again after its retry,
+// possibly the next day. The dashboard reads each event once, by its id.
+test('the dashboard reads an event retried after a failed flush once', () => {
+  const dir = tmp();
+  const now = Date.parse('2026-11-07T12:00:00Z');
+  const line = (o) => `${JSON.stringify(o)}\n`;
+  fs.writeFileSync(path.join(dir, '2026-11-06.jsonl'), line({ id: 'a', type: 'problem_report' }) + line({ id: 'b', type: 'intake_loaded' }));
+  fs.writeFileSync(path.join(dir, '2026-11-07.jsonl'), line({ id: 'a', type: 'problem_report' }) + line({ id: 'c', type: 'intake_loaded' }) + line({ id: 'c', type: 'intake_loaded' }));
+  assert.deepEqual(eventReader(dir)(7, now).map((e) => e.id), ['a', 'b', 'c']);
 });

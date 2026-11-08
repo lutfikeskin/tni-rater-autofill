@@ -11,7 +11,7 @@ import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../.
 import * as usage from '../usage-log.js';
 import { isStandard } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
-import { $, aiSnapshotFieldMatches, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
+import { $, aiSnapshotFieldMatches, keepJournal, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
@@ -87,8 +87,10 @@ function resumeHeldFill() {
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
-/** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean }} [options] */
-async function fillPage({ auto = false, confirmed = null, continuing = false } = {}) {
+// `retried`: the second click of a Continue whose page stayed unchanged (watchNextStep): the step it is
+// for (its doneSteps key), logged as a retry only when this fill continued that step.
+/** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean, retried?: string | false }} [options] */
+async function fillPage({ auto = false, confirmed = null, continuing = false, retried = false } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
   if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
   // The tab's quote is for another state than the intake's: nothing is filled until the agent says
@@ -112,7 +114,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // after it (it used to be skipped: "it stopped here").
   // Kept with its tab: the fill running may be on another one (audit 2026-11-07, FLOW-07).
   if (state.filling && auto === 'page') { state.pagePending = { tabId: state.tab?.id, page: pageOf(state.tab?.url) }; return; }
-  if (state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
+  if (state.filling || state.closing || state.resetting || state.newQuoteFailed || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
   // Back on a step that takes follow-ups only for new questions (newQuestionsOnlySteps) after its
   // fill: only the agent, or new questions, fill it again.
   if (auto && state.tab.carrier.newQuestionsOnlySteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
@@ -122,7 +124,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     if (!auto) fillProblem({ tabId: state.tab.id, page: pageOf(state.tab.url), carrier: state.tab.carrier }, 'This is the portal. Open a quote, then fill.', 'notice');
     return;
   }
-  if (!auto) state.autoPaused = false;
+  if (!auto && state.autoPaused) { state.autoPaused = false; keepJournal(state.tab.id, { dropped: ['autoPaused'] }); }
   state.fillingKind = 'fill';
   state.filling = true;
   clearTimeout(state.autoTimer);
@@ -135,6 +137,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
+  if (retried) ctx.retried = retried;
   await pickListItem(carrier, page, ctx);
   // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
   if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); resumeHeldFill(); return; }
@@ -193,6 +196,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     const retrying = rememberFill(frames, ctx);
     tabMaps(tabId).autoPages.add(page);
     followUp = afterFill(frames, ctx);
+    // AmWINS' next step at the same address: its own first Continue isn't the retry.
+    if (ctx.retried && continuedKey(frames, page, carrier, ctx.active) !== ctx.retried) ctx.retried = false;
     logFill(ctx, frames, results, started);
     // The report is its own tab's: kept for it when the agent has moved to another tab meanwhile.
     // Stopped by the agent before the kit was done (a frame halted): said so, and the dock offers to
@@ -212,6 +217,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     await tellRecorder('resume', tabId);
     state.filling = false;
     if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
+    // Steps continued, pages filled, a pause: kept for the panel opened again (FLOW-06).
+    keepJournal(tabId);
     renderSite();
     // The page in front, which this fill wasn't for, gets its own fill: one this tab moved on to, or
     // one that opened on the tab the agent moved to meanwhile, however this fill ended.
@@ -451,6 +458,15 @@ function unitArrival(carrier, from, page) {
   }
 }
 
+// The step a fill continued from, as its doneSteps entry, or null: scoped by the step as the kit read
+// it (the tab's step is noted later), per form and button where the carrier continues a step so
+// (advance `byForm`: advanceKey).
+/** @param {FillReport[]} frames */
+function continuedKey(frames, page, carrier, active) {
+  const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
+  return advanced?.stepKey ? stepScope(page, carrier, active, carrier?.layoutSteps ? knownStep(carrier, advanced.stepKey) : undefined) + (advanced.advanceKey ?? advanced.stepKey) : null;
+}
+
 // Bookkeeping after a fill: a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
@@ -464,7 +480,7 @@ function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, i
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
   // Scoped by the step the fill continued from, as the kit read it (the tab's step is noted later);
   // per form and button where the carrier continues a step so (advance `byForm`: advanceKey).
-  const doneKey = advanced?.stepKey ? stepScope(page, carrier, active, carrier?.layoutSteps ? knownStep(carrier, advanced.stepKey) : undefined) + (advanced.advanceKey ?? advanced.stepKey) : null;
+  const doneKey = continuedKey(frames, page, carrier, active);
   if (doneKey) maps.doneSteps.add(doneKey);
   // Keep the origin's bookkeeping, but never start helpers or Continue work in another tab.
   if (!fillCurrent(ctx)) return false;
@@ -538,11 +554,13 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     if (retries && unchanged >= patience && doneKey && !state.filling && !state.advanceRetried.has(doneKey)) {
       state.advanceRetried.add(doneKey);
       state.doneSteps.delete(doneKey);
-      fillPage({ auto: 'page' });
+      keepJournal(tabId, { dropped: [`step:${doneKey}`] });
+      fillPage({ auto: 'page', retried: doneKey });
       return;
     }
     if (unchanged >= patience && doneKey && !state.filling && (!retries || state.advanceRetried.has(doneKey))) {
       state.autoPaused = true;
+      keepJournal(tabId);
       fillProblem({ tabId, page, carrier }, 'Continue didn\'t take: click it yourself.');
       if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, ...(run ? { run } : {}), auto: 'page', error: 'continue did not take' });
       return;

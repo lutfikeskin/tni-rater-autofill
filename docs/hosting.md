@@ -37,7 +37,7 @@ one turns uploads off. Harnesses that load the packaged extension must set that 
 server first (`npm run e2e:extension` does, and fails on any request that leaves the machine), so test runs
 stay out of the pilot's usage data. The upload token can only add events, which the server cleans; reading
 them back needs the admin token, kept in Railway, in the repository secret `RATER_ADMIN_TOKEN`,
-and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
+and on the maintainer's computer in `~/.config/tni-rater/admin-token`.
 
 Agents use Luna without an OpenAI key of their own: with no key saved, the panel sends its Luna
 requests to `/v1/luna` with the upload token, and the server adds `OPENAI_API_KEY` and passes them
@@ -84,6 +84,27 @@ maintainer's computer (`server-data/warehouse.duckdb`, git-ignored). It runs not
 leaves this volume the only full copy of the log. Its tables, the richer intake profile it plans and
 optional quoted premiums are in [quoting history database](quoting-history-database.md).
 
+The extension deletes its copy of an upload once the server answers 200, so `store` in
+`server/index.mjs` flushes the day file to the volume (`fsync`) before that answer, and then the events folder,
+which holds a new day file's name (on Linux; Windows opens no folder). It flushes the folder on
+every upload, so the retry of one whose folder flush failed flushes it too. A write or flush
+that fails answers 500 (`could not store events`), and the extension keeps the events and sends
+them again, so a line written before a failed flush can be in the file twice (readers, the
+dashboard included, de-duplicate by id). A restarted server flushes every day file it reads, and
+the folder, before taking uploads: a retry it answers as a duplicate of such a line is then on the
+disk too.
+
+**Backups.** Railway's Hobby plan has no volume backups. The maintainer's computer keeps a daily
+copy instead (audit 2026-11-07, SRV-05): `~/.config/tni-rater/backup-usage-server.mjs`, a
+standalone script outside the repository, pulls `/v1/export` with the admin token into
+`~/Backups/tni-usage-server/<UTC day>/events/*.jsonl`, refuses an export that was cut off, keeps
+the last 14 copies and logs each run to `backup.log` in that folder. A Windows scheduled task runs
+it every day at 12:00. To restore, deploy the server and push a copy back:
+`npm run push-logs -- ~/Backups/tni-usage-server/<UTC day>/events` (events already stored are
+skipped by id; each is stored with a new `receivedAt`). Luna's day counts (`DATA_DIR/luna/`) are
+not copied: a lost day file is counted again from 0 (above), and the next day starts its own.
+`npm run pull` also leaves a plain copy of the days it downloads in the maintainer's `server-data/`.
+
 ### Upload limits and the disk guard
 
 The upload token ships in the extension, so `/v1/events` bounds what one address can send and stops
@@ -107,8 +128,25 @@ the next minute's upload (its queue keeps 20,000 events, then drops the oldest a
 `usage_lost`). On `DISK LOW`, grow the volume in Railway (or free space on it) before the agents'
 queues fill.
 
-Redeploy after a server change: `railway up --service usage-server` from the repository root
-(`.railwayignore` keeps the upload to what the image needs).
+Redeploy after a server change is merged: `npm run deploy:server` (`scripts/deploy-server.mjs`),
+with Railway's CLI signed in and linked to the project. `railway up` uploads the working tree as it
+is, on whatever branch it is (other sessions switch branches in the main checkout), so the script
+deploys only `origin/main` as merged (audit 2026-11-07, SRV-10). It fetches, refuses unless this
+checkout's commit is `origin/main`'s and the files the image is built from (`server/Dockerfile` and
+its `COPY` sources) have no uncommitted or untracked changes, then runs
+`railway up --service usage-server --ci` (`.railwayignore` keeps the upload to what the image
+needs) and waits up to 5 minutes in all, a stalled request included, for Railway's production `/v1/health` (never `RATER_SERVER`) to name this checkout's server. `--dry-run` only
+checks. A failed build exits 1, and the previous deployment keeps serving.
+
+After a merge to `main` that changes what the image is built from (`server/`, `.railwayignore`, or
+any other file `server/Dockerfile` copies: `test/deploy.test.mjs` holds the workflow's paths to it), [deploy-server.yml](../.github/workflows/deploy-server.yml) runs the same
+script on GitHub, one deploy at a time (the maintainer, 2026-11-07). It needs the repository secret
+`RAILWAY_TOKEN`, a Railway project token for the production environment; without it the job says
+`RAILWAY_TOKEN is not set: nothing deployed` and succeeds, so deploy by hand as above. Only the
+step that checks for the token and the deploy step get it, not the install of Railway's CLI. It checks
+out `main` as it is when the job starts, not the pushed commit, so a later merge that changes no
+server file and starts no run of its own doesn't stop the deploy. Actions → Deploy usage server →
+Run workflow deploys `main` again on demand.
 
 Before deploying, confirm `RATER_TOKEN` is set in the service's Variables. The server fails closed:
 bound to anything but loopback (`127.0.0.1`, `localhost`, `::1`) without `RATER_TOKEN`, it exits
@@ -116,8 +154,10 @@ with `RATER_TOKEN is not set and HOST=0.0.0.0 is not loopback: refusing to start
 endpoint` instead of taking anyone's uploads (audit 2026-10-08: an unset variable made the
 deployment an open write endpoint). On Railway that is a failed deployment in the deploy logs, and
 the previous one keeps serving. `npm run server` on this computer still needs no token.
-`/v1/health` answers `{ ok, server }` to anyone (what the daily server check and the panel's
-"is it there" probe read); `events`, how many are stored, only comes with the admin token.
+`/v1/health` answers `{ ok, server, schema }` to anyone (what the daily server check and the panel's
+"is it there" probe read); `events`, how many are stored, and `metrics` only come with the admin
+token (below).
+
 One request never stops the server for everyone else. A request target that isn't a URL answers
 400 before any token check, an event whose type isn't one of the server's own (`constructor` or
 `__proto__` included) is refused in the reply's `rejected`, and an exception inside a request
@@ -134,9 +174,25 @@ root-owned, and a non-root process that can't write there would answer every upl
 `server/Dockerfile`, check `ls -ld /data` and a test write as `node` in the running container
 (or add an entrypoint that chowns `/data` first), then redeploy and confirm `/v1/events` still
 stores an event.
-Deploy a server change that accepts new event fields before releasing the extension that sends
-them: an older server drops unknown fields (and refuses layouts over its size limit) rather than
-storing them. The run-identity fields (`run`, `rules`, `settings`, `step` on fill and field-change
+The event contract, which event types there are and which fields each keeps (`COMMON`,
+`EVENT_FIELDS`), with the profile's text tests (`ID_LIKE`, `LIMIT`, `PROFILE_UNITS`) and the schema's
+version, is one module the extension and the server both import: `src/usage-schema.js`, which has
+no imports and which the image copies (`server/Dockerfile`; `railway up` uploads it, and its text is
+in the `server` hash). The server adds agent defaults' fields to its own copy and checks every
+value's shape itself. Every event carries the `schema` it was logged under (`SCHEMA_VERSION`;
+none before 2026-11-07), and `/v1/health` names the server's (`schema`). An event of a newer schema
+than the server's is refused, per event in the reply's `rejected`, as `schema newer than server
+(N > M)`; the extension keeps it aside like an unknown event type and sends it again on each
+upload, so once the server is deployed it is stored with every field. Until then nothing of that
+extension's is stored (its events wait on the agents' computers, which keep 20,000 each), so deploy
+soon after. A change to the contract (an event type, a field, a profile group or field) changes its
+fingerprint, and `test/consistency.test.mjs`, which holds each version's fingerprint, fails until
+`SCHEMA_VERSION` is raised and the new version's fingerprint (which the failure names) is added,
+earlier versions' entries left as they are. A shape check alone (tighter
+validation, no new field) needs no new version. An event without `schema`, from an extension
+released before it, is kept as before: such an extension's new fields still need the server
+deployed first, as an older server drops unknown fields (and refuses layouts over its size limit)
+rather than storing them. The run-identity fields (`run`, `rules`, `settings`, `step` on fill and field-change
 events, [learning](learning.md)) are such a change: deploy the server that keeps them before the
 extension that sends them, or every fill run until then is stored with those names in `dropped`.
 That server also refuses an event whose run id, rules hash, settings object or step is malformed
@@ -144,7 +200,7 @@ That server also refuses an event whose run id, rules hash, settings object or s
 commit, optionally `+dirty`) only in those shapes. Every event's common fields are kept only in their shapes (`COMMON_SHAPES`), and an event with one out of its shape is refused (in the reply's `rejected`, naming the field), never stored with it or trimmed: `t` an ISO time in UTC (`…Z`), a real date and time (not `2025-02-30` or `24:00`), from 2025 to 30 days ahead of the server's clock; `agent` initials as typed (1–12 letters, digits, spaces and `. ' -`); `session` a UUID; `intakeId` the intake PDF's SHA-256 (64 lowercase hex); `carrier` a carrier id's shape (lowercase letters, digits and `-`, at most 20, so a new carrier needs no server change); `page` a page name or path (at most 200 of letters, digits, space and `_ . : / ~ % + ( ) , -`); `v` a version number or `dev`. Each may be null but `t`. The request's `agent`, which fills an event without one, is used only in that shape, otherwise not at all. Every event stored from the pilot up to 2026-11-06 (98,872) passes these checks. It refuses events from the local test page (`carrier: 'test'`, localhost), which are
 no quote; the review scripts also skip the ones stored before. The server names what it dropped on
 the stored event (`dropped`: field names only, at most 20, `droppedMore` counts the rest), and
-`/v1/health` names its version (`server`, a hash of its `server/index.mjs`, `server/dashboard.mjs` and `server/agent-defaults.mjs`, the files the image copies). `node scripts/server-check.mjs` compares that with this checkout, without
+`/v1/health` names its version (`server`, a hash of every file the image copies, in `server/Dockerfile`'s order: `server/index.mjs`, `server/dashboard.mjs`, `server/agent-defaults.mjs`, `server/privacy.html` and `src/usage-schema.js`; a test holds the list to the Dockerfile's; and `schema`, its schema version). `node scripts/server-check.mjs` compares that with this checkout, without
 sending any event: after a deploy it should say `same`.
 
 The server accepts `intake_profile`, a profile of the client's business (`PROFILE` in
@@ -164,6 +220,56 @@ and its group named in `dropped`; a group that isn't the right kind of object or
 whole. Accepting the event collects nothing until an extension sends it, so this server can be
 deployed whenever; the extension that sends the profile is released only after the privacy policy
 names it.
+
+### Upload limits and the disk guard
+
+The upload token ships in the extension, so `/v1/events` bounds what one address can send and stops
+taking uploads before the volume fills (`UPLOAD_LIMITS` and `MIN_FREE_MB` in `server/index.mjs`).
+Each address has two token buckets in memory: 120 requests, refilled at 60 a minute, and 100 MB,
+refilled at 25 MB an hour. The panel posts at most once a minute plus a few prompt uploads, each of
+at most 500 events and a million characters, so a full queue (20,000 events) drains in 40 requests
+at once; the pilot's busiest minute was 9 requests and 4.8 MB, its busiest day 8.3 MB, all agents
+together, and an office's agents may share one address. Over either limit the answer is 429 with
+`retry-after`, and the log line names the limit and the address (`limit`, `ip`). The address is the socket's, or
+the last value of the header `RATER_CLIENT_IP_HEADER` names: the image sets `x-real-ip`, which
+Railway's edge sets to the client's address (without it every agent would share the edge's). The
+buckets start full again after a restart or redeploy.
+
+While `DATA_DIR` has less than `RATER_MIN_FREE_MB` free (unset or blank 500, `0` switches the guard
+off, a value that isn't a number keeps 500), every upload answers 507 and stores nothing, so the
+server and the stored log survive; the log says `DISK LOW` once when it starts and `disk ok again`
+when it ends. A free-space reading that fails is logged once and never stops uploads. The extension
+treats 429 and 507 like any other refusal: the events stay queued on the agent's computer and go on
+the next minute's upload (its queue keeps 20,000 events, then drops the oldest and logs
+`usage_lost`). On `DISK LOW`, grow the volume in Railway (or free space on it) before the agents'
+queues fill.
+
+### Logs and counters
+
+Each log line is one JSON object (`logLine` in `server/index.mjs`), so Railway's log search filters
+by field (`@level:error`, `@route:/v1/luna`, `@status:507`). Every answer's line has `t`, `level`
+(`error` for a 5xx, on stderr), `method`, `route` (one of the server's routes, or `other`: never the
+path asked for), `status` and `ms`, and what it was about: an upload's `agent`, `accepted`,
+`duplicates` and `rejected` counts; a Luna request's `luna` (answered, limit, budget, upstream with
+OpenAI's status and error `code`, no answer, unreadable), the day's `requests`, `limit`, `tokens`
+and `budget`, and the answer's `in` and `out` tokens (`estimated` when OpenAI gave none); a rate
+limit's `limit`, `ip` and `wait`; a disk refusal's `disk`; an export's `since`, `until` and `days`;
+the dashboard's `window`, `tests` and `cached`. Other lines have a `msg` (startup, `DISK LOW`,
+`disk ok again`, a Luna day file not read or saved, a request's exception with its `error` name and
+`where`, and, when it answered 500, that answer's `status` and `ms`, counted like any other; an
+uncaught one's `error` and `stack`). `where` and `stack` are the error's stack frames only, never
+its message: the stack's `Name: message` header is cut off whole before frames are read, and a
+stack that doesn't start with it gives none. Lines carry names, counts and ids only: never a token, an
+event's or a Luna request's content, OpenAI's answer, or a request's query beyond the export's dates.
+
+With the admin token, `/v1/health` adds `metrics`: since the process started (`startedAt`,
+`uptimeS`; a restart or redeploy starts them again), `requests` by route and status, `exceptions`,
+and `events` (`accepted`, `duplicates`, `rejected`, `withDropped`: stored with a field dropped, and
+`lastStoredAt`), `rejects` by the server's reason (an unknown type's name and numbers left out, at
+most 50 reasons, then `other`); and as they are now, `disk` (`freeMB` on `DATA_DIR`, null when
+unreadable, and `guardMB`) and `luna` (the day's counts from its file, `limit` and `budget`; null
+without `OPENAI_API_KEY`). No external service reads them yet: `curl -H "authorization: Bearer
+$RATER_ADMIN_TOKEN" https://usage-server-production.up.railway.app/v1/health`.
 
 ## Live usage page
 
@@ -197,7 +303,7 @@ state, business class, unit counts, redacted labels and report texts.
 
 **Its password.** Set `RATER_DASHBOARD_TOKEN` in the `usage-server` service's Variables (a random
 value of at least 16 characters, for example from `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`),
-keep it in your password manager, and redeploy (`railway up --service usage-server`). Unset, or
+keep it in your password manager, and redeploy (`npm run deploy:server`). Unset, or
 shorter than 16 characters, the page is off and `/dashboard` answers 404 (a short one also prints a
 warning at startup); the startup line says `(dashboard on: /dashboard)` when it is on. The browser
 asks for a user name and password: any user name, the token as the password (HTTP Basic, over
@@ -253,8 +359,9 @@ arrived and every run stayed silent, so a week without quotes looked the same as
 Anyone with the extension's upload token can write what the comment quotes (an agent's initials, a
 page, a carrier, a build (an alert's too), a question's caption, data-model name and kind), so each is posted in inline code (no
 markdown, link or image), its backticks and line breaks taken out, every `@` broken by a zero-width
-space (no one is mentioned, and the comment never starts the Claude workflow, which answers an
-at-mention of Claude from the maintainer's login, the one `npm run daily -- --post` posts as), and
+space (no one is mentioned, and the comment holds no at-mention of Claude, which the Claude
+workflow would answer from the maintainer's login, the one `npm run daily -- --post` posts as;
+that workflow doesn't run on the `daily-review` or `weekly-review` issues at all either), and
 bounded (a caption at 200 characters, others at 120 or fewer) (`untrusted` in
 `scripts/lib/daily.mjs`). A report's time is written only when it is a real date and minute, else `?`. A list too long anyway is cut to fit
 a GitHub comment and points to the review. Closing the issue is how a
@@ -263,9 +370,9 @@ corrections.
 
 ### On the maintainer's computer: `npm run daily`
 
-Since 2026-10-19 GitHub doesn't start Actions jobs on this account (billing), so the workflow below
-fails before it starts. `npm run daily` (`scripts/daily.mjs`) does the same steps on a Windows (or
-any) computer: the server check, `npm run pull`, `scripts/review.mjs --since <start> --summary`,
+The workflow below runs the review every day. From 2026-10-19 until the repository went public on
+2026-10-27, GitHub didn't start Actions jobs on this account (billing), and this stood in for it.
+`npm run daily` (`scripts/daily.mjs`) does the same steps on a Windows (or any) computer: the server check, `npm run pull`, `scripts/review.mjs --since <start> --summary`,
 then `scripts/daily-issue.mjs post`. It needs Node 22, the admin token (`RATER_ADMIN_TOKEN` or
 `~/.config/tni-rater/admin-token`), and `gh auth login` as an account that can comment on the
 repository's issues.
@@ -281,11 +388,18 @@ It posts only with `--post`, and so does `scripts/daily-issue.mjs post` (the wor
 trying it out never comments by accident. A dry run may run anywhere. `--post` refuses, and says
 what to do, unless it runs in the main checkout (not a linked worktree, whose state would be its
 own), on the default branch, level with `origin` after a fetch: the server check compares the
-deployed server with that checkout, and the review uses its rules. The main checkout was on
-`claude/release-0.9.10` on 2026-10-20; switch it to `main` and `git pull` before the first real run.
+deployed server with that checkout, and the review uses its rules: switch the main checkout to
+`main` and `git pull` before a real run.
 
-The first real run needs `--since`, once: where the last comment on the issue stopped. That was
-2026-10-20T01:12:33Z (comment 6280982877 on #50, the last before this runner). After it,
+A real run here that takes over from the workflow needs `--since`, once: where the workflow's last
+review stopped, which `node scripts/daily-issue.mjs since` prints (the last successful run's
+download start). Without it, a `reviews/daily/state.json` left from earlier local runs is older
+than the workflow's reviews, and the run would post what they already said. Check first that
+Actions shows a successful Daily review run on `main`: with none, `since` prints a day ago, which
+could skip reports nobody reviewed, so leave `--since` out and let the state file say where to
+start. With no state file either, the run stops and asks for `--since`: give the time the last
+review you know of stopped, or an earlier one (an earlier start only says some things again).
+After it,
 `reviews/daily/state.json` (git-ignored) says where each run starts: when the last real run's
 download began. It's written whole (a temporary file, then a rename) and only after the post step
 succeeded (a comment, or nothing new to say). A run that fails leaves it, so the next one reviews
@@ -301,7 +415,9 @@ by UTC day and minute, not next to the weekly `reviews/review-<date>.md` files. 
 finish says so on the issue with the step that stopped and exits 1; one that can't reach GitHub at
 all only writes `daily.log`.
 
-**Scheduling it on Windows.** After the first real run has written the state, use Task Scheduler,
+**Scheduling it on Windows**, only while the workflow can't run (both would post). After the first
+real run here has written the state (with `--since` from `node scripts/daily-issue.mjs since` when
+the workflow has a successful run, else from its state file, as above), use Task Scheduler,
 from PowerShell in the main checkout. `-At` is this computer's local time. The workflow ran at 06:00
 UTC, after US agents' day; the first line turns that into local time (02:00 at UTC-4). Any hour
 works, as each run starts where the last stopped: pick one when the computer is usually on.
@@ -324,8 +440,7 @@ files." It runs only while the app is open and the computer awake. Use one sched
 
 ### On GitHub: the workflow
 
-`.github/workflows/daily-review.yml` stays in the repository for when Actions works again. It runs
-every day at 06:00 UTC, which GitHub often starts hours late (and on demand: Actions → Daily
+`.github/workflows/daily-review.yml` runs every day at 06:00 UTC, which GitHub often starts hours late (and on demand: Actions → Daily
 review → Run workflow, optionally with a start date or time). Its window starts when the last
 successful run on the default branch began downloading (`scripts/daily-issue.mjs since`, from that
 run's steps; a day when there is none; a run that can't tell fails rather than guess). The review
@@ -334,8 +449,8 @@ only, and nothing is kept as an artifact. The runner has no local test-run list
 (`reviews/test-intakes.txt` is ignored by git), so its review carries the "No test-run list"
 warning: the maintainer's own test quotes count as agents' work there, while fixture intakes and
 intakes marked as a test are still left out ([learning](learning.md)). When the script that
-comments is what broke, the workflow says so with `gh` alone. Its cron is still set, so GitHub
-still tries it each day and the run fails at start. Before using it again, stop the local
-schedule and start its first run by hand, with the `since` in the local `reviews/daily/state.json`
-as its start. Its own last successful run is older, so its window would repeat what the local runs
-already said.
+comments is what broke, the workflow says so with `gh` alone. A local schedule set up while it
+couldn't run should be removed (`Unregister-ScheduledTask -TaskName 'TNI daily review'`), so only
+one review posts. When the workflow takes over from local runs, start its first run by hand with
+the `since` in the local `reviews/daily/state.json`: its own last successful run is older, so its
+window would repeat what the local runs already said.

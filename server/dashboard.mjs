@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The maintainer's live usage page (GET /dashboard on the usage server, server/index.mjs): the
 // last 24 hours, 7 and 30 days of the events this server stored, in plain server-rendered HTML
 // that reloads itself every minute. Behind RATER_DASHBOARD_TOKEN (HTTP Basic, any user name, the
@@ -179,6 +180,10 @@ export function eventReader(eventsDir) {
     const first = new Date(now - days * DAY).toISOString().slice(0, 10);
     const files = fs.readdirSync(eventsDir).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n) && n.slice(0, 10) >= first).sort();
     for (const f of cache.keys()) if (!files.includes(f)) cache.delete(f);
+    // Each event once: a line written before a failed flush is in the files again after its retry
+    // (the review of #425), so the first line with an id is the event.
+    const ids = new Set();
+    const once = (e) => !e?.id || (!ids.has(e.id) && Boolean(ids.add(e.id)));
     return files.flatMap((f) => {
       const full = path.join(eventsDir, f);
       const size = fs.statSync(full).size;
@@ -190,7 +195,7 @@ export function eventReader(eventsDir) {
         cache.set(f, { size, events });
       }
       return cache.get(f).events;
-    });
+    }).filter(once);
   };
 }
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Builds the committed GEICO fixture, test/fixtures/geico/quote.html, from the ignored raw evidence:
 // the NE quote pages saved with Chrome's "Save page as" on 2026-10-20 (layouts/geico/NE-no-dot/) and,
 // for what was never saved as HTML (Business & Owner Info, the owner/SSN sub-form, the USDOT number box,

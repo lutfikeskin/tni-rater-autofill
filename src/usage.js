@@ -12,6 +12,7 @@ import { toMoney, toDate } from './normalize.js';
 import { noPriorInsurance } from './util.js';
 import { isStandard, resolutionOf } from './resolution.js';
 import { redactionPattern } from './redaction.js';
+import { ID_LIKE, LIMIT, PROFILE_UNITS } from './usage-schema.js';
 
 /** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, IntakeProfileEvent, IntakeResult, IntakeSummary, UsageEvent } from '../types.js' */
 
@@ -59,19 +60,12 @@ export async function intakeSummary(pdfBytes, raw, result) {
 // becomes # (ID_LIKE: an @; a date with /, - or . between its parts; seven or more digits, even with
 // spaces, dashes, dots, slashes or brackets between them, as in a phone, SSN, licence or policy
 // number; five digits in a row; a word of eight or more letters and digits mixed, as in a VIN). A
-// limit as written is kept as it is (LIMIT: $1M CSL, $1,000,000, 1000000, 25/50/25). The server
-// keeps each value only in the same shapes (PROFILE, ID_LIKE and LIMIT in server/index.mjs).
-export const ID_LIKE = /@|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d(?:[\s()./-]{0,2}\d){6,}|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/i;
+// limit as written is kept as it is (LIMIT: $1M CSL, $1,000,000, 1000000, 25/50/25). ID_LIKE, LIMIT
+// and PROFILE_UNITS are the event contract's (src/usage-schema.js), which the server shares; it
+// keeps each value only in its shape (PROFILE in server/index.mjs).
+export { ID_LIKE, LIMIT, PROFILE_UNITS };
+// ID_LIKE's parts, to replace each with # (an @ takes its whole word).
 const ID_PARTS = /\S*@\S*|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d(?:[\s()./-]{0,2}\d){6,}|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/gi;
-// An amount: with thousands commas, round thousands written plainly, or up to four digits with an
-// optional K or M; a pair of amounts with a slash ($1M/$2M); a split limit (25/50/25, 100/300/100,
-// whose first part is 15 or more, so a date isn't one); a word; & + -.
-const MONEY = String.raw`\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$?\d{1,6}000|\$?\d{1,4}(?:\.\d+)?[km]?`;
-const LIMIT_PART = String.raw`(?:1[5-9]|[2-9]\d|[1-9]\d{2})(?:\/\d{1,3}){1,2}|(?:${MONEY})(?:\s*\/\s*(?:${MONEY}))?|[a-z]+\.?|[&+-]`;
-// Two numbers with only a space, &, + or - between them aren't a limit (an SSN or a phone written
-// with spaces: 123 45 6789).
-export const LIMIT = new RegExp(String.raw`^(?![\s\S]*\d[\s&+-]+\$?\d)(?:${LIMIT_PART})(?:\s+(?:${LIMIT_PART}))*$`, 'i');
-export const PROFILE_UNITS = 50;
 const MAX_DOLLARS = 99_999_999;
 const yesNo = (v) => (typeof v === 'boolean' ? v : null);
 // USDOT and MC as normalizeIntake keeps a valid one (digits, not all zero); FEIN 12-3456789.
@@ -423,10 +417,10 @@ function fieldWhy(x, list) {
 // still counts them all (`kept`). Without `keptLogged`, every one is logged.
 /**
  * @param {Partial<FillReport>[]} frames  the page kit's fill reports, one per frame (a stop page's: its blockers only)
- * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean, keptLogged?: Set<string> }} ctx
+ * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean, retried?: boolean, keptLogged?: Set<string> }} ctx
  * @returns {UsageEvent[]}
  */
-export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false, keptLogged }) {
+export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false, retried = false, keptLogged }) {
   // Typed for the report list it reads (the body takes any key).
   /** @type {<K extends keyof FillReport>(k: K) => NonNullable<FillReport[K]>} */
   const all = /** @param {any} k @returns {any} */ (k) => frames.flatMap((f) => f[k] ?? []);
@@ -442,6 +436,9 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     // was hidden meanwhile (`hiddenMs`): Chrome slows a hidden tab's timers, so the weekly review can
     // tell those fills from slow carriers (audit 2026-11-07, FLOW-12).
     ...(background ? { background: true } : {}), ...(hiddenMs ? { hiddenMs } : {}),
+    // The second click of a Continue whose page stayed unchanged (the panel's watchNextStep, audit 2026-11-07,
+    // FLOW-11): the weekly review counts them to judge whether the retry is still needed.
+    ...(retried ? { retried: true } : {}),
     fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0),
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,

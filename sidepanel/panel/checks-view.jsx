@@ -12,7 +12,8 @@ import { panelStore } from './state-store.js';
 // A check card's field (fieldSaid in record.js), named by the card above it. Its edit is made as the
 // box's own change event says it, as in client details: a text box's when the agent leaves it or
 // presses Enter, not each key. The box shows the record's value as it was said (a new value is
-// another box: the card's key).
+// another box: the card's key; so is a value an edit saved otherwise than typed, `rev`: "No" in the
+// USDOT box is saved empty).
 function CheckField({ field }) {
   const ref = useRef(null);
   const { control, value, options, label, edit, maxLength } = field;
@@ -67,7 +68,7 @@ function CheckCard({ card }) {
     <div className={card.alert ? 'check alert' : 'check'} role={card.alert ? 'alert' : undefined} data-check={card.i}>
       <CheckHead title={card.title} msg={card.msg} />
       <div className="check-body">
-        {card.field ? <CheckField key={`${card.field.path}|${card.field.value}`} field={card.field} /> : null}
+        {card.field ? <CheckField key={`${card.field.path}|${card.field.value}|${card.field.rev ?? 0}`} field={card.field} /> : null}
         <div className="check-actions">
           <button type="button" className="tinted" onClick={card.lookRight}>Looks right</button>
           {pdf ?? (card.details ? <button type="button" className="ghost" onClick={card.details}>Show details</button> : null)}

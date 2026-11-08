@@ -67,6 +67,9 @@
 
   <main id="view" class="view">
     <div id="notices" class="notices"></div>
+    <div id="storage-note" class="notices"></div>
+    <!-- What's new in this version, once after an update (whats-new.js). -->
+    <div id="whats-new" class="notices"></div>
     <!-- Pop out or Back to the side panel that didn't work (windowProblem). -->
     <div id="window-note" class="notices" hidden></div>
 
@@ -123,6 +126,8 @@
         <button type="button" id="send-problem" class="primary small-btn">Save report</button>
       </div>
     </div>
+    <!-- Whether the report just saved reached TNI (usage-panel.js sayProblem). -->
+    <p id="problem-said" class="problem-said" role="status" hidden></p>
     <div class="foot-row">
       <button type="button" id="report-problem" class="link small" aria-expanded="false" aria-controls="problem-form">Report a problem</button>
       <!-- "Recording usage" (#recording), drawn by settings-view.jsx (mountRecordingLine). -->
