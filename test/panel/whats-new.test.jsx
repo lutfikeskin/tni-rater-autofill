@@ -66,3 +66,15 @@ test('an update from before the card says this version only; a new install, or n
   expect(env.data.whatsNewSeen).toBe('0.9.41');
   env.version = '0.9.40';
 });
+
+test('a rollback keeps the newer version said, so updating to it again says nothing twice', async () => {
+  const { container } = render(<div id="whats-new"><Note name="whatsNew" /></div>);
+  env.data.whatsNewSeen = '0.9.40';
+  env.version = '0.9.39';
+  await act(() => showWhatsNew());
+  expect(container.querySelector('.issue')).toBeNull();
+  expect(env.data.whatsNewSeen).toBe('0.9.40');
+  env.version = '0.9.40';
+  await act(() => showWhatsNew());
+  expect(container.querySelector('.issue')).toBeNull();
+});
