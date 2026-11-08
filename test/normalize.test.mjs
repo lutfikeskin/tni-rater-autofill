@@ -1,9 +1,10 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
+import { normalizeIntake, noNumberEdit, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance, set } from '../src/util.js';
@@ -2121,6 +2122,69 @@ test('"None" or "N/A" in the USDOT or MC box is an explicit No (W44-15, R14)', (
     assert.equal(other.record.applicant.noDot, null, box);
     assert.ok(other.warnings.some((x) => x.code === 'id.invalid'), box);
   }
+});
+
+// The maintainer, 2026-11-07 (answer 1 on PR #367): "No", "None" or "N/A" the agent types into the
+// USDOT or MC box is no number, saved as the intake's own No is. Before, the box kept "No" and
+// Progressive answered that the customer has a USDOT number.
+test('"No" typed into the USDOT or MC box in the panel is no number, as the intake\'s own No', () => {
+  const loaded = () => ({ ...normalizeIntake({ ...raw, mc_dot_60days: '' }, W44), done: [], agentEdited: [] });
+  const progressiveDot = (r) => buildPlan(r, progressive).find((s) => s.q === '1ED').value;
+  for (const typed of ['No', 'none', 'N/A', ' n.a ']) {
+    const intake = loaded();
+    intake.record.applicant.dot = typed;
+    assert.equal(noNumberEdit(intake, 'applicant.dot'), true, typed);
+    assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot], [null, true], typed);
+    assert.equal(progressiveDot(intake.record), 'No - and the customer will not have a USDOT number', typed);
+    assert.equal(buildPlan(intake.record, geico).find((s) => s.name === 'Has a USDOT number').value, 'No', typed);
+    assert.equal(intake.warnings.find((w) => w.code === 'dot.none')?.msg, `USDOT # "${typed.trim()}": the client has no USDOT number.`, 'the intake\'s note says so');
+  }
+  const mc = loaded();
+  mc.record.applicant.mc = 'None';
+  assert.equal(noNumberEdit(mc, 'applicant.mc'), true);
+  assert.deepEqual([mc.record.applicant.mc, mc.record.applicant.noMc], [null, true]);
+  assert.equal(buildPlan(mc.record, amwins).find((s) => s.selector === '#hasMcNumber').value, false);
+  // A number, another box or other words: as typed.
+  const number = loaded();
+  number.record.applicant.dot = '7654321';
+  assert.equal(noNumberEdit(number, 'applicant.dot'), false);
+  assert.equal(progressiveDot(number.record), 'Yes - the customer has a USDOT number');
+  for (const typed of ['none yet', 'N/']) {
+    const other = loaded();
+    other.record.applicant.dot = typed;
+    assert.equal(noNumberEdit(other, 'applicant.dot'), false, typed);
+    assert.equal(other.record.applicant.dot, typed);
+  }
+  const name = loaded();
+  name.record.applicant.name = 'No';
+  assert.equal(noNumberEdit(name, 'applicant.name'), false);
+});
+
+// Reviews of PR #376 (Claude, CodeRabbit): the agent's typed No, then a number, then No again, then
+// the box emptied, as the panel's edit makes them (set, noNumberEdit, rederive): the No and its note
+// follow each one, and so do the carriers' answers.
+test('typing No, then a number, then No again into the USDOT box: the No and its note follow each edit', () => {
+  const intake = { ...normalizeIntake({ ...raw, mc_dot_60days: '' }, W44), done: [], agentEdited: [] };
+  const edit = (value) => {
+    set(intake.record, 'applicant.dot', value);
+    intake.agentEdited = [...new Set([...intake.agentEdited, 'applicant.dot'])];
+    noNumberEdit(intake, 'applicant.dot');
+    rederive(intake.record, 'applicant.dot', { ...W44, keep: new Set(intake.agentEdited), intake });
+  };
+  const progressiveDot = () => buildPlan(intake.record, progressive).find((s) => s.q === '1ED').value;
+  const amwinsDot = () => buildPlan(intake.record, amwins).find((s) => s.selector === '#hasDotNumber').value;
+  const note = () => intake.warnings.filter((w) => w.code === 'dot.none').map((w) => [w.level, w.msg]);
+  edit('No');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, progressiveDot(), amwinsDot()], [null, true, 'No - and the customer will not have a USDOT number', false]);
+  assert.deepEqual(note(), [['info', 'USDOT # "No": the client has no USDOT number.']]);
+  edit('7654321');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, progressiveDot(), amwinsDot()], ['7654321', null, 'Yes - the customer has a USDOT number', true], 'a number: the No is cleared');
+  assert.deepEqual(note(), [['info', 'No longer applies after your edit: USDOT # "No": the client has no USDOT number.']], 'and its note retired');
+  edit('None');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, progressiveDot()], [null, true, 'No - and the customer will not have a USDOT number']);
+  assert.deepEqual(note(), [['info', 'USDOT # "None": the client has no USDOT number.']], 'the note said again, in its place');
+  edit(null);
+  assert.deepEqual([intake.record.applicant.noDot, note().length], [true, 1], 'emptied: the No stays');
 });
 
 // R15 (TNI, 2026-10-26: answer to PR question): "New", "New authority", "Brand new" and "New

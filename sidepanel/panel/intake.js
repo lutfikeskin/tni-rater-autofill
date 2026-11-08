@@ -10,7 +10,7 @@ import { ownerDrivesAnswered } from '../../src/answers/owner.js';
 import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes, forgetKeptWork, keptWorkCleared, keptWorkLocal } from './core.js';
+import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals } from './core.js';
 import { firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
@@ -79,6 +79,8 @@ async function loadFile(file, { reset = false } = {}) {
     state.visitedPages = new Set();
     state.doneSteps = new Set();
     state.advanceRetried = new Set();
+    // Their kept copies too (FLOW-06), each tab's quote state aside.
+    await forgetJournals();
     state.assistPage = null;
     state.layoutErrors = 0;
     cancelLayouts();

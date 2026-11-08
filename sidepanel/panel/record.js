@@ -1,7 +1,8 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The side panel: rendering the client record.
 // One part of the panel; sidepanel.js wires the parts together.
 import { sourcePlace } from '../../src/intake-source.js';
-import { parseEdit, rederive } from '../../src/normalize.js';
+import { noNumberEdit, parseEdit, rederive } from '../../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../../src/schema.js';
 import { get, set, STATES, quotedCarrierPolicy } from '../../src/util.js';
 import { ownerDrivesAnswered } from '../../src/answers/owner.js';
@@ -151,7 +152,7 @@ function renderWarnings() {
     const pdf = pdfLink(w, label);
     return { ...card, alert: !!w.alert,
       // The field to fix, named by the card above it; an edit there is the agent's, as in client details.
-      field: info ? { ...fieldSaid(w.path, info.kind), path: w.path, label: info.label, edit: (value) => { agentEdit(w.path, parseEdit(info.kind, value), info.kind); renderSections(); } } : null,
+      field: info ? { ...fieldSaid(w.path, info.kind), path: w.path, label: info.label, rev: state.fieldRevs?.get(w.path) ?? 0, edit: (value) => { agentEdit(w.path, parseEdit(info.kind, value), info.kind); renderSections(); } } : null,
       lookRight: () => toggleDone(i, true),
       pdf, details: !pdf && w.path && !info ? () => jumpTo(w.path) : null };
   });
@@ -263,7 +264,7 @@ function fieldSaid(path, kind) {
 function fieldRow(path, label, kind, flagged, shown = false) {
   const said = fieldSaid(path, kind);
   const empty = said.blank && !state.intake.agentEdited?.includes(path) && !shown;
-  return { ...said, path, label, flagged, empty, edit: (value) => agentEdit(path, parseEdit(kind, value), kind) };
+  return { ...said, path, label, flagged, empty, rev: state.fieldRevs?.get(path) ?? 0, edit: (value) => agentEdit(path, parseEdit(kind, value), kind) };
 }
 
 // The agent's edit of one intake field, from All client details or a check card's button: set
@@ -272,6 +273,13 @@ function fieldRow(path, label, kind, flagged, shown = false) {
 async function agentEdit(path, after, kind) {
   const before = get(state.intake.record, path);
   set(state.intake.record, path, after);
+  // "No" typed into the USDOT or MC box: no number, the box empty with the intake's note (noNumberEdit).
+  // The box is said again with the record's value though it may equal the old one (fieldRevs).
+  if (noNumberEdit(state.intake, path)) {
+    state.fieldRevs?.set(path, (state.fieldRevs.get(path) ?? 0) + 1);
+    renderSections({ keep: [path] });
+    renderWarnings();
+  }
   const edited = new Set(state.intake.agentEdited ?? []).add(path);
   state.intake.agentEdited = [...edited];
   // The agent's own Owner drives answers "Does the owner drive?" (W46-02: answers/owner.js ownerNoPending), and
