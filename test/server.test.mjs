@@ -12,6 +12,7 @@ import { MAX_EVENTS } from '../src/usage.js';
 import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
+import { imageFiles } from '../scripts/lib/deploy.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
 const ev = (over = {}) => ({ id: crypto.randomUUID(), t: new Date().toISOString(), type: 'fill_run', carrier: 'progressive', page: 'AddVehicle', filled: 3, ...over });
@@ -295,10 +296,12 @@ test('dropped fields are named on the event (names only, bounded), and health na
   await withServer({ dataDir }, async ({ post, base }) => {
     await post({ events: [ev({ seq: -1, ...many, 'Jordan Sample': 'x' })] });
     const health = await (await fetch(`${base}/v1/health`)).json();
-    // The server's own files, as the image copies them (server/Dockerfile): index.mjs, the
-    // dashboard's, then agent defaults'.
+    // Every file the image copies (server/Dockerfile), in its order: a change to any of them, the
+    // privacy page included, is another server (the review of #426).
     const hash = crypto.createHash('sha256');
-    for (const f of ['index.mjs', 'dashboard.mjs', 'agent-defaults.mjs']) hash.update(fs.readFileSync(new URL(`../server/${f}`, import.meta.url)));
+    const copied = imageFiles(fs.readFileSync(new URL('../server/Dockerfile', import.meta.url), 'utf8')).filter((f) => f !== 'server/Dockerfile');
+    assert.ok(copied.includes('server/privacy.html'));
+    for (const f of copied) hash.update(fs.readFileSync(new URL(`../${f}`, import.meta.url)));
     assert.equal(health.server, hash.digest('hex').slice(0, 12));
     assert.equal(health.server, SERVER_HASH);
   });

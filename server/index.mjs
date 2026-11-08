@@ -61,11 +61,13 @@ const MAX_LAYOUT_BYTES = 128 * 1024;
 // How long one dashboard page serves every request for its period: building it reads and sums 31
 // days of events on the process that takes uploads, and each open tab reloads it every minute.
 const DASHBOARD_CACHE_MS = 30_000;
-// Which version of the server is running (this file and the dashboard's): the daily review
-// compares it with the repository's.
+// Which version of the server is running (every file the image copies, in server/Dockerfile's
+// order; test/server.test.mjs holds the two in step): the daily review compares it with the
+// repository's.
 export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url)))
   .update(fs.readFileSync(new URL('./dashboard.mjs', import.meta.url)))
-  .update(fs.readFileSync(new URL('./agent-defaults.mjs', import.meta.url))).digest('hex').slice(0, 12);
+  .update(fs.readFileSync(new URL('./agent-defaults.mjs', import.meta.url)))
+  .update(fs.readFileSync(new URL('./privacy.html', import.meta.url))).digest('hex').slice(0, 12);
 // Uploads from one address (audit 2026-11-07, SRV-13: the upload token ships in the extension, so
 // anyone could fill the volume). Two token buckets per address, in memory: requests and bytes. An
 // agent's panel posts at most once a minute plus a few prompt uploads (an intake loaded, a problem
