@@ -194,24 +194,19 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-confirm .ghost { min-height: 30px; }
 .file-confirm p { color: var(--ink); }
 .client-note { margin: 8px 12px 0; padding: 6px 9px; border-radius: var(--radius-sm); background: var(--success-soft); color: var(--success-ink); }
-.steps { padding: 8px 12px 9px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.steps { padding: 8px 12px 9px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .step { display: grid; gap: 4px; padding: 0; background: none; border: 0; text-align: left; min-width: 0; }
 .step-bar { height: 4px; border-radius: 2px; background: var(--border); }
 .step-line { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.step-num { flex: 0 0 auto; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 8px; font: 700 9px/1 var(--font-mono); color: var(--ink-muted); background: var(--surface); border: 1px solid var(--border-queued); }
 .step-label { font-size: 11.5px; font-weight: 600; color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.step[aria-current="step"] .step-label { color: var(--ink-strong); font-weight: 700; }
-.step-note { margin-top: -3px; padding-left: 21px; font-size: 11px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step[aria-current="true"] .step-label { color: var(--ink-strong); font-weight: 700; }
+.step-note { margin-top: -3px; font-size: 11px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .step[data-state="done"] .step-bar { background: var(--success); }
-.step[data-state="done"] .step-num { color: #fff; background: var(--success); border-color: var(--success); }
 .step[data-state="done"] .step-note { color: var(--success-ink); }
 .step[data-state="active"] .step-bar { background: var(--brand); }
-.step[data-state="active"] .step-num { color: #fff; background: var(--brand); border-color: var(--brand); }
 .step[data-state="warn"] .step-bar { background: var(--warning-bar); }
-.step[data-state="warn"] .step-num { color: var(--warning-ink); border-color: var(--warning-bar); }
 .step[data-state="warn"] .step-note { color: var(--warning-ink); }
 .step[data-state="bad"] .step-bar { background: var(--signal-line); }
-.step[data-state="bad"] .step-num { color: var(--signal); border-color: var(--signal-line); }
 .step[data-state="bad"] .step-note { color: var(--signal-dark); }
 
 /* The middle: one scrolling area between the header (and client strip) and the dock. Positioned, so

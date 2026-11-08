@@ -998,7 +998,7 @@ test('a fill report does not list the buttons waiting on others', () => {
   assert.doesNotMatch(extractFunction('renderReport'), /'Buttons waiting'/);
 });
 
-test('an automatic fill says so in step 2 and brings step 3 into view, unless the agent is working in step 1', () => {
+test('an automatic fill says so on This page and brings it into view, unless the agent is working on the Intake tab', () => {
   const { context, box } = reportHarness({ tab: { id: 1, url: 'Quote' } });
   context.renderReport([{ fields: 2, kept: [], failed: [], noData: [], leftRequired: [], actions: [], filled: [{ label: 'A', key: 'a', shown: 'x' }] }], { auto: 'page' });
   assert.equal(context.state.reportFor.auto, true);
@@ -7472,12 +7472,17 @@ test('on a stop step the panel offers no fill; on the other steps it names the s
   assert.deepEqual([stoppedDock.phase, stoppedDock.button, stoppedDock.alt], ['yours', undefined, undefined]);
   assert.deepEqual([stoppedDock.title, stoppedDock.sub], ['Finish MVR & CLUE yourself', 'Nothing on this step is filled or clicked.']);
   const stopped = siteHarness(geico, 'MVR & CLUE');
-  assert.deepEqual([stopped['site-step'].textContent, stopped['site-count'].textContent], ['MVR & CLUE page', 'Step 8 of 9']);
+  assert.deepEqual([stopped['site-step'].textContent, stopped['site-count'].textContent], ['MVR & CLUE page', 'Page 8 of 9']);
   const vehiclesDock = dock('Vehicles');
   assert.deepEqual([vehiclesDock.phase, vehiclesDock.button, vehiclesDock.label, vehiclesDock.title], ['ready', 'fill', 'Fill this page', 'Fill the Vehicles page']);
   assert.equal(vehiclesDock.sub, 'Nothing is submitted. Review, then click Next yourself.');
   const vehicles = siteHarness(geico, 'Vehicles');
-  assert.deepEqual([vehicles['site-step'].textContent, vehicles['site-count'].textContent], ['Vehicles page', 'Step 3 of 9']);
+  assert.deepEqual([vehicles['site-step'].textContent, vehicles['site-count'].textContent], ['Vehicles page', 'Page 3 of 9']);
+  // Audit 2026-11-07, UX-04: "Step n of m" in the header beside the start dock's "Step 1 of 3" (the
+  // panel's own steps): the header says the quote's page, the start dock no step number.
+  const start = dockHarness({ carrier: geico });
+  start.state.intake = null;
+  assert.deepEqual([start.dock().phase, start.dock().eyebrow], ['start', 'Start']);
   // The strip: the steps before done, the tab's here (filled once its page has a report), the rest to come.
   assert.deepEqual(vehicles.siteTrack.map((s) => s.at), ['done', 'done', 'here', null, null, null, null, null, null]);
   assert.deepEqual(vehicles.siteTrack.map((s) => s.name), geico.quoteSteps.map((s) => s.name));
@@ -9664,9 +9669,9 @@ test('the client strip: the name opens client details, and Change file, New quot
   // New quote is off while answers go in: renderSteps says it, the header draws it.
   assert.match(extractFunction('renderSteps'), /state\.newQuoteOff = !!state\.filling;/);
   assert.match(view, /disabled=\{newQuoteOff\} onClick=\{\(\) => act\.newQuote\(\)\}/);
-  // The three steps under the strip: drawn by steps-view.jsx (their labels and order:
+  // The two tabs under the strip: drawn by steps-view.jsx (their labels and order:
   // test/panel/steps-view.test.jsx).
-  assert.match(html, /<nav id="steps" class="steps" aria-label="Steps"><\/nav>\s+<\/section>/);
+  assert.match(html, /<nav id="steps" class="steps" aria-label="Intake or this page"><\/nav>\s+<\/section>/);
   assert.match(SIDEPANEL, /mountSteps\(\$\('steps'\), \{\s+check: \(\) => setView\('check'\),\s+fill: \(\) => setView\('page'\),\s+confirm: \(\) => \{ setView\('page'\); refreshAnswers\(\); checkItems\(\); \},\s+\}\);/);
 });
 
@@ -9788,7 +9793,7 @@ test('the quote is done where TNI stops on the rater: the finishing action click
   // (quoteFinished reads the done actions of the state it was extracted with: the same Set.)
   done.delete('printProposal');
   assert.equal(d.dock().phase, 'yours', 'not printed: moving on is the agent\'s, as before');
-  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;[\s\S]*note: !filled \? 'After the fill' : finished \? 'Quote done'/);
+  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;[\s\S]*!filled \? \(stopped \? 'Stopped' : 'Ready to fill'\)\s*: finished \? 'Quote done'/);
   assert.equal(geico.finishedBy, 'printProposal');
   assert.ok(geico.actions.some((a) => a.id === 'printProposal' && a.steps.includes('Quote & Coverages')));
 });

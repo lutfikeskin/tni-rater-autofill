@@ -1,5 +1,5 @@
-// The quote's three steps and the dock in React, drawn from what the panel says of them: the steps'
-// tone, note and which one is shown (state.steps, renderSteps in coordinator.js), and the dock's one
+// The panel's two tabs (Intake, This page) and the dock in React, drawn from what the panel says of
+// them: the tabs' tone, note and which one is shown (state.steps, renderSteps in coordinator.js), and the dock's one
 // next thing to do and its button (state.dock, renderDock from dockFor). What their buttons do is the
 // panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountSteps, mountDock).
@@ -9,25 +9,28 @@ import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 
-// The intake, then the page in front: filled, then reviewed. `prefix`: the ids of its number and note.
-const STEPS = [
-  { id: 'check', prefix: 'check', number: '1', label: 'Intake', controls: 'check-view' },
-  { id: 'fill', prefix: 'fill', number: '2', label: 'Fill page', controls: 'page-view' },
-  { id: 'confirm', prefix: 'finish', number: '3', label: 'Review page', controls: 'page-view' },
+// Two tabs: the intake, and the page in front (its fill, then what is left on it for the agent).
+// Not a wizard: the page tab is one view, and the header's "Page n of m" is the quote's place (audit
+// 2026-11-07, UX-04: three numbered steps, two of them the same view, beside the header's "Step n
+// of m"). `prefix`: the id of its note (#check-summary, #fill-summary: the harnesses read them).
+const TABS = [
+  { id: 'check', prefix: 'check', label: 'Intake', controls: 'check-view' },
+  { id: 'fill', prefix: 'fill', label: 'This page', controls: 'page-view' },
 ];
 
-// Each step: its bar, number (✓ once done) and note, toned by what it says ('done', 'active',
-// 'warn', 'bad'); the one shown is the current step. Before the panel has said anything, as the
-// page loads, each is drawn plain.
+// Each tab: its bar, name and note, toned by what it says ('done', 'active', 'warn', 'bad'); the
+// one shown is marked current. Before the panel has said anything, as the page loads, each is drawn
+// plain. The page tab, once its page is filled (`review`), asks the panel to read the page again
+// (act.confirm); before, it only shows the page (act.fill).
 function Steps({ act }) {
   const said = useStore(panelStore, (s) => s.steps);
-  return STEPS.map(({ id, prefix, number, label, controls }) => {
+  return TABS.map(({ id, prefix, label, controls }) => {
     const s = said?.[id] ?? {};
     return (
       <button key={id} type="button" id={`step-${id}`} className="step" aria-controls={controls} data-state={s.tone}
-        aria-current={s.current ? 'step' : undefined} onClick={() => act[id]()}>
+        aria-current={s.current ? 'true' : undefined} onClick={() => act[s.review ? 'confirm' : id]()}>
         <span className="step-bar" />
-        <span className="step-line"><span id={`${prefix}-num`} className="step-num">{s.tone === 'done' ? '✓' : number}</span><span className="step-label">{label}</span></span>
+        <span className="step-line"><span className="step-label">{label}</span></span>
         <span id={`${prefix}-summary`} className="step-note">{s.note ?? ''}</span>
       </button>
     );

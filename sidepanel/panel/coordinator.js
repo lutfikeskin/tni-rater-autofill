@@ -930,13 +930,13 @@ function renderSite() {
   // dock says what to open).
   $('carrier-line').hidden = !carrier;
   $('brand').hidden = !!carrier;
-  // Where the tab is in the quote: its step, "Step 3 of 7" and a bar (carriers.js quoteProgress).
+  // Where the tab is in the quote: its step, "Page 3 of 7" and a bar (carriers.js quoteProgress).
   const page = pageOf(state.tab?.url);
   const progress = carrier ? quoteProgress(carrier, page, state.tabSteps.get(state.tab.id)) : null;
   $('site-step').hidden = !progress;
   $('site-step').textContent = progress ? `${progress.name} page` : '';
   $('site-count').hidden = !progress;
-  $('site-count').textContent = progress ? `Step ${progress.index + 1} of ${progress.count}` : '';
+  $('site-count').textContent = progress ? `Page ${progress.index + 1} of ${progress.count}` : '';
   const filledHere = reportShown() && !!state.reportFor.fields;
   $('site-track').hidden = !progress;
   // Its marks, drawn by site-view.jsx.
@@ -1093,9 +1093,10 @@ function announce(text) {
   setTimeout(() => { live.textContent = text; }, 50);
 }
 
-// The three steps under the client's name: what each says about the intake and the page in front,
-// and which one's view is shown (state.steps, drawn by steps-view.jsx); then the page view (the answers going in, or the last fill's, with
-// their filters: state.feed, drawn by feed-view.jsx) and the dock. Steps 2 and 3 show the last fill of the page in front.
+// The two tabs under the client's name, Intake and This page: what each says about the intake and
+// the page in front, and which one's view is shown (state.steps, drawn by steps-view.jsx); then the
+// page view (the answers going in, or the last fill's, with their filters: state.feed, drawn by
+// feed-view.jsx) and the dock. This page shows the last fill of the page in front.
 function renderSteps() {
   // Pop out or Dock: never while a fill runs.
   $('pop-out').hidden = !inExtension || popped;
@@ -1124,23 +1125,21 @@ function renderSteps() {
   const notice = filling || error ? null : report?.notice ?? null;
   const left = filled ? report.left ?? 0 : 0;
   const steps = {};
-  const step = (id, { tone = '', note, current }) => { steps[id] = { tone, note, current: !!current }; };
-  // 1. Intake.
+  const step = (id, { tone = '', note, current, review = false }) => { steps[id] = { tone, note, current: !!current, review: !!review }; };
+  // The Intake tab.
   step('check', { tone: open ? 'warn' : 'done', note: open ? `${open} to check` : 'All checked', current: state.view === 'check' });
-  // 2. Fill page: the page in front's.
-  step('fill', {
-    tone: !onRater ? '' : error || (stopped && !filled) ? 'bad' : filled ? 'done' : 'active',
-    note: !onRater ? 'Open a rater' : filling ? `Filling… ${state.fillingFor.filled ?? 0} in` : error ? 'Didn’t finish'
-      : filled ? `${report.filled} filled${report.auto ? ' automatically' : ''}` : stopped ? 'Stopped' : 'Ready to fill',
-    current: state.view === 'page' && !filled,
-  });
-  // 3. Review page: what's left for the agent on it, and Continue; "Quote done" where the quote
-  // ends (quoteFinished).
+  // The page tab: the page in front's fill, then what's left on it for the agent, and Continue;
+  // "Quote done" where the quote ends (quoteFinished). Once filled, opening it reads the page again
+  // (`review`: the panel's confirm).
   const finished = filled && quoteFinished(carrier, report, page) && !pendingAi(state.tab.id, page).length;
-  step('confirm', {
-    tone: !filled ? '' : finished || report.advanced ? 'done' : 'active',
-    note: !filled ? 'After the fill' : finished ? 'Quote done' : report.advanced ? 'Continued' : left ? `${left} need${left === 1 ? 's' : ''} you` : 'All answered',
-    current: state.view === 'page' && filled,
+  step('fill', {
+    tone: !onRater ? '' : error || (stopped && !filled) ? 'bad' : !filled ? 'active' : finished || report.advanced || !left ? 'done' : 'active',
+    note: !onRater ? 'Open a rater' : filling ? `Filling… ${state.fillingFor.filled ?? 0} in` : error ? 'Didn’t finish'
+      : !filled ? (stopped ? 'Stopped' : 'Ready to fill')
+        : finished ? 'Quote done' : report.advanced ? 'Continued' : left ? `${left} need${left === 1 ? 's' : ''} you`
+          : `${report.filled} filled${report.auto ? ' automatically' : ''}`,
+    current: state.view === 'page',
+    review: filled,
   });
   state.steps = steps;
   // The page view: a rater to open, what's wrong about the last fill (state.cards, drawn by
@@ -1304,7 +1303,7 @@ function playChime() {
 // The dock: the one next thing to do, always in the same place under the panel, and its button.
 // #dock[data-phase] names it, and data-report the fill it is about (the panel harness reads both).
 function dockFor() {
-  if (!state.intake) return { phase: 'start', eyebrow: 'Step 1 of 3', title: 'Add the client’s intake PDF', sub: 'The panel checks it and fills the rater.' };
+  if (!state.intake) return { phase: 'start', eyebrow: 'Start', title: 'Add the client’s intake PDF', sub: 'The panel checks it and fills the rater.' };
   const { warnings, done } = state.intake;
   const open = warnings.filter((w, i) => checkShown(w) && !done.includes(i)).length;
   const checksSaid = state.view === 'check' && open ? `${open} intake item${open === 1 ? '' : 's'} not looked at yet. You can still fill.` : null;

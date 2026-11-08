@@ -3,11 +3,11 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
 import { Dock, Steps, mountDock, mountSteps } from '../../sidepanel/panel/steps-view.jsx';
 
-// The quote's three steps and the dock in React (React PR 5, 2026-11-01): what renderSteps and
+// The panel's two tabs (Intake, This page) and the dock in React (React PR 5, 2026-11-01): what renderSteps and
 // renderDock wrote on the page's own elements, drawn from what they say now (state.steps,
 // state.dock). What each says is checked by the safety tests (dockFor, continueSaid, renderSteps,
 // renderDock); here, that the page shows it with the ids, attributes and wording the panel's
-// harnesses read (#dock[data-phase], data-report, #fill, #dock-alt[data-go], #finish-summary), and
+// harnesses read (#dock[data-phase], data-report, #fill, #dock-alt[data-go], #fill-summary), and
 // what each button asks the panel to do (wired in sidepanel.js: the safety tests check the wiring).
 
 let state;
@@ -21,41 +21,43 @@ const acts = () => {
   return { calls, act: Object.fromEntries(['check', 'fill', 'confirm', 'stop', 'next', 'lookRight', 'approve', 'alt'].map((n) => [n, call(n)])) };
 };
 const steps = (container) => [...container.querySelectorAll('.step')].map((b) => [b.id, b.dataset.state ?? null, b.getAttribute('aria-current'),
-  b.querySelector('.step-num').textContent, b.querySelector('.step-label').textContent, b.querySelector('.step-note').textContent]);
+  b.querySelector('.step-label').textContent, b.querySelector('.step-note').textContent]);
 const shown = (container) => [...container.querySelectorAll('.dock-body > button')].filter((b) => !b.hidden).map((b) => [b.id, b.textContent, b.disabled]);
 const $ = (container, id) => container.querySelector(`#${id}`);
 
-// From the safety test on the client strip ("Intake", "Fill page", "Review page" in the page's
-// markup) and renderSteps' step(): each step's tone, number (✓ once done), note and the one shown.
-test('the three steps say what renderSteps says of them, in order, and ask the panel for their view', () => {
+// Audit 2026-11-07, UX-04: three numbered steps, two of them the same view (Fill page, Review page),
+// whose checkmarks went back on every page, beside the header's "Step n of m". Now two tabs, no
+// numbers: the intake, and the page in front.
+test('the two tabs say what renderSteps says of them, in order, and ask the panel for their view', () => {
   const t = acts();
   const { container } = render(<Steps act={t.act} />);
-  // Before the panel says anything: plain, numbered.
+  // Before the panel says anything: plain.
   expect(steps(container)).toEqual([
-    ['step-check', null, null, '1', 'Intake', ''],
-    ['step-fill', null, null, '2', 'Fill page', ''],
-    ['step-confirm', null, null, '3', 'Review page', ''],
+    ['step-check', null, null, 'Intake', ''],
+    ['step-fill', null, null, 'This page', ''],
   ]);
-  expect([...container.querySelectorAll('.step')].map((b) => b.getAttribute('aria-controls'))).toEqual(['check-view', 'page-view', 'page-view']);
+  expect(container.querySelector('.step-num')).toBe(null);
+  expect([...container.querySelectorAll('.step')].map((b) => b.getAttribute('aria-controls'))).toEqual(['check-view', 'page-view']);
   act(() => {
     state.steps = {
       check: { tone: 'done', note: 'All checked', current: false },
-      fill: { tone: 'done', note: '12 filled automatically', current: false },
-      confirm: { tone: 'active', note: '2 need you', current: true },
+      fill: { tone: 'active', note: '2 need you', current: true, review: true },
     };
   });
   expect(steps(container)).toEqual([
-    ['step-check', 'done', null, '✓', 'Intake', 'All checked'],
-    ['step-fill', 'done', null, '✓', 'Fill page', '12 filled automatically'],
-    ['step-confirm', 'active', 'step', '3', 'Review page', '2 need you'],
+    ['step-check', 'done', null, 'Intake', 'All checked'],
+    ['step-fill', 'active', 'true', 'This page', '2 need you'],
   ]);
-  // Mark done lowers what is left: the note the Luna mock reads (#finish-summary) follows.
-  act(() => { state.steps = { ...state.steps, confirm: { tone: 'active', note: '1 needs you', current: true } }; });
-  expect($(container, 'finish-summary').textContent).toBe('1 needs you');
-  act(() => { state.steps = { ...state.steps, check: { tone: 'warn', note: '3 to check', current: true }, confirm: { tone: '', note: 'After the fill', current: false } }; });
-  expect(steps(container).map((s) => s.slice(1, 4))).toEqual([['warn', 'step', '1'], ['done', null, '✓'], ['', null, '3']]);
-  for (const id of ['check', 'fill', 'confirm']) fireEvent.click($(container, `step-${id}`));
-  expect(t.calls).toEqual([['check'], ['fill'], ['confirm']]);
+  // Mark done lowers what is left: the note the Luna mock reads (#fill-summary) follows.
+  act(() => { state.steps = { ...state.steps, fill: { tone: 'active', note: '1 needs you', current: true, review: true } }; });
+  expect($(container, 'fill-summary').textContent).toBe('1 needs you');
+  // A filled page's tab reads the page again (confirm); before the fill it only shows the page.
+  fireEvent.click($(container, 'step-check'));
+  fireEvent.click($(container, 'step-fill'));
+  act(() => { state.steps = { ...state.steps, check: { tone: 'warn', note: '3 to check', current: true }, fill: { tone: 'active', note: 'Ready to fill', current: false, review: false } }; });
+  expect(steps(container).map((s) => s.slice(1, 3))).toEqual([['warn', 'true'], ['active', null]]);
+  fireEvent.click($(container, 'step-fill'));
+  expect(t.calls).toEqual([['check'], ['confirm'], ['fill']]);
 });
 
 // From renderDock: the dock is hidden until the panel says it and while Settings is open; it names
@@ -161,7 +163,7 @@ test('mountSteps and mountDock draw before they return', () => {
   act(() => {
     mountSteps(nav, acts().act);
     mountDock(foot, acts().act);
-    expect([...nav.querySelectorAll('.step')].map((b) => b.id)).toEqual(['step-check', 'step-fill', 'step-confirm']);
+    expect([...nav.querySelectorAll('.step')].map((b) => b.id)).toEqual(['step-check', 'step-fill']);
     expect(foot.querySelector('#dock')?.hidden).toBe(true);
   });
   nav.remove();

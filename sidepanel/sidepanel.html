@@ -55,14 +55,14 @@
   </header>
 
   <!-- The client: their name (a button to every answer on the intake), the intake PDF, the file tools
-       always in view (no menu to open first), and the three steps as a strip -->
+       always in view (no menu to open first), and the two tabs, Intake and This page -->
   <section id="quote" class="client" hidden>
     <!-- The name, the tools, the file tools' question and the note on the file just loaded: drawn by
          client-view.jsx (mountClient). -->
     <div id="client-root"></div>
-    <!-- The intake, then the page in front: filled, then reviewed. Each page has its own 2 and 3;
-         the header's "Step n of m" is the quote's place. Drawn by steps-view.jsx (mountSteps). -->
-    <nav id="steps" class="steps" aria-label="Steps"></nav>
+    <!-- The intake, then the page in front (its fill and what is left on it). The header's
+         "Page n of m" is the quote's place. Drawn by steps-view.jsx (mountSteps). -->
+    <nav id="steps" class="steps" aria-label="Intake or this page"></nav>
   </section>
 
   <main id="view" class="view">
