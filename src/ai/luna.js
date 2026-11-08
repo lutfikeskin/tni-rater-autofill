@@ -387,6 +387,35 @@ export async function callModel({ apiKey, proxy = null, body, fetchImpl = global
   } finally { clearTimeout(timer); }
 }
 
+// One model call as Luna got it and answered, for the developer recording (`trace`, while one runs;
+// docs/developer-recording.md): which call, the request's state (the intake already redacted as sent;
+// the questions and their options as the page shows them), the answer it gave, its usage and time.
+// Never logged or uploaded: it stays in the recording's zip.
+function traced(call, trace) {
+  return async (args) => {
+    const started = Date.now();
+    let json = null, error = null;
+    try {
+      json = await call(args);
+      return json;
+    } catch (e) {
+      error = e;
+      throw e;
+    } finally {
+      let state = null, answer = null;
+      try { state = JSON.parse(args.body.input[0].content); } catch { /* not this contract's request */ }
+      try { answer = json ? responseData(json) : null; } catch { /* refused below as it is */ }
+      const count = (v) => (Number.isFinite(v) && v >= 0 ? v : null);
+      try {
+        trace({ call: state?.proposed ? 'verify' : 'propose', ms: Date.now() - started, request: state, answer,
+          model: typeof json?.model === 'string' ? json.model : null, outcome: typeof json?.status === 'string' ? json.status : null,
+          tokensIn: count(json?.usage?.input_tokens), tokensOut: count(json?.usage?.output_tokens),
+          error: error ? String(error.message ?? error).slice(0, 200) : null });
+      } catch { /* the recording never stops a review */ }
+    }
+  };
+}
+
 // A failed or dropped review carries its prompt hash too (error.promptHash), so its log can be told
 // apart by the instructions and rules that produced it.
 export async function suggest(items, context, config, options = {}) {
@@ -399,7 +428,8 @@ export async function suggest(items, context, config, options = {}) {
   }
 }
 
-async function reviewPage(items, context, config, { call = callModel, isStale = () => false }, prompt) {
+async function reviewPage(items, context, config, { call: send = callModel, isStale = () => false, trace = null }, prompt) {
+  const call = trace ? traced(send, trace) : send;
   const counters = { tokensIn: 0, tokensOut: 0, modelCalls: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
   const fresh = () => { if (isStale()) throw new AssistError('The page or intake changed. Run Fill again for fresh suggestions.'); };
   // Counted as soon as a call returns, before it is checked or found stale: its tokens were spent.
