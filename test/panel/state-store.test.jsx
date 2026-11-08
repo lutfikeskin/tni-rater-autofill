@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import { test, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { act, cleanup, render, screen } from '@testing-library/react';

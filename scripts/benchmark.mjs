@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Replay benchmark: would today's rules give the answers agents left in recorded quotes?
 //
 //   npm run benchmark -- --intakes <folder with intake PDFs> [--intakes <another>] [--key key.json [--tests <file>]] [--save run.json] [--against earlier.json]
