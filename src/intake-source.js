@@ -119,7 +119,7 @@ const around = (rects) => [
  * there (PDF units), and one rectangle per path in `rects`; null when the PDF doesn't show it.
  * Several paths (a derived answer's evidence, plan.js `from`) are each marked on the first one's
  * page; `rect` is the box around all of them. An answer this intake read from another box than
- * its own (`readFrom`, normalizeIntake: years in business from the notes) is marked there.
+ * its own (`readFrom`, normalizeIntake: years in business or ownership from the notes) is marked there.
  * @param {string | string[]} paths
  * @param {{ rows?: object, readFrom?: Record<string, string[]>, places?: { fields: Record<string, { page: number, rect: number[] }> } }} intake
  */

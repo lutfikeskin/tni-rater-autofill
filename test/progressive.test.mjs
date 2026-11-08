@@ -494,7 +494,7 @@ test('search-style business type: General Freight Trucking, else For Hire Trucki
   assert.deepEqual([la.value, la.source, la.manualOnly, la.search], [null, 'fact', true, null]);
   const popup = byQ(plan, '36');
   assert.deepEqual([popup.value, popup.source, popup.manualOnly, popup.choiceAliases, popup.unofferedNote], [null, 'derived', false, [], null]);
-  assert.match(popup.note, /Business type for a Flat Bed\/Step Deck hauling Rebar and steel pipe: no exact match\. Luna suggests/);
+  assert.match(popup.note, /Business type for a Flat Bed\/Step Deck hauling Rebar and steel pipe: no exact match\. The AI assistant suggests/);
   assert.equal(plan.find((s) => s.q === '1D' && s.selector).ignore, false, 'Trucking typed for every class');
   assert.ok(plan.find((s) => s.action === 'businessTypePopupSearch'), 'and searched');
   assert.equal(plan.find((s) => s.action === 'businessTypePopupContinue'), undefined, 'the popup\'s Continue follows the agent\'s approval of Luna\'s pick');
