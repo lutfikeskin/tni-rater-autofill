@@ -138,6 +138,16 @@ its `COPY` sources) have no uncommitted or untracked changes, then runs
 needs) and waits up to 5 minutes in all, a stalled request included, for Railway's production `/v1/health` (never `RATER_SERVER`) to name this checkout's server. `--dry-run` only
 checks. A failed build exits 1, and the previous deployment keeps serving.
 
+After a merge to `main` that changes what the image is built from (`server/`, `.railwayignore`, or
+any other file `server/Dockerfile` copies: `test/deploy.test.mjs` holds the workflow's paths to it), [deploy-server.yml](../.github/workflows/deploy-server.yml) runs the same
+script on GitHub, one deploy at a time (the maintainer, 2026-11-07). It needs the repository secret
+`RAILWAY_TOKEN`, a Railway project token for the production environment; without it the job says
+`RAILWAY_TOKEN is not set: nothing deployed` and succeeds, so deploy by hand as above. Only the
+step that checks for the token and the deploy step get it, not the install of Railway's CLI. It checks
+out `main` as it is when the job starts, not the pushed commit, so a later merge that changes no
+server file and starts no run of its own doesn't stop the deploy. Actions → Deploy usage server →
+Run workflow deploys `main` again on demand.
+
 Before deploying, confirm `RATER_TOKEN` is set in the service's Variables. The server fails closed:
 bound to anything but loopback (`127.0.0.1`, `localhost`, `::1`) without `RATER_TOKEN`, it exits
 with `RATER_TOKEN is not set and HOST=0.0.0.0 is not loopback: refusing to start an open upload
