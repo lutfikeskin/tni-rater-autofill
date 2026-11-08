@@ -23,7 +23,7 @@ test('the checklist ticks what is done, opens Settings at what is left, and goes
   const root = container.querySelector('#setup-root');
   expect(root.childNodes.length).toBe(0);
   act(() => { state.health = { checklist: items(['ai', 'server']) }; });
-  const rows = () => [...root.querySelectorAll('.setup-list li')].map((li) => [li.dataset.item, li.className, li.querySelector('.tick').textContent, li.querySelector('.setup-label').textContent, !!li.querySelector('button')]);
+  const rows = () => [...root.querySelectorAll('.setup-list li')].map((li) => [li.getAttribute('data-item'), li.className, li.querySelector('.tick').textContent, li.querySelector('.setup-label').textContent, !!li.querySelector('button')]);
   expect(root.querySelector('h3').textContent).toBe('Finish setting up');
   expect(root.querySelector('.setup-card > p').textContent).toBe('One thing left, then you’re ready to quote.');
   expect(rows()).toEqual([
