@@ -14,7 +14,7 @@ export const API_URL = 'https://api.openai.com/v1/responses';
 // The safety contract's version, set by hand: the schema's shape, what may be picked automatically and
 // what counts as evidence. Changing it retires every pending approval hold (restoreAiPending). The
 // prompt itself (instructions and rules as sent) is told apart by promptHash, automatically.
-export const POLICY_VERSION = 'luna-evidence-v6';
+export const POLICY_VERSION = 'luna-evidence-v7';
 const KINDS = new Set(['radio', 'select', 'checkbox']);
 const BATCH_SIZE = 12;
 // A request's state and schema, in characters. TNI's server allows more (LUNA_MAX_CHARS in

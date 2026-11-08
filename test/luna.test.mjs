@@ -444,7 +444,7 @@ test('promptHash follows the instructions and the rules as sent, and each review
   setActiveDefaults({ values: { umCsl: { value: 300_000 }, medPay: { value: 2_000 } } });
   assert.notEqual(await promptHash('progressive'), base, "an agent's own defaults");
   setActiveDefaults(null);
-  assert.equal(POLICY_VERSION, 'luna-evidence-v6');
+  assert.equal(POLICY_VERSION, 'luna-evidence-v7');
   const result = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => (JSON.parse(body.input[0].content).proposed ? groupCheck(body) : answer(body)) });
   assert.equal(result.promptHash, await promptHash('geico'));
   assert.ok(result.suggestions.every(x => x.promptHash === result.promptHash));
