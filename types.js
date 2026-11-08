@@ -46,9 +46,10 @@
  * @property {{ fields: number, filled: number }} stats
  * @property {{ drivers: number[], vehicles: number[], trailers: number[] }} rows  the form row (1-4) each unit was read from
  * @property {Record<string, string[]>} readFrom  record path -> the form fields an answer was read
- *   from when that isn't its own box (years in business stated in the notes: `claims_details`,
- *   `additional_notes`); the panel marks it there on the PDF (intake-source.js sourcePlace). Empty
- *   otherwise; absent on an intake saved before it.
+ *   from when that isn't its own box (years in business, a year established or an ownership stated
+ *   in the notes: `claims_details`, `additional_notes`); the panel marks it there on the PDF
+ *   (intake-source.js sourcePlace), and a correction of the notes recomputes it (normalize.js
+ *   rederive, which keeps it current). Empty otherwise; absent on an intake saved before it.
  */
 
 /** @typedef {'vehicles' | 'drivers' | 'trailers'} UnitList */
@@ -134,7 +135,8 @@
  *   SOURCES (Contract 2, docs/intake-and-rules.md), which test/provenance.test.mjs checks for every rule
  * @property {string} [tni]  the id of the TNI rulebook entry that states this answer (src/ai/rulebook/:
  *   general.js or this carrier's part); every rule that can be `standard` has one, which
- *   test/rulebook.test.mjs checks with the entry's kind and part. Nothing at fill time reads it
+ *   test/rulebook.test.mjs checks with the entry's kind and part (a function source counts when it
+ *   returns `standard` for any record of the test's matrix, through a wrapper too). Nothing at fill time reads it
  * @property {string} [kind]  a value kind (src/schema.js: bool, choice, date, int, money, state, text), or
  *   how the page kit picks it (address-suggest, first-option, pick-not, search-select, selected-option)
  * @property {string} [q]  the carrier's question id (Duck Creek)
@@ -987,7 +989,7 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel
+ *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel, and luna (one Luna call)
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
  * @property {boolean} [away]  panel: the panel follows another tab than the recorded one (true), or is back on it
  * @property {number | null} [followed]  panel: the tab the panel follows (a tab number)
@@ -1062,6 +1064,14 @@
  * @property {'page' | 'kit' | 'navigate' | 'reload' | 'back_forward' | 'prerender' | null} [how]  kit press: clicked from the page's own world, or by the kit; load: how the document came (its navigation entry's type)
  * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
  * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
+ * @property {'propose' | 'verify'} [call]  luna: the page review's first call or its evidence check (src/ai/luna.js `trace`)
+ * @property {object | null} [request]  luna: the request's state as sent (fields with their options, sources; the intake as Luna got it), redacted again
+ * @property {object | null} [answer]  luna: Luna's answer as it parsed (`decisions`), null when it gave none the contract accepts
+ * @property {string | null} [model]  luna: the model that answered
+ * @property {string | null} [outcome]  luna: the response's status as the provider said it (completed, incomplete…)
+ * @property {number | null} [tokensIn]  luna: the call's input tokens
+ * @property {number | null} [tokensOut]  luna: its output tokens
+ * @property {string | null} [error]  luna: why the call failed
  */
 
 /**

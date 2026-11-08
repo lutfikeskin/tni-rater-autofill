@@ -376,7 +376,7 @@ const classBusinessType = (r) => {
 const popupBusinessType = (r) => searchBusinessType(r) ?? classBusinessType(r);
 const popupBusinessSource = (r) => (searchClass(r) ? 'standard' : 'derived');
 const popupBusinessNote = (r) => (popupBusinessType(r) ? null
-  : `Business type for a ${r.operations.businessClass || 'business of unknown class'}${r.operations.whatHaul ? ` hauling ${r.operations.whatHaul}` : ''}: no exact match. Luna suggests the closest business from the business class and what they haul; check it, or pick it yourself.`);
+  : `Business type for a ${r.operations.businessClass || 'business of unknown class'}${r.operations.whatHaul ? ` hauling ${r.operations.whatHaul}` : ''}: no exact match. The AI assistant suggests the closest business from the business class and what they haul; check it, or pick it yourself.`);
 const popupBusinessUnoffered = (r) => (searchClass(r) ? SEARCH_UNOFFERED : null);
 // The popup's own Business Type box and Search (KY), apart from the page's box and Search behind it.
 const BECA_POPUP = '.becaPopupPage';
@@ -813,7 +813,7 @@ export const progressive = {
       { concept: 'quote.effective-date', q: '194', field: 'PolicyInput.EffectiveDate', ask: 'When should this Progressive Commercial Auto policy start?', name: 'Policy start date (preserve prefilled value)', ignore: true },
       { concept: 'prior.same-carrier', tni: 'progressive.insured-with-progressive', q: '198', source: insuredWithProgressiveSource, field: 'AccountInput.PGRInsuredIndicator', ask: 'Is the customer currently insured with Progressive Commercial Auto?', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive, note: insuredWithProgressiveNote },
       { concept: 'quote.agency', q: '1CC', field: 'Warehouse.QuoteVendorCode', ask: 'Quote Vendor Code', optional: true, name: 'Quote vendor code (optional)', ignore: true },
-      { concept: 'business.usdot', q: '1ED', source: held(hasUsdotSource), clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: holdOr(hasUsdotNote) },
+      { concept: 'business.usdot', q: '1ED', tni: 'progressive.ntl-usdot-filings', source: held(hasUsdotSource), clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: holdOr(hasUsdotNote) },
       { concept: 'business.usdot', q: '1F3', field: 'USDOTInput.NumberCollection', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !dotOnQuote(r), note: holdOr() },
       // Shown when Verify USDOT finds no record for the number (a brand-new USDOT). TNI's standard
       // Yes (2026-10-19, after a live run): a number the lookup doesn't know yet is a new one.

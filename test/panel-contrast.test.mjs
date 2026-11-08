@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Audit 2026-11-07, UX-09: the panel's muted text fell under 4.5:1 on the canvas and the sunken
 // surface, the edge of an input and the switch's off track under 3:1 on white, several labels were
 // 9-10px, and with reduced motion on the fill's sliding bar froze at a third, reading as progress.

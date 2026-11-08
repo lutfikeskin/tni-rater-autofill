@@ -75,6 +75,36 @@ export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fi
   .update(fs.readFileSync(new URL('./agent-defaults.mjs', import.meta.url)))
   .update(fs.readFileSync(new URL('./privacy.html', import.meta.url)))
   .update(fs.readFileSync(new URL('../src/usage-schema.js', import.meta.url))).digest('hex').slice(0, 12);
+// The log: one JSON object a line (audit 2026-11-07, SRV-11), so Railway's log search can filter by
+// field (`@level:error`, `@route:/v1/luna`, `@status:507`): when (`t`), `level` (info, or error on
+// console.error), and what happened as fields, with `msg` for a sentence. Names, counts and ids
+// only: never a token, an event's or a Luna request's content, OpenAI's answer, or a request's
+// path beyond the routes this server has.
+// Where an error was thrown: its first `n` stack frames. A stack starts with the error's header
+// (`Name: message`), and the message can run over several lines, quote event text or a path, and
+// hold a line that reads like a frame. So the header is cut off whole first, and a stack that
+// doesn't start with it (a changed `stack`, a thrown non-Error) gives no frames at all.
+const framesOf = (e, n) => {
+  if (typeof e?.stack !== 'string') return '';
+  let head;
+  try { head = Error.prototype.toString.call(e); } catch { return ''; }
+  if (!e.stack.startsWith(head)) return '';
+  return e.stack.slice(head.length).split('\n').map((s) => s.trim()).filter((s) => s.startsWith('at ')).slice(0, n).join(' | ');
+};
+
+export function logLine(fields, level = 'info') {
+  const line = JSON.stringify({ t: new Date().toISOString(), level, ...fields });
+  if (level === 'error') console.error(line);
+  else console.log(line);
+}
+// A route for the log and the counters: one of this server's, or `other`, never what was asked.
+const ROUTES = new Set(['/v1/events', '/v1/luna', '/v1/health', '/v1/days', '/v1/export', '/dashboard', '/privacy']);
+// A refusal's reason as a counter's name: what the server said, without the event's own text (an
+// unknown type's name, quotes inside it included: from the first quote to the last) or numbers,
+// so a client can't make up names of its own.
+const reasonKey = (error) => String(error).replace(/"[\s\S]*"/, '"…"').replace(/\d+/g, 'N').slice(0, 80);
+const MAX_REASONS = 50;
+
 // Uploads from one address (audit 2026-11-07, SRV-13: the upload token ships in the extension, so
 // anyone could fill the volume). Two token buckets per address, in memory: requests and bytes. An
 // agent's panel posts at most once a minute plus a few prompt uploads (an intake loaded, a problem
@@ -324,15 +354,16 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (!minFreeBytes) return false;
     let free;
     try { free = freeSpace(); } catch (e) {
-      if (!unreadableSaid) console.error(`${new Date().toISOString()} free space on ${dataDir} unreadable (${e?.name ?? 'error'}): uploads go on without the disk guard`);
+      if (!unreadableSaid) logLine({ msg: `free space on ${dataDir} unreadable: uploads go on without the disk guard`, disk: 'unreadable', error: e?.name ?? 'error' }, 'error');
       unreadableSaid = true;
       return false;
     }
     const low = free < minFreeBytes;
     if (low !== diskLow) {
       const said = `free space on ${dataDir} is ${Math.round(free / MB)} MB, the guard ${Math.round(minFreeBytes / MB)} MB (RATER_MIN_FREE_MB)`;
-      if (low) console.error(`${new Date().toISOString()} DISK LOW: ${said}: refusing uploads (507) until space is freed`);
-      else console.log(`${new Date().toISOString()} disk ok again: ${said}: taking uploads`);
+      const sizes = { freeMB: Math.round(free / MB), guardMB: Math.round(minFreeBytes / MB) };
+      if (low) logLine({ msg: `DISK LOW: ${said}: refusing uploads (507) until space is freed`, disk: 'low', ...sizes }, 'error');
+      else logLine({ msg: `disk ok again: ${said}: taking uploads`, disk: 'ok', ...sizes });
       diskLow = low;
     }
     return low;
@@ -507,7 +538,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     const receivedAt = new Date().toISOString();
     const file = path.join(eventsDir, `${receivedAt.slice(0, 10)}.jsonl`);
     const lines = events.map((e) => JSON.stringify({ ...e, receivedAt })).join('\n');
-    if (!lines) return;
+    if (!lines) return receivedAt;
     // On the disk before the 200 (audit 2026-11-07, SRV-05): the extension deletes its copy on that
     // answer, so a crash between the write and the disk would lose the events for good. A day's
     // first upload creates its file, whose name is in the folder: the folder is flushed too, or the
@@ -523,6 +554,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       const dir = fs.openSync(eventsDir, 'r');
       try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
     }
+    return receivedAt;
   }
 
   // Browsers may ask permission (CORS preflight) before an extension posts JSON. Only browser
@@ -559,7 +591,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (lunaDay.day === day) return lunaDay;
     let saved = {};
     try { saved = JSON.parse(fs.readFileSync(lunaFile(day), 'utf8')); } catch (e) {
-      if (e?.code !== 'ENOENT') console.error(`${new Date().toISOString()} Luna usage for ${day} unreadable (${e?.name ?? 'error'}): counting from 0`);
+      if (e?.code !== 'ENOENT') logLine({ msg: `Luna usage for ${day} unreadable (${e?.name ?? 'error'}): counting from 0`, luna: 'usage unreadable', day, error: e?.name ?? 'error' }, 'error');
     }
     Object.assign(lunaDay, { day }, ...LUNA_COUNTS.map((k) => ({ [k]: Number.isSafeInteger(saved?.[k]) && saved[k] >= 0 ? saved[k] : 0 })));
     return lunaDay;
@@ -571,11 +603,11 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(['day', ...LUNA_COUNTS].map((k) => [k, lunaDay[k]]))));
       fs.renameSync(tmp, lunaFile(lunaDay.day));
     } catch (e) {
-      console.error(`${new Date().toISOString()} Luna usage not saved (${e?.name ?? 'error'}): the count goes on in memory`);
+      logLine({ msg: 'Luna usage not saved: the count goes on in memory', luna: 'usage not saved', error: e?.name ?? 'error' }, 'error');
     }
   };
   const lunaTokens = () => lunaDay.inputTokens + lunaDay.outputTokens;
-  const lunaSaid = () => `luna ${lunaDay.requests}/${lunaDailyLimit} tokens ${lunaTokens()}/${lunaDailyTokens}`;
+  const lunaSaid = () => ({ requests: lunaDay.requests, limit: lunaDailyLimit, tokens: lunaTokens(), budget: lunaDailyTokens });
   // A whole number of tokens OpenAI says it used, or null.
   const tokenCount = (n) => (Number.isSafeInteger(n) && n >= 0 ? n : null);
   async function askLuna(body, done, res) {
@@ -585,8 +617,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (day.requests >= lunaDailyLimit || lunaTokens() >= lunaDailyTokens) {
       res.setHeader('retry-after', '3600');
       return day.requests >= lunaDailyLimit
-        ? done(429, { error: 'daily Luna limit reached' }, `luna limit ${lunaDailyLimit}`)
-        : done(429, { error: 'daily Luna token budget reached' }, `luna token budget ${lunaTokens()}/${lunaDailyTokens}`);
+        ? done(429, { error: 'daily Luna limit reached' }, { luna: 'limit', ...lunaSaid() })
+        : done(429, { error: 'daily Luna token budget reached' }, { luna: 'budget', ...lunaSaid() });
     }
     // Counted before the call: a request OpenAI refuses or doesn't answer still counts.
     day.requests++;
@@ -596,7 +628,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       upstream = await fetchImpl(openaiUrl, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${openaiKey}` },
         body: JSON.stringify(body), signal: AbortSignal.timeout(LUNA_TIMEOUT_MS) });
     } catch (e) {
-      return done(504, { error: 'OpenAI did not answer' }, `luna ${e?.name ?? 'error'}`);
+      return done(504, { error: 'OpenAI did not answer' }, { luna: 'no answer', error: e?.name ?? 'error' });
     }
     // OpenAI's error bodies can echo the request: only the status goes back, and only its error code
     // (an identifier such as insufficient_quota) is read, for the mapping and the log. The server's
@@ -608,10 +640,10 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       const status = [401, 403, 404].includes(upstream.status) || code === 'insufficient_quota' ? 424 : upstream.status;
       const retry = upstream.headers.get('retry-after');
       if (retry && status !== 424) res.setHeader('retry-after', retry);
-      return done(status, { error: `OpenAI returned HTTP ${upstream.status}` }, `luna upstream ${upstream.status}${code ? ` ${code}` : ''}`);
+      return done(status, { error: `OpenAI returned HTTP ${upstream.status}` }, { luna: 'upstream', upstream: upstream.status, ...(code ? { code } : {}) });
     }
     let json;
-    try { json = await upstream.json(); } catch { return done(502, { error: 'OpenAI sent an unreadable answer' }, 'luna unreadable'); }
+    try { json = await upstream.json(); } catch { return done(502, { error: 'OpenAI sent an unreadable answer' }, { luna: 'unreadable' }); }
     // What it cost: OpenAI's usage counts (never the answer). An answer without them is counted at
     // the most it could have cost: a token is at least one byte of the request as sent (a token per
     // 4 characters undercounted other scripts and punctuation: CodeRabbit on #375), plus the
@@ -625,18 +657,58 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     now.outputTokens += used.output;
     if (estimated) now.estimated++;
     saveLuna();
-    done(200, json, `${lunaSaid()} +${used.input}/${used.output}${estimated ? ' estimated' : ''}`);
+    done(200, json, { luna: 'answered', ...lunaSaid(), in: used.input, out: used.output, ...(estimated ? { estimated: true } : {}) });
   }
+
+  // What the server has done since it started, for TNI (admin /v1/health; audit 2026-11-07, SRV-11):
+  // requests by route and status, exceptions, events stored, already stored and refused (by the
+  // server's own reason, numbers and names left out), stored with a field dropped, and when the
+  // last was stored. Counts only, in memory: a restart starts them again (the day's Luna counts are
+  // on the volume). Luna's and the disk's are read when asked.
+  const metrics = {
+    startedAt: new Date().toISOString(), requests: {}, exceptions: 0,
+    events: { accepted: 0, duplicates: 0, rejected: 0, withDropped: 0, lastStoredAt: null },
+    rejects: {},
+  };
+  const routeOf = (req) => { try { const p = new URL(req.url, 'http://x').pathname; return ROUTES.has(p) ? p : 'other'; } catch { return 'other'; } };
+  const countRequest = (route, status) => {
+    const byStatus = (metrics.requests[route] ??= {});
+    byStatus[status] = (byStatus[status] ?? 0) + 1;
+  };
+  const countReject = (error) => {
+    const k = reasonKey(error);
+    const key = Object.hasOwn(metrics.rejects, k) || Object.keys(metrics.rejects).length < MAX_REASONS ? k : 'other';
+    metrics.rejects[key] = (metrics.rejects[key] ?? 0) + 1;
+  };
+  const health = () => {
+    let freeMB = null;
+    try { freeMB = Math.round(freeSpace() / MB); } catch { /* unreadable: null */ }
+    const luna = openaiKey ? { ...lunaToday(), limit: lunaDailyLimit, budget: lunaDailyTokens } : null;
+    return { ...metrics, uptimeS: Math.round((Date.now() - Date.parse(metrics.startedAt)) / 1000), disk: { freeMB, guardMB: Math.round(minFreeBytes / MB) }, luna };
+  };
 
   // One request's exception is that request's 500, never the end of the server (audit 2026-11-07,
   // SRV-01: a single request used to stop it for every agent). The log gets the error's name and
   // where it was thrown, not its message.
+  // A 500 it answers is counted and logged with its status and time like any answer; one that came
+  // after the answer had begun (an export streaming out) only closes the connection.
   const failed = (req, res, e) => {
-    const where = String(e?.stack ?? '').split('\n').slice(1, 3).map((s) => s.trim()).join(' | ');
-    console.error(`${new Date().toISOString()} ${req.method} ${req.url} failed: ${e?.name ?? 'error'}${where ? ` ${where}` : ''}`);
-    if (res.headersSent) res.destroy();
-    else send(res, 500, { error: 'server error' }, corsHeaders(req));
+    const where = framesOf(e, 2);
+    const route = routeOf(req);
+    metrics.exceptions++;
+    const line = { msg: 'request failed', method: req.method, route, error: e?.name ?? 'error', ...(where ? { where } : {}) };
+    if (res.headersSent) {
+      logLine(line, 'error');
+      res.destroy();
+      return;
+    }
+    send(res, 500, { error: 'server error' }, corsHeaders(req));
+    countRequest(route, 500);
+    const started = arrived.get(res);
+    logLine({ ...line, status: 500, ...(started === undefined ? {} : { ms: Date.now() - started }) }, 'error');
   };
+  // When each request arrived, for its 500's `ms`.
+  const arrived = new WeakMap();
   // A request callback (sync or async) with that guard.
   const guarded = (req, res, fn) => (...args) => {
     try {
@@ -649,10 +721,17 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
 
   function respond(req, res) {
     const started = Date.now();
+    arrived.set(res, started);
     const cors = corsHeaders(req);
-    const done = (status, body, note = '') => {
+    const route = routeOf(req);
+    // Every answer is logged and counted once, with what it was about (`fields`).
+    const logged = (status, fields = {}) => {
+      countRequest(route, status);
+      logLine({ method: req.method, route, status, ms: Date.now() - started, ...fields }, status >= 500 ? 'error' : 'info');
+    };
+    const done = (status, body, fields = {}) => {
       send(res, status, body, cors);
-      console.log(`${new Date().toISOString()} ${req.method} ${req.url} ${status} ${Date.now() - started}ms ${note}`);
+      logged(status, fields);
     };
     // A request target that isn't a URL (GET http://[::1/) is the client's mistake, before any check.
     let url;
@@ -662,18 +741,20 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       if (!cors['access-control-allow-origin']) return done(403, { error: 'not allowed' });
       res.writeHead(204, cors);
       res.end();
+      logged(204);
       return;
     }
     // Public privacy policy page (linked from the Chrome Web Store listing).
     if (req.method === 'GET' && url.pathname === '/privacy') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600' });
       res.end(fs.readFileSync(new URL('./privacy.html', import.meta.url)));
+      logged(200);
       return;
     }
     // What the daily server check reads (scripts/lib/central.mjs: `server`) and the panel's "is it
     // there" probe need, for anyone; how many events are stored, for TNI only.
     if (req.method === 'GET' && url.pathname === '/v1/health') {
-      return done(200, { ok: true, server: SERVER_HASH, schema: SCHEMA_VERSION, ...(isAdmin(req) ? { events: seen.size } : {}) });
+      return done(200, { ok: true, server: SERVER_HASH, schema: SCHEMA_VERSION, ...(isAdmin(req) ? { events: seen.size, metrics: health() } : {}) });
     }
     // The maintainer's usage page: 404 when it is off, so the server says nothing of it.
     if (url.pathname === '/dashboard') {
@@ -694,7 +775,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
         try {
           page = { at: now, html: renderDashboard(summarize(readRecent(Math.max(...Object.values(WINDOWS)) + 1, now), { now, window, includeTests, testIntakes })) };
         } catch (e) {
-          return done(500, { error: 'could not build the dashboard' }, `dashboard ${e?.name ?? 'error'}`);
+          return done(500, { error: 'could not build the dashboard' }, { error: e?.name ?? 'error' });
         }
         dashboardPages.set(key, page);
       }
@@ -704,7 +785,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
         'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
       });
       res.end(page.html);
-      console.log(`${new Date().toISOString()} GET dashboard ${window}${includeTests ? ' tests' : ''} 200 ${Date.now() - started}ms${page.at === now ? '' : ' cached'}`);
+      logged(200, { window, tests: includeTests, cached: page.at !== now });
       return;
     }
     if (req.method === 'GET' && (url.pathname === '/v1/days' || url.pathname === '/v1/export')) {
@@ -719,7 +800,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
       for (const f of files) res.write(fs.readFileSync(path.join(eventsDir, f)));
       res.end();
-      console.log(`${new Date().toISOString()} GET export ${since}..${until} ${files.length} days ${Date.now() - started}ms`);
+      logged(200, { since, until, days: files.length });
       return;
     }
     if (url.pathname !== '/v1/events' && url.pathname !== '/v1/luna') return done(404, { error: 'not found' });
@@ -735,14 +816,14 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     const ip = clientIp(req);
     const tooMany = (wait, what) => {
       res.setHeader('retry-after', String(wait));
-      return done(429, { error: `too many uploads from this address (${what}); try again in ${wait} s` }, `rate limit ${what} ${ip}`);
+      return done(429, { error: `too many uploads from this address (${what}); try again in ${wait} s` }, { limit: what, ip, wait });
     };
     if (!luna) {
       const wait = requestLimit(ip, 1);
       if (wait) return tooMany(wait, 'requests');
       if (tooFull()) {
         res.setHeader('retry-after', '3600');
-        return done(507, { error: 'the server is out of space for uploads; the events stay queued' }, 'disk low');
+        return done(507, { error: 'the server is out of space for uploads; the events stay queued' }, { disk: 'low' });
       }
     }
 
@@ -776,13 +857,21 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
         seen.add(event.id);
         accepted.push(event);
       }
+      let storedAt;
       try {
-        store(accepted);
+        storedAt = store(accepted);
       } catch (e) {
         for (const ev of accepted) seen.delete(ev.id);
-        return done(500, { error: 'could not store events' }, String(e.message));
+        return done(500, { error: 'could not store events' }, { error: e?.name ?? 'error', code: typeof e?.code === 'string' ? e.code : undefined });
       }
-      done(200, { accepted: accepted.length, duplicates, rejected }, `agent=${agent ?? '-'} +${accepted.length} dup=${duplicates} bad=${rejected.length}`);
+      const counted = metrics.events;
+      counted.accepted += accepted.length;
+      counted.duplicates += duplicates;
+      counted.rejected += rejected.length;
+      counted.withDropped += accepted.filter((e) => e.dropped).length;
+      if (accepted.length) counted.lastStoredAt = storedAt;
+      for (const r of rejected) countReject(r.error);
+      done(200, { accepted: accepted.length, duplicates, rejected }, { agent, accepted: accepted.length, duplicates, rejected: rejected.length });
     }));
   }
 }
@@ -793,26 +882,26 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const token = process.env.RATER_TOKEN || '';
   const problem = startupError({ host, token });
   if (problem) {
-    console.error(problem);
+    logLine({ msg: problem }, 'error');
     process.exit(1);
   }
   const dataDir = path.resolve(process.env.DATA_DIR || 'server-data');
   const lunaDailyLimit = lunaDailyLimitFrom(process.env.RATER_LUNA_DAILY_LIMIT);
   const lunaDailyTokens = lunaDailyTokensFrom(process.env.RATER_LUNA_DAILY_TOKENS);
   const dashboardToken = process.env.RATER_DASHBOARD_TOKEN || '';
-  if (dashboardToken && dashboardToken.length < MIN_DASHBOARD_TOKEN) console.error(`RATER_DASHBOARD_TOKEN is shorter than ${MIN_DASHBOARD_TOKEN} characters: the dashboard stays off.`);
+  if (dashboardToken && dashboardToken.length < MIN_DASHBOARD_TOKEN) logLine({ msg: `RATER_DASHBOARD_TOKEN is shorter than ${MIN_DASHBOARD_TOKEN} characters: the dashboard stays off.` }, 'error');
   const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '', openaiKey: process.env.OPENAI_API_KEY || '', lunaDailyLimit, lunaDailyTokens,
     dashboardToken, testIntakes: testIntakesFrom(process.env.RATER_TEST_INTAKES),
     clientIpHeader: process.env.RATER_CLIENT_IP_HEADER || '', minFreeBytes: minFreeBytesFrom(process.env.RATER_MIN_FREE_MB) });
   server.listen(port, host, () => {
-    console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit} requests and ${lunaDailyTokens} tokens a day)` : ''}${dashboardToken.length >= MIN_DASHBOARD_TOKEN ? '  (dashboard on: /dashboard)' : ''}`);
+    logLine({ msg: `rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit} requests and ${lunaDailyTokens} tokens a day)` : ''}${dashboardToken.length >= MIN_DASHBOARD_TOKEN ? '  (dashboard on: /dashboard)' : ''}`, port: server.address().port });
   });
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => server.close(() => process.exit(0)));
   // Anything outside a request's guard still stops the server, visibly: a timestamped log line and a
   // non-zero exit, so the platform restarts it.
   for (const kind of ['uncaughtException', 'unhandledRejection']) {
     process.on(kind, (e) => {
-      console.error(`${new Date().toISOString()} ${kind}: ${e?.stack ?? e}`);
+      logLine({ msg: kind, error: e?.name ?? 'error', stack: framesOf(e, 5) }, 'error');
       process.exit(1);
     });
   }
