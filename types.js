@@ -187,7 +187,7 @@
  * @property {ClientValue<string | null>} [unofferedNote]  a list without the answer, which no helper shows later (GEICO's Medical Payments without $5,000): the agent's alone at once, with this note, instead of a failure
  * @property {string[]} [needs]  the rules (their `q`) whose answer on the same unit the page needs before it offers this one (GEICO's collision, rental and road service behind comprehensive): while one of them is being given again this waits, and when one doesn't take, the unit gets one needs-you item naming them all instead of a failure each
  * @property {boolean} [checkNumber]
- * @property {{ id: string, part: 'section' | 'limit' }} [section]  a question of a coverage section the carrier declares (`sections`): of its open section, or its limit (in the section and in the row once Done); the section's Done (`verify: { closed }`) checks them
+ * @property {{ id: string, part: 'section' | 'limit' | 'question' }} [section]  a question of a coverage section the carrier declares (`sections`): of its open section, its limit (in the section and in the row once Done), which the section's Done (`verify: { closed }`) checks, or another question of that coverage (`question`: Progressive's reefer breakdown, which re-arms cargo's Done but isn't checked)
  * @property {string} [group]
  * @property {ClientValue<string | null>} [summaryAfter]
  * @property {ClientValue<string[]>} [choiceAliases]  other words for the answer, in order, as an option reads; a yes/no answer
@@ -409,7 +409,7 @@
  * @property {boolean} each
  * @property {boolean} optional
  * @property {boolean} registeredName
- * @property {{ id: string, part: 'section' | 'limit' } | null} section
+ * @property {{ id: string, part: 'section' | 'limit' | 'question' } | null} section
  * @property {string | null} selector
  * @property {string | null} re  the rule's `label` pattern
  * @property {string | null} ex  the rule's `not` pattern

@@ -10117,3 +10117,26 @@ test('a detached list pick that fires no input or change event still stops the f
   assert.deepEqual([...report.protectedKeys], ['ref:Test.combo']);
   assert.equal(combo.input.value, 'Agent choice');
 });
+
+// Review of #475: an answer on Rates re-arms its coverage's Done by the step's `section` (any cargo
+// question, reefer breakdown included; a question of GL's or interchange's open section).
+test('Progressive: an answer on Rates re-arms the Done of its coverage section', async () => {
+  const { buildPlan } = await import('../src/plan.js');
+  const { progressive } = await import('../src/carriers/progressive.js');
+  const { context } = harness({ ext: true });
+  const made = context.__raterAdapter.create({});
+  const rearm = (step) => Array.from(made.rearm('CoveragesRates', step)).filter((id) => id.startsWith('done'));
+  const record = { applicant: { name: 'Synthetic LLC' }, garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [],
+    trailers: [{ type: 'Dry Van' }], trailerInfo: { interchange: true, interchangeLimit: '$50,000' }, priorInsurance: [],
+    coverage: { cargo: true, cargoLimit: 100000, cargoDeductible: 1000, reeferBreakdown: true, gl: true }, claims: {} };
+  const plan = buildPlan(record, progressive, {});
+  const byQ = (q) => plan.find((s) => s.q === q);
+  assert.deepEqual(rearm(byQ('216A')), ['doneCargo'], 'a cargo section question');
+  assert.deepEqual(rearm(byQ('216F')), ['doneCargo'], 'the cargo limit');
+  assert.deepEqual(rearm(byQ('215C')), ['doneCargo'], 'reefer breakdown');
+  assert.deepEqual(rearm(byQ('21D1')), [], "GL's limit: not its section");
+  assert.deepEqual(rearm(plan.find((s) => s.section?.id === 'gl' && s.section.part === 'section')), ['doneGl']);
+  assert.deepEqual(rearm(byQ('21BE')), ['doneInterchange']);
+  assert.deepEqual(rearm(byQ('21DD')), [], "interchange's limit: not its section");
+  assert.deepEqual(Array.from(made.rearm('Drivers', byQ('216A'))), []);
+});
