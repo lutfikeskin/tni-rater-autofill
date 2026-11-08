@@ -56,7 +56,7 @@ the store refuses a version it already has.
      names (for the gender TNI assumes), when the agent saved an OpenAI key of their own.
      usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, a
      profile of each client's business without names, numbers or addresses, and what an agent types
-     into a problem report), which also passes those Luna requests to OpenAI with TNI's key when
+     into a problem report; a quote summary the agent saves, with the client's answers), which also passes those Luna requests to OpenAI with TNI's key when
      the agent has none, storing nothing.
      localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
@@ -67,7 +67,10 @@ the store refuses a version it already has.
      request: declare "Personally identifiable information" (name). The usage server gets a
      profile of each client's business (the privacy policy lists it): drivers' ages, marital
      status and gender as the agent set it are personal information too, and the garaging state
-     is a region ("Location"). The store also asks to certify that data isn't used for purposes
+     is a region ("Location"). A quote summary the agent saves (Save summary) goes to the usage
+     server whole, with the client's business name and the answers filled (owner's and drivers'
+     names, dates of birth, addresses among them): declare "Personally identifiable information"
+     for it too. The store also asks to certify that data isn't used for purposes
      unrelated to the extension's single purpose; analysing TNI's own quoting from the usage log is
      a purpose beyond filling quotes. TNI's compliance owner should confirm these answers, and
      that certification, before a version that sends the profile is uploaded.

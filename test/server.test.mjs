@@ -821,6 +821,34 @@ test('a quoted premium is kept in its shape; anything else in it is dropped', as
   assert.deepEqual([...odd.dropped].sort(), ['dueToday', 'insured', 'payments', 'termMonths']);
 });
 
+// The quote summary the agent saved (Save summary, audit 2026-11-07 UX-05): kept whole in its shape;
+// one with anything else in it, text too long, or too large, refused whole, never trimmed.
+test('a quote summary is kept whole in its shape; one out of it is refused', async () => {
+  const row = { label: 'ZIP', value: '21201', source: 'intake', sourceSaid: 'Intake', note: null };
+  const summary = { client: { name: 'Sample Hauling LLC', fileName: 'sample.pdf', state: 'Maryland' }, at: '2026-11-07T15:04:00.000Z', version: '0.9.32',
+    carriers: [{ id: 'geico', name: 'GEICO', practice: false, pages: [{ title: 'Quote & Coverages', at: '2026-11-07T15:00:00.000Z', said: null,
+      counts: [{ source: 'intake', sourceSaid: 'Intake', n: 1 }], rows: [row] }] }],
+    overrides: [{ kind: 'edit', carrier: null, page: null, label: 'Company name', value: 'Sample Hauling LLC', said: 'Corrected in the panel' }],
+    ai: [], marked: [{ ...row, label: 'Prior claims', value: 'Marked done', source: 'marked', sourceSaid: 'Marked done', carrier: 'GEICO', page: 'Quote & Coverages' }], open: 0, answers: 1 };
+  const dataDir = tmp();
+  const sum = (over) => ev({ filled: undefined, type: 'quote_summary', carrier: undefined, page: undefined, summary: { ...summary, ...over } });
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      sum({}),
+      sum({ extra: 'x' }),
+      sum({ marked: [{ ...row, value: 'x'.repeat(501) }] }),
+      sum({ carriers: [{ ...summary.carriers[0], tabId: 3 }] }),
+      ev({ filled: undefined, type: 'quote_summary', carrier: undefined, page: undefined }),
+      sum({ carriers: Array.from({ length: 6 }, () => ({ ...summary.carriers[0], pages: Array.from({ length: 200 }, () => ({ ...summary.carriers[0].pages[0], rows: Array.from({ length: 2 }, () => ({ ...row, value: 'v'.repeat(400) })) })) })) }),
+    ] })).json();
+    assert.equal(r.accepted, 1);
+    assert.deepEqual(r.rejected, [1, 2, 3, 4].map((index) => ({ index, error: 'quote_summary needs a summary in its shape' })).concat([{ index: 5, error: 'event too large' }]));
+  });
+  const [kept, ...more] = stored(dataDir);
+  assert.equal(more.length, 0);
+  assert.deepEqual([kept.type, kept.summary, kept.dropped], ['quote_summary', summary, undefined]);
+});
+
 // A real panel request (src/ai/luna.js), so the server's check can't drift from what Luna sends.
 const lunaBody = () => buildRequest(collectItems([{ unknown: [{ key: 'haz', label: 'Hazardous materials requiring placards?', controlKind: 'select', options: ['Yes', 'No'], current: '' }] }]).items,
   { carrier: 'geico', page: 'operations', active: { drivers: 0, vehicles: 0 }, record: { operations: {}, drivers: [], vehicles: [] } });

@@ -1,6 +1,6 @@
 // Where the usage log lives: chrome.storage.local on the agent's computer until it's uploaded to
 // the collection server (server/index.mjs) or exported. Events are built by src/usage.js and
-// never contain client data.
+// never contain client data, except a quote summary the agent saves (quote_summary: quote-summary.js).
 
 import { LOG_KEY, MAX_EVENTS } from '../src/usage.js';
 
