@@ -25,8 +25,9 @@
 
   const isTop = window === window.top;
   const round = (n) => Math.round(n * 10) / 10;
-  // When an event happened, on the page's clock (wall-clock ms), not when this saw it.
-  const when = (e) => round(performance.timeOrigin + (typeof e?.timeStamp === 'number' && e.timeStamp > 0 ? e.timeStamp : performance.now()));
+  // When an event happened, on the page's clock (wall-clock ms), not when this saw it (`at`: a
+  // moment given as wall-clock ms, as a document's navigation start).
+  const when = (e) => round(typeof e?.at === 'number' ? e.at : performance.timeOrigin + (typeof e?.timeStamp === 'number' && e.timeStamp > 0 ? e.timeStamp : performance.now()));
   const BATCH_MS = 250;
   // Kept while no panel takes them (closed, reloading); past this the oldest go, and the next batch
   // says how many (`dropped`). With no panel taking them for a minute, the trace stops: a panel opened
@@ -216,7 +217,26 @@
   const pathOf = () => idless(location.pathname);
   let page = read.pageKey();
   let step = stepNow();
-  push('page', { page, path: pathOf(), title: document.title, step, top: isTop, viewport: viewport(), scroll: scroll() });
+  // A document the trace is in from its load (`fresh`: put in within LOAD_MS of its navigation,
+  // as the panel does on each load, and the first trace in it): its first `page` is stamped at its
+  // navigation start (`injectedAt`: when the trace was put in), a `load` says how it loaded, and
+  // the requests it made before the trace are read from the browser's buffer (REC-03, 2026-11-07:
+  // a full page load's time and its first requests, often the slow part, were charged to the step
+  // before or lost). Once per document: a trace put in again doesn't read them twice.
+  const LOAD_MS = 30_000;
+  let nav = null;
+  try { nav = performance.getEntriesByType?.('navigation')?.[0] ?? null; } catch { /* no timing */ }
+  const fresh = !!nav && performance.now() < LOAD_MS && !globalThis.__raterTraceLoaded;
+  globalThis.__raterTraceLoaded = true;
+  const navAt = (ms) => (typeof ms === 'number' && ms > 0 ? round(performance.timeOrigin + ms) : null);
+  push('page', { page, path: pathOf(), title: document.title, step, top: isTop, viewport: viewport(), scroll: scroll(), ...(fresh ? { injectedAt: round(performance.timeOrigin + performance.now()) } : {}) },
+    fresh ? { at: performance.timeOrigin } : undefined);
+  // `how`: navigate, reload or back_forward; when the server's answer ended (`response`), the
+  // document was ready (DOMContentLoaded) and loaded (load), each null while not yet.
+  if (fresh) {
+    push('load', { how: /^(navigate|reload|back_forward|prerender)$/.test(String(nav.type)) ? nav.type : null, response: navAt(nav.responseEnd),
+      ready: navAt(nav.domContentLoadedEventEnd), loaded: navAt(nav.loadEventEnd) }, { at: performance.timeOrigin });
+  }
   const watch = setInterval(() => {
     if (!chrome.runtime?.id) { dispose(); return; }
     const nowPage = read.pageKey();
@@ -418,7 +438,7 @@
   let requests = null;
   try {
     requests = new PerformanceObserver((list) => recordRequests(list.getEntries()));
-    requests.observe({ type: 'resource' });
+    requests.observe({ type: 'resource', buffered: fresh });
   } catch { requests = null; }
 
   // What the extension's fill says (pagekit.js `kitTrace`), by its own time: a JSON string from
@@ -441,7 +461,8 @@
     if (said.what === 'run') return { what: 'run', ...yesNo(said, ['on', 'halted']), ...nums(said, ['steps', 'filled']) };
     if (said.what === 'press') return { what: 'press', button: { text: words(said.button?.text, 60) ?? '' }, ...(said.how === 'page' || said.how === 'kit' ? { how: said.how } : {}) };
     if (said.what === 'wait') {
-      if (!isNum(said.start) || !isNum(said.ms) || (said.ended !== 'quiet' && said.ended !== 'limit')) return null;
+      // `stopped`: the agent stopped the fill while it waited (adapter.js settle's `abort`).
+      if (!isNum(said.start) || !isNum(said.ms) || !['quiet', 'limit', 'stopped'].includes(said.ended)) return null;
       const held = has(said.held) ? { held: { busy: said.held.busy === true, changing: said.held.changing === true, requests: said.held.requests === true } } : {};
       return { what: 'wait', why: WAITS_FOR.has(said.why) ? said.why : null, start: said.start, ms: said.ms, ended: said.ended,
         ...nums(said, ['quietMs', 'maxMs']), ...yesNo(said, ['requests', 'settled']), ...held };

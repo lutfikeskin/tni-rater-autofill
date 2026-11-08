@@ -14,9 +14,11 @@ import { CARRIERS } from '../src/carriers.js';
 import { loadEvents } from './lib/events.mjs';
 import { buildLayouts } from './lib/layouts.mjs';
 import { coverage, idsInHtml } from './lib/coverage.mjs';
+import { reportsOf } from './lib/carrier-reports.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MOCKS = { amwins: path.join(root, 'test/fixtures/amwins/application.html') };
+// A carrier's static mock page, whose ids are compared with the live layouts (carrier-reports.mjs mock).
+const mockOf = (id) => { const m = reportsOf(id)?.mock; return m ? path.join(root, m) : null; };
 
 export function loadLayouts(paths) {
   const out = [];
@@ -40,7 +42,8 @@ export function report(layouts) {
   for (const { key, layout } of layouts) {
     const carrier = CARRIERS.find((c) => c.id === layout.carrier);
     if (!carrier) continue;
-    const mockIds = MOCKS[carrier.id] && fs.existsSync(MOCKS[carrier.id]) ? idsInHtml(MOCKS[carrier.id]) : null;
+    const mock = mockOf(carrier.id);
+    const mockIds = mock && fs.existsSync(mock) ? idsInHtml(mock) : null;
     const r = coverage(layout, carrier, { mockIds });
     results.push({ key, ...r });
     const t = r.totals;

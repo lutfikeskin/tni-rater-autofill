@@ -190,7 +190,7 @@ export const EVENT_FIELDS = {
   // how: what found the field (field = data-model name, text, option, selector, label, name).
   // source: where the answer comes from (plan.js; FIELD_SOURCES below); standard, manualOnly,
   // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
-  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review'],
+  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'code', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review'],
   // A button the agent clicked themselves: its text (60 characters), and the step on screen.
   agent_click: ['text', 'step'],
   // The agent dismissed a "needs you" item (×): the question, and why it needed them.
@@ -200,7 +200,7 @@ export const EVENT_FIELDS = {
   // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
   // many seconds before the report).
   problem_report: ['text', 'run', 'step', 'blockerList', 'since'],
-  // An error nothing in the panel caught: where (panel), its message (redacted, 300 characters)
+  // An error nothing in the panel or the page's recorder caught: where (panel, recorder), its message (redacted, 300 characters)
   // and up to four frames inside the extension's own files.
   client_error: ['where', 'error', 'stack'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
@@ -472,6 +472,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     }
     if (out.source !== undefined && !FIELD_SOURCES.includes(out.source)) drop('source');
     for (const k of ['standard', 'manualOnly', 'review']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
+    // Why a fill's answer failed, as a code (types.js FailCode): words and dots, never text.
+    if (out.type === 'fill_field' && out.code !== undefined && !(typeof out.code === 'string' && /^[a-z]+\.[a-z-]{1,30}$/.test(out.code))) drop('code');
     if (out.background !== undefined && out.background !== true) drop('background');
     if (out.hiddenMs !== undefined && !(Number.isSafeInteger(out.hiddenMs) && out.hiddenMs > 0 && out.hiddenMs <= 86_400_000)) drop('hiddenMs');
     if (out.type === 'check_dismissed' && out.mark !== undefined && !(out.mark === null || (typeof out.mark === 'string' && /^[a-z-]{1,20}$/.test(out.mark)))) drop('mark');
@@ -494,7 +496,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (out.messages !== undefined && !(Array.isArray(out.messages) && out.messages.length <= 40 && out.messages.every((m) => typeof m === 'string' && m.length <= 200))) drop('messages');
     // A crash: where, a bounded message, and frames inside the extension's files only.
     if (out.type === 'client_error') {
-      if (out.where !== undefined && out.where !== 'panel') drop('where');
+      if (out.where !== undefined && !['panel', 'recorder'].includes(out.where)) drop('where');
       if (out.error !== undefined && !(typeof out.error === 'string' && out.error.length <= 300)) drop('error');
       if (out.stack !== undefined && !(Array.isArray(out.stack) && out.stack.length <= 4 && out.stack.every((x) => typeof x === 'string' && x.length <= 160 && /^[\w./-]+:\d+:\d+$/.test(x)))) drop('stack');
     }

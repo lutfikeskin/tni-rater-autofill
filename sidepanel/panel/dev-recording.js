@@ -88,11 +88,11 @@ async function startRecording() {
       checkBeforeContinue: switchOn('checkBeforeContinue', 'check-continue') },
     platform: navigator.userAgentData?.platform || navigator.platform || null });
   const store = await RecordingStore.start(manifest);
-  // `fills`: when fills ran ({ start, end }), noted by state.filling's setter.
-  state.recording = { store, tabId, carrier, redact, fills: state.filling ? [{ start: started.getTime(), end: null }] : [], started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false };
+  // `fills`: when fills ran ({ start, end, what }), noted by state.filling's setter.
+  state.recording = { store, tabId, carrier, redact, fills: state.filling ? [{ start: started.getTime(), end: null, what: state.fillingKind ?? 'fill' }] : [], started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false };
   // Started during a fill: its start is the recording's, so the timeline counts that fill as one
   // (its end alone would be no fill at all to the report).
-  if (state.filling) store.add([{ kind: 'fill', t: started.getTime(), frame: 0, on: true }]);
+  if (state.filling) store.add([{ kind: 'fill', t: started.getTime(), frame: 0, on: true, what: state.fillingKind ?? 'fill' }]);
   renderDevrec();
   await ensureRecorder();
 }

@@ -1,6 +1,7 @@
 // The panel's notes and cards in React, besides those at the top of the page view (cards-view.jsx):
-// a usage log that can't be saved (#notices) and a Pop out or Dock that didn't work (#window-note),
-// from what renderHealth and windowProblem say (state.notes); a PDF that couldn't be read
+// a usage log that can't be saved (#notices), what else the panel couldn't save on this computer
+// (#storage-note) and a Pop out or Dock that didn't work (#window-note), from what renderHealth,
+// persistFailed (core.js) and windowProblem say (state.notes); a PDF that couldn't be read
 // (#load-error, from showLoadError's state.loadError); and what a fill's report says above its list,
 // drawn into the report as renderReport (fill.js) builds it.
 // One part of the panel; sidepanel.js mounts the notes (mountNote, mountLoadError), renderReport a

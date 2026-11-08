@@ -54,25 +54,33 @@ async function injectKit(tabId, carrier) {
  * @param {any[]} [args]
  * @param {number[]} [frameIds]
  */
+// The kit is injected by one executeScript and called by a second, so a tab that navigated between
+// the two has none: every call of the panel's is optional (`globalThis.__raterKit?.name(...)`), and a
+// frame without the kit answers null rather than throwing on the carrier's page (audit 2026-11-07,
+// QA-03; sidepanel-safety holds every call to it). A fill whose top frame had no kit is a page that
+// moved on (fillPage, autoFill).
 async function runKit(tabId, carrier, func, args = [], frameIds) {
   await injectKit(tabId, carrier);
   return chrome.scripting.executeScript({ target: { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) }, world: worldFor(carrier), func, args });
 }
 
-// agent defaults: the page whose opening fill the quote's question held (fillPage), with the intake
-// it was held for. Only that page fills once the hold lifts: never another page that happens to be in
-// front, such as the last client's quote left open when a new intake loads.
+// The page whose opening fill a hold kept back (fillPage): the quote's defaults question (agent
+// defaults) or the tab's quote state (stateIssue), with the intake it was held for. Only that page
+// fills once the holds lift: never another page that happens to be in front, such as the last
+// client's quote left open when a new intake loads.
 /** @type {{ key: string, intake: any } | null} */
-let heldForDefaults = null;
+let heldFill = null;
 
-// agent defaults: the quote's question answered, or the feature hidden (its hold lifted). The page
-// whose own fill waited on it is filled as on opening, while it is still in front for the same intake,
-// "Fill pages when they open" is on and nothing has filled it since. A page filled before keeps its
-// answers until the agent fills it again.
-function fillAfterDefaults() {
-  const held = heldForDefaults;
-  if (!held || !state.intake || defaultsHold() || state.filling || !state.tab?.carrier || !switchOn('autoPages', 'auto-pages') || !onQuotePage()) return;
-  heldForDefaults = null;
+// A hold lifted: the defaults question answered or the feature hidden, "<state> is right" (audit
+// 2026-11-07, FLOW-16: it lifted the hold and filled nothing), or what was going in when one lifted
+// (a fill, a pick from a row, an AI answer) has ended. The page whose own fill waited is filled as on
+// opening, once no hold is left, while it is still in front for the same intake, "Fill pages when they
+// open" is on and nothing has filled it since. A page filled before keeps its answers until the agent
+// fills it again.
+function resumeHeldFill() {
+  const held = heldFill;
+  if (!held || !state.intake || defaultsHold() || stateIssue() || state.filling || !state.tab?.carrier || !switchOn('autoPages', 'auto-pages') || !onQuotePage()) return;
+  heldFill = null;
   if (held.intake !== state.intake || held.key !== currentReportKey() || state.reports.has(held.key)) return;
   fillPage({ auto: 'page' });
 }
@@ -85,11 +93,15 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
   // The tab's quote is for another state than the intake's: nothing is filled until the agent says
   // the state is right (or Fill anyway), on request or automatically (stateIssue).
-  if (state.intake && stateIssue()) { showStateNote(); renderSteps(); return; }
+  // A page's opening fill held so is kept for resumeHeldFill, as one the defaults question holds.
+  if (state.intake && stateIssue()) {
+    if (auto === 'page') heldFill = { key: currentReportKey(), intake: state.intake };
+    showStateNote(); renderSteps(); return;
+  }
   // agent defaults: nothing fills until the agent says whose defaults this quote takes (the card above).
   if (state.intake && defaultsHold()) {
-    // A page's opening fill: kept for fillAfterDefaults, to run once the agent answers.
-    if (auto === 'page') heldForDefaults = { key: currentReportKey(), intake: state.intake };
+    // A page's opening fill: kept for resumeHeldFill, to run once the agent answers.
+    if (auto === 'page') heldFill = { key: currentReportKey(), intake: state.intake };
     renderSteps();
     return;
   }
@@ -100,7 +112,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // after it (it used to be skipped: "it stopped here").
   // Kept with its tab: the fill running may be on another one (audit 2026-11-07, FLOW-07).
   if (state.filling && auto === 'page') { state.pagePending = { tabId: state.tab?.id, page: pageOf(state.tab?.url) }; return; }
-  if (state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
+  if (state.filling || state.closing || state.resetting || state.newQuoteFailed || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
   // Back on a step that takes follow-ups only for new questions (newQuestionsOnlySteps) after its
   // fill: only the agent, or new questions, fill it again.
   if (auto && state.tab.carrier.newQuestionsOnlySteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
@@ -111,6 +123,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     return;
   }
   if (!auto) state.autoPaused = false;
+  state.fillingKind = 'fill';
   state.filling = true;
   clearTimeout(state.autoTimer);
   state.autoDrawn = null;
@@ -124,7 +137,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
   await pickListItem(carrier, page, ctx);
   // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
-  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); return; }
+  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); resumeHeldFill(); return; }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
@@ -167,10 +180,10 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // the extension didn't write may be the agent's (the maintainer, 2026-11-07, in place of giving
     // it again, 2026-10-21). Replace existing answers still gives it again.
     const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
-    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (results.some((r) => r.result?.pageMoved)) { notePageMoved(ctx); return; }
+    if (results.some((r) => r.result?.pageMoved) || results.some((r) => r.frameId === 0 && r.result == null)) { notePageMoved(ctx); return; }
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
     // And its quote is this intake's (the agent's Fill this page on another intake's quote too).
@@ -203,6 +216,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // The page in front, which this fill wasn't for, gets its own fill: one this tab moved on to, or
     // one that opened on the tab the agent moved to meanwhile, however this fill ended.
     runPendingPage(ctx);
+    // A page a hold kept back, whose hold lifted while this ran.
+    resumeHeldFill();
   }
   if (!fillCurrent(ctx)) return;
   // The agent's next step is the page's answers: in view (showFinish).
@@ -508,7 +523,7 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     try {
       // While the page saves / reloads (its loading overlay) the step isn't ready yet. A frame without
       // the kit (its document replaced after the kit went in) reads as nothing, as the snapshot reads do.
-      const results = await runKit(tabId, carrier, () => (!globalThis.__raterKit || globalThis.__raterKit.busy() ? null : globalThis.__raterKit.signature()));
+      const results = await runKit(tabId, carrier, () => { const kit = globalThis.__raterKit; return !kit || kit.busy() ? null : kit.signature(); });
       now = results.find((r) => r.frameId === 0)?.result ?? null;
     } catch { return; }
     if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page) return;
@@ -1140,7 +1155,7 @@ async function changeAnswer(rec, { tabId, page, carrier }) {
   if (state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   if (rec.change) { rec.change = null; drawRow(rec); return; }
   let frames = null;
-  try { frames = await runKit(tabId, carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); } catch { /* the page is navigating */ }
+  try { frames = await runKit(tabId, carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null)); } catch { /* the page is navigating */ }
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   const matches = aiSnapshotFieldMatches(frames, { key: rec.key, label: rec.field });
   const field = matches.length === 1 ? matches[0].field : null;
@@ -1175,15 +1190,16 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
   let result = null;
   let guarding = false;
   let edited = [];
+  state.fillingKind = 'pick';
   state.filling = true;
   if (button) button.disabled = true;
   // Our own answer isn't the agent's change on the page: the recorder is paused, as for a fill.
   await tellRecorder('pause', tabId);
   try {
     guarding = true;
-    await runKit(tabId, carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [token]);
+    await runKit(tabId, carrier, (t) => globalThis.__raterKit?.answerEdits('begin', t), [token]);
     if (!current()) return;
-    const frames = await runKit(tabId, carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+    const frames = await runKit(tabId, carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
     if (!current()) return;
     const matches = aiSnapshotFieldMatches(frames, x);
     if (matches.length !== 1) { say('The page changed: answer it on the page.'); return; }
@@ -1194,7 +1210,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
       say('The page doesn’t offer that answer now: answer it on the page.');
       return;
     }
-    const answered = await runKit(tabId, carrier, (a, t, o) => globalThis.__raterKit.answer(a, null, t, o),
+    const answered = await runKit(tabId, carrier, (a, t, o) => globalThis.__raterKit?.answer(a, null, t, o),
       [[{ key: field.key, label: field.label, value: choice, expected: { kind: field.kind, section: field.section, options, current: field.current } }],
         token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent' }], [frame.frameId]);
     result = answered.flatMap((f) => f.result ?? []).find((r) => r?.key === field.key) ?? null;
@@ -1203,7 +1219,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
   } finally {
     if (guarding) {
       try {
-        const frames = await runKit(tabId, carrier, (t) => globalThis.__raterKit.answerEdits('end', t), [token]);
+        const frames = await runKit(tabId, carrier, (t) => globalThis.__raterKit?.answerEdits('end', t), [token]);
         // The agent's own edits while the answer went in stay theirs, as after a fill.
         edited = frames.flatMap((f) => f.result ?? []).filter((r) => r?.protected).map((r) => r.key);
       } catch { /* a removed or navigating frame no longer has live listeners */ }
@@ -1212,6 +1228,8 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
     await tellRecorder('resume', tabId);
     state.filling = false;
     if (button) button.disabled = false;
+    // A page a hold kept back, whose hold lifted while the pick went in.
+    resumeHeldFill();
     // The recorder was paused: the questions the answer revealed or hid are read here.
     if (field && state.tab?.id === tabId) scheduleLayout(page, 'changed');
   }
@@ -1283,7 +1301,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
 
 async function clearMarks() {
   if (!state.tab?.carrier) return;
-  await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit.clear());
+  await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit?.clear());
   const key = currentReportKey();
   dropReports((entry) => entry.key === key);
   renderSite();
@@ -1355,7 +1373,7 @@ async function capturePage() {
   // What the capture is of; checked again once the page has been read (as layout jobs are).
   const asked = JSON.stringify([tabId, page, state.active, state.intakeRevision, usage.currentSession()?.id ?? null]);
   try {
-    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
+    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit?.capture(p, r),
       [record ? planFor(record, carrier, state.active) : null, record ? redactionTerms(record) : []]);
     // Frames with questions, the top one, and any with messages or an open list (evidence only).
     const frames = results.map((r) => r.result).filter((f) => f && (f.controls.length || f.isTopFrame || f.messages?.length || f.openLists?.length));
@@ -1390,4 +1408,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillAfterDefaults, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };
+export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, resumeHeldFill, runKit, showNextNeed, unitArrival, worldFor };
