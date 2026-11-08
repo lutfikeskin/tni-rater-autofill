@@ -1,8 +1,11 @@
+// @ts-check
 // The side panel: "What's new in vX", said once per version (audit 2026-11-07, UX-12 c). The lines are
 // src/whats-new.js's; the version last said is kept in chrome.storage.local (`whatsNewSeen`), which
-// background.js sets to the version installed on a new install, so a new agent isn't told what
-// changed since a version they never had.
+// background.js starts at the version installed on a new install (a new agent isn't told what
+// changed since a version they never had), and on an update with none said yet at the version
+// updated from (every version since is said).
 // One part of the panel; sidepanel.js calls showWhatsNew as the panel opens.
+/** @typedef {{ version: string, lines: string[] }} WhatsNewEntry */
 import { whatsNewSince } from '../../src/whats-new.js';
 import { inExtension } from './env.js';
 import { state } from './core.js';
@@ -18,7 +21,8 @@ async function showWhatsNew() {
   if (!inExtension) return;
   try {
     const version = chrome.runtime.getManifest().version;
-    const { [SEEN_KEY]: seen = null } = await chrome.storage.local.get(SEEN_KEY);
+    const stored = (await chrome.storage.local.get(SEEN_KEY))[SEEN_KEY];
+    const seen = typeof stored === 'string' ? stored : null;
     if (seen === version) return;
     const entries = whatsNewSince(seen, version);
     await chrome.storage.local.set({ [SEEN_KEY]: version });
@@ -30,6 +34,7 @@ async function showWhatsNew() {
 }
 
 // The card: this version's lines, then each earlier version's under its name.
+/** @param {string} version @param {WhatsNewEntry[]} entries */
 function whatsNewCard(version, entries) {
   const notes = entries.flatMap((e) => (e.version === version ? e.lines : [`In v${e.version}:`, ...e.lines]));
   return issueSaid({ tone: 'info', title: `What's new in v${version}`, notes,

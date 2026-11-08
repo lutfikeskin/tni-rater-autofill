@@ -92,8 +92,9 @@ commit they were packaged from, `+dirty` otherwise), upload the new zip on the i
 tab, submit.
 In the version's PR, add what agents will see differently to `src/whats-new.js` under the new
 version: one to five short lines in the agent's words. The panel shows them once, as "What's new in
-v<version>", the first time it opens after the update; a version with no lines shows nothing, and a
-new install isn't told. `test/whats-new.test.mjs` checks the lines' shape.
+v<version>", the first time it opens after the update, with every version's lines since the one it
+last showed (or the version updated from, when it never showed one); a version with no lines shows
+nothing, and a new install isn't told. `test/whats-new.test.mjs` checks the lines' shape.
 Chrome updates installed copies by itself within a few hours of approval.
 
 When the version bump reaches `main`, [release-tag.yml](../.github/workflows/release-tag.yml)

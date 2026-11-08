@@ -41,7 +41,26 @@ test('an agent is told what changed since the version last said, newest first, a
   assert.deepEqual(whatsNewSince('0.10.0', '0.9.33', notes), []);
 });
 
-test("a new install starts from its own version, so it isn't told what changed before it", () => {
+// background.js's onInstalled, run with a stub chrome: where the card starts.
+async function installed(details, stored = {}) {
   const bg = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
-  assert.match(bg, /onInstalled\.addListener\(\(\{ reason \}\) => \{\s*if \(reason !== 'install'\) return;\s*chrome\.storage\.local\.set\(\{ whatsNewSeen: chrome\.runtime\.getManifest\(\)\.version \}\)/);
+  const start = bg.indexOf('chrome.runtime.onInstalled.addListener(');
+  const end = bg.indexOf('\n});', start) + 4;
+  let listener;
+  const data = { ...stored };
+  const chrome = { runtime: { getManifest: () => ({ version: '0.9.40' }), onInstalled: { addListener: (f) => { listener = f; } } },
+    storage: { local: { get: async (k) => ({ [k]: data[k] }), set: async (o) => { Object.assign(data, o); } } } };
+  new Function('chrome', bg.slice(start, end))(chrome);
+  listener(details);
+  await new Promise((r) => setTimeout(r, 0));
+  return data.whatsNewSeen;
+}
+
+test('a new install starts from its own version; an update with none said yet from the version it updated from', async () => {
+  assert.equal(await installed({ reason: 'install' }), '0.9.40', "a new install isn't told what changed before it");
+  // An update the panel wasn't opened after: every version since the one updated from is said.
+  assert.equal(await installed({ reason: 'update', previousVersion: '0.9.31' }), '0.9.31');
+  // A version already said stays: the card says what is new since it.
+  assert.equal(await installed({ reason: 'update', previousVersion: '0.9.38' }, { whatsNewSeen: '0.9.35' }), '0.9.35');
+  assert.equal(await installed({ reason: 'chrome_update' }), undefined);
 });
