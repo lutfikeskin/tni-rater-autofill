@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import { afterEach, expect, test } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 import { AiCard, AiHolder, aiHolder } from '../../sidepanel/panel/ai-view.jsx';
@@ -26,7 +27,7 @@ test('a suggestion: what the AI suggests, what it rests on, Use this answer and 
   const box = container.firstChild;
   expect(box.className).toBe('ai-box');
   expect([...box.children].map((c) => [c.className, c.textContent])).toEqual([
-    ['ai-says', 'AI suggests No'], ['ai-tip', 'The intake says no hazmat.'],
+    ['ai-says', 'The AI assistant suggests No'], ['ai-tip', 'The intake says no hazmat.'],
     ['ai-why', 'Based on Hazmat placards: No'],
     ['ai-actions', 'Use this answerNo thanks'],
   ]);
@@ -74,7 +75,7 @@ test('a pick the AI put in: Picked by the AI, its notes, Continue waits, Approve
   const { container } = render(<AiCard card={card} />);
   const box = container.firstChild;
   expect([...box.children].map((c) => [c.className, c.textContent])).toEqual([
-    ['ai-says', 'Picked by the AI: No'], ['ai-tip', 'The intake says no.'], ['ai-tip', 'Picked before the intake or unit changed.'],
+    ['ai-says', 'Picked by the AI assistant: No'], ['ai-tip', 'The intake says no.'], ['ai-tip', 'Picked before the intake or unit changed.'],
     ['ai-why', 'Continue waits for your answer.'], ['ai-actions', 'ApproveReject'],
   ]);
   expect(buttons(box)).toEqual([['primary accept', 'Approve'], ['ghost ai-reject', 'Reject']]);
@@ -102,23 +103,23 @@ test('what happened to a suggestion: rejected (with Confirm while it holds Conti
 });
 
 test('a question left to the agent: its tip and Luna’s recommendation, and no button', () => {
-  const { container, rerender } = render(<AiCard card={{ kind: 'tip', says: 'AI: this one is yours to decide.', tip: 'Not on the intake.', next: 'Confirm placard use with the client.' }} />);
+  const { container, rerender } = render(<AiCard card={{ kind: 'tip', says: 'The AI assistant leaves this one to you.', tip: 'Not on the intake.', next: 'Confirm placard use with the client.' }} />);
   expect([...container.firstChild.children].map((c) => [c.className, c.textContent])).toEqual([
-    ['ai-says', 'AI: this one is yours to decide.'], ['ai-tip', 'Not on the intake.'], ['ai-tip ai-next', 'Luna recommends: Confirm placard use with the client.']]);
-  expect(container.querySelector('.ai-next b').textContent).toBe('Luna recommends: ');
+    ['ai-says', 'The AI assistant leaves this one to you.'], ['ai-tip', 'Not on the intake.'], ['ai-tip ai-next', 'The AI assistant recommends: Confirm placard use with the client.']]);
+  expect(container.querySelector('.ai-next b').textContent).toBe('The AI assistant recommends: ');
   expect(buttons(container)).toEqual([]);
-  rerender(<AiCard card={{ kind: 'tip', says: 'AI tip', tip: null, next: null }} />);
-  expect(container.firstChild.textContent).toBe('AI tip');
+  rerender(<AiCard card={{ kind: 'tip', says: 'Tip from the AI assistant', tip: null, next: null }} />);
+  expect(container.firstChild.textContent).toBe('Tip from the AI assistant');
 });
 
 test('above the list: asking, a failure, a missing key with Add the key, then Use all and the cards without a row', async () => {
-  const { container, rerender } = render(<AiHolder said={{ wait: 'Asking Luna about 2 questions left for you…' }} />);
-  expect([container.firstChild.tagName, container.firstChild.className, container.textContent]).toEqual(['P', 'ai-wait', 'Asking Luna about 2 questions left for you…']);
-  rerender(<AiHolder said={{ bad: 'AI assistant: Luna is rate-limited. Try again shortly.' }} />);
-  expect([container.firstChild.className, container.textContent]).toEqual(['card bad small', 'AI assistant: Luna is rate-limited. Try again shortly.']);
+  const { container, rerender } = render(<AiHolder said={{ wait: 'Asking the AI assistant about 2 questions left for you…' }} />);
+  expect([container.firstChild.tagName, container.firstChild.className, container.textContent]).toEqual(['P', 'ai-wait', 'Asking the AI assistant about 2 questions left for you…']);
+  rerender(<AiHolder said={{ bad: 'The AI assistant is rate-limited. Try again shortly.' }} />);
+  expect([container.firstChild.className, container.textContent]).toEqual(['card bad small', 'The AI assistant is rate-limited. Try again shortly.']);
   let added = 0;
-  rerender(<AiHolder said={{ needsKey: { text: 'Luna needs an OpenAI API key. ', add: () => { added++; } } }} />);
-  expect([container.firstChild.className, container.textContent, buttons(container)]).toEqual(['note-line', 'Luna needs an OpenAI API key. Add the key', [['link small', 'Add the key']]]);
+  rerender(<AiHolder said={{ needsKey: { text: 'The AI assistant needs an OpenAI API key. ', add: () => { added++; } } }} />);
+  expect([container.firstChild.className, container.textContent, buttons(container)]).toEqual(['note-line', 'The AI assistant needs an OpenAI API key. Add the key', [['link small', 'Add the key']]]);
   container.querySelector('button').click();
   expect(added).toBe(1);
   const going = later();
@@ -127,7 +128,7 @@ test('above the list: asking, a failure, a missing key with Add the key, then Us
   rerender(<AiHolder said={{ useAll: { label: 'Use all 2 AI answers', put: () => { put++; return going.promise; } }, orphans: [orphan] }} />);
   expect([...container.children].map((c) => c.className)).toEqual(['ai-actions', 'ai-orphan']);
   expect(container.querySelector('.ai-orphan > b').textContent).toBe('Mock Luna choice');
-  expect(container.querySelector('.ai-orphan > .ai-box .ai-says').textContent).toBe('Picked by the AI: No');
+  expect(container.querySelector('.ai-orphan > .ai-box .ai-says').textContent).toBe('Picked by the AI assistant: No');
   const useAll = container.querySelector('.ai-actions > button');
   expect([useAll.className, useAll.textContent]).toEqual(['ghost', 'Use all 2 AI answers']);
   act(() => { useAll.click(); });
@@ -144,10 +145,10 @@ test('aiHolder draws what it is told before say returns, says whether it is on s
   expect([holder.node.tagName, holder.node.className, holder.isConnected]).toEqual(['DIV', 'ai-holder', false]);
   document.body.append(holder.node);
   expect(holder.isConnected).toBe(true);
-  holder.say({ wait: 'Asking Luna about 1 question left for you…' });
-  expect(holder.node.textContent).toBe('Asking Luna about 1 question left for you…');
-  holder.say({ bad: 'Luna: the tab or page changed. Click Fill this page to ask again.' });
-  expect(holder.node.querySelector('.card.bad').textContent).toBe('Luna: the tab or page changed. Click Fill this page to ask again.');
+  holder.say({ wait: 'Asking the AI assistant about 1 question left for you…' });
+  expect(holder.node.textContent).toBe('Asking the AI assistant about 1 question left for you…');
+  holder.say({ bad: 'AI assistant: the tab or page changed. Click Fill this page to ask again.' });
+  expect(holder.node.querySelector('.card.bad').textContent).toBe('AI assistant: the tab or page changed. Click Fill this page to ask again.');
   holder.remove();
   expect([holder.isConnected, holder.node.childElementCount]).toEqual([false, 0]);
 });

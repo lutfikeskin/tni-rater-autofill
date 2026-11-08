@@ -2,7 +2,11 @@
 // Kinds: text, int, money, date, bool, state, phone, choice, textarea. A choice lists the intake
 // form's own dropdown options (the TNI intake PDF, 2026-10), so client details offer the same list.
 
-const LIMITS = ['$25K/$50K', '$50K/$100K', '$100K/$300K', '$250K/$500K', '$500K/$1M', '$1M CSL', 'Other'];
+// The liability limits in the form's order: requested auto liability, and the current policy's
+// limit (the form offers $30K/$60K for the first only). test/intake-forms.test.mjs holds every
+// choice to the blank form's dropdowns.
+const AUTO_LIMITS = ['State Minimum', '$25K/$50K', '$30K/$60K', '$50K/$100K', '$100K/$300K', '$100K CSL', '$250K/$500K', '$300K CSL', '$500K/$1M', '$750K CSL', '$1M CSL', 'Other'];
+const PRIOR_LIMITS = ['State Minimum', '$25K/$50K', '$50K/$100K', '$100K/$300K', '$100K CSL', '$300K CSL', '$250K/$500K', '$500K/$1M', '$750K CSL', '$1M CSL', 'Other'];
 const OWNERSHIP = ['Owned', 'Leased', 'Financed', 'Rented'];
 
 export const SECTIONS = [
@@ -96,12 +100,12 @@ export const SECTIONS = [
   { id: 'priorInsurance', title: 'Current insurance', list: 'priorInsurance', item: 'Policy', fields: [
     ['priorInsurance[].type', 'Policy type', 'choice', ['Commercial Auto', 'Personal Auto', 'General Liability', 'Cargo', 'Other']],
     ['priorInsurance[].carrier', 'Carrier'],
-    ['priorInsurance[].limit', 'Liability limit', 'choice', LIMITS],
+    ['priorInsurance[].limit', 'Liability limit', 'choice', PRIOR_LIMITS],
     ['priorInsurance[].expiration', 'Expiration', 'date'],
   ] },
   { id: 'coverage', title: 'Requested coverage', fields: [
     ['coverage.autoLiability', 'Auto liability', 'choice', ['Yes', 'No', 'Non-Trucking']],
-    ['coverage.autoLiabLimit', 'Auto liability limit', 'choice', LIMITS],
+    ['coverage.autoLiabLimit', 'Auto liability limit', 'choice', AUTO_LIMITS],
     ['coverage.cargo', 'Cargo', 'bool'],
     ['coverage.cargoLimit', 'Cargo limit', 'money'],
     ['coverage.cargoDeductible', 'Cargo deductible', 'money'],
