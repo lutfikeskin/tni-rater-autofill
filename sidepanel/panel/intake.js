@@ -94,7 +94,11 @@ async function loadFile(file, { reset = false } = {}) {
     // A new client's intake: the last client's kept corrections and checks go (FLOW-17). The same
     // PDF after a browser restart (no copy of it in the session): its own, from the last day, come back.
     await forgetKeptWork({ except: summary.intakeId });
-    const restored = same || !(await keptWorkCleared()) ? null : await restoreKeptWork(state.intake);
+    // A Clear that failed is tried again first; while it still fails only what was kept after it
+    // comes back, and when that can't be known nothing does, nor is the kept copy saved over.
+    const gate = same ? null : await keptWorkCleared();
+    const restored = gate?.known ? await restoreKeptWork(state.intake, gate.after) : null;
+    if (gate && !gate.known) holdKeptWork(state.intake.intakeId);
     state.view = firstView(state.intake);
     state.filter = 'all';
     state.aiDocks = new Map();
@@ -214,12 +218,19 @@ async function markTestRun(test) {
 // The agent's corrections and checks of this intake, kept on this computer (src/kept-work.js), put
 // back on it as made in the panel: each corrected value set and marked the agent's, the values derived
 // from it following (as agentEdit does), and each check found again marked done. Returns how many
-// came back ({ edits, checks }), or null when nothing was kept for it within the day.
-async function restoreKeptWork(intake) {
+// came back ({ edits, checks }), or null when nothing was kept for it within the day. `after`: only
+// what was kept after then (a Clear that still fails: keptWorkCleared). A kept copy that can't be
+// read is held (keptHeld): no save overwrites or deletes it.
+const keptHeld = new Set();
+const holdKeptWork = (intakeId) => { keptHeld.add(intakeId); };
+async function restoreKeptWork(intake, after = -Infinity) {
   const key = `${KEPT_WORK_PREFIX}${intake.intakeId}`;
-  const kept = (await keptWorkLocal.get(key).catch(() => ({})))?.[key];
+  let kept;
+  try { kept = (await keptWorkLocal.get(key))?.[key]; } catch { keptHeld.add(intake.intakeId); return null; }
+  keptHeld.delete(intake.intakeId);
   if (!kept) return null;
   if (!keptFresh(kept)) { await keptWorkLocal.remove([key]).catch(() => {}); return null; }
+  if (!(kept.at > after)) return null;
   const edited = new Set(intake.agentEdited ?? []);
   for (const [path, value] of Array.isArray(kept.edits) ? kept.edits : []) {
     if (typeof path !== 'string' || !path) continue;
@@ -253,7 +264,7 @@ function editChecks(intake, path) {
 // change (FLOW-17), or lets them go when there are none left. A save that changed neither (the
 // vehicle picked, say) leaves their day as it was.
 async function keepKeptWork(intake) {
-  if (!intake?.intakeId) return;
+  if (!intake?.intakeId || keptHeld.has(intake.intakeId)) return;
   const key = `${KEPT_WORK_PREFIX}${intake.intakeId}`;
   const kept = keptWorkOf(intake, get);
   try {

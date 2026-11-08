@@ -57,25 +57,31 @@ const keptWorkLocal = inExtension && globalThis.chrome?.storage?.local
 // Returns what went, or null when the storage refused.
 const forgetKeptWork = (options = {}) => pruneKeptWork(keptWorkLocal, options).catch(() => null);
 // Clear this client: all of it goes (as kept up to `before`, now). One that fails is remembered, in
-// memory and in local storage where it can be (KEPT_CLEAR_KEY), and tried again (keptWorkCleared)
-// for what was kept up to the first failure only, so a correction made since stays. False on failure.
+// memory and in local storage (KEPT_CLEAR_KEY), and tried again (keptWorkCleared) for what was kept
+// up to the first failure only, so a correction made since stays. `cleared`; `retry` when it failed
+// and is noted; `unsure` when it couldn't be noted either (a panel opened again doesn't know of it).
 const KEPT_CLEAR_KEY = 'keptWorkClear';
 let keptClearAt = null;
 async function clearKeptWork(before = Date.now()) {
   if (await forgetKeptWork({ before })) {
     keptClearAt = null;
     await keptWorkLocal.remove([KEPT_CLEAR_KEY]).catch(() => {});
-    return true;
+    return 'cleared';
   }
   keptClearAt = keptClearAt ?? before;
-  await keptWorkLocal.set({ [KEPT_CLEAR_KEY]: keptClearAt }).catch(() => {});
-  return false;
+  return keptWorkLocal.set({ [KEPT_CLEAR_KEY]: keptClearAt }).then(() => 'retry', () => 'unsure');
 }
 // Before anything kept is read back, and as the panel opens: a Clear that failed is tried again.
-// False while it still fails (nothing kept may come back then).
+// `{ known: true, after }`: what was kept after `after` may come back (-Infinity: all of it); while
+// the Clear still fails, only what was kept since. `{ known: false }`: its note couldn't be read, so
+// nothing may come back.
 async function keptWorkCleared() {
-  const at = keptClearAt ?? (await keptWorkLocal.get(KEPT_CLEAR_KEY).catch(() => ({})))?.[KEPT_CLEAR_KEY];
-  return !Number.isFinite(at) || clearKeptWork(at);
+  let at = keptClearAt;
+  if (at == null) {
+    try { at = (await keptWorkLocal.get(KEPT_CLEAR_KEY))?.[KEPT_CLEAR_KEY]; } catch { return { known: false }; }
+  }
+  if (!Number.isFinite(at) || (await clearKeptWork(at)) === 'cleared') return { known: true, after: -Infinity };
+  return { known: true, after: at };
 }
 // Tab ids can be reused after Chrome restarts. Local edit/helper records belong to the
 // extension's current browser session, whose nonce survives panel reloads in storage.session.

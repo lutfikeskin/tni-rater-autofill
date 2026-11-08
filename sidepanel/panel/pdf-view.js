@@ -424,8 +424,11 @@ async function clearClient() {
     await clearAgentKeys(scope);
     // Its corrections and checks kept on this computer (FLOW-17) go too. One the storage refused is
     // said, on the screen Clear leaves, and tried again before any kept work is read back.
-    if (!(await clearKeptWork())) {
-      state.loadError = { title: 'Not cleared from this computer', text: "Clear couldn't delete this client's corrections and checks kept on this computer. They aren't brought back, and are deleted as the panel opens or the next PDF loads." };
+    const cleared = await clearKeptWork();
+    if (cleared !== 'cleared') {
+      state.loadError = { title: 'Not cleared from this computer', text: cleared === 'unsure'
+        ? "Clear couldn't delete this client's corrections and checks kept on this computer. Loaded again within a day, this PDF may bring them back."
+        : "Clear couldn't delete this client's corrections and checks kept on this computer. They aren't brought back, and are deleted as the panel opens or the next PDF loads." };
       $('load-error').hidden = false;
     }
     // agent defaults: no client, no question.
