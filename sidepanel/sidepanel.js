@@ -32,7 +32,7 @@ import { mountSiteTrack } from './panel/site-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaultsShown } from './panel/agent-defaults/store.js';
 import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
-import { forgetQuoteTab, noteNewTab, restoreQuoteOwners } from './panel/quote-owner.js';
+import { forgetQuoteTab, noteNewTab, openPortal, restoreQuoteOwners } from './panel/quote-owner.js';
 import { fileReplacer } from './panel/file-drop.js';
 import { showWhatsNew } from './panel/whats-new.js';
 import { flushSync } from 'react-dom';
@@ -113,7 +113,9 @@ function wire() {
   mountSummary($('summary-view'), { close: () => closeSummary(), save: () => saveSummary() });
   // The page's answers: their filters, an earlier page's answers on this tab (read-only) and back to
   // this page's, what the tags mean, and Clear the marks.
-  mountCards($('cards-root'));
+  // A rater's logo on the "open a rater" card opens its agent site in a new tab, where nothing fills
+  // by itself (quote-owner.js openPortal).
+  mountCards($('cards-root'), { portal: (url) => { if (inExtension) openPortal(url); } });
   mountPickers($('pickers'), { pick: (list, i) => pickUnit(list, i) });
   mountFeed($('feed-root'), {
     setFilter: (filter) => setFilter(filter),

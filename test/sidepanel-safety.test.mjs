@@ -19,7 +19,7 @@ import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
-import { quoteProgress, stopScreen } from '../src/carriers.js';
+import { quoteProgress, ratersSaid, stopScreen } from '../src/carriers.js';
 import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
@@ -113,7 +113,7 @@ function extractFunction(name) {
           initialsChanged: 'async () => {}', refreshDefaults: '() => {}', quoteStarting: '() => {}', settingsDefaults: '() => undefined',
           // Whose quote a tab is (quote-owner.js) has its own tests (test/panel/quote-owner.test.jsx):
           // elsewhere every tab is this intake's, unless the harness says otherwise.
-          quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
+          quoteOwnerIssue: '() => null', portalHold: '() => false', releasePortal: '() => {}', openPortal: 'async () => {}', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
           stopFillFirst: 'async () => {}',
@@ -6901,11 +6901,100 @@ test('editing a source field in the panel recomputes what derives from it and re
   assert.equal(stored.record.operations.radiusMiles, 77, 'and saved that way');
   sandbox.state.intake = { record, warnings: [], done: [] };
   // A new intake starts clean: its derived values follow their source again.
-  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places, test, intakeId: summary\.intakeId \};/, 'a loaded intake starts with no edits');
+  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places, test, intakeId: summary\.intakeId, intakeRecord: JSON\.parse\(JSON\.stringify\(result\.record\)\) \};/, 'a loaded intake starts with no edits, the record as read kept');
   sandbox.renderSections();
   await edit('operations.radius', '250');
   assert.equal(record.operations.radiusMiles, 250, 'another intake: the miles follow the edit');
   assert.equal(row('operations.radiusMiles').value, '250');
+});
+
+// Audit 2026-11-07, UX-07: a correction in client details looked like an intake value afterwards,
+// what the client wrote was gone, and undoing a typo meant retyping it from the PDF; 96 fields had no
+// search. An edited row says so, with the intake's value and Restore; a box finds fields, and Your
+// corrections lists only the agent's.
+test('client details mark the agent\'s corrections, show the intake\'s value with Restore, and find fields', async () => {
+  const { get, set, STATES } = await import('../src/util.js');
+  const { parseEdit, rederive } = await import('../src/normalize.js');
+  const read = { operations: { radius: '100', radiusMiles: 100 }, applicant: { name: 'Acme Freight', yearEstablished: 2010, yearsInBusiness: 15 } };
+  const record = structuredClone(read);
+  const logged = [];
+  const sandbox = {
+    state: { intake: { record, intakeRecord: read, warnings: [], done: [], agentEdited: [] }, detailsClosed: new Set(['operations']), showEmpty: false, details: null, detailsQuery: '', detailsEditedOnly: false },
+    get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES, flushSync: (fn) => fn(), noNumberEdit: () => false, renderWarnings() {},
+    intakeEdited() {}, usage: { log: (e) => logged.push([e.path, e.change]) }, save: async () => {},
+    claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {}, profileLater() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'restoreField', 'restoreNoNumber', 'agentEdit'].map(extractFunction).join('\n'), sandbox);
+  sandbox.renderSections();
+  const rows = () => JSON.parse(JSON.stringify(sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path)));
+  const live = () => sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path);
+  const row = (path) => live().find((r) => r.path === path);
+  assert.deepEqual([row('operations.radius').edited, row('operations.radius').original, sandbox.state.details.edited], [false, undefined, null], 'nothing corrected: no mark, no Your corrections');
+
+  await row('operations.radius').edit('Unlimited');
+  sandbox.renderSections();
+  assert.deepEqual([row('operations.radius').edited, row('operations.radius').original, record.operations.radiusMiles], [true, '100', null]);
+  assert.equal(row('operations.radiusMiles').edited, false, 'a derived value that followed is not the agent\'s');
+  assert.equal(sandbox.state.details.edited, 'Your corrections (1)');
+  // Restore: the intake's value back, no longer the agent's, the miles following it again.
+  await row('operations.radius').restore();
+  assert.deepEqual([record.operations.radius, record.operations.radiusMiles, [...sandbox.state.intake.agentEdited]], ['100', 100, []]);
+  assert.deepEqual([row('operations.radius').edited, row('operations.radius').original], [false, undefined]);
+  assert.deepEqual(logged, [['operations.radius', 'changed'], ['operations.radius', 'restored']], 'logged as undone, without the value');
+  // A field the intake left blank, corrected: its original is said as blank.
+  await row('applicant.name').edit('');
+  sandbox.renderSections();
+  assert.equal(row('applicant.name').original, 'Acme Freight');
+  sandbox.state.intake.agentEdited = ['applicant.fein'];
+  set(record, 'applicant.fein', '12-3456789');
+  sandbox.renderSections();
+  assert.equal(row('applicant.fein').original, 'blank on the form');
+  // An intake saved by an older build (no record as read): marked, but nothing to restore to.
+  sandbox.state.intake.intakeRecord = undefined;
+  sandbox.renderSections();
+  assert.deepEqual([row('applicant.fein').edited, row('applicant.fein').restore], [true, undefined]);
+  sandbox.state.intake.intakeRecord = read;
+
+  // Find: by label, empty fields too, folded sections opened; nothing else listed.
+  sandbox.state.details.search('radius');
+  assert.deepEqual(rows().map((r) => [r.path, r.empty]), [['operations.radius', false], ['operations.radiusMiles', false]]);
+  assert.equal(sandbox.state.details.sections[0].open, true, 'a folded section with a match is open');
+  assert.equal(sandbox.state.details.toggle, null, 'no empty-fields button while finding');
+  sandbox.state.details.fold('operations', false);
+  assert.ok(sandbox.state.detailsClosed.has('operations') && sandbox.state.detailsClosed.size === 1, 'folding while finding leaves the drawer\'s folds as they were');
+  sandbox.state.details.search('no such field');
+  assert.deepEqual([rows().length, sandbox.state.details.nothing], [0, 'No field matches.']);
+  sandbox.state.details.search('');
+  // Your corrections: only the agent's.
+  sandbox.state.details.editedToggle();
+  assert.deepEqual(rows().map((r) => r.path), ['applicant.fein']);
+  assert.equal(sandbox.state.details.editedOnly, true);
+  sandbox.state.details.editedToggle();
+  assert.ok(rows().length > 3, 'all of them again');
+  // The intake keeps its record as read from the PDF, before any correction.
+  assert.match(SIDEPANEL, /intakeRecord: JSON\.parse\(JSON\.stringify\(result\.record\)\)/);
+
+  // CodeRabbit on #474: restoring the USDOT box put back the empty box but not the intake's "no
+  // number". The intake said No (noDot, its note); the agent typed a number (rederive cleared both);
+  // Restore brings both back. And an intake with a blank box, after the agent's typed No: Restore
+  // takes the No and its note away again, the checks after it keeping their Looks right.
+  const noDot = (applicant, warnings, done) => {
+    const rec = { applicant: { ...applicant } };
+    sandbox.state.intake = { record: rec, intakeRecord: { applicant: { ...applicant } }, warnings, done, agentEdited: ['applicant.dot'] };
+    return rec;
+  };
+  const said = noDot({ dot: null, noDot: true }, [{ code: 'dot.none', path: 'applicant.dot', level: 'info', msg: 'x' }], []);
+  said.applicant.dot = '1234567';
+  said.applicant.noDot = null;
+  sandbox.state.intake.warnings = [];
+  await sandbox.restoreField('applicant.dot', null, 'text');
+  assert.deepEqual(JSON.parse(JSON.stringify([said.applicant, sandbox.state.intake.warnings.map((w) => w.code), sandbox.state.intake.agentEdited])),
+    [{ dot: null, noDot: true }, ['dot.none'], []]);
+  const blank = noDot({ dot: null, noDot: null }, [{ code: 'dot.none', path: 'applicant.dot', level: 'info', msg: 'typed No' }, { code: 'mc.none', path: 'applicant.mc', level: 'info', msg: 'm' }], [1]);
+  blank.applicant.noDot = true;
+  await sandbox.restoreField('applicant.dot', null, 'text');
+  assert.deepEqual(JSON.parse(JSON.stringify([blank.applicant.noDot, sandbox.state.intake.warnings.map((w) => w.code), sandbox.state.intake.done])), [null, ['mc.none'], [0]]);
 });
 
 for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transport of ['complete', 'failure']) {
@@ -7378,7 +7467,7 @@ function namesHarness() {
   const context = {
     state, AssistError, Date, get: (obj, path) => path.split(/[.[\]]+/).filter(Boolean).reduce((o, k) => o?.[k], obj),
     firstNameOf: (v) => String(v ?? '').trim().split(/\s+/)[0] || null,
-    aiSettings: async () => ({ on: !state.offline, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, names: !state.namesOff, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
     reviewDriverNames: async (record, cfg) => {
       requests.push({ record: structuredClone(record), cfg });
       const reply = t.reply;
@@ -7395,17 +7484,30 @@ function namesHarness() {
 }
 const namesIntake = () => ({ record: { drivers: [{ first: 'Maria', last: 'Sample' }, { first: 'John', last: 'Sample' }], coverage: {} }, warnings: [{ code: 'other', level: 'check' }], done: [] });
 
-test('Luna checks driver first names once per intake, never with the assistant off, and fails to an info note', async () => {
-  // Off, or no key: nothing is sent, nothing changes (gender stays the TNI standard).
-  for (const flag of ['offline', 'noKey']) {
+test('Luna checks driver first names once per intake, never with its switch off, and fails to an info note', async () => {
+  // The check's own switch off, or no key: nothing is sent, nothing changes (gender stays the TNI standard).
+  for (const flag of ['namesOff', 'noKey']) {
     const t = namesHarness();
     const intake = namesIntake();
     t.state.intake = intake;
     t.state[flag] = true;
-    await t.review({ retry: true });
+    // Not awaited: a request sent would wait on its answer (gates) and hold the test.
+    t.review({ retry: true });
+    for (let i = 0; i < 5; i++) await t.settle();
     assert.equal(t.requests.length, 0, flag);
     assert.deepEqual(intake.warnings.map((w) => w.code), ['other'], flag);
     assert.equal(intake.namesReview, undefined, flag);
+  }
+  // Maintainer, 2026-11-07 (AI-15): the check has its own switch, so Suggest answers off doesn't stop it.
+  {
+    const t = namesHarness();
+    const intake = namesIntake();
+    t.state.intake = intake;
+    t.state.offline = true;
+    t.review({ retry: true });
+    await t.answer();
+    assert.equal(t.requests.length, 1, 'Suggest answers off: the names are still checked');
+    assert.equal(intake.namesReview.done, true);
   }
   const t = namesHarness();
   const intake = namesIntake();
@@ -7880,6 +7982,28 @@ function siteHarness(carrier, step, filled = false) {
   context.renderSite();
   return Object.assign(ui, { siteTrack: plain(state.siteTrack) });
 }
+
+// Audit 2026-11-07, UX-14: the header's logo and caption, the dock's raters and review mode's words
+// come from the carrier's `display`, not from the panel's code.
+test('the header, the dock and review mode say the carrier as its display says it', () => {
+  const page = siteHarness({ ...amwins, quoteSteps: undefined });
+  assert.equal(page['site-caption'].textContent, 'Commercial auto');
+  assert.doesNotMatch(extractFunction('renderSite'), /assets\/raters|'Commercial auto'/);
+  assert.match(extractFunction('renderSite'), /const src = carrier\?\.display\?\.logo \|\| null;/);
+  const off = dockHarness({ carrier: null, extra: { ratersSaid } });
+  assert.equal(off.dock().sub, 'Progressive, GEICO or AmWINS.');
+  const review = (carrier) => {
+    const state = { tab: { carrier }, intake: { record: { operations: { businessClass: 'Towing' } } }, cards: {} };
+    const context = { state, supportedClass: () => false, issueSaid: (c) => c };
+    vm.runInNewContext(extractFunction('showReviewMode'), context);
+    context.showReviewMode();
+    return state.cards.review.text;
+  };
+  assert.equal(review(geico), 'GEICO\'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.');
+  assert.equal(review({ name: 'New carrier' }), 'New carrier\'s rules weren’t written for this business class. Confirm the marked answers: Continue waits on each page.');
+  // A logo opens the agent site in a new tab, only in the extension.
+  assert.match(SIDEPANEL, /mountCards\(\$\('cards-root'\), \{ portal: \(url\) => \{ if \(inExtension\) openPortal\(url\); \} \}\);/);
+});
 
 test('on a stop step the panel offers no fill; on the other steps it names the step', () => {
   // The dock: on a stop step no button at all, and why; elsewhere Fill, named after the step.
@@ -9255,6 +9379,7 @@ test('automatic filling paused on the tab in front is said under the dock\'s wor
   // The dock carries it (renderDock), and the agent's own Fill lifts it (fillPage).
   assert.match(extractFunction('renderDock'), /busy: !!state\.filling, paused: pausedSaid\(d\) \};/);
   assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false;/);
+  assert.match(extractFunction('fillPage'), /if \(!auto\) releasePortal\(state\.tab\.id\);/);
 });
 
 // W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
@@ -11045,8 +11170,13 @@ test('Assistant names whose key Luna uses: the agent\'s, TNI\'s server, or anoth
   // On without a key: it says so, and its fold opens (warn). The picks switch is disabled only while
   // AI is off (or with a provider that can't pick).
   assert.deepEqual([none.ai.keyEdit, none.ai.keyTone, none.ai.warn, none.ai.note, none.ai.noteTone, none.ai.autoOff], ['Add key', 'warn', true, 'Needs a key', 'warn', false]);
-  const off = await said({ on: false });
-  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown], [false, 'Off', 'off', true, true]);
+  const off = await said({ on: false, names: false });
+  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown, off.ai.names], [false, 'Off', 'off', true, true, false]);
+  // Maintainer, 2026-11-07 (AI-15): the driver-name check has its own switch; on alone, the card says so.
+  const names = await said({ on: false, names: true, apiKey: 'sk-own', ready: true });
+  assert.deepEqual([names.ai.on, names.ai.names, names.ai.warn, names.ai.note, names.ai.noteTone], [false, true, false, 'On. Checks driver names.', 'on']);
+  const namesNoKey = await said({ on: false, names: true });
+  assert.deepEqual([namesNoKey.ai.warn, namesNoKey.ai.note], [true, 'Needs a key'], 'the check on without a key: it can\'t run yet');
 });
 
 // The AI key (CLAUDE.md: credentials stay out of logs): Add key opens its box with the saved key in
@@ -11079,13 +11209,17 @@ test('the AI key is put in its box and read from it, never into the panel\'s sta
   assert.deepEqual(calls.find((c) => c[0] === 'logSettings'), ['logSettings', 'changed', 'aiKey']);
   assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, focused.at(-1), prevented], ['', false, 'key-edit', 1]);
   assert.deepEqual([...state.aiCache.keys()], ['b'], 'answers asked with the old key are dropped');
+  // The driver-name check's switch (AI-15) saves its own setting and logs it by its name.
+  await context.acts.aiNames(false);
+  assert.deepEqual(calls.filter((c) => c[0] === 'save').at(-1), ['save', { lunaNames: false }]);
+  assert.deepEqual(calls.filter((c) => c[0] === 'logSettings').at(-1), ['logSettings', 'changed', 'aiNames']);
   // Escape: emptied and closed without saving; stopped, so Settings stays open.
   await context.acts.keyEdit();
   el('ai-openai-key').value = 'typed';
   let stopped = 0;
   context.acts.keyKey({ key: 'Escape', preventDefault() {}, stopPropagation: () => { stopped++; } });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 1]);
+  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 2]);
   assert.doesNotMatch(JSON.stringify([...Object.entries(state)]), /sk-/, 'no key in the panel\'s state');
   // The box and its button in Settings (settings-view.jsx): a password box, never given a value by React.
   const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');

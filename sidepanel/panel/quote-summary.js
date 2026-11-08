@@ -254,7 +254,7 @@ function saveSummary() {
     const name = downloadSummary(open.summary);
     said = `Saved ${name} to Downloads. It holds the client’s answers: keep it as you keep their file.`;
   } catch (e) {
-    said = `Couldn’t save the summary file: ${e?.message ?? e}.`;
+    said = `Couldn’t save the summary: ${e?.message ?? e}.`;
   }
   const summary = summaryEvent(open.summary);
   if (summary) {

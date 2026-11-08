@@ -66,6 +66,9 @@ jobs:
           if [ ! -f "$destination/$(jq -r .side_panel.default_path "$manifest")" ]; then echo 'Missing side panel'; exit 1; fi
           if [ ! -f "$destination/sidepanel/bundle/sidepanel.js" ] || [ -f "$destination/sidepanel/sidepanel.js" ]; then echo 'The side panel is not the built one'; exit 1; fi
           if [ ! -f "$destination/src/content/pagekit.js" ] || [ -e "$destination/src/kit" ]; then echo 'The fill engine is not the built one'; exit 1; fi
+          if [ ! -f "$destination/THIRD_PARTY_NOTICES.txt" ] || [ -e "$destination/lib" ]; then echo 'The store ZIP needs its notices, and no lib/'; exit 1; fi
+          if [ -n "$(find "$destination" -name '*.map')" ] || grep -rq 'sourceMappingURL' "$destination/sidepanel/bundle/sidepanel.js" "$destination/src/content/pagekit.js"; then echo 'The store ZIP carries or names source maps'; exit 1; fi
+          if [ ! -f "dist/tni-rater-autofill-$version-sourcemaps.zip" ]; then echo 'Missing the source maps zip'; exit 1; fi
       - name: Packaged extension with the Node replay server
         run: |
           node scripts/replay.mjs &

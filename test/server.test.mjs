@@ -8,9 +8,9 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom, SCHEMA_VERSION } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, LUNA_TIMEOUT_MS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom, SCHEMA_VERSION } from '../server/index.mjs';
 import { MAX_EVENTS } from '../src/usage.js';
-import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
+import { buildRequest, MAX_REQUEST_CHARS, TIMEOUT_MS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
 import { imageFiles } from '../scripts/lib/deploy.mjs';
@@ -631,7 +631,7 @@ test('keeps an intake marked as a test run, and only a yes/no mark', async () =>
 
 test('keeps the agent\'s settings, booleans and where usage goes only', async () => {
   const dataDir = tmp();
-  const values = { autoFollowUps: true, autoAdvance: false, autoPages: false, overwrite: false, aiOn: true, aiAuto: false, aiKey: true, uploads: 'central' };
+  const values = { autoFollowUps: true, autoAdvance: false, autoPages: false, overwrite: false, aiOn: true, aiAuto: false, aiNames: true, aiKey: true, uploads: 'central' };
   await withServer({ dataDir }, async ({ post }) => {
     await post({ events: [
       ev({ type: 'agent_settings', filled: undefined, reason: 'changed', changed: 'autoAdvance', values }),
@@ -948,6 +948,26 @@ test('/v1/luna: 501 without a key, a daily limit, and OpenAI refusing the server
     assert.equal(limited.headers.get('retry-after'), '3600');
   });
   assert.equal(lunaRequestError(lunaBody()), null);
+});
+
+// Audit 2026-11-07, AI-09: the server gives up on OpenAI well before the panel gives up on it, so the
+// panel gets the server's 504 instead of leaving a call that is still paid for.
+test("the server's wait for OpenAI ends at least 5 s before the panel's", () => {
+  assert.ok(LUNA_TIMEOUT_MS + 5000 <= TIMEOUT_MS, `${LUNA_TIMEOUT_MS} vs ${TIMEOUT_MS}`);
+});
+
+// CodeRabbit on #416: OpenAI's headers in time, its body still coming when the wait ends, is a 504
+// too (the panel says "The AI assistant took too long"), not an unreadable answer or OpenAI's own status.
+test('/v1/luna: a body still being read when the wait ends is a 504, an answer or an error alike', async () => {
+  for (const [ok, status] of [[true, 200], [false, 500]]) {
+    const fetchImpl = async (url, init) => ({ ok, status, headers: new Headers(),
+      json: () => new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))) });
+    await withServer({ dataDir: tmp(), openaiKey: 'sk-server', lunaTimeoutMs: 50, fetchImpl }, async ({ base }) => {
+      const res = await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
+      assert.equal(res.status, 504, `OpenAI ${status}`);
+      assert.deepEqual(await res.json(), { error: 'OpenAI did not answer' });
+    });
+  }
 });
 
 // Audit 2026-11-07, AI-01: the server's bound is above the panel's, so the largest request the panel
