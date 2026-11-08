@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
@@ -80,6 +81,27 @@ test('a box\'s edit is its change, not each key; a value said again shows in the
   expect(radius.value).toBe('Unlimi');
 });
 
+// Review of PR #376 (CodeRabbit): "No" typed into a USDOT box that was empty is saved empty
+// (noNumberEdit), the same value as before, so the box went on showing "No". The edit says the
+// field again (`rev`): its box shows the record's value, and what the agent is typing elsewhere stays.
+test('a field said again after its edit shows the record\'s value, though the value is the same as before', () => {
+  const { container } = render(<Details act={{}} />);
+  const say = (rev) => act(() => {
+    state.details = { showEmpty: false, toggle: null, fold() {}, sections: [{ id: 'applicant', title: 'Business', open: true, allEmpty: false, flags: 0, hiddenSaid: null, rows: [
+      field('applicant.dot', '', { rev }), field('operations.radius', '100')] }] };
+  });
+  say(0);
+  const dot = $(container, '#f-applicant_dot');
+  const radius = $(container, '#f-operations_radius');
+  fireEvent.input(dot, { target: { value: 'No' } });
+  fireEvent.change(dot);
+  fireEvent.input(radius, { target: { value: 'Unlim' } });
+  say(0);
+  expect([dot.value, radius.value], 'said again unchanged: nothing moves').toEqual(['No', 'Unlim']);
+  say(1);
+  expect([$(container, '#f-applicant_dot'), dot.value, radius.value]).toEqual([dot, '', 'Unlim']);
+});
+
 test('a dropdown shows the record\'s value, one off the list kept; a long answer is a text area', () => {
   const edits = [];
   const { container } = render(<Details act={{}} />);
@@ -99,6 +121,37 @@ test('a dropdown shows the record\'s value, one off the list kept; a long answer
   expect(select.value).toBe('');
   const notes = $(container, '#f-notes_text');
   expect([notes.tagName, notes.rows, notes.value]).toEqual(['TEXTAREA', 4, 'Hauls produce.']);
+});
+
+// Audit 2026-11-07, UX-07: an edited row is marked like the report's Your edit, says what the
+// intake had and offers Restore; the box at the top finds fields, and Your corrections lists the
+// agent's (what each does to the record: the safety tests, renderSections and restoreField).
+test('a corrected field shows Your edit, the intake\'s value and Restore; the find box and Your corrections ask the panel', () => {
+  const calls = [];
+  const { container } = render(<Details act={{}} />);
+  act(() => {
+    state.details = { showEmpty: false, toggle: null, fold() {}, query: '', editedOnly: false, edited: 'Your corrections (1)', nothing: null,
+      search: (text) => calls.push(['search', text]), editedToggle: () => calls.push(['edited']),
+      sections: [{ id: 'operations', title: 'Operations', open: true, allEmpty: false, flags: 0, hiddenSaid: null, rows: [
+        field('operations.radius', 'Unlimited', { label: 'Radius (as written)', edited: true, original: '100', restore: () => calls.push(['restore']) }),
+        field('operations.radiusMiles', '')] }] };
+  });
+  const [radius, miles] = container.querySelectorAll('.field');
+  expect([radius.className, radius.querySelector('label .tag.you')?.textContent, radius.querySelector('.field-was span').textContent]).toEqual(['field edited', 'Your edit', 'On the intake: 100']);
+  expect([miles.className, miles.querySelector('.tag'), miles.querySelector('.field-was')]).toEqual(['field', null, null]);
+  const restore = radius.querySelector('.field-was button');
+  expect(restore.getAttribute('aria-label')).toBe('Restore Radius (as written) to the intake\'s value');
+  fireEvent.click(restore);
+  const find = $(container, '#details-find');
+  fireEvent.change(find, { target: { value: 'rad' } });
+  const edited = $(container, '#details-edited');
+  expect([edited.hidden, edited.textContent, edited.getAttribute('aria-pressed')]).toEqual([false, 'Your corrections (1)', 'false']);
+  fireEvent.click(edited);
+  expect(calls).toEqual([['restore'], ['search', 'rad'], ['edited']]);
+  act(() => { state.details = { ...state.details, query: 'zzz', sections: [], nothing: 'No field matches.' }; });
+  expect([find.value, $(container, '#sections .feed-empty').textContent]).toEqual(['zzz', 'No field matches.']);
+  act(() => { state.details = { ...state.details, edited: null }; });
+  expect(edited.hidden, 'nothing corrected: no switch').toBe(true);
 });
 
 test('mountDetails draws before it returns', () => {

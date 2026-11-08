@@ -26,6 +26,18 @@ for (const area of ['local', 'managed']) {
 // let go when the panel closes (src/tab-mark.js).
 createTabMarker(chrome).listen();
 
+// Where the panel's "What's new" card (sidepanel/panel/whats-new.js) starts: a new install has
+// nothing new to be told, so from the version installed; an update with no version said yet (the
+// panel not opened since this card came, perhaps over several updates) from the version updated
+// from, so the card says every version since. A version already said is left as it is.
+chrome.runtime.onInstalled.addListener(({ reason, previousVersion }) => {
+  const from = reason === 'install' ? chrome.runtime.getManifest().version : reason === 'update' ? previousVersion : null;
+  if (!from) return;
+  chrome.storage.local.get('whatsNewSeen')
+    .then(({ whatsNewSeen }) => (whatsNewSeen ? null : chrome.storage.local.set({ whatsNewSeen: from })))
+    .catch((e) => console.warn("what's new start not saved:", e?.message ?? e));
+});
+
 // The agent's corrections and checks kept past their day (src/kept-work.js) are deleted as Chrome
 // starts, whether or not the panel is opened.
 chrome.runtime.onStartup.addListener(() => { pruneKeptWork(chrome.storage.local).catch((e) => console.warn('kept work not pruned:', e?.message ?? e)); });

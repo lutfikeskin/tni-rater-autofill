@@ -3,6 +3,7 @@
 // never contain client data.
 
 import { LOG_KEY, MAX_EVENTS } from '../src/usage.js';
+import { SCHEMA_VERSION } from '../src/usage-schema.js';
 
 const hasChrome = !!globalThis.chrome?.storage?.local;
 const memory = { [LOG_KEY]: [], settings: {} };
@@ -104,7 +105,7 @@ export function log(...events) {
     const install = await installId();
     let list = (await local.get(LOG_KEY)) ?? [];
     let seq = (await local.get(SEQ_KEY)) ?? 0;
-    const stamp = () => ({ id: crypto.randomUUID(), t, v: version, channel: PROVENANCE.channel, ...(PROVENANCE.commit ? { commit: PROVENANCE.commit } : {}), agent, install, session: sessionId, intakeId, seq: ++seq });
+    const stamp = () => ({ id: crypto.randomUUID(), t, v: version, schema: SCHEMA_VERSION, channel: PROVENANCE.channel, ...(PROVENANCE.commit ? { commit: PROVENANCE.commit } : {}), agent, install, session: sessionId, intakeId, seq: ++seq });
     for (const e of events) list.push({ ...stamp(), ...e });
     // Oldest events go first if nobody has exported in a long time; how many is logged in their
     // place (usage_lost), so a review knows the log is missing some.
@@ -241,10 +242,11 @@ export function upload({ timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
     const { serverUrl, serverToken } = await serverConfig();
     if (!serverUrl) { uploadStatus = { state: 'off' }; return; }
     let sent = 0;
-    // Events an older server refused because it didn't know their type yet (e.g. the AI events)
-    // go back in the queue: a newer server takes them, an old one refuses them again.
+    // Events an older server refused because it didn't know their type yet (e.g. the AI events), or
+    // because they were logged under a newer schema than its own (src/usage-schema.js: it would drop
+    // their new fields), go back in the queue: a newer server takes them, an old one refuses them again.
     const parked = (await local.get(REJECTED_KEY)) ?? [];
-    const retry = parked.filter((e) => /unknown event type/.test(e.rejectedBecause ?? ''));
+    const retry = parked.filter((e) => /unknown event type|schema newer than server/.test(e.rejectedBecause ?? ''));
     if (retry.length) {
       const queued = (await local.get(LOG_KEY)) ?? [];
       const ids = new Set(queued.map((e) => e.id));

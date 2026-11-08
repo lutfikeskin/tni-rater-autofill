@@ -8,7 +8,9 @@ export const PROVIDERS = Object.freeze({
 
 // `server` is the usage server in use (usage-log.js serverConfig): without a key of the agent's own,
 // Luna goes through its /v1/luna with TNI's key. Suggestions are on unless the agent turned them off;
-// automatic picks stay off unless the agent turned them on.
+// automatic picks stay off unless the agent turned them on. The driver-name check (`names`) has its
+// own switch, on unless the agent turned it off, whatever Suggest answers says (the maintainer,
+// 2026-11-07, AI-15).
 export function settingsFrom(saved = {}, server = {}) {
   // Dedicated Luna settings only: obsolete provider credentials are never reused.
   const apiKey = saved.lunaKey || '';
@@ -16,7 +18,7 @@ export function settingsFrom(saved = {}, server = {}) {
   if (!apiKey && server.serverUrl) {
     try { proxy = { url: new URL('/v1/luna', server.serverUrl).href, token: server.serverToken || '' }; } catch { /* not a URL: no server */ }
   }
-  return { provider: 'luna', on: saved.aiOn !== false, auto: saved.lunaAuto === true,
+  return { provider: 'luna', on: saved.aiOn !== false, auto: saved.lunaAuto === true, names: saved.lunaNames !== false,
     apiKey, proxy, ready: !!(apiKey || proxy), model: luna.DEFAULT_MODEL };
 }
 

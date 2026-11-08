@@ -31,6 +31,8 @@ vehicle types, driver and vehicle counts, coverages, known exceptions.
 - [ ] Step 5: each rule's `concept` in `src/concepts.js`, then `npm run concepts` (`test/concepts.test.mjs`)
 - [ ] Step 6: `quoteSteps` (and `layoutSteps` on a one-address application), and `advance` only on pages or steps it lists: never on one that binds, buys, submits, orders reports or signs, and never on a stop page or step
 
+- [ ] Step 7: its `display`: the logo in `sidepanel/assets/raters/` (with its source), the agent home page on one of its hosts, the product, and the classes review mode names (`test/new-carrier.test.mjs` checks it)
+
 ### Validate and expand
 
 - [ ] A mock or replay of the carrier's pages under `test/fixtures/<carrier>/` with its runner in `scripts/` and an `npm run` script

@@ -59,7 +59,9 @@ logged and the day counts from 0, and one that can't be written is logged and th
 memory. The server neither stores nor logs the request or OpenAI's answer. OpenAI's own errors come back as their status only (the log adds OpenAI's error
 code, such as `insufficient_quota`); the server's key refused (401, 403, 404) or out of credit or
 over its budget (429 `insufficient_quota`) is 424, so the panel says to tell TNI rather than to
-check a key or try again. The upload token ships in the extension, so it is not a secret. What
+check a key or try again. OpenAI gets 45 s (`LUNA_TIMEOUT_MS`) for its whole answer, the body read included, then the server answers 504, which
+the panel says as "The AI assistant took too long"; the panel's own wait is 55 s (`TIMEOUT_MS` in
+`src/ai/luna.js`), longer, so the server's answer reaches it. The upload token ships in the extension, so it is not a secret. What
 bounds the spending is the daily limit and token budget (counted here) and the money the key can reach:
 give the key its own OpenAI project, and on prepaid credit keep auto-recharge off, so an empty
 balance stops it (429 `insufficient_quota`, which the panel shows as 424). An OpenAI spend alert on
@@ -138,14 +140,26 @@ its `COPY` sources) have no uncommitted or untracked changes, then runs
 needs) and waits up to 5 minutes in all, a stalled request included, for Railway's production `/v1/health` (never `RATER_SERVER`) to name this checkout's server. `--dry-run` only
 checks. A failed build exits 1, and the previous deployment keeps serving.
 
+After a merge to `main` that changes what the image is built from (`server/`, `.railwayignore`, or
+any other file `server/Dockerfile` copies: `test/deploy.test.mjs` holds the workflow's paths to it), [deploy-server.yml](../.github/workflows/deploy-server.yml) runs the same
+script on GitHub, one deploy at a time (the maintainer, 2026-11-07). It needs the repository secret
+`RAILWAY_TOKEN`, a Railway project token for the production environment; without it the job says
+`RAILWAY_TOKEN is not set: nothing deployed` and succeeds, so deploy by hand as above. Only the
+step that checks for the token and the deploy step get it, not the install of Railway's CLI. It checks
+out `main` as it is when the job starts, not the pushed commit, so a later merge that changes no
+server file and starts no run of its own doesn't stop the deploy. Actions → Deploy usage server →
+Run workflow deploys `main` again on demand.
+
 Before deploying, confirm `RATER_TOKEN` is set in the service's Variables. The server fails closed:
 bound to anything but loopback (`127.0.0.1`, `localhost`, `::1`) without `RATER_TOKEN`, it exits
 with `RATER_TOKEN is not set and HOST=0.0.0.0 is not loopback: refusing to start an open upload
 endpoint` instead of taking anyone's uploads (audit 2026-10-08: an unset variable made the
 deployment an open write endpoint). On Railway that is a failed deployment in the deploy logs, and
 the previous one keeps serving. `npm run server` on this computer still needs no token.
-`/v1/health` answers `{ ok, server }` to anyone (what the daily server check and the panel's
-"is it there" probe read); `events`, how many are stored, only comes with the admin token.
+`/v1/health` answers `{ ok, server, schema }` to anyone (what the daily server check and the panel's
+"is it there" probe read); `events`, how many are stored, and `metrics` only come with the admin
+token (below).
+
 One request never stops the server for everyone else. A request target that isn't a URL answers
 400 before any token check, an event whose type isn't one of the server's own (`constructor` or
 `__proto__` included) is refused in the reply's `rejected`, and an exception inside a request
@@ -162,9 +176,25 @@ root-owned, and a non-root process that can't write there would answer every upl
 `server/Dockerfile`, check `ls -ld /data` and a test write as `node` in the running container
 (or add an entrypoint that chowns `/data` first), then redeploy and confirm `/v1/events` still
 stores an event.
-Deploy a server change that accepts new event fields before releasing the extension that sends
-them: an older server drops unknown fields (and refuses layouts over its size limit) rather than
-storing them. The run-identity fields (`run`, `rules`, `settings`, `step` on fill and field-change
+The event contract, which event types there are and which fields each keeps (`COMMON`,
+`EVENT_FIELDS`), with the profile's text tests (`ID_LIKE`, `LIMIT`, `PROFILE_UNITS`) and the schema's
+version, is one module the extension and the server both import: `src/usage-schema.js`, which has
+no imports and which the image copies (`server/Dockerfile`; `railway up` uploads it, and its text is
+in the `server` hash). The server adds agent defaults' fields to its own copy and checks every
+value's shape itself. Every event carries the `schema` it was logged under (`SCHEMA_VERSION`;
+none before 2026-11-07), and `/v1/health` names the server's (`schema`). An event of a newer schema
+than the server's is refused, per event in the reply's `rejected`, as `schema newer than server
+(N > M)`; the extension keeps it aside like an unknown event type and sends it again on each
+upload, so once the server is deployed it is stored with every field. Until then nothing of that
+extension's is stored (its events wait on the agents' computers, which keep 20,000 each), so deploy
+soon after. A change to the contract (an event type, a field, a profile group or field) changes its
+fingerprint, and `test/consistency.test.mjs`, which holds each version's fingerprint, fails until
+`SCHEMA_VERSION` is raised and the new version's fingerprint (which the failure names) is added,
+earlier versions' entries left as they are. A shape check alone (tighter
+validation, no new field) needs no new version. An event without `schema`, from an extension
+released before it, is kept as before: such an extension's new fields still need the server
+deployed first, as an older server drops unknown fields (and refuses layouts over its size limit)
+rather than storing them. The run-identity fields (`run`, `rules`, `settings`, `step` on fill and field-change
 events, [learning](learning.md)) are such a change: deploy the server that keeps them before the
 extension that sends them, or every fill run until then is stored with those names in `dropped`.
 That server also refuses an event whose run id, rules hash, settings object or step is malformed
@@ -172,7 +202,7 @@ That server also refuses an event whose run id, rules hash, settings object or s
 commit, optionally `+dirty`) only in those shapes. Every event's common fields are kept only in their shapes (`COMMON_SHAPES`), and an event with one out of its shape is refused (in the reply's `rejected`, naming the field), never stored with it or trimmed: `t` an ISO time in UTC (`…Z`), a real date and time (not `2025-02-30` or `24:00`), from 2025 to 30 days ahead of the server's clock; `agent` initials as typed (1–12 letters, digits, spaces and `. ' -`); `session` a UUID; `intakeId` the intake PDF's SHA-256 (64 lowercase hex); `carrier` a carrier id's shape (lowercase letters, digits and `-`, at most 20, so a new carrier needs no server change); `page` a page name or path (at most 200 of letters, digits, space and `_ . : / ~ % + ( ) , -`); `v` a version number or `dev`. Each may be null but `t`. The request's `agent`, which fills an event without one, is used only in that shape, otherwise not at all. Every event stored from the pilot up to 2026-11-06 (98,872) passes these checks. It refuses events from the local test page (`carrier: 'test'`, localhost), which are
 no quote; the review scripts also skip the ones stored before. The server names what it dropped on
 the stored event (`dropped`: field names only, at most 20, `droppedMore` counts the rest), and
-`/v1/health` names its version (`server`, a hash of every file the image copies, in `server/Dockerfile`'s order: `server/index.mjs`, `server/dashboard.mjs`, `server/agent-defaults.mjs` and `server/privacy.html`; a test holds the list to the Dockerfile's). `node scripts/server-check.mjs` compares that with this checkout, without
+`/v1/health` names its version (`server`, a hash of every file the image copies, in `server/Dockerfile`'s order: `server/index.mjs`, `server/dashboard.mjs`, `server/agent-defaults.mjs`, `server/privacy.html` and `src/usage-schema.js`; a test holds the list to the Dockerfile's; and `schema`, its schema version). `node scripts/server-check.mjs` compares that with this checkout, without
 sending any event: after a deploy it should say `same`.
 
 The server accepts `intake_profile`, a profile of the client's business (`PROFILE` in
@@ -192,6 +222,56 @@ and its group named in `dropped`; a group that isn't the right kind of object or
 whole. Accepting the event collects nothing until an extension sends it, so this server can be
 deployed whenever; the extension that sends the profile is released only after the privacy policy
 names it.
+
+### Upload limits and the disk guard
+
+The upload token ships in the extension, so `/v1/events` bounds what one address can send and stops
+taking uploads before the volume fills (`UPLOAD_LIMITS` and `MIN_FREE_MB` in `server/index.mjs`).
+Each address has two token buckets in memory: 120 requests, refilled at 60 a minute, and 100 MB,
+refilled at 25 MB an hour. The panel posts at most once a minute plus a few prompt uploads, each of
+at most 500 events and a million characters, so a full queue (20,000 events) drains in 40 requests
+at once; the pilot's busiest minute was 9 requests and 4.8 MB, its busiest day 8.3 MB, all agents
+together, and an office's agents may share one address. Over either limit the answer is 429 with
+`retry-after`, and the log line names the limit and the address (`limit`, `ip`). The address is the socket's, or
+the last value of the header `RATER_CLIENT_IP_HEADER` names: the image sets `x-real-ip`, which
+Railway's edge sets to the client's address (without it every agent would share the edge's). The
+buckets start full again after a restart or redeploy.
+
+While `DATA_DIR` has less than `RATER_MIN_FREE_MB` free (unset or blank 500, `0` switches the guard
+off, a value that isn't a number keeps 500), every upload answers 507 and stores nothing, so the
+server and the stored log survive; the log says `DISK LOW` once when it starts and `disk ok again`
+when it ends. A free-space reading that fails is logged once and never stops uploads. The extension
+treats 429 and 507 like any other refusal: the events stay queued on the agent's computer and go on
+the next minute's upload (its queue keeps 20,000 events, then drops the oldest and logs
+`usage_lost`). On `DISK LOW`, grow the volume in Railway (or free space on it) before the agents'
+queues fill.
+
+### Logs and counters
+
+Each log line is one JSON object (`logLine` in `server/index.mjs`), so Railway's log search filters
+by field (`@level:error`, `@route:/v1/luna`, `@status:507`). Every answer's line has `t`, `level`
+(`error` for a 5xx, on stderr), `method`, `route` (one of the server's routes, or `other`: never the
+path asked for), `status` and `ms`, and what it was about: an upload's `agent`, `accepted`,
+`duplicates` and `rejected` counts; a Luna request's `luna` (answered, limit, budget, upstream with
+OpenAI's status and error `code`, no answer, unreadable), the day's `requests`, `limit`, `tokens`
+and `budget`, and the answer's `in` and `out` tokens (`estimated` when OpenAI gave none); a rate
+limit's `limit`, `ip` and `wait`; a disk refusal's `disk`; an export's `since`, `until` and `days`;
+the dashboard's `window`, `tests` and `cached`. Other lines have a `msg` (startup, `DISK LOW`,
+`disk ok again`, a Luna day file not read or saved, a request's exception with its `error` name and
+`where`, and, when it answered 500, that answer's `status` and `ms`, counted like any other; an
+uncaught one's `error` and `stack`). `where` and `stack` are the error's stack frames only, never
+its message: the stack's `Name: message` header is cut off whole before frames are read, and a
+stack that doesn't start with it gives none. Lines carry names, counts and ids only: never a token, an
+event's or a Luna request's content, OpenAI's answer, or a request's query beyond the export's dates.
+
+With the admin token, `/v1/health` adds `metrics`: since the process started (`startedAt`,
+`uptimeS`; a restart or redeploy starts them again), `requests` by route and status, `exceptions`,
+and `events` (`accepted`, `duplicates`, `rejected`, `withDropped`: stored with a field dropped, and
+`lastStoredAt`), `rejects` by the server's reason (an unknown type's name and numbers left out, at
+most 50 reasons, then `other`); and as they are now, `disk` (`freeMB` on `DATA_DIR`, null when
+unreadable, and `guardMB`) and `luna` (the day's counts from its file, `limit` and `budget`; null
+without `OPENAI_API_KEY`). No external service reads them yet: `curl -H "authorization: Bearer
+$RATER_ADMIN_TOKEN" https://usage-server-production.up.railway.app/v1/health`.
 
 ## Live usage page
 

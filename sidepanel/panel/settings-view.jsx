@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Settings in React, over everything but the header: the agent's initials, the Filling switches, the
 // AI's card and its key, the usage log, and Advanced (the test-run mark, the usage server, page
 // captures and the developer recording). Drawn from what the panel says: the switches (state.switches,
@@ -73,13 +74,14 @@ function Assistant({ act }) {
   }, [ai]);
   return (
     <details id="assistant" ref={fold} className="group fold">
-      <summary className="list-row"><svg className="fold-icon" aria-hidden="true"><use href="#brain" /></svg><span className="fold-name">AI</span><span id="ai-note" className={ai?.noteTone}>{ai?.note ?? ''}</span><span className="chev" aria-hidden="true">›</span></summary>
+      <summary className="list-row"><svg className="fold-icon" aria-hidden="true"><use href="#brain" /></svg><span className="fold-name">AI assistant</span><span id="ai-note" className={ai?.noteTone}>{ai?.note ?? ''}</span><span className="chev" aria-hidden="true">›</span></summary>
       <div id="agent-card" className={`card${ai?.warn ? ' warn' : ''}`}>
         <label className="opt"><span className="opt-text"><b>Suggest answers</b><span>For questions the intake doesn’t answer</span></span><Check id="ai-on" role="switch" className="switch" checked={!!ai?.on} said={ai} onChange={act.aiOn} /></label>
         <label id="ai-auto-option" className="opt" hidden={!!ai && !ai.autoShown}>
           <span className="opt-text"><b>Put checked picks in</b><span>Shown in purple. You still approve them before Continue.</span></span>
           <Check id="ai-auto" role="switch" className="switch" checked={!!ai?.auto} said={ai} disabled={!!ai?.autoOff} onChange={act.aiAuto} />
         </label>
+        <label className="opt"><span className="opt-text"><b>Check driver names</b><span>Flags a first name more often a woman’s. You set the gender on its Intake check item.</span></span><Check id="ai-names" role="switch" className="switch" checked={!!ai?.names} said={ai} onChange={act.aiNames} /></label>
         <div className="key-row">
           <div className="opt">
             <span className="opt-text"><b id="key-label">OpenAI key</b><span id="key-status" className={ai?.keyTone}>{ai?.keyStatus ?? ''}</span></span>
@@ -117,7 +119,7 @@ function DevRecording({ act }) {
 }
 
 // `act`: done; the Filling switches (switch(name, on)); agent, serverUrl, serverToken (a box's new
-// value); upload, exportLog, clearLog, capture; testRun(on); the AI's aiOn(on), aiAuto(on), keyEdit,
+// value); upload, exportLog, clearLog, capture; testRun(on); the AI's aiOn(on), aiAuto(on), aiNames(on), keyEdit,
 // keySave and keyKey (a key pressed in the key's box); and the developer recording's (devrec: start,
 // note, stop, recover), or null where it isn't offered.
 function Settings({ act }) {

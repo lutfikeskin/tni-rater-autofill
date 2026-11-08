@@ -10,7 +10,7 @@ import { ownerDrivesAnswered } from '../../src/answers/owner.js';
 import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes, forgetKeptWork, keptWorkCleared, keptWorkLocal } from './core.js';
+import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals } from './core.js';
 import { firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
@@ -79,6 +79,8 @@ async function loadFile(file, { reset = false } = {}) {
     state.visitedPages = new Set();
     state.doneSteps = new Set();
     state.advanceRetried = new Set();
+    // Their kept copies too (FLOW-06), each tab's quote state aside.
+    await forgetJournals();
     state.assistPage = null;
     state.layoutErrors = 0;
     cancelLayouts();
@@ -88,7 +90,8 @@ async function loadFile(file, { reset = false } = {}) {
     // among them (radius miles, years in business) stays theirs after the panel reopens.
     // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
     // intakeId: whose quote a tab is (quote-owner.js), from the moment this intake is the panel's.
-    state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test, intakeId: summary.intakeId };
+    // intakeRecord: the record as read from the PDF, before any correction (client details' Restore).
+    state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test, intakeId: summary.intakeId, intakeRecord: JSON.parse(JSON.stringify(result.record)) };
     // A New quote that failed holds this intake's fills until one for it finishes (its own load,
     // `reset`): not lifted by the same PDF loaded again, after a Clear or another intake too, whose
     // quote on screen lost its records (fillsHeld; CodeRabbit on PR #395).
@@ -109,6 +112,7 @@ async function loadFile(file, { reset = false } = {}) {
     state.aiDocks = new Map();
     state.pastKey = null;
     state.detailsOpen = false;
+    state.summary = null;
     state.settingsOpen = false;
     state.fileConfirm = null;
     state.pdf = null;
@@ -219,7 +223,7 @@ async function markTestRun(test) {
 }
 
 // The agent's work on an intake loaded again from the same PDF: the record with their corrections
-// (and what was derived from them), the items with their checks (checked by position, Luna's
+// (and what was derived from them, with the boxes it was read from), the items with their checks (checked by position, Luna's
 // claims-box items included), Luna's claims-box review, and Add NTL done on its quote.
 // The agent's corrections and checks of this intake, kept on this computer (src/kept-work.js), put
 // back on it as made in the panel: each corrected value set and marked the agent's, the values derived
@@ -282,7 +286,7 @@ async function keepKeptWork(intake) {
 }
 
 function keepWork(intake, was) {
-  Object.assign(intake, { record: was.record ?? intake.record, warnings: was.warnings ?? intake.warnings, done: [...(was.done ?? [])], agentEdited: [...(was.agentEdited ?? [])],
+  Object.assign(intake, { record: was.record ?? intake.record, warnings: was.warnings ?? intake.warnings, readFrom: was.readFrom ?? intake.readFrom, done: [...(was.done ?? [])], agentEdited: [...(was.agentEdited ?? [])],
     notesReview: was.notesReview ?? null, namesReview: was.namesReview ?? null, ntlAdded: !!was.ntlAdded });
 }
 

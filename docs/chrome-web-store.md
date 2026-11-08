@@ -17,8 +17,12 @@ script: `npm run package -- --label test-build` writes
 `dist/tni-rater-autofill-<version>-test-build-<commit>.zip` (`-dirty` when the packaged files had
 changes the commit doesn't hold). A label is lowercase words and hyphens.
 
-The zip holds only what the extension runs: `manifest.json`, `background.js`, `icons/`, `lib/`,
-`sidepanel/`, `src/`. Raise `version` in `manifest.json` (and `package.json`) for every upload:
+The zip holds only what the extension runs: `manifest.json`, `background.js`, `icons/`,
+`sidepanel/` (the panel as built, PDF.js and fflate bundled in), `src/`, and `THIRD_PARTY_NOTICES.txt`,
+the licences of the third-party code it carries (the npm packages the panel's build and the fill
+engine took in, with the vendored PDF.js and fflate). It has no source maps: those go in
+`dist/tni-rater-autofill-<version>-sourcemaps.zip` beside it, made with the same code, to read an
+agent's stack trace against; keep that zip with the upload. The unpacked copy keeps its maps. Raise `version` in `manifest.json` (and `package.json`) for every upload:
 the store refuses a version it already has.
 
 ## 2. One-time setup
@@ -109,6 +113,11 @@ Apps & extensions → the extension → Policy for extensions**, a JSON object w
 Raise the version, `npm run package` from a clean, committed tree (the usage events name the
 commit they were packaged from, `+dirty` otherwise), upload the new zip on the item's **Package**
 tab, submit.
+In the version's PR, add what agents will see differently to `src/whats-new.js` under the new
+version: one to five short lines in the agent's words. The panel shows them once, as "What's new in
+v<version>", the first time it opens after the update, with every version's lines since the one it
+last showed (or the version updated from, when it never showed one); a version with no lines shows
+nothing, and a new install isn't told. `test/whats-new.test.mjs` checks the lines' shape.
 Chrome updates installed copies by itself within a few hours of approval.
 
 When the version bump reaches `main`, [release-tag.yml](../.github/workflows/release-tag.yml)

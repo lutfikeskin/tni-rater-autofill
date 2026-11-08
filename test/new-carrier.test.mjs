@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { CARRIERS } from '../src/carriers.js';
+import { CARRIERS, RATERS, ratersSaid } from '../src/carriers.js';
 
 // Audit 2026-11-07, ORG-16: adding a carrier touches about a dozen places, listed only in
 // docs/new-carrier.md's prose. The new-carrier issue template lists each as a box; this keeps the
@@ -55,4 +55,27 @@ test('the template has a box for the correction keys, the agent\'s stops and whe
   // docs/new-carrier.md step 2: what the intake doesn't answer, without a TNI standard, is the agent's.
   assert.match(steps, /every question the intake doesn't answer is the agent's/);
   assert.match(template, /^- \[ \] Step 2: a question the intake doesn't answer and TNI has no standard for stays the agent's, shown as unanswered: never filled as No or not applicable$/m);
+});
+
+// Audit 2026-11-07, UX-14: the panel's logos, the dock's list of raters, the caption and review
+// mode's wording were written into the panel's code, in four places a new carrier would miss. Each
+// carrier with rules says them in its own `display`; a logo opens its agent site, on its own hosts.
+test('every carrier with rules says how the panel shows it: a logo on disk, its agent site on its hosts, its product and classes', () => {
+  const real = CARRIERS.filter((c) => c.rules?.length);
+  assert.deepEqual(RATERS.map((c) => c.id), real.map((c) => c.id));
+  for (const { id, hosts, display } of real) {
+    assert.ok(display, `${id} has a display`);
+    assert.ok(fs.existsSync(new URL(`../sidepanel/${display.logo}`, import.meta.url)), `${id}'s logo ${display.logo} exists`);
+    const url = new URL(display.portalUrl);
+    assert.equal(url.protocol, 'https:', `${id}'s agent site is https`);
+    assert.ok(hosts.some((h) => h.test(url.hostname)), `${id}'s agent site ${url.hostname} is one of its hosts`);
+    assert.ok(display.product && display.classesSaid, `${id} names its product and classes`);
+  }
+  assert.equal(ratersSaid(), 'Progressive, GEICO or AmWINS.');
+  assert.equal(ratersSaid(RATERS.slice(0, 1)), 'Progressive.');
+});
+
+test('docs/new-carrier.md and the template name the carrier\'s display', () => {
+  assert.match(read('docs/new-carrier.md'), /`display`/);
+  assert.match(template, /`display`/);
 });

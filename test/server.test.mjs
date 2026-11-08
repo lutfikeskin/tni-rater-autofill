@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -7,9 +8,9 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, LUNA_TIMEOUT_MS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom, SCHEMA_VERSION } from '../server/index.mjs';
 import { MAX_EVENTS } from '../src/usage.js';
-import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
+import { buildRequest, MAX_REQUEST_CHARS, TIMEOUT_MS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
 import { imageFiles } from '../scripts/lib/deploy.mjs';
@@ -301,6 +302,7 @@ test('dropped fields are named on the event (names only, bounded), and health na
     const hash = crypto.createHash('sha256');
     const copied = imageFiles(fs.readFileSync(new URL('../server/Dockerfile', import.meta.url), 'utf8')).filter((f) => f !== 'server/Dockerfile');
     assert.ok(copied.includes('server/privacy.html'));
+    assert.ok(copied.includes('src/usage-schema.js'), 'the shared event contract too');
     for (const f of copied) hash.update(fs.readFileSync(new URL(`../${f}`, import.meta.url)));
     assert.equal(health.server, hash.digest('hex').slice(0, 12));
     assert.equal(health.server, SERVER_HASH);
@@ -354,14 +356,65 @@ test('health names the server version for anyone; how many events are stored onl
   await withServer({ dataDir, token: 'up' }, async ({ post, base }) => {
     await post({ events: [ev()] }, { authorization: 'Bearer up' });
     const anyone = await (await fetch(`${base}/v1/health`)).json();
-    assert.deepEqual(anyone, { ok: true, server: SERVER_HASH }, 'no admin token configured: never a count');
+    assert.deepEqual(anyone, { ok: true, server: SERVER_HASH, schema: SCHEMA_VERSION }, 'no admin token configured: never a count');
     const uploader = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer up' } })).json();
     assert.equal(uploader.events, undefined, 'the token every extension carries is not enough');
   });
   await withServer({ dataDir, token: 'up', adminToken: 'admin' }, async ({ base }) => {
     assert.equal((await (await fetch(`${base}/v1/health`)).json()).events, undefined);
-    assert.deepEqual(await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json(), { ok: true, server: SERVER_HASH, events: 1 });
+    const { metrics, ...admin } = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json();
+    assert.deepEqual(admin, { ok: true, server: SERVER_HASH, schema: SCHEMA_VERSION, events: 1 });
+    assert.ok(metrics && typeof metrics.uptimeS === 'number', 'and the counters (below)');
   });
+});
+
+// Audit 2026-11-07, SRV-11: the log was free text, and nothing counted requests, errors or refused
+// events. Each line is one JSON object now, and the admin's health has the counters.
+test('the log is one JSON object a line, with names and counts only, never a token or an event\'s text', async () => {
+  const lines = [];
+  const [log, error] = [console.log, console.error];
+  console.log = (...a) => { lines.push(a.join(' ')); };
+  console.error = (...a) => { lines.push(a.join(' ')); };
+  try {
+    await withServer({ dataDir: tmp(), token: 'upload-secret-token' }, async ({ post, base }) => {
+      await post({ agent: 'JC', events: [ev({ type: 'problem_report', text: 'Jane Roe at 555-0142', filled: undefined }), ev({ type: 'no_such_type_Jane' })] }, { authorization: 'Bearer upload-secret-token' });
+      await post({ events: [] }, { authorization: 'Bearer wrong' });
+      await fetch(`${base}/v1/events/Jane%20Roe?client=Jane`);
+      await fetch(`${base}/v1/health`);
+    });
+  } finally { [console.log, console.error] = [log, error]; }
+  const parsed = lines.map((l) => JSON.parse(l));
+  assert.ok(parsed.every((x) => typeof x.t === 'string' && ['info', 'error'].includes(x.level)), 'every line is JSON with a time and a level');
+  assert.deepEqual(parsed.map((x) => [x.method, x.route, x.status]), [['POST', '/v1/events', 200], ['POST', '/v1/events', 401], ['GET', 'other', 404], ['GET', '/v1/health', 200]]);
+  assert.deepEqual([parsed[0].agent, parsed[0].accepted, parsed[0].duplicates, parsed[0].rejected], ['JC', 1, 0, 1]);
+  assert.ok(lines.every((l) => !/upload-secret-token|Jane|555-0142/.test(l)), `no token, event text or asked-for path: ${lines.join('\n')}`);
+});
+
+test('the admin\'s health counts requests by route and status, exceptions, stored, duplicate and refused events, and Luna today', async () => {
+  const dataDir = tmp();
+  const quiet = [console.log, console.error];
+  console.log = () => {};
+  console.error = () => {};
+  const fetchImpl = async () => new Response(JSON.stringify({ usage: { input_tokens: 10, output_tokens: 5 } }), { status: 200 });
+  try {
+    await withServer({ dataDir, adminToken: 'admin', openaiKey: 'sk-server', fetchImpl, freeSpace: () => 2048 * 1024 * 1024 }, async ({ post, base }) => {
+      const first = ev();
+      await post({ events: [first, ev({ type: 'a_made_up_type' }), ev({ type: 'another_made_up' }), ev({ type: 'a"Jane Roe' }), ev({ id: 'x' })] });
+      await post({ events: [first, ev({ junk: 1 })] });
+      await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
+      await fetch(`${base}/v1/health`);
+      const anyone = await (await fetch(`${base}/v1/health`)).json();
+      assert.equal(anyone.metrics, undefined, 'the counters are TNI\'s only');
+      const { metrics: m } = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json();
+      assert.deepEqual(m.requests, { '/v1/events': { 200: 2 }, '/v1/luna': { 200: 1 }, '/v1/health': { 200: 2 } });
+      assert.deepEqual({ ...m.events, lastStoredAt: typeof m.events.lastStoredAt }, { accepted: 2, duplicates: 1, rejected: 4, withDropped: 1, lastStoredAt: 'string' });
+      assert.deepEqual(m.rejects, { 'unknown event type "…"': 3, 'event id missing or invalid': 1 }, 'by the server\'s reason, never the event\'s own words');
+      assert.equal(m.exceptions, 0);
+      assert.deepEqual(m.disk, { freeMB: 2048, guardMB: 500 });
+      assert.deepEqual([m.luna.requests, m.luna.inputTokens, m.luna.outputTokens, m.luna.limit, m.luna.budget], [1, 10, 5, 5000, 10_000_000]);
+      assert.ok(m.uptimeS >= 0 && Date.parse(m.startedAt) <= Date.now());
+    });
+  } finally { [console.log, console.error] = quiet; }
 });
 
 // Audit 2026-10-08: without RATER_TOKEN the server took anyone's uploads, wherever it listened.
@@ -377,8 +430,8 @@ test('without a token the server starts on loopback only', () => {
 
 // The server as deployed (node server/index.mjs): its own environment, never this shell's tokens.
 const SERVER = fileURLToPath(new URL('../server/index.mjs', import.meta.url));
-function startServer(env) {
-  const child = spawn(process.execPath, [SERVER], { env: { PATH: process.env.PATH, DATA_DIR: tmp(), PORT: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+function startServer(env, nodeArgs = []) {
+  const child = spawn(process.execPath, [...nodeArgs, SERVER], { env: { PATH: process.env.PATH, DATA_DIR: tmp(), PORT: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '', stderr = '';
   child.stdout.on('data', (c) => { stdout += c; });
   child.stderr.on('data', (c) => { stderr += c; });
@@ -578,7 +631,7 @@ test('keeps an intake marked as a test run, and only a yes/no mark', async () =>
 
 test('keeps the agent\'s settings, booleans and where usage goes only', async () => {
   const dataDir = tmp();
-  const values = { autoFollowUps: true, autoAdvance: false, autoPages: false, overwrite: false, aiOn: true, aiAuto: false, aiKey: true, uploads: 'central' };
+  const values = { autoFollowUps: true, autoAdvance: false, autoPages: false, overwrite: false, aiOn: true, aiAuto: false, aiNames: true, aiKey: true, uploads: 'central' };
   await withServer({ dataDir }, async ({ post }) => {
     await post({ events: [
       ev({ type: 'agent_settings', filled: undefined, reason: 'changed', changed: 'autoAdvance', values }),
@@ -867,6 +920,26 @@ test('/v1/luna: 501 without a key, a daily limit, and OpenAI refusing the server
   assert.equal(lunaRequestError(lunaBody()), null);
 });
 
+// Audit 2026-11-07, AI-09: the server gives up on OpenAI well before the panel gives up on it, so the
+// panel gets the server's 504 instead of leaving a call that is still paid for.
+test("the server's wait for OpenAI ends at least 5 s before the panel's", () => {
+  assert.ok(LUNA_TIMEOUT_MS + 5000 <= TIMEOUT_MS, `${LUNA_TIMEOUT_MS} vs ${TIMEOUT_MS}`);
+});
+
+// CodeRabbit on #416: OpenAI's headers in time, its body still coming when the wait ends, is a 504
+// too (the panel says "The AI assistant took too long"), not an unreadable answer or OpenAI's own status.
+test('/v1/luna: a body still being read when the wait ends is a 504, an answer or an error alike', async () => {
+  for (const [ok, status] of [[true, 200], [false, 500]]) {
+    const fetchImpl = async (url, init) => ({ ok, status, headers: new Headers(),
+      json: () => new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))) });
+    await withServer({ dataDir: tmp(), openaiKey: 'sk-server', lunaTimeoutMs: 50, fetchImpl }, async ({ base }) => {
+      const res = await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
+      assert.equal(res.status, 504, `OpenAI ${status}`);
+      assert.deepEqual(await res.json(), { error: 'OpenAI did not answer' });
+    });
+  }
+});
+
 // Audit 2026-11-07, AI-01: the server's bound is above the panel's, so the largest request the panel
 // may send passes both the check and the body limit; one over the server's own bound is refused.
 test('/v1/luna takes the largest request the panel may send', async () => {
@@ -1093,6 +1166,47 @@ test('an exception inside one request is a 500, logged by name, and the server k
   assert.ok(logged.every((l) => !/clock broke/.test(l)), 'not its message');
 });
 
+// SRV-11 review: the 500 an exception answers is an answer like any other, counted by route and
+// status and logged with them; where it was thrown is its frames, never a message's later lines.
+test('an exception\'s 500 is counted and logged with its status and time, by frames only', crashTest, async () => {
+  const logged = [];
+  const error = console.error;
+  console.error = (...a) => { logged.push(a.join(' ')); };
+  const dashboardToken = 'd'.repeat(32);
+  let broken = true;
+  // A message line that reads like a frame ("at …") is still the message.
+  const clock = () => { if (broken) throw new RangeError('clock broke\nsecond line of the message\n    at Jane Roe 555-0142'); return Date.now(); };
+  try {
+    await withServer({ dataDir: tmp(), dashboardToken, adminToken: 'admin', clock }, async ({ base }) => {
+      assert.equal((await fetch(`${base}/dashboard`, { headers: { authorization: `Bearer ${dashboardToken}` } })).status, 500);
+      broken = false;
+      const { metrics: m } = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json();
+      assert.deepEqual(m.requests['/dashboard'], { 500: 1 });
+      assert.equal(m.exceptions, 1);
+    });
+  } finally { console.error = error; }
+  const failure = logged.map((l) => JSON.parse(l)).find((x) => x.msg === 'request failed');
+  assert.deepEqual([failure.level, failure.method, failure.route, failure.status, typeof failure.ms, failure.error], ['error', 'GET', '/dashboard', 500, 'number', 'RangeError']);
+  assert.match(failure.where, /^at /);
+  assert.ok(logged.every((l) => !/clock broke|second line|Jane|555-0142/.test(l)), `no line of the message: ${logged.join('\n')}`);
+});
+
+test('an uncaught exception exits non-zero with its name and frames, never its message', crashTest, async () => {
+  // The message comes from the environment, so the frame naming this preload doesn't quote it.
+  const throwLater = 'setTimeout(() => { throw new SyntaxError(process.env.THROWN); }, 1500);';
+  const s = startServer({ HOST: '127.0.0.1', THROWN: 'Unexpected token in "Jane Roe 555-0142"\nsecond line Jane\n    at Jane Roe (555-0142)' },
+    ['--import', `data:text/javascript,${encodeURIComponent(throwLater)}`]);
+  try {
+    assert.ok(await within(s.started, 'the server did not start'));
+    assert.notEqual(await within(s.exit, 'the server did not exit'), 0);
+  } finally { s.child.kill(); }
+  const { stdout, stderr } = s.out();
+  const line = stderr.split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((x) => x.msg === 'uncaughtException');
+  assert.equal(line.error, 'SyntaxError');
+  assert.match(line.stack, /^at /, 'where it was thrown');
+  assert.ok(!/Jane|555-0142/.test(stdout + stderr), `no message in the log: ${stderr}`);
+});
+
 // Audit 2026-11-07, SRV-13: the upload token ships in the extension, so anyone could fill the
 // volume. Uploads are limited per address (requests and bytes), and stop while the disk is low.
 test('uploads from one address over its limit are refused with 429 and retry-after, nothing stored; another address has its own', async () => {
@@ -1249,4 +1363,24 @@ test('the request\'s agent is used only in the shape of an event\'s', async () =
     for (const agent of ['AYAZ', 'x'.repeat(40), { initials: 'AB' }, 'a@b.c']) await post({ agent, events: [ev()] });
   });
   assert.deepEqual(stored(dataDir).map((e) => e.agent), ['AYAZ', null, null, null]);
+});
+
+// Audit 2026-11-07, SRV-14: an extension released before its server sent fields the server dropped
+// for good. Events carry the schema they were logged under; one newer than the server's is refused
+// in words the extension retries, so it waits for the deploy instead of losing its new fields.
+test('an event of a newer schema than the server\'s is refused, saying so; this one and older ones are kept with their schema', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ schema: SCHEMA_VERSION + 1, newField: 'x' }), ev({ schema: SCHEMA_VERSION }), ev(), ev({ schema: 0 }), ev({ schema: '1' }), ev({ type: 'a_new_type', schema: SCHEMA_VERSION + 1 }),
+    ] })).json();
+    assert.deepEqual(r.rejected, [
+      { index: 0, error: `schema newer than server (${SCHEMA_VERSION + 1} > ${SCHEMA_VERSION})` },
+      { index: 3, error: 'schema is not a valid schema version' },
+      { index: 4, error: 'schema is not a valid schema version' },
+      { index: 5, error: `schema newer than server (${SCHEMA_VERSION + 1} > ${SCHEMA_VERSION})` },
+    ]);
+    assert.equal(r.accepted, 2);
+  });
+  assert.deepEqual(stored(dataDir).map((e) => [e.schema, e.dropped]), [[SCHEMA_VERSION, undefined], [undefined, undefined]], 'kept, never in dropped; an older client\'s has none');
 });

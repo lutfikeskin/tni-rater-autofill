@@ -25,6 +25,8 @@
     <symbol id="restart" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></symbol>
     <!-- Agents' own defaults: Settings' Your defaults row and the client strip's icon. -->
     <symbol id="sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <!-- The client strip's Quote summary (summary-view.jsx). -->
+    <symbol id="list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></symbol>
     <symbol id="trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
   </svg>
 
@@ -68,6 +70,8 @@
   <main id="view" class="view">
     <div id="notices" class="notices"></div>
     <div id="storage-note" class="notices"></div>
+    <!-- What's new in this version, once after an update (whats-new.js). -->
+    <div id="whats-new" class="notices"></div>
     <!-- Pop out or Back to the side panel that didn't work (windowProblem). -->
     <div id="window-note" class="notices" hidden></div>
 
@@ -112,6 +116,10 @@
   <!-- Every answer on the intake, to read or correct, in a drawer from the right over the panel.
        Drawn by details-view.jsx (mountDetails). -->
   <div id="details-view" class="drawer" hidden></div>
+
+  <!-- The quote summary, read only: every page's answers with their sources, overrides, AI decisions
+       and what was marked done, and Save summary. Drawn by summary-view.jsx (mountSummary). -->
+  <div id="summary-view" class="sheet" hidden></div>
 
   <!-- What to do next, always in the same place, and the panel's own links -->
   <footer class="foot">
