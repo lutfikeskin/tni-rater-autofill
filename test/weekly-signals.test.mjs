@@ -22,7 +22,9 @@ function week() {
     e(s, v, { type: 'fill_run', page: 'BusinessOwnerInfo', blockers: 1, blockerList: ['unfamiliar: Agent Code'], clicked: ['verifyDot'], advanced: null });
     e(s, v, { type: 'page_view', page: 'CoveragesRates', from: 'BusinessOwnerInfo' });
   }
-  e('new', '0.9.9', { type: 'fill_field', page: 'CoveragesRates', q: '9B', label: 'Liability limit', result: 'failed', reason: 'no option matches "$1M CSL"' });
+  e('new', '0.9.9', { type: 'fill_field', page: 'CoveragesRates', q: '9B', label: 'Liability limit', result: 'failed', code: 'option.no-match', reason: 'no option matches "$1M CSL"' });
+  // A build before codes: by its text.
+  e('old', '0.9.8', { type: 'fill_field', page: 'CoveragesRates', q: '9B', label: 'Liability limit', result: 'failed', reason: 'no option matches "$2M CSL"' });
   e('new', '0.9.9', { type: 'fill_run', page: 'CoveragesRates', blockers: 0, blockerList: [], clicked: ['billPlan'], advanced: 'Continue', reworded: 1, pageChanged: true });
   e('old', '0.9.8', { type: 'ai_suggest', error: 'The page or intake changed. Run Fill again for fresh suggestions.' });
   e('new', '0.9.9', { type: 'ai_suggest', ms: 900 });
@@ -44,7 +46,9 @@ test('signals counts the period by build, quote and reason, never by raw repeats
   // One unfamiliar question per quote and page, whatever the number of fill runs.
   assert.equal(s.left.unfamiliar.answers, 2);
   assert.equal(s.left.noData.answers, 1);
-  assert.deepEqual(s.failed, [['progressive CoveragesRates: "Liability limit" · no option matches "…"', 1]]);
+  // By code (LEARN-09), so rewording a message doesn't split a row; a build before codes by its text.
+  assert.deepEqual(s.failed, [['progressive CoveragesRates: "Liability limit" · option.no-match', 1], ['progressive CoveragesRates: "Liability limit" · no option matches "…"', 1]]);
+  assert.deepEqual(s.failedCodes, [['option.no-match', 1], ['no code: no option matches "…"', 1]]);
   assert.deepEqual(s.blockers, [['progressive BusinessOwnerInfo: unfamiliar: Agent Code', 2]]);
   assert.equal(s.blockedRuns, 2);
   assert.deepEqual(s.pageChanges.map(([k]) => k).sort(), ['progressive CoveragesRates: 1 known question(s) reworded', 'progressive CoveragesRates: page looked changed']);
@@ -125,6 +129,37 @@ test('signals flags a restricted action the extension clicked', () => {
   const s = signals(events, { since: '2026-10-06' });
   assert.deepEqual(s.restricted, [['advance "Submit Application"', 1]]);
   assert.match(markdown(s), /Safety finding/);
+});
+
+// Audit 2026-11-07, FLOW-12: fills of a hidden tab, with their median time against the others', per
+// carrier, to judge whether Chrome's throttling is worth saying in the dock.
+test('signals sets fills of a hidden tab against the others on the carrier', () => {
+  const events = week();
+  const run = (id, over) => ({ id, t: '2026-10-06T13:00:00Z', receivedAt: '2026-10-06T13:00:00Z', session: 'new', v: '0.9.9', carrier: 'geico', type: 'fill_run', page: 'Vehicles', clicked: [], ...over });
+  events.push(run('h1', { background: true, hiddenMs: 9000, ms: 30000 }), run('h2', { hiddenMs: 2000, ms: 12000 }), run('v1', { ms: 4000 }), run('v2', { ms: 6000 }), run('s', { auto: 'stop', ms: 0, background: true }));
+  const s = signals(events, { since: '2026-10-06' });
+  assert.deepEqual(s.hiddenFills.geico, { runs: 4, background: 1, hidden: 2, medianMs: 30000, medianMsOthers: 6000 });
+  assert.match(markdown(s), /## Fills of a hidden tab[\s\S]*- geico: 1 in the background, 2 hidden, of 4 runs · median 30000 ms against 6000 ms/);
+  assert.equal(s.hiddenFills.progressive, undefined, 'a carrier with no such fill is left out');
+});
+
+// Audit 2026-11-07, FLOW-11: the lost-Continue retry rests on no proof that the first click was
+// lost: each second click is counted among the extension's clicks, and only one that clicked.
+test('signals counts each Continue clicked again after it didn’t take', () => {
+  const events = week();
+  events.push({ id: 'r', t: '2026-10-06T13:00:00Z', receivedAt: '2026-10-06T13:00:00Z', session: 'new', v: '0.9.9', carrier: 'progressive', type: 'fill_run', page: 'Rates', auto: 'page', retried: true, advanced: 'Continue', clicked: [] });
+  // A retry fill held before Continue (Let me look first, a blocker) clicked nothing: not counted.
+  events.push({ id: 'h', t: '2026-10-06T13:01:00Z', receivedAt: '2026-10-06T13:01:00Z', session: 'new', v: '0.9.9', carrier: 'progressive', type: 'fill_run', page: 'Rates', auto: 'page', retried: true, clicked: [], blockers: 1 });
+  const s = signals(events, { since: '2026-10-06' });
+  assert.deepEqual(s.actions.find(([a]) => a.startsWith('Continue clicked again')), ['Continue clicked again on progressive Rates', 1]);
+  assert.match(markdown(s), /Continue clicked again on progressive Rates ×1/);
+  assert.deepEqual(s.restricted, []);
+  // A page named like a restricted action (Save Quote) isn't one: the click is still checked by its
+  // own text (`advanced`), never by the page's name (#404 review).
+  events.push({ id: 'q', t: '2026-10-06T13:02:00Z', receivedAt: '2026-10-06T13:02:00Z', session: 'new', v: '0.9.9', carrier: 'progressive', type: 'fill_run', page: 'Save Quote', auto: 'page', retried: true, advanced: 'Continue', clicked: [] });
+  const named = signals(events, { since: '2026-10-06' });
+  assert.deepEqual(named.actions.find(([a]) => a === 'Continue clicked again on progressive Save Quote'), ['Continue clicked again on progressive Save Quote', 1]);
+  assert.deepEqual([named.restricted, named.kpis?.restrictedActions ?? 0], [[], 0]);
 });
 
 test('mask merges values that only differ in numbers or quoted text', () => {
@@ -339,7 +374,7 @@ test('the agent\'s latest test mark wins, and the new events are digested', () =
   const report = s.problems.find((p) => p.text === 'stuck on Rates');
   assert.equal(report.run, 'run-rates-1');
   assert.equal(report.lastRun.advanced, 'Continue', 'joined to the run it names, not the last fill on its page');
-  assert.match(markdown(s), /## Panel crashes[\s\S]*## Settings in force[\s\S]*## Buttons agents clicked themselves/);
+  assert.match(markdown(s), /## Crashes[\s\S]*## Settings in force[\s\S]*## Buttons agents clicked themselves/);
 });
 
 // agent defaults: the defaults each quote was filled with, by quote and agent; a correction of an

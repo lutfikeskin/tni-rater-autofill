@@ -5,7 +5,7 @@ import { redactionTerms } from '../../src/plan.js';
 import { get } from '../../src/util.js';
 import { redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { collectItems, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
+import { collectItems, pseudonymizeChoices, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
 import { claimsTruncated, firstNameOf } from '../../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../../src/ai/providers.js';
 import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
@@ -13,7 +13,7 @@ import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
 import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout } from './coordinator.js';
-import { drawRow, fillPage, runKit } from './fill.js';
+import { drawRow, fillPage, resumeHeldFill, runKit } from './fill.js';
 import { aiHolder } from './ai-view.jsx';
 import { needId, setHead } from './report-rows.js';
 import { renderUsage } from './usage-panel.js';
@@ -160,16 +160,21 @@ async function reviewClaimsBox({ retry = false } = {}) {
     if (!cfg.on || !cfg.ready || state.intake !== intake) return;
     const started = Date.now();
     const read = claimsContext(intake.record);
-    const logged = { type: 'ai_suggest', page: 'ClaimsBox', model: cfg.model };
+    // Logged as the quote it began in (as a page review's), also when the intake is replaced
+    // while Luna answers: the tokens were spent, though the answer is dropped.
+    const origin = usage.currentSession();
+    const logged = { type: 'ai_suggest', page: 'ClaimsBox', model: cfg.model, session: origin?.id ?? null, intakeId: origin?.intakeId ?? null };
     const failed = intake.warnings.findIndex((w) => w.code === 'ai.claims-review-failed');
     try {
       const result = await reviewNotes(intake.record, cfg, { redact: redactor(redactionTerms(intake.record)) });
-      // Nothing about a replaced intake is logged under the new one.
-      if (state.intake !== intake) return;
-      const changed = claimsContext(intake.record) !== read;
+      // A replaced intake gets nothing; its quote's log keeps the usage.
+      const replaced = state.intake !== intake;
+      const changed = !replaced && claimsContext(intake.record) !== read;
       usage.log({ ...logged, ms: Date.now() - started, items: result.lines, suggested: result.flagged, leave: result.lines - result.flagged,
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens,
-        cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens, ...(changed ? { error: 'Answer discarded: the claims box or coverages changed.' } : {}) });
+        cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
+        ...(replaced ? { error: 'Answer discarded: the intake was replaced.' } : changed ? { error: 'Answer discarded: the claims box or coverages changed.' } : {}) });
+      if (replaced) return;
       if (changed) { again = true; return; }
       // Warnings are marked checked by position: an earlier failure, or Luna's items from a claims
       // box the agent has since edited, are replaced in place, never removed.
@@ -182,9 +187,9 @@ async function reviewClaimsBox({ retry = false } = {}) {
       if (result.warnings.some((w) => w.code === 'ai.ntl') && intake.record.claims) intake.record.claims.aiNtl = true;
       intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length, context: read };
     } catch (e) {
-      if (state.intake !== intake) return;
       const msg = e instanceof AssistError ? e.message : 'The claims-box review failed.';
-      usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+      usage.log({ ...logged, ms: Date.now() - started, ...spentOf(e), error: msg.slice(0, 200) });
+      if (state.intake !== intake) return;
       if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Luna couldn't review the claims box and Additional Notes. Read them for coverage requests, e.g. NTL or a different limit." });
       intake.notesReview = { failed: true, model: cfg.model };
     }
@@ -232,26 +237,29 @@ async function reviewDriverGender({ retry = false } = {}) {
     if (!cfg.on || !cfg.ready || state.intake !== intake) return;
     const started = Date.now();
     const read = driverNamesContext(intake.record);
-    const logged = { type: 'ai_suggest', page: 'DriverNames', model: cfg.model };
+    const origin = usage.currentSession();
+    const logged = { type: 'ai_suggest', page: 'DriverNames', model: cfg.model, session: origin?.id ?? null, intakeId: origin?.intakeId ?? null };
     const failed = intake.warnings.findIndex((w) => w.code === 'ai.driver-names-failed');
     try {
       const result = await reviewDriverNames(intake.record, cfg);
-      if (state.intake !== intake) return;
-      const changed = driverNamesContext(intake.record) !== read;
+      const replaced = state.intake !== intake;
+      const changed = !replaced && driverNamesContext(intake.record) !== read;
       if (result.modelCalls) {
         usage.log({ ...logged, ms: Date.now() - started, items: result.names, suggested: result.flagged, leave: result.names - result.flagged,
           tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens,
-          cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens, ...(changed ? { error: 'Answer discarded: a driver name changed.' } : {}) });
+          cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
+          ...(replaced ? { error: 'Answer discarded: the intake was replaced.' } : changed ? { error: 'Answer discarded: a driver name changed.' } : {}) });
       }
+      if (replaced) return;
       if (changed) { again = true; return; }
       if (failed >= 0) intake.warnings[failed] = { code: 'ai.driver-names-reviewed', path: 'drivers', level: 'info', msg: 'Luna checked the drivers\' first names after an earlier failure.' };
       // A driver whose gender the agent set meanwhile keeps it: no item for them.
       intake.warnings.push(...result.warnings.filter((w) => !get(intake.record, w.path)));
       intake.namesReview = { done: true, model: cfg.model, flagged: result.flagged, context: read };
     } catch (e) {
-      if (state.intake !== intake) return;
       const msg = e instanceof AssistError ? e.message : 'The driver-name check failed.';
-      usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+      usage.log({ ...logged, ms: Date.now() - started, ...spentOf(e), error: msg.slice(0, 200) });
+      if (state.intake !== intake) return;
       if (failed < 0) intake.warnings.push({ code: 'ai.driver-names-failed', path: 'drivers', level: 'info', msg: "Luna couldn't check the drivers' first names. Gender is filled Male (TNI standard) unless you set it under All client details." });
       intake.namesReview = { failed: true, model: cfg.model };
     }
@@ -293,16 +301,25 @@ async function applyCheckChoice(i, choice) {
 
 // ctx: { tabId, page, carrier } of the fill these frames came from.
 async function runAssist(frames, ctx) {
+  // The quote the review is for: its ai_suggest is logged as that quote's, also when the intake was
+  // replaced while Luna answered (usage-log.js log keeps an event's own session and intakeId).
+  const origin = usage.currentSession();
   const record = state.intake?.record;
   const active = { ...state.active };
-  ctx = { ...ctx, intake: state.intake, tabUrl: state.tab?.url, contextKey: assistContextKey(record, active) };
+  // What Luna's answers rest on (assistContextKey): the intake as Luna sees it, the driver/vehicle,
+  // and the carrier's rules with the agent's own defaults. Compared again before any answer is used.
+  ctx = { ...ctx, intake: state.intake, tabUrl: state.tab?.url, contextKey: assistContextKey(record, active, ctx.carrier?.id) };
   const cfg = await aiSettings();
-  if (!cfg.on || !record || !aiActionCurrent(ctx, []) || ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
+  if (!cfg.on || !record || !aiActionCurrent(ctx, []) || ctx.contextKey !== assistContextKey(state.intake?.record, state.active, ctx.carrier?.id)) return;
   const provider = PROVIDERS[cfg.provider];
   // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
-  const items = collected.items.filter(x => !agentEdited(ctx.page, x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
-  const blocked = collected.blocked;
+  // A question whose choices name the client goes to Luna with placeholders, and its pick comes back
+  // as the page's own choice; one whose choices code can't tell apart stays with the agent
+  // (pseudonymizeChoices, common.js).
+  const named = pseudonymizeChoices(collected.items, record);
+  const items = collected.items.filter(x => !named.held.includes(x) && !agentEdited(ctx.page, x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
+  const blocked = [...collected.blocked, ...named.held];
   // Messages, the approval card and suggestions without a list item go above "Needs you", in the
   // report's holder (aiHolder in ai-view.jsx), which draws what it is told (`say`).
   const head = $('report').querySelector('.needs-head');
@@ -326,13 +343,13 @@ async function runAssist(frames, ctx) {
   const run = ++state.aiRun;
   ctx.run = run;
   try {
-    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
   } catch { return; }
   // Why this request's answer can't be used at all: its settings, tab, page, intake or
   // driver/vehicle are no longer the panel's. Null while they are.
   const discardWhy = () => (run < state.aiSettingsRun ? 'the assistant settings changed'
     : !aiActionCurrent(ctx, []) ? 'the tab or page changed'
-    : ctx.contextKey !== assistContextKey(state.intake?.record, state.active) ? 'the intake or driver/vehicle changed' : null);
+    : ctx.contextKey !== assistContextKey(state.intake?.record, state.active, ctx.carrier?.id) ? 'the intake, driver/vehicle or your defaults changed' : null);
   // Why this request (or its answer) no longer fits what the panel shows; null while it does. A
   // newer request or a redrawn report alone doesn't make the answer wrong: it is cached, and the
   // newer request waits for it (2026-10-09 to 10-26: 12 of 58 page reviews were thrown away, most
@@ -369,29 +386,33 @@ async function runAssist(frames, ctx) {
     // The page's other choice questions and their answers go along as context (redacted, bounded,
     // never typed values): what the agent sees beside the questions left to them.
     const context = { record, carrier: ctx.carrier.id, page: ctx.page, active, pageAnswers: pageAnswers(ctx.snapshots, missing, record) };
-    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
+    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length,
+      session: origin?.id ?? null, intakeId: origin?.intakeId ?? null };
     let answered = () => {};
     const sigs = missing.map(sigOf);
     const pending = new Promise((resolve) => { answered = resolve; });
     sigs.forEach((sig) => state.aiAsking.set(sig, pending));
     try {
       // Stopped between model calls only for an answer that would be discarded.
-      const result = await suggest(missing, context, cfg, { isStale: () => !!discardWhy() });
-      const fresh = result.suggestions;
+      const result = await suggest(missing.map(named.toSend), context, cfg, { isStale: () => !!discardWhy() });
+      const fresh = result.suggestions.map(named.restore);
       // An answer that came too late is still logged (its tokens were spent), with the reason.
       const why = discardWhy();
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length, ...leaveCounts(fresh),
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
         reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
-        ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
+        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
       if (why) { dropped(`it answered after ${why}, so nothing was applied`); return; }
       fresh.forEach(x => state.aiCache.set(sigOf(x), {
         ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),
       }));
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : 'The assistant could not review this page. Nothing was applied.';
-      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: redactor(redactionTerms(record))(msg).slice(0, 200) });
+      // Which prompt failed (luna.js suggest: error.promptHash), only as its 12 hex characters, and what
+      // a failed or dropped review spent before it stopped (error.usage).
+      const prompt = /^[0-9a-f]{12}$/.test(e?.promptHash ?? '') ? { promptHash: e.promptHash } : {};
+      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, ...prompt, ...spentOf(e), error: redactor(redactionTerms(record))(msg).slice(0, 200) });
       if (!stale()) holder.say({ bad: `AI assistant: ${msg}` });
       else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;
@@ -412,6 +433,15 @@ async function runAssist(frames, ctx) {
   else if (applied) dropped(`${staleWhy()} after its selections were put in`, 'Click Fill this page to review them before continuing.');
   else dropped(`${staleWhy()} before its answers were shown, so nothing was applied`);
   syncAiBanner(ctx);
+}
+
+// The usage counters a failed Luna review carries (luna.js: error.usage), for its ai_suggest event:
+// the calls made before it failed or was dropped were paid for. None for a call never answered.
+function spentOf(e) {
+  const u = e?.usage;
+  if (!u || typeof u !== 'object') return {};
+  const keys = ['modelCalls', 'tokensIn', 'tokensOut', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'];
+  return Object.fromEntries(keys.filter((k) => Number.isFinite(u[k]) && u[k] >= 0).map((k) => [k, u[k]]));
 }
 
 // Why Luna left questions, as counts (luna.js leaveWhy): it said information is missing, saw a
@@ -441,11 +471,11 @@ function pendingAi(tabId, page) {
 // A new fill clears the page's marks: put the purple back on the AI's answers on this page.
 async function remarkAi(ctx) {
   const answered = [];
-  const contextHash = aiFingerprint(assistContextKey(state.intake?.record, state.active));
+  const contextHash = aiFingerprint(assistContextKey(state.intake?.record, state.active, ctx.carrier?.id));
   for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
     if (t === String(ctx.tabId) && p === ctx.page && x.done && !x.rejected
-      && (x.contextKey === assistContextKey(state.intake?.record, state.active) || x.contextHash === contextHash)) answered.push(x);
+      && (x.contextKey === assistContextKey(state.intake?.record, state.active, ctx.carrier?.id) || x.contextHash === contextHash)) answered.push(x);
   }
   if (!answered.length) return;
   try {
@@ -469,18 +499,19 @@ async function syncAiBanner(ctx) {
 async function applyAi(list, ctx, decision) {
   if (state.filling || state.closing) return false;
   if (state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return false;
-  if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return false;
+  if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active, ctx.carrier?.id)) return false;
   if (ctx.run !== undefined && ctx.run !== state.aiRun) return false;
   list = list.filter(x => ['radio', 'select', 'checkbox'].includes(x.controlKind) && !x.leave && !agentEdited(ctx.page, x.key) && (decision !== 'auto' || x.autoOk));
   if (!list.length || !aiActionCurrent(ctx, list)) return false;
   const isCurrent = () => aiActionCurrent(ctx, list)
-    && ctx.contextKey === assistContextKey(state.intake?.record, state.active)
+    && ctx.contextKey === assistContextKey(state.intake?.record, state.active, ctx.carrier?.id)
     && (ctx.run === undefined || ctx.run === state.aiRun);
   const entries = [...state.aiCache].filter(([, x]) => list.includes(x));
   const editOrigin = { scope: usage.currentSession()?.intakeId, tabId: ctx.tabId,
     page: editScope(ctx.page, ctx.carrier), keys: state.agentKeys, epoch: state.agentKeysEpochs?.get(usage.currentSession()?.intakeId) ?? 0 };
   let dispatched = false, prepared = false, guarding = false;
   const guardToken = crypto.randomUUID();
+  state.fillingKind = 'ai';
   state.filling = true;
   await tellRecorder('pause', ctx.tabId);
   try {
@@ -488,9 +519,9 @@ async function applyAi(list, ctx, decision) {
     // Watch every frame before the snapshot and pending-hold writes. An idle frame stays
     // guarded while another waits on its server, until the full apply finishes.
     guarding = true;
-    await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [guardToken]);
+    await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit?.answerEdits('begin', t), [guardToken]);
     if (!isCurrent()) return false;
-    const current = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+    const current = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
     if (!isCurrent()) return false;
     if (!snapshotsEqual(current, ctx.snapshots)) {
       for (const x of list) x.error = 'the page changed; click Fill this page for fresh suggestions';
@@ -529,7 +560,7 @@ async function applyAi(list, ctx, decision) {
     // including later answers in the active frame.
     const results = [];
     const readEdits = async (command = 'read') => {
-      const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit.answerEdits(c, t), [command, guardToken]);
+      const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit?.answerEdits(c, t), [command, guardToken]);
       for (const frame of frames) for (const item of frame.result ?? []) {
         if (item?.protected) results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
       }
@@ -554,7 +585,7 @@ async function applyAi(list, ctx, decision) {
       startedFrames.add(frameId);
       dispatched = true;
       // The carrier's stop steps go along: after a reload no fill has told this document about them.
-      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit.answer(a, snapshots, t, o),
+      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit?.answer(a, snapshots, t, o),
         [[a], expected, guardToken, { stopSteps: Object.keys(ctx.carrier.stopSteps ?? {}) }], [frameId]);
       for (const frame of answerFrames) for (const item of frame.result ?? []) {
         if (item && typeof item === 'object') results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
@@ -570,7 +601,7 @@ async function applyAi(list, ctx, decision) {
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
       const ok = !protectedKeys.includes(x.key) && mine.find((r) => r.ok);
-      const problem = mine.find((r) => !r.ok && !/no longer on this page/.test(r.reason ?? '')) ?? mine[0];
+      const problem = mine.find((r) => !r.ok && r.code !== 'field.missing') ?? mine[0];
       if (ok) {
         x.origin = aiOriginRecord({ frameId: ok.frameId, documentId: ok.documentId,
           questionHash: aiQuestionHash(x), fieldHash: aiLiveFieldHash({ ...x, current: ok.shown }) });
@@ -595,7 +626,7 @@ async function applyAi(list, ctx, decision) {
     if (list.some((x) => x.done) || protectedKeys.length) noteChangedAfterDone(ctx.carrier, ctx.page, tabStep(ctx.carrier, ctx.tabId), ctx.tabId);
     await persistGuardedEdits(editOrigin, protectedKeys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
-    const after = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+    const after = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
     for (const x of list) if (x.done) {
       x.snapshots = after;
       x.snapshotHash = snapshotFingerprint(after);
@@ -611,7 +642,7 @@ async function applyAi(list, ctx, decision) {
   } finally {
     if (guarding) {
       try {
-        const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('end', t), [guardToken]);
+        const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit?.answerEdits('end', t), [guardToken]);
         // Even a failed answer transport must preserve edits the still-live guards caught.
         const edited = frames.flatMap(frame => frame.result ?? []).filter(item => item?.protected);
         await persistGuardedEdits(editOrigin, edited.map(item => item.key));
@@ -632,6 +663,8 @@ async function applyAi(list, ctx, decision) {
     }
     await tellRecorder('resume', ctx.tabId);
     state.filling = false;
+    // A page a hold kept back, whose hold lifted while the picks went in.
+    resumeHeldFill();
     // The recorder was paused while Luna's picks went in, so it won't report the questions they
     // revealed or hid: ask for the page's layout, if that tab is still the one followed (a job
     // is built from the followed tab, and checks the page).
@@ -646,7 +679,7 @@ function aiDecisionEvent(x, ctx, decision) {
   return {
     type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
     decision, choice: x.controlKind !== 'text' && x.choice ? redact(x.choice) : undefined,
-    model: x.model, policy: x.policy, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
+    model: x.model, policy: x.policy, promptHash: x.promptHash ?? undefined, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
   };
 }
 
@@ -669,7 +702,7 @@ function renderAi(holder, suggestions, ctx) {
   const pending = pendingAi(ctx.tabId, ctx.page);
   const awaiting = pending.filter((x) => !x.rejected);
   const rejectedPending = pending.filter((x) => x.rejected);
-  const current = assistContextKey(state.intake?.record, state.active);
+  const current = assistContextKey(state.intake?.record, state.active, ctx.carrier?.id);
   const currentHash = aiFingerprint(current);
   const canContinue = switchOn('autoAdvance', 'auto-advance') && !!ctx.carrier.advance;
   // Approving or rejecting acts on a cached pick in this intake and page. A driver/vehicle
@@ -680,7 +713,7 @@ function renderAi(holder, suggestions, ctx) {
       // Approve only what the page still shows as the AI left it; a pick whose page changed since
       // is rejected so the agent reviews it after a fresh fill.
       let now;
-      try { now = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); }
+      try { now = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null)); }
       catch {
         if (!aiActionCurrent(ctx, list)) return;
         for (const x of list) x.error = 'the page is unavailable; return to it and run Fill again';
@@ -730,7 +763,7 @@ function renderAi(holder, suggestions, ctx) {
     for (const x of list) {
       let present = false;
       try {
-        const result = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+        const result = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
         present = aiCurrentAnswerPresent(result, x);
       } catch { /* page navigating */ }
       if (!aiActionCurrent(ctx, list)) return;
@@ -747,14 +780,15 @@ function renderAi(holder, suggestions, ctx) {
     if (canContinue && !pendingAi(ctx.tabId, ctx.page).length
       && aiActionCurrent(ctx, list)) fillPage();
   };
-  const why = (x) => [
-    x.evidenceSources?.length ? `cited evidence: ${x.evidenceSources.map(source => source.basis === 'intake' ? source.path : 'TNI rule').join(', ')}` : null,
-    'Evidence checked · needs your review',
-  ].filter(Boolean).join(' · ');
+  // What the suggestion rests on, as the agent reads it (luna.js citedSaid): each cited intake field's
+  // label and value, or the TNI rule's text.
+  const why = (x) => (x.cited?.length ? `Based on ${x.cited.join(' · ')}` : null);
+  // A cited rule shortened there, whole, for the agent to open and check its exceptions (citedRuleFull).
+  const rules = (x) => (x.citedRules?.length ? { rules: [...x.citedRules] } : {});
   const answer = (x) => (x.controlKind === 'text' ? `typing “${x.choice}”` : `“${x.choice}”`);
   // Said of a pick waiting for approval that came from before a change, or a retired assistant.
   const notes = (x) => [x.retired ? 'From a retired assistant: review the page answer.' : null,
-    (x.contextKey ? x.contextKey !== current : x.contextHash !== currentHash) ? 'Picked before the intake or unit changed.' : null].filter(Boolean);
+    (x.contextKey ? x.contextKey !== current : x.contextHash !== currentHash) ? 'Picked before the intake, unit or your defaults changed.' : null].filter(Boolean);
   // What goes on a row (its card, AiCard in ai-view.jsx): the suggestion and its buttons, or what
   // happened to it; null for none.
   const box = (x) => {
@@ -775,7 +809,7 @@ function renderAi(holder, suggestions, ctx) {
       // Its recommendation (luna.js nextStep): what to confirm or check, never an answer.
       return { kind: 'tip', says: x.leave ? 'AI: this one is yours to decide.' : 'AI tip', tip: x.tip || null, next: x.leave && x.nextStep ? x.nextStep : null };
     }
-    return { kind: 'suggest', choice: x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice, tip: x.tip || null, why: why(x), checks: [...x.checks],
+    return { kind: 'suggest', choice: x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice, tip: x.tip || null, why: why(x), ...rules(x),
       use: () => act([x], 'accepted'),
       noThanks: () => { x.dismissed = true; if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } };
   };
@@ -886,4 +920,4 @@ async function renderAiSettings() {
   renderUsage();
 }
 
-export { aiActs, aiDecisionEvent, aiSettings, applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, ntlPrimaryEdited, pendingAi, remarkAi, renderAiSettings, reviewClaimsBox, reviewDriverGender, reviewIntake, runAssist, syncAiBanner };
+export { aiActs, aiDecisionEvent, aiSettings, applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, ntlNotesItem, ntlPrimaryEdited, pendingAi, remarkAi, renderAiSettings, reviewClaimsBox, reviewDriverGender, reviewIntake, runAssist, syncAiBanner };

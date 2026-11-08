@@ -72,6 +72,21 @@ test('a saved recording is its manifest and its events in the order they happene
   assert.deepEqual(files['events.jsonl'].trim().split('\n').map((l) => JSON.parse(l).kind), ['page', 'gap', 'click']);
 });
 
+// REC-10 (audit 2026-11-07): two recordings on "the same build" could differ in rules, defaults,
+// switches or trace, and the report couldn't tell; a newer format was read without a word.
+test('a recording says what its run needs to be reproduced, and the report warns of a format it doesn\'t know', () => {
+  const manifest = newManifest({ id: 'geico-x', carrier: 'geico', scenario: 'x', started: '2026-10-23T14:12:00.000Z', build, session: 'session-1', rules: 'rules-1',
+    defaultsHash: null, settings: { autoAdvance: true, autoFollowUps: false, autoPages: true, checkBeforeContinue: true }, platform: 'Windows' });
+  manifest.versions.trace = 2;
+  manifest.versions.recorder = 12;
+  assert.equal(manifest.version, 2);
+  const report = recordingReport({ manifest, events: [] });
+  assert.match(report, /Rules rules-1 · defaults TNI's · auto-advance on, follow-ups off, automatic pages on, check before Continue on · trace 2, recorder 12 · Windows · session session-1/);
+  assert.doesNotMatch(report, /format is version/);
+  assert.match(recordingReport({ manifest: { ...manifest, version: 3 }, events: [] }), /This recording's format is version 3; this report reads up to 2/);
+  assert.doesNotMatch(recordingReport({ manifest: { ...manifest, version: 1 }, events: [] }), /^Rules /m, 'a format-1 recording has none of it');
+});
+
 // The origin private file system's handles, as much of them as the store uses.
 class FakeFile {
   constructor() { this.content = ''; }
@@ -183,7 +198,7 @@ test('the report tells the flow and each step\'s actions: whose each is, typing 
   assert.equal(recordingReport(readRecording(dir)), report);
   fs.rmSync(dir, { recursive: true, force: true });
 
-  assert.match(report, /\| 1 \| \/quote · Business Class & USDOT \| 0:00\.1 \| 6\.9 s \| 10 \| "Next" \|/);
+  assert.match(report, /\| 1 \| \/quote · Business Class & USDOT \| 0:00\.1 \| 6\.9 s \| 10 \| "Next" \(you\) \|/);
   assert.match(report, /\| 2 \| \/quote · Business & Owner Info \| 0:07\.0 \| 2\.0 s \| 1 \| — \|/);
   assert.match(report, /0:01\.0 \(\+0\.9 s\) picked "No" for "Team driving\?"\n/, 'yours, with your gesture; input and change of one pick: one line');
   assert.match(report, /0:01\.1 \(\+0\.1 s\) a fill started\n.*set "No" for "Hazmat placard\?" \(not you, during a fill\)\n.*↑ set "Business name" \(length 7\) \(not you, during a fill\)\n.*the fill ended \(it ran 0\.3 s\)/,
@@ -198,6 +213,29 @@ test('the report tells the flow and each step\'s actions: whose each is, typing 
 
 // The page's own changes and requests and the extension's account (docs/developer-recording.md):
 // what may name the client is redacted as a field's label is.
+// Audit 2026-11-07, FLOW-15: the agent's pick from a row and an AI answer applied set `filling` as
+// a fill does, and read as fills in the timeline. Each span says what went in (`what`); one with
+// none (an older recording) is a fill.
+test('the timeline says what went in while the panel was filling: a fill, the agent\'s pick, an AI answer', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0 + 100, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: t0 + 1000, frame: 0, on: true, what: 'fill' },
+    { kind: 'fill', t: t0 + 1500, frame: 0, on: false, what: 'fill' },
+    { kind: 'fill', t: t0 + 2000, frame: 0, on: true, what: 'pick' },
+    { kind: 'fill', t: t0 + 2200, frame: 0, on: false, what: 'pick' },
+    { kind: 'fill', t: t0 + 3000, frame: 0, on: true, what: 'ai' },
+    { kind: 'fill', t: t0 + 3400, frame: 0, on: false, what: 'ai' },
+    { kind: 'fill', t: t0 + 4000, frame: 0, on: true },
+    { kind: 'fill', t: t0 + 4100, frame: 0, on: false },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
+  // The pick's and the AI answer's ends say they ended, not that the answer went in: a pick that found
+  // no field, or an AI answer whose page had changed, ends the same way (#412 review).
+  assert.match(report, /0:01\.0 .*a fill started\n.*the fill ended \(it ran 0\.5 s\)\n.*the panel began putting in the agent's pick from a row\n.*the pick ended \(it ran 0\.2 s\)\n.*the panel began putting in an AI answer\n.*the AI answer ended \(it ran 0\.4 s\)\n.*a fill started\n.*the fill ended \(it ran 0\.1 s\)/);
+  assert.doesNotMatch(report, /was in/);
+});
+
 test('the questions a page drew, a request\'s path and what the fill answered are redacted as a field is', () => {
   const redact = (s) => s.replace(/Sam Smith/g, '[client]');
   const [burst, request, answer, press] = stampEvents([
@@ -317,4 +355,113 @@ test('a box with no size is never marked above an answer, and the order goes on 
   assert.doesNotMatch(report, /↑ set "checked" for "Current Page Errored"/);
   assert.doesNotMatch(report, /↑ set "Lower question"/);
   assert.match(report, /↑ set "Middle question"/, 'above the lower one, the answer before it');
+});
+
+// REC-20 (audit 2026-11-07): the report showed a failed request as one that finished.
+test('a page request its server answered with an error is in the step\'s timeline, its table row and up front', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: t0 + 100, frame: 0, on: true },
+    { kind: 'kit', t: t0 + 200, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Year', label: 'Year' }, ok: true, start: t0 + 150, applyMs: 50 },
+    { kind: 'request', t: t0 + 300, seq: 3, frame: 0, path: '/api/rate', end: t0 + 1500, ms: 1200, via: 'fetch', status: 503 },
+    { kind: 'request', t: t0 + 400, seq: 4, frame: 0, path: '/api/save', end: t0 + 500, ms: 100, via: 'xhr', status: 200 },
+    { kind: 'request', t: t0 + 600, seq: 5, frame: 0, path: '/api/old', end: t0 + 700, ms: 100, via: 'xhr' },
+    { kind: 'fill', t: t0 + 2000, frame: 0, on: false },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:03.000Z' }, events });
+  assert.match(report, /the page's request to `\/api\/rate` failed: HTTP 503 after 1\.2 s/);
+  assert.equal(report.match(/failed: HTTP/g).length, 1, 'a 200 or a request with no status is no line');
+  // Review of PR #379: a decoded path holding a line break and Markdown stays code on its one line.
+  const odd = recordingReport({ manifest: manifestFor(), events: events.map((e) => (e.status === 503 ? { ...e, path: '/api/\n\n# Extra `x`' } : e)) });
+  assert.match(odd, /the page's request to `\/api\/ # Extra 'x'` failed: HTTP 503/);
+  assert.doesNotMatch(odd, /^# Extra/m);
+  assert.match(report, /\| 3 \(1\.4 s\), 1 failed \|/);
+  assert.match(report, /The page's server answered 1 request with an error \(HTTP 503 ×1\)/);
+  assert.ok(!/with an error/.test(recordingReport({ manifest: manifestFor(), events: events.filter((e) => e.status !== 503) })));
+});
+
+// REC-13 (audit 2026-11-07): "Left by" named the agent's earlier click (Add vehicle) when the fill
+// pressed Continue, and a step only the fill left showed none.
+test('a step is left by the last button pressed on it, the agent\'s or the extension\'s', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'click', t: t0 + 1000, seq: 2, frame: 0, trusted: true, button: { text: 'Add vehicle', rect: null } },
+    { kind: 'click', t: t0 + 1900, seq: 3, frame: 0, trusted: false, button: { text: 'Continue', rect: null } },
+    { kind: 'kit', t: t0 + 2000, seq: 4, frame: 0, what: 'press', button: { text: 'Continue' }, how: 'page' },
+    { kind: 'step', t: t0 + 3000, seq: 5, frame: 0, step: 'Drivers', from: 'Vehicles' },
+    { kind: 'kit', t: t0 + 4000, seq: 6, frame: 0, what: 'press', button: { text: 'Continue' }, how: 'kit' },
+    { kind: 'step', t: t0 + 5000, seq: 7, frame: 0, step: 'Coverages', from: 'Drivers' },
+    { kind: 'kit', t: t0 + 5500, seq: 8, frame: 0, what: 'press', button: { text: 'Recalculate' }, how: 'kit' },
+    { kind: 'click', t: t0 + 6000, seq: 9, frame: 0, trusted: true, button: { text: 'Next', rect: null } },
+    { kind: 'step', t: t0 + 7000, seq: 10, frame: 0, step: 'Summary', from: 'Coverages' },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:08.000Z' }, events });
+  assert.match(report, /\| 1 \| \/quote · Vehicles \|[^\n]*\| "Continue" \(extension\) \|/);
+  assert.match(report, /\| 2 \| \/quote · Drivers \|[^\n]*\| "Continue" \(extension\) \|/, 'a step only the fill left');
+  assert.match(report, /\| 3 \| \/quote · Coverages \|[^\n]*\| "Next" \(you\) \|/);
+  assert.match(report, /\| 4 \| \/quote · Summary \|[^\n]*\| — \|/);
+});
+
+// REC-02 (audit 2026-11-07): a wait held by GEICO's `active-index`, a radio's `checked` or a busy page
+// read as "the page did nothing during it", a safe speed-up to the review, from the trace's observer.
+test('a wait\'s slack counts what the wait saw itself, and says when the trace saw less', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const wait = { kind: 'kit', t: t0 + 3000, seq: 2, frame: 0, what: 'wait', why: 'continue', quietMs: 500, maxMs: 6000, requests: false, start: t0 + 1000, ms: 2000, ended: 'quiet' };
+  const page = { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true };
+  const report = (more) => recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:04.000Z' }, events: [page, { ...wait, ...more }] });
+  // The page changed an attribute until 2.4 s: 0.6 s of slack, not 2.0 s.
+  const seen = report({ lastChange: t0 + 2400, lastHeld: t0 + 1000 });
+  assert.match(seen, /the extension waited 2\.0 s before pressing Continue \(quiet 500 ms\): the page was quiet; 0\.6 s after the page's last change \(the wait saw the page change or busy 1\.4 s after the trace's last change: not slack\)/);
+  // Busy until 2.2 s, no change seen.
+  assert.match(report({ lastChange: t0 + 1000, lastHeld: t0 + 2200 }), /; 0\.8 s after the page's last change \(the wait saw/);
+  // Nothing seen by either: all slack, as before; and a recording from before REC-02: the trace's alone.
+  assert.match(report({ lastChange: t0 + 1000, lastHeld: t0 + 1000 }), /the page did nothing during it\n/);
+  assert.match(report({}), /the page did nothing during it\n/);
+});
+
+// REC-03 (audit 2026-11-07): a page's load time was invisible, charged to the step before it.
+test('a page loaded with the trace in it says how long it took, in the Flow and its own lines', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'click', t: t0 + 5000, seq: 2, frame: 0, button: { text: 'Continue' }, trusted: true },
+    { kind: 'page', t: t0 + 5200, seq: 1, frame: 0, page: '/drivers', step: 'Drivers', top: true, injectedAt: t0 + 8000 },
+    { kind: 'load', t: t0 + 5200, seq: 2, frame: 0, how: 'navigate', response: t0 + 6100, ready: t0 + 7000, loaded: t0 + 7800 },
+    { kind: 'load', t: t0 + 5300, seq: 1, frame: 1, how: 'navigate', response: null, ready: null, loaded: t0 + 9000 },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:20.000Z' }, events });
+  assert.match(report, /\| 2 \| \/drivers · Drivers \| 0:05\.2 \(loaded in 2\.6 s\) \|/);
+  assert.match(report, /the page loaded \(a new page\): its server answered in 0\.9 s, ready at 1\.8 s, loaded at 2\.6 s/);
+  assert.equal(report.match(/the page loaded/g).length, 1, 'a frame\'s load is not the page\'s');
+  assert.match(report, /\| 1 \| \/quote · Vehicles \| 0:00\.0 \|/);
+  // Review of PR #397: a reload, the same page and step, is a step of its own with its load.
+  const reload = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:20.000Z' }, events: [...events,
+    { kind: 'page', t: t0 + 12_000, seq: 1, frame: 0, page: '/drivers', step: 'Drivers', top: true, injectedAt: t0 + 13_500 },
+    { kind: 'load', t: t0 + 12_000, seq: 2, frame: 0, how: 'reload', response: t0 + 12_400, ready: t0 + 12_900, loaded: t0 + 13_100 }] });
+  assert.match(reload, /\| 3 \| \/drivers · Drivers \| 0:12\.0 \(loaded in 1\.1 s\) \|/);
+  assert.match(reload, /the page loaded \(reloaded\): its server answered in 0\.4 s, ready at 0\.9 s, loaded at 1\.1 s/);
+  // The same page seen again by a trace put in again in that document (no injectedAt): no new step.
+  const again = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:20.000Z' }, events: [...events,
+    { kind: 'page', t: t0 + 12_000, seq: 1, frame: 0, page: '/drivers', step: 'Drivers', top: true }] });
+  assert.doesNotMatch(again, /^\| 3 \|/m);
+});
+
+// REC-04 (audit 2026-11-07): a recording whose panel followed another tab looked complete.
+test('the report says when the panel followed another tab, and for how long, and when the recorded tab was closed', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: 'Home', top: true },
+    { kind: 'panel', t: t0 + 1000, frame: 0, away: true, followed: 9, recorded: 4 },
+    { kind: 'panel', t: t0 + 4000, frame: 0, away: false, followed: 4, recorded: 4 },
+    { kind: 'panel', t: t0 + 5000, frame: 0, closed: true, recorded: 4 },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
+  assert.match(report, /The panel followed another tab for 3\.0 s: what the quote did there is not in this recording/);
+  assert.match(report, /THE PANEL MOVED TO ANOTHER TAB/);
+  assert.match(report, /the panel is back on the recorded tab/);
+  assert.match(report, /THE RECORDED TAB WAS CLOSED/);
+  assert.match(report, /The recorded tab was closed, which ended the recording\./);
+  assert.ok(!/followed another tab/.test(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) })));
 });

@@ -8,6 +8,7 @@ import { renderPickers } from './record.js';
 import { ensureRecorder, pageOf } from './usage.js';
 import { issueSaid, renderSite, scheduleLayout, seedQuoteState } from './coordinator.js';
 import { noteQuoteTab } from './quote-owner.js';
+import { noteFollowed } from './dev-recording.js';
 
 // ---------------------------------------------------------------------------------------------
 // The current tab
@@ -35,9 +36,17 @@ function quoteUnderWay() {
   return (state.filling && state.fillingFor?.tabId === state.tab?.id) || state.autoPages.size > 0 || state.filled.size > 0 || state.doneActions.size > 0;
 }
 
+// Calls overlap (a tab switch, an address change and its load, a window's focus, each calls it):
+// the latest wins. Each is numbered, and one that a later call overtook while it waited stops there,
+// so a slow answer never puts the panel back on a tab no longer in front, nor runs the later steps
+// twice (audit 2026-11-07, FLOW-14).
+let tabRefreshes = 0;
 async function refreshTab() {
+  const call = ++tabRefreshes;
+  const overtaken = () => call !== tabRefreshes;
   if (!inExtension) { state.tab = null; return renderSite(); }
   const tab = await tabInView();
+  if (overtaken()) return;
   if (Number.isInteger(tab?.windowId)) state.browserWindow = tab.windowId;
   // The tab the agent asked to quote on (quoteHere): followed this once.
   const moveTo = state.quoteMove;
@@ -53,9 +62,11 @@ async function refreshTab() {
     && (!activeIsRater || (quoteUnderWay() && tab.openerTabId !== state.tab.id));
   if (hold) {
     const quote = await chrome.tabs.get(state.tab.id).catch(() => null);
+    if (overtaken()) return;
     const carrier = quote?.url ? carrierForUrl(quote.url) : null;
     if (carrier) {
       state.tab = { id: quote.id, url: quote.url, carrier, background: true, windowId: quote.windowId };
+      noteFollowed();
       showHeldNote(activeIsRater ? { id: tab.id, carrier: carrierForUrl(tab.url), windowId: tab.windowId } : null);
       renderSite();
       ensureRecorder();
@@ -85,12 +96,16 @@ async function refreshTab() {
     state.autoPending = false;
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false, windowId: tab.windowId } : null;
+  // A recording on another tab says the panel moved (REC-04), as it moves.
+  noteFollowed();
   // Whose quote the tab is, as the panel finds it (one it saw go into a quote, or out of one).
   noteQuoteTab(state.tab?.id, state.tab?.url);
   await restoreAgentKeys(state.tab?.id);
   await restoreDoneActions(state.tab?.id);
   await restoreReports(state.tab?.id);
   if (state.tab?.carrier && !state.filling) await retireAiOrigins({ tabId: state.tab.id, tabUrl: state.tab.url, intake: state.intake, carrier: state.tab.carrier });
+  // A later call draws the tab, injects the recorder and asks for the layout itself.
+  if (overtaken()) return;
   renderSite();
   ensureRecorder();
   // A recorder already in the page (the panel was closed or reloaded, or another tab was in

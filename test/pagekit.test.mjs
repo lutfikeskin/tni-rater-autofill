@@ -9,7 +9,7 @@ import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { advanceFor } from '../src/units.js';
-import { fieldChangeEvent, redactor } from '../src/usage.js';
+import { fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import { assistContextKey } from '../src/ai/common.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
 import { assertReportResolutions } from './resolution-check.mjs';
@@ -65,6 +65,8 @@ function virtualClock() {
       return id;
     },
     clearTimeout(id) { timers.delete(id); },
+    // The page's own script holding the thread (no timer fires meanwhile).
+    advance(ms) { now += ms; },
   };
 }
 const clock = virtualClock();
@@ -183,9 +185,13 @@ class FakeNode {
 
   // An open shadow root (GEICO draws its radios and buttons in them): reached through shadowRoot,
   // never by a querySelectorAll of the page.
-  attachShadow() {
-    this.shadowRoot = new FakeShadowRoot(this);
-    return this.shadowRoot;
+  attachShadow({ mode = 'open' } = {}) {
+    const root = new FakeShadowRoot(this);
+    // A closed one: no shadowRoot, reached only through chrome.dom.openOrClosedShadowRoot (a test's
+    // context gives it as `chrome.dom`).
+    if (mode === 'closed') this._closedRoot = root;
+    else this.shadowRoot = root;
+    return root;
   }
 
   get classList() { return { contains: (name) => this.className.split(/\s+/).includes(name) }; }
@@ -201,7 +207,7 @@ class FakeNode {
       node.parentElement = this;
       // The whole subtree joins this document (a radio group appended with its radios), shadow
       // roots included.
-      const adopt = (n) => { n.ownerDocument = this.ownerDocument; for (const c of n.children ?? []) adopt(c); if (n.shadowRoot) adopt(n.shadowRoot); };
+      const adopt = (n) => { n.ownerDocument = this.ownerDocument; for (const c of n.children ?? []) adopt(c); if (n.shadowRoot) adopt(n.shadowRoot); if (n._closedRoot) adopt(n._closedRoot); };
       adopt(node);
       this.children.push(node);
     }
@@ -603,6 +609,30 @@ test('reinjection reuses the installed pagekit and preserves its state', () => {
   const h = harness();
   vm.runInNewContext(PAGEKIT, h.context);
   assert.equal(h.context.__raterKit, h.kit);
+});
+
+// Audit 2026-11-07, FLOW-12: Chrome slows a hidden tab's timers, which the fill's waits run on. A
+// fill says how long its page was hidden (`hiddenMs`), and nothing when it wasn't.
+test('a fill says how long its page was hidden, and nothing when it was in view', async () => {
+  const fillOn = async (visibility, hideAfterAnswer = false) => {
+    const h = harness();
+    h.document.visibilityState = visibility;
+    const select = new SelectNode([{ text: '', value: '' }, { text: 'NO PRIOR', value: 'np' }], { attrs: { 'data-id': 'carrierName' } });
+    h.document.body.append(select);
+    // The agent moves to another tab once the answer is in: hidden from then on.
+    if (hideAfterAnswer) select.addEventListener('change', () => { h.document.visibilityState = 'hidden'; h.document.dispatchEvent({ type: 'visibilitychange' }); });
+    const report = await h.kit.fill([{ id: 'prior', path: 'prior', withOption: 'NO PRIOR', kind: 'choice', value: 'NO PRIOR' }], { maxRounds: 3 });
+    assert.equal(select.value, 'np');
+    return { report, h };
+  };
+  const shown = await fillOn('visible');
+  assert.equal(shown.report.hiddenMs, undefined);
+  const hidden = await fillOn('hidden');
+  assert.ok(Number.isInteger(hidden.report.hiddenMs) && hidden.report.hiddenMs > 0, `hidden throughout: ${hidden.report.hiddenMs}`);
+  const later = await fillOn('visible', true);
+  assert.ok(later.report.hiddenMs > 0 && later.report.hiddenMs <= hidden.report.hiddenMs, `hidden after the answer: ${later.report.hiddenMs}`);
+  // The fill's listener goes with it.
+  assert.equal(later.h.document._listeners.get('visibilitychange')?.length ?? 0, 0);
 });
 
 test('anonymous repeated carrier fields have distinct keys and protecting one does not skip the others', async () => {
@@ -1340,6 +1370,24 @@ test('Progressive: the fill after a helper opened the page begins sooner; answer
   assert.deepEqual(starts(), [400, 100, 400]);
 });
 
+// REC-02 (audit 2026-11-07): a recording's slack came from the trace's observer alone, which sees
+// neither the attributes a wait watches nor a busy page: each wait says what it saw itself.
+test('a traced wait says the last change and the last moment it was held that it saw itself', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  addExtText(h, 'c', '2BA1');
+  await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }], { maxRounds: 2, trace: true });
+  const waits = said.filter((x) => x.what === 'wait');
+  assert.ok(waits.length >= 2, `${waits.length} waits`);
+  for (const w of waits) {
+    assert.ok(typeof w.lastChange === 'number' && w.lastChange >= w.start && w.lastChange <= w.start + w.ms, `${w.why}: lastChange within the wait`);
+    assert.ok(typeof w.lastHeld === 'number' && w.lastHeld >= w.start && w.lastHeld <= w.start + w.ms, `${w.why}: lastHeld within the wait`);
+  }
+});
+
 // Review of PR 284: the answer wait counts its quiet from the page's last request too, in a frame
 // inside the page as well as the top one. A request ending 160 ms after the answer is waited after.
 test('Progressive: in a frame inside the page, an answer waits 150 ms after the request it set off', async () => {
@@ -1363,6 +1411,8 @@ test('Progressive: in a frame inside the page, an answer waits 150 ms after the 
   await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }], { maxRounds: 2, trace: true });
   const wait = said.find((x) => x.what === 'wait' && x.why === 'answer');
   assert.ok(wait.ms >= 300, `${wait.ms} ms: past the request's end and 150 ms after it`);
+  // Review of PR 430: what held the wait is the request's end, not the 150 ms it waited after it.
+  assert.ok(wait.start + wait.ms - wait.lastHeld >= 120, `held until ${wait.lastHeld - wait.start} ms of ${wait.ms}`);
 });
 
 test('Progressive: the page changed after the helper\'s fill, so the next one waits the full 400 ms', async () => {
@@ -1819,6 +1869,17 @@ test('vehicle ZIP: Progressive\'s own ZIP is left when the intake has none; empt
   // ...and a different one on the page is flagged, not kept quietly.
   ({ report } = await zipRun('17101', '18042'));
   assert.ok(report.kept.some((x) => x.differs), 'page ZIP differs from the intake: flagged');
+  // The intake's ZIP already there: kept, with what the field shows as the fill ends (reconcile's
+  // `now`), which a quote's kept answers are logged once by (LEARN-11; Claude on PR #406).
+  ({ report } = await zipRun('17101', '17101'));
+  const kept = report.kept.find((x) => x.key === 'ref:RiskInput.PrimaryZIP');
+  assert.deepEqual([kept?.differs ?? false, kept?.now], [false, '17101']);
+  const keptLogged = new Set();
+  const logged = () => fillEvents([report], { carrier: 'progressive', page: 'AddVehicle', view: 't1', overwrite: false, ms: 1, redact: (s) => s, keptLogged })
+    .filter((e) => e.result === 'kept' && e.key === 'ref:RiskInput.PrimaryZIP').length;
+  assert.deepEqual([logged(), logged()], [1, 0]);
+  kept.now = '17102';
+  assert.equal(logged(), 1, 'what the field shows changed: logged again');
 });
 
 // SC 2026-10-07: the equipment amount showed until "no equipment" was ticked, then went away; it
@@ -3662,6 +3723,151 @@ test('Stop halts a running fill after the answer going in; progress counts what 
   assert.equal(h.kit.progress(), null, 'the fill is over');
 });
 
+// Audit 2026-11-07 (ENG-02, LIVE-05): after Stop, the kit kept waiting for a quiet page for up to
+// the wait's limit (15 s after an answer, 60 s around a helper), the dock saying it was stopping
+// after the answer going in. Every wait of the kit's ends at its next wake once the fill stops.
+test('Stop during a wait on a page that stays busy ends the fill within one wake, and nothing more is written', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  // The first answer's request never ends: the wait after it would run its whole 15 s.
+  let busy = false;
+  h.context.Ext.Ajax.isLoading = () => busy;
+  let stoppedAt = null;
+  addExtText(h, 'a', '2BA1', { onSet: () => {
+    busy = true;
+    setTimeout(() => { stoppedAt = clock.Date.now(); assert.equal(h.kit.stop(), true); }, 1000);
+  } });
+  const { input: second } = addExtText(h, 'b', '2BA2');
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const report = await h.kit.fill([
+    { id: 'one', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'First', kind: 'text', value: 'Yes' },
+    { id: 'two', q: '2BA2', field: fieldOf('2BA2'), path: 'progressive.q2BA2', name: 'Second', kind: 'text', value: 'No' },
+  ], { maxRounds: 3, advance: { text: '^continue$' } });
+  const after = clock.Date.now() - stoppedAt;
+  assert.ok(stoppedAt != null);
+  assert.ok(after <= 100, `the fill ended ${after} ms after Stop`);
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.equal(second.value, '', 'nothing after Stop is written');
+  assert.ok(!next._clicked, 'Continue is not clicked');
+  assert.equal(h.kit.progress(), null, 'the fill is over');
+});
+
+test('Stop while the fill waits for a busy page to begin keeps its reason and ends at once', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  h.context.Ext.Ajax.isLoading = () => true;
+  const { input } = addExtText(h, 'a', '2BA1');
+  const t0 = clock.Date.now();
+  setTimeout(() => h.kit.stop(), 500);
+  const report = await h.kit.fill([{ id: 'one', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'First', kind: 'text', value: 'Yes' }], { maxRounds: 3 });
+  assert.ok(clock.Date.now() - t0 <= 600, `the fill ended ${clock.Date.now() - t0} ms after it began`);
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/, 'not "still waiting on its server"');
+  assert.equal(input.value, '');
+});
+
+// Audit 2026-11-07 (ENG-12): each wait is bounded, but a fill going through many had no end but
+// Stop. After 5 minutes in all it stops as on Stop, and says why.
+test('a fill stops once it has run 5 minutes in all, and the report says so', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  // Each answer's request keeps the page busy 14 s: 30 answers would take 7 minutes.
+  let busyUntil = 0;
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  const questions = Array.from({ length: 30 }, (_, i) => `2B${String(i).padStart(2, '0')}`);
+  const fields = questions.map((q, i) => addExtText(h, String.fromCharCode(97 + (i % 26)) + i, q, { onSet: () => { busyUntil = clock.Date.now() + 14000; } }));
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const t0 = clock.Date.now();
+  const report = await h.kit.fill(questions.map((q) => ({ id: q, q, field: fieldOf(q), path: `progressive.q${q}`, name: q, kind: 'text', value: 'Yes' })), { maxRounds: 60, advance: { text: '^continue$' } });
+  const ran = clock.Date.now() - t0;
+  assert.ok(ran >= 300000 && ran <= 300100, `the fill ran ${ran} ms`);
+  assert.equal(report.halted, true);
+  assert.equal(report.outOfTime, true);
+  assert.match(report.reason, /ran for 5 minutes and stopped there/);
+  const answered = fields.filter((f) => f.input.value === 'Yes').length;
+  assert.ok(answered > 15 && answered < 30, `${answered} answered before the time ran out`);
+  assert.ok(!next._clicked, 'Continue is not clicked');
+  assert.equal(h.kit.progress(), null, 'the fill is over');
+});
+
+// CodeRabbit on #398: a frame's fill begun again on the top's page (Arizona's popup) kept the time
+// it had left, not a new 5 minutes.
+test('a frame\'s fill begun again keeps the time it had left', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  h.context.top = { location: { origin: 'https://synthetic.example', pathname: '/rater', search: '?pageName=BECAPopup', hash: '' } };
+  // The page waits on its server 4 s as the fill begins, and the popup draws meanwhile; then it
+  // waits again, 20 s.
+  const t0 = clock.Date.now();
+  let busyUntil = t0 + 4000;
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  h.context.setTimeout(() => { h.context.location.search = '?pageName=BECAPopup'; becaPopup(h.document.body); }, 3900);
+  h.context.setTimeout(() => { busyUntil = t0 + 24000; }, 4100);
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 10, budgetMs: 5000 });
+  const ran = clock.Date.now() - t0;
+  assert.equal(report.outOfTime, true);
+  assert.ok(ran >= 5000 && ran <= 5100, `the fill ran ${ran} ms of its 5 s`);
+});
+
+test('Stop while an address box waits for its suggestions: nothing is picked and no fallback is written', async () => {
+  const h = harness();
+  const address = makeInput({ id: 'addr', ariaLabel: 'Home Address' });
+  h.document.body.append(address);
+  // The page never offers a suggestion: the driver would wait 4 s, then type the street back.
+  const t0 = clock.Date.now();
+  setTimeout(() => h.kit.stop(), 500);
+  const report = await h.kit.fill([{ id: 'addr', selector: '#addr', path: 'x.addr', kind: 'address-suggest', value: '125 Maple Leaf Dr, Springfield IL 62704', fallback: '125 Maple Leaf Dr' }], { maxRounds: 3 });
+  assert.ok(clock.Date.now() - t0 <= 600, `the fill ended ${clock.Date.now() - t0} ms after it began`);
+  assert.equal(report.halted, true);
+  assert.notEqual(address.value, '125 Maple Leaf Dr', 'the fallback is not written after Stop');
+  assert.equal(report.filled.length, 0);
+});
+
+test('Stop while a list waits for its options (a plain list, select2\'s search, Progressive\'s combo): nothing is picked, at once', async () => {
+  const stopIn = (h, ms) => { const t0 = clock.Date.now(); setTimeout(() => h.kit.stop(), ms); return () => clock.Date.now() - t0; };
+  // A plain list still loading (one placeholder option): the fill would wait 6 s for it.
+  {
+    const h = harness();
+    const list = new SelectNode([{ text: '', value: '' }], { id: 'odd', ariaLabel: 'Body type' });
+    h.document.body.append(list);
+    setTimeout(() => { list.options = [...list.options, { text: 'Box', value: 'box' }]; }, 2000);
+    const took = stopIn(h, 500);
+    const report = await h.kit.fill([{ id: 'body', selector: '#odd', path: 'x.body', kind: 'choice', value: 'Box' }], { maxRounds: 3 });
+    assert.ok(took() <= 600, `the plain list: the fill ended ${took()} ms in`);
+    assert.deepEqual([report.halted, list.value, report.filled.length], [true, '', 0]);
+  }
+  // A select2 type-ahead whose server never answers: 6 s for its results.
+  {
+    const h = harness();
+    const select = new SelectNode([{ text: '', value: '' }], { id: 'classCodeAndDescription', ariaLabel: 'Classification' });
+    const container = new FakeNode('span', { className: 'select2 select2-container' });
+    const opener = new FakeNode('span', { className: 'select2-selection' });
+    container.append(opener);
+    h.document.body.append(select, container);
+    opener.addEventListener('mousedown', () => {
+      const search = makeInput({ className: 'select2-search__field' });
+      search.className = 'select2-search__field';
+      h.document.body.append(search);
+    });
+    const took = stopIn(h, 500);
+    const report = await h.kit.fill([{ id: 'cls', selector: '#classCodeAndDescription', path: 'x.cls', kind: 'search-select', value: '484122', search: '484122' }], { maxRounds: 3 });
+    assert.ok(took() <= 600, `select2: the fill ended ${took()} ms in`);
+    assert.deepEqual([report.halted, select.value, report.filled.length], [true, '', 0]);
+  }
+  // Progressive's combo whose list fills only later (cargo commodities): 6 s for it.
+  {
+    const h = harness({ ext: true, search: '?pageName=NewCustomer' });
+    const field = addExtText(h, 'a', '93');
+    let records = [];
+    Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records, isLoading: () => false }, doQuery: () => {} });
+    setTimeout(() => { records = [{ get: () => 'Trucking' }]; }, 3000);
+    const took = stopIn(h, 500);
+    const report = await h.kit.fill([{ id: 'desc', q: '93', field: fieldOf('93'), path: 'progressive.q93', name: 'Business description', kind: 'choice', value: 'Trucking' }], { maxRounds: 3 });
+    assert.ok(took() <= 600, `Progressive's combo: the fill ended ${took()} ms in`);
+    assert.deepEqual([report.halted, field.cmp.getValue() ?? '', report.filled.length], [true, '', 0]);
+  }
+});
+
 // Bitwarden comparison (2026-10-22): the page the panel asked to fill is checked as the fill starts.
 // Another one in the top frame is left alone: nothing filled, and the marks of an earlier fill stay.
 test('a fill meant for another page than the top frame shows fills nothing and names the page found', async () => {
@@ -3745,6 +3951,28 @@ test('answers given one at a time go down the page, and what an answer reveals u
 // AmWINS' driver rules give the names and license number before gender, marital status and the
 // license year, which sit between them on the page: a batch round's answers land together, so it
 // keeps the order its rules are written in.
+// CodeRabbit on #398: an answer whose page handler holds the thread past the fill's deadline, in a
+// batch round: no answer more goes in, before the timer gets to run.
+test('a batch round gives no answer more once the page held it past the fill\'s time', async () => {
+  const h = harness();
+  const fields = ['first', 'second', 'third'].map((id) => makeInput({ id, ariaLabel: id }));
+  h.document.body.append(...fields);
+  fields[0].addEventListener('input', () => clock.advance(6000));
+  const report = await h.kit.fill(fields.map((f) => ({ id: f.id, selector: `#${f.id}`, path: `x.${f.id}`, kind: 'text', value: 'v' })), { maxRounds: 4, batch: true, budgetMs: 5000 });
+  assert.deepEqual(fields.map((f) => f.value), ['v', '', ''], JSON.stringify(report.filled.map((x) => x.path)));
+  assert.equal(report.outOfTime, true);
+});
+
+// CodeRabbit on #398: every click and write the cursor makes outside an answer (a unit group, a
+// helper's menu, a helper, a nudge, Continue) reads the deadline just before it, as apply does for
+// answers, so a choice that ran past it presses nothing more.
+test('every press and nudge of the cursor reads the fill\'s deadline just before it', () => {
+  const lines = CURSOR_SOURCE.split('\n');
+  const acts = lines.map((l, i) => [l, i]).filter(([l]) => /pressButton\(|adapter\(\)\.reselect\(widget|setNativeValue\(pair\.control/.test(l) && !/^\s*\/\//.test(l));
+  assert.ok(acts.length >= 6, `${acts.length} sites`);
+  for (const [l, i] of acts) assert.ok(lines.slice(Math.max(0, i - 14), i + 1).some((x) => x.includes('thisFill.timeUp()')), `line ${i + 1}: ${l.trim()}`);
+});
+
 test('a batch round keeps the order its rules are written in', async () => {
   const h = harness();
   const gender = makeInput({ id: 'gender', ariaLabel: 'Gender' });
@@ -5627,7 +5855,7 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
         if (scenario.startsWith('transport failure') && /\.answer\(/.test(String(func))) throw new Error('Transport unavailable after answer');
         return results.filter(Boolean);
       },
-      tellRecorder: async () => {}, persistAiPending: async () => {},
+      tellRecorder: async () => {}, persistAiPending: async () => {}, resumeHeldFill: () => {},
       agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => {} },
       usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
     const source = PANEL_SOURCE;
@@ -6368,6 +6596,44 @@ test('GEICO\'s Recalculate rated 18 s after the click, nothing busy for 3 s: its
   assert.match(report.failed[0].reason, /changed this answer when it recalculated \(to "\$500 deductible"\), and the fill put it back/);
   assert.match(report.failed[1].reason, /changed an answer when it recalculated/);
   assert.equal(slow.more._clicked, undefined, 'View More Payment Plans waits for the agent');
+});
+
+// Audit 2026-11-07 (LIVE-05): Stop during GEICO's redraw after the premium showed (the `rated` wait,
+// up to a minute on a page that stays busy) ends it too (the maintainer, 2026-11-07): nothing is put
+// back, nothing more is clicked.
+test('GEICO\'s Recalculate: Stop while the page redraws after its premium ends the wait at once, nothing put back', async () => {
+  let stoppedAt = null;
+  const p = recalcPage({ redraw: ({ h, comp }) => {
+    comp.value = '$500 deductible';
+    // GEICO's loader, a second in, never going: the wait after the premium would last its minute.
+    setTimeout(() => h.document.body.append(new FakeNode('div', { id: 'page-load', className: 'loader-container' })), 1000);
+    setTimeout(() => { stoppedAt = clock.Date.now(); h.kit.stop(); }, 3000);
+  } });
+  p.h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+  const said = [];
+  const seen = new Set();
+  p.h.document.addEventListener('rater-trace', (e) => { if (!seen.has(e)) { seen.add(e); said.push(JSON.parse(e.detail)); } });
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 12, trace: true });
+  const after = clock.Date.now() - stoppedAt;
+  assert.ok(stoppedAt != null && after <= 100, `the fill ended ${after} ms after Stop`);
+  assert.equal(p.recalcs, 1);
+  assert.deepEqual(plain(said.filter((x) => x.what === 'wait' && x.why === 'rated').map((x) => x.ended)), ['stopped']);
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.equal(p.comp.value, '$500 deductible', 'nothing put back after Stop');
+  assert.equal(p.more._clicked, undefined, 'nothing more clicked');
+});
+
+test('GEICO\'s Recalculate: Stop while the fill puts GEICO\'s changes back ends the put-back after the answer going in', async () => {
+  const p = recalcPage({ redraw: ({ comp, coll }) => { comp.value = '$500 deductible'; coll.value = '$500 deductible'; } });
+  // The agent stops as the first answer goes back in.
+  p.comp.addEventListener('change', () => p.h.kit.stop());
+  const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+  assert.equal(p.recalcs, 1);
+  assert.deepEqual([p.comp.value, p.coll.value], ['$1,000 deductible', '$500 deductible'], 'the second is not put back after Stop');
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.equal(p.more._clicked, undefined);
 });
 
 // W43-41 (FL, 2026-10-22): after the fill's Recalculate, the liability limit, UM, road service and
@@ -8213,6 +8479,28 @@ test('a quiet page is one whose components are all defined, each waited for up t
   assert.ok(other.took < 3000, `took ${other.took} ms`);
 });
 
+// Review of PR 430: a recording's look at the components (lastHeld) started their 3 s from the
+// wait's first poll, not from when the page went quiet, so a recorded fill stopped waiting for a
+// component sooner than an unrecorded one. Recording a fill doesn't change how long it waits.
+test('a recorded fill waits for an undefined component as long as an unrecorded one', async () => {
+  const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
+  const run = async (trace) => {
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    h.context.CustomEvent = class { constructor(type, init = {}) { Object.assign(this, { type, detail: init.detail }); } };
+    geicoBar(h, 'Business Class & USDOT');
+    h.document.body.append(geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?'), notDefinedYet(new FakeNode('gds-address-check')));
+    // The page keeps drawing for 2 s before it goes quiet.
+    const start = clock.Date.now();
+    h.context.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return clock.Date.now() - start < 2000 ? [{}] : []; } };
+    await h.kit.fill(plan, { maxRounds: 2, ...(trace ? { trace: true } : {}) });
+    return clock.Date.now() - start;
+  };
+  const plainRun = await run(false);
+  const traced = await run(true);
+  assert.ok(plainRun >= 4500, `unrecorded: ${plainRun} ms, 3 s after the page went quiet`);
+  assert.ok(Math.abs(traced - plainRun) < 500, `recorded ${traced} ms, unrecorded ${plainRun} ms`);
+});
+
 // A wait with a limit of 3 s (after a helper click, after an answer) and a component that appears
 // with it and is never defined: the wait for it ends at the limit, and the page counts as settled.
 test('a component never defined doesn\'t make a short wait fail', async () => {
@@ -8449,7 +8737,41 @@ test('a list whose only option shows twice is still loading: waited for; a full 
   const t0 = Date.now();
   report = await h2.kit.fill([step], { maxRounds: 30 });
   assert.ok(Date.now() - t0 < 2000, 'no wait');
-  assert.deepEqual(plain(report.failed.map((x) => x.reason)), ['no option matches "$1,000 deductible"']);
+  assert.deepEqual(plain(report.failed.map((x) => [x.code, x.reason])), [['option.no-match', 'no option matches "$1,000 deductible"']]);
+});
+
+// Audit 2026-11-07, LEARN-09: the kit's failures carry a stable code (types.js FailCode), which the
+// kit branches on and the usage log keeps, so rewording a message changes neither. Every object the
+// kit or a carrier's page code gives with a `reason` key gives a `code` beside it.
+test('every failure the fill engine gives carries a code beside its reason', () => {
+  const root = new URL('../', import.meta.url);
+  const dir = (d) => fs.readdirSync(new URL(d, root)).filter((f) => f.endsWith('.js')).map((f) => `${d}${f}`);
+  const files = [...dir('src/kit/'), ...dir('src/kit/drivers/'), ...dir('src/content/carriers/')];
+  const codes = fs.readFileSync(new URL('types.js', root), 'utf8').match(/@typedef \{([^}]*)\} FailCode/)[1].match(/'[^']+'/g).map((c) => c.slice(1, -1));
+  const missing = [];
+  const used = new Set();
+  for (const f of files) {
+    // Comments out: a typedef or a note names `reason` too.
+    const src = fs.readFileSync(new URL(f, root), 'utf8').split('\n').map((l) => (/^\s*(\/\/|\*|\/\*\*)/.test(l) ? '' : l.replace(/\/\/ .*$/, ''))).join('\n');
+    for (const m of src.matchAll(/code: (?:\/\*\* @type \{FailCode\} \*\/ \()?'([a-z.-]+)'/g)) used.add(m[1]);
+    // `reason` as an object's key (`reason:`, or shorthand), not a value or an argument.
+    for (const m of src.matchAll(/(?<![.\w$]|\$\{|:\s{0,3})reason(?=\s*[:,}])/g)) {
+      let depth = 0, i = m.index, opener = null;
+      for (; i >= 0; i--) {
+        const ch = src[i];
+        if (ch === '}' || ch === ')') depth++;
+        else if (ch === '{' || ch === '(') { if (depth === 0) { opener = ch; break; } depth--; }
+      }
+      if (opener === '{' && !/\bcode\b/.test(src.slice(i, m.index))) missing.push(`${f}:${src.slice(0, m.index).split('\n').length}`);
+    }
+  }
+  assert.deepEqual(missing, [], 'a failure without a code');
+  assert.deepEqual([...used].filter((c) => !codes.includes(c)), [], 'a code types.js FailCode does not list');
+  // A failure that still comes back without a code is `kit.uncoded`, never the kit's own error
+  // (`kit.exception`), so it isn't counted as a defect (Claude on PR #402).
+  const kit = ['src/kit/cursor.js', 'src/kit/pagekit.js'].map((f) => fs.readFileSync(new URL(f, root), 'utf8')).join('\n');
+  assert.equal(/code \?\? 'kit\.exception'/.test(kit), false);
+  assert.equal((kit.match(/code \?\? 'kit\.uncoded'/g) ?? []).length, 2);
 });
 
 // FL live run 5, 2026-10-21 (W43-21): GEICO cleared the business description when the agent
@@ -8946,7 +9268,7 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.equal(seen[0].phase, null, 'answering');
   assert.equal(h.kit.progress(), null, 'the fill is over');
   // Each long wait names itself before it begins.
-  assert.match(CURSOR_SOURCE, /phase\('reading'\);[^]{0,300}const settled = await settle\(\{ quietMs: fresh \? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' \}\);\s+phase\(null\);/);
+  assert.match(CURSOR_SOURCE, /phase\('reading'\);[^]{0,300}try \{ settled = await settle\(\{ quietMs: fresh \? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' \}\); \} catch \(e\) \{ releaseEditGuard\(\); clearTimeout\(budget\); throw e; \}\s+phase\(null\);/);
   assert.match(CURSOR_SOURCE, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
   assert.match(CURSOR_SOURCE, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
   assert.match(CURSOR_SOURCE, /if \(thisRound\.helperClicked\) phase\('helper', state\.pendingAction\?\.label \?\? state\.report\.actions\.at\(-1\)\?\.text \?\? null\);/);
@@ -9579,6 +9901,30 @@ test('a control in a shadow root is labelled by the page element its aria-labell
   assert.match(String(c?.label ?? ''), /Cargo limit/);
 });
 
+// Audit 2026-11-07 (ENG-14): a design system's components switched to closed shadow roots would
+// hide the whole page from the kit. In an extension's isolated world (GEICO's kit) Chrome hands
+// the kit a closed root (chrome.dom.openOrClosedShadowRoot): its controls are read and filled.
+test('a control in a closed shadow root is read and filled where Chrome gives the kit the root', async () => {
+  const page = (dom) => {
+    const h = harness();
+    if (dom) h.context.chrome = { dom: { openOrClosedShadowRoot: (el) => el.shadowRoot ?? el._closedRoot ?? null } };
+    const box = new SelectNode(['', '$50,000', '$100,000'], { id: 'limitBox', ariaLabel: 'Cargo limit' });
+    const host = new FakeNode('gds-select');
+    host.attachShadow({ mode: 'closed' }).append(box);
+    h.document.body.append(host);
+    return { h, box };
+  };
+  const step = { id: 'cargo', selector: '#limitBox', path: 'coverage.cargoLimit', name: 'Cargo limit', kind: 'choice', value: '$100,000' };
+  const { h, box } = page(true);
+  assert.ok(h.kit.capture(null, []).controls.some((x) => x.id === 'limitBox'), 'read through the closed root');
+  const report = await h.kit.fill([step], { maxRounds: 3 });
+  assert.equal(box.value, '$100,000');
+  assert.equal(report.filled.length, 1);
+  // Without chrome.dom (the page's own world) a closed root stays closed: nothing is read there.
+  const closed = page(false);
+  assert.ok(!closed.h.kit.capture(null, []).controls.some((x) => x.id === 'limitBox'));
+});
+
 // Review of PR #282 (an independent pass): while a fill runs in the frame, present() reads the
 // fill's own hidden-but-fillable fields, not the panel's list, as before the kit was split.
 test('present during a fill keeps the fill\'s hidden fields it may fill', async () => {
@@ -9597,4 +9943,158 @@ test('present during a fill keeps the fill\'s hidden fields it may fill', async 
   ], { maxRounds: 2 });
   assert.ok(during, 'present ran during the fill');
   assert.equal(during[0]?.hidden, undefined, 'the fill may fill it: present sees the control');
+});
+
+// Audit 2026-11-07 (LEARN-07): an agent edit the panel never heard (closed, on another tab, a page
+// the recorder wasn't in) left no mark, and the next fill on Progressive or GEICO (replaceChoices)
+// took the agent's choice for a pre-selection and put its own back. A choice a fill on this tab gave
+// that now shows otherwise isn't the extension's: kept and flagged.
+// What a fill gave, as the panel keeps it for the tab's next fills (rememberFill, fillOptions).
+const givenBy = (...reports) => Object.fromEntries(reports.flatMap((r) => r.filled).map((x) => [x.key, { path: x.path ?? null, shown: x.shown ?? null }]));
+
+test('a choice an earlier fill gave that now shows otherwise is kept and flagged, not replaced', async () => {
+  const h = harness();
+  const radius = new SelectNode(['', '0-50 miles', '51-200 miles', '201+ miles'], { id: 'radius', value: '' });
+  const years = new SelectNode(['', '1', '3', '5+'], { id: 'years', value: '' });
+  h.document.body.append(radius, years);
+  const plan = [
+    { id: 'radius', selector: '#radius', path: 'operations.radius', name: 'Radius', kind: 'choice', value: '0-50 miles' },
+    { id: 'years', selector: '#years', path: 'business.years', name: 'Years in business', kind: 'choice', value: '5+' },
+  ];
+  const first = await h.kit.fill(plan.slice(0, 1), { maxRounds: 3, replaceChoices: true });
+  assert.equal(radius.value, '0-50 miles');
+  const givenBefore = givenBy(first);
+  // The agent changes the radius with no panel to hear it; the page pre-selects the years.
+  radius.value = '201+ miles';
+  years.value = '1';
+  let report = await h.kit.fill(plan, { maxRounds: 3, replaceChoices: true, givenBefore });
+  assert.equal(radius.value, '201+ miles', 'what was changed after the fill stays');
+  assert.equal(years.value, '5+', 'a pre-selection no fill gave is replaced, as before');
+  assert.deepEqual(plain(report.checks.map((x) => [x.stepId, x.note])), [['radius', 'This was changed after it was filled (Radius): left as it is. Check it.']]);
+  assert.ok(!report.filled.some((x) => x.stepId === 'radius'));
+  // Replace existing answers: the agent asks for it, so it is given again.
+  await h.kit.fill(plan, { maxRounds: 3, replaceChoices: true, overwrite: true, givenBefore });
+  assert.equal(radius.value, '0-50 miles');
+  // Still what the fill gave, with the intake now saying otherwise: the fill's own, given anew.
+  await h.kit.fill([{ ...plan[0], value: '51-200 miles' }], { maxRounds: 3, replaceChoices: true, givenBefore });
+  assert.equal(radius.value, '51-200 miles');
+  // Given for another rule's path (another vehicle's): not this one's, replaced as before.
+  radius.value = '201+ miles';
+  const elsewhere = Object.fromEntries(Object.entries(givenBefore).map(([key, x]) => [key, { ...x, path: 'vehicles[1].radius' }]));
+  await h.kit.fill(plan.slice(0, 1), { maxRounds: 3, replaceChoices: true, givenBefore: elsewhere });
+  assert.equal(radius.value, '0-50 miles');
+});
+
+test('a value an earlier fill gave that a rule replaces (`replace`) is kept once it shows otherwise', async () => {
+  const h = harness();
+  const state = new SelectNode(['', 'Florida', 'Georgia'], { id: 'mailingState', value: 'Georgia' });
+  h.document.body.append(state);
+  const step = { id: 'state', selector: '#mailingState', path: 'garaging.state', name: 'Mailing state', kind: 'choice', value: 'Florida', replace: true };
+  const first = await h.kit.fill([step], { maxRounds: 3 });
+  assert.equal(state.value, 'Florida', 'the page\'s own value, which no fill gave, is replaced');
+  state.value = 'Georgia';
+  const report = await h.kit.fill([step], { maxRounds: 3, givenBefore: givenBy(first) });
+  assert.equal(state.value, 'Georgia');
+  assert.equal(report.checks[0]?.note, 'This was changed after it was filled (Mailing state): left as it is. Check it.');
+});
+
+// Review of PR #374: a fill reports a list's several picks in the answer's order ("Gravel; Sand"),
+// the page reads them back in its own ("Sand; Gravel"): the same picks, not an edit.
+test('a list\'s several picks read back in another order are what the fill gave; other picks are an edit', async () => {
+  const h = harness();
+  const goods = new SelectNode(['Sand', 'Gravel', 'Steel'], { id: 'goods' });
+  goods.multiple = true;
+  Object.defineProperty(goods, 'selectedOptions', { get: () => goods.options.filter((o) => o.selected) });
+  h.document.body.append(goods);
+  const step = { id: 'goods', selector: '#goods', path: 'operations.commodities', name: 'Commodities', kind: 'choice', value: 'Gravel; Sand' };
+  const first = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true });
+  assert.deepEqual(plain(first.filled.map((x) => x.shown)), ['Gravel; Sand']);
+  // The intake now says otherwise: the fill's own picks, given anew.
+  let report = await h.kit.fill([{ ...step, value: 'Steel' }], { maxRounds: 3, replaceChoices: true, givenBefore: givenBy(first) });
+  assert.deepEqual(goods.options.map((o) => !!o.selected), [false, false, true]);
+  assert.deepEqual(plain(report.checks), []);
+  // Picks the agent changed are kept and flagged.
+  for (const o of goods.options) o.selected = o.text !== 'Gravel';
+  report = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, givenBefore: givenBy(first) });
+  assert.deepEqual(goods.options.map((o) => !!o.selected), [true, false, true]);
+  assert.equal(report.checks[0]?.note, 'This was changed after it was filled (Commodities): left as it is. Check it.');
+});
+
+// The maintainer, 2026-11-07: on GEICO's Quote & Coverages too, an answer the fill gave that shows
+// otherwise now is kept and flagged, by the agent's Fill this page as well, also where the panel's
+// keys of the tab's answers don't name it (a panel opened again knows it from the kept reports only).
+test('on the steps where the page takes answers back, an answer showing otherwise is kept by every fill', async () => {
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const comp = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_20000_COMP`, value: 'Not Included' });
+  h.document.body.append(comp);
+  const step = { id: 'comp', selector: '[id$="_COMP"]', steps: ['Quote & Coverages'], path: 'geico.qCOMP', name: 'Comprehensive', kind: 'choice', value: '$1,000 deductible' };
+  const first = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true });
+  comp.value = 'Not Included';
+  let report = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, takenBack: { steps: ['Quote & Coverages'], keys: {} }, givenBefore: givenBy(first) });
+  assert.equal(comp.value, 'Not Included');
+  assert.deepEqual(plain(report.checks.map((x) => x.note)), ['This was changed after it was filled (Comprehensive): left as it is. Check it.']);
+  // Replace existing answers gives it again.
+  report = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, overwrite: true, takenBack: { steps: ['Quote & Coverages'], keys: {} }, givenBefore: givenBy(first) });
+  assert.equal(comp.value, '$1,000 deductible');
+});
+
+// The recorder is paused as a fill begins, but the kit's own edit guard came on only after the
+// fill's first wait for the page (up to 15 s on a page waiting on its server): an agent's pick in
+// that wait was neither the recorder's nor the guard's, and the fill put its own choice over it.
+test('an agent edit while the fill waits for the page to settle is protected, and the fill stops', async () => {
+  const h = harness();
+  const radius = new SelectNode(['', '0-50 miles', '51-200 miles'], { id: 'radius', value: '' });
+  const years = new SelectNode(['', '1', '3', '5+'], { id: 'years', value: '' });
+  h.document.body.append(radius, years);
+  let observers = 0;
+  h.context.MutationObserver = class {
+    constructor() {
+      // The first wait is the fill's start: the agent picks the radius meanwhile.
+      if (++observers === 1) setTimeout(() => {
+        radius.dispatchEvent({ type: 'pointerdown', target: radius, isTrusted: true });
+        radius.value = '51-200 miles';
+        radius.dispatchEvent({ type: 'change', target: radius, isTrusted: true });
+      }, 10);
+    }
+    observe() {} disconnect() {}
+  };
+  const report = await h.kit.fill([
+    { id: 'radius', selector: '#radius', path: 'operations.radius', name: 'Radius', kind: 'choice', value: '0-50 miles' },
+    { id: 'years', selector: '#years', path: 'business.years', name: 'Years in business', kind: 'choice', value: '5+' },
+  ], { maxRounds: 3, replaceChoices: true });
+  assert.equal(radius.value, '51-200 miles', 'the agent\'s pick stays');
+  assert.equal(years.value, '', 'an edit during a fill stops it, as later in the fill');
+  assert.equal(report.halted, true);
+  assert.equal(report.reason, 'An agent edit interrupted filling. Review before resuming.');
+  assert.equal(report.protectedKeys.length, 1);
+});
+
+// An ExtJS combo's pick sets its box with no input or change event (2026-10-20): during a fill the
+// edit guard never heard it, the paused recorder neither, and the agent's pick was nobody's.
+test('a detached list pick that fires no input or change event still stops the fill, and the box stays the agent\'s', async () => {
+  const h = harness({ ext: true });
+  const combo = addExtText(h, 'combo', '1002', { ref: 'Test.combo', caption: 'Combo', value: 'wanted' });
+  const popup = new FakeNode('div', { className: 'x-boundlist' });
+  const option = new FakeNode('div', { className: 'x-boundlist-item' });
+  popup.append(option); h.document.body.append(popup);
+  h.document.activeElement = combo.input;
+  const button = addButton(h, 'Continue');
+  let clicks = 0, settles = 0;
+  button.onclick = () => { clicks++; };
+  h.context.MutationObserver = class {
+    constructor() {
+      if (++settles === 2) setTimeout(() => {
+        option.dispatchEvent({ type: 'pointerdown', target: option, isTrusted: true });
+        combo.cmp.setValue('Agent choice');
+      }, 10);
+    }
+    observe() {} disconnect() {}
+  };
+  const report = await h.kit.fill([{ id: 'combo', field: 'Test.combo', kind: 'text', value: 'wanted', name: 'Combo' }],
+    { maxRounds: 2, advance: { text: 'Continue' } });
+  assert.equal(clicks, 0);
+  assert.equal(report.halted, true);
+  assert.deepEqual([...report.protectedKeys], ['ref:Test.combo']);
+  assert.equal(combo.input.value, 'Agent choice');
 });

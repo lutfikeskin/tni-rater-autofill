@@ -1,11 +1,11 @@
 // @ts-check
 // Multi-round cursor execution engine: pass management, control judgement, helper verification, post-fill reconciliation, and result resolution.
 
-import { oneLine, squash, sleep, loose } from "./text.js";
+import { oneLine, squash, loose } from "./text.js";
 import {
   adapter, currentPage, stepKey, stepIs, stopStepOn,
   addStopSteps, pageAt, pageBusy, stepBars, perfNow, recentRequests, setComponentPrefix, watchRequests, watchingRequests, settle,
-  ratesStale, premiumReady, rated,
+  pause, stopWaitsWhen, INTERRUPTED, ratesStale, premiumReady, rated,
 } from "./adapter.js";
 import {
   deepQueryAll, buttonText, collectControls, fieldKey, optionsOf,
@@ -26,18 +26,23 @@ import {
   assign, matchOption, holdingCondition, moneyTokens, businessNameKey, uniqueBusinessNames,
   heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName, apply, agreesWith, looseMatch, looseNote,
   summaryAccepted, waitedOut, unpicked, waitedOutUndrawn, WAIT_MS, WAIT_ROUND_MS,
-  AFTER_WAIT_QUIET_MS, LOAD_MS, LOAD_RESULT_MS, LOAD_QUIET_MS, LOAD_HALT, KEPT_WATCH_MS,
+  AFTER_WAIT_QUIET_MS, LOAD_MS, LOAD_RESULT_MS, LOAD_QUIET_MS, LOAD_HALT, KEPT_WATCH_MS, FILL_BUDGET_MS, BUDGET_HALT,
   ONCE_UNVERIFIED, NOTHING_LEFT, AGENT_PRESSED, CONTINUE_REFUSED, RESET_QUIET_MS,
 } from "./apply.js";
 import { itemResolution, LIST_STATUS } from "../resolution.js";
 
-/** @import { FillOptions, FillReport, PlanStep, UnitPager } from "../../types.js" */
+/** @import { FailCode, FillOptions, FillReport, PlanStep, UnitPager } from "../../types.js" */
 /** @import { PageControl } from "./dom.js" */
 
 export const getRunning = () => running;
 
 
 let running = null;
+// The running fill stopped (Stop, or the agent's edit): every wait of the kit's ends at its next
+// wake (adapter.js settle and pause), the driver's too, and nothing more is written or clicked.
+// Its time in all spent (`budgetMs`) stops it there too, read at every answer and wait, so a page
+// that blocks past the deadline gets no answer more before the timer runs (CodeRabbit on #398).
+stopWaitsWhen(() => !!running && (running.report.halted || running.timeUp()));
 // Fills the agent stopped before they began here (`run`: the panel's id for the fill; Stop can
 // come while the panel still prepares, before fill() starts): such a fill halts as it starts.
 const stoppedRuns = new Set();
@@ -227,7 +232,7 @@ export function resolveItems(report, plan) {
  * @param {FillOptions} [options]
  * @returns {Promise<FillReport>}
  */
-export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
+export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, budgetMs = FILL_BUDGET_MS, deadline = null, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
   /** @type {RunState} */
   const state = /** @type {any} */ ({});
   // The plan as given (helpers included, which the fill sets apart below), for a fill begun again.
@@ -406,6 +411,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   state.judgedTo = Infinity;
   state.provisionalLeft = 0;
   const halt = (reason) => { state.report.halted = true; state.report.reason = reason; };
+  // A wait that ended unsettled: the fill halts for it, unless it ended because the fill had stopped
+  // already (Stop, or the agent's edit), whose reason stays.
+  const stalled = (reason) => { if (!state.report.halted) halt(reason); };
   // Answers this fill gave that their field no longer shows (a later server response rewrote or
   // cleared them), each with its question as `pairs` read it. A field the agent edited, and a
   // lookup box its helper has used, don't count.
@@ -431,9 +439,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // A coverage's name without the rule's own words in brackets ("Rental reimbursement (TNI: …)").
   const coverageName = (s) => { const n = String(s.name ?? '').replace(/\s*\(.*\)\s*$/, '').trim(); return n.charAt(0).toLowerCase() + n.slice(1); };
   const wordList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
-  const unitHeldNote = ({ step, deps, tries, reason }) => {
+  const unitHeldNote = ({ step, deps, tries, code, reason }) => {
     const pre = coverageName(step);
-    const why = /did not keep/.test(reason ?? '') ? `didn't stick on the page (tried ${tries} time${tries === 1 ? '' : 's'}, each once the page was quiet)` : `couldn't be set (${reason})`;
+    const why = code === 'answer.not-kept' ? `didn't stick on the page (tried ${tries} time${tries === 1 ? '' : 's'}, each once the page was quiet)` : `couldn't be set (${reason})`;
     return `${pre.charAt(0).toUpperCase()}${pre.slice(1)} ${why}. This vehicle's ${wordList([...new Set(deps.map(coverageName))])} depend${deps.length === 1 ? 's' : ''} on it, so the fill left ${deps.length === 1 ? 'it' : 'them'} too. Set its ${pre} yourself, then fill again.`;
   };
   const holdDependent = (s, root) => {
@@ -448,10 +456,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // A prerequisite that didn't take, with answers on its unit that need it still to give: one
   // needs-you item for the unit (which holds `whenClear` helpers: Recalculate and after), and its
   // dependents held behind it, none a failure of its own. False when nothing waits on it.
-  const holdUnit = (step, c, item, reason, pairsNow) => {
+  const holdUnit = (step, c, item, reason, code, pairsNow) => {
     const deps = dependentsOf(step, pairsNow).map((p) => p.step);
     if (!deps.length) return false;
-    const root = { item: { ...item, ...describe(c) }, step, deps: [], tries: (state.retries.get(step.id) ?? 0) + 1, reason };
+    const root = { item: { ...item, ...describe(c) }, step, deps: [], tries: (state.retries.get(step.id) ?? 0) + 1, code, reason };
     state.unitHeld.set(step.id, root);
     for (const d of deps) holdDependent(d, root);
     root.item.note = unitHeldNote(root);
@@ -463,19 +471,45 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // null while it answers, else { name, what }: 'reading' the page as it begins, 'waiting' for the
   // page after an answer, a 'helper' it clicked (`what`: the button), the 'premium' it rates, or
   // 'continue'. Said so a fill waiting on GEICO's Recalculate doesn't read as stuck (2026-10-23).
-  const thisFill = { report: state.report, halt, run, phase: null };
+  // Set below with the fill's deadline: whether its time is spent, halting it if so.
+  const thisFill = { report: state.report, halt, run, phase: null, timeUp: () => false };
   const phase = (name, what = null) => { thisFill.phase = name ? { name, what } : null; };
   running = thisFill;
+  // Its time in all (`budgetMs`): once it is spent, the fill stops as on Stop, its waits with it, and
+  // the report says why (`outOfTime`). A fill begun again in its frame (below) keeps this one's end
+  // (`deadline`), not a new budget.
+  const ends = deadline ?? Date.now() + budgetMs;
+  const outOfTime = () => {
+    if (state.report.halted) return;
+    halt(budgetMs === FILL_BUDGET_MS ? BUDGET_HALT : BUDGET_HALT.replace('5 minutes', `${Math.round(budgetMs / 1000)} s`));
+    state.report.outOfTime = true;
+  };
+  thisFill.timeUp = () => { if (Date.now() >= ends) outOfTime(); return state.report.halted; };
+  const budget = setTimeout(outOfTime, Math.max(0, ends - Date.now()));
   // Stopped by the agent before it began (the panel was still preparing): nothing is done.
   if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
+  // A real user edit during a fill must survive even while the recorder is paused: its field is
+  // protected (also from this fill's later rounds) and the fill stops. The guard is on from before
+  // the fill's first wait for the page, as the recorder is paused already then: an edit in that
+  // wait (seconds, on a page waiting on its server) was neither the recorder's nor the guard's, and
+  // the fill put its own choice over it (LEARN-07, 2026-11-07). It stays on until the fill returns,
+  // so an edit during the wait before Continue stops that too.
+  const releaseEditGuard = guardEdits((key) => {
+    state.skipKeys.add(key);
+    if (!state.report.protectedKeys.includes(key)) state.report.protectedKeys.push(key);
+    halt(EDIT_HALT);
+  });
   phase('reading');
   const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
-  const settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' });
+  let settled;
+  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); clearTimeout(budget); throw e; }
   phase(null);
   // Stopped while the page settled: nothing was done.
   if (!settled || state.report.halted) {
-    if (!settled) halt('The page is still waiting on its server. Review and retry.');
+    releaseEditGuard();
+    if (!settled) stalled('The page is still waiting on its server. Review and retry.');
     state.report.stepKey = stepKey();
+    clearTimeout(budget);
     if (running === thisFill) running = null;
     return state.report;
   }
@@ -486,8 +520,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // now, once.
   if (!restarted && window !== window.top && currentPage() !== startPage && currentPage() === topPageNow()) {
     adapter().offRequest(countAjax);
+    releaseEditGuard();
+    clearTimeout(budget);
     if (running === thisFill) running = null;
-    return fill(givenPlan, { ...arguments[1], restarted: true });
+    return fill(givenPlan, { ...arguments[1], restarted: true, deadline: ends });
   }
   // The step on screen as the fill begins, on a page with a step progress bar (null elsewhere:
   // AmWINS' headings change with its dialogs). Read once the page has settled.
@@ -499,14 +535,6 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // A plan kept to steps on a page whose step bar can't be read (STEP_UNREAD_HALT): the same.
   const steppedPlan = plan.some((s) => s.steps?.length);
   state.unreadStep = false;
-  // A real user edit during a fill must survive even while the recorder is paused: its field is
-  // protected (also from this fill's later rounds) and the fill stops. The guard stays on until
-  // the fill returns, so an edit during the wait before Continue stops that too.
-  const releaseEditGuard = guardEdits((key) => {
-    state.skipKeys.add(key);
-    if (!state.report.protectedKeys.includes(key)) state.report.protectedKeys.push(key);
-    halt(EDIT_HALT);
-  });
   // A button the agent clicks during the fill (Next, "+", Looks Good) moves the page on their
   // click: this fill clicks no Continue and no helper after it (FL live run 4, 2026-10-21: the
   // agent's Next, then a fill's, while GEICO still worked on the first).
@@ -600,7 +628,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     const controls = collectControls();
     state.roundControls = controls;
     state.report.fields = Math.max(state.report.fields, controls.length);
-    if (state.report.halted) break;
+    if (thisFill.timeUp()) break;
     const allPairs = assign(controls, plan);
     // The agent's edits made where the kit is now, before anything asks whether a field is theirs.
     if (skipBy) skipWhere(allPairs.units);
@@ -708,13 +736,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         if (!here(c)) continue;
         const reason = 'The page marks this answer invalid.';
         const key = fieldKey(c);
-        if (!state.report.failed.some((x) => x.key === key && x.label === c.label && (x.reason === reason || !x.stepId))) state.report.failed.push({ label: c.label, key, q: c.q, controlKind: c.kind, reason, ...describe(c) });
+        if (!state.report.failed.some((x) => x.key === key && x.label === c.label && (x.reason === reason || !x.stepId))) state.report.failed.push({ label: c.label, key, q: c.q, controlKind: c.kind, code: 'answer.invalid', reason, ...describe(c) });
         mark(c, 'failed', 'the page marks this answer invalid');
       }
       for (const { step, control } of allPairs) {
         if (!here(control) || skippedField(control) || !hasValue(control)) continue;
         if (step.verifyOnly && !agreesWith(step, control)) {
-          flag(state.report.failed, { label: control.label, key: fieldKey(control), q: control.q, reason: 'The looked-up value differs from the intake. Check the VIN.' });
+          flag(state.report.failed, { label: control.label, key: fieldKey(control), q: control.q, code: 'lookup.differs', reason: 'The looked-up value differs from the intake. Check the VIN.' });
           mark(control, 'failed', 'lookup result differs from the intake');
         }
       }
@@ -727,7 +755,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         continue;
       }
       if (hasValue(pair.control)) {
-        state.report.failed.push({ ...previous, reason: 'A later server response changed this answer; check it.' });
+        state.report.failed.push({ ...previous, code: 'answer.changed', reason: 'A later server response changed this answer; check it.' });
         state.report.filled = state.report.filled.filter((x) => x !== previous);
         state.handled.set(pair.step.id, { status: 'failed', note: 'a later server response changed this answer' });
       }
@@ -751,7 +779,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       judged(Math.min(thisRound.lagBound, firstOpen(allPairs, place)));
       // A lookup (Import Data) may wait on its server without changing the page for a while.
       phase('helper', state.pendingAction?.label ?? state.report.actions.at(-1)?.text ?? null);
-      if (!await settle(serverBacked ? { why: 'helper' } : { quietMs: 800, maxMs: 8000, why: 'helper' })) { halt('The helper response did not settle. Review before retrying.'); break; }
+      if (!await settle(serverBacked ? { why: 'helper' } : { quietMs: 800, maxMs: 8000, why: 'helper' })) { stalled('The helper response did not settle. Review before retrying.'); break; }
       if (!await verifyAction()) break;
       if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
       if (stepChanged()) break;
@@ -911,12 +939,22 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         // An unticked box that should stay unticked already has its answer (live run 2026-10-09:
         // every unticked box was "filled" again on each pass).
         const answered = hasValue(c) || (c.kind === 'checkbox' && step.value === false && !c.el.checked);
+        // An answer a fill on this tab gave here (`givenBefore`: this field, for this rule's path)
+        // that the field now shows otherwise, and that this fill hasn't given: the extension didn't
+        // write what is there, so it is the agent's (an edit the panel never heard: closed, on
+        // another tab, a page no recorder was in) or the page's. Kept and flagged, never replaced
+        // (LEARN-07, 2026-11-07), unless the agent asks to replace answers (`overwrite`). One the
+        // page took back (`tookBack`) is kept as that, with its own note.
+        const givenHere = answered && !overwrite ? givenBefore?.[fieldKey(c)] : null;
+        const changedSince = !!givenHere && givenHere.path != null && givenHere.path === step.path && givenHere.shown != null
+          && !sameShown(c, givenHere.shown, answerShown(c)) && !agreesWith(step, c) && !tookBack
+          && !state.refill.has(step.id) && !state.report.filled.some((x) => x.stepId === step.id);
         // A street an earlier fill left without a suggestion is not answered while the box holds
         // what that fill left: it stays the agent's, never taken as the page's.
         if (step.checkNumber && unpicked.has(c.el) && unpicked.get(c.el) === c.el.value) {
           if (notYet()) continue;
           const reason = 'no address suggestion was picked for it: pick the address yourself';
-          state.report.failed.push({ ...item, reason, ...describe(c) });
+          state.report.failed.push({ ...item, code: 'address.no-suggestion', reason, ...describe(c) });
           state.handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason}` });
           continue;
         }
@@ -935,7 +973,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         // replaced with this unit's answer (W43-38, Progressive Add Driver, 2026-10-22: another
         // driver's name and date of birth were kept as differing and left to the agent).
         const otherUnits = answered && !agreesWith(step, c) && givenForOtherUnit(step, c);
-        if (legacyHold || sameAnswer || presetKept || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !state.refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+        if (legacyHold || sameAnswer || presetKept || changedSince || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !state.refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           if (notYet()) continue;
           state.report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
@@ -944,6 +982,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             state.handled.set(step.id, { status: 'needs', note });
           } else if (tookBack) {
             const note = `The page changed this back after it was filled (${step.name}): left as it is. Check it.`;
+            state.report.checks.push({ ...item, note, ...describe(c) });
+            state.handled.set(step.id, { status: 'needs', note });
+          } else if (changedSince) {
+            const note = `This was changed after it was filled (${step.name}): left as it is. Check it.`;
             state.report.checks.push({ ...item, note, ...describe(c) });
             state.handled.set(step.id, { status: 'needs', note });
           } else if (step.keepChoice && isChoice && !agreesWith(step, c)) {
@@ -1028,13 +1070,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         let result;
         // The field as read after the answer (a redraw's own), for how it holds the answer.
         let judged = c;
-        try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
+        try { result = await apply(step, c); } catch (e) { result = { ok: false, code: 'kit.exception', reason: String(e?.message ?? e) }; }
         const tApplied = Date.now();
         if (result.ok && batch) {
           item.timing = { ms: Date.now() - t0, settleMs: 0, ajax: state.ajaxCount - requests0, revealed: 0, removed: 0, changed: 0, batch: true };
-          if (state.report.halted) result = { ok: false, reason: 'the agent interrupted filling' };
-          else if (c.el.isConnected === false) result = { ok: false, reason: 'the page did not keep the answer; check it' };
-          else if (invalidControl(c) || !agreesWith(step, c)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
+          if (state.report.halted) result = { ok: false, code: 'fill.interrupted', reason: INTERRUPTED };
+          else if (c.el.isConnected === false) result = { ok: false, code: 'answer.not-kept', reason: 'the page did not keep the answer; check it' };
+          else if (invalidControl(c) || !agreesWith(step, c)) result = { ok: false, code: 'answer.not-kept', reason: 'the page did not keep the answer; check it' };
         } else if (result.ok) {
           // On a page that waits on its server the redraw lands as its request ends, at most 114 ms later
           // in two Progressive recordings (84 answers, 2026-11-04): 150 ms of quiet, as elsewhere, counted
@@ -1055,7 +1097,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // An address box may collapse once a suggestion is picked; the ZIP/city rules check it.
           const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : step.kind === 'address-suggest' || summaryAccepted(step, currentControls);
           if (!settled || !accepted || state.report.halted) {
-            result = { ok: false, reason: !settled ? 'the page did not settle after the answer' : !fresh ? 'the field disappeared after the answer; check the page' : state.report.halted ? 'the agent interrupted filling' : 'the page did not keep the answer; check it',
+            const why = !settled ? (state.report.halted ? 'fill.interrupted' : 'page.unsettled') : !fresh ? 'field.vanished' : state.report.halted ? 'fill.interrupted' : 'answer.not-kept';
+            result = { ok: false, code: why, reason: { 'fill.interrupted': INTERRUPTED, 'page.unsettled': 'the page did not settle after the answer', 'field.vanished': 'the field disappeared after the answer; check the page', 'answer.not-kept': 'the page did not keep the answer; check it' }[why],
               // The page took the question away on this answer (a summary in its place): the item is
               // about the fill's answer, kept with no field (reconcile's `offPage: 'answer'`).
               ...(settled && !fresh ? { vanished: true } : {}) };
@@ -1110,22 +1153,22 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // Batch: carry on with the next answer, except before a helper button that waits on
           // this one (Import Data after the VIN list): it's clicked first thing next round.
           if (!batch || immediateAfter.has(step.path)) break;
-        } else if (provisional && !step.whenOffered && /^no option matches/.test(result.reason ?? '')) {
+        } else if (provisional && !step.whenOffered && result.code === 'option.no-match') {
           // Below the last answer, whose redraw may still be on its way (GEICO's UM, tried against
           // the split limits shown before the CSL limit redrew them: 2026-10-28): no item yet. The
           // cursor stays here, and the choice is tried again once the cursor is below it.
           cursor();
           thisRound.retry = true;
-        } else if (step.unofferedNote && /^no option matches/.test(result.reason ?? '')) {
+        } else if (step.unofferedNote && result.code === 'option.no-match') {
           // A list without the answer, which no helper shows later (GEICO's Basic PIP without
           // $2,500): the agent's alone at once, so a `whenClear` helper (Print) waits for it.
           state.report.noData.push({ ...item, note: step.unofferedNote, manualOnly: true, ...describe(c) });
           state.handled.set(step.id, { status: 'needs', note: step.unofferedNote });
-        } else if (step.whenOffered && /^no option matches/.test(result.reason ?? '')) {
+        } else if (step.whenOffered && result.code === 'option.no-match') {
           // Not offered yet: a helper may show it (GEICO's 11 Payments, behind View More Payment
           // Plans). Tried again each round; never offered by the fill's end, it is the agent's.
           state.unoffered.set(step.id, { item: { ...item, ...describe(c) }, control: c, step, options: result.options ?? [] });
-        } else if (/did not keep/.test(result.reason ?? '') && !state.report.halted && retryOnce(step.id)) {
+        } else if (result.code === 'answer.not-kept' && !state.report.halted && retryOnce(step.id)) {
           // Often a later redraw resets it (a coverage list reloading): a choice is tried again once
           // the page has settled (`keepWait`), a typed answer next round.
           state.refill.add(step.id);
@@ -1136,12 +1179,12 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // (a batch goes on).
           cursor();
           if (!batch || serverBacked) break;
-        } else if (holdUnit(step, c, item, result.reason, assign(collectControls(), plan))) {
+        } else if (holdUnit(step, c, item, result.reason, result.code, assign(collectControls(), plan))) {
           // A prerequisite that didn't take, with answers on its unit waiting on it (`needs`): one
           // item for the unit, not a failure for each.
           thisRound.retry = true;
           if (serverBacked) { thisRound.stopAt = Math.min(thisRound.stopAt, at + 1); break; }
-        } else if (step.keepUnlisted && /^no option matches/.test(result.reason ?? '') && hasValue(c) && !/^other\b/i.test(oneLine(selectedText(c) ?? ''))) {
+        } else if (step.keepUnlisted && result.code === 'option.no-match' && hasValue(c) && !/^other\b/i.test(oneLine(selectedText(c) ?? ''))) {
           // A list without the answer that already holds the page's own (`keepUnlisted`: GEICO's
           // cities for the ZIP, TNI, 2026-10-21, W43-35: one city and OTHER in GA, "failed: City"
           // on two steps, and the agent kept GEICO's): kept, with a check naming the answer. Its
@@ -1151,7 +1194,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           state.report.checks.push({ ...item, note, ...describe(c) });
           state.handled.set(step.id, { status: 'needs', note });
         } else {
-          state.report.failed.push({ ...item, reason: result.reason, ...describe(c), ...(result.vanished ? { vanished: true } : {}) });
+          state.report.failed.push({ ...item, code: result.code ?? 'kit.uncoded', reason: result.reason, ...describe(c), ...(result.vanished ? { vanished: true } : {}) });
           state.handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
           thisRound.retry = true;
           if (state.report.halted) { thisRound.stopAt = Math.min(thisRound.stopAt, at + 1); break; }
@@ -1178,7 +1221,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // the round read it is no question: judgeControls passes over it).
     const judgeTo = batch || !thisRound.acted ? Infinity : thisRound.changed ? thisRound.stopAt : Math.min(thisRound.stopAt, thisRound.lagBound);
     judged(judgeTo, judgeTo === thisRound.pendingAt);
-    if (state.report.halted) break;
+    if (thisFill.timeUp()) break;
     // The next round's start ends the fill (or stops it on a step that is the agent's).
     if (thisRound.stepMoved) continue;
     // A choice never offered once the helper that shows every option has been clicked (`orMost`:
@@ -1191,15 +1234,17 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // Another group of units (`pager`), before any helper: Recalculate or the bill plan must not
     // go before every unit's rows were answered.
     const turn = !thisRound.changed && !thisRound.retry && !thisRound.waited && unitGroups.on && window === window.top && !state.agentPressed ? unitGroups.next() : null;
+    // Its time spent while the round chose: no other group is shown.
+    if (turn && thisFill.timeUp()) break;
     if (turn) {
       state.report.paged = unitGroups.paged;
       phase('helper', turn.text);
       pressButton(turn.el);
       state.progressed = true;
-      if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
+      if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { stalled('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
       // Its rows drawn: the pressed group shown (where the page says which is), 10 s at most.
-      for (const until = Date.now() + 10000; !unitGroups.shows(turn.text) && Date.now() < until && !state.report.halted;) await sleep(200);
-      if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
+      for (const until = Date.now() + 10000; !unitGroups.shows(turn.text) && Date.now() < until && !state.report.halted;) await pause(200);
+      if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { stalled('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
       if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
       continue;
     }
@@ -1217,7 +1262,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         const before = signature();
         const due = actions.find((x) => x.action === state.loadDue);
         phase('waiting');
-        if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !state.report.halted : null, why: 'before-load' })) { halt(LOAD_HALT); break; }
+        if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !state.report.halted : null, why: 'before-load' })) { stalled(LOAD_HALT); break; }
         state.quiet = !state.agentPressed && signature() === before ? { action: state.loadDue, sig: before } : null;
         continue;
       }
@@ -1259,7 +1304,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       break;
     }
     if (!thisRound.changed) {
-      if (thisRound.waited) await sleep(WAIT_ROUND_MS);
+      if (thisRound.waited) await pause(WAIT_ROUND_MS);
       continue;
     }
     // An answer given one at a time has already waited for the page (above); only a helper
@@ -1273,7 +1318,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     if (thisRound.helperClicked) phase('helper', state.pendingAction?.label ?? state.report.actions.at(-1)?.text ?? null);
     if ((thisRound.helperClicked || batch) && !await settle(serverBacked ? { why: 'round' } : { quietMs: batch ? 150 : 250, maxMs: loads || rates ? LOAD_MS : 3000, why: 'round' })) {
       traceEnd(state.pendingAction);
-      halt(loads ? LOAD_HALT : 'The page did not settle after the helper.');
+      stalled(loads ? LOAD_HALT : 'The page did not settle after the helper.');
       break;
     }
     // Its view comes a moment after the page went quiet (GEICO's chooser after "+", with no
@@ -1294,13 +1339,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         for (let tick = 0; Date.now() < until && !state.report.halted; tick++) {
           if ((dirty || tick % 5 === 0) && (opens ? currentPage() === opens : revealedNow(state.pendingAction))) break;
           dirty = false;
-          await sleep(200);
+          await pause(200);
         }
       } finally {
         mo.disconnect();
       }
       if (state.report.halted) { traceEnd(state.pendingAction); break; }
-      if (!await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'load' })) { halt(LOAD_HALT); break; }
+      if (!await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'load' })) { stalled(LOAD_HALT); break; }
     }
     // One that rates the quote on a page that isn't ExtJS (GEICO's Recalculate) shows nothing
     // busy at first: GEICO's loader shows only 3 s into a load. GEICO rated the fill's click 13 to
@@ -1313,11 +1358,14 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     if (rates && !serverBacked) {
       phase('premium');
       const until = Date.now() + LOAD_MS;
-      while (Date.now() < until && !rated(state.pendingAction) && !state.report.halted && currentPage() === startPage && !stepChanged()) { traceRead(state.pendingAction); await sleep(500); }
+      while (Date.now() < until && !rated(state.pendingAction) && !state.report.halted && currentPage() === startPage && !stepChanged()) { traceRead(state.pendingAction); await pause(500); }
       if (state.pendingAction?.trace && rated(state.pendingAction)) { state.pendingAction.trace.premiumMs = Math.round(perfNow() - state.pendingAction.trace.at); traceRead(state.pendingAction); }
       // Stopped, or the agent edited, while it rated: nothing more is done here.
       if (state.report.halted) { traceEnd(state.pendingAction); break; }
-      if (!await settle({ quietMs: state.pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'rated' })) { traceEnd(state.pendingAction); halt(LOAD_HALT); break; }
+      // A Stop during GEICO's redraw after the premium ends this wait too (the maintainer, 2026-11-07):
+      // nothing more is put back or read for the answers.
+      if (!await settle({ quietMs: state.pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'rated' })) { traceEnd(state.pendingAction); stalled(LOAD_HALT); break; }
+      if (state.report.halted) { traceEnd(state.pendingAction); break; }
       traceRead(state.pendingAction);
     }
     if (!await verifyAction()) break;
@@ -1355,7 +1403,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // Clicked once a quote (`once`: GEICO's Recalculate, W43-31): never again, also when its
     // result didn't show; from here it is the agent's, and they're told.
     if (!accepted && a.once) {
-      state.report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, reason: ONCE_UNVERIFIED });
+      state.report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, code: 'action.unverified', reason: ONCE_UNVERIFIED });
       traceEnd(a);
       return false;
     }
@@ -1465,6 +1513,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   function answerShown(c) {
     return c.kind === 'text' ? c.el.value : selectedText(c);
   }
+  // The same answer shown, a list's several picks ("a; b") in any order: a fill reports them in
+  // the answer's order, the page reads them back in its own (review of PR #374).
+  function sameShown(c, a, b) {
+    if (c.kind === 'text') return loose(a) === loose(b);
+    const picks = (v) => String(v ?? '').split(/;\s*/).map(loose).sort().join(';');
+    return picks(a) === picks(b);
+  }
 
   // The answers on the page as a helper that redraws them is clicked (`keepAnswers`: GEICO's
   // Recalculate, W43-31): the fill's (any fill's, the page agreeing with its step) and the agent's.
@@ -1551,8 +1606,11 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // What the page showed instead, before anything is put back.
     const seen = new Map(changed.map(({ k, c }) => [k.at, answerShown(c)]));
     for (const { k, c } of changed) {
+      // Stopped meanwhile (Stop, or the agent's edit): nothing more is put back; nor an answer the
+      // agent has made theirs.
+      if (state.report.halted) break;
       const step = k.stepId != null ? pairs.find((p) => p.control === c && p.step.id === k.stepId)?.step : null;
-      if (!step) continue;
+      if (!step || skippedField(c)) continue;
       let result;
       try { result = await apply(step, c); } catch (e) { result = { ok: false }; }
       if (result.ok) { given.add(k.at); a.trace?.putBack.push(k.at); }
@@ -1577,12 +1635,12 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       };
       state.report.filled = own(state.report.filled);
       state.report.kept = own(state.report.kept);
-      state.report.failed.push({ stepId: step?.id ?? null, label: c.label, path: step?.path ?? null, name: step?.name ?? c.label, key, q: c.q ?? null, controlKind: c.kind, reason, ...describe(c) });
+      state.report.failed.push({ stepId: step?.id ?? null, label: c.label, path: step?.path ?? null, name: step?.name ?? c.label, key, q: c.q ?? null, controlKind: c.kind, code: 'answer.changed', reason, ...describe(c) });
       mark(c, 'failed', reason);
       if (step) state.handled.set(step.id, { status: 'failed', note: reason });
     }
     const n = changed.length;
-    state.report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null,
+    state.report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, code: 'answer.changed',
       reason: `the page changed ${n === 1 ? 'an answer' : `${n} answers`} when it recalculated (marked above), so the premium may not be for the answers shown. Check them and click Recalculate yourself: the fill clicks it once a quote.` });
     return true;
   }
@@ -1592,7 +1650,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // once the page is quiet. An agent edit, another page or another step ends the watch.
   async function watchKept(a) {
     while (Date.now() - a.clickedAt < KEPT_WATCH_MS && !state.report.halted && currentPage() === startPage && !stepChanged()) {
-      await sleep(500);
+      await pause(500);
       const now = new Map(answerPlaces(collectControls()));
       traceRead(a, now);
       if (!keptChanged(a, now).length) continue;
@@ -1910,6 +1968,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       if (!button && a.nudge && !state.nudged.has(a.action) && a.after.every(has) && a.afterActions.every((id) => state.clicked.has(id))) {
         const pair = pairs.find(({ step }) => step.path === a.nudge && step.value != null);
         if (pair && agreesWith(pair.step, pair.control)) {
+          // Its time spent meanwhile: nothing more is written.
+          if (thisFill.timeUp()) return false;
           state.nudged.add(a.action);
           // A widget is picked again its own way (the page adapter's reselect), a field set again.
           const { widget } = pair.control;
@@ -1965,6 +2025,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         if (!opener) continue;
         // Something open over it (a dialog, a message): not clicked through it.
         if (coveredBy(opener)) { holdCovered(a, opener); continue; }
+        // Its time spent meanwhile: nothing more is clicked.
+        if (thisFill.timeUp()) return false;
         state.openersTried.add(a.action);
         state.report.actions.push({ id: `${a.action}:menu`, text: buttonText(opener).slice(0, 60) });
         pressButton(opener);
@@ -1973,6 +2035,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       if ((a.loads || a.quietMs) && !(state.quiet?.action === a.action && state.quiet.sig === signature())) { state.loadDue = a.action; return false; }
       // Something open over it (a dialog, a message): not clicked through it; clicked once it's gone.
       if (coveredBy(button)) { holdCovered(a, button); continue; }
+      // Its time spent meanwhile: nothing more is clicked.
+      if (thisFill.timeUp()) return false;
       state.quiet = null;
       state.clicked.add(a.action);
       state.report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
@@ -2041,8 +2105,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       const reason = state.refill.has(step.id) ? 'the page did not keep the answer; check it' : 'the page was still working on this question; check it';
       const base = { stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind };
       // With answers on its unit waiting on it (`needs`): one item for the unit, as in a round.
-      if (state.refill.has(step.id) && holdUnit(step, control, base, reason, finalPairs)) continue;
-      state.report.failed.push({ ...base, reason, ...describe(control) });
+      if (state.refill.has(step.id) && holdUnit(step, control, base, reason, 'answer.not-kept', finalPairs)) continue;
+      state.report.failed.push({ ...base, code: state.refill.has(step.id) ? 'answer.not-kept' : 'page.unsettled', reason, ...describe(control) });
       state.handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason.replace(/; check it$/, '')}` });
     }
     // Out of rounds with questions still below the cursor, never judged (it waited on the page to the
@@ -2235,7 +2299,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         // to `failed`, is marked, and Continue waits.
         const changed = changedSinceFilled(nowPairs);
         for (const { previous, pair } of changed) {
-          const item = { ...previous, reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
+          const item = { ...previous, code: /** @type {FailCode} */ ('answer.changed'), reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
           const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(pair.control);
           if (at >= 0) item.order = at;
           state.report.filled = state.report.filled.filter((x) => x !== previous);
@@ -2279,7 +2343,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // go through it. Continue waits until the agent closes it.
           state.report.covered = true;
           state.report.blockers.push(COVERED);
-        } else if (button && approved) {
+        } else if (button && approved && !thisFill.timeUp()) {
           const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           state.report.signatureBefore = signature();
@@ -2307,7 +2371,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             document.addEventListener('click', repeat, true);
             const pressedAt = perfNow();
             try {
-              const done = await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'continued' });
+              // A Stop meanwhile doesn't end this wait (`abort: null`): Continue's request is the page's
+              // until it is done, and the click guard above holds until then.
+              const done = await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'continued', abort: null });
               // The next page drawn and quiet, as after a helper that opens one (`settledAt`).
               if (done && currentPage() !== startPage) settledAt = { at: Date.now(), page: currentPage(), sig: signature() };
               // Quiet, still on this page, and nothing sent to the server: the page refused Continue in
@@ -2337,6 +2403,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     adapter().offRequest(countAjax);
     releaseEditGuard();
     document.removeEventListener('click', notePress, true);
+    clearTimeout(budget);
     if (running === thisFill) running = null;
   }
 }

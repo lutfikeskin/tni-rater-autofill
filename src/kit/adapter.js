@@ -29,7 +29,7 @@ export const NO_ADAPTER = {
   groupOf: () => null,
   setText: () => {},
   changed: () => {},
-  apply: async () => ({ ok: false, reason: 'no page adapter for this widget' }),
+  apply: async () => ({ ok: false, code: 'widget.unsupported', reason: 'no page adapter for this widget' }),
   reselect: () => {},
   highlight: () => null,
   typeName: () => null,
@@ -52,9 +52,11 @@ let adapterNow = NO_ADAPTER;
 /** @type {PageAdapterKit} */
 let adapterHooks = {
   oneLine,
-  sleep,
+  sleep: (ms) => pause(ms),
+  halted: () => waitsStopped(),
+  interrupted: () => ({ ok: false, code: 'fill.interrupted', reason: INTERRUPTED }),
   matchOption: () => null,
-  noMatch: () => ({ ok: false, reason: 'no match' }),
+  noMatch: () => ({ ok: false, code: 'option.no-match', reason: 'no match' }),
   textFor: () => '',
   hasOptions: () => false,
   labelFor: () => null,
@@ -140,9 +142,10 @@ export const setComponentPrefix = (prefix) => { componentPrefix = prefix; };
 
 /**
  * Checks whether custom carrier web-components are still undefined.
+ * @param {boolean} [onlyLook] Look without starting a component's 3 s (a recording's look).
  * @returns {boolean}
  */
-export function partsUndefined() {
+export function partsUndefined(onlyLook = false) {
   if (!componentPrefix) return false;
   let parts;
   try {
@@ -153,7 +156,10 @@ export function partsUndefined() {
   const now = Date.now();
   let waiting = false;
   for (const el of parts) {
-    if (!undefinedSince.has(el)) undefinedSince.set(el, now);
+    if (!undefinedSince.has(el)) {
+      if (onlyLook) { waiting = true; continue; }
+      undefinedSince.set(el, now);
+    }
     if (now - undefinedSince.get(el) < UNDEFINED_MS) waiting = true;
   }
   return waiting;
@@ -214,30 +220,69 @@ export function watchRequests() {
 
 const REQUESTS_MS = 30000;
 
+// The running fill stopped (the agent's Stop, or their edit): every kit wait ends at its next wake,
+// 60 ms at most, and nothing more is written or clicked. cursor.js says which fill runs
+// (stopWaitsWhen); with none running, nothing stops a wait.
+let stopWaits = () => false;
+/** @param {() => boolean} stopped */
+export function stopWaitsWhen(stopped) { stopWaits = stopped; }
+export const waitsStopped = () => !!stopWaits();
+// What an answer the fill stopped during comes back with.
+export const INTERRUPTED = 'the agent interrupted filling';
+const WAKE_MS = 60;
+
+/**
+ * A sleep that ends early once the running fill stops (waitsStopped): for the kit's polling loops,
+ * which check the stop before they write anything.
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
+export async function pause(ms) {
+  for (const end = Date.now() + ms; Date.now() < end && !waitsStopped();) await sleep(Math.max(1, Math.min(WAKE_MS, end - Date.now())));
+}
+
 /**
  * Wait until the page stops changing: not busy, every component it draws defined, and no new
- * nodes for quietMs.
- * @param {{ quietMs?: number, maxMs?: number, requests?: (() => boolean) | null, why?: string | null }} [options]
+ * nodes for quietMs. A stopped fill (`abort`, waitsStopped unless given) ends the wait at its next
+ * wake, unsettled; `abort: null` only where the wait holds a request the page is still answering.
+ * @param {{ quietMs?: number, maxMs?: number, requests?: (() => boolean) | null, why?: string | null, abort?: (() => boolean) | null }} [options]
  * @returns {Promise<boolean>}
  */
-export async function settle({ quietMs = 250, maxMs = 15000, requests = null, why = null } = {}) {
+export async function settle({ quietMs = 250, maxMs = 15000, requests = null, why = null, abort = waitsStopped } = {}) {
   let last = Date.now();
   const mo = new MutationObserver(() => { last = Date.now(); });
   mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', ...adapter().changeAttributes] });
   const start = Date.now();
+  // While a recording runs, the wait says what it saw itself (REC-02, 2026-11-07): the trace sees
+  // only the page's child lists, not the attributes this one watches (a radio's `checked`, GEICO's
+  // `active-index`) nor a busy page or an undefined component. `lastChange`: its last change seen;
+  // `lastHeld`: the last moment it saw the page busy or a component undefined, or the end of the
+  // last request it waited after; each its start when it saw none. The look starts no component's
+  // 3 s, so a recorded fill waits as long as one not recorded.
+  let lastHeld = start;
   const told = (ended, more = {}) => {
-    if (isTracing()) kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms: Date.now() - start, ended, ...more });
+    if (isTracing()) kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms: Date.now() - start, ended, lastChange: Math.max(last, start), lastHeld, ...more });
+  };
+  const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
+  const held = (now) => {
+    if (pageBusy() || partsUndefined(true)) lastHeld = now;
+    else if (requested()) lastHeld = Math.max(lastHeld, now - (perfNow() - lastRequestEnd()));
   };
   try {
-    const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
     for (let now = Date.now(); now - start < maxMs; now = Date.now()) {
+      if (abort?.()) { told('stopped'); return false; }
       if (mo.takeRecords?.().length) last = now;
+      if (isTracing()) held(now);
       const quietFor = now - last;
       if (quietFor >= quietMs && !pageBusy() && !partsUndefined() && !requested()) { told('quiet'); return true; }
-      await sleep(Math.max(1, Math.min(quietFor < quietMs ? quietMs - quietFor : 60, maxMs - (now - start))));
+      await sleep(Math.max(1, Math.min(quietFor < quietMs ? quietMs - quietFor : WAKE_MS, abort ? WAKE_MS : Infinity, maxMs - (now - start))));
     }
+    if (abort?.()) { told('stopped'); return false; }
     const settled = !pageBusy() && Date.now() - last >= quietMs;
-    if (isTracing()) told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
+    if (isTracing()) {
+      held(Date.now());
+      told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
+    }
     return settled;
   } finally {
     mo.disconnect();

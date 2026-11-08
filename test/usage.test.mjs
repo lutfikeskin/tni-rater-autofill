@@ -64,6 +64,16 @@ test('agent edits to text boxes are logged without the text', () => {
   assertNoClientData(typed);
 });
 
+// Audit 2026-11-07 LEARN-04: GEICO wraps a driver's name in an analytics <span> inside the label; the
+// change and the fill name the field with the same text.
+test('change and fill events log a question\'s text without the page\'s markup', () => {
+  const label = "<span data-qm-encrypt='true'>Jordan</span>'s   Driver License State";
+  const change = fieldChangeEvent({ key: 'ref:GiveLicenseState', label, kind: 'select', before: '', after: 'TX', agent: true }, { record, filled: new Map(), redact });
+  const [, fill] = fillEvents([{ filled: [{ key: 'ref:GiveLicenseState', label: "[client]'s Driver License State", controlKind: 'select', shown: 'TX' }] }], { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact });
+  assert.equal(change.label, "[client]'s Driver License State");
+  assert.equal(change.label, fill.label);
+});
+
 test('change and fill events name the control, so repeated vehicle rows stay apart', () => {
   const second = fieldChangeEvent({ key: '2B9D@2', q: '2B9D', label: 'Farthest distance', kind: 'select', before: '', after: '500 miles', agent: true }, { record, filled: new Map(), redact });
   assert.deepEqual([second.q, second.key], ['2B9D', '2B9D@2']);
@@ -80,6 +90,25 @@ test('change and fill events name the control, so repeated vehicle rows stay apa
   assert.equal(owner('2B9D@2', 'salt-1'), '2B9D@2', 'keys without client data stay as they are');
   const [, filled] = fillEvents([{ filled: [{ key: '2B9D@3', q: '2B9D', label: 'Farthest distance', controlKind: 'select', shown: '500 miles' }] }], { carrier: 'progressive', page: 'Rates', overwrite: false, ms: 1, redact });
   assert.deepEqual([filled.q, filled.key], ['2B9D', '2B9D@3']);
+});
+
+// Audit 2026-11-07, FLOW-12: a fill of the quote tab while the agent was on another, and how long its
+// page was hidden (the longest a frame saw), so the weekly review can tell throttled fills apart.
+test('a fill run says it ran in the background and how long its page was hidden, only when so', () => {
+  const ctx = { carrier: 'progressive', page: 'Rates', overwrite: false, ms: 1, redact: (t) => t };
+  const [back] = fillEvents([{ fields: 3, hiddenMs: 1200 }, { fields: 1, hiddenMs: 900 }, { fields: 1 }], { ...ctx, background: true });
+  const [front] = fillEvents([{ fields: 3 }], ctx);
+  assert.deepEqual([back.background, back.hiddenMs], [true, 1200]);
+  assert.deepEqual(['background' in front, 'hiddenMs' in front], [false, false]);
+});
+
+// Audit 2026-11-07, FLOW-11: the second click of a Continue that didn't take is said on its fill_run,
+// so the weekly review can judge whether the retry is still needed.
+test('a fill run that clicked a lost Continue again says so, and no other does', () => {
+  const ctx = { carrier: 'amwins', page: 'Step', overwrite: false, ms: 1, redact: (t) => t };
+  const [retried] = fillEvents([{ fields: 3, advanced: 'Save & Continue' }], { ...ctx, auto: 'page', retried: true });
+  const [plain] = fillEvents([{ fields: 3, advanced: 'Save & Continue' }], { ...ctx, auto: 'page' });
+  assert.deepEqual([retried.retried, 'retried' in plain], [true, false]);
 });
 
 test('dropdown changes keep the option text, minus client names', () => {
@@ -184,6 +213,34 @@ test('fill results drop typed values but keep chosen options', () => {
   assert.equal(text.shown, undefined);
   assert.equal(events.find((e) => e.q === '1D97').shown, '$1 million CSL');
   events.forEach(assertNoClientData);
+});
+
+// Audit 2026-11-07, LEARN-09: a failed answer is logged with its code, for the reviews to count by.
+test('a failed answer is logged with its code beside its reason', () => {
+  const frames = [{ fields: 1, filled: [], noData: [], kept: [], leftRequired: [],
+    failed: [{ label: 'Radius', path: 'operations.radius', q: null, controlKind: 'select', code: 'option.no-match', reason: 'no option matches "Unlimited"' }] }];
+  const failed = fillEvents(frames, { carrier: 'progressive', page: 'AddVehicle', overwrite: false, ms: 1, redact }).find((e) => e.result === 'failed');
+  assert.deepEqual([failed.code, failed.reason], ['option.no-match', 'no option matches "Unlimited"']);
+});
+
+// Audit 2026-11-07, LEARN-11: every fill run of a page logged each kept answer again (59% of fill
+// events). A kept answer is logged once per quote, tab, page, step, question and what it shows; the
+// run still counts them all.
+test('a kept answer is logged once per quote and what it shows, and counted on every run', () => {
+  const kept = (now, extra = {}) => ({ label: 'Garaging ZIP', key: 'ref:GiveZip', q: null, controlKind: 'text', now, ...extra });
+  const run = (items, opts = {}) => fillEvents([{ fields: items.length, filled: [], failed: [], noData: [], leftRequired: [], kept: items }],
+    { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact, step: 'Vehicles', ...opts });
+  const keptOf = (events) => events.filter((e) => e.type === 'fill_field' && e.result === 'kept').length;
+  const keptLogged = new Set();
+  const first = run([kept('20001'), kept('20001', { label: 'Business ZIP', key: 'ref:BizZip' })], { keptLogged });
+  assert.deepEqual([keptOf(first), first[0].kept], [2, 2]);
+  const again = run([kept('20001'), kept('20001', { label: 'Business ZIP', key: 'ref:BizZip' })], { keptLogged });
+  assert.deepEqual([keptOf(again), again[0].kept], [0, 2], 'the same answers kept again: counted, not logged');
+  assert.equal(keptOf(run([kept('20002')], { keptLogged })), 1, 'what the field shows changed');
+  assert.equal(keptOf(run([kept('20002')], { keptLogged, view: 't2' })), 1, 'another tab');
+  assert.equal(keptOf(run([kept('20002')], { keptLogged, step: 'Drivers' })), 1, 'another step');
+  assert.equal(keptOf(run([kept('20002', { differs: true })], { keptLogged })), 1, 'one that differs from the rule always');
+  assert.equal(keptOf(run([kept('20001')])), 1, 'without the quote\'s set, every one');
 });
 
 test('summary script turns a log into corrections and mapping candidates', async () => {

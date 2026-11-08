@@ -20,8 +20,14 @@ export function stableJson(value) {
   return JSON.stringify(sorted(value));
 }
 
-export function assistContextKey(record, active) {
-  return stableJson([record, active]);
+// What decides Luna's answers on a carrier, as one key: the intake as Luna can see it (every row,
+// with scopedIntake's identifier removal and redaction), the active rows, and the carrier's TNI rules
+// as they are sent, an agent's own defaults included (evidenceFor). Suggestions are cached on it, and
+// an answer asked under another key is not used: a defaults or rulebook change asks again, an edit
+// Luna never sees (a phone number) does not (audit 2026-11-07, AI-05).
+export function assistContextKey(record, active, carrier = null) {
+  const rules = carrier ? rulesSent(carrier).map((rule) => [rule.id, rule.text]) : null;
+  return stableJson([record ? visibleIntake(record) : null, active, rules]);
 }
 
 const NEVER = [
@@ -143,6 +149,76 @@ export function rowsFor(items, record, active = {}) {
   return rows;
 }
 
+// Questions whose choices name the client's people or place: a driver, an owner, or the garaging
+// street, unit, city or ZIP, as the redactor would replace them (redactionTerms). Luna gets those facts
+// as [client], so such a choice goes as a placeholder naming whose it is ("Driver 1 (intake
+// drivers[0])", "Owner (intake applicant.owner1)", "Garaging city"), and code maps the pick back by its
+// place in the list: no name or address is sent (the maintainer, 2026-11-07; audit AI-13). A choice
+// is a driver's when it holds each word of their first and last name, an owner's when it holds each
+// word of the name. A question stays with the agent, never asked, when code can't tell whose a choice
+// is: part of a name only, two drivers or two owners, a person and the address, two choices for the
+// same placeholder, or a current answer naming the client that is none of its choices. Picking
+// between people is an identity match, so a pick made so is never an automatic one. The business's
+// own name doesn't count: its words are often a business class or cargo ("Reefer Express").
+//   items:   what to send (the others as they are)
+//   held:    questions kept from Luna
+//   restore: a suggestion back with the page's own choices
+//   toSend:  what goes to Luna for one of `items`' originals (itself unless its choices name the client)
+const wordsOf = (s) => String(s ?? '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2);
+export function pseudonymizeChoices(items, record) {
+  const a = record?.applicant ?? {}, g = record?.garaging ?? {};
+  const drivers = record?.drivers ?? [];
+  const names = redactor(redactionTerms({ applicant: { owner1: a.owner1, owner2: a.owner2 },
+    drivers: drivers.map((d) => ({ first: d?.first, middle: d?.middle, last: d?.last })) }));
+  const people = [
+    ...drivers.map((d, i) => ({ driver: true, said: `Driver ${i + 1} (intake drivers[${i}])`, words: [...wordsOf(d?.first), ...wordsOf(d?.last)] })),
+    { driver: false, said: 'Owner (intake applicant.owner1)', words: wordsOf(a.owner1) },
+    { driver: false, said: 'Owner 2 (intake applicant.owner2)', words: wordsOf(a.owner2) },
+  ].filter((p) => p.words.length);
+  // A garaging value as a value of its own, never part of a larger number or an amount: unit 100 is
+  // in "Suite 100", not in "$100,000/$300,000" (CodeRabbit on PR #418). A ZIP with its four more
+  // digits ("62704-1234") is the ZIP.
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const places = [['street', 'Garaging street'], ['unit', 'Garaging unit'], ['city', 'Garaging city'], ['zip', 'Garaging ZIP']]
+    .map(([k, said]) => [k, String(g[k] ?? '').replace(/\s+/g, ' ').trim(), said]).filter(([, v]) => v.length >= 2)
+    .map(([k, v, said]) => ({ said, re: new RegExp(`(?<![\\p{L}\\p{N}$.,/-])${escape(v).replace(/ /g, '\\s+')}${k === 'zip' ? '(?:-\\d{4})?' : ''}(?![\\p{L}\\p{N}]|[.,/-]\\p{N})`, 'iu') }));
+  const named = (o) => typeof o === 'string' && (names(o) !== o || places.some((p) => p.re.test(o)));
+  // A choice's placeholder; the choice itself when it names no one; null when code can't tell whose.
+  const placeholder = (o) => {
+    if (!named(o)) return o;
+    const words = new Set(wordsOf(o));
+    const who = people.filter((p) => p.words.every((w) => words.has(w)));
+    const where = places.filter((p) => p.re.test(o));
+    const [drv, own] = [who.filter((p) => p.driver), who.filter((p) => !p.driver)];
+    if (drv.length > 1 || own.length > 1 || (who.length && where.length)) return null;
+    if (where.length) return where.length === 1 ? where[0].said : 'Garaging address';
+    if (!who.length) return null;
+    return drv.length ? `${drv[0].said}${own.length ? `, also ${own[0].said}` : ''}` : own[0].said;
+  };
+  const sent = [], held = [], back = new Map(), copies = new Map();
+  const sig = (x) => `${x?.id ?? ''}|${x?.key}|${x?.label}`;
+  for (const x of items) {
+    const options = x.options ?? [];
+    if (!options.some(named) && !named(x.current)) { sent.push(x); continue; }
+    const shown = options.map(placeholder);
+    const at = options.indexOf(x.current);
+    const current = at >= 0 ? shown[at] : x.current;
+    if (shown.includes(null) || new Set(shown).size !== shown.length || named(current)) { held.push(x); continue; }
+    const copy = { ...x, options: shown, current };
+    sent.push(copy);
+    copies.set(x, copy);
+    back.set(sig(x), { options, shown, current: x.current });
+  }
+  const restore = (s) => {
+    const b = back.get(sig(s));
+    if (!b) return s;
+    const at = s.choice == null ? -1 : b.shown.indexOf(s.choice);
+    return { ...s, options: b.options, current: b.current, choice: at >= 0 ? b.options[at] : null, autoOk: false, pseudonymized: true,
+      ...(s.choice != null && at < 0 ? { leave: true } : {}) };
+  };
+  return { items: sent, held, restore, toSend: (x) => copies.get(x) ?? x };
+}
+
 // The page's other choice questions and what they show now, as the agent sees them: context for
 // consistency, never evidence. From the panel's decision snapshot (pagekit decisionSnapshot, one JSON
 // string per frame). Never a typed value, nor a question on the never-list or about identifiers,
@@ -183,15 +259,7 @@ export function pageAnswers(snapshots, items, record) {
 // (audit 2026-10-08: names, DOB, address and claims text went verbatim). Numbers and booleans
 // stay; the prior carrier's name and the garaging state are not terms and are still sent.
 export function scopedIntake(record, active, rows = {}) {
-  const privateKey = /^(vin|licenseNumber|licensePlate|fein|ssn|socialSecurity|phone|email|policyNumber|accountNumber|routingNumber|password)$/i;
-  const redact = redactor(redactionTerms(record));
-  const clean = (obj) => {
-    if (Array.isArray(obj)) return obj.map(clean);
-    if (typeof obj === 'string') return redact(obj);
-    if (!obj || typeof obj !== 'object') return obj;
-    return Object.fromEntries(Object.entries(obj).filter(([k]) => !privateKey.test(k)).map(([k, v]) =>
-      ['dot', 'mc'].includes(k) ? [`has${k.toUpperCase()}`, !!v] : [k, clean(v)]));
-  };
+  const clean = cleaner(record);
   const out = {};
   for (const key of SECTION_KEYS) {
     if (record[key]) out[key] = clean(record[key]);
@@ -205,13 +273,43 @@ export function scopedIntake(record, active, rows = {}) {
   return out;
 }
 
+// A copy of an intake value as Luna may see it: identifiers dropped (DOT and MC as present or not),
+// client terms redacted.
+function cleaner(record) {
+  const privateKey = /^(vin|licenseNumber|licensePlate|fein|ssn|socialSecurity|phone|email|policyNumber|accountNumber|routingNumber|password)$/i;
+  const redact = redactor(redactionTerms(record));
+  const clean = (obj) => {
+    if (Array.isArray(obj)) return obj.map(clean);
+    if (typeof obj === 'string') return redact(obj);
+    if (!obj || typeof obj !== 'object') return obj;
+    return Object.fromEntries(Object.entries(obj).filter(([k]) => !privateKey.test(k)).map(([k, v]) =>
+      ['dot', 'mc'].includes(k) ? [`has${k.toUpperCase()}`, !!v] : [k, clean(v)]));
+  };
+  return clean;
+}
+
+// All Luna could see of an intake: scopedIntake with every driver, vehicle and trailer row.
+function visibleIntake(record) {
+  const clean = cleaner(record);
+  const out = {};
+  for (const key of SECTION_KEYS) if (record[key]) out[key] = clean(record[key]);
+  for (const key of UNIT_LISTS) (record[key] ?? []).forEach((row, i) => { if (row) out[`${key}[${i}]`] = clean(row); });
+  if (record.priorInsurance?.length) out.computed = { priorPolicyExpired: priorPolicyExpired(record), noPriorInsurance: noPriorInsurance(record.priorInsurance[0]) };
+  return out;
+}
+
+// The carrier's TNI rules as Luna gets them: an agent's own default rewrites the entries stating the
+// standard it replaces (src/agent-defaults/).
+export function rulesSent(carrier) {
+  return rulebookFor(carrier, { rewrite: rulebookRewriteFor(carrier) });
+}
+
 export function evidenceFor(context) {
   const facts = scopedIntake(context.record, context.active ?? {}, context.rows ?? {});
   // TNI's rules first, keyed by their ids: the general part and this carrier's (none for a carrier
   // without a part), the same for every request on that carrier, so its requests share one start.
   const sources = {};
-  // An agent's own default rewrites the entries stating the standard it replaces (src/agent-defaults/).
-  for (const rule of rulebookFor(context.carrier, { rewrite: rulebookRewriteFor(context.carrier) })) sources[rule.id] = { basis: 'tni_rule', rule: rule.text };
+  for (const rule of rulesSent(context.carrier)) sources[rule.id] = { basis: 'tni_rule', rule: rule.text };
   let n = 0;
   const flatten = (obj, path = '') => {
     for (const [key, value] of Object.entries(obj ?? {})) {

@@ -60,8 +60,9 @@ test('learning suggests standard answers, per-state answers, mappings and review
   const std = suggestions.standard.find((s) => s.q === '9A01');
   assert.equal(std.answer, 'No');
   assert.equal(std.share, 1);
-  assert.match(std.rule, /^\{ page: 'CoveragesRates', ask: 'Trailer interchange\?'.*kind: 'bool', value: \(\) => false/);
-  assert.doesNotMatch(std.rule, /q: /, 'never by the question id');
+  // A possible standard is the maintainer's decision, never a ready rule (maintainer, 2026-11-07).
+  assert.equal(std.rule, undefined);
+  assert.match(std.decide, /^Is "No" TNI's standard here\? If so, record it in TNI's rulebook/);
   const byState = suggestions.byState.find((s) => s.q === '9A02');
   assert.deepEqual(byState.perState.map((p) => `${p.state}:${p.value}`).sort(), ['MD:Zone 1', 'VA:Zone 7']);
   const map = suggestions.mapping.find((s) => s.q === '9A03');
@@ -263,23 +264,23 @@ test('learning: one question across the renumbering is one question, and its rul
     // Before names: id 100; after the renumbering: id 2F0, with its data-model name.
     const q = before ? '100' : '2F0';
     events.push({ id: `l${i}`, t: at(i * 10), session: s, carrier: 'progressive', type: 'page_layout', page: 'MoreAboutBusiness', context: {},
-      fields: [{ q, ref: before ? null : 'RiskInput.HazmatIndicator', kind: 'radio', label: 'Does the customer haul hazardous materials?', options: ['Yes', 'No'] }] });
+      fields: [{ q, ref: before ? null : 'RiskInput.GaragingCounty', kind: 'text', label: 'Garaging county' }] });
     events.push({ id: `c${i}`, t: at(i * 10 + 1), session: s, carrier: 'progressive', type: 'field_change', page: 'MoreAboutBusiness', q,
-      key: before ? q : 'ref:RiskInput.HazmatIndicator', label: 'Does the customer haul hazardous materials?', kind: 'radio', by: 'agent', to: 'No' });
+      key: before ? q : 'ref:RiskInput.GaragingCounty', label: 'Garaging county', kind: 'text', by: 'agent', change: 'entered', matchesIntake: ['garaging.city'] });
   }
   const { suggestions } = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minIntakes: 5 });
-  assert.equal(suggestions.standard.length, 1);
-  const [std] = suggestions.standard;
-  assert.equal(std.intakes, 6, 'the quotes on both sides of the renumbering count together');
-  assert.equal(std.field, 'RiskInput.HazmatIndicator');
-  const suggested = rule(std.rule);
-  assert.equal(suggested.field, 'RiskInput.HazmatIndicator');
+  assert.equal(suggestions.mapping.length, 1);
+  const [map] = suggestions.mapping;
+  assert.equal(map.intakes, 6, 'the quotes on both sides of the renumbering count together');
+  assert.equal(map.field, 'RiskInput.GaragingCounty');
+  const suggested = rule(map.rule);
+  assert.equal(suggested.field, 'RiskInput.GaragingCounty');
   assert.equal(suggested.q, undefined);
   // The suggested rule claims the field, as the fill engine would pair them.
   const carrier = { id: 'progressive', rules: [suggested], useGenericRules: false };
-  assert.equal(fieldStatus({ ref: 'RiskInput.HazmatIndicator', caption: 'Does the customer haul hazardous materials?', kind: 'radio' }, carrier, 'MoreAboutBusiness').status, 'filled');
+  assert.equal(fieldStatus({ ref: 'RiskInput.GaragingCounty', caption: 'Garaging county', kind: 'text' }, carrier, 'MoreAboutBusiness').status, 'filled');
   // With that rule in place, it's mapped: not suggested again.
-  assert.equal(learn(events, { carriers: [carrier], minIntakes: 5 }).suggestions.standard.length, 0);
+  assert.equal(learn(events, { carriers: [carrier], minIntakes: 5 }).suggestions.mapping.length, 0);
 });
 
 test('learning: two questions reading the same stay apart, and so do one quote\'s vehicles', () => {
@@ -325,13 +326,13 @@ test('learning: a suggested rule takes the question as the page words it, not th
   const events = [];
   for (let i = 0; i < 5; i++) {
     events.push({ id: `l${i}`, t: at(i * 10), session: `w${i}`, carrier: 'progressive', type: 'page_layout', page: 'MoreAboutBusiness', context: {},
-      fields: [{ q: '3A1', kind: 'radio', label: 'Does the customer pull double trailers?', options: ['Yes', 'No'] }] });
+      fields: [{ q: '3A1', kind: 'text', label: 'In which county is the business garaged?' }] });
     events.push({ id: `c${i}`, t: at(i * 10 + 1), session: `w${i}`, carrier: 'progressive', type: 'field_change', page: 'MoreAboutBusiness', q: '3A1',
-      label: 'Yes No', kind: 'radio', by: 'agent', to: 'No' });
+      label: 'County', kind: 'text', by: 'agent', change: 'entered', matchesIntake: ['garaging.city'] });
   }
-  const [std] = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minIntakes: 5 }).suggestions.standard;
-  assert.equal(std.label, 'Does the customer pull double trailers?');
-  assert.equal(rule(std.rule).ask, 'Does the customer pull double trailers?');
+  const [map] = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minIntakes: 5 }).suggestions.mapping;
+  assert.equal(map.label, 'In which county is the business garaged?');
+  assert.equal(rule(map.rule).ask, 'In which county is the business garaged?');
 });
 
 // Real data 2026-10-08: UIM filled on More About Business, corrected on Rates (the same question).
@@ -529,7 +530,7 @@ test('learning: an AmWINS event with a step is grouped by page, step and label; 
   const { questions, suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
   assert.equal(questions, 5, 'every answer is still an answer');
   assert.deepEqual(suggestions.standard.map((s) => [s.label, s.step, s.answer]), [['Hired auto?', 'Coverage', 'No']], 'only the question is a candidate, with its step');
-  assert.match(suggestions.standard[0].rule, /^\{ label: 'hired auto'/, 'the rule still finds it by its label');
+  assert.equal(suggestions.standard[0].rule, undefined, 'a possible standard: a decision, no rule');
 });
 
 // Codex on PR #61: a label rule has no step, so two steps' questions reading the same would get one
@@ -537,20 +538,20 @@ test('learning: an AmWINS event with a step is grouped by page, step and label; 
 test('learning: same-label AmWINS questions on two steps get no ready-to-paste rule', () => {
   const events = [];
   for (let i = 0; i < 5; i++) {
-    const e = (label, to, step) => events.push({ id: `${i}-${step}`, t: `2026-10-06T10:0${i}:00Z`, session: `s${i}`, carrier: 'amwins', type: 'field_change', page: '/application/businessauto', step, label, kind: 'select', by: 'agent', to });
-    e('Hired auto?', 'No', 'Coverage');
-    e('Hired auto?', 'Yes', 'Vehicles');
-    e('Owned trailers?', 'No', 'Vehicles');
+    const e = (label, path, step) => events.push({ id: `${i}-${step}-${label}`, t: `2026-10-06T10:0${i}:00Z`, session: `s${i}`, carrier: 'amwins', type: 'field_change', page: '/application/businessauto', step, label, kind: 'text', by: 'agent', change: 'entered', matchesIntake: [path] });
+    e('Garaging city', 'garaging.city', 'Coverage');
+    e('Garaging city', 'mailing.city', 'Vehicles');
+    e('Owner city', 'owner.city', 'Vehicles');
   }
   const { suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
-  const hired = suggestions.standard.filter((s) => s.label === 'Hired auto?');
-  assert.deepEqual(hired.map((s) => [s.step, s.answer]).sort(), [['Coverage', 'No'], ['Vehicles', 'Yes']], 'both steps are still suggestions');
+  const hired = suggestions.mapping.filter((s) => s.label === 'Garaging city');
+  assert.deepEqual(hired.map((s) => [s.step, s.path]).sort(), [['Coverage', 'garaging.city'], ['Vehicles', 'mailing.city']], 'both steps are still suggestions');
   for (const s of hired) {
     assert.equal(s.rule, null, 'no ready rule: its label selector would match both steps');
     assert.match(s.manualRule, /steps (Coverage, Vehicles|Vehicles, Coverage)/, 'the steps are named');
   }
-  const other = suggestions.standard.find((s) => s.label === 'Owned trailers?');
-  assert.match(other.rule, /^\{ label: 'owned trailers'/, 'a label on one step keeps its ready rule');
+  const other = suggestions.mapping.find((s) => s.label === 'Owner city');
+  assert.match(other.rule, /^\{ label: 'owner city'/, 'a label on one step keeps its ready rule');
 });
 
 test('learning: one observation on a sibling step suppresses a qualifying label rule', () => {
@@ -564,6 +565,10 @@ test('learning: one observation on a sibling step suppresses a qualifying label 
     const { suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
     const list = kind === 'select' ? suggestions.standard : suggestions.mapping;
     assert.equal(list.length, 1, 'only Coverage meets the support threshold');
+    if (kind === 'select') {
+      assert.equal(list[0].rule, undefined, 'a possible standard has no rule to make ambiguous');
+      continue;
+    }
     assert.equal(list[0].rule, null, 'even a low-support sibling makes the label selector ambiguous');
     assert.match(list[0].manualRule, /steps Coverage, Vehicles/);
   }
@@ -725,4 +730,174 @@ test('learning never suggests reviewing a rule for corrections of the agent\'s o
   // The same corrections of a TNI standard still are.
   const standard = week(10).map((e) => (e.type === 'fill_field' && e.q === '2B9D' ? { ...e, source: 'standard' } : e));
   assert.equal(learn(standard, { carriers: CARRIERS, minIntakes: 5 }).suggestions.review.find((s) => s.q === '2B9D').corrected, 6);
+});
+
+// Audit 2026-11-07 LEARN-01: GEICO's questions have no id; their key names them (`ref:<name>`). The
+// learner groups them by it on their step and finds today's rule by that name, and a rule that kept
+// the page's answer (or had no intake value) still matched: no suggestion for a rule that exists.
+test('learning: a GEICO question its rule claims by name, or whose rule kept the page\'s answer, gets no suggestion', () => {
+  const events = [];
+  for (let i = 0; i < 5; i++) {
+    const base = { session: `g${i}`, intakeId: `pdf${i}`, carrier: 'geico', page: '/quote', view: 't1' };
+    const e = (x) => events.push({ id: `${i}-${events.length}`, t: `2026-10-06T10:0${i}:${String(events.length % 60).padStart(2, '0')}Z`, ...base, ...x });
+    e({ type: 'intake_loaded', carrier: undefined, state: 'TX', businessClass: 'Expediter' });
+    // The business ZIP: GEICO's own ZIP already there, the rule kept it; the page re-sets it and
+    // the agent types the intake's.
+    e({ type: 'fill_field', step: 'Business & Owner Info', q: null, key: 'ref:GiveZip', label: '5-Digit ZIP Code', controlKind: 'text', result: 'kept', path: 'garaging.zip' });
+    e({ type: 'field_change', step: 'Business & Owner Info', q: null, key: 'ref:GiveZip', label: '5-Digit ZIP Code', kind: 'text', by: 'page', change: 'edited', matchesIntake: ['garaging.zip'] });
+    e({ type: 'field_change', step: 'Business & Owner Info', q: null, key: 'ref:GiveZip', label: '5-Digit ZIP Code', kind: 'text', by: 'agent', change: 'edited', matchesIntake: ['garaging.zip'] });
+    // TNI's standard (No), answered by the agent before any fill reached it: claimed by its name.
+    e({ type: 'field_change', step: 'Quote & Coverages', q: null, key: 'ref:GiveHasContractForBlanketAiEndorsement', label: 'Does the customer have a contract that requires a blanket additional insured endorsement?', kind: 'radio', by: 'agent', to: 'No' });
+    // A question no rule knows: still a candidate.
+    e({ type: 'field_change', step: 'Quote & Coverages', q: null, key: 'ref:GiveBrandNewQuestion', label: 'A question GEICO just added?', kind: 'radio', by: 'agent', to: 'No' });
+  }
+  const { suggestions } = learn(events, { carriers: CARRIERS, minIntakes: 5 });
+  const all = Object.values(suggestions).flat();
+  assert.deepEqual(all.filter((s) => s.carrier === 'geico').map((s) => [s.field, s.answer]), [['GiveBrandNewQuestion', 'No']], 'only the new question');
+  assert.equal(suggestions.standard[0].step, 'Quote & Coverages');
+  assert.equal(suggestions.standard[0].field, 'GiveBrandNewQuestion', 'named by its data-model name');
+  assert.equal(questionOf([])({ carrier: 'geico', page: '/quote', step: 'Vehicles', q: null, key: 'ref:GiveZip', label: '5-Digit ZIP Code' }), 'geico|/quote › Vehicles|ref:GiveZip', 'by name on its step');
+  // An AmWINS question whose rule had no intake value (noData) is mapped too.
+  const amwins = [];
+  for (let i = 0; i < 5; i++) {
+    const base = { session: `a${i}`, intakeId: `apdf${i}`, carrier: 'amwins', page: '/application/businessauto', step: 'Underwriting', label: 'Disclosure Details' };
+    amwins.push({ id: `a${i}-1`, t: `2026-10-06T11:0${i}:00Z`, ...base, type: 'fill_field', q: null, key: 'disclosure', controlKind: 'select', result: 'noData' });
+    amwins.push({ id: `a${i}-2`, t: `2026-10-06T11:0${i}:01Z`, ...base, type: 'field_change', q: null, key: 'disclosure', kind: 'select', by: 'agent', to: 'None' });
+  }
+  assert.equal(Object.values(learn(amwins, { carriers: noRules, minIntakes: 5 }).suggestions).flat().length, 0);
+});
+
+// Audit 2026-11-07 LEARN-03: a TNI standard is only one TNI records (AGENTS.md). The learner never
+// proposes one for an attestation or a client fact, never counts the page's own cascade as agents'
+// answers, never merges coverage rows under their redacted vehicle, and a possible standard is a
+// question for the maintainer, never a rule line (maintainer, 2026-11-07).
+test('learning: no standard for attestations, client facts or the page\'s cascades; a possible standard is a decision', () => {
+  const events = [];
+  for (let i = 0; i < 5; i++) {
+    const base = { session: `s${i}`, intakeId: `pdf${i}`, carrier: 'amwins', page: '/application/businessauto', type: 'field_change', q: null };
+    const e = (x) => events.push({ id: `${i}-${events.length}`, t: at(events.length), ...base, ...x });
+    e({ step: 'Drivers', key: 'emancipation', label: 'I agree to having proof of emancipation and will provide it', kind: 'checkbox', by: 'agent', to: 'unchecked' });
+    e({ step: 'Underwriting', key: 'fedLiab', label: 'Federal Liability (includes MCS-90)', kind: 'checkbox', by: 'agent', to: 'unchecked' });
+    e({ step: 'Coverage', key: 'hired', label: 'Hired auto?', kind: 'select', by: 'agent', to: 'No' });
+    // Words an attestation uses, in questions that attest nothing (Claude review on PR #372).
+    e({ step: 'Coverage', key: 'decl', label: 'Mail the declarations page?', kind: 'select', by: 'agent', to: 'No' });
+    e({ step: 'Coverage', key: 'auth', label: 'Prior authorization on file?', kind: 'select', by: 'agent', to: 'No' });
+    // GEICO's per-vehicle coverages, each labelled by its (redacted) vehicle, set by the page.
+    for (const cov of ['COLL', 'COMP']) e({ carrier: 'geico', page: '/quote', step: 'Quote & Coverages', key: `cov:${cov}#1`, label: '[client]', kind: 'select', by: 'page', to: 'Not Included' });
+    e({ carrier: 'geico', page: '/quote', step: 'Quote & Coverages', key: 'Id_x', label: '[client] [client]', kind: 'select', by: 'agent', to: 'Yes' });
+  }
+  const { suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
+  assert.deepEqual(suggestions.standard.map((s) => s.label).sort(), ['Hired auto?', 'Mail the declarations page?', 'Prior authorization on file?'], 'only the questions that can be TNI\'s');
+  assert.deepEqual(suggestions.byState, []);
+  assert.deepEqual(suggestions.agent.map((s) => [s.label, s.why]).sort(), [['Federal Liability (includes MCS-90)', 'fact'], ['I agree to having proof of emancipation and will provide it', 'attestation']]);
+  assert.match(suggestions.agent.find((s) => s.why === 'attestation').rule, /source: 'attestation', note: /);
+  assert.match(suggestions.agent.find((s) => s.why === 'fact').rule, /source: 'fact', note: /);
+  assert.deepEqual(suggestions.pageSets.map((s) => [s.coverage, s.answer, s.rule]), [['COLL', 'Not Included', undefined], ['COMP', 'Not Included', undefined]], 'two coverages, the page\'s own answer, no rule');
+  // A possible standard: its evidence and the decision, never a line to paste.
+  for (const std of suggestions.standard) {
+    assert.equal(std.rule, undefined);
+    assert.match(std.decide, /TNI's standard here\? If so, record it in TNI's rulebook/);
+  }
+});
+
+// Audit 2026-11-07 LEARN-05: a rule review counts the answers the current rules filled (the fill
+// run's `rules` fingerprint), so a rule fixed since stops showing; and a cleared value is a
+// correction, as the review and the signals report count one.
+test('learning reviews a rule by the corrections of the current rules only, cleared values included', () => {
+  // Ten quotes filled with the old rules (2B9D corrected in 6), then five with the fixed ones, accepted.
+  const runs = (events, rules, offset) => events.flatMap((e) => (e.type === 'intake_loaded'
+    ? [e, { id: `${e.session}-run`, t: e.t, session: e.session, carrier: 'progressive', page: 'AddVehicle', type: 'fill_run', run: `r-${e.session}`, rules }]
+    : [e.type === 'fill_field' ? { ...e, run: `r-${e.session}` } : e])).map((e) => ({ ...e, session: `${offset}${e.session}`, ...(e.run ? { run: `${offset}${e.run}` } : {}),
+    t: new Date(Date.parse(e.t) + offset.length * 86_400_000).toISOString() }));
+  const old = runs(week(10), 'aaaaaaaaaaaa', '');
+  const fixed = runs(week(5).filter((e) => !(e.type === 'field_change' && e.q === '2B9D')), 'bbbbbbbbbbbb', 'n');
+  const events = [...old, ...fixed];
+  const review = (opts) => learn(events, { carriers: CARRIERS, minIntakes: 5, ...opts }).suggestions.review.find((s) => s.q === '2B9D');
+  assert.equal(learn(events, { carriers: CARRIERS }).rules, 'bbbbbbbbbbbb', 'the newest fills\' rules');
+  assert.equal(review(), undefined, 'fixed: no correction under today\'s rules');
+  assert.deepEqual([review({ rules: 'aaaaaaaaaaaa' }).corrected, review({ rules: 'aaaaaaaaaaaa' }).filled, review({ rules: 'aaaaaaaaaaaa' }).otherRules], [6, 10, { filled: 5, corrected: 0 }]);
+  assert.equal(review({ rules: null }).filled, 15, 'null: every build');
+  // A fill whose run the log doesn't hold: its rules aren't known, never "other rules" (CodeRabbit on PR #373).
+  const unknown = [...events, ...runs(week(1), 'aaaaaaaaaaaa', 'u').filter((e) => e.type !== 'fill_run')];
+  const withUnknown = learn(unknown, { carriers: CARRIERS, minIntakes: 5, rules: 'aaaaaaaaaaaa' }).suggestions.review.find((s) => s.q === '2B9D');
+  assert.deepEqual([withUnknown.otherRules, withUnknown.unknownRules], [{ filled: 5, corrected: 0 }, { filled: 1, corrected: 1 }]);
+  // The newest fill by time, whatever its offset: 22:00Z is before 23:30Z.
+  const at2 = (t, rules) => ({ id: rules, t, type: 'fill_run', carrier: 'progressive', page: 'AddVehicle', rules });
+  assert.equal(learn([at2('2026-10-06T00:00:00+02:00', 'xxxxxxxxxxxx'), at2('2026-10-05T23:30:00Z', 'yyyyyyyyyyyy')]).rules, 'yyyyyyyyyyyy');
+  // A cleared text box the fill had typed is a correction.
+  const cleared = [];
+  for (let i = 0; i < 5; i++) {
+    const base = { session: `c${i}`, carrier: 'progressive', page: 'AddVehicle', q: '2C77', label: 'Garaging county' };
+    cleared.push({ id: `c${i}a`, t: at(i * 2), ...base, type: 'fill_field', controlKind: 'text', result: 'filled', path: 'garaging.county' });
+    cleared.push({ id: `c${i}b`, t: at(i * 2 + 1), ...base, type: 'field_change', kind: 'text', by: 'agent', autofilled: 'garaging.county', change: 'cleared', vsAutofill: 'cleared' });
+  }
+  const r = learn(cleared, { carriers: noRules, minIntakes: 5 }).suggestions.review[0];
+  assert.deepEqual([r?.corrected, r?.changes[0].value], [5, 'cleared the value']);
+});
+
+// Audit 2026-11-07 LEARN-02: a test run's answers were chosen on purpose, so they add no support to
+// a suggestion, as every other report leaves them out (readTestList, testSessionsOf).
+test('learning leaves test runs out: a test-only intake PDF adds no support', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const { testSessionsOf } = await import('../scripts/lib/signals.mjs');
+  // Five quotes of five PDFs answer "Trailer interchange?" No; the fifth is the maintainer's test.
+  const events = week(5).map((e) => (e.type === 'intake_loaded' && e.session === 's4' ? { ...e, intakeId: 'aaaaaaaa0001' } : e));
+  const standardOf = (r) => r.suggestions.standard.find((s) => s.q === '9A01');
+  assert.equal(standardOf(learn(events, { carriers: CARRIERS, minIntakes: 5 })).intakes, 5, 'with the test run: five PDFs');
+  const left = learn(events, { carriers: CARRIERS, minIntakes: 5, excludeSessions: testSessionsOf(events, ['aaaaaaaa']) });
+  assert.equal(standardOf(left), undefined, 'four agents\' PDFs: below the threshold');
+  assert.deepEqual([left.quotes, left.testRunsLeftOut], [4, 1]);
+  // The report, as the review runs it: with the review's --tests list.
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-learn-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const log = path.join(dir, 'usage.jsonl');
+  fs.writeFileSync(log, events.map((e) => JSON.stringify(e)).join('\n'));
+  const list = path.join(dir, 'tests.txt');
+  fs.writeFileSync(list, 'aaaaaaaa\n');
+  const report = (...args) => spawnSync(process.execPath, [path.join(root, 'scripts', 'learn-rules.mjs'), log, '--json', ...args], { encoding: 'utf8' });
+  const listed = report('--tests', list);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.equal(standardOf(JSON.parse(listed.stdout)), undefined);
+  assert.equal(JSON.parse(listed.stdout).testRunsLeftOut, 1);
+  assert.equal(report('--tests').status, 1, '--tests needs a value');
+  // A slice of the log without the test quote's intake_loaded: its other events name the PDF
+  // (CodeRabbit on PR #369).
+  const slice = path.join(dir, 'slice.jsonl');
+  fs.writeFileSync(slice, events.filter((e) => !(e.session === 's4' && e.type === 'intake_loaded')).map((e) => JSON.stringify(e.session === 's4' ? { ...e, intakeId: 'aaaaaaaa0001' } : e)).join('\n'));
+  const sliced = spawnSync(process.execPath, [path.join(root, 'scripts', 'learn-rules.mjs'), slice, '--json', '--tests', list], { encoding: 'utf8' });
+  assert.equal(sliced.status, 0, sliced.stderr);
+  assert.deepEqual([standardOf(JSON.parse(sliced.stdout)), JSON.parse(sliced.stdout).testRunsLeftOut], [undefined, 1]);
+  // The review, run from another folder with the list by a relative path, passes that list on.
+  const data = path.join(dir, 'data');
+  fs.mkdirSync(data);
+  fs.copyFileSync(log, path.join(data, '2026-10-05.jsonl'));
+  const reviewed = spawnSync(process.execPath, [path.join(root, 'scripts', 'review.mjs'), data, '--all', '--tests', 'tests.txt', '--out', path.join(dir, 'review.md')], { encoding: 'utf8', cwd: dir });
+  assert.equal(reviewed.status, 0, reviewed.stderr);
+  assert.match(fs.readFileSync(path.join(dir, 'review.md'), 'utf8'), /1 test run left out\./);
+  // The current rules are the agents' newest: a test run's newer build is never "current".
+  const fill = (session, t, rules) => ({ id: `${session}-run`, t, session, type: 'fill_run', carrier: 'progressive', page: 'AddVehicle', run: `${session}-r`, rules });
+  const builds = [...events, fill('s0', '2026-10-06T10:00:00Z', 'aaaaaaaaaaaa'), fill('s4', '2026-10-07T10:00:00Z', 'bbbbbbbbbbbb')];
+  assert.equal(learn(builds).rules, 'bbbbbbbbbbbb');
+  assert.equal(learn(builds, { excludeSessions: testSessionsOf(builds, ['aaaaaaaa']) }).rules, 'aaaaaaaaaaaa');
+});
+
+// Audit 2026-11-07 LEARN-04: label hygiene. Page chrome with trailing dots, the carrier's portal
+// pages and page markup in an older event's label make no suggestion and split no question.
+test('learning: "Browse …", portal pages and labels with markup make no suggestion or second question', () => {
+  const events = [];
+  for (let i = 0; i < 5; i++) {
+    const base = { session: `h${i}`, intakeId: `pdf${i}`, type: 'field_change', q: null, by: 'agent', kind: 'select' };
+    const e = (x) => events.push({ id: `${i}-${events.length}`, t: at(events.length), ...base, ...x });
+    e({ carrier: 'amwins', page: '/application/businessauto', step: 'Underwriting', key: 'file', label: 'Browse …', kind: 'checkbox', to: 'unchecked' });
+    e({ carrier: 'geico', page: '/', key: 'header-search-type', label: 'header-search-type', to: 'Policy' });
+    e({ carrier: 'progressive', page: '/home', key: 'search', label: 'Search by', to: 'Name' });
+    // One question, logged with and without the page's markup.
+    e({ carrier: 'amwins', page: '/application/businessauto', step: 'Drivers', key: 'lic', label: i % 2 ? "<span data-qm-encrypt='true'>[client]</span>'s License State" : "[client]'s License State", to: 'TX' });
+    // A Progressive question by its text, its id renumbered and no layout to name it (CodeRabbit on PR #392).
+    e({ carrier: 'progressive', page: 'AddDriver', q: `5L0${i}`, key: `5L0${i}`, label: i % 2 ? '<b>License</b> State' : 'License State', to: 'TX' });
+  }
+  const { suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
+  assert.deepEqual(Object.values(suggestions).flat().map((s) => [s.carrier, s.label]).sort(), [['amwins', "[client]'s License State"], ['progressive', 'License State']]);
+  assert.deepEqual(suggestions.standard.map((s) => s.intakes), [5, 5], 'one question each, all five quotes');
 });

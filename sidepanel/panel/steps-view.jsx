@@ -3,7 +3,7 @@
 // next thing to do and its button (state.dock, renderDock from dockFor). What their buttons do is the
 // panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountSteps, mountDock).
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
@@ -47,37 +47,70 @@ const DOCK_BUTTONS = [
 ];
 
 // A dock button. Disabled as each word of the dock says, set on every draw: a click may disable it
-// on the page until then (Looks right while it reads the page, Stop once pressed).
-function DockButton({ id, className, label, shown, disabled, go, onClick }) {
+// on the page until then (Looks right while it reads the page, Stop once pressed). `why`: what it
+// waits for, said on hover while it is held.
+function DockButton({ id, className, label, shown, disabled, why, go, onClick }) {
   const button = useRef(null);
   useLayoutEffect(() => { if (button.current) button.current.disabled = disabled; });
   return (
-    <button ref={button} type="button" id={id} className={className} hidden={!shown} data-go={go} onClick={(e) => onClick(e.currentTarget)}>{label}</button>
+    <button ref={button} type="button" id={id} className={className} hidden={!shown} data-go={go} title={why || undefined} onClick={(e) => onClick(e.currentTarget)}>{label}</button>
   );
 }
+
+// Focus the browser takes away itself, from a button that was disabled or hidden (Stop once
+// pressed), not focus the agent moved elsewhere.
+const lostBy = (el) => !!el && (el.disabled || el.hidden);
+// While answers go in (`busy`: a quiet automatic fill too, before it is said as one), every dock
+// button but Stop waits, and says why (audit 2026-11-07, FLOW-05: they did nothing, silently).
+const BUSY = 'Wait for the answers going in to finish.';
 
 // The dock: the one next thing to do, always in the same place under the panel, and its button.
 // #dock[data-phase] names it, and data-report the fill it is about (the panel harness reads both).
 // Hidden until the panel first says it, and while Settings is open.
+// Keyboard focus stays in the dock as its button changes (audit 2026-11-07, UX-08: Fill this page
+// hid as Stop showed, and focus fell to the page, at the moment Stop mattered most): when the button
+// that had it is hidden, or disabled, the button shown now takes it (its alternative when it has
+// none). Only when focus was in the dock: the dock never takes it from elsewhere.
 function Dock({ act }) {
   const d = useStore(panelStore, (s) => s.dock);
+  const dock = useRef(null);
+  const focused = useRef(false);
+  // Focus that went anywhere outside the dock (the agent's, after the browser dropped it from Stop
+  // once pressed) is no longer the dock's (review of #390).
+  useEffect(() => {
+    const away = (e) => { if (!dock.current?.contains(e.target)) focused.current = false; };
+    document.addEventListener('focusin', away);
+    return () => document.removeEventListener('focusin', away);
+  }, []);
+  useLayoutEffect(() => {
+    const root = dock.current;
+    if (!root || !focused.current || root.hidden) return;
+    const usable = (el) => !!el && root.contains(el) && !el.hidden && !el.disabled;
+    if (usable(document.activeElement)) return;
+    const next = [d?.button ? root.querySelector(`#${d.button}`) : null, root.querySelector('#dock-alt')].find(usable);
+    next?.focus();
+  });
   return (
-    <div id="dock" className="dock" hidden={!d || d.hidden} data-phase={d?.phase} data-report={d?.report}>
+    <div id="dock" ref={dock} className="dock" hidden={!d || d.hidden} data-phase={d?.phase} data-report={d?.report}
+      onFocus={() => { focused.current = true; }} onBlur={(e) => { if (!dock.current?.contains(e.relatedTarget) && !lostBy(e.target)) focused.current = false; }}>
       <div id="fill-progress" className="progress" hidden={!d?.progress}><span /></div>
       <div className="dock-body">
         <div className="dock-text">
           <span id="dock-eyebrow" className="dock-eyebrow" data-tone={d?.tone ?? ''}>{d?.eyebrow ?? ''}</span>
           <span id="dock-title" className="dock-title">{d?.title}</span>
           <span id="dock-sub" className="dock-sub" hidden={!d?.sub}>{d?.sub ?? ''}</span>
+          {/* Automatic filling paused on this tab (renderDock's `paused`). */}
+          <span id="dock-paused" className="dock-paused" role="status" hidden={!d?.paused}>{d?.paused ?? ''}</span>
         </div>
         {DOCK_BUTTONS.map(({ id, className, text, act: does }) => {
           const shown = !!d && d.button === id;
           // The dock's Continue is a fill that replaces nothing (`go`: fillPage `continuing`).
+          const held = shown && id !== 'fill-stop' && !!d.busy;
           return <DockButton key={id} id={id} className={className} label={shown ? d.label : text} shown={shown}
-            disabled={shown && (!!d.disabled || (id === 'fill' && d.busy))} go={id === 'fill' ? d?.go ?? '' : undefined}
+            disabled={shown && (!!d.disabled || held)} why={held ? BUSY : ''} go={id === 'fill' ? d?.go ?? '' : undefined}
             onClick={(button) => act[does](id === 'fill' ? d?.go ?? '' : button)} />;
         })}
-        <button type="button" id="dock-alt" className="link small dock-alt" hidden={!d?.alt} data-go={d?.alt ?? ''} onClick={() => act.alt(d?.alt ?? '')}>{d?.altLabel ?? ''}</button>
+        <button type="button" id="dock-alt" className="link small dock-alt" hidden={!d?.alt} disabled={!!d?.busy} title={d?.busy ? BUSY : undefined} data-go={d?.alt ?? ''} onClick={() => act.alt(d?.alt ?? '')}>{d?.altLabel ?? ''}</button>
       </div>
     </div>
   );
