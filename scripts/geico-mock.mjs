@@ -361,6 +361,9 @@ const fail = (msg) => failures.push(msg);
 const fills = [];
 const needsSeen = new Map();
 const filledKeys = new Set();
+// rememberFill's record of what this tab's fills gave (state.filled): field key -> its rule's path
+// and what it showed, which the panel passes as `givenBefore` (W43-38).
+const given = new Map();
 const left = {};
 let run = 0;
 let totalMs = 0;
@@ -369,7 +372,8 @@ let totalMs = 0;
 const reconciled = [];
 
 // One fill of the page as the panel starts it (fillPage): the recorder paused, the plan for the
-// picker's units, the options of sidepanel.js fillOptions for GEICO, then rememberFill's bookkeeping.
+// picker's units, the options of the panel's fillOptions for GEICO (coordinator.js; every key it
+// passes, which test/geico-mock-options.test.mjs holds), then rememberFill's bookkeeping.
 // `asked`: the agent's own Fill this page (fillContext), which gives back an answer GEICO took back (no
 // takenBack) and adds a unit with both switches off; the others are the panel's automatic fills.
 // `expectFailed`: patterns for the keys of the red items this fill must leave (the answers GEICO
@@ -393,7 +397,15 @@ async function fill(form, { asked = false, expectFailed = [] } = {}) {
       bound: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...unitForms[list] }])),
     },
     skip: keysOf(PAGE), skipBy: skipBy(), run: ++run,
+    // The page as the panel reads the tab's address (pageOf: GEICO's is its path), which the kit checks.
+    expectPage: await inWorld('location.pathname'),
     takenBack: !asked && geico.keepTakenBack?.length ? { steps: geico.keepTakenBack, keys: Object.fromEntries([...filledKeys].map((key) => [key, true])) } : null,
+    // A field reset since a fill gave it is given again only on a quiet page (W43-21); one still
+    // showing another unit's answer gets this unit's (W43-38).
+    filledBefore: [...filledKeys],
+    givenBefore: Object.fromEntries(given),
+    // Progressive's only (unitNames, unitPager): none for GEICO, as the panel passes.
+    formUnit: null, pager: geico.unitPager ?? null,
   };
   await tellRecorder('pause');
   const t0 = Date.now();
@@ -425,7 +437,10 @@ async function fill(form, { asked = false, expectFailed = [] } = {}) {
   else if (stepList(reportStep) && report.fields > 0) unitShown = { step: reportStep, list: null, id: null, held: false };
   for (const key of report.protectedKeys ?? []) keysIn(editScope(reportStep ?? null)).add(key);
   for (const id of report.invalidatedActions ?? []) doneActions.delete(id);
-  for (const x of report.filled) filledKeys.add(x.key);
+  for (const x of report.filled) {
+    filledKeys.add(x.key);
+    given.set(x.key, { path: x.path ?? null, shown: x.shown ?? null });
+  }
   for (const a of report.actions ?? []) doneActions.add(a.id);
   // The form it answered is the plan's unit's now, and so are the edits filed under the form itself
   // (made while it was held, or before a fill had read it): GEICO draws a new form when the agent

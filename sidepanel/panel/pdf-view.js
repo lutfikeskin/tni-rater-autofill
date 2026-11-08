@@ -5,7 +5,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { fillEvents, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { $, clearAgentKeys, FILLS_HELD_NOTE, holdFills, persistAiPending, releaseFills, state, store } from './core.js';
+import { $, clearAgentKeys, FILLS_HELD_NOTE, holdFills, persistAiPending, releaseFills, state, store, clearKeptWork } from './core.js';
 import { loadFile, logProfile, profileTimer } from './intake.js';
 import { render, showScreen } from './record.js';
 import { pageOf, samePage } from './usage.js';
@@ -449,6 +449,15 @@ async function clearClient() {
     try {
       await clearAgentKeys(scope);
     } finally {
+      // Its corrections and checks kept on this computer (FLOW-17) go too. One the storage refused is
+      // said, on the screen Clear leaves, and tried again before any kept work is read back.
+      const cleared = await clearKeptWork();
+      if (cleared !== 'cleared') {
+        state.loadError = { title: 'Not cleared from this computer', text: cleared === 'unsure'
+          ? "Clear couldn't delete this client's corrections and checks kept on this computer. Loaded again within a day, this PDF may bring them back."
+          : "Clear couldn't delete this client's corrections and checks kept on this computer. They aren't brought back, and are deleted as the panel opens or the next PDF loads." };
+        $('load-error').hidden = false;
+      }
       // agent defaults: no client, no question.
       refreshDefaults();
       render();
