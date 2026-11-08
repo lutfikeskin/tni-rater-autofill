@@ -87,6 +87,16 @@ commit they were packaged from, `+dirty` otherwise), upload the new zip on the i
 tab, submit.
 Chrome updates installed copies by itself within a few hours of approval.
 
+When the version bump reaches `main`, [release-tag.yml](../.github/workflows/release-tag.yml)
+tags the commit that set the version `v<version>` and makes a GitHub Release whose notes are the
+pull requests merged since the version before it (`scripts/release-notes.mjs`, which prints them
+here without changing anything: `node scripts/release-notes.mjs --version 0.9.32`). Only the push
+that brings the version bump tags it: a version already on `main` before that push is never
+tagged, and there is no manual run, so versions released before the workflow stay untagged. A tag
+that already names the same commit is left as it is; one that names another commit fails the run,
+to be checked by hand. The tag says which commit a store version came from, and the notes what changed; it
+uploads nothing to the store.
+
 Agents' own defaults ([spec](agent-defaults-spec.md)) ship hidden in the store build until TNI's
 managers approve them: that release's PR sets `RELEASED_TO_AGENTS` to `true` in
 `src/agent-defaults/index.js`. The unpacked copy has them on regardless (Settings → Advanced, for

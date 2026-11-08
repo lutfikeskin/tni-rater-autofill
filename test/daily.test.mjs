@@ -269,3 +269,29 @@ test('daily: alerts for a page changed for two installs, a build failing more, c
   const odd = commentBody({ since: facts.since, alerts: [{ kind: 'page-changed', carrier: 'progressive', page: `${AT_CLAUDE} [x](https://evil.example)`, installs: 2, runs: 2 }] }, '2026-11-07');
   assert.match(odd, /`@\u200bclaude \[x\]\(https:\/\/evil\.example\)`/);
 });
+
+// The maintainer, 2026-11-07: the Claude workflow never runs on the daily and weekly review issues,
+// whose text quotes the usage log (anyone with the upload token can write it). Its job's `if` is
+// the triggers in one group, and then each review issue's label refused.
+test('the Claude workflow never runs on an issue labelled as a daily or weekly review', () => {
+  const read = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8');
+  const labels = [
+    /--label (\S+) --body/.exec(read('../.github/workflows/daily-review.yml'))?.[1],
+    /'--label', '([^']+)'/.exec(read('../scripts/ledger.mjs'))?.[1],
+  ];
+  assert.deepEqual(labels, ['daily-review', 'weekly-review'], 'the labels the review issues are opened and found with');
+  const workflow = read('../.github/workflows/claude.yml');
+  const cond = /^ {4}if: \|\n((?: {6}.*\n)+)/m.exec(workflow)?.[1].replace(/\s+/g, ' ').trim();
+  assert.ok(cond, 'the job has one if');
+  // The triggers' group closes just before the guard, so the guard holds for every trigger.
+  assert.equal(cond[0], '(');
+  let depth = 0, end = -1;
+  for (let i = 0; i < cond.length && end < 0; i++) {
+    if (cond[i] === '(') depth++;
+    else if (cond[i] === ')' && --depth === 0) end = i;
+  }
+  const guard = cond.slice(end + 1).trim();
+  // A pull request's conversation comment also arrives as issue_comment, with the PR as `issue`
+  // (and its `pull_request` set): the labels are refused on issues only, so a PR is never held.
+  assert.equal(guard, `&& (github.event.issue.pull_request || (${labels.map((l) => `!contains(github.event.issue.labels.*.name, '${l}')`).join(' && ')}))`);
+});
