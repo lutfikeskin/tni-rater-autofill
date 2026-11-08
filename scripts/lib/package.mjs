@@ -31,7 +31,6 @@ export function stampProvenance(text, { channel, commit }) {
   return text.replace(PROVENANCE, `const PROVENANCE = { channel: '${channel}', commit: ${commit ? `'${commit}'` : 'null'} };`);
 }
 
-// What the extension runs: the files and folders npm run package copies (the panel's built).
 // The store zip's name: tni-rater-autofill-<version>.zip, or for a build made to try out
 // (`npm run package -- --label test-build`) its label and the commit it was packaged from as well,
 // tni-rater-autofill-<version>-<label>-<commit>.zip, so a test build is named by the script, never
@@ -42,6 +41,7 @@ export function zipName(version, { label = null, commit = null } = {}) {
   return `tni-rater-autofill-${version}-${label}-${(commit ?? 'nocommit').replace('+', '-')}.zip`;
 }
 
+// What the extension runs: the files and folders npm run package copies (the panel's built).
 export const PACKAGED = ['manifest.json', 'background.js', 'icons', 'lib', 'sidepanel', 'src'];
 
 // The commit the packaged files come from, +dirty when they, or what builds the panel, have changes
