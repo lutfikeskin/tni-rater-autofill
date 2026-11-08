@@ -47,6 +47,82 @@ test('stores events once, even when an upload is retried', async () => {
   });
 });
 
+// Audit 2026-11-07, SRV-05: the extension deletes its copy of an upload once the server says 200,
+// so the day file is flushed to the disk (fsync) before that answer. A flush that fails is a 500:
+// the extension keeps the events and sends them again.
+test('an upload is on the disk before its 200; a failed flush is a 500 and the events can be sent again', async (t) => {
+  const dataDir = tmp();
+  const synced = [];
+  const sync = t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(fd); });
+  const events = [ev(), ev()];
+  await withServer({ dataDir }, async ({ post }) => {
+    synced.length = 0; // what the start flushed: its own test, below
+    assert.equal((await post({ events: events.slice(0, 1) })).status, 200);
+    assert.equal(synced.length, process.platform === 'win32' ? 1 : 2, 'flushed before the answer (on Linux, its folder too)');
+    assert.equal(typeof synced[0], 'number');
+    sync.mock.mockImplementation(() => { throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); });
+    assert.equal((await post({ events: events.slice(1) })).status, 500);
+    sync.mock.mockImplementation((fd) => { synced.push(fd); });
+    const again = await (await post({ events: events.slice(1) })).json();
+    assert.deepEqual([again.accepted, again.duplicates], [1, 0], 'not counted as stored: sent again, it is accepted');
+  });
+  assert.deepEqual(stored(dataDir).map((e) => e.id), [events[0].id, events[1].id, events[1].id], 'a line written before its failed flush may be on the disk twice');
+});
+
+// The review of #425: fsync on a new file doesn't keep its directory entry, so an upload also flushes
+// the events folder (on Linux, where the server runs; Windows can't open one). Every upload does:
+// one whose folder flush failed was a 500, and its retry finds the day file there already.
+test('an upload also flushes the events folder, so a new day file survives a crash, retries included', async (t) => {
+  const dataDir = tmp();
+  const opened = new Map();
+  const open = fs.openSync;
+  t.mock.method(fs, 'openSync', (p, ...rest) => { const fd = open(p, ...rest); opened.set(fd, path.relative(dataDir, String(p))); return fd; });
+  const synced = [];
+  const sync = t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(opened.get(fd)); });
+  await withServer({ dataDir }, async ({ post }) => {
+    synced.length = 0;
+    assert.equal((await post({ events: [ev()] })).status, 200);
+    const day = `${new Date().toISOString().slice(0, 10)}.jsonl`;
+    const dayFile = path.join('events', day);
+    const both = process.platform === 'win32' ? [dayFile] : [dayFile, 'events'];
+    assert.deepEqual(synced, both, 'the file, then its folder');
+    synced.length = 0;
+    assert.equal((await post({ events: [ev()] })).status, 200);
+    assert.deepEqual(synced, both, 'a day file that was there already: the same');
+    if (process.platform === 'win32') return;
+    // The folder's flush fails: a 500. The retry, with the day file there, flushes the folder again.
+    synced.length = 0;
+    sync.mock.mockImplementation((fd) => { if (opened.get(fd) === 'events') throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); synced.push(opened.get(fd)); });
+    const retried = ev();
+    assert.equal((await post({ events: [retried] })).status, 500);
+    sync.mock.mockImplementation((fd) => { synced.push(opened.get(fd)); });
+    synced.length = 0;
+    assert.equal((await post({ events: [retried] })).status, 200);
+    assert.deepEqual(synced, [dayFile, 'events'], 'the retry flushes the folder before its 200');
+  });
+});
+
+// The review of #425: after a failed flush and a restart, the retry is a duplicate of a line the
+// start read, answered 200 without a write. So the start flushes every day file it reads, and the
+// folder (on Linux), before it takes an upload.
+test('a restarted server flushes the events it reads, so a retry answered as a duplicate is on the disk', async (t) => {
+  const dataDir = tmp();
+  const kept = ev();
+  const day = `${new Date().toISOString().slice(0, 10)}.jsonl`;
+  fs.mkdirSync(path.join(dataDir, 'events'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'events', day), `${JSON.stringify({ ...kept, receivedAt: new Date().toISOString() })}\n`);
+  const opened = new Map();
+  const open = fs.openSync;
+  t.mock.method(fs, 'openSync', (p, ...rest) => { const fd = open(p, ...rest); opened.set(fd, path.relative(dataDir, String(p))); return fd; });
+  const synced = [];
+  t.mock.method(fs, 'fsyncSync', (fd) => { synced.push(opened.get(fd)); });
+  await withServer({ dataDir }, async ({ post }) => {
+    assert.deepEqual(synced, process.platform === 'win32' ? [path.join('events', day)] : [path.join('events', day), 'events'], 'flushed at the start');
+    const again = await (await post({ events: [kept] })).json();
+    assert.equal(again.duplicates, 1);
+  });
+});
+
 test('keeps only known event types and fields', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {
@@ -248,6 +324,17 @@ test('a fill run keeps whether it ran in the background and how long its page wa
     [[true, 4200, []], [null, null, ['background', 'hiddenMs']], [null, null, ['hiddenMs']]]);
 });
 
+// Audit 2026-11-07, FLOW-11: a fill run or error from a lost Continue's second click keeps `retried`
+// (true only); anything else there is dropped and named.
+test('a Continue retry is kept on its fill_run and fill_error, true only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [ev({ retried: true }), ev({ type: 'fill_error', error: 'continue did not take', retried: true }), ev({ retried: 'yes' })] });
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((e) => [e.type, e.retried ?? null, (e.dropped ?? []).includes('retried')]), [['fill_run', true, false], ['fill_error', true, false], ['fill_run', null, true]]);
+});
+
 // Codex on PR #47: stored events uploaded again (npm run push-logs) keep what was dropped before.
 test('a re-uploaded event keeps the names an earlier server dropped', async () => {
   const dataDir = tmp();
@@ -447,10 +534,13 @@ test('keeps a panel crash with its bounded message and extension frames only', a
     const r = await (await post({ events: [
       ev({ type: 'client_error', filled: undefined, where: 'panel', error: 'Cannot read properties of null', stack: ['sidepanel/sidepanel.js:12:5'] }),
       ev({ type: 'client_error', filled: undefined, where: 'carrier page', error: 'x'.repeat(301), stack: ['https://carrier.example/app.js:1:1'] }),
+      // The page's recorder's own exception (LEARN-10).
+      ev({ type: 'client_error', filled: undefined, where: 'recorder', error: 'Cannot read properties of undefined', stack: ['src/content/recorder.js:120:9'] }),
     ] })).json();
-    assert.equal(r.accepted, 2);
+    assert.equal(r.accepted, 3);
   });
-  const [ok, bad] = stored(dataDir);
+  const [ok, bad, recorder] = stored(dataDir);
+  assert.deepEqual([recorder.where, recorder.stack], ['recorder', ['src/content/recorder.js:120:9']]);
   assert.deepEqual([ok.where, ok.error, ok.stack], ['panel', 'Cannot read properties of null', ['sidepanel/sidepanel.js:12:5']]);
   assert.deepEqual([bad.where, bad.error, bad.stack], [undefined, undefined, undefined]);
   assert.deepEqual(bad.dropped.sort(), ['error', 'stack', 'where']);
@@ -516,6 +606,20 @@ test('keeps the install id, the platform and a lost-events count, in their shape
   assert.deepEqual([loaded.install, loaded.platform], [install, { os: 'Windows', chrome: 141 }]);
   assert.deepEqual([lost.type, lost.count], ['usage_lost', 12]);
   assert.deepEqual([odd.install, odd.platform], [undefined, undefined]);
+});
+
+// Audit 2026-11-07, LEARN-09: why an answer failed, as a code (types.js FailCode), never text.
+test('keeps a failed answer\'s code in its shape only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'fill_field', filled: undefined, result: 'failed', q: '2B9D', code: 'option.no-match', reason: 'no option matches "…"' }),
+      ev({ type: 'fill_field', filled: undefined, result: 'failed', q: '2B9E', code: 'No option for John Smith' }),
+    ] });
+  });
+  const [ok, odd] = stored(dataDir);
+  assert.deepEqual([ok.code, ok.reason], ['option.no-match', 'no option matches "…"']);
+  assert.deepEqual([odd.code, odd.dropped], [undefined, ['code']]);
 });
 
 test('keeps why an answer was given, and a dismissed check, in their shapes only', async () => {

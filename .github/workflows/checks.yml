@@ -1,7 +1,10 @@
 # The pull-request checks on Ubuntu, split into parallel jobs: lint, type, unit and package checks,
 # then the browser checks with Playwright Chromium. The repository is public, so these runs
-# cost nothing. The same browser checks on Windows are windows-smoke.yml, run by hand.
+# cost nothing. The same browser checks on Windows are windows-smoke.yml, nightly and by hand.
 # No secrets: a pull request from a fork runs this code, and nothing here needs a credential.
+# A mock or replay job that fails keeps what its run left (the Luna mock's screenshots and
+# diagnostics, the Progressive fixtures' report) as an artifact for a week: synthetic mock data
+# only (audit 2026-11-07, QA-13).
 name: Checks
 
 on:
@@ -89,7 +92,7 @@ jobs:
           - name: Progressive fixtures
             run: npm run e2e -- --fixtures
           - name: Luna mock
-            run: npm run package && npm run mock:luna
+            run: npm run package && npm run mock:luna -- "$RUNNER_TEMP/artifacts"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -102,3 +105,13 @@ jobs:
       - run: npx playwright install chromium
       - name: ${{ matrix.name }}
         run: ${{ matrix.run }}
+      - name: Keep what the failed run left
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ${{ runner.temp }}/artifacts
+            reviews/e2e-*.md
+          retention-days: 7
+          if-no-files-found: ignore

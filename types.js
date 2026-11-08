@@ -611,6 +611,7 @@
  * @property {any} [confirmed]  the page's receipt as the agent approved it
  * @property {string | null} [run]
  * @property {number} [loadResultMs]
+ * @property {number} [budgetMs]  how long the fill may run in all (FILL_BUDGET_MS, 5 minutes), then it stops as on Stop
  * @property {string[]} [filledBefore]
  * @property {string | null} [expectPage]
  * @property {{ list: UnitList, text: string, names: string[][], active: number, label: string } | null} [formUnit]
@@ -620,6 +621,7 @@
  *   shows another unit's answer (`givenForOtherUnit`)
  * @property {UnitPager | null} [pager]  the carrier's `unitPager`
  * @property {boolean} [restarted]  the kit's own: a frame's fill begun again on the page it turned into (pagekit fill)
+ * @property {number | null} [deadline]  the kit's own: when that fill's time in all ends, the time of the fill it began again from
  * @property {boolean} [trace]  a developer recording runs on the tab: the kit says what it waits
  *   for, answers and presses as `rater-trace` events (pagekit `kitTrace`, docs/developer-recording.md)
  */
@@ -631,6 +633,40 @@
  * @property {string[]} pages  the pages that page
  * @property {string} text  a group button's words (a pattern)
  * @property {string} [current]  a selector around the shown group's button (besides disabled or tabindex -1)
+ */
+
+/**
+ * Why an answer didn't go in, as a stable code: the kit branches on it, the usage log keeps it
+ * (`fill_field`'s `code`), and the reviews count by it, so rewording the `reason` people read changes
+ * none of them. Set by the kit where it gives up (src/kit/apply.js, cursor.js, pagekit.js, guard.js,
+ * drivers/, the carriers' page code); a test checks every failure there carries one.
+ * - `option.no-match`: the list has no option for the answer; `option.ambiguous`: a searched list
+ *   showed several or no confident match
+ * - `answer.not-kept`: the page took it and then didn't keep it (tried again once); `answer.refused`:
+ *   a widget didn't take the choice (Progressive's lists); `answer.cleared`: the page emptied
+ *   it (format); `answer.too-long`; `answer.invalid`: the page marks it invalid, or a yes/no field got
+ *   another answer; `answer.changed`: the page or the carrier changed it after the fill (a server
+ *   response, Recalculate); `answer.agent-edited`: the agent changed that question meanwhile
+ * - `field.read-only`; `field.vanished`: the field went away on the answer; `field.missing`: the
+ *   question is no longer on the page; `field.changed`: it changed since the AI read it
+ * - `page.unsettled`: the page didn't settle after the answer; `page.changed`: the page or frame
+ *   changed since the AI read it; `page.stop-step`: a step that is the agent's
+ * - `fill.interrupted`: the agent stopped the fill or edited the page
+ * - `lookup.differs`: a looked-up value isn't the intake's (VIN); `action.unverified`: a button
+ *   clicked with no sign it worked (Recalculate with no premium)
+ * - `address.no-suggestion`: no address suggestion to pick; `widget.unavailable`: a list's search
+ *   box or remove button isn't there; `widget.unsupported`: no page code for the control
+ * - `kit.exception`: the kit threw (its message is the reason): a defect, not a refusal;
+ *   `kit.uncoded`: a failure that came back without a code (a write path that names none: the
+ *   source test should have caught it)
+ * @typedef {'option.no-match' | 'option.ambiguous' | 'answer.not-kept' | 'answer.refused' | 'answer.cleared' | 'answer.too-long' | 'answer.invalid' | 'answer.changed' | 'answer.agent-edited' | 'field.read-only' | 'field.vanished' | 'field.missing' | 'field.changed' | 'page.unsettled' | 'page.changed' | 'page.stop-step' | 'fill.interrupted' | 'lookup.differs' | 'action.unverified' | 'address.no-suggestion' | 'widget.unavailable' | 'widget.unsupported' | 'kit.exception' | 'kit.uncoded'} FailCode
+ */
+
+/**
+ * What writing one answer did (src/kit/apply.js apply, a driver's or page code's write): `shown`, what
+ * the field shows; on failure its `code` (FailCode) and `reason`, and a list's `options` without the
+ * answer.
+ * @typedef {{ ok: boolean, shown?: string | null, code?: FailCode, reason?: string, options?: string[] }} WriteResult
  */
 
 /**
@@ -652,7 +688,8 @@
  * @property {boolean} [otherStep]
  * @property {string} [note]  why it is the agent's
  * @property {string | null} [action]  a markable helper's reminder: the helper's id as the fill tracks it (scoped: `vehicleTile:0`), for the tab's done actions
- * @property {string} [reason]  why it failed
+ * @property {string} [reason]  why it failed, for people
+ * @property {FailCode} [code]  failed: why, as a code (FailCode)
  * @property {string} [shown]  what the page shows (a choice's text)
  * @property {string} [said]
  * @property {'prefix' | 'contains'} [matched]  filled or check: its option was matched only by a fallback, the one beginning with the answer's words or having them (none reading exactly so), so it is also a check item (apply.js looseMatch)
@@ -719,6 +756,7 @@
  * @property {string[]} invalidatedActions
  * @property {boolean} halted
  * @property {string} [reason]  why it halted
+ * @property {boolean} [outOfTime]  it halted because its time in all (`budgetMs`) was spent
  * @property {string[]} [blockers]  what holds Continue
  * @property {{ list: UnitList, id: string } | null} unitForm
  * @property {{ list: UnitList, id: string } | null} unitHeld
@@ -840,6 +878,7 @@
  * @property {string} [step]
  * @property {boolean} [background]  the panel filled the quote tab while the agent was on another tab
  * @property {number} [hiddenMs]  how long the quote tab's page was hidden during the fill, only when it was
+ * @property {boolean} [retried]  the second click of a Continue whose page stayed unchanged for about 6 s (watchNextStep)
  * @property {number} fields
  * @property {number} rounds
  * @property {number} filled
@@ -877,6 +916,7 @@
  * @property {true} [manualOnly]
  * @property {true} [review]
  * @property {string} [shown]
+ * @property {FailCode} [code]  failed: why, as a code (FailCode)
  * @property {string} [reason]
  * @property {string[]} [options]
  * @property {object} [timing]
@@ -935,8 +975,12 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap
+ *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
+ * @property {boolean} [away]  panel: the panel follows another tab than the recorded one (true), or is back on it
+ * @property {number | null} [followed]  panel: the tab the panel follows (a tab number)
+ * @property {number} [recorded]  panel: the recorded tab (a tab number)
+ * @property {true} [closed]  panel: the recorded tab was closed, which ends the recording
  * @property {number} t  wall-clock ms when it happened, on the page's own clock (a fraction kept)
  * @property {number} [seq]  the frame's counter: the order of two events in one millisecond
  * @property {number} [frame]  the frame it came from (0: the top frame)
@@ -974,6 +1018,11 @@
  * @property {string | null} [why]  visible: pageshow or pagehide, when it came from one; kit wait: what for (answer, round, load, rated, continue, drawn, start, before-load; null: another)
  * @property {number} [ms]  request: how long it took; kit wait: how long it waited; fill, in the report only: how long the fill ran (on its end)
  * @property {number} [end]  burst, request: wall-clock ms when it ended (`t` is when it began)
+ * @property {number} [injectedAt]  page, the first of a document the trace is in from its load: wall-clock ms when the trace was put in
+ *   (`t` is the document's navigation start)
+ * @property {number | null} [response]  load: wall-clock ms when its server's answer ended (`t`: its navigation start)
+ * @property {number | null} [ready]  load: wall-clock ms when it was ready (DOMContentLoaded ended); null while not yet
+ * @property {number | null} [loaded]  load: wall-clock ms when it loaded (load ended); null while not yet
  * @property {number} [records]  burst: how many DOM mutation records it was
  * @property {{ key: string | null, kind: string | null, label: string }[]} [drawn]  burst: the questions it drew, at most 12 (labels redacted)
  * @property {number} [drawnCount]  burst: how many questions it drew in all
@@ -998,7 +1047,7 @@
  * @property {boolean} [ok]  kit answer: the page kept it
  * @property {number} [applyMs]  kit answer: ms to give it, a list's wait for its options included
  * @property {{ ms: number, settleMs: number, ajax: number, revealed: number, removed: number, changed: number, batch?: boolean }} [timing]  kit answer: the usage log's fill_field timing
- * @property {'page' | 'kit'} [how]  kit press: clicked from the page's own world, or by the kit
+ * @property {'page' | 'kit' | 'navigate' | 'reload' | 'back_forward' | 'prerender' | null} [how]  kit press: clicked from the page's own world, or by the kit; load: how the document came (its navigation entry's type)
  * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
  * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
  */
@@ -1019,6 +1068,12 @@
  * @property {boolean} test  marked as a test run, not a client
  * @property {number} events  how many events were kept
  * @property {number} dropped  how many the trace couldn't keep
+ * @property {string | null} [session]  the usage session's id, to join the usage log's events (version 2 on)
+ * @property {string | null} [rules]  the rule files' fingerprint (rulesHash), null until the panel has read it
+ * @property {string | null} [defaultsHash]  the agent's own defaults' fingerprint; null: TNI's
+ * @property {{ autoAdvance: boolean, autoFollowUps: boolean, autoPages: boolean, checkBeforeContinue?: boolean } | null} [settings]  the filling switches as the recording began (an older recording may lack checkBeforeContinue)
+ * @property {string | null} [platform]  the browser's platform (Windows, macOS…)
+ * @property {{ trace: number | null, recorder: number | null }} [versions]  the trace's and recorder's versions, as the trace's first batch says them
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -1031,9 +1086,9 @@
  * @property {(s: any) => string} oneLine  one line of text, spaces squashed
  * @property {(ms: number) => Promise<void>} sleep  ends early once the running fill stops (halted)
  * @property {() => boolean} [halted]  the running fill stopped (the agent's Stop, or their edit): a wait ends, and nothing more is written
- * @property {() => { ok: false, reason: string }} [interrupted]  the result of an answer the fill stopped during, nothing written
+ * @property {() => { ok: false, code?: FailCode, reason: string }} [interrupted]  the result of an answer the fill stopped during, nothing written
  * @property {(options: any[], step: FieldStep) => any} matchOption  the option a step's answer picks, or null
- * @property {(step: FieldStep, options: any[]) => { ok: false, reason: string, options?: string[] }} noMatch  the result for an answer none of the options takes
+ * @property {(step: FieldStep, options: any[]) => { ok: false, code?: FailCode, reason: string, options?: string[] }} noMatch  the result for an answer none of the options takes
  * @property {(step: FieldStep, control: any) => string} textFor  the text a step types into a field
  * @property {(options: any[]) => boolean} hasOptions  a list offers a real choice, not only its placeholder
  * @property {(el: Element) => string | null} labelFor  a field's label as the page shows it
@@ -1095,7 +1150,7 @@
  * @property {(option: any) => any} groupOf  a radio option's group widget, for its validity
  * @property {(widget: any, text: string) => void} setText  an address typed into a widget's box
  * @property {(widget: any, text: string) => void} changed  after the typing events: the widget's own change
- * @property {(step: FieldStep, control: any) => Promise<{ ok: boolean, shown?: string, reason?: string }>} apply  puts an answer into a widget's field
+ * @property {(step: FieldStep, control: any) => Promise<WriteResult>} apply  puts an answer into a widget's field
  * @property {(widget: any, el: Element) => void} reselect  picks a widget's answer again (a nudge that makes the page show what follows it)
  * @property {(widget: any) => Element | null} highlight  the element to mark for a widget's field
  * @property {(widget: any) => string | null} typeName  the widget's type, for captures
@@ -1165,6 +1220,7 @@
  * @property {Map<string, Set<string>>} [agentKeys]
  * @property {Map<string, number>} [agentKeysEpochs]
  * @property {boolean} [filling]
+ * @property {'fill' | 'pick' | 'ai' | null} [fillingKind]  what goes in while `filling`: a fill, the agent's pick from a row, an AI answer
  * @property {any} [autoTimer]
  * @property {any} [autoDrawn]
  * @property {boolean} [autoPending]
@@ -1249,6 +1305,14 @@
  * @property {any} [detailsReturn]
  * @property {any} [browserWindow]
  * @property {boolean} [closing]
+ * @property {boolean} [defaultsOn] agent defaults: whether this copy of the panel shows the feature
+ *   (agent-defaults/store.js `show`): the Settings section, the quote's question, the client pill.
+ * @property {boolean} [defaultsDev] whether the developer's switch for it is drawn (every copy but the store build).
+ * @property {{ v: 1, active: string | null, activeFor: string | null, profiles: Record<string, DefaultsProfile> } | null} [agentDefaults]
+ *   the stored defaults profiles, null until read.
+ * @property {string | null} [defaultsInitials] the agent's initials the profiles need.
+ * @property {any} [defaultsChip] what the client strip's defaults pill says for this quote (agent-defaults/store.js).
+ * @property {number} [rowsDrawn] bumped when a report row's record changes, so report-view.jsx draws it again.
  */
 
 /**

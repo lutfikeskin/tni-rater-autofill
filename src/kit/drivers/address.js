@@ -77,9 +77,9 @@ export function createAddressDriver(kit) {
       }
       el.blur?.();
       if (step.checkNumber) unpicked.set(el, el.value);
-      if (offered) return { ok: false, reason: `none of the page's address suggestions has the intake's house number${wantZip ? ' and ZIP' : ''}: pick the address yourself` };
+      if (offered) return { ok: false, code: 'address.no-suggestion', reason: `none of the page's address suggestions has the intake's house number${wantZip ? ' and ZIP' : ''}: pick the address yourself` };
       const seen = [...new Set(added.filter((n) => n.getClientRects?.().length).map((n) => `${n.tagName.toLowerCase()}${n.id ? `#${String(n.id).replace(/\d{3,}/g, '#')}` : ''}${typeof n.className === 'string' && n.className.trim() ? `.${n.className.trim().split(/\s+/).slice(0, 3).join('.')}` : ''}${n.getAttribute?.('role') ? `[role=${n.getAttribute('role')}]` : ''}`))].slice(0, 8);
-      return { ok: false, reason: `the page offered no address suggestion; check the address, city and ZIP${seen.length ? ` (new on the page: ${seen.join(', ')})` : ''}` };
+      return { ok: false, code: 'address.no-suggestion', reason: `the page offered no address suggestion; check the address, city and ZIP${seen.length ? ` (new on the page: ${seen.join(', ')})` : ''}` };
     }
     const shown = oneLine(first.textContent).slice(0, 120);
     if (first.classList?.contains('pac-item') || / pac-item /.test(` ${first.className} `)) {

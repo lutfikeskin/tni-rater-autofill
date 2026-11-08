@@ -8,6 +8,7 @@ import { fieldId, inferShowWhenByGroup } from './conditions.mjs';
 import { CARRIERS } from '../../src/carriers.js';
 import { knownStep } from '../../src/usage.js';
 import { isPageLayout } from './events.mjs';
+import { reportsOf } from './carrier-reports.mjs';
 
 // Carriers whose steps share one address (AmWINS): their layouts from before 0.9.6 name no step,
 // so every step looks like one page whose questions come and go. Those are kept in the page's
@@ -215,7 +216,7 @@ export function fieldIdentities(events) {
   const pages = new Map();
   for (const e of events) {
     if (!isPageLayout(e) || !e.carrier || !e.page || !e.session) continue;
-    if (e.carrier === 'progressive' && e.page.startsWith('/')) continue;
+    if (reportsOf(e.carrier)?.portalPage?.(e.page)) continue;
     const name = e.step ? `${e.page} › ${layoutStep(e)}` : e.page;
     const p = pages.get(`${e.carrier}|${name}`) ?? { carrier: e.carrier, page: e.page, snapshots: [] };
     const fields = (e.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.label ?? ''));
@@ -262,9 +263,9 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
   const layouts = new Map();
   for (const e of events) {
     if (!isPageLayout(e) || !e.carrier || !e.page) continue;
-    // Progressive's portal pages outside the quote flow (home, quote search) are recorded by
-    // path, not by page name; they're never filled. Other carriers' pages are all paths.
-    if (e.carrier === 'progressive' && e.page.startsWith('/')) continue;
+    // A carrier's portal pages outside the quote flow (Progressive's home and quote search, recorded
+    // by path): never filled (carrier-reports.mjs portalPage).
+    if (reportsOf(e.carrier)?.portalPage?.(e.page)) continue;
     // An empty layout is a page whose questions all went away, or (before 0.9.6) a fill that ran
     // before the page drew its questions; only the first is evidence.
     if (!(e.fields ?? []).length && !String(e.reason ?? '').split('+').includes('removed')) continue;

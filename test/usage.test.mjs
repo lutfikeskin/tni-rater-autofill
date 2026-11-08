@@ -102,6 +102,15 @@ test('a fill run says it ran in the background and how long its page was hidden,
   assert.deepEqual(['background' in front, 'hiddenMs' in front], [false, false]);
 });
 
+// Audit 2026-11-07, FLOW-11: the second click of a Continue that didn't take is said on its fill_run,
+// so the weekly review can judge whether the retry is still needed.
+test('a fill run that clicked a lost Continue again says so, and no other does', () => {
+  const ctx = { carrier: 'amwins', page: 'Step', overwrite: false, ms: 1, redact: (t) => t };
+  const [retried] = fillEvents([{ fields: 3, advanced: 'Save & Continue' }], { ...ctx, auto: 'page', retried: true });
+  const [plain] = fillEvents([{ fields: 3, advanced: 'Save & Continue' }], { ...ctx, auto: 'page' });
+  assert.deepEqual([retried.retried, 'retried' in plain], [true, false]);
+});
+
 test('dropdown changes keep the option text, minus client names', () => {
   const filled = new Map([['2B9D', { path: 'progressive.q2B9D', shown: 'More than 500 miles' }]]);
   const e = fieldChangeEvent({ key: '2B9D', q: '2B9D', label: 'Farthest distance', kind: 'select', before: 'More than 500 miles', after: '500 miles', agent: true }, { record, filled, redact });
@@ -204,6 +213,34 @@ test('fill results drop typed values but keep chosen options', () => {
   assert.equal(text.shown, undefined);
   assert.equal(events.find((e) => e.q === '1D97').shown, '$1 million CSL');
   events.forEach(assertNoClientData);
+});
+
+// Audit 2026-11-07, LEARN-09: a failed answer is logged with its code, for the reviews to count by.
+test('a failed answer is logged with its code beside its reason', () => {
+  const frames = [{ fields: 1, filled: [], noData: [], kept: [], leftRequired: [],
+    failed: [{ label: 'Radius', path: 'operations.radius', q: null, controlKind: 'select', code: 'option.no-match', reason: 'no option matches "Unlimited"' }] }];
+  const failed = fillEvents(frames, { carrier: 'progressive', page: 'AddVehicle', overwrite: false, ms: 1, redact }).find((e) => e.result === 'failed');
+  assert.deepEqual([failed.code, failed.reason], ['option.no-match', 'no option matches "Unlimited"']);
+});
+
+// Audit 2026-11-07, LEARN-11: every fill run of a page logged each kept answer again (59% of fill
+// events). A kept answer is logged once per quote, tab, page, step, question and what it shows; the
+// run still counts them all.
+test('a kept answer is logged once per quote and what it shows, and counted on every run', () => {
+  const kept = (now, extra = {}) => ({ label: 'Garaging ZIP', key: 'ref:GiveZip', q: null, controlKind: 'text', now, ...extra });
+  const run = (items, opts = {}) => fillEvents([{ fields: items.length, filled: [], failed: [], noData: [], leftRequired: [], kept: items }],
+    { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact, step: 'Vehicles', ...opts });
+  const keptOf = (events) => events.filter((e) => e.type === 'fill_field' && e.result === 'kept').length;
+  const keptLogged = new Set();
+  const first = run([kept('20001'), kept('20001', { label: 'Business ZIP', key: 'ref:BizZip' })], { keptLogged });
+  assert.deepEqual([keptOf(first), first[0].kept], [2, 2]);
+  const again = run([kept('20001'), kept('20001', { label: 'Business ZIP', key: 'ref:BizZip' })], { keptLogged });
+  assert.deepEqual([keptOf(again), again[0].kept], [0, 2], 'the same answers kept again: counted, not logged');
+  assert.equal(keptOf(run([kept('20002')], { keptLogged })), 1, 'what the field shows changed');
+  assert.equal(keptOf(run([kept('20002')], { keptLogged, view: 't2' })), 1, 'another tab');
+  assert.equal(keptOf(run([kept('20002')], { keptLogged, step: 'Drivers' })), 1, 'another step');
+  assert.equal(keptOf(run([kept('20002', { differs: true })], { keptLogged })), 1, 'one that differs from the rule always');
+  assert.equal(keptOf(run([kept('20001')])), 1, 'without the quote\'s set, every one');
 });
 
 test('summary script turns a log into corrections and mapping candidates', async () => {

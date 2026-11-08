@@ -37,7 +37,7 @@ one turns uploads off. Harnesses that load the packaged extension must set that 
 server first (`npm run e2e:extension` does, and fails on any request that leaves the machine), so test runs
 stay out of the pilot's usage data. The upload token can only add events, which the server cleans; reading
 them back needs the admin token, kept in Railway, in the repository secret `RATER_ADMIN_TOKEN`,
-and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
+and on the maintainer's computer in `~/.config/tni-rater/admin-token`.
 
 Agents use Luna without an OpenAI key of their own: with no key saved, the panel sends its Luna
 requests to `/v1/luna` with the upload token, and the server adds `OPENAI_API_KEY` and passes them
@@ -84,6 +84,27 @@ maintainer's computer (`server-data/warehouse.duckdb`, git-ignored). It runs not
 leaves this volume the only full copy of the log. Its tables, the richer intake profile it plans and
 optional quoted premiums are in [quoting history database](quoting-history-database.md).
 
+The extension deletes its copy of an upload once the server answers 200, so `store` in
+`server/index.mjs` flushes the day file to the volume (`fsync`) before that answer, and then the events folder,
+which holds a new day file's name (on Linux; Windows opens no folder). It flushes the folder on
+every upload, so the retry of one whose folder flush failed flushes it too. A write or flush
+that fails answers 500 (`could not store events`), and the extension keeps the events and sends
+them again, so a line written before a failed flush can be in the file twice (readers, the
+dashboard included, de-duplicate by id). A restarted server flushes every day file it reads, and
+the folder, before taking uploads: a retry it answers as a duplicate of such a line is then on the
+disk too.
+
+**Backups.** Railway's Hobby plan has no volume backups. The maintainer's computer keeps a daily
+copy instead (audit 2026-11-07, SRV-05): `~/.config/tni-rater/backup-usage-server.mjs`, a
+standalone script outside the repository, pulls `/v1/export` with the admin token into
+`~/Backups/tni-usage-server/<UTC day>/events/*.jsonl`, refuses an export that was cut off, keeps
+the last 14 copies and logs each run to `backup.log` in that folder. A Windows scheduled task runs
+it every day at 12:00. To restore, deploy the server and push a copy back:
+`npm run push-logs -- ~/Backups/tni-usage-server/<UTC day>/events` (events already stored are
+skipped by id; each is stored with a new `receivedAt`). Luna's day counts (`DATA_DIR/luna/`) are
+not copied: a lost day file is counted again from 0 (above), and the next day starts its own.
+`npm run pull` also leaves a plain copy of the days it downloads in the maintainer's `server-data/`.
+
 ### Upload limits and the disk guard
 
 The upload token ships in the extension, so `/v1/events` bounds what one address can send and stops
@@ -117,8 +138,8 @@ its `COPY` sources) have no uncommitted or untracked changes, then runs
 needs) and waits up to 5 minutes in all, a stalled request included, for Railway's production `/v1/health` (never `RATER_SERVER`) to name this checkout's server. `--dry-run` only
 checks. A failed build exits 1, and the previous deployment keeps serving.
 
-After a merge to `main` that changes what the image is built from (`server/`, `src/usage-schema.js`
-or `.railwayignore`), [deploy-server.yml](../.github/workflows/deploy-server.yml) runs the same
+After a merge to `main` that changes what the image is built from (`server/`, `.railwayignore`, or
+any other file `server/Dockerfile` copies: `test/deploy.test.mjs` holds the workflow's paths to it), [deploy-server.yml](../.github/workflows/deploy-server.yml) runs the same
 script on GitHub, one deploy at a time (the maintainer, 2026-11-07). It needs the repository secret
 `RAILWAY_TOKEN`, a Railway project token for the production environment; without it the job says
 `RAILWAY_TOKEN is not set: nothing deployed` and succeeds, so deploy by hand as above. Only the
@@ -250,6 +271,15 @@ opens one titled "Daily review" when none is open. New means:
   at most the panel's 1,000 characters of it);
 - questions without a rule (or AmWINS fields the mock lacks) first seen in a layout of the period,
   one per question whatever its row, number, product or step (`scripts/lib/daily.mjs`);
+- alerts, from the agents' events of the period (test runs left out), said first under
+  "### Alerts" (`alerts` and its thresholds `ALERTS` in `scripts/lib/daily.mjs`, proposed for the
+  maintainer to tune; a section of this comment, no webhook, the maintainer's choice on 2026-11-07):
+  a carrier page that reads as changed (a fill's `pageChanged`, or a known question renamed) for two
+  installs or more; the newest version of a channel (store, unpacked) failing 3 or more fields per 100
+  filled more than that channel's version before it, with 200 filled on each (fewer on the newest:
+  nothing said yet); crashes (`client_error`) in 2% of the period's sessions or
+  more, with 20 sessions or more; and 50 or more events lost before upload (`usage_lost`). A page
+  changed at 10:00 US time is still said only the next morning;
 - a deployed usage server that isn't the repository's (`scripts/server-check.mjs`, checked first
   and only on the default branch): redeploy it;
 - two days without any event received (test runs don't count);
@@ -259,10 +289,11 @@ Nothing new, no comment. Two quiet days get one comment, with the day the last e
 the run whose window holds the moment the quiet reached 48 hours. From 2026-10-11 to 10-18 no events
 arrived and every run stayed silent, so a week without quotes looked the same as broken uploads.
 Anyone with the extension's upload token can write what the comment quotes (an agent's initials, a
-page, a carrier, a build, a question's caption, data-model name and kind), so each is posted in inline code (no
+page, a carrier, a build (an alert's too), a question's caption, data-model name and kind), so each is posted in inline code (no
 markdown, link or image), its backticks and line breaks taken out, every `@` broken by a zero-width
-space (no one is mentioned, and the comment never starts the Claude workflow, which answers an
-at-mention of Claude from the maintainer's login, the one `npm run daily -- --post` posts as), and
+space (no one is mentioned, and the comment holds no at-mention of Claude, which the Claude
+workflow would answer from the maintainer's login, the one `npm run daily -- --post` posts as;
+that workflow doesn't run on the `daily-review` or `weekly-review` issues at all either), and
 bounded (a caption at 200 characters, others at 120 or fewer) (`untrusted` in
 `scripts/lib/daily.mjs`). A report's time is written only when it is a real date and minute, else `?`. A list too long anyway is cut to fit
 a GitHub comment and points to the review. Closing the issue is how a
@@ -271,9 +302,9 @@ corrections.
 
 ### On the maintainer's computer: `npm run daily`
 
-Since 2026-10-19 GitHub doesn't start Actions jobs on this account (billing), so the workflow below
-fails before it starts. `npm run daily` (`scripts/daily.mjs`) does the same steps on a Windows (or
-any) computer: the server check, `npm run pull`, `scripts/review.mjs --since <start> --summary`,
+The workflow below runs the review every day. From 2026-10-19 until the repository went public on
+2026-10-27, GitHub didn't start Actions jobs on this account (billing), and this stood in for it.
+`npm run daily` (`scripts/daily.mjs`) does the same steps on a Windows (or any) computer: the server check, `npm run pull`, `scripts/review.mjs --since <start> --summary`,
 then `scripts/daily-issue.mjs post`. It needs Node 22, the admin token (`RATER_ADMIN_TOKEN` or
 `~/.config/tni-rater/admin-token`), and `gh auth login` as an account that can comment on the
 repository's issues.
@@ -289,11 +320,18 @@ It posts only with `--post`, and so does `scripts/daily-issue.mjs post` (the wor
 trying it out never comments by accident. A dry run may run anywhere. `--post` refuses, and says
 what to do, unless it runs in the main checkout (not a linked worktree, whose state would be its
 own), on the default branch, level with `origin` after a fetch: the server check compares the
-deployed server with that checkout, and the review uses its rules. The main checkout was on
-`claude/release-0.9.10` on 2026-10-20; switch it to `main` and `git pull` before the first real run.
+deployed server with that checkout, and the review uses its rules: switch the main checkout to
+`main` and `git pull` before a real run.
 
-The first real run needs `--since`, once: where the last comment on the issue stopped. That was
-2026-10-20T01:12:33Z (comment 6280982877 on #50, the last before this runner). After it,
+A real run here that takes over from the workflow needs `--since`, once: where the workflow's last
+review stopped, which `node scripts/daily-issue.mjs since` prints (the last successful run's
+download start). Without it, a `reviews/daily/state.json` left from earlier local runs is older
+than the workflow's reviews, and the run would post what they already said. Check first that
+Actions shows a successful Daily review run on `main`: with none, `since` prints a day ago, which
+could skip reports nobody reviewed, so leave `--since` out and let the state file say where to
+start. With no state file either, the run stops and asks for `--since`: give the time the last
+review you know of stopped, or an earlier one (an earlier start only says some things again).
+After it,
 `reviews/daily/state.json` (git-ignored) says where each run starts: when the last real run's
 download began. It's written whole (a temporary file, then a rename) and only after the post step
 succeeded (a comment, or nothing new to say). A run that fails leaves it, so the next one reviews
@@ -309,7 +347,9 @@ by UTC day and minute, not next to the weekly `reviews/review-<date>.md` files. 
 finish says so on the issue with the step that stopped and exits 1; one that can't reach GitHub at
 all only writes `daily.log`.
 
-**Scheduling it on Windows.** After the first real run has written the state, use Task Scheduler,
+**Scheduling it on Windows**, only while the workflow can't run (both would post). After the first
+real run here has written the state (with `--since` from `node scripts/daily-issue.mjs since` when
+the workflow has a successful run, else from its state file, as above), use Task Scheduler,
 from PowerShell in the main checkout. `-At` is this computer's local time. The workflow ran at 06:00
 UTC, after US agents' day; the first line turns that into local time (02:00 at UTC-4). Any hour
 works, as each run starts where the last stopped: pick one when the computer is usually on.
@@ -332,8 +372,7 @@ files." It runs only while the app is open and the computer awake. Use one sched
 
 ### On GitHub: the workflow
 
-`.github/workflows/daily-review.yml` stays in the repository for when Actions works again. It runs
-every day at 06:00 UTC, which GitHub often starts hours late (and on demand: Actions → Daily
+`.github/workflows/daily-review.yml` runs every day at 06:00 UTC, which GitHub often starts hours late (and on demand: Actions → Daily
 review → Run workflow, optionally with a start date or time). Its window starts when the last
 successful run on the default branch began downloading (`scripts/daily-issue.mjs since`, from that
 run's steps; a day when there is none; a run that can't tell fails rather than guess). The review
@@ -342,8 +381,8 @@ only, and nothing is kept as an artifact. The runner has no local test-run list
 (`reviews/test-intakes.txt` is ignored by git), so its review carries the "No test-run list"
 warning: the maintainer's own test quotes count as agents' work there, while fixture intakes and
 intakes marked as a test are still left out ([learning](learning.md)). When the script that
-comments is what broke, the workflow says so with `gh` alone. Its cron is still set, so GitHub
-still tries it each day and the run fails at start. Before using it again, stop the local
-schedule and start its first run by hand, with the `since` in the local `reviews/daily/state.json`
-as its start. Its own last successful run is older, so its window would repeat what the local runs
-already said.
+comments is what broke, the workflow says so with `gh` alone. A local schedule set up while it
+couldn't run should be removed (`Unregister-ScheduledTask -TaskName 'TNI daily review'`), so only
+one review posts. When the workflow takes over from local runs, start its first run by hand with
+the `since` in the local `reviews/daily/state.json`: its own last successful run is older, so its
+window would repeat what the local runs already said.
