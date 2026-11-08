@@ -404,6 +404,23 @@ test('a step is left by the last button pressed on it, the agent\'s or the exten
   assert.match(report, /\| 4 \| \/quote · Summary \|[^\n]*\| — \|/);
 });
 
+// REC-02 (audit 2026-11-07): a wait held by GEICO's `active-index`, a radio's `checked` or a busy page
+// read as "the page did nothing during it", a safe speed-up to the review, from the trace's observer.
+test('a wait\'s slack counts what the wait saw itself, and says when the trace saw less', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const wait = { kind: 'kit', t: t0 + 3000, seq: 2, frame: 0, what: 'wait', why: 'continue', quietMs: 500, maxMs: 6000, requests: false, start: t0 + 1000, ms: 2000, ended: 'quiet' };
+  const page = { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true };
+  const report = (more) => recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:04.000Z' }, events: [page, { ...wait, ...more }] });
+  // The page changed an attribute until 2.4 s: 0.6 s of slack, not 2.0 s.
+  const seen = report({ lastChange: t0 + 2400, lastHeld: t0 + 1000 });
+  assert.match(seen, /the extension waited 2\.0 s before pressing Continue \(quiet 500 ms\): the page was quiet; 0\.6 s after the page's last change \(the wait saw the page change or busy 1\.4 s after the trace's last change: not slack\)/);
+  // Busy until 2.2 s, no change seen.
+  assert.match(report({ lastChange: t0 + 1000, lastHeld: t0 + 2200 }), /; 0\.8 s after the page's last change \(the wait saw/);
+  // Nothing seen by either: all slack, as before; and a recording from before REC-02: the trace's alone.
+  assert.match(report({ lastChange: t0 + 1000, lastHeld: t0 + 1000 }), /the page did nothing during it\n/);
+  assert.match(report({}), /the page did nothing during it\n/);
+});
+
 // REC-03 (audit 2026-11-07): a page's load time was invisible, charged to the step before it.
 test('a page loaded with the trace in it says how long it took, in the Flow and its own lines', () => {
   const t0 = Date.parse('2026-10-23T14:12:00.000Z');

@@ -21,6 +21,9 @@ export const mask = (s) => String(s ?? '').replace(/"[^"]*"/g, '"…"').replace(
 // them in step), signing and discarding a form among them. "Save & Continue" is not one, as in
 // pagekit, which reads it as Continue.
 export const RESTRICTED = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|logout|log out|sign out|order|sign|signature|esign|esignature)\b/i;
+// The retry tally's lines (below) name a page, not a button: never a restricted action themselves.
+const RETRIED = 'Continue clicked again on ';
+const clickedAction = (action) => !action.startsWith(RETRIED) && isRestricted(action);
 export const isRestricted = (action) => RESTRICTED.test(action.replace(/^(helper|advance) /, '').replace(/^"?save\s*(?:&|and)\s*continue"?$/i, 'continue'));
 const tally = (map, key, n = 1) => map.set(key, (map.get(key) ?? 0) + n);
 const top = (map, n) => [...map].sort((a, b) => b[1] - a[1]).slice(0, n);
@@ -263,8 +266,13 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   for (const r of allRuns) {
     for (const c of r.clicked ?? []) tally(actions, `helper ${String(typeof c === 'string' ? c : JSON.stringify(c)).replace(/:\d+$/, '')}`);
     if (r.advanced) tally(actions, `advance "${typeof r.advanced === 'string' ? r.advanced : JSON.stringify(r.advanced)}"`);
+    // A Continue clicked a second time because its page stayed unchanged for about 6 s (`retried`):
+    // whether the retry still earns its place. A retry fill held before Continue (Let me look first, a
+    // blocker) clicked nothing. Its button's own text is checked above (`advanced`), so this line,
+    // which names the page (Save Quote, say), isn't read as a restricted action.
+    if (r.retried && r.advanced) tally(actions, `${RETRIED}${r.carrier} ${r.page}`);
   }
-  const restricted = [...actions].filter(([a]) => isRestricted(a));
+  const restricted = [...actions].filter(([a]) => clickedAction(a));
 
   const fillErrors = new Map();
   for (const e of periodAll.filter((x) => x.type === 'fill_error')) tally(fillErrors, `${build(e)} · ${where(e)}: ${mask(e.error)}`);
@@ -349,7 +357,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     problemReportsInTestRuns: periodAll.filter((e) => e.type === 'problem_report' && testSessions.has(e.session)).length,
     aiRequests: asks.length,
     aiErrorPercent: asks.length ? Math.round((asks.filter((a) => a.error).length / asks.length) * 100) : null,
-    restrictedActions: [...actions].filter(([a]) => isRestricted(a)).reduce((x, [, c]) => x + c, 0),
+    restrictedActions: [...actions].filter(([a]) => clickedAction(a)).reduce((x, [, c]) => x + c, 0),
     // Not the period's: today's rules on the keyed quotes, whenever they were recorded.
     // All keyed answers, and those the reviewer decided (not confirmed as proposed) apart.
     answerKey: answerKey ? { quotes: answerKey.quotes, entries: answerKey.entries, proposed: answerKey.proposed, all: keyCounts(answerKey.total), decided: keyCounts(answerKey.decided) } : null,

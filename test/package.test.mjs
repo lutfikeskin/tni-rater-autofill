@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile } from '../scripts/lib/package.mjs';
+import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile, zipName } from '../scripts/lib/package.mjs';
 import { kitCode } from '../scripts/lib/kit.mjs';
 
 const read = (f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
@@ -120,4 +120,18 @@ test('a watch build always says its commit is dirty', () => {
   assert.ok(stamped(true, '7a5cdb5244+dirty').includes("commit: '7a5cdb5244+dirty'"), 'not twice');
   assert.ok(stamped(true, null).includes('commit: null'), 'packaged without git');
   assert.ok(stamped(false, '7a5cdb5244').includes("commit: '7a5cdb5244'"), 'a one-off build as git says');
+});
+
+// Audit 2026-11-07, QA-17: test builds were zips named by hand (`0.9.28-test-build-5bb6f00.zip`).
+// `npm run package -- --label <label>` names one by the script: its label and its commit.
+test('a labelled package is named by its version, label and commit; the store zip as before', () => {
+  assert.equal(zipName('0.9.32'), 'tni-rater-autofill-0.9.32.zip');
+  assert.equal(zipName('0.9.32', { label: 'test-build', commit: '5bb6f00' }), 'tni-rater-autofill-0.9.32-test-build-5bb6f00.zip');
+  assert.equal(zipName('0.9.32', { label: 'test-build', commit: '5bb6f00+dirty' }), 'tni-rater-autofill-0.9.32-test-build-5bb6f00-dirty.zip', 'a dirty tree says so');
+  assert.equal(zipName('0.9.32', { label: 'test-build' }), 'tni-rater-autofill-0.9.32-test-build-nocommit.zip', 'git couldn\'t say');
+  for (const bad of ['', 'Test Build', '../x', 'a_b', 'x'.repeat(41)]) assert.throws(() => zipName('0.9.32', { label: bad }), /lowercase words and hyphens/, JSON.stringify(bad));
+  // The script takes it from --label.
+  const script = read('scripts/package.mjs');
+  assert.match(script, /process\.argv\.indexOf\('--label'\)/);
+  assert.match(script, /zipName\(manifest\.version, label == null \? \{\} : \{ label, commit: packagedCommit\(root\) \}\)/);
 });
