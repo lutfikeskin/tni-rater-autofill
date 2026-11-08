@@ -248,12 +248,16 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // ran, or reloaded): it stops as on Stop, and this one begins only once it has ended, so two fills
   // never run in one frame: its waits, drivers and cleanup (the hidden selectors, the fill's units)
   // stay its own, and this one's Stop reaches all that runs (audit 2026-11-07, UX-03; CodeRabbit on
-  // #478). A halted fill ends at its next wake; one still not ended after TAKEOVER_MS is said.
-  if (running) {
+  // #478). A halted fill ends at its next wake; one still not ended after TAKEOVER_MS is said. The
+  // fill running is read again after each wait: another fill waiting too may have begun first, and
+  // it is stopped and waited for in turn (nothing awaits between here and `running = thisFill`), so
+  // the newest fill is the one that runs.
+  for (const end = Date.now() + TAKEOVER_MS; running;) {
     const previous = running;
     previous.halt(STOP_HALT);
-    for (const end = Date.now() + TAKEOVER_MS; running === previous; await new Promise((r) => setTimeout(r, 50))) {
+    while (running === previous) {
       if (Date.now() >= end) throw new Error('An earlier fill on this page is still ending. Fill again in a moment.');
+      await new Promise((r) => setTimeout(r, 50));
     }
   }
   /** @type {RunState} */

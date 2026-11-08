@@ -3789,6 +3789,28 @@ test('a fill that begins stops one still running in its frame; stopRun stops onl
   assert.equal(input.value, '');
 });
 
+// CodeRabbit on #478: two fills waiting on the same one to end both began, the second over the first,
+// so stopRun could no longer reach the first. Each takes over in turn: the newest is the one running.
+test('two fills waiting on the same stopped fill take over in turn; only the newest runs', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  h.context.Ext.Ajax.isLoading = () => true;
+  addExtText(h, 'a', '2BA1');
+  const steps = [{ id: 'one', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'First', kind: 'text', value: 'Yes' }];
+  const orphan = h.kit.fill(steps, { maxRounds: 3, run: 'old' });
+  let b = null;
+  let c = null;
+  setTimeout(() => { b = h.kit.fill(steps, { maxRounds: 3, run: 'b' }); c = h.kit.fill(steps, { maxRounds: 3, run: 'c' }); }, 500);
+  assert.equal((await orphan).halted, true);
+  await new Promise((r) => setTimeout(r, 200));
+  const first = await b;
+  assert.equal(first.halted, true, 'the first to begin is stopped by the one after it');
+  assert.match(first.reason, /You stopped the fill/, 'stopped, not left to wait out the page');
+  assert.equal(h.kit.stopRun('b'), false, 'b has ended');
+  assert.equal(h.kit.stopRun('c'), true, 'c is the one running, and stopRun reaches it');
+  assert.equal((await c).halted, true);
+  assert.equal(h.kit.progress(), null);
+});
+
 test('Stop while the fill waits for a busy page to begin keeps its reason and ends at once', async () => {
   const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
   h.context.Ext.Ajax.isLoading = () => true;

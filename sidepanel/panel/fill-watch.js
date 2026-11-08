@@ -9,6 +9,7 @@ import { inExtension } from './env.js';
 let port = null;
 /** @type {{ tabId: number | null, run?: string, world?: string }} */
 let said = { tabId: null };
+const RECONNECT_MS = 500;
 
 function post() {
   if (!port) {
@@ -16,11 +17,12 @@ function post() {
     if (said.tabId == null) return;
     try { port = chrome.runtime.connect({ name: 'fill-watch' }); } catch { port = null; return; }
     // The worker stopped (Chrome stops an idle one) or reloaded: the fill still running is said to
-    // the next one at once.
+    // the next one, half a second on (a worker that can't start isn't asked again at once, over and
+    // over: CodeRabbit on #478), while that fill still runs.
     port.onDisconnect.addListener(() => {
       port = null;
       void chrome.runtime.lastError;
-      if (said.tabId != null) post();
+      if (said.tabId != null) setTimeout(() => { if (said.tabId != null && !port) post(); }, RECONNECT_MS);
     });
   }
   try { port.postMessage(said); } catch { port = null; }
