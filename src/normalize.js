@@ -1391,18 +1391,20 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
 // 2026-11-07, answer 1 on PR #367): the box empty and `noDot` (`noMc`) true, with the intake's note
 // saying so, so the carriers' has-a-USDOT-number questions answer No instead of reading "No" as a
 // number. Before, the box kept "No", and Progressive answered that the customer has a USDOT number.
-// True when the edit was one.
-const TYPED_NO_NUMBER = /^(?:no|none|n\s*[./]?\s*a)\.?$/i;
+// True when the edit was one. A number typed later clears the No and retires the note (rederive's
+// USDOT and MC derivation); an emptied box keeps them.
 export function noNumberEdit(intake, path) {
   const box = { 'applicant.dot': ['noDot', 'dot.none', 'USDOT'], 'applicant.mc': ['noMc', 'mc.none', 'MC'] }[path];
   const typed = intake.record.applicant?.[path.slice('applicant.'.length)];
-  if (!box || typeof typed !== 'string' || !TYPED_NO_NUMBER.test(typed.replace(/\s+/g, ' ').trim())) return false;
+  if (!box || typeof typed !== 'string' || !numberBoxSaysNo(typed)) return false;
   const [flag, code, name] = box;
   set(intake.record, path, null);
   intake.record.applicant[flag] = true;
-  if (!intake.warnings.some((w) => w.code === code)) {
-    intake.warnings.push({ code, path, level: 'info', msg: `${name} # "${typed.trim()}": the client has no ${name} number.` });
-  }
+  // The note in its place, said again (one retired by an earlier number), else added.
+  const note = { code, path, level: 'info', msg: `${name} # "${typed.trim()}": the client has no ${name} number.` };
+  const i = intake.warnings.findIndex((w) => w.code === code);
+  if (i < 0) intake.warnings.push(note);
+  else intake.warnings[i] = note;
   return true;
 }
 

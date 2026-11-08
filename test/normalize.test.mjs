@@ -2159,6 +2159,33 @@ test('"No" typed into the USDOT or MC box in the panel is no number, as the inta
   assert.equal(noNumberEdit(name, 'applicant.name'), false);
 });
 
+// Reviews of PR #376 (Claude, CodeRabbit): the agent's typed No, then a number, then No again, then
+// the box emptied, as the panel's edit makes them (set, noNumberEdit, rederive): the No and its note
+// follow each one, and so do the carriers' answers.
+test('typing No, then a number, then No again into the USDOT box: the No and its note follow each edit', () => {
+  const intake = { ...normalizeIntake({ ...raw, mc_dot_60days: '' }, W44), done: [], agentEdited: [] };
+  const edit = (value) => {
+    set(intake.record, 'applicant.dot', value);
+    intake.agentEdited = [...new Set([...intake.agentEdited, 'applicant.dot'])];
+    noNumberEdit(intake, 'applicant.dot');
+    rederive(intake.record, 'applicant.dot', { ...W44, keep: new Set(intake.agentEdited), intake });
+  };
+  const progressiveDot = () => buildPlan(intake.record, progressive).find((s) => s.q === '1ED').value;
+  const amwinsDot = () => buildPlan(intake.record, amwins).find((s) => s.selector === '#hasDotNumber').value;
+  const note = () => intake.warnings.filter((w) => w.code === 'dot.none').map((w) => [w.level, w.msg]);
+  edit('No');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, progressiveDot(), amwinsDot()], [null, true, 'No - and the customer will not have a USDOT number', false]);
+  assert.deepEqual(note(), [['info', 'USDOT # "No": the client has no USDOT number.']]);
+  edit('7654321');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, progressiveDot(), amwinsDot()], ['7654321', null, 'Yes - the customer has a USDOT number', true], 'a number: the No is cleared');
+  assert.deepEqual(note(), [['info', 'No longer applies after your edit: USDOT # "No": the client has no USDOT number.']], 'and its note retired');
+  edit('None');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, progressiveDot()], [null, true, 'No - and the customer will not have a USDOT number']);
+  assert.deepEqual(note(), [['info', 'USDOT # "None": the client has no USDOT number.']], 'the note said again, in its place');
+  edit(null);
+  assert.deepEqual([intake.record.applicant.noDot, note().length], [true, 1], 'emptied: the No stays');
+});
+
 // R15 (TNI, 2026-10-26: answer to PR question): "New", "New authority", "Brand new" and "New
 // venture" as the whole answer in years under own authority are 0 years, as "NEW" is.
 test('"New authority", "Brand new" and "New venture" in years under own authority are 0 years (W44-15, R15)', () => {

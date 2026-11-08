@@ -3060,7 +3060,7 @@ test('a panel edit of the claims box recomputes what derives from it and says th
     warnings: [{ code: 'ownership.missing', path: 'operations.vehicleOwnership', level: 'check', msg: 'Not selected.' }], done: [], agentEdited: [], readFrom: {},
   };
   const sandbox = {
-    state: { intake }, get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    state: { intake }, get, set, rederive, noNumberEdit: () => false, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
     usage: { log: (e) => calls.push(['log', e.path, e.warnings]) },
     renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings', intake.warnings[0].level]),
     claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
@@ -9053,7 +9053,9 @@ test('a panel edit of "No" into the USDOT box saves no number, and says the row 
   calls.length = 0;
   await sandbox.agentEdit('applicant.dot', '7654321', 'text');
   assert.equal(intake.record.applicant.dot, '7654321', 'a number stays as typed');
-  assert.deepEqual(calls, [['log', 'applicant.dot']]);
+  // Reviews of PR #376: the number clears the No and retires its note (rederive), said again.
+  assert.deepEqual([intake.record.applicant.noDot, intake.warnings[0].msg.startsWith('No longer applies after your edit: ')], [null, true]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['renderSections', ['applicant.noDot']], ['renderWarnings'], ['log', 'applicant.dot']]);
 });
 
 // Review of PR #170: a field the agent emptied in the drawer went with the blank ones (hidden at the
