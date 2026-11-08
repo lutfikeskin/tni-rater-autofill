@@ -320,10 +320,11 @@ export async function settle({ quietMs = 250, maxMs = 15000, requests = null, wh
     }
     if (abort?.()) { told('stopped'); return false; }
     const settled = !pageBusy() && Date.now() - last >= quietMs;
+    // At its limit: in the tally whether or not a recording runs; what held it only for a recording.
     if (isTracing()) {
       held(Date.now());
       told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
-    }
+    } else told('limit');
     return settled;
   } finally {
     mo.disconnect();

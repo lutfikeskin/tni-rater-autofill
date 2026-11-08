@@ -8787,9 +8787,25 @@ test('a fill tallies its waits by what they were for, as counts and ms only, rec
     assert.deepEqual(Object.keys(w).sort(), ['limit', 'ms', 'n', 'slack']);
     assert.ok(Object.values(w).every(Number.isSafeInteger) && w.n > 0 && w.limit <= w.n && w.slack <= w.ms, JSON.stringify(w));
   }
-  // The tally ends with the fill: an answer the panel puts in afterwards adds nothing to it.
+  // The tally ends with the fill (review of PR #476): the next fill's counts are its own, as on a
+  // page that never filled.
+  const total = (r) => Object.values(r.waits ?? {}).reduce((n, w) => n + w.n, 0);
   const again = await h.kit.fill([], { maxRounds: 1 });
-  assert.ok(!again.waits || Object.values(again.waits).every((w) => w.n >= 1));
+  const fresh = harness();
+  fresh.document.body.append(new SelectNode([{ text: 'Select one', value: '' }, { text: 'Consumer Goods', value: 'cg' }], { id: 'commodity', ariaLabel: 'Commodity category', value: 'cg' }));
+  assert.equal(total(again), total(await fresh.kit.fill([], { maxRounds: 1 })));
+});
+
+// Review of PR #476: a wait that ran to its limit in a fill not recorded was left out of its tally.
+test('a fill not recorded tallies a wait that ran to its limit too', async () => {
+  const h = harness();
+  const mask = new FakeNode('div', { className: 'x-loading-mask' });
+  mask.setAttribute('class', 'x-loading-mask');
+  h.document.body.append(mask);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const waits = Object.values(plain(report.waits) ?? {});
+  assert.ok(waits.some((w) => w.limit >= 1), JSON.stringify(report.waits));
+  assert.ok(waits.every((w) => w.limit <= w.n));
 });
 
 // FL live run 5, 2026-10-21 (W43-21): GEICO cleared the business description when the agent
