@@ -108,10 +108,15 @@ export async function count() {
 }
 // What Clear log's question names: the events waiting (`n`) and the number of the last event logged
 // (`seq`), which a new event changes even when the capped queue's count doesn't (MAX_EVENTS: the
-// oldest go for it). clearLog({ expected }) deletes only while both are still these.
+// oldest go for it). clearLog({ expected }) deletes only while both are still these. Read under the
+// log's lock, so a write another panel has under way (its number saved, its queue not yet) is
+// finished first and counted.
 export async function logMark() {
-  const n = await count();
-  return { n, seq: (await local.get(SEQ_KEY)) ?? 0 };
+  await queue;
+  return exclusive(async () => ({
+    n: ((await local.get(LOG_KEY)) ?? []).length + ((await local.get(REJECTED_KEY)) ?? []).length,
+    seq: (await local.get(SEQ_KEY)) ?? 0,
+  }));
 }
 
 export async function exportLog() {

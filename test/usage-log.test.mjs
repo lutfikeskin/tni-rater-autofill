@@ -204,6 +204,40 @@ test('Clear with what was asked about deletes nothing after an event logged into
   await usage.clearLog();
 });
 
+// Two panels share the stored log under one Web Lock: the question's mark is read under it, so it
+// waits for a write the other panel has under way (its number saved, its queue not yet), and counts it.
+test('Clear log\'s question waits for another panel\'s write under way', { skip: !globalThis.navigator?.locks && 'no Web Locks in this Node' }, async () => {
+  const saved = globalThis.chrome;
+  const data = {};
+  let pause = null;
+  globalThis.chrome = {
+    storage: { local: {
+      get: async (key) => ({ [key]: structuredClone(data[key]) }),
+      set: async (items) => { if ('usageLog' in items && pause) await pause.promise; Object.assign(data, structuredClone(items)); },
+    } },
+    runtime: { getManifest: () => ({ version: 'test' }) },
+  };
+  try {
+    const writer = await import('../sidepanel/usage-log.js?panel=writer');
+    const asker = await import('../sidepanel/usage-log.js?panel=asker');
+    await writer.log({ type: 'page_view', page: 'A' });
+    pause = Promise.withResolvers();
+    const writing = writer.log({ type: 'page_view', page: 'B' });
+    for (let i = 0; i < 50 && data.usageSeq !== 2; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(data.usageSeq, 2, 'the writer saved its number and waits to save its queue');
+    let mark = null;
+    const marking = asker.logMark().then((m) => { mark = m; });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(mark, null, 'the question waits for the write');
+    pause.resolve();
+    await writing;
+    await marking;
+    assert.deepEqual(mark, { n: 2, seq: 2 });
+  } finally {
+    globalThis.chrome = saved;
+  }
+});
+
 test('a reply that does not account for every event sent keeps them in the queue', async () => {
   let requests = fakeServer(() => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('an HTML page'); } }));
   await usage.saveSettings({ serverUrl: 'http://usage.test' });
