@@ -1,3 +1,4 @@
+// @ts-check
 // The side panel's decision logic for a page's report: which report is whose, what is left for the
 // agent, the answers and their sources, and when the quote counts as finished. No DOM: the report,
 // the steps and the dock draw it.
@@ -7,6 +8,7 @@ import { neverReason } from '../../src/ai/common.js';
 import { state } from './core.js';
 import { stepScope, tabStep } from './scope.js';
 import { pageOf } from './usage.js';
+/** @import { FillReport } from '../../types.js' */
 
 // Which report a page has: its tab and page (on a page or step about one vehicle or driver, that
 // one: stepScope) and, on a one-address application (AmWINS, GEICO), its step, which changes while

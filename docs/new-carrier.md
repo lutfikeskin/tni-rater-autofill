@@ -2,6 +2,8 @@
 
 Read this when adding a carrier, product, state, or materially different vehicle/coverage flow. A generic label match is not evidence of full support.
 
+To track the work, open an issue from the **New carrier or product** template ([new-carrier.md](../.github/ISSUE_TEMPLATE/new-carrier.md)): one box for each place below where a carrier is registered or checked, by step. [test/new-carrier.test.mjs](../test/new-carrier.test.mjs) checks that the template names every file the adapter steps link to and that its paths exist. When a step here gains a place to register, add its box there.
+
 ## Capture the behavior
 
 Define the initial supported scope: carrier/product, states, operations, vehicle types, driver/vehicle counts, requested coverages, and known exceptions. Reuse existing intake concepts where their meanings agree.
@@ -34,5 +36,5 @@ After pilot runs, inspect `npm run coverage` and agent reports. Use [learning](l
 
 - [progressive.js](../src/carriers/progressive.js), [replay page](../test/replay/index.html), [e2e.mjs](../scripts/e2e.mjs): questions by data-model name or text, and server-backed replay (also renumbered).
 - [amwins.js](../src/carriers/amwins.js), [AmWINS fixtures](../test/fixtures/amwins/), [amwins-mock.mjs](../scripts/amwins-mock.mjs): selectors, repeated sections, and saved-page behavior.
-- [geico.js](../src/carriers/geico.js), [GEICO fixture](../test/fixtures/geico/), [geico-fixture.mjs](../scripts/geico-fixture.mjs), [geico-mock.mjs](../scripts/geico-mock.mjs): a single-page application on one address. New with it: controls in open shadow roots, the step read from the progress bar, rules kept to their steps and to one form of a step, unit forms held while the panel has another unit picked, stop steps the agent does, and a fixture builder that refuses to write on a privacy finding. Mapped from saved pages and captures; not yet checked live.
+- [geico.js](../src/carriers/geico.js), [GEICO fixture](../test/fixtures/geico/), [geico-fixture.mjs](../scripts/geico-fixture.mjs), [geico-mock.mjs](../scripts/geico-mock.mjs): a single-page application on one address. New with it: controls in open shadow roots, the step read from the progress bar, rules kept to their steps and to one form of a step, unit forms held while the panel has another unit picked, stop steps the agent does, and a fixture builder that refuses to write on a privacy finding. Mapped from saved pages and captures; run on live quotes since 2026-10-21.
 - [consistency tests](../test/consistency.test.mjs): host permissions and shared contracts; [testing](testing.md): commands and limits.
