@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Run local intake PDFs against the saved AmWINS mock and captured FAO page replays.
 // No carrier or AI requests. Results contain synthetic test inputs; keep them outside source.
 import fs from 'node:fs';
