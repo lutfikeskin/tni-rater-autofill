@@ -403,7 +403,9 @@ async function runAssist(frames, ctx) {
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length, ...leaveCounts(fresh),
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
         reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
-        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) }, ...aiLeaveEvents(fresh, ctx, redactor(redactionTerms(record))));
+        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) },
+        // A discarded answer left nothing to the agent: no ai_leave (CodeRabbit on PR #413).
+        ...(why ? [] : aiLeaveEvents(fresh, ctx, redactor(redactionTerms(record)))));
       if (why) { dropped(`it answered after ${why}, so nothing was applied`); return; }
       fresh.forEach(x => state.aiCache.set(sigOf(x), {
         ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),

@@ -3151,6 +3151,8 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   assert.equal(t.logged[0].type, 'ai_suggest');
   assert.equal(t.logged[0].tokensIn, 10, 'the spent tokens are logged');
   assert.equal(t.logged[0].error, 'Answer discarded: the tab or page changed.');
+  // CodeRabbit on PR #413: a discarded answer left nothing to the agent, so no ai_leave is logged.
+  assert.deepEqual(t.logged.map((e) => e.type), ['ai_suggest']);
   // The same answer while the page is unchanged is shown.
   const fresh = assistHarness({ suggest: async () => answer });
   await fresh.context.runAssist([{}], fresh.ctx);
