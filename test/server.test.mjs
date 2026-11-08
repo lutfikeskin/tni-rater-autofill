@@ -631,7 +631,7 @@ test('keeps an intake marked as a test run, and only a yes/no mark', async () =>
 
 test('keeps the agent\'s settings, booleans and where usage goes only', async () => {
   const dataDir = tmp();
-  const values = { autoFollowUps: true, autoAdvance: false, autoPages: false, overwrite: false, aiOn: true, aiAuto: false, aiKey: true, uploads: 'central' };
+  const values = { autoFollowUps: true, autoAdvance: false, autoPages: false, overwrite: false, aiOn: true, aiAuto: false, aiNames: true, aiKey: true, uploads: 'central' };
   await withServer({ dataDir }, async ({ post }) => {
     await post({ events: [
       ev({ type: 'agent_settings', filled: undefined, reason: 'changed', changed: 'autoAdvance', values }),

@@ -521,13 +521,13 @@ test('usage counters ignore malformed values and reasoning is already included i
 test('Luna settings ignore legacy providers and use only Luna opt-in fields', () => {
   const legacy = { aiOn: true, aiAuto: true, aiKey: 'legacy', jevKey: 'typesafe', jevModel: 'jev-old', lunaKey: 'openai' };
   assert.deepEqual(settingsFrom(legacy), {
-    provider: 'luna', on: true, auto: false, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: false, names: true, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
   });
   assert.deepEqual(settingsFrom({ ...legacy, lunaAuto: true, aiProvider: 'jev' }), {
-    provider: 'luna', on: true, auto: true, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: true, names: true, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
   });
   assert.deepEqual(settingsFrom({ aiProvider: 'jev', jevKey: 'typesafe', jevModel: 'jev-old' }), {
-    provider: 'luna', on: true, auto: false, apiKey: '', proxy: null, ready: false, model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: false, names: true, apiKey: '', proxy: null, ready: false, model: DEFAULT_MODEL,
   });
   assert.equal(settingsFrom({ aiProvider: 'luna', aiKey: 'legacy', jevKey: 'typesafe' }).apiKey, '');
   assert.equal(settingsFrom({ lunaKey: 'openai', lunaAuto: 'true' }).auto, false);
@@ -535,9 +535,11 @@ test('Luna settings ignore legacy providers and use only Luna opt-in fields', ()
 
 test('suggestions are on until the agent turns them off; without a key of their own, Luna goes through the usage server', () => {
   const server = { serverUrl: 'https://usage.example', serverToken: 'upload' };
-  assert.deepEqual(settingsFrom({}, server), { provider: 'luna', on: true, auto: false, apiKey: '',
+  assert.deepEqual(settingsFrom({}, server), { provider: 'luna', on: true, auto: false, names: true, apiKey: '',
     proxy: { url: 'https://usage.example/v1/luna', token: 'upload' }, ready: true, model: DEFAULT_MODEL });
   assert.equal(settingsFrom({ aiOn: false }, server).on, false, 'turned off stays off');
+  // The driver-name check has its own switch (maintainer, 2026-11-07, AI-15): on unless turned off, whatever Suggest answers says.
+  assert.deepEqual([settingsFrom({ aiOn: false }, server).names, settingsFrom({ lunaNames: false }, server).names, settingsFrom({ lunaNames: 'false' }, server).names], [true, false, true]);
   assert.equal(settingsFrom({ lunaKey: 'own' }, server).proxy, null, "the agent's own key goes straight to OpenAI");
   assert.equal(settingsFrom({}, { serverUrl: '' }).ready, false, 'no server, no key: not ready');
   assert.equal(settingsFrom({}, { serverUrl: 'not a url' }).proxy, null);
