@@ -402,3 +402,30 @@ test('every event names its install; a full log says how many oldest events it d
     delete globalThis.chrome;
   }
 });
+
+// #422 review: the footer said a problem report reached TNI for any upload that ended `ok`, though
+// one the server refused is parked, and an empty queue's health check ends `ok` too. Where the report
+// itself is now says it: still waiting here, set aside as refused, or gone, which only a confirmed
+// upload does.
+test('an event is found waiting, set aside as refused, or sent', async () => {
+  await usage.clearLog();
+  await usage.saveSettings({ serverUrl: 'http://usage.test' });
+  let refuse = true;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const rejected = refuse ? body.events.map((e, index) => ({ index, error: 'unknown field' })) : [];
+    return { ok: true, json: async () => ({ accepted: body.events.length - rejected.length, duplicates: 0, rejected }) };
+  };
+  await usage.log({ id: 'report-1', type: 'problem_report', text: 'x' });
+  assert.equal(await usage.eventFate('report-1'), 'queued');
+  await usage.upload();
+  assert.deepEqual([usage.lastUpload().state, await usage.eventFate('report-1')], ['ok', 'refused']);
+  refuse = false;
+  await usage.log({ id: 'report-2', type: 'problem_report', text: 'y' });
+  await usage.upload();
+  assert.equal(await usage.eventFate('report-2'), 'sent');
+  // Gone from this computer with no receipt for it (Clear, or the queue's cap): not known to be sent.
+  await usage.log({ id: 'report-3', type: 'problem_report', text: 'z' });
+  await usage.clearLog();
+  assert.equal(await usage.eventFate('report-3'), 'unknown');
+});
