@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Headroom of Luna's request bound per carrier (audit 2026-11-07, AI-01). Each carrier's TNI rules go
 // in full with every page review, so a growing rulebook makes every request longer; at the bound a
 // question can't be asked at all (RequestTooLarge: "Answer it manually"). This fails in CI while
