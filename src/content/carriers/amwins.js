@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // AmWINS' page adapter: what its application pages draw that no other carrier does, injected on
 // AmWINS' tabs only (the carrier config's `pageAdapter`), in the kit's world and the usage
 // recorder's. Classic script, no imports; it registers itself as globalThis.__raterAdapter. All of
@@ -22,7 +21,7 @@
       // Every row gets its own key, name#<row> numbered from 1, so an edit or answer on one vehicle
       // stays on that vehicle. The first row too: a plain name saved before (field key version 2)
       // could be any row's edit, and protects them all (field-key.js rowKeyBase).
-      rowName: (el) => {
+      rowName: (/** @type {HTMLInputElement} */ el) => {
         if (!el.name || el.type?.toLowerCase() === 'radio') return null;
         const row = String(el.id ?? '').startsWith(el.name) ? el.id.slice(el.name.length).match(/^(\d+)_\d+_/)?.[1] : null;
         return row ? `${el.name}#${Number(row) + 1}` : null;

@@ -98,7 +98,7 @@ const schemaFingerprint = () => crypto.createHash('sha256').update(JSON.stringif
 // Every schema version's fingerprint, one entry a version. A version's entry is never rewritten:
 // a contract that changed is a new version with its own entry, so the fingerprint can't be brought
 // up to date while the version stays (the review of #378).
-const VERSION_FINGERPRINTS = { 1: '4e730dd257f0' };
+const VERSION_FINGERPRINTS = { 1: '4e730dd257f0', 2: 'df6f4ac901ac' };
 test('the event contract is shared, and its version goes up whenever it changes', () => {
   assert.equal(COMMON, SCHEMA.COMMON, 'the server keeps the shared COMMON');
   assert.deepEqual(Object.keys(EVENT_FIELDS), Object.keys(SCHEMA.EVENT_FIELDS), 'the server knows every shared event type, and only those');
@@ -292,6 +292,7 @@ const NOT_TRACKED = {
   'summary.json': "a file inside a developer recording's zip",
   'recording.json': "a file inside a developer recording's zip",
   '.claude/worktrees': 'local git worktrees agents work in, ignored',
+  'THIRD_PARTY_NOTICES.txt': 'written into each packaged copy by scripts/package.mjs',
 };
 // A document's paths that aren't in the repository: backticked ones under its own folders, backticked
 // file names with no folder (a root file, or a tracked file's own name), and relative links.
