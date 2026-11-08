@@ -1392,3 +1392,10 @@
  * @typedef {import('zustand/vanilla').StoreApi<PanelState>} PanelStore
  */
 
+/**
+ * A fill the panel says is running, over its 'fill-watch' port to the service worker
+ * (sidepanel/panel/fill-watch.js to src/fill-watch.js): the worker stops that run (the kit's
+ * stopRun) if the port goes while it runs. The panel says `{ tabId: null }` once the fill ended.
+ * @typedef {{ tabId: number, run: string, world: 'MAIN' | 'ISOLATED' }} WatchedRun
+ */
+
