@@ -2,7 +2,7 @@
   "compilerOptions": {
     "allowJs": true,
     "jsx": "react-jsx",
-    "checkJs": false,
+    "checkJs": true,
     "noEmit": true,
     "target": "ES2023",
     "lib": ["DOM", "ES2023"],

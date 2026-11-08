@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // What a period's usage events say that the review (scripts/review.mjs) doesn't show: which builds
 // logged them, how far quotes got, what was left to the agent and why, what held Continue, fill
 // errors, signs the carrier changed a page, fields the server dropped, the AI assistant by build,
