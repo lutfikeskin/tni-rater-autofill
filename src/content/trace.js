@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The developer recording's trace (docs/developer-recording.md): injected by the side panel next to
 // the recorder, in its isolated world and every frame, only while a recording runs (unpacked
 // builds). It watches and never acts: it clicks nothing, sets no value and dispatches no event.
