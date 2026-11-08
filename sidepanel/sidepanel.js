@@ -106,7 +106,8 @@ function wire() {
   mountDetails($('details-view'), { close: () => closeDetails(), showEmpty: () => showEmpty() });
   // The page's answers: their filters, an earlier page's answers on this tab (read-only) and back to
   // this page's, what the tags mean, and Clear the marks.
-  mountCards($('cards-root'));
+  // A rater's logo on the "open a rater" card opens its agent site in a new tab (nothing is filled).
+  mountCards($('cards-root'), { portal: (url) => { if (inExtension && url) chrome.tabs.create({ url }); } });
   mountPickers($('pickers'), { pick: (list, i) => pickUnit(list, i) });
   mountFeed($('feed-root'), {
     setFilter: (filter) => setFilter(filter),

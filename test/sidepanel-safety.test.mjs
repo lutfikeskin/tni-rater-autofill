@@ -18,7 +18,7 @@ import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
-import { quoteProgress, stopScreen } from '../src/carriers.js';
+import { quoteProgress, ratersSaid, stopScreen } from '../src/carriers.js';
 import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
@@ -7652,6 +7652,28 @@ function siteHarness(carrier, step, filled = false) {
   context.renderSite();
   return Object.assign(ui, { siteTrack: plain(state.siteTrack) });
 }
+
+// Audit 2026-11-07, UX-14: the header's logo and caption, the dock's raters and review mode's words
+// come from the carrier's `display`, not from the panel's code.
+test('the header, the dock and review mode say the carrier as its display says it', () => {
+  const page = siteHarness({ ...amwins, quoteSteps: undefined });
+  assert.equal(page['site-caption'].textContent, 'Commercial auto');
+  assert.doesNotMatch(extractFunction('renderSite'), /assets\/raters|'Commercial auto'/);
+  assert.match(extractFunction('renderSite'), /const src = carrier\?\.display\?\.logo \|\| null;/);
+  const off = dockHarness({ carrier: null, extra: { ratersSaid } });
+  assert.equal(off.dock().sub, 'Progressive, GEICO or AmWINS.');
+  const review = (carrier) => {
+    const state = { tab: { carrier }, intake: { record: { operations: { businessClass: 'Towing' } } }, cards: {} };
+    const context = { state, supportedClass: () => false, issueSaid: (c) => c };
+    vm.runInNewContext(extractFunction('showReviewMode'), context);
+    context.showReviewMode();
+    return state.cards.review.text;
+  };
+  assert.equal(review(geico), 'GEICO\'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.');
+  assert.equal(review({ name: 'New carrier' }), 'New carrier\'s rules weren’t written for this business class. Confirm the marked answers: Continue waits on each page.');
+  // A logo opens the agent site in a new tab, only in the extension.
+  assert.match(SIDEPANEL, /mountCards\(\$\('cards-root'\), \{ portal: \(url\) => \{ if \(inExtension && url\) chrome\.tabs\.create\(\{ url \}\); \} \}\);/);
+});
 
 test('on a stop step the panel offers no fill; on the other steps it names the step', () => {
   // The dock: on a stop step no button at all, and why; elsewhere Fill, named after the step.

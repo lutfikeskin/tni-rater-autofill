@@ -318,7 +318,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 /* Steps 2 and 3: the raters to open, the unit pickers, the answers */
 .waiting { padding: 14px 12px; }
 .rater-logos { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
-.rater-logos img { height: 14px; width: auto; }
+.rater-logo { display: inline-flex; align-items: center; padding: 6px 8px; margin: -6px -8px; background: none; border: 0; border-radius: var(--radius-sm); cursor: pointer; }
+.rater-logo:hover { background: var(--surface-sunken); }
+.rater-logos img { height: 14px; width: auto; display: block; }
 .pickers { padding: 8px 12px 0; display: grid; gap: 6px; }
 .pickers:empty { display: none; }
 .picker { display: flex; align-items: center; gap: 8px; }

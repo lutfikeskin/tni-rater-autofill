@@ -73,10 +73,19 @@ test('a card is drawn as issueCard drew it, and its buttons do what they say', (
 });
 
 test('off a rater the page view says which to open, or why the page can\'t be read, with the raters\' logos', () => {
-  const { container } = render(<Cards />);
+  const opened = [];
+  const { container } = render(<Cards act={{ portal: (url) => opened.push(url) }} />);
   act(() => { state.cards = { waiting: 'Open the client’s quote on one of these raters.' }; });
   expect([$(container, 'fill-waiting').hidden, $(container, 'fill-waiting-text').textContent]).toEqual([false, 'Open the client’s quote on one of these raters.']);
-  expect([...container.querySelectorAll('.rater-logos img')].map((i) => [i.alt, !!i.getAttribute('src')])).toEqual([['Progressive', true], ['GEICO', true], ['AmWINS', true]]);
+  expect([...container.querySelectorAll('.rater-logos img')].map((i) => [i.alt, i.getAttribute('src')])).toEqual([
+    ['Progressive', 'assets/raters/progressive.svg'], ['GEICO', 'assets/raters/geico.gif'], ['AmWINS', 'assets/raters/amwins.svg']]);
+  // Audit 2026-11-07, UX-14: each logo is a button that opens its carrier's agent site (the
+  // carrier's `display`), not a picture the agent can't click.
+  const logos = [...container.querySelectorAll('.rater-logos button')];
+  expect(logos.map((b) => [b.type, b.dataset.carrier, b.title])).toEqual([
+    ['button', 'progressive', 'Open Progressive in a new tab'], ['button', 'geico', 'Open GEICO in a new tab'], ['button', 'amwins', 'Open AmWINS in a new tab']]);
+  for (const b of logos) fireEvent.click(b);
+  expect(opened).toEqual(['https://www.foragentsonly.com/home/', 'https://gateway2.geico.com/', 'https://myagency.amwinsadmittedplacement.com/commerciallines']);
   act(() => { state.cards = { waiting: null }; });
   expect($(container, 'fill-waiting').hidden).toBe(true);
 });

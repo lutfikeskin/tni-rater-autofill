@@ -256,6 +256,7 @@ test('commands named in AGENTS.md and the README exist', () => {
 const NOT_TRACKED = {
   'src/content/pagekit.js': 'built from src/kit/ by scripts/lib/kit.mjs',
   'docs/HANDOFF.md': 'a local note, named as local',
+  '.claude/worktrees': "a session's local worktrees, named as not linted",
   'docs/kesif-plani.md': 'a local file outside the repository, named as such',
   'src/content/page-watch.js': "developer-recording.md's proposal, not built",
   'test/fixtures/recording': "developer-recording.md's proposal, not built",
