@@ -7,6 +7,7 @@ import { normalizeIntake, intakeNotes } from '../src/normalize.js';
 import { sourceFields } from '../src/intake-source.js';
 import { buildNotesReview, notesWarnings } from '../src/ai/luna.js';
 import { buildPlan } from '../src/plan.js';
+import { fieldInfo } from '../src/schema.js';
 import { amwins } from '../src/carriers/amwins.js';
 
 // The intake form changed on 2026-10-19: the other-insurance-products box was removed, the claims
@@ -101,4 +102,40 @@ test('Luna reads the claims box and the Additional Notes box; AmWINS reads POP n
   assert.equal(notesWarnings([{ line: 'Wants hired auto', ntl: false, coverageChange: true, businessYears: null, businessSince: null, generalLiability: false }], claimsReview)[0].path, 'claims.text');
   const pop = normalizeIntake({ ...newRaw, ins_type_1: 'Commercial Auto', additional_notes: 'POP document unavailable' }, today).record;
   assert.match(buildPlan(pop, amwins).find((s) => s.re === '^disclosure details$').value, /POP document unavailable/);
+});
+
+// Client details offer a choice field's options as a dropdown (record.js fieldSaid): every option
+// the blank intake form's dropdown offers must be among them, or an agent can't enter the client's
+// own answer (audit 2026-11-07, DATA-08: $300K CSL, State Minimum and others were missing).
+test('every intake form dropdown offers only options its client details field lists', async () => {
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(new URL('../docs/intake-form/intake-form-2026-10.pdf', import.meta.url))) }).promise;
+  /** @type {Record<string, string[]>} */
+  const boxes = {};
+  for (let p = 1; p <= doc.numPages; p++) {
+    for (const a of await (await doc.getPage(p)).getAnnotations()) {
+      if (a.fieldType === 'Ch') boxes[a.fieldName] = (a.options ?? []).map((o) => o.displayValue).filter((o) => o !== 'Select*');
+    }
+  }
+  // The form's boxes behind each choice field; yes/no and state boxes are read as bool and state.
+  const PATHS = [
+    [/^biz_class$/, 'operations.businessClass'], [/^veh_ownership$/, 'operations.vehicleOwnership'],
+    [/^veh_type_\d$/, 'vehicles[].type'], [/^trl_type_\d$/, 'trailers[].type'], [/^trl_ownership$/, 'trailerInfo.ownership'],
+    [/^trl_hitch_type$/, 'trailerInfo.hitch'], [/^ins_type_1$/, 'priorInsurance[].type'], [/^ins_limit_1$/, 'priorInsurance[].limit'],
+    [/^auto_liability$/, 'coverage.autoLiability'], [/^auto_liab_limit$/, 'coverage.autoLiabLimit'], [/^gen_liab_limit$/, 'coverage.glLimit'],
+    [/^marital_stat_/, 'drivers[].maritalStatus'],
+  ];
+  const yesNo = (o) => o.length === 2 && o.includes('Yes') && o.includes('No');
+  const states = (o) => o.includes('AL') && o.includes('WY');
+  const checked = new Set();
+  for (const [name, options] of Object.entries(boxes)) {
+    if (name === 'cargo_limit_ded') continue; // an amount pair, read as the cargo limit and deductible (money)
+    if (yesNo(options) || states(options)) continue;
+    const path = PATHS.find(([re]) => re.test(name))?.[1];
+    assert.ok(path, `${name}: a dropdown with no choice field (add it to PATHS)`);
+    const info = fieldInfo(path);
+    assert.equal(info.kind, 'choice', path);
+    assert.deepEqual(options.filter((o) => !info.options.includes(o)), [], `${name} offers options ${path} doesn't list`);
+    checked.add(path);
+  }
+  assert.ok(checked.has('coverage.autoLiabLimit') && checked.has('priorInsurance[].limit'));
 });
