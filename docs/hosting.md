@@ -162,9 +162,25 @@ root-owned, and a non-root process that can't write there would answer every upl
 `server/Dockerfile`, check `ls -ld /data` and a test write as `node` in the running container
 (or add an entrypoint that chowns `/data` first), then redeploy and confirm `/v1/events` still
 stores an event.
-Deploy a server change that accepts new event fields before releasing the extension that sends
-them: an older server drops unknown fields (and refuses layouts over its size limit) rather than
-storing them. The run-identity fields (`run`, `rules`, `settings`, `step` on fill and field-change
+The event contract, which event types there are and which fields each keeps (`COMMON`,
+`EVENT_FIELDS`), with the profile's text tests (`ID_LIKE`, `LIMIT`, `PROFILE_UNITS`) and the schema's
+version, is one module the extension and the server both import: `src/usage-schema.js`, which has
+no imports and which the image copies (`server/Dockerfile`; `railway up` uploads it, and its text is
+in the `server` hash). The server adds agent defaults' fields to its own copy and checks every
+value's shape itself. Every event carries the `schema` it was logged under (`SCHEMA_VERSION`;
+none before 2026-11-07), and `/v1/health` names the server's (`schema`). An event of a newer schema
+than the server's is refused, per event in the reply's `rejected`, as `schema newer than server
+(N > M)`; the extension keeps it aside like an unknown event type and sends it again on each
+upload, so once the server is deployed it is stored with every field. Until then nothing of that
+extension's is stored (its events wait on the agents' computers, which keep 20,000 each), so deploy
+soon after. A change to the contract (an event type, a field, a profile group or field) changes its
+fingerprint, and `test/consistency.test.mjs`, which holds each version's fingerprint, fails until
+`SCHEMA_VERSION` is raised and the new version's fingerprint (which the failure names) is added,
+earlier versions' entries left as they are. A shape check alone (tighter
+validation, no new field) needs no new version. An event without `schema`, from an extension
+released before it, is kept as before: such an extension's new fields still need the server
+deployed first, as an older server drops unknown fields (and refuses layouts over its size limit)
+rather than storing them. The run-identity fields (`run`, `rules`, `settings`, `step` on fill and field-change
 events, [learning](learning.md)) are such a change: deploy the server that keeps them before the
 extension that sends them, or every fill run until then is stored with those names in `dropped`.
 That server also refuses an event whose run id, rules hash, settings object or step is malformed
@@ -172,7 +188,7 @@ That server also refuses an event whose run id, rules hash, settings object or s
 commit, optionally `+dirty`) only in those shapes. Every event's common fields are kept only in their shapes (`COMMON_SHAPES`), and an event with one out of its shape is refused (in the reply's `rejected`, naming the field), never stored with it or trimmed: `t` an ISO time in UTC (`…Z`), a real date and time (not `2025-02-30` or `24:00`), from 2025 to 30 days ahead of the server's clock; `agent` initials as typed (1–12 letters, digits, spaces and `. ' -`); `session` a UUID; `intakeId` the intake PDF's SHA-256 (64 lowercase hex); `carrier` a carrier id's shape (lowercase letters, digits and `-`, at most 20, so a new carrier needs no server change); `page` a page name or path (at most 200 of letters, digits, space and `_ . : / ~ % + ( ) , -`); `v` a version number or `dev`. Each may be null but `t`. The request's `agent`, which fills an event without one, is used only in that shape, otherwise not at all. Every event stored from the pilot up to 2026-11-06 (98,872) passes these checks. It refuses events from the local test page (`carrier: 'test'`, localhost), which are
 no quote; the review scripts also skip the ones stored before. The server names what it dropped on
 the stored event (`dropped`: field names only, at most 20, `droppedMore` counts the rest), and
-`/v1/health` names its version (`server`, a hash of every file the image copies, in `server/Dockerfile`'s order: `server/index.mjs`, `server/dashboard.mjs`, `server/agent-defaults.mjs` and `server/privacy.html`; a test holds the list to the Dockerfile's). `node scripts/server-check.mjs` compares that with this checkout, without
+`/v1/health` names its version (`server`, a hash of every file the image copies, in `server/Dockerfile`'s order: `server/index.mjs`, `server/dashboard.mjs`, `server/agent-defaults.mjs`, `server/privacy.html` and `src/usage-schema.js`; a test holds the list to the Dockerfile's; and `schema`, its schema version). `node scripts/server-check.mjs` compares that with this checkout, without
 sending any event: after a deploy it should say `same`.
 
 The server accepts `intake_profile`, a profile of the client's business (`PROFILE` in
