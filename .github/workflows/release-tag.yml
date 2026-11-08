@@ -1,0 +1,54 @@
+# Tags each extension version and gives it a GitHub Release (audit 2026-11-07, ORG-13): when a push
+# to main brings the commit that set manifest.json's version, that commit is tagged v<version>, with
+# the pull requests merged since the version before it as notes (scripts/release-notes.mjs).
+# Only a version the push brought is tagged: one already on main before it never is (the
+# maintainer, 2026-11-07: no backfill), so the first run tags nothing until the next version bump.
+# A tag that exists already is left as it is when it names the same commit, and fails the run
+# when it names another. It uploads nothing to the Chrome Web Store (docs/chrome-web-store.md).
+name: Release tag
+
+on:
+  push:
+    branches: [main]
+    paths: [manifest.json]
+
+# No concurrency group: GitHub keeps one pending run per group and cancels the one before, which
+# would drop a version bump's run when another manifest change follows it (the review of #429).
+# Two runs never tag the same version: only the push that brought a version's commit tags it.
+
+jobs:
+  tag:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write   # the tag and the release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the history back to the previous version
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: release
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: node scripts/release-notes.mjs --ref origin/main --before "$BEFORE" --out notes.md >> "$GITHUB_OUTPUT"
+      - if: steps.release.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TARGET: ${{ steps.release.outputs.target }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          existing=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" || true)
+          if [ -n "$existing" ] && [ "$existing" != "$TARGET" ]; then
+            echo "::error::$TAG already names $existing, not $TARGET: check it by hand."
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$TAG already has a release: left as it is."
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$TARGET" --title "$VERSION" --notes-file notes.md
+          fi
