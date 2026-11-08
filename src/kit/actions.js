@@ -88,11 +88,24 @@ export function findAdvanceButton(pattern, { notWithin = null } = {}) {
     if (!el.getClientRects().length || /** @type {HTMLButtonElement} */ (el).disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el) || closestOwn(el, 'stepLinks')) continue;
     if (notWithin && insideOf(el, notWithin)) continue;
     const text = buttonText(el);
-    const committing = NEVER_ADVANCE.test(text.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue'));
+    // Its words ("Save & Continue" read as Continue) and its aria-label and title, as for a helper.
+    const committing = NEVER_ADVANCE.test(namesOf(el, text.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue')));
     if (text.length > 40 || committing || !re.test(text)) continue;
     if (!best || best.contains(el)) best = el;
   }
   return best;
+}
+
+/**
+ * A button's words and the name an icon button has instead (aria-label, title), checked against the
+ * commit words: a button found by its `token` (id, href, onclick, data-*), or an advance whose words
+ * read as Continue, is held to them too (audit 2026-11-07, CARR-13).
+ * @param {Element} el
+ * @param {string} text its words
+ * @returns {string}
+ */
+function namesOf(el, text) {
+  return [text, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ');
 }
 
 /**
@@ -127,9 +140,7 @@ export function findButton(step, { disabledToo = false } = {}) {
     if (step.within && !insideOf(el, step.within)) continue;
     if (!disabledToo && (/** @type {HTMLButtonElement} */ (el).disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el))) continue;
     const text = buttonText(el);
-    // Its words, and the name an icon button has instead (aria-label, title): a button found by its
-    // `token` (id, href, onclick, data-*) is checked by them too (audit 2026-11-07, CARR-13).
-    const named = [text, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ');
+    const named = namesOf(el, text);
     if (step.moveOn && step.within ? NEVER_ADVANCE.test(named) : NEVER_CLICK.test(named)) continue;
     const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
       ...[...el.attributes].filter((a) => a.name.startsWith('data-')).map((a) => a.value)].join(' ');

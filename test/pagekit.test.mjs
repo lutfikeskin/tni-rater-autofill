@@ -6187,6 +6187,27 @@ test('issuing, paying, accepting, agreeing, confirming and finalizing are never 
   assert.equal(report.advanced, undefined);
 });
 
+// Review on PR #491: the advance is held to a button's aria-label and title as a helper is, so a
+// Continue whose name is a commit word is never the click that moves the quote on.
+test('a Continue button named Bind policy is not the advance; Save & Continue still is', async () => {
+  const run = async (buttons, text) => {
+    const h = harness({ pathname: '/quote' });
+    const clicks = [];
+    for (const [words, attrs] of buttons) {
+      const button = new FakeNode('button', { textContent: words, attrs });
+      button.onclick = () => clicks.push(words);
+      h.document.body.append(button);
+    }
+    const report = await h.kit.fill([], { maxRounds: 2, advance: { text } });
+    return [clicks, report.advanced];
+  };
+  const [refused, advanced] = await run([['Continue', { 'aria-label': 'Bind policy' }], ['Next', { title: 'Submit application' }]], '^(continue|next)$');
+  assert.deepEqual(refused, []);
+  assert.equal(advanced, undefined);
+  const [clicked] = await run([['Save & Continue', { title: 'Continue' }]], '^save & continue$');
+  assert.deepEqual(clicked, ['Save & Continue']);
+});
+
 // GEICO's add rows and the chooser behind Add Vehicle or Trailer (FL live run, 2026-10-21): a helper
 // kept to a container (`within`) clicks only there, and with `moveOn` a Next there (it opens a form,
 // no step's move) is clicked, never one elsewhere, nor Cancel, Save, Discard in the same container.
