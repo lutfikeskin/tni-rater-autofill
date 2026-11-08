@@ -11,8 +11,8 @@ import { panelStore } from './state-store.js';
 // agent defaults: the quote's defaults, once answered, as a pill among the tools.
 import { DefaultsChip } from './agent-defaults/view.jsx';
 
-// `act`: details (the name: client details open or closed), pdf, replace, newQuote, clear, and the
-// question's yes and cancel.
+// `act`: details (the name: client details open or closed), pdf, summary (the quote summary), replace,
+// newQuote, clear, and the question's yes and cancel.
 function ClientHead({ act }) {
   const client = useStore(panelStore, (s) => s.client);
   const detailsOpen = useStore(panelStore, (s) => !!s.detailsOpen);
@@ -30,6 +30,7 @@ function ClientHead({ act }) {
         <div className="client-tools">
           <DefaultsChip />
           <button type="button" id="open-pdf" className="ghost intake-btn" title="Show the intake PDF" hidden={!client?.pdf} onClick={() => act.pdf()}><span className="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
+          <button type="button" id="quote-summary" className="ghost tool-btn" aria-label="Quote summary" title="Quote summary: every answer of this quote, with where it came from" onClick={() => act.summary()}><svg aria-hidden="true"><use href="#list" /></svg></button>
           <button type="button" id="replace" className="ghost tool-btn" aria-label="Change file" title="Change file: load another intake PDF" onClick={() => act.replace()}><svg aria-hidden="true"><use href="#file-in" /></svg></button>
           <button type="button" id="new-quote" className="ghost tool-btn" aria-label="New quote with this intake" title="New quote with this intake: forgets this quote’s fills, marks and clicks; keeps the intake, your corrections and checks"
             disabled={newQuoteOff} onClick={() => act.newQuote()}><svg aria-hidden="true"><use href="#restart" /></svg></button>
