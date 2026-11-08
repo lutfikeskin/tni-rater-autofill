@@ -31,6 +31,25 @@ A carrier rule finds its question by what it is, never by a remembered question 
 
 A choice is the option reading as the answer, then as one of its aliases (`choiceAliases`), then the one option beginning with their words, then the one having them, whole words only ("No" doesn't begin "None" or "Not sure", and "Van" isn't in "Caravan"). An option found by one of those two fallbacks is still the answer given, but the engine isn't sure of it: the report lists it as a check item (amber on the page, never green) naming the option and how it matched (`matched`: `prefix` or `contains`), on the fill that chose it and on each later fill that finds the page holding it (the maintainer, 2026-11-07). A yes/no answer takes no fallback: only Yes or No (Y, true / N, false as an option's value) or the step's own aliases, so an option worded otherwise (Progressive's Refrigeration Breakdown "Yes, match Motor Truck Cargo limits") is named in its rule's `choiceAliases` for that answer, and a list without either is no match. A rule with `matchStart` takes only the first kinds, the answer before each alias in turn, so an option that only mentions the answer further on is never it: Progressive's business type lists read "<name> <description>", and "Auto Hauler (For Hire Trucking)" is not For Hire Trucking. An option beginning with the answer there is the rule's own declared match, not a fallback, so it is no check item: Progressive's payment method reads "Automatic payments from checking account" followed by its tagline. A type-ahead list is narrowed first by the word the rule's `search` gives, as the agent types it: a select2 list (`search-select`: AmWINS' classification) or an ExtJS combo (its `doQuery`: Progressive's LA business description, "Trucking"), and the answer is picked among those results only; none matching is a miss, which a rule with `unofferedNote` leaves to the agent with that note. Where the word goes into a box of its own and a Search shows the results (Progressive's Business Type Selection popup in KY), the box is a rule (`unlessShown` the result list, so it isn't typed where the list already shows) and its Search a helper kept inside the popup (`within`), never the page's box or Search behind it ([Intake and rules](intake-and-rules.md), TNI 2026-10-28).
 
+### DOM events, not the debugger
+
+The kit acts on a carrier page the way a script can: it writes values through the control's own setter, dispatches `input`, `change` and key events, and clicks with `click()` or from the page's own world ([page-press.js](../src/content/page-press.js)). It doesn't use the Chrome DevTools Protocol (`chrome.debugger`: `Input.dispatchMouseEvent`, `Input.insertText`, network idle, a DOM that pierces shadow roots).
+
+**Why not the protocol.**
+- The `debugger` permission can't be optional. Chrome warns when it is installed or added, and disables the extension until the agent accepts.
+- Chrome shows "is debugging this browser" on every tab while the debugger is attached. The developer recording turned it down for screenshots too ([Developer recording](developer-recording.md), its screenshot choice).
+- Every licensed agent would have to accept the warning, and the store review weighs the permission.
+- The protocol's events are trusted, but that is all it would give the fill. The DOM-event fill already works on the three carriers.
+
+**The cost: the page sees script events, not the agent's.** Each gap has its own fix:
+- **React 18 clicks:** pressed from inside a dispatch in the page's own world (page-press.js, W43-44).
+- **select2:** a `MouseEvent` with `button: 0` ([select2.js](../src/kit/drivers/select2.js)).
+- **Google's address suggestions:** a `keyCode` set on the key events ([address.js](../src/kit/drivers/address.js)).
+- **GEICO's Print Quote Proposal:** clicked by the kit (`kitClick` in [geico.js](../src/carriers/geico.js)), because the page-world press never opened the proposal. Why is not known.
+- **Not covered:** a field that rejects one-write input (an input mask, a read-only date picker). That field is left for the agent.
+
+**When to look again.** Look again only when every agent's Chrome installs the extension by policy (a managed build, so no agent has to accept the warning), or when a carrier needs trusted input that page events can't give. Until then, a new gap gets a fix in the carrier's page adapter or a driver, as above.
+
 ## Review and navigation
 
 - Unknown fields are marked; supported fields can still fill. An unfamiliar question that went away during the fill (hidden by an answer) is not reported. Missing data, failures, differing retained values, confirmations, and blocked helpers contribute to the review report. A field drawn without a caption is named there after its rule. A helper that opens the next page (the vehicle tile) leaves that page's questions to its own fill; none is reported as the earlier page's.
