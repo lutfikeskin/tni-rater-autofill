@@ -64,37 +64,46 @@ async function runKit(tabId, carrier, func, args = [], frameIds) {
   return chrome.scripting.executeScript({ target: { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) }, world: worldFor(carrier), func, args });
 }
 
-// agent defaults: the page whose opening fill the quote's question held (fillPage), with the intake
-// it was held for. Only that page fills once the hold lifts: never another page that happens to be in
-// front, such as the last client's quote left open when a new intake loads.
+// The page whose opening fill a hold kept back (fillPage): the quote's defaults question (agent
+// defaults) or the tab's quote state (stateIssue), with the intake it was held for. Only that page
+// fills once the holds lift: never another page that happens to be in front, such as the last
+// client's quote left open when a new intake loads.
 /** @type {{ key: string, intake: any } | null} */
-let heldForDefaults = null;
+let heldFill = null;
 
-// agent defaults: the quote's question answered, or the feature hidden (its hold lifted). The page
-// whose own fill waited on it is filled as on opening, while it is still in front for the same intake,
-// "Fill pages when they open" is on and nothing has filled it since. A page filled before keeps its
-// answers until the agent fills it again.
-function fillAfterDefaults() {
-  const held = heldForDefaults;
-  if (!held || !state.intake || defaultsHold() || state.filling || !state.tab?.carrier || !switchOn('autoPages', 'auto-pages') || !onQuotePage()) return;
-  heldForDefaults = null;
+// A hold lifted: the defaults question answered or the feature hidden, "<state> is right" (audit
+// 2026-11-07, FLOW-16: it lifted the hold and filled nothing), or what was going in when one lifted
+// (a fill, a pick from a row, an AI answer) has ended. The page whose own fill waited is filled as on
+// opening, once no hold is left, while it is still in front for the same intake, "Fill pages when they
+// open" is on and nothing has filled it since. A page filled before keeps its answers until the agent
+// fills it again.
+function resumeHeldFill() {
+  const held = heldFill;
+  if (!held || !state.intake || defaultsHold() || stateIssue() || state.filling || !state.tab?.carrier || !switchOn('autoPages', 'auto-pages') || !onQuotePage()) return;
+  heldFill = null;
   if (held.intake !== state.intake || held.key !== currentReportKey() || state.reports.has(held.key)) return;
   fillPage({ auto: 'page' });
 }
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
-/** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean }} [options] */
-async function fillPage({ auto = false, confirmed = null, continuing = false } = {}) {
+// `retried`: the second click of a Continue whose page stayed unchanged (watchNextStep): the step it is
+// for (its doneSteps key), logged as a retry only when this fill continued that step.
+/** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean, retried?: string | false }} [options] */
+async function fillPage({ auto = false, confirmed = null, continuing = false, retried = false } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
   if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
   // The tab's quote is for another state than the intake's: nothing is filled until the agent says
   // the state is right (or Fill anyway), on request or automatically (stateIssue).
-  if (state.intake && stateIssue()) { showStateNote(); renderSteps(); return; }
+  // A page's opening fill held so is kept for resumeHeldFill, as one the defaults question holds.
+  if (state.intake && stateIssue()) {
+    if (auto === 'page') heldFill = { key: currentReportKey(), intake: state.intake };
+    showStateNote(); renderSteps(); return;
+  }
   // agent defaults: nothing fills until the agent says whose defaults this quote takes (the card above).
   if (state.intake && defaultsHold()) {
-    // A page's opening fill: kept for fillAfterDefaults, to run once the agent answers.
-    if (auto === 'page') heldForDefaults = { key: currentReportKey(), intake: state.intake };
+    // A page's opening fill: kept for resumeHeldFill, to run once the agent answers.
+    if (auto === 'page') heldFill = { key: currentReportKey(), intake: state.intake };
     renderSteps();
     return;
   }
@@ -105,7 +114,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // after it (it used to be skipped: "it stopped here").
   // Kept with its tab: the fill running may be on another one (audit 2026-11-07, FLOW-07).
   if (state.filling && auto === 'page') { state.pagePending = { tabId: state.tab?.id, page: pageOf(state.tab?.url) }; return; }
-  if (state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
+  if (state.filling || state.closing || state.resetting || state.newQuoteFailed || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
   // Back on a step that takes follow-ups only for new questions (newQuestionsOnlySteps) after its
   // fill: only the agent, or new questions, fill it again.
   if (auto && state.tab.carrier.newQuestionsOnlySteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
@@ -116,6 +125,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     return;
   }
   if (!auto) state.autoPaused = false;
+  state.fillingKind = 'fill';
   state.filling = true;
   clearTimeout(state.autoTimer);
   state.autoDrawn = null;
@@ -127,9 +137,10 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
+  if (retried) ctx.retried = retried;
   await pickListItem(carrier, page, ctx);
   // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
-  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); return; }
+  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); resumeHeldFill(); return; }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
@@ -185,6 +196,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     const retrying = rememberFill(frames, ctx);
     tabMaps(tabId).autoPages.add(page);
     followUp = afterFill(frames, ctx);
+    // AmWINS' next step at the same address: its own first Continue isn't the retry.
+    if (ctx.retried && continuedKey(frames, page, carrier, ctx.active) !== ctx.retried) ctx.retried = false;
     logFill(ctx, frames, results, started);
     // The report is its own tab's: kept for it when the agent has moved to another tab meanwhile.
     // Stopped by the agent before the kit was done (a frame halted): said so, and the dock offers to
@@ -208,6 +221,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     // The page in front, which this fill wasn't for, gets its own fill: one this tab moved on to, or
     // one that opened on the tab the agent moved to meanwhile, however this fill ended.
     runPendingPage(ctx);
+    // A page a hold kept back, whose hold lifted while this ran.
+    resumeHeldFill();
   }
   if (!fillCurrent(ctx)) return;
   // The agent's next step is the page's answers: in view (showFinish).
@@ -441,6 +456,15 @@ function unitArrival(carrier, from, page) {
   }
 }
 
+// The step a fill continued from, as its doneSteps entry, or null: scoped by the step as the kit read
+// it (the tab's step is noted later), per form and button where the carrier continues a step so
+// (advance `byForm`: advanceKey).
+/** @param {FillReport[]} frames */
+function continuedKey(frames, page, carrier, active) {
+  const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
+  return advanced?.stepKey ? stepScope(page, carrier, active, carrier?.layoutSteps ? knownStep(carrier, advanced.stepKey) : undefined) + (advanced.advanceKey ?? advanced.stepKey) : null;
+}
+
 // Bookkeeping after a fill: a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
@@ -454,7 +478,7 @@ function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, i
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
   // Scoped by the step the fill continued from, as the kit read it (the tab's step is noted later);
   // per form and button where the carrier continues a step so (advance `byForm`: advanceKey).
-  const doneKey = advanced?.stepKey ? stepScope(page, carrier, active, carrier?.layoutSteps ? knownStep(carrier, advanced.stepKey) : undefined) + (advanced.advanceKey ?? advanced.stepKey) : null;
+  const doneKey = continuedKey(frames, page, carrier, active);
   if (doneKey) maps.doneSteps.add(doneKey);
   // Keep the origin's bookkeeping, but never start helpers or Continue work in another tab.
   if (!fillCurrent(ctx)) return false;
@@ -528,7 +552,7 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     if (retries && unchanged >= patience && doneKey && !state.filling && !state.advanceRetried.has(doneKey)) {
       state.advanceRetried.add(doneKey);
       state.doneSteps.delete(doneKey);
-      fillPage({ auto: 'page' });
+      fillPage({ auto: 'page', retried: doneKey });
       return;
     }
     if (unchanged >= patience && doneKey && !state.filling && (!retries || state.advanceRetried.has(doneKey))) {
@@ -1180,6 +1204,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
   let result = null;
   let guarding = false;
   let edited = [];
+  state.fillingKind = 'pick';
   state.filling = true;
   if (button) button.disabled = true;
   // Our own answer isn't the agent's change on the page: the recorder is paused, as for a fill.
@@ -1217,6 +1242,8 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
     await tellRecorder('resume', tabId);
     state.filling = false;
     if (button) button.disabled = false;
+    // A page a hold kept back, whose hold lifted while the pick went in.
+    resumeHeldFill();
     // The recorder was paused: the questions the answer revealed or hid are read here.
     if (field && state.tab?.id === tabId) scheduleLayout(page, 'changed');
   }
@@ -1395,4 +1422,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillAfterDefaults, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, runKit, showNextNeed, unitArrival, worldFor };
+export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, resumeHeldFill, runKit, showNextNeed, unitArrival, worldFor };

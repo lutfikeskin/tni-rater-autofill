@@ -121,6 +121,16 @@ test('a fill_run carries the timeline of a fill that halted, redacted as its fie
   const [plain] = fillEvents([{ filled: [] }], { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact });
   assert.equal('timeline' in plain, false, 'none without one');
 });
+
+// Audit 2026-11-07, FLOW-11: the second click of a Continue that didn't take is said on its fill_run,
+// so the weekly review can judge whether the retry is still needed.
+test('a fill run that clicked a lost Continue again says so, and no other does', () => {
+  const ctx = { carrier: 'amwins', page: 'Step', overwrite: false, ms: 1, redact: (t) => t };
+  const [retried] = fillEvents([{ fields: 3, advanced: 'Save & Continue' }], { ...ctx, auto: 'page', retried: true });
+  const [plain] = fillEvents([{ fields: 3, advanced: 'Save & Continue' }], { ...ctx, auto: 'page' });
+  assert.deepEqual([retried.retried, 'retried' in plain], [true, false]);
+});
+
 test('dropdown changes keep the option text, minus client names', () => {
   const filled = new Map([['2B9D', { path: 'progressive.q2B9D', shown: 'More than 500 miles' }]]);
   const e = fieldChangeEvent({ key: '2B9D', q: '2B9D', label: 'Farthest distance', kind: 'select', before: 'More than 500 miles', after: '500 miles', agent: true }, { record, filled, redact });
@@ -223,6 +233,14 @@ test('fill results drop typed values but keep chosen options', () => {
   assert.equal(text.shown, undefined);
   assert.equal(events.find((e) => e.q === '1D97').shown, '$1 million CSL');
   events.forEach(assertNoClientData);
+});
+
+// Audit 2026-11-07, LEARN-09: a failed answer is logged with its code, for the reviews to count by.
+test('a failed answer is logged with its code beside its reason', () => {
+  const frames = [{ fields: 1, filled: [], noData: [], kept: [], leftRequired: [],
+    failed: [{ label: 'Radius', path: 'operations.radius', q: null, controlKind: 'select', code: 'option.no-match', reason: 'no option matches "Unlimited"' }] }];
+  const failed = fillEvents(frames, { carrier: 'progressive', page: 'AddVehicle', overwrite: false, ms: 1, redact }).find((e) => e.result === 'failed');
+  assert.deepEqual([failed.code, failed.reason], ['option.no-match', 'no option matches "Unlimited"']);
 });
 
 // Audit 2026-11-07, LEARN-11: every fill run of a page logged each kept answer again (59% of fill

@@ -67,6 +67,11 @@ const whose = (e) => (e.filling ? ' (not you, during a fill)' : ' (the page)');
 const many = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 // A page request its server answered with an error (HTTP 400 and up; the trace's `status`).
 const failed = (e) => Number.isInteger(e.status) && e.status >= 400;
+// What the panel was putting in while it was `filling` (the panel's `fillingKind`), as it began and
+// ended. The end says it ended, not that it went in: a pick that found no field, or an AI answer
+// whose page had changed, ends the same way.
+const SPANS = { fill: ['a fill started', 'the fill ended'], pick: ["the panel began putting in the agent's pick from a row", 'the pick ended'],
+  ai: ['the panel began putting in an AI answer', 'the AI answer ended'] };
 // A wait's own words: what it was for (pagekit.js settle's `why`).
 const WAITS = { answer: 'after an answer', round: 'after a round of answers', load: 'for a new view to load', 'before-load': 'before a button that loads a view',
   rated: 'for the premium', continue: 'before pressing Continue', continued: 'after pressing Continue', drawn: 'for a late question', start: 'before the fill',
@@ -170,7 +175,8 @@ function actions(events) {
       const held = e.held?.busy ? ', the page still busy' : e.held?.changing ? ', the page still changing' : e.held?.requests ? ', requests still finishing' : '';
       const ended = e.ended === 'quiet' ? 'the page was quiet' : `at its limit of ${secs(e.maxMs ?? 0)}${held}`;
       const slack = e.slack == null ? '' : e.slack >= (e.ms ?? 0) ? '; the page did nothing during it' : `; ${secs(e.slack)} after the page's last change`;
-      lines.push({ t: e.start ?? e.t, text: `the extension waited ${secs(e.ms ?? 0)} ${WAITS[e.why] ?? 'for the page'} (quiet ${e.quietMs ?? '?'} ms${e.requests ? ' and its requests' : ''}): ${ended}${slack}` });
+      const unseen = e.slackTrace != null && e.slackTrace - e.slack >= 250 ? ` (the wait saw the page change or busy ${secs(e.slackTrace - e.slack)} after the trace's last change: not slack)` : '';
+      lines.push({ t: e.start ?? e.t, text: `the extension waited ${secs(e.ms ?? 0)} ${WAITS[e.why] ?? 'for the page'} (quiet ${e.quietMs ?? '?'} ms${e.requests ? ' and its requests' : ''}): ${ended}${slack}${unseen}` });
     } else if (e.kind === 'kit' && e.what === 'press') lines.push({ t: e.t, text: `the extension pressed the ${quote(e.button?.text)} button` });
     else if (e.kind === 'burst' && (e.drawnCount || e.removed)) {
       const names = (e.drawn ?? []).map((d) => quote(d.label || d.key || 'a question')).join(', ');
@@ -178,7 +184,12 @@ function actions(events) {
       const drew = e.drawnCount ? `drew ${many(e.drawnCount, 'question')}${names ? ` (${names}${more})` : ''}` : '';
       const took = e.removed ? `took away ${many(e.removed, 'question')}` : '';
       lines.push({ t: e.t, text: `the page ${[drew, took].filter(Boolean).join(' and ')}${e.sinceAction != null ? `, ${secs(e.sinceAction)} after the last action` : ''}` });
-    } else if (e.kind === 'fill') lines.push({ t: e.t, text: e.on ? 'a fill started' : `the fill ended${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
+    } else if (e.kind === 'fill') {
+      // What went in (`what`): a fill, the agent's pick from a row, an AI answer (none said: a fill,
+      // as recordings before it).
+      const [began, ended] = SPANS[e.what] ?? SPANS.fill;
+      lines.push({ t: e.t, text: e.on ? began : `${ended}${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
+    }
     // A request the carrier's server refused or failed (HTTP 400 and up): its own error, not the fill's.
     else if (e.kind === 'request' && failed(e)) lines.push({ t: e.t, text: `the page's request to ${codePath(e.path)} failed: HTTP ${e.status} after ${secs(e.ms ?? 0)}` });
     // A document's load, from its navigation start (REC-03): its server's answer, ready, loaded.
@@ -261,6 +272,13 @@ export function recordingReport({ manifest, events }) {
     if (e.kind === 'kit' && e.what === 'wait' && typeof e.start === 'number' && typeof e.ms === 'number') {
       const waitEnd = e.start + e.ms;
       e.slack = waitEnd - activity.reduce((m, a) => (a <= waitEnd && a > m ? a : m), e.start);
+      // What the wait saw itself (REC-02): the attributes it watches, a busy page, an undefined
+      // component, a request going; the trace sees none of them. The later of the two counts, and a
+      // disagreement is said (`slackTrace`). A recording from before has the trace's alone.
+      if (typeof e.lastChange === 'number' || typeof e.lastHeld === 'number') {
+        const kitLast = Math.min(waitEnd, Math.max(e.start, e.lastChange ?? e.start, e.lastHeld ?? e.start));
+        if (waitEnd - kitLast < e.slack) { e.slackTrace = e.slack; e.slack = waitEnd - kitLast; }
+      }
     }
     if (e.kind === 'burst') {
       const last = actionTimes.reduce((m, a) => (a < e.t && (m == null || a > m) ? a : m), null);

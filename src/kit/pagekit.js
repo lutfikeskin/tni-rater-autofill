@@ -23,7 +23,7 @@ const TIMELINE_EVENTS = 40;
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 94 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 95 && globalThis.__raterKit.build === BUILD) return;
 
   /**
    * Puts answers the agent accepted from the AI assistant (or that it was allowed to pick itself)
@@ -36,14 +36,14 @@ const TIMELINE_EVENTS = 40;
    */
   async function answer(answers, expectedSnapshots, guardToken, { stopSteps = getKnownStopSteps(), by = 'ai' } = {}) {
     const agent = by === 'agent';
-    if (stopStepOn(stopSteps)) return answers.map((a) => ({ key: a.key, label: a.label, ok: false, reason: STOP_STEP_HALT }));
+    if (stopStepOn(stopSteps)) return answers.map((a) => ({ key: a.key, label: a.label, ok: false, code: 'page.stop-step', reason: STOP_STEP_HALT }));
     const answerEditSession = getAnswerEditSession();
     if (guardToken && answerEditSession?.token !== guardToken) {
-      return answers.map(a => ({ key: a.key, label: a.label, ok: false,
+      return answers.map(a => ({ key: a.key, label: a.label, ok: false, code: 'page.changed',
         reason: 'the page or frame changed while applying the answers; request fresh suggestions' }));
     }
     if (expectedSnapshots && !expectedSnapshots.includes(decisionSnapshot())) {
-      return answers.map(a => ({ key: a.key, label: a.label, ok: false, reason: 'the page changed since the assistant evaluated it; request fresh suggestions' }));
+      return answers.map(a => ({ key: a.key, label: a.label, ok: false, code: 'page.changed', reason: 'the page changed since the assistant evaluated it; request fresh suggestions' }));
     }
     const serverBacked = adapter().serverBacked();
     const find = (key, label) => {
@@ -58,9 +58,9 @@ const TIMELINE_EVENTS = 40;
     });
     try {
       for (const a of answers) {
-        if (editedQuestions.size) { results.push({ key: a.key, label: a.label, ok: false, reason: EDIT_HALT_ANSWERS }); continue; }
+        if (editedQuestions.size) { results.push({ key: a.key, label: a.label, ok: false, code: 'fill.interrupted', reason: EDIT_HALT_ANSWERS }); continue; }
         const c = find(a.key, a.label);
-        if (!c) { results.push({ key: a.key, label: a.label, ok: false, reason: 'the question is no longer on this page' }); continue; }
+        if (!c) { results.push({ key: a.key, label: a.label, ok: false, code: 'field.missing', reason: 'the question is no longer on this page' }); continue; }
         if (a.expected) {
           const d = describe(c);
           const options = c.kind === 'checkbox' ? ['checked', 'unchecked'] : d.options;
@@ -69,7 +69,7 @@ const TIMELINE_EVENTS = 40;
             JSON.stringify(options) !== JSON.stringify(a.expected.options) && 'options',
             (d.current ?? null) !== (a.expected.current ?? null) && 'selection'].filter(Boolean);
           if (changed.length) {
-            results.push({ key: a.key, label: a.label, ok: false, reason: `the field changed (${changed.join(', ')}) since the assistant evaluated it; request a fresh suggestion` });
+            results.push({ key: a.key, label: a.label, ok: false, code: 'field.changed', reason: `the field changed (${changed.join(', ')}) since the assistant evaluated it; request a fresh suggestion` });
             continue;
           }
         }
@@ -79,22 +79,22 @@ const TIMELINE_EVENTS = 40;
           ? { id, name, kind: 'bool', value: /^(checked|yes|true)$/i.test(String(a.value)) }
           : { id, name, value: String(a.value) };
         let result;
-        try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
+        try { result = await apply(step, c); } catch (e) { result = { ok: false, code: 'kit.exception', reason: String(e?.message ?? e) }; }
         if (result.ok) {
           const settled = await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
           const fresh = find(a.key, a.label);
-          if (edited(a.key)) result = { ok: false, reason: 'you changed this question yourself while the answer went in; your answer stays' };
-          else if (!settled) result = { ok: false, reason: 'the page did not settle after the answer' };
-          else if (!fresh) result = { ok: false, reason: 'the field disappeared after the answer; check the page' };
-          else if (invalidControl(fresh) || !agreesWith(step, fresh)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
+          if (edited(a.key)) result = { ok: false, code: 'answer.agent-edited', reason: 'you changed this question yourself while the answer went in; your answer stays' };
+          else if (!settled) result = { ok: false, code: 'page.unsettled', reason: 'the page did not settle after the answer' };
+          else if (!fresh) result = { ok: false, code: 'field.vanished', reason: 'the field disappeared after the answer; check the page' };
+          else if (invalidControl(fresh) || !agreesWith(step, fresh)) result = { ok: false, code: 'answer.not-kept', reason: 'the page did not keep the answer; check it' };
           else mark(fresh, agent ? 'agent' : 'ai', a.note ?? (agent ? 'your answer, from the side panel' : 'answer suggested by the AI assistant — check it'));
         }
         if (!result.ok && !edited(a.key)) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `${agent ? 'Your answer' : 'AI answer'} not accepted: ${result.reason}`); }
-        results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, reason: result.reason ?? null });
+        results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, ...(result.ok ? {} : { code: result.code ?? 'kit.uncoded' }), reason: result.reason ?? null });
       }
       for (const r of results) if (edited(r.key)) r.protected = true;
       for (const [key, label] of editedQuestions) {
-        if (!results.some((r) => r.key === key)) results.push({ key, label, ok: false, protected: true, reason: 'you changed this question yourself while the AI answers went in; your answer stays' });
+        if (!results.some((r) => r.key === key)) results.push({ key, label, ok: false, protected: true, code: 'answer.agent-edited', reason: 'you changed this question yourself while the AI answers went in; your answer stays' });
       }
       return results;
     } finally {
@@ -138,7 +138,7 @@ const TIMELINE_EVENTS = 40;
   }
 
   globalThis.__raterKit = {
-    version: 94,
+    version: 95,
     build: BUILD,
     fill: tracedFill,
     // The last fill's timeline, for one whose report never came back (the panel's fill_error).

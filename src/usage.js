@@ -442,10 +442,10 @@ function fieldWhy(x, list) {
 // still counts them all (`kept`). Without `keptLogged`, every one is logged.
 /**
  * @param {Partial<FillReport>[]} frames  the page kit's fill reports, one per frame (a stop page's: its blockers only)
- * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean, keptLogged?: Set<string> }} ctx
+ * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean, retried?: boolean, keptLogged?: Set<string> }} ctx
  * @returns {UsageEvent[]}
  */
-export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false, keptLogged }) {
+export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false, retried = false, keptLogged }) {
   // Typed for the report list it reads (the body takes any key).
   /** @type {<K extends keyof FillReport>(k: K) => NonNullable<FillReport[K]>} */
   const all = /** @param {any} k @returns {any} */ (k) => frames.flatMap((f) => f[k] ?? []);
@@ -462,6 +462,9 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     // was hidden meanwhile (`hiddenMs`): Chrome slows a hidden tab's timers, so the weekly review can
     // tell those fills from slow carriers (audit 2026-11-07, FLOW-12).
     ...(background ? { background: true } : {}), ...(hiddenMs ? { hiddenMs } : {}),
+    // The second click of a Continue whose page stayed unchanged (the panel's watchNextStep, audit 2026-11-07,
+    // FLOW-11): the weekly review counts them to judge whether the retry is still needed.
+    ...(retried ? { retried: true } : {}),
     fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0),
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,
@@ -497,6 +500,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     // check items (never logged), so it is the item's own `review`.
     ...fieldWhy(x, list),
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
+    ...(x.code ? { code: x.code } : {}),
     reason: x.reason ? redact(x.reason) : undefined,
     options: x.options?.map(redact),
     // Per-answer timing and side effects (filled answers only): see scripts/review.mjs, Speed.

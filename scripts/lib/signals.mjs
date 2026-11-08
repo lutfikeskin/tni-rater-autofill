@@ -11,6 +11,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { quoteSessions } from './events.mjs';
+import { reportsOf } from './carrier-reports.mjs';
 import { receivedAt } from './daily.mjs';
 import { defaultsInForce, isOwnDefault } from './agent-defaults.mjs';
 
@@ -20,6 +21,9 @@ export const mask = (s) => String(s ?? '').replace(/"[^"]*"/g, '"…"').replace(
 // them in step), signing and discarding a form among them. "Save & Continue" is not one, as in
 // pagekit, which reads it as Continue.
 export const RESTRICTED = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|logout|log out|sign out|order|sign|signature|esign|esignature)\b/i;
+// The retry tally's lines (below) name a page, not a button: never a restricted action themselves.
+const RETRIED = 'Continue clicked again on ';
+const clickedAction = (action) => !action.startsWith(RETRIED) && isRestricted(action);
 export const isRestricted = (action) => RESTRICTED.test(action.replace(/^(helper|advance) /, '').replace(/^"?save\s*(?:&|and)\s*continue"?$/i, 'continue'));
 const tally = (map, key, n = 1) => map.set(key, (map.get(key) ?? 0) + n);
 const top = (map, n) => [...map].sort((a, b) => b[1] - a[1]).slice(0, n);
@@ -33,26 +37,16 @@ const byVersion = (a, b) => {
   return String(a).localeCompare(String(b));
 };
 
-// The page (or one-address application step) where a quote is done, per carrier: Progressive's
-// quote summary, print confirmation or the printed quote PDF, AmWINS' last application step
-// (Underwriting) or its submission notice, GEICO's steps after Quote & Coverages (its stop steps,
-// reached with a rated quote; the agent's from there). A heuristic for the weekly numbers, not a
-// carrier's definition. A printed quote is done (TNI, 2026-10-20): Print/Send opens the PDF in a tab the
-// panel then follows, so the confirmation page in the quote tab may not be logged after it. The
-// panel's own page strip (a carrier's `quoteSteps`) is a separate list.
-export const FINAL = {
-  progressive: /^(Quote|PrintEmailFaxConfirm|\/Express\/PDFHandler\.ashx)$/i,
-  amwins: /› (Underwriting|Thank you for the submission)/,
-  geico: /› (Final Quote Details|MVR & CLUE|Payment Information)$/,
+// Where a quote is done, per carrier (carrier-reports.mjs finalPage, finalClick): a heuristic for
+// the weekly numbers, not a carrier's definition. The panel's own page strip (a carrier's
+// `quoteSteps`) is a separate list.
+const finalPage = (carrier, page) => !!reportsOf(carrier)?.finalPage.test(page ?? '');
+const finalClick = (e) => {
+  const c = reportsOf(e.carrier)?.finalClick;
+  return e.type === 'agent_click' && !!c && c.page.test(e.page) && c.text.test(String(e.text ?? '').trim());
 };
-// The agent's own click that ends a quote, on the page it is made: Progressive's Print/Send (the
-// agent's since 2026-10-07; logged in the quote tab, whether or not the PDF's page is).
-export const FINAL_CLICK = {
-  progressive: { page: /^PrintEmailFax$/, text: /^print\s*\/\s*send$/i },
-};
-const finalClick = (e) => e.type === 'agent_click' && !!FINAL_CLICK[e.carrier]?.page.test(e.page) && FINAL_CLICK[e.carrier].text.test(String(e.text ?? '').trim());
 // A carrier's login page reached in the middle of a quote: the carrier's session ran out.
-const LOGIN = /\/(auth\/)?login\b|\/login\//i;
+const loginPage = (e) => !!reportsOf(e.carrier)?.loginPage.test(e.page ?? '');
 
 // A test run: an intake the agent marked as a test (`test` on intake_loaded), or one of the
 // fingerprints the reviewer listed (`testIntakes`, full or leading hex).
@@ -131,11 +125,11 @@ export function quoteOutcomes(events, quotes) {
     if (e.type === 'fill_run') q.seenWork = true;
     // Only after this quote's own fill: the page the panel opens on may be the previous client's
     // confirmation, or an old quote the agent reopened.
-    if (q.seenWork && (FINAL[e.carrier]?.test(page) || FINAL[e.carrier]?.test(e.page) || finalClick(e))) q.done = true;
+    if (q.seenWork && (finalPage(e.carrier, page) || finalPage(e.carrier, e.page) || finalClick(e))) q.done = true;
     // A stop page is the carrier's refusal (Progressive's DeclinationNotice); a stop step that is a
     // final page (GEICO's) is the agent's part of a quote that got there.
-    if (e.type === 'fill_run' && !FINAL[e.carrier]?.test(page) && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
-    if (e.type === 'page_view' && LOGIN.test(e.page) && q.seenWork) q.logins++;
+    if (e.type === 'fill_run' && !finalPage(e.carrier, page) && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
+    if (e.type === 'page_view' && loginPage(e) && q.seenWork) q.logins++;
     perQuote.set(k, q);
   }
   return [...perQuote.values()];
@@ -213,6 +207,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   const left = new Map();
   const leftQuestions = new Map();
   const failed = new Map();
+  const failedCodes = new Map();
   for (const e of events) {
     if (e.type !== 'fill_field' || ['filled', 'kept'].includes(e.result)) continue;
     const once = `${e.session}|${e.page}|${e.view ?? ''}|${e.key ?? e.q ?? ''}|${e.label ?? ''}`;
@@ -223,7 +218,12 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     const q = leftQuestions.get(e.result) ?? new Map();
     tally(q, `${where(e)}: "${mask(e.label)}"`);
     leftQuestions.set(e.result, q);
-    if (e.result === 'failed') tally(failed, `${where(e)}: "${mask(e.label)}" · ${mask(e.reason)}`);
+    // By its code (types.js FailCode), so a reworded message stays one row; a build before codes by
+    // its masked text.
+    if (e.result === 'failed') {
+      tally(failed, `${where(e)}: "${mask(e.label)}" · ${e.code ?? mask(e.reason)}`);
+      tally(failedCodes, e.code ?? `no code: ${mask(e.reason)}`);
+    }
   }
 
   // What held Continue (fill_run blockerList), per quote.
@@ -266,8 +266,13 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   for (const r of allRuns) {
     for (const c of r.clicked ?? []) tally(actions, `helper ${String(typeof c === 'string' ? c : JSON.stringify(c)).replace(/:\d+$/, '')}`);
     if (r.advanced) tally(actions, `advance "${typeof r.advanced === 'string' ? r.advanced : JSON.stringify(r.advanced)}"`);
+    // A Continue clicked a second time because its page stayed unchanged for about 6 s (`retried`):
+    // whether the retry still earns its place. A retry fill held before Continue (Let me look first, a
+    // blocker) clicked nothing. Its button's own text is checked above (`advanced`), so this line,
+    // which names the page (Save Quote, say), isn't read as a restricted action.
+    if (r.retried && r.advanced) tally(actions, `${RETRIED}${r.carrier} ${r.page}`);
   }
-  const restricted = [...actions].filter(([a]) => isRestricted(a));
+  const restricted = [...actions].filter(([a]) => clickedAction(a));
 
   const fillErrors = new Map();
   for (const e of periodAll.filter((x) => x.type === 'fill_error')) tally(fillErrors, `${build(e)} · ${where(e)}: ${mask(e.error)}`);
@@ -352,7 +357,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     problemReportsInTestRuns: periodAll.filter((e) => e.type === 'problem_report' && testSessions.has(e.session)).length,
     aiRequests: asks.length,
     aiErrorPercent: asks.length ? Math.round((asks.filter((a) => a.error).length / asks.length) * 100) : null,
-    restrictedActions: [...actions].filter(([a]) => isRestricted(a)).reduce((x, [, c]) => x + c, 0),
+    restrictedActions: [...actions].filter(([a]) => clickedAction(a)).reduce((x, [, c]) => x + c, 0),
     // Not the period's: today's rules on the keyed quotes, whenever they were recorded.
     // All keyed answers, and those the reviewer decided (not confirmed as proposed) apart.
     answerKey: answerKey ? { quotes: answerKey.quotes, entries: answerKey.entries, proposed: answerKey.proposed, all: keyCounts(answerKey.total), decided: keyCounts(answerKey.decided) } : null,
@@ -425,6 +430,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     funnel: Object.fromEntries([...funnel].map(([c, list]) => [c, { quotes: list.quotes, pages: list.pages.slice(0, 25) }])),
     left: Object.fromEntries([...left].map(([result, s]) => [result, { answers: s.size, top: top(leftQuestions.get(result), n) }])),
     failed: top(failed, n),
+    failedCodes: top(failedCodes, n),
     blockers: [...blockers].map(([b, s]) => [b, s.size]).sort((a, b) => b[1] - a[1]).slice(0, n),
     blockedRuns: runs.filter((r) => r.blockers > 0).length,
     runs: runs.length,
@@ -493,7 +499,7 @@ export function markdown(s, { noTestList = false } = {}) {
   }
   L.push('## Left to the agent', '', 'Each question counted once per quote, page and unit. unfamiliar: no rule; leftRequired: required and unanswered; noData: the intake has no answer; failed: the fill could not set it.', '');
   for (const [result, x] of Object.entries(s.left)) L.push(`**${result}**: ${x.answers}`, '', ...list(x.top), '');
-  L.push('## Fill failures by reason', '', ...list(s.failed), '');
+  L.push('## Fill failures by reason', '', 'Each question once per quote, page and unit, by why it failed (its code; `kit.exception` is an error of the kit itself, a defect rather than a refusal; a build before codes by its text).', '', ...list(s.failedCodes), '', ...list(s.failed), '');
   L.push('## What held Continue', '', `Blockers at the end of fill runs, by the number of quotes they held.`, '', ...list(s.blockers, ' quotes'), '');
   L.push('## Restricted actions by the extension', '', s.restricted.length ? '**Safety finding: the extension clicked something that reads as a restricted action.**' : 'None: every click the extension made was a helper or a continuation.', ...(s.restricted.length ? list(s.restricted, ' runs') : []), '', `Its clicks: ${s.actions.map(([a, c]) => `${a} ×${c}`).join(', ') || 'none'}.`, '');
   L.push('## Signs a carrier changed a page', '', ...list(s.pageChanges, ' runs'), '');

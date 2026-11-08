@@ -61,11 +61,13 @@ const MAX_LAYOUT_BYTES = 128 * 1024;
 // How long one dashboard page serves every request for its period: building it reads and sums 31
 // days of events on the process that takes uploads, and each open tab reloads it every minute.
 const DASHBOARD_CACHE_MS = 30_000;
-// Which version of the server is running (this file and the dashboard's): the daily review
-// compares it with the repository's.
+// Which version of the server is running (every file the image copies, in server/Dockerfile's
+// order; test/server.test.mjs holds the two in step): the daily review compares it with the
+// repository's.
 export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url)))
   .update(fs.readFileSync(new URL('./dashboard.mjs', import.meta.url)))
-  .update(fs.readFileSync(new URL('./agent-defaults.mjs', import.meta.url))).digest('hex').slice(0, 12);
+  .update(fs.readFileSync(new URL('./agent-defaults.mjs', import.meta.url)))
+  .update(fs.readFileSync(new URL('./privacy.html', import.meta.url))).digest('hex').slice(0, 12);
 // Uploads from one address (audit 2026-11-07, SRV-13: the upload token ships in the extension, so
 // anyone could fill the volume). Two token buckets per address, in memory: requests and bytes. An
 // agent's panel posts at most once a minute plus a few prompt uploads (an intake loaded, a problem
@@ -184,18 +186,19 @@ export const EVENT_FIELDS = {
   // run: one fill invocation, shared with its fill_field events; rules: the rule files'
   // fingerprint; settings: the panel's filling switches; step: a one-address application's step
   // (AmWINS). Their shapes are checked below (RUN_FIELDS): a malformed value refuses the event.
+  // retried: the second click of a Continue whose page stayed unchanged (true only), on its fill_run or fill_error.
   // background: the quote tab filled while the agent was on another; hiddenMs: how long its page was
   // hidden meanwhile (Chrome slows a hidden tab's timers).
-  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed', 'timeline'],
+  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'retried', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed', 'timeline'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
   // source: where the answer comes from (plan.js; FIELD_SOURCES below); standard, manualOnly,
   // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
-  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review'],
+  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'code', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review'],
   // A button the agent clicked themselves: its text (60 characters), and the step on screen.
   agent_click: ['text', 'step'],
   // The agent dismissed a "needs you" item (×): the question, and why it needed them.
   check_dismissed: ['q', 'key', 'label', 'mark'],
-  fill_error: ['run', 'rules', 'settings', 'auto', 'error', 'timeline'],
+  fill_error: ['run', 'rules', 'settings', 'auto', 'retried', 'error', 'timeline'],
   field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
   // many seconds before the report).
@@ -405,12 +408,22 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
   };
 
   // Ids already stored, so retried uploads are ignored. Fine at pilot scale (a few million ids).
+  // What it reads is flushed first: a line written before a failed flush is read as stored, and its
+  // retry then answered 200 as a duplicate, so it must be on the disk (the review of #425). The
+  // folder too, for a day file the failed upload created (on Linux; Windows opens no folder).
   const seen = new Set();
   for (const f of fs.readdirSync(eventsDir).filter((n) => n.endsWith('.jsonl'))) {
-    for (const line of fs.readFileSync(path.join(eventsDir, f), 'utf8').split('\n')) {
+    const file = path.join(eventsDir, f);
+    const fd = fs.openSync(file, 'r+'); // writable: Windows flushes no read-only handle
+    try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
       if (!line) continue;
       try { seen.add(JSON.parse(line).id); } catch { /* skip a torn last line */ }
     }
+  }
+  if (process.platform !== 'win32') {
+    const dir = fs.openSync(eventsDir, 'r');
+    try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
   }
 
   const matches = (req, secret) => {
@@ -488,8 +501,11 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     }
     if (out.source !== undefined && !FIELD_SOURCES.includes(out.source)) drop('source');
     for (const k of ['standard', 'manualOnly', 'review']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
+    // Why a fill's answer failed, as a code (types.js FailCode): words and dots, never text.
+    if (out.type === 'fill_field' && out.code !== undefined && !(typeof out.code === 'string' && /^[a-z]+\.[a-z-]{1,30}$/.test(out.code))) drop('code');
     if (out.background !== undefined && out.background !== true) drop('background');
     if (out.hiddenMs !== undefined && !(Number.isSafeInteger(out.hiddenMs) && out.hiddenMs > 0 && out.hiddenMs <= 86_400_000)) drop('hiddenMs');
+    if (out.retried !== undefined && out.retried !== true) drop('retried');
     if (out.type === 'check_dismissed' && out.mark !== undefined && !(out.mark === null || (typeof out.mark === 'string' && /^[a-z-]{1,20}$/.test(out.mark)))) drop('mark');
     if (out.install !== undefined && !(typeof out.install === 'string' && /^[0-9a-f-]{36}$/.test(out.install))) drop('install');
     if (out.platform !== undefined && !(out.platform && typeof out.platform === 'object' && !Array.isArray(out.platform) && Object.keys(out.platform).every((k) => ['os', 'chrome'].includes(k))
@@ -552,7 +568,22 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     const receivedAt = new Date().toISOString();
     const file = path.join(eventsDir, `${receivedAt.slice(0, 10)}.jsonl`);
     const lines = events.map((e) => JSON.stringify({ ...e, receivedAt })).join('\n');
-    if (lines) fs.appendFileSync(file, `${lines}\n`);
+    if (!lines) return;
+    // On the disk before the 200 (audit 2026-11-07, SRV-05): the extension deletes its copy on that
+    // answer, so a crash between the write and the disk would lose the events for good. A day's
+    // first upload creates its file, whose name is in the folder: the folder is flushed too, or the
+    // file could be gone after a crash (on Linux, where the server runs; Windows opens no folder).
+    // On every upload, not only the one that created the file: one whose folder flush failed was a
+    // 500, and its retry finds the file there already (the review of #425).
+    const fd = fs.openSync(file, 'a');
+    try {
+      fs.appendFileSync(fd, `${lines}\n`);
+      fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
+    if (process.platform !== 'win32') {
+      const dir = fs.openSync(eventsDir, 'r');
+      try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
+    }
   }
 
   // Browsers may ask permission (CORS preflight) before an extension posts JSON. Only browser

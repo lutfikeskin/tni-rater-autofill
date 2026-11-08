@@ -213,6 +213,29 @@ test('the report tells the flow and each step\'s actions: whose each is, typing 
 
 // The page's own changes and requests and the extension's account (docs/developer-recording.md):
 // what may name the client is redacted as a field's label is.
+// Audit 2026-11-07, FLOW-15: the agent's pick from a row and an AI answer applied set `filling` as
+// a fill does, and read as fills in the timeline. Each span says what went in (`what`); one with
+// none (an older recording) is a fill.
+test('the timeline says what went in while the panel was filling: a fill, the agent\'s pick, an AI answer', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0 + 100, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: t0 + 1000, frame: 0, on: true, what: 'fill' },
+    { kind: 'fill', t: t0 + 1500, frame: 0, on: false, what: 'fill' },
+    { kind: 'fill', t: t0 + 2000, frame: 0, on: true, what: 'pick' },
+    { kind: 'fill', t: t0 + 2200, frame: 0, on: false, what: 'pick' },
+    { kind: 'fill', t: t0 + 3000, frame: 0, on: true, what: 'ai' },
+    { kind: 'fill', t: t0 + 3400, frame: 0, on: false, what: 'ai' },
+    { kind: 'fill', t: t0 + 4000, frame: 0, on: true },
+    { kind: 'fill', t: t0 + 4100, frame: 0, on: false },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
+  // The pick's and the AI answer's ends say they ended, not that the answer went in: a pick that found
+  // no field, or an AI answer whose page had changed, ends the same way (#412 review).
+  assert.match(report, /0:01\.0 .*a fill started\n.*the fill ended \(it ran 0\.5 s\)\n.*the panel began putting in the agent's pick from a row\n.*the pick ended \(it ran 0\.2 s\)\n.*the panel began putting in an AI answer\n.*the AI answer ended \(it ran 0\.4 s\)\n.*a fill started\n.*the fill ended \(it ran 0\.1 s\)/);
+  assert.doesNotMatch(report, /was in/);
+});
+
 test('the questions a page drew, a request\'s path and what the fill answered are redacted as a field is', () => {
   const redact = (s) => s.replace(/Sam Smith/g, '[client]');
   const [burst, request, answer, press] = stampEvents([
@@ -379,6 +402,23 @@ test('a step is left by the last button pressed on it, the agent\'s or the exten
   assert.match(report, /\| 2 \| \/quote · Drivers \|[^\n]*\| "Continue" \(extension\) \|/, 'a step only the fill left');
   assert.match(report, /\| 3 \| \/quote · Coverages \|[^\n]*\| "Next" \(you\) \|/);
   assert.match(report, /\| 4 \| \/quote · Summary \|[^\n]*\| — \|/);
+});
+
+// REC-02 (audit 2026-11-07): a wait held by GEICO's `active-index`, a radio's `checked` or a busy page
+// read as "the page did nothing during it", a safe speed-up to the review, from the trace's observer.
+test('a wait\'s slack counts what the wait saw itself, and says when the trace saw less', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const wait = { kind: 'kit', t: t0 + 3000, seq: 2, frame: 0, what: 'wait', why: 'continue', quietMs: 500, maxMs: 6000, requests: false, start: t0 + 1000, ms: 2000, ended: 'quiet' };
+  const page = { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true };
+  const report = (more) => recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:04.000Z' }, events: [page, { ...wait, ...more }] });
+  // The page changed an attribute until 2.4 s: 0.6 s of slack, not 2.0 s.
+  const seen = report({ lastChange: t0 + 2400, lastHeld: t0 + 1000 });
+  assert.match(seen, /the extension waited 2\.0 s before pressing Continue \(quiet 500 ms\): the page was quiet; 0\.6 s after the page's last change \(the wait saw the page change or busy 1\.4 s after the trace's last change: not slack\)/);
+  // Busy until 2.2 s, no change seen.
+  assert.match(report({ lastChange: t0 + 1000, lastHeld: t0 + 2200 }), /; 0\.8 s after the page's last change \(the wait saw/);
+  // Nothing seen by either: all slack, as before; and a recording from before REC-02: the trace's alone.
+  assert.match(report({ lastChange: t0 + 1000, lastHeld: t0 + 1000 }), /the page did nothing during it\n/);
+  assert.match(report({}), /the page did nothing during it\n/);
 });
 
 // REC-03 (audit 2026-11-07): a page's load time was invisible, charged to the step before it.
