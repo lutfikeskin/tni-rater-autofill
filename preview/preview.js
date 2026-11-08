@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The preview page (npm run preview): the side panel beside a practice carrier page, as one tab of
 // Chrome with the extension's panel open, on Vite's dev server. The panel's chrome.* is
 // panel-shim.js; this page answers it: the stored data, the one tab (the carrier frame), its frames

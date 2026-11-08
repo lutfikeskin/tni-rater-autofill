@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The review page for TNI's answer key: every question the recorded quotes of the given intakes met,
 // grouped so a reviewer decides each answer once (scripts/lib/answer-key.mjs).
 //
