@@ -12,6 +12,7 @@ import { MAX_EVENTS } from '../src/usage.js';
 import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
+import { imageFiles } from '../scripts/lib/deploy.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
 const ev = (over = {}) => ({ id: crypto.randomUUID(), t: new Date().toISOString(), type: 'fill_run', carrier: 'progressive', page: 'AddVehicle', filled: 3, ...over });
@@ -295,10 +296,12 @@ test('dropped fields are named on the event (names only, bounded), and health na
   await withServer({ dataDir }, async ({ post, base }) => {
     await post({ events: [ev({ seq: -1, ...many, 'Jordan Sample': 'x' })] });
     const health = await (await fetch(`${base}/v1/health`)).json();
-    // The server's own files, as the image copies them (server/Dockerfile): index.mjs, the
-    // dashboard's, then agent defaults'.
+    // Every file the image copies (server/Dockerfile), in its order: a change to any of them, the
+    // privacy page included, is another server (the review of #426).
     const hash = crypto.createHash('sha256');
-    for (const f of ['index.mjs', 'dashboard.mjs', 'agent-defaults.mjs']) hash.update(fs.readFileSync(new URL(`../server/${f}`, import.meta.url)));
+    const copied = imageFiles(fs.readFileSync(new URL('../server/Dockerfile', import.meta.url), 'utf8')).filter((f) => f !== 'server/Dockerfile');
+    assert.ok(copied.includes('server/privacy.html'));
+    for (const f of copied) hash.update(fs.readFileSync(new URL(`../${f}`, import.meta.url)));
     assert.equal(health.server, hash.digest('hex').slice(0, 12));
     assert.equal(health.server, SERVER_HASH);
   });
@@ -319,6 +322,17 @@ test('a fill run keeps whether it ran in the background and how long its page wa
   const rows = stored(dataDir);
   assert.deepEqual(rows.map((e) => [e.background ?? null, e.hiddenMs ?? null, (e.dropped ?? []).filter((k) => ['background', 'hiddenMs'].includes(k)).sort()]),
     [[true, 4200, []], [null, null, ['background', 'hiddenMs']], [null, null, ['hiddenMs']]]);
+});
+
+// Audit 2026-11-07, FLOW-11: a fill run or error from a lost Continue's second click keeps `retried`
+// (true only); anything else there is dropped and named.
+test('a Continue retry is kept on its fill_run and fill_error, true only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [ev({ retried: true }), ev({ type: 'fill_error', error: 'continue did not take', retried: true }), ev({ retried: 'yes' })] });
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((e) => [e.type, e.retried ?? null, (e.dropped ?? []).includes('retried')]), [['fill_run', true, false], ['fill_error', true, false], ['fill_run', null, true]]);
 });
 
 // Codex on PR #47: stored events uploaded again (npm run push-logs) keep what was dropped before.

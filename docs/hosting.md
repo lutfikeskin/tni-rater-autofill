@@ -128,8 +128,15 @@ the next minute's upload (its queue keeps 20,000 events, then drops the oldest a
 `usage_lost`). On `DISK LOW`, grow the volume in Railway (or free space on it) before the agents'
 queues fill.
 
-Redeploy after a server change: `railway up --service usage-server` from the repository root
-(`.railwayignore` keeps the upload to what the image needs).
+Redeploy after a server change is merged: `npm run deploy:server` (`scripts/deploy-server.mjs`),
+with Railway's CLI signed in and linked to the project. `railway up` uploads the working tree as it
+is, on whatever branch it is (other sessions switch branches in the main checkout), so the script
+deploys only `origin/main` as merged (audit 2026-11-07, SRV-10). It fetches, refuses unless this
+checkout's commit is `origin/main`'s and the files the image is built from (`server/Dockerfile` and
+its `COPY` sources) have no uncommitted or untracked changes, then runs
+`railway up --service usage-server --ci` (`.railwayignore` keeps the upload to what the image
+needs) and waits up to 5 minutes in all, a stalled request included, for Railway's production `/v1/health` (never `RATER_SERVER`) to name this checkout's server. `--dry-run` only
+checks. A failed build exits 1, and the previous deployment keeps serving.
 
 Before deploying, confirm `RATER_TOKEN` is set in the service's Variables. The server fails closed:
 bound to anything but loopback (`127.0.0.1`, `localhost`, `::1`) without `RATER_TOKEN`, it exits
@@ -165,7 +172,7 @@ That server also refuses an event whose run id, rules hash, settings object or s
 commit, optionally `+dirty`) only in those shapes. Every event's common fields are kept only in their shapes (`COMMON_SHAPES`), and an event with one out of its shape is refused (in the reply's `rejected`, naming the field), never stored with it or trimmed: `t` an ISO time in UTC (`…Z`), a real date and time (not `2025-02-30` or `24:00`), from 2025 to 30 days ahead of the server's clock; `agent` initials as typed (1–12 letters, digits, spaces and `. ' -`); `session` a UUID; `intakeId` the intake PDF's SHA-256 (64 lowercase hex); `carrier` a carrier id's shape (lowercase letters, digits and `-`, at most 20, so a new carrier needs no server change); `page` a page name or path (at most 200 of letters, digits, space and `_ . : / ~ % + ( ) , -`); `v` a version number or `dev`. Each may be null but `t`. The request's `agent`, which fills an event without one, is used only in that shape, otherwise not at all. Every event stored from the pilot up to 2026-11-06 (98,872) passes these checks. It refuses events from the local test page (`carrier: 'test'`, localhost), which are
 no quote; the review scripts also skip the ones stored before. The server names what it dropped on
 the stored event (`dropped`: field names only, at most 20, `droppedMore` counts the rest), and
-`/v1/health` names its version (`server`, a hash of its `server/index.mjs`, `server/dashboard.mjs` and `server/agent-defaults.mjs`, the files the image copies). `node scripts/server-check.mjs` compares that with this checkout, without
+`/v1/health` names its version (`server`, a hash of every file the image copies, in `server/Dockerfile`'s order: `server/index.mjs`, `server/dashboard.mjs`, `server/agent-defaults.mjs` and `server/privacy.html`; a test holds the list to the Dockerfile's). `node scripts/server-check.mjs` compares that with this checkout, without
 sending any event: after a deploy it should say `same`.
 
 The server accepts `intake_profile`, a profile of the client's business (`PROFILE` in
@@ -218,7 +225,7 @@ state, business class, unit counts, redacted labels and report texts.
 
 **Its password.** Set `RATER_DASHBOARD_TOKEN` in the `usage-server` service's Variables (a random
 value of at least 16 characters, for example from `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`),
-keep it in your password manager, and redeploy (`railway up --service usage-server`). Unset, or
+keep it in your password manager, and redeploy (`npm run deploy:server`). Unset, or
 shorter than 16 characters, the page is off and `/dashboard` answers 404 (a short one also prints a
 warning at startup); the startup line says `(dashboard on: /dashboard)` when it is on. The browser
 asks for a user name and password: any user name, the token as the password (HTTP Basic, over
