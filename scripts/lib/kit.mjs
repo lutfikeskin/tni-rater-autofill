@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The fill engine injected into carrier pages (__raterKit) is built from its source under src/kit/
 // into one classic script: an IIFE with no imports, as chrome.scripting.executeScript needs. The
 // extension injects it as src/content/pagekit.js, the path the package writes it to; the

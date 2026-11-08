@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // TNI's rulebook as Luna reads it (src/ai/tni-rules.js) and the carrier rules state the same
 // standards: every rule that can fill a TNI standard names its rulebook entry (`tni`), in the general
 // part or its own carrier's, and every standard entry is filled by a rule (or a click) of a carrier

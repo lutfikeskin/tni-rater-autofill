@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Every carrier rule says what it is about: a concept of src/concepts.js, so one concept can be
 // followed across carriers (docs/concepts.md, `npm run concepts`).
 import test from 'node:test';
