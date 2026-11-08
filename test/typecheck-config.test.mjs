@@ -22,6 +22,11 @@ test('every JavaScript file is type-checked, and each one left out says why', (t
     t.skip('git is not available here');
     return;
   }
+  // Each one is in a program: under an include of tsconfig.json or tsconfig.node.json (review of
+  // #455: preview/ was in neither), or vendored in lib/, which the panel's imports bring in.
+  const included = [...ext.include, ...node.include];
+  const outside = files.filter((f) => !f.startsWith('lib/') && !included.some((p) => f === p || f.startsWith(`${p}/`)));
+  assert.deepEqual(outside, [], 'a JavaScript file neither program reads');
   const unexplained = files.filter((f) => {
     const lines = fs.readFileSync(new URL(f, root), 'utf8').split('\n', 3);
     const first = lines[0].startsWith('#!') ? lines[1] : lines[0];
