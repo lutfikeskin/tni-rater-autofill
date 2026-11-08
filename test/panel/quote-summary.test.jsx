@@ -136,7 +136,7 @@ test('opened from the client strip and from the Quote done dock', () => {
   const dock = render(<Dock act={acts} />);
   act(() => { state.dock = { phase: 'finished', tone: 'good', eyebrow: 'Quote done', title: 'The quote proposal is printed', button: 'dock-summary', label: 'Quote summary', alt: 'fill-again', altLabel: 'Fill this page again' }; });
   const button = dock.container.querySelector('#dock-summary');
-  expect([button.hidden, button.textContent]).toEqual([false, 'Quote summary']);
+  expect([button.hasAttribute('hidden'), button.textContent]).toEqual([false, 'Quote summary']);
   fireEvent.click(button);
   expect(calls).toEqual(['summary', 'summary']);
 });
