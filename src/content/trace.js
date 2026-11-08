@@ -464,7 +464,7 @@
       if (!isNum(said.start) || !isNum(said.ms) || (said.ended !== 'quiet' && said.ended !== 'limit')) return null;
       const held = has(said.held) ? { held: { busy: said.held.busy === true, changing: said.held.changing === true, requests: said.held.requests === true } } : {};
       return { what: 'wait', why: WAITS_FOR.has(said.why) ? said.why : null, start: said.start, ms: said.ms, ended: said.ended,
-        ...nums(said, ['quietMs', 'maxMs']), ...yesNo(said, ['requests', 'settled']), ...held };
+        ...nums(said, ['quietMs', 'maxMs', 'lastChange', 'lastHeld']), ...yesNo(said, ['requests', 'settled']), ...held };
     }
     if (said.what === 'answer') {
       if (!has(said.field) || !isNum(said.start)) return null;
