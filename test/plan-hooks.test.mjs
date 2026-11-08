@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The generic hooks a feature can plug into without core code knowing it (docs/agent-defaults-spec.md):
 // buildPlan's step overlay, the panel's one planFor, and rulebookFor's rewrite. With nothing plugged in
 // each does nothing, so every plan and rulebook is the rules' own.

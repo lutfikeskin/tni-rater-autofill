@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Replay regression run: every recorded layout (each state / product) is rebuilt on the replay
 // page (test/replay/) in a real browser, and the real fill engine and Progressive rules fill it
 // with the sample intake, page by page. Compares with the last accepted run so a rule change
