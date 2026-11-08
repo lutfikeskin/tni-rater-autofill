@@ -321,12 +321,26 @@
  */
 
 /**
+ * How the side panel presents a carrier (audit 2026-11-07, UX-14: these were written into the panel's
+ * code): its logo in the header and on the "open a rater" card, the agent portal that card's logo
+ * opens in a new tab (a navigation the agent asks for; nothing is filled there), the product named
+ * under the carrier on a page outside the quote's steps, and the business classes its rules were
+ * written for, as review mode says them (they describe `supportedClasses`, which decides).
+ * @typedef {object} CarrierDisplay
+ * @property {string} logo  the image's path from sidepanel/ (`assets/raters/<carrier>.<ext>`)
+ * @property {string} portalUrl  the carrier's agent home page, on one of its `hosts`
+ * @property {string} product  "Commercial auto"
+ * @property {string} classesSaid  "expediters and general freight", after "<carrier>'s rules cover"
+ */
+
+/**
  * A carrier's settings and mappings (src/carriers.js describes each). `practice` is set by
  * carrierForUrl on the repository's practice pages, never by a carrier file.
  * @typedef {object} CarrierConfig
  * @property {string} id
  * @property {string} name
  * @property {RegExp[]} hosts  also needs a manifest.json host permission
+ * @property {CarrierDisplay} [display]  how the panel shows it; every carrier with rules has one (test/carriers.test.mjs)
  * @property {CarrierRule[]} rules
  * @property {CarrierAction[]} [actions]
  * @property {CarrierAdvance} [advance]
@@ -858,7 +872,7 @@
  * @property {'agent_settings'} type
  * @property {string} [reason]  intake, opened or changed
  * @property {string} [changed]
- * @property {{ autoFollowUps: boolean, autoAdvance: boolean, autoPages: boolean, overwrite: boolean, aiOn: boolean, aiAuto: boolean, aiKey: boolean, uploads: 'off' | 'central' | 'other' }} values
+ * @property {{ autoFollowUps: boolean, autoAdvance: boolean, autoPages: boolean, overwrite: boolean, aiOn: boolean, aiAuto: boolean, aiNames: boolean, aiKey: boolean, uploads: 'off' | 'central' | 'other' }} values
  */
 
 /**
@@ -999,7 +1013,7 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel
+ *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel, and luna (one Luna call)
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
  * @property {boolean} [away]  panel: the panel follows another tab than the recorded one (true), or is back on it
  * @property {number | null} [followed]  panel: the tab the panel follows (a tab number)
@@ -1074,6 +1088,14 @@
  * @property {'page' | 'kit' | 'navigate' | 'reload' | 'back_forward' | 'prerender' | null} [how]  kit press: clicked from the page's own world, or by the kit; load: how the document came (its navigation entry's type)
  * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
  * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
+ * @property {'propose' | 'verify'} [call]  luna: the page review's first call or its evidence check (src/ai/luna.js `trace`)
+ * @property {object | null} [request]  luna: the request's state as sent (fields with their options, sources; the intake as Luna got it), redacted again
+ * @property {object | null} [answer]  luna: Luna's answer as it parsed (`decisions`), null when it gave none the contract accepts
+ * @property {string | null} [model]  luna: the model that answered
+ * @property {string | null} [outcome]  luna: the response's status as the provider said it (completed, incomplete…)
+ * @property {number | null} [tokensIn]  luna: the call's input tokens
+ * @property {number | null} [tokensOut]  luna: its output tokens
+ * @property {string | null} [error]  luna: why the call failed
  */
 
 /**
@@ -1264,6 +1286,7 @@
  * @property {Set<number>} [layoutReadyTabs]
  * @property {Set<number>} [layoutNewTabs]
  * @property {Map<number, number>} [viewTabs]
+ * @property {Map<number, string>} [portalTabs]  tabs a rater's logo opened (quote-owner.js openPortal) -> the page opened: nothing fills there by itself
  * @property {any} [layoutLatest]
  * @property {number} [layoutErrors]
  * @property {Set<string>} [layoutErrorsLogged]

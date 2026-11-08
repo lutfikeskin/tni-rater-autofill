@@ -19,7 +19,7 @@ import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
-import { quoteProgress, stopScreen } from '../src/carriers.js';
+import { quoteProgress, ratersSaid, stopScreen } from '../src/carriers.js';
 import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
@@ -113,7 +113,7 @@ function extractFunction(name) {
           initialsChanged: 'async () => {}', refreshDefaults: '() => {}', quoteStarting: '() => {}', settingsDefaults: '() => undefined',
           // Whose quote a tab is (quote-owner.js) has its own tests (test/panel/quote-owner.test.jsx):
           // elsewhere every tab is this intake's, unless the harness says otherwise.
-          quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
+          quoteOwnerIssue: '() => null', portalHold: '() => false', releasePortal: '() => {}', openPortal: 'async () => {}', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
           stopFillFirst: 'async () => {}',
@@ -1934,7 +1934,7 @@ test('a question Luna left shows its recommendation; an answered one shows none'
   context.renderAi(holder, [left], ctx);
   // Drawn as "AI: this one is yours to decide.", its tip, then "Luna recommends: …" (ai-view.jsx).
   const { card } = holder.said.orphans[0];
-  assert.deepEqual({ ...card }, { kind: 'tip', says: 'AI: this one is yours to decide.', tip: 'Not on the intake.',
+  assert.deepEqual({ ...card }, { kind: 'tip', says: 'The AI assistant leaves this one to you.', tip: 'Not on the intake.',
     next: 'The intake leaves "Needs SR-22" blank: confirm it with the client, then add it under All client details.' });
   assert.equal(card.use, undefined, 'a recommendation is no answer to put in');
   context.renderAi(holder, [{ ...left, leave: false, choice: 'No', nextStep: null, evidenceSources: [] }], ctx);
@@ -3133,7 +3133,7 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
     syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
-  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('runAssist'), context);
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('lunaTrace') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
   return { state, context, ctx, report, logged, rendered, applied, session, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
 }
@@ -3167,7 +3167,7 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   } });
   await t.context.runAssist([{}], t.ctx);
   const text = JSON.stringify(t.holder().said);
-  assert.match(text, /Luna: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
+  assert.match(text, /AI assistant: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
   assert.doesNotMatch(text, /Asking/);
   assert.equal(t.rendered.length, 0, 'stale suggestions are never shown as current');
   assert.equal(t.state.aiCache.size, 0, 'nor cached');
@@ -3190,7 +3190,7 @@ test('Luna without a key says so above the list, and a failed review says it fai
   keyless.context.openSettings = (id) => opened.push(id);
   await keyless.context.runAssist([{}], keyless.ctx);
   const { needsKey } = keyless.holder().said;
-  assert.equal(needsKey.text, 'Luna needs an OpenAI API key. ');
+  assert.equal(needsKey.text, 'The AI assistant needs an OpenAI API key. ');
   needsKey.add();
   assert.deepEqual([opened, keyless.logged], [['ai-openai-key'], []], 'Add the key opens its field; nothing is asked');
   const failed = assistHarness({ suggest: async () => { throw new failed.context.AssistError('Luna is rate-limited. Try again shortly.'); } });
@@ -3250,6 +3250,35 @@ test("a question whose choices name a driver goes to Luna with placeholders and 
 
 // 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions
 // were left, as counts.
+// Audit 2026-11-07, AI-08: while a developer recording runs on the tab, each Luna call goes into it,
+// redacted with the recording's redactor; on another tab, or once it stops, nothing does.
+test("a developer recording on the tab keeps each Luna call, redacted, and nothing otherwise", async () => {
+  let opts;
+  const t = assistHarness({ suggest: async (items, context, cfg, o) => {
+    opts = o;
+    o.trace?.({ call: 'propose', ms: 5, request: { fields: { f1: { label: 'Years with Acme Trucking' } } }, answer: { decisions: {} }, tokensIn: 1 });
+    return { suggestions: [], tokensIn: 1, tokensOut: 1, modelCalls: 1 };
+  } });
+  const added = [];
+  const recording = { tabId: 1, stopping: false, redact: (s) => s.replace('Acme Trucking', '[client]'), store: { add: (events) => added.push(...events) } };
+  t.state.recording = recording;
+  await t.context.runAssist([{}], t.ctx);
+  assert.equal(added.length, 1);
+  assert.deepEqual([added[0].kind, added[0].frame, added[0].page, added[0].call, added[0].request.fields.f1.label, added[0].tokensIn],
+    ['luna', 0, 'CoveragesRates', 'propose', 'Years with [client]', 1]);
+  assert.ok(Number.isFinite(added[0].t));
+  // Stopped while Luna answered: nothing more goes in.
+  recording.stopping = true;
+  opts.trace({ call: 'verify', request: {}, answer: null });
+  assert.equal(added.length, 1);
+  for (const other of [{ ...recording, stopping: false, tabId: 2 }, null]) {
+    const u = assistHarness({ suggest: async (items, context, cfg, o) => { opts = o; return { suggestions: [], tokensIn: 1, tokensOut: 1, modelCalls: 1 }; } });
+    u.state.recording = other;
+    await u.context.runAssist([{}], u.ctx);
+    assert.equal(opts.trace, undefined, 'no trace without a recording on this tab');
+  }
+});
+
 test('Luna gets the page’s other answers from the snapshot, and the log counts why questions were left', async () => {
   let sent;
   const why = ['missing', 'unverified', 'unverified', 'chose', 'tooLarge', null];
@@ -3311,7 +3340,7 @@ test('a Luna answer that comes after a fill of the same page redrew it is kept, 
   await settle();
   assert.equal(luna.calls.length, 1, 'the same questions are not asked twice while the first request answers them');
   assert.equal(luna.calls[0].opts.isStale(), false, 'Luna is not stopped between its calls for a newer request of the same page');
-  assert.match(JSON.stringify(t.holder().said), /Asking Luna about 1 question left for you/);
+  assert.match(JSON.stringify(t.holder().said), /Asking the AI assistant about 1 question left for you/);
   luna.calls[0].resolve();
   await Promise.all([first, second]);
   assert.equal(t.logged.length, 1);
@@ -7395,7 +7424,7 @@ function namesHarness() {
   const context = {
     state, AssistError, Date, get: (obj, path) => path.split(/[.[\]]+/).filter(Boolean).reduce((o, k) => o?.[k], obj),
     firstNameOf: (v) => String(v ?? '').trim().split(/\s+/)[0] || null,
-    aiSettings: async () => ({ on: !state.offline, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, names: !state.namesOff, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
     reviewDriverNames: async (record, cfg) => {
       requests.push({ record: structuredClone(record), cfg });
       const reply = t.reply;
@@ -7412,17 +7441,30 @@ function namesHarness() {
 }
 const namesIntake = () => ({ record: { drivers: [{ first: 'Maria', last: 'Sample' }, { first: 'John', last: 'Sample' }], coverage: {} }, warnings: [{ code: 'other', level: 'check' }], done: [] });
 
-test('Luna checks driver first names once per intake, never with the assistant off, and fails to an info note', async () => {
-  // Off, or no key: nothing is sent, nothing changes (gender stays the TNI standard).
-  for (const flag of ['offline', 'noKey']) {
+test('Luna checks driver first names once per intake, never with its switch off, and fails to an info note', async () => {
+  // The check's own switch off, or no key: nothing is sent, nothing changes (gender stays the TNI standard).
+  for (const flag of ['namesOff', 'noKey']) {
     const t = namesHarness();
     const intake = namesIntake();
     t.state.intake = intake;
     t.state[flag] = true;
-    await t.review({ retry: true });
+    // Not awaited: a request sent would wait on its answer (gates) and hold the test.
+    t.review({ retry: true });
+    for (let i = 0; i < 5; i++) await t.settle();
     assert.equal(t.requests.length, 0, flag);
     assert.deepEqual(intake.warnings.map((w) => w.code), ['other'], flag);
     assert.equal(intake.namesReview, undefined, flag);
+  }
+  // Maintainer, 2026-11-07 (AI-15): the check has its own switch, so Suggest answers off doesn't stop it.
+  {
+    const t = namesHarness();
+    const intake = namesIntake();
+    t.state.intake = intake;
+    t.state.offline = true;
+    t.review({ retry: true });
+    await t.answer();
+    assert.equal(t.requests.length, 1, 'Suggest answers off: the names are still checked');
+    assert.equal(intake.namesReview.done, true);
   }
   const t = namesHarness();
   const intake = namesIntake();
@@ -7897,6 +7939,28 @@ function siteHarness(carrier, step, filled = false) {
   context.renderSite();
   return Object.assign(ui, { siteTrack: plain(state.siteTrack) });
 }
+
+// Audit 2026-11-07, UX-14: the header's logo and caption, the dock's raters and review mode's words
+// come from the carrier's `display`, not from the panel's code.
+test('the header, the dock and review mode say the carrier as its display says it', () => {
+  const page = siteHarness({ ...amwins, quoteSteps: undefined });
+  assert.equal(page['site-caption'].textContent, 'Commercial auto');
+  assert.doesNotMatch(extractFunction('renderSite'), /assets\/raters|'Commercial auto'/);
+  assert.match(extractFunction('renderSite'), /const src = carrier\?\.display\?\.logo \|\| null;/);
+  const off = dockHarness({ carrier: null, extra: { ratersSaid } });
+  assert.equal(off.dock().sub, 'Progressive, GEICO or AmWINS.');
+  const review = (carrier) => {
+    const state = { tab: { carrier }, intake: { record: { operations: { businessClass: 'Towing' } } }, cards: {} };
+    const context = { state, supportedClass: () => false, issueSaid: (c) => c };
+    vm.runInNewContext(extractFunction('showReviewMode'), context);
+    context.showReviewMode();
+    return state.cards.review.text;
+  };
+  assert.equal(review(geico), 'GEICO\'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.');
+  assert.equal(review({ name: 'New carrier' }), 'New carrier\'s rules weren’t written for this business class. Confirm the marked answers: Continue waits on each page.');
+  // A logo opens the agent site in a new tab, only in the extension.
+  assert.match(SIDEPANEL, /mountCards\(\$\('cards-root'\), \{ portal: \(url\) => \{ if \(inExtension\) openPortal\(url\); \} \}\);/);
+});
 
 test('on a stop step the panel offers no fill; on the other steps it names the step', () => {
   // The dock: on a stop step no button at all, and why; elsewhere Fill, named after the step.
@@ -9272,6 +9336,7 @@ test('automatic filling paused on the tab in front is said under the dock\'s wor
   // The dock carries it (renderDock), and the agent's own Fill lifts it (fillPage).
   assert.match(extractFunction('renderDock'), /busy: !!state\.filling, paused: pausedSaid\(d\) \};/);
   assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false;/);
+  assert.match(extractFunction('fillPage'), /if \(!auto\) releasePortal\(state\.tab\.id\);/);
 });
 
 // W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
@@ -11061,8 +11126,13 @@ test('Assistant names whose key Luna uses: the agent\'s, TNI\'s server, or anoth
   // On without a key: it says so, and its fold opens (warn). The picks switch is disabled only while
   // AI is off (or with a provider that can't pick).
   assert.deepEqual([none.ai.keyEdit, none.ai.keyTone, none.ai.warn, none.ai.note, none.ai.noteTone, none.ai.autoOff], ['Add key', 'warn', true, 'Needs a key', 'warn', false]);
-  const off = await said({ on: false });
-  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown], [false, 'Off', 'off', true, true]);
+  const off = await said({ on: false, names: false });
+  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown, off.ai.names], [false, 'Off', 'off', true, true, false]);
+  // Maintainer, 2026-11-07 (AI-15): the driver-name check has its own switch; on alone, the card says so.
+  const names = await said({ on: false, names: true, apiKey: 'sk-own', ready: true });
+  assert.deepEqual([names.ai.on, names.ai.names, names.ai.warn, names.ai.note, names.ai.noteTone], [false, true, false, 'On. Checks driver names.', 'on']);
+  const namesNoKey = await said({ on: false, names: true });
+  assert.deepEqual([namesNoKey.ai.warn, namesNoKey.ai.note], [true, 'Needs a key'], 'the check on without a key: it can\'t run yet');
 });
 
 // The AI key (CLAUDE.md: credentials stay out of logs): Add key opens its box with the saved key in
@@ -11095,13 +11165,17 @@ test('the AI key is put in its box and read from it, never into the panel\'s sta
   assert.deepEqual(calls.find((c) => c[0] === 'logSettings'), ['logSettings', 'changed', 'aiKey']);
   assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, focused.at(-1), prevented], ['', false, 'key-edit', 1]);
   assert.deepEqual([...state.aiCache.keys()], ['b'], 'answers asked with the old key are dropped');
+  // The driver-name check's switch (AI-15) saves its own setting and logs it by its name.
+  await context.acts.aiNames(false);
+  assert.deepEqual(calls.filter((c) => c[0] === 'save').at(-1), ['save', { lunaNames: false }]);
+  assert.deepEqual(calls.filter((c) => c[0] === 'logSettings').at(-1), ['logSettings', 'changed', 'aiNames']);
   // Escape: emptied and closed without saving; stopped, so Settings stays open.
   await context.acts.keyEdit();
   el('ai-openai-key').value = 'typed';
   let stopped = 0;
   context.acts.keyKey({ key: 'Escape', preventDefault() {}, stopPropagation: () => { stopped++; } });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 1]);
+  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 2]);
   assert.doesNotMatch(JSON.stringify([...Object.entries(state)]), /sk-/, 'no key in the panel\'s state');
   // The box and its button in Settings (settings-view.jsx): a password box, never given a value by React.
   const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');

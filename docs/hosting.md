@@ -59,7 +59,9 @@ logged and the day counts from 0, and one that can't be written is logged and th
 memory. The server neither stores nor logs the request or OpenAI's answer. OpenAI's own errors come back as their status only (the log adds OpenAI's error
 code, such as `insufficient_quota`); the server's key refused (401, 403, 404) or out of credit or
 over its budget (429 `insufficient_quota`) is 424, so the panel says to tell TNI rather than to
-check a key or try again. The upload token ships in the extension, so it is not a secret. What
+check a key or try again. OpenAI gets 45 s (`LUNA_TIMEOUT_MS`) for its whole answer, the body read included, then the server answers 504, which
+the panel says as "The AI assistant took too long"; the panel's own wait is 55 s (`TIMEOUT_MS` in
+`src/ai/luna.js`), longer, so the server's answer reaches it. The upload token ships in the extension, so it is not a secret. What
 bounds the spending is the daily limit and token budget (counted here) and the money the key can reach:
 give the key its own OpenAI project, and on prepaid credit keep auto-recharge off, so an empty
 balance stops it (429 `insufficient_quota`, which the panel shows as 424). An OpenAI spend alert on
@@ -154,8 +156,10 @@ with `RATER_TOKEN is not set and HOST=0.0.0.0 is not loopback: refusing to start
 endpoint` instead of taking anyone's uploads (audit 2026-10-08: an unset variable made the
 deployment an open write endpoint). On Railway that is a failed deployment in the deploy logs, and
 the previous one keeps serving. `npm run server` on this computer still needs no token.
-`/v1/health` answers `{ ok, server }` to anyone (what the daily server check and the panel's
-"is it there" probe read); `events`, how many are stored, only comes with the admin token.
+`/v1/health` answers `{ ok, server, schema }` to anyone (what the daily server check and the panel's
+"is it there" probe read); `events`, how many are stored, and `metrics` only come with the admin
+token (below).
+
 One request never stops the server for everyone else. A request target that isn't a URL answers
 400 before any token check, an event whose type isn't one of the server's own (`constructor` or
 `__proto__` included) is refused in the reply's `rejected`, and an exception inside a request
@@ -218,6 +222,56 @@ and its group named in `dropped`; a group that isn't the right kind of object or
 whole. Accepting the event collects nothing until an extension sends it, so this server can be
 deployed whenever; the extension that sends the profile is released only after the privacy policy
 names it.
+
+### Upload limits and the disk guard
+
+The upload token ships in the extension, so `/v1/events` bounds what one address can send and stops
+taking uploads before the volume fills (`UPLOAD_LIMITS` and `MIN_FREE_MB` in `server/index.mjs`).
+Each address has two token buckets in memory: 120 requests, refilled at 60 a minute, and 100 MB,
+refilled at 25 MB an hour. The panel posts at most once a minute plus a few prompt uploads, each of
+at most 500 events and a million characters, so a full queue (20,000 events) drains in 40 requests
+at once; the pilot's busiest minute was 9 requests and 4.8 MB, its busiest day 8.3 MB, all agents
+together, and an office's agents may share one address. Over either limit the answer is 429 with
+`retry-after`, and the log line names the limit and the address (`limit`, `ip`). The address is the socket's, or
+the last value of the header `RATER_CLIENT_IP_HEADER` names: the image sets `x-real-ip`, which
+Railway's edge sets to the client's address (without it every agent would share the edge's). The
+buckets start full again after a restart or redeploy.
+
+While `DATA_DIR` has less than `RATER_MIN_FREE_MB` free (unset or blank 500, `0` switches the guard
+off, a value that isn't a number keeps 500), every upload answers 507 and stores nothing, so the
+server and the stored log survive; the log says `DISK LOW` once when it starts and `disk ok again`
+when it ends. A free-space reading that fails is logged once and never stops uploads. The extension
+treats 429 and 507 like any other refusal: the events stay queued on the agent's computer and go on
+the next minute's upload (its queue keeps 20,000 events, then drops the oldest and logs
+`usage_lost`). On `DISK LOW`, grow the volume in Railway (or free space on it) before the agents'
+queues fill.
+
+### Logs and counters
+
+Each log line is one JSON object (`logLine` in `server/index.mjs`), so Railway's log search filters
+by field (`@level:error`, `@route:/v1/luna`, `@status:507`). Every answer's line has `t`, `level`
+(`error` for a 5xx, on stderr), `method`, `route` (one of the server's routes, or `other`: never the
+path asked for), `status` and `ms`, and what it was about: an upload's `agent`, `accepted`,
+`duplicates` and `rejected` counts; a Luna request's `luna` (answered, limit, budget, upstream with
+OpenAI's status and error `code`, no answer, unreadable), the day's `requests`, `limit`, `tokens`
+and `budget`, and the answer's `in` and `out` tokens (`estimated` when OpenAI gave none); a rate
+limit's `limit`, `ip` and `wait`; a disk refusal's `disk`; an export's `since`, `until` and `days`;
+the dashboard's `window`, `tests` and `cached`. Other lines have a `msg` (startup, `DISK LOW`,
+`disk ok again`, a Luna day file not read or saved, a request's exception with its `error` name and
+`where`, and, when it answered 500, that answer's `status` and `ms`, counted like any other; an
+uncaught one's `error` and `stack`). `where` and `stack` are the error's stack frames only, never
+its message: the stack's `Name: message` header is cut off whole before frames are read, and a
+stack that doesn't start with it gives none. Lines carry names, counts and ids only: never a token, an
+event's or a Luna request's content, OpenAI's answer, or a request's query beyond the export's dates.
+
+With the admin token, `/v1/health` adds `metrics`: since the process started (`startedAt`,
+`uptimeS`; a restart or redeploy starts them again), `requests` by route and status, `exceptions`,
+and `events` (`accepted`, `duplicates`, `rejected`, `withDropped`: stored with a field dropped, and
+`lastStoredAt`), `rejects` by the server's reason (an unknown type's name and numbers left out, at
+most 50 reasons, then `other`); and as they are now, `disk` (`freeMB` on `DATA_DIR`, null when
+unreadable, and `guardMB`) and `luna` (the day's counts from its file, `limit` and `budget`; null
+without `OPENAI_API_KEY`). No external service reads them yet: `curl -H "authorization: Bearer
+$RATER_ADMIN_TOKEN" https://usage-server-production.up.railway.app/v1/health`.
 
 ## Live usage page
 

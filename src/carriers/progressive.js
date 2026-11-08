@@ -376,7 +376,7 @@ const classBusinessType = (r) => {
 const popupBusinessType = (r) => searchBusinessType(r) ?? classBusinessType(r);
 const popupBusinessSource = (r) => (searchClass(r) ? 'standard' : 'derived');
 const popupBusinessNote = (r) => (popupBusinessType(r) ? null
-  : `Business type for a ${r.operations.businessClass || 'business of unknown class'}${r.operations.whatHaul ? ` hauling ${r.operations.whatHaul}` : ''}: no exact match. Luna suggests the closest business from the business class and what they haul; check it, or pick it yourself.`);
+  : `Business type for a ${r.operations.businessClass || 'business of unknown class'}${r.operations.whatHaul ? ` hauling ${r.operations.whatHaul}` : ''}: no exact match. The AI assistant suggests the closest business from the business class and what they haul; check it, or pick it yourself.`);
 const popupBusinessUnoffered = (r) => (searchClass(r) ? SEARCH_UNOFFERED : null);
 // The popup's own Business Type box and Search (KY), apart from the page's box and Search behind it.
 const BECA_POPUP = '.becaPopupPage';
@@ -564,6 +564,8 @@ const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
+  // The quote is started on the agent home page (quoteState below).
+  display: { logo: 'assets/raters/progressive.svg', portalUrl: 'https://www.foragentsonly.com/home/', product: 'Commercial auto', classesSaid: 'expediters and general freight' },
   hosts: [/(^|\.)foragentsonly\.com$/, /(^|\.)progressive\.com$/],
   // ExtJS components are only reachable from the page's own JavaScript world.
   world: 'MAIN',

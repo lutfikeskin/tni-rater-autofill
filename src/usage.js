@@ -240,7 +240,7 @@ export function checkDismissedEvent(x, { redact = (v) => v, keySalt } = {}) {
 // intake) or changed (`changed` names the setting). `defaults`: the agent's own defaults in force
 // for the quote ({ id, value | 'ask', carrier? }; [] for TNI's), given once the agent answered.
 /**
- * @param {{ serverUrl?: string, autoFollowUps?: boolean, autoAdvance?: boolean, autoPages?: boolean, aiOn?: boolean, lunaAuto?: boolean, lunaKey?: string }} [saved]
+ * @param {{ serverUrl?: string, autoFollowUps?: boolean, autoAdvance?: boolean, autoPages?: boolean, aiOn?: boolean, lunaAuto?: boolean, lunaNames?: boolean, lunaKey?: string }} [saved]
  * @param {{ overwrite?: boolean, reason?: string, changed?: string, centralServer?: string, defaults?: { id: string, value: number | string, carrier?: string }[] }} [opts]
  * @returns {AgentSettingsEvent}
  */
@@ -250,7 +250,7 @@ export function agentSettingsEvent(saved = {}, { overwrite = false, reason, chan
     type: 'agent_settings', reason, ...(changed ? { changed } : {}),
     values: {
       autoFollowUps: saved.autoFollowUps ?? true, autoAdvance: saved.autoAdvance ?? true, autoPages: saved.autoPages ?? true, overwrite: !!overwrite,
-      aiOn: saved.aiOn !== false, aiAuto: saved.lunaAuto === true, aiKey: !!saved.lunaKey,
+      aiOn: saved.aiOn !== false, aiAuto: saved.lunaAuto === true, aiNames: saved.lunaNames !== false, aiKey: !!saved.lunaKey,
       uploads: url === '' ? 'off' : url === undefined || url === centralServer ? 'central' : 'other',
     },
     // The agent's own defaults this quote fills with (docs/agent-defaults-spec.md), once the agent

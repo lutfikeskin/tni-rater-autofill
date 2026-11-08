@@ -26,7 +26,12 @@ const BATCH_SIZE = 12;
 export const MAX_REQUEST_CHARS = 120_000;
 export const OLD_SERVER_CHARS = 48_000;
 const MAX_SCHEMA_ENUM_VALUES = 1000;
-const TIMEOUT_MS = 45000;
+// The usage server gives OpenAI LUNA_TIMEOUT_MS (45 s, server/index.mjs) and answers 504 after it:
+// the panel waits longer, so that 504 reaches it (and is said as too long) instead of the panel giving
+// up while the server's call can still finish and be paid for (audit 2026-11-07, AI-09).
+export const TIMEOUT_MS = 55000;
+// Groups of a page asked at the same time.
+const GROUPS_AT_ONCE = 2;
 const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const strings = { type: 'array', items: { type: 'string' }, maxItems: 4 };
 
@@ -37,7 +42,7 @@ function request(schema, state, instructions = INSTRUCTIONS, maxOutputTokens = 4
     instructions, input: [{ role: 'user', content: JSON.stringify(state) }],
     text: { verbosity: 'low', format: { type: 'json_schema', name, strict: true, schema } } };
   // Count the schema too: repeated option/source enums can exceed the context itself.
-  if (JSON.stringify(body).length > limit) throw new RequestTooLarge('This page has too much context for Luna. Answer it manually.');
+  if (JSON.stringify(body).length > limit) throw new RequestTooLarge('This page has too much context for the AI assistant. Answer it manually.');
   return body;
 }
 
@@ -46,13 +51,13 @@ const withRows = (items, context) => ({ ...context, rows: rowsFor(items, context
 
 // `limit`: the request's bound in characters (OLD_SERVER_CHARS for a server from before 2026-11-07).
 export function buildRequest(items, context, { limit = MAX_REQUEST_CHARS } = {}) {
-  if (!items.length || items.length > BATCH_SIZE) throw new AssistError('Luna can review up to twelve questions in one group.');
+  if (!items.length || items.length > BATCH_SIZE) throw new AssistError('The AI assistant can review up to twelve questions in one group.');
   // Every question is checked before any size is: one Luna may not review is never "too large"
   // (requestGroups leaves those to the agent and goes on).
   const ids = new Set();
   for (const item of items) {
     if (!item.id || ids.has(item.id) || !KINDS.has(item.controlKind) || !item.options?.length
-      || item.options.length > 254 || neverReason(item)) throw new AssistError('Luna can only review permitted fields with visible choices.');
+      || item.options.length > 254 || neverReason(item)) throw new AssistError('The AI assistant can only review permitted fields with visible choices.');
     ids.add(item.id);
   }
   context = withRows(items, context);
@@ -62,7 +67,7 @@ export function buildRequest(items, context, { limit = MAX_REQUEST_CHARS } = {})
   let enumValues = citations.items.enum.length;
   for (const item of items) {
     enumValues += item.options.length + 1;
-    if (enumValues > MAX_SCHEMA_ENUM_VALUES) throw new RequestTooLarge('Too many choices for one Luna review. Answer it manually.');
+    if (enumValues > MAX_SCHEMA_ENUM_VALUES) throw new RequestTooLarge('Too many choices for one AI assistant review. Answer it manually.');
     fields[item.id] = { label: item.label, section: item.section, current: item.current, reason: item.reason, ...fieldContext(item, context),
       options: Object.fromEntries(item.options.map((label, i) => [`o${i}`, label])) };
     properties[item.id] = object({ option: { type: 'string', enum: [...Object.keys(fields[item.id].options), LEAVE] },
@@ -139,7 +144,7 @@ const DERIVED_LABELS = {
   'applicant.hasMC': 'Has an MC #',
   'computed.priorPolicyExpired': 'Prior policy expired (worked out from the intake)',
   'computed.noPriorInsurance': 'No prior insurance (worked out from the intake)',
-  'claims.aiNtl': "NTL in the claims box or notes (Luna's review)",
+  'claims.aiNtl': "NTL in the claims box or notes (the AI assistant's review)",
 };
 // A cited intake path's label: the schema's, else one of those, else its last part in words
 // ("aiNtl" → "Ai ntl"), never the path itself.
@@ -155,24 +160,24 @@ function citedLabel(path) {
 // Parse the HTTP envelope ourselves; output_text is an SDK convenience, not the wire contract.
 export function responseData(json) {
   if (json?.status !== 'completed' || !isLunaModel(json.model) || !Array.isArray(json.output)) {
-    throw new AssistError('Luna returned an incomplete response or an unexpected model. Nothing was applied.');
+    throw new AssistError('The AI assistant returned an incomplete response or an unexpected model. Nothing was applied.');
   }
   const parts = [];
   for (const item of json.output) {
     if (item.type === 'reasoning') continue;
     if (item.type !== 'message' || item.role !== 'assistant' || !Array.isArray(item.content)) {
-      throw new AssistError('Luna returned an unexpected response. Nothing was applied.');
+      throw new AssistError('The AI assistant returned an unexpected response. Nothing was applied.');
     }
     for (const content of item.content) {
       if (content.type !== 'output_text' || typeof content.text !== 'string') {
-        throw new AssistError('Luna did not provide a reviewable answer. Nothing was applied.');
+        throw new AssistError('The AI assistant did not provide a reviewable answer. Nothing was applied.');
       }
       parts.push(content.text);
     }
   }
-  if (parts.length !== 1 || parts[0].length > 64000) throw new AssistError('Luna returned an invalid response. Nothing was applied.');
+  if (parts.length !== 1 || parts[0].length > 64000) throw new AssistError('The AI assistant returned an invalid response. Nothing was applied.');
   try { return JSON.parse(parts[0]); }
-  catch { throw new AssistError('Luna returned invalid structured output. Nothing was applied.'); }
+  catch { throw new AssistError('The AI assistant returned invalid structured output. Nothing was applied.'); }
 }
 
 const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
@@ -183,7 +188,7 @@ export function parseResponse(json, items, body) {
   const data = responseData(json);
   const state = JSON.parse(body.input[0].content);
   if (!exactKeys(data, ['decisions']) || !exactKeys(data.decisions, items.map(x => x.id))) {
-    throw new AssistError('Luna returned missing or unexpected decisions. Nothing was applied.');
+    throw new AssistError('The AI assistant returned missing or unexpected decisions. Nothing was applied.');
   }
   return items.map(item => {
     const x = data.decisions[item.id];
@@ -191,7 +196,7 @@ export function parseResponse(json, items, body) {
       || typeof x.option !== 'string' || !(x.option === LEAVE || Object.hasOwn(state.fields[item.id].options, x.option))
       || !shortList(x.sourceIds) || !shortList(x.missingInformation) || !shortList(x.conflicts)
       || typeof x.explanation !== 'string' || x.explanation.length > 2000 || typeof x.nextStep !== 'string' || x.nextStep.length > 500) {
-      throw new AssistError('Luna returned an invalid decision. Nothing was applied.');
+      throw new AssistError('The AI assistant returned an invalid decision. Nothing was applied.');
     }
     const evidenceSources = [...new Set(x.sourceIds)].map(id => Object.hasOwn(state.sources, id) ? state.sources[id] : null);
     const validSource = source => source && (source.basis === 'intake' && typeof source.path === 'string'
@@ -302,19 +307,19 @@ function requestGroups(items, context, limit, start = 0) {
 const tooLargeLeave = item => ({ ...item, choice: null, leave: true, basis: 'none', intakePath: null, evidence: null, evidenceSources: [],
   model: DEFAULT_MODEL, provider: 'luna', policy: POLICY_VERSION, probability: null, confidence: null, margin: null,
   evidenceProbability: null, support: null, autoOk: false, checks: [], leaveWhy: 'tooLarge', nextStep: null,
-  tip: 'Too long for Luna to review: its choices, with the intake and the rules, do not fit one request. Answer it on the page.' });
+  tip: 'Too long for the AI assistant to review: its choices, with the intake and the rules, do not fit one request. Answer it on the page.' });
 
 export function verifyResponse(json, suggestions) {
   const data = responseData(json), picked = suggestions.filter(x => !x.leave);
   if (!exactKeys(data, ['decisions']) || !exactKeys(data.decisions, picked.map(x => x.id))
     || picked.some(x => !exactKeys(data.decisions[x.id], ['supported', 'gap']) || typeof data.decisions[x.id].supported !== 'boolean'
       || typeof data.decisions[x.id].gap !== 'string' || data.decisions[x.id].gap.length > 500)) {
-    throw new AssistError('Luna returned an invalid evidence check. Nothing was applied.');
+    throw new AssistError('The AI assistant returned an invalid evidence check. Nothing was applied.');
   }
   return suggestions.map(x => x.leave ? x : data.decisions[x.id].supported
     ? { ...x, verified: true, autoOk: automaticChoiceAllowed(x) }
     : { ...x, choice: null, leave: true, autoOk: false, verified: false, evidence: null, evidenceSources: [], cited: [], citedRules: [], basis: 'none', intakePath: null, leaveWhy: 'unverified',
-      tip: data.decisions[x.id].gap.trim() ? `Luna could not verify an answer: ${data.decisions[x.id].gap.trim()}` : 'Luna could not verify this answer against the supplied facts. Review it on the page.' });
+      tip: data.decisions[x.id].gap.trim() ? `The AI assistant could not verify an answer: ${data.decisions[x.id].gap.trim()}` : 'The AI assistant could not verify this answer against the supplied facts. Review it on the page.' });
 }
 
 // A pick resting on intake text only as the client wrote it: every intake source it cites is a free-text
@@ -346,7 +351,7 @@ export class OldServerLimit extends AssistError {}
 export async function callModel({ apiKey, proxy = null, body, fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   const via = apiKey ? { url: API_URL, token: apiKey } : proxy?.url ? proxy : null;
-  if (!via) throw new AssistError('Luna needs an OpenAI API key. Add it in Settings, under AI.');
+  if (!via) throw new AssistError('The AI assistant needs an OpenAI API key. Add it in Settings, under AI assistant.');
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), timeoutMs);
   const wire = JSON.stringify(body), overOldServer = !apiKey && wire.length > OLD_SERVER_CHARS;
   // Only over the old server's body limit (twice its bound, in bytes) can it cut the connection.
@@ -358,33 +363,63 @@ export async function callModel({ apiKey, proxy = null, body, fetchImpl = global
       if ([429, 500, 502, 503].includes(res.status) && attempt < 2) {
         const header = res.headers?.get('retry-after'), seconds = header == null ? NaN : Number(header);
         const delay = Number.isFinite(seconds) ? seconds * 1000 : 500 * 2 ** attempt;
-        if (delay > 5000) throw new AssistError('Luna is busy or rate-limited. Try again shortly.');
+        if (delay > 5000) throw new AssistError('The AI assistant is busy or rate-limited. Try again shortly.');
         await sleep(Math.max(250, delay));
         if (abort.signal.aborted) throw new Error('timeout');
         continue;
       }
       // Provider errors can echo inputs and credentials. Never expose their bodies. Through the
       // usage server, 404 is a server from before /v1/luna: Luna isn't set up there, as with no key.
-      const notSetUp = "Luna isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under AI.";
+      const notSetUp = "The AI assistant isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under AI assistant.";
       // The server's own refusal of the size (its error text, never OpenAI's: that comes back as a status).
       if (overOldServer && (res.status === 413
-        || res.status === 400 && await Promise.resolve().then(() => res.json()).then(x => x?.error === 'request too large', () => false))) throw new OldServerLimit('Luna could not review this page context. Answer it manually.');
+        || res.status === 400 && await Promise.resolve().then(() => res.json()).then(x => x?.error === 'request too large', () => false))) throw new OldServerLimit('The AI assistant could not review this page context. Answer it manually.');
       if (!res.ok && !apiKey) throw new AssistError(({ 401: "TNI's server refused this copy of the extension. Tell TNI.",
         404: notSetUp, 501: notSetUp,
-        424: "Luna isn't working on TNI's server right now. Tell TNI.", 400: 'Luna could not review this page context. Answer it manually.',
-        429: 'Luna is rate-limited. Try again shortly.' })[res.status]
-        ?? `Luna returned HTTP ${res.status}. Try again shortly.`);
-      if (!res.ok) throw new AssistError(({ 401: 'The OpenAI API key was refused. Check it in Settings, under AI.',
-        403: 'This OpenAI key cannot use Luna.', 400: 'Luna could not review this page context. Answer it manually.',
-        404: 'GPT-6 Luna is unavailable for this OpenAI project.', 429: 'Luna is rate-limited. Try again shortly.' })[res.status]
-        ?? `Luna returned HTTP ${res.status}. Try again shortly.`);
+        424: "The AI assistant isn't working on TNI's server right now. Tell TNI.", 400: 'The AI assistant could not review this page context. Answer it manually.',
+        504: 'The AI assistant took too long. Nothing was applied.',
+        429: 'The AI assistant is rate-limited. Try again shortly.' })[res.status]
+        ?? `The AI assistant returned HTTP ${res.status}. Try again shortly.`);
+      if (!res.ok) throw new AssistError(({ 401: 'The OpenAI API key was refused. Check it in Settings, under AI assistant.',
+        403: 'This OpenAI key cannot use the AI assistant.', 400: 'The AI assistant could not review this page context. Answer it manually.',
+        404: "The AI assistant's model is unavailable for this OpenAI project.", 429: 'The AI assistant is rate-limited. Try again shortly.' })[res.status]
+        ?? `The AI assistant returned HTTP ${res.status}. Try again shortly.`);
       return await res.json();
     }
   } catch (error) {
     if (error instanceof AssistError) throw error;
-    if (overOldBody && !abort.signal.aborted) throw new OldServerLimit('Cannot reach Luna or read its response. Nothing was applied.');
-    throw new AssistError(abort.signal.aborted ? 'Luna took too long. Nothing was applied.' : 'Cannot reach Luna or read its response. Nothing was applied.');
+    if (overOldBody && !abort.signal.aborted) throw new OldServerLimit('Cannot reach the AI assistant or read its response. Nothing was applied.');
+    throw new AssistError(abort.signal.aborted ? 'The AI assistant took too long. Nothing was applied.' : 'Cannot reach the AI assistant or read its response. Nothing was applied.');
   } finally { clearTimeout(timer); }
+}
+
+// One model call as Luna got it and answered, for the developer recording (`trace`, while one runs;
+// docs/developer-recording.md): which call, the request's state (the intake already redacted as sent;
+// the questions and their options as the page shows them), the answer it gave, its usage and time.
+// Never logged or uploaded: it stays in the recording's zip.
+function traced(call, trace) {
+  return async (args) => {
+    const started = Date.now();
+    let json = null, error = null;
+    try {
+      json = await call(args);
+      return json;
+    } catch (e) {
+      error = e;
+      throw e;
+    } finally {
+      let state = null, answer = null;
+      try { state = JSON.parse(args.body.input[0].content); } catch { /* not this contract's request */ }
+      try { answer = json ? responseData(json) : null; } catch { /* refused below as it is */ }
+      const count = (v) => (Number.isFinite(v) && v >= 0 ? v : null);
+      try {
+        trace({ call: state?.proposed ? 'verify' : 'propose', ms: Date.now() - started, request: state, answer,
+          model: typeof json?.model === 'string' ? json.model : null, outcome: typeof json?.status === 'string' ? json.status : null,
+          tokensIn: count(json?.usage?.input_tokens), tokensOut: count(json?.usage?.output_tokens),
+          error: error ? String(error.message ?? error).slice(0, 200) : null });
+      } catch { /* the recording never stops a review */ }
+    }
+  };
 }
 
 // A failed or dropped review carries its prompt hash too (error.promptHash), so its log can be told
@@ -399,7 +434,8 @@ export async function suggest(items, context, config, options = {}) {
   }
 }
 
-async function reviewPage(items, context, config, { call = callModel, isStale = () => false }, prompt) {
+async function reviewPage(items, context, config, { call: send = callModel, isStale = () => false, trace = null }, prompt) {
+  const call = trace ? traced(send, trace) : send;
   const counters = { tokensIn: 0, tokensOut: 0, modelCalls: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
   const fresh = () => { if (isStale()) throw new AssistError('The page or intake changed. Run Fill again for fresh suggestions.'); };
   // Counted as soon as a call returns, before it is checked or found stale: its tokens were spent.
@@ -430,37 +466,45 @@ async function reviewGroups(items, context, config, { call, fresh, usage, counte
   // None fits: the review stops before any paid call.
   if (!groups.length && tooLarge.length) throw tooLarge[0].error;
   for (const { at } of tooLarge) suggestions[at] = tooLargeLeave(items[at]);
-  for (let i = 0; i < groups.length; i++) {
-    const { batch, at, body } = groups[i];
-    let parsed;
-    try {
+  // One group: its choices, then the evidence check of what it picked, both required.
+  const review = async ({ batch, body }) => {
+    fresh();
+    const json = await call({ apiKey: config.apiKey, proxy: config.proxy, body });
+    usage(json);
+    fresh();
+    let parsed = parseResponse(json, batch, body);
+    if (parsed.some(x => !x.leave)) {
+      const checked = await call({ apiKey: config.apiKey, proxy: config.proxy, body: buildVerification(parsed, context, { limit }) });
+      usage(checked);
       fresh();
-      const json = await call({ apiKey: config.apiKey, proxy: config.proxy, body });
-      usage(json);
-      fresh();
-      parsed = parseResponse(json, batch, body);
-      if (parsed.some(x => !x.leave)) {
-        const checked = await call({ apiKey: config.apiKey, proxy: config.proxy, body: buildVerification(parsed, context, { limit }) });
-        usage(checked);
-        fresh();
-        parsed = verifyResponse(checked, parsed);
-      }
-    } catch (error) {
-      // TNI's server from before 2026-11-07: the questions not yet reviewed are planned again at its
-      // bound, before any further paid call, and this group is asked again in the new plan.
-      if (!(error instanceof OldServerLimit) || limit === OLD_SERVER_CHARS) throw error;
-      limit = OLD_SERVER_CHARS;
-      const again = requestGroups(items, context, limit, at[0]);
-      // Nothing reviewed and nothing fits that server: the review stops, as when none fits at all
-      // (not cached as leaves, so the next fill asks again).
-      if (i === 0 && !again.groups.length) throw again.tooLarge[0]?.error ?? error;
-      suggestions.length = at[0];
-      for (const x of again.tooLarge) suggestions[x.at] = tooLargeLeave(items[x.at]);
-      groups = [...groups.slice(0, i), ...again.groups];
-      i--;
-      continue;
+      parsed = verifyResponse(checked, parsed);
     }
-    parsed.forEach((x, k) => { suggestions[at[k]] = x; });
+    return parsed;
+  };
+  // Up to GROUPS_AT_ONCE groups are asked at the same time (audit 2026-11-07, AI-09: one after the
+  // other, a page of 3 groups was 6 calls in a row). Each still needs both its calls, results go in
+  // the questions' order, and the first failure in that order is the review's, once every group of
+  // the wave has ended, so what they spent is counted.
+  for (let i = 0; i < groups.length;) {
+    const wave = groups.slice(i, i + GROUPS_AT_ONCE);
+    const ended = await Promise.allSettled(wave.map(review));
+    let k = 0;
+    for (; k < ended.length && ended[k].status === 'fulfilled'; k++) ended[k].value.forEach((x, j) => { suggestions[wave[k].at[j]] = x; });
+    if (k === ended.length) { i += wave.length; continue; }
+    const error = ended[k].reason, { at } = wave[k];
+    // TNI's server from before 2026-11-07: the questions not yet reviewed are planned again at its
+    // bound, before any further paid call, and this group is asked again in the new plan (a group
+    // after it in the same wave too: its answer, if any, is not used).
+    if (!(error instanceof OldServerLimit) || limit === OLD_SERVER_CHARS) throw error;
+    limit = OLD_SERVER_CHARS;
+    const again = requestGroups(items, context, limit, at[0]);
+    // Nothing reviewed and nothing fits that server: the review stops, as when none fits at all
+    // (not cached as leaves, so the next fill asks again).
+    if (i + k === 0 && !again.groups.length) throw again.tooLarge[0]?.error ?? error;
+    suggestions.length = at[0];
+    for (const x of again.tooLarge) suggestions[x.at] = tooLargeLeave(items[x.at]);
+    groups = [...groups.slice(0, i + k), ...again.groups];
+    i += k;
   }
   return { suggestions: suggestions.map(x => ({ ...x, promptHash: prompt })), promptHash: prompt, ...counters };
 }
@@ -545,7 +589,7 @@ export function parseNotesReview(json, { lines, ids, year = new Date().getFullYe
     || typeof data.lines[id].ntl !== 'boolean' || typeof data.lines[id].coverageChange !== 'boolean' || typeof data.lines[id].generalLiability !== 'boolean'
     || !yearsOrNull(data.lines[id].businessYears, MAX_BUSINESS_YEARS)
     || !(data.lines[id].businessSince === null || (yearsOrNull(data.lines[id].businessSince, year) && data.lines[id].businessSince >= year - MAX_BUSINESS_YEARS)))) {
-    throw new AssistError('Luna returned an invalid claims-box review.');
+    throw new AssistError('The AI assistant returned an invalid claims-box review.');
   }
   return lines.map((line, i) => ({ line, ...data.lines[ids[i]] }));
 }
@@ -571,28 +615,28 @@ export function notesWarnings(results, { quotedFragments = [], ntlSet = false, i
   const gl = results.find((x) => x.generalLiability === true && (!lines || lines.includes(x.line)));
   if (gl) {
     out.push({ line: gl.line, code: 'ai.gl', path: 'coverage.hasGl', level: 'check', choices: GL_CHOICES.map((c) => ({ ...c })),
-      msg: `Luna: notes mention GL: "${shortQuote(gl.line)}". Progressive fills None of the above unless you confirm it; then those questions are left to you.` });
+      msg: `AI assistant: notes mention GL: "${shortQuote(gl.line)}". Progressive fills None of the above unless you confirm it; then those questions are left to you.` });
   }
   const stated = results.find((x) => statedYears(x, year) != null);
   const years = stated ? statedYears(stated, year) : null;
   if (stated && years !== intakeYears) {
     const about = `"${stated.line}" (${years} year${years === 1 ? '' : 's'})`;
     out.push({ line: stated.line, code: 'ai.years-in-business', path: 'applicant.yearsInBusiness', level: 'check', msg: yearsRange
-      ? `Luna: the claims box or Additional Notes may say how long the business has run: ${about}. The intake's notes give years in business as a range, so it is left to you. If the line is right, enter Years in business or Year established here.`
+      ? `AI assistant: the claims box or Additional Notes may say how long the business has run: ${about}. The intake's notes give years in business as a range, so it is left to you. If the line is right, enter Years in business or Year established here.`
       : yearsUnread
-      ? `Luna: the claims box or Additional Notes may say how long the business has run: ${about}. The intake's notes state years in business, but not as one number, so it is left to you. If the line is right, enter Years in business or Year established here.`
+      ? `AI assistant: the claims box or Additional Notes may say how long the business has run: ${about}. The intake's notes state years in business, but not as one number, so it is left to you. If the line is right, enter Years in business or Year established here.`
       : intakeYears == null
-      ? `Luna: the claims box or Additional Notes may say how long the business has run: ${about}. Years in business is blank on the intake, so the quote gets 0 (New Venture). If the line is right, enter Years in business or Year established here.`
-      : `Luna: the claims box or Additional Notes may say how long the business has run: ${about}, but the intake gives ${intakeYears}. Check Years in business here.` });
+      ? `AI assistant: the claims box or Additional Notes may say how long the business has run: ${about}. Years in business is blank on the intake, so the quote gets 0 (New Venture). If the line is right, enter Years in business or Year established here.`
+      : `AI assistant: the claims box or Additional Notes may say how long the business has run: ${about}, but the intake gives ${intakeYears}. Check Years in business here.` });
   }
   for (const x of results) {
     // The intake's own NTL item already covers NTL here; another request in it still counts.
     const quotedNtl = quotedFragments.includes(x.line) && NTL_WORDS.test(x.line);
     if (x.ntl && !quotedNtl && !ntlSet) {
-      out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: notes may be about NTL: "${x.line}". If the client wants it, set Non-trucking liability to Yes. ${NTL_RATES}` });
+      out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `AI assistant: notes may be about NTL: "${x.line}". If the client wants it, set Non-trucking liability to Yes. ${NTL_RATES}` });
     }
     if (x.coverageChange) {
-      out.push({ line: x.line, code: 'ai.coverage-change', path: fromNotes.includes(x.line) ? 'notes.text' : 'claims.text', level: 'check', msg: `Luna: notes may ask for a coverage change: "${x.line}". Change Requested coverage if so.` });
+      out.push({ line: x.line, code: 'ai.coverage-change', path: fromNotes.includes(x.line) ? 'notes.text' : 'claims.text', level: 'check', msg: `AI assistant: notes may ask for a coverage change: "${x.line}". Change Requested coverage if so.` });
     }
   }
   return out;
@@ -611,7 +655,7 @@ export async function reviewNotes(record, config, { call = callModel, redact, to
   const flagged = new Set(warnings.map(w => w.line)).size;
   for (const w of warnings) delete w.line;
   // Past the first lines nothing was read: the agent reads the rest.
-  if (review.truncated) warnings.push({ code: 'ai.claims-truncated', path: 'claims.text', level: 'check', msg: `Luna read only the first ${MAX_NOTE_LINES} lines of the notes. Check the rest.` });
+  if (review.truncated) warnings.push({ code: 'ai.claims-truncated', path: 'claims.text', level: 'check', msg: `The AI assistant read only the first ${MAX_NOTE_LINES} lines of the notes. Check the rest.` });
   // The same usage counters as page reviews (suggest), cache included.
   return { warnings, lines: review.lines.length, flagged, ...spent };
 }
@@ -660,7 +704,7 @@ export function buildNameReview(record) {
 export function parseNameReview(json, { ids }) {
   const data = responseData(json);
   if (!exactKeys(data, ['drivers']) || !exactKeys(data.drivers, ids) || ids.some(id => !NAME_GUESSES.includes(data.drivers[id]))) {
-    throw new AssistError('Luna returned an invalid driver-name review.');
+    throw new AssistError('The AI assistant returned an invalid driver-name review.');
   }
   return ids.map(id => ({ id, index: Number(id.slice(1)), guess: data.drivers[id] }));
 }
@@ -675,7 +719,7 @@ export function nameWarnings(results, { names }, record) {
   return results.filter(x => x.guess === 'likely_female' && !record?.drivers?.[x.index]?.gender
     && firstNameOf(record?.drivers?.[x.index]?.first) === names[x.id]).map(x => ({
     code: 'ai.driver-gender', path: `drivers[${x.index}].gender`, level: 'check', choices: genderChoices(x.index),
-    msg: `Luna: driver ${x.index + 1} is filled Male (TNI standard), but "${names[x.id]}" is more often a woman's name: a guess from the first name only. Check.`,
+    msg: `AI assistant: driver ${x.index + 1} is filled Male (TNI standard), but "${names[x.id]}" is more often a woman's name: a guess from the first name only. Check.`,
   }));
 }
 

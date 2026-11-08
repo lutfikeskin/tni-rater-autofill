@@ -162,7 +162,7 @@ test('each cited source is said as the agent reads it: the field label with its 
   assert.equal(citedSaid({ basis: 'intake', path: 'computed.priorPolicyExpired', value: true }), 'Prior policy expired (worked out from the intake): Yes');
   assert.equal(citedSaid({ basis: 'intake', path: 'computed.noPriorInsurance', value: false }), 'No prior insurance (worked out from the intake): No');
   assert.equal(citedSaid({ basis: 'intake', path: 'applicant.hasDOT', value: true }), 'Has a USDOT #: Yes');
-  assert.equal(citedSaid({ basis: 'intake', path: 'claims.aiNtl', value: true }), "NTL in the claims box or notes (Luna's review): Yes");
+  assert.equal(citedSaid({ basis: 'intake', path: 'claims.aiNtl', value: true }), "NTL in the claims box or notes (the AI assistant's review): Yes");
   assert.equal(citedSaid({ basis: 'intake', path: 'operations.notes', value: 'No placards.' }), 'Notes: No placards.');
   assert.equal(citedSaid({ basis: 'intake', path: 'trailers[1].someNewThing', value: 'x' }), 'Some new thing (trailer 2): x');
   // A left question cites nothing.
@@ -232,6 +232,33 @@ test('suggestions wait for both calls; stale verification responses are discarde
   assert.equal(result.modelCalls, 2);
   count = 0;
   await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call, isStale: () => count >= 2 }), /changed/);
+});
+
+// Audit 2026-11-07, AI-08: a developer recording keeps what Luna was asked and answered, per call.
+test('with a trace, each call says what Luna was asked and answered, failures too, and a failing trace stops nothing', async () => {
+  const seen = [];
+  let count = 0;
+  const call = async ({ body }) => ++count === 1 ? answer(body) : envelope({ decisions: { f1: { supported: true, gap: '' } } });
+  const result = await suggest(items, context, { apiKey: 'synthetic' }, { call, trace: (x) => seen.push(x) });
+  assert.equal(result.suggestions[0].choice, 'No');
+  assert.deepEqual(seen.map((x) => [x.call, x.model, x.outcome, x.tokensIn, x.tokensOut, x.error]),
+    [['propose', DEFAULT_MODEL, 'completed', 100, 30, null], ['verify', DEFAULT_MODEL, 'completed', 100, 30, null]]);
+  assert.equal(seen[0].request.fields.f1.label, 'Hazardous materials requiring placards?');
+  assert.ok(Object.values(seen[0].request.sources).some((s) => s.path === 'operations.hazPlacard' && s.value === false));
+  assert.equal(seen[0].answer.decisions.f1.explanation, 'The intake explicitly says No.');
+  assert.deepEqual(seen[1].answer.decisions.f1, { supported: true, gap: '' });
+  assert.ok(seen.every((x) => Number.isFinite(x.ms) && x.ms >= 0));
+  // A call that fails is said with its error; an answer Luna's contract refuses has no answer.
+  const failed = [];
+  await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async () => { throw new AssistError('Luna is rate-limited. Try again shortly.'); }, trace: (x) => failed.push(x) }), /rate-limited/);
+  assert.deepEqual([failed.length, failed[0].call, failed[0].answer, failed[0].error], [1, 'propose', null, 'Luna is rate-limited. Try again shortly.']);
+  const odd = [];
+  await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async () => ({ ...envelope({}), model: 'other' }), trace: (x) => odd.push(x) }));
+  assert.deepEqual([odd[0].answer, odd[0].model], [null, 'other']);
+  // Without a trace nothing is built; with one that throws, the review goes on.
+  count = 0;
+  const kept = await suggest(items, context, { apiKey: 'synthetic' }, { call, trace: () => { throw new Error('recording gone'); } });
+  assert.equal(kept.suggestions[0].choice, 'No');
 });
 
 test('twelve questions need two calls with complete facts and deduplicated verification evidence', async () => {
@@ -385,7 +412,7 @@ test('a question too large even alone is left to the agent, said so, and the res
   assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id), "in the page's order");
   for (const x of result.suggestions.filter(x => ['f2', 'f4'].includes(x.id))) {
     assert.deepEqual([x.leave, x.leaveWhy, x.choice, x.autoOk, x.nextStep], [true, 'tooLarge', null, false, null]);
-    assert.match(x.tip, /Too long for Luna.*Answer it on the page/);
+    assert.match(x.tip, /Too long for the AI assistant.*Answer it on the page/);
   }
   assert.ok(result.suggestions.filter(x => ['f1', 'f3', 'f5'].includes(x.id)).every(x => x.choice === 'No'));
   assert.equal(result.modelCalls, 2, 'one proposal and one evidence check; nothing for the questions left');
@@ -494,13 +521,13 @@ test('usage counters ignore malformed values and reasoning is already included i
 test('Luna settings ignore legacy providers and use only Luna opt-in fields', () => {
   const legacy = { aiOn: true, aiAuto: true, aiKey: 'legacy', jevKey: 'typesafe', jevModel: 'jev-old', lunaKey: 'openai' };
   assert.deepEqual(settingsFrom(legacy), {
-    provider: 'luna', on: true, auto: false, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: false, names: true, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
   });
   assert.deepEqual(settingsFrom({ ...legacy, lunaAuto: true, aiProvider: 'jev' }), {
-    provider: 'luna', on: true, auto: true, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: true, names: true, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
   });
   assert.deepEqual(settingsFrom({ aiProvider: 'jev', jevKey: 'typesafe', jevModel: 'jev-old' }), {
-    provider: 'luna', on: true, auto: false, apiKey: '', proxy: null, ready: false, model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: false, names: true, apiKey: '', proxy: null, ready: false, model: DEFAULT_MODEL,
   });
   assert.equal(settingsFrom({ aiProvider: 'luna', aiKey: 'legacy', jevKey: 'typesafe' }).apiKey, '');
   assert.equal(settingsFrom({ lunaKey: 'openai', lunaAuto: 'true' }).auto, false);
@@ -508,9 +535,11 @@ test('Luna settings ignore legacy providers and use only Luna opt-in fields', ()
 
 test('suggestions are on until the agent turns them off; without a key of their own, Luna goes through the usage server', () => {
   const server = { serverUrl: 'https://usage.example', serverToken: 'upload' };
-  assert.deepEqual(settingsFrom({}, server), { provider: 'luna', on: true, auto: false, apiKey: '',
+  assert.deepEqual(settingsFrom({}, server), { provider: 'luna', on: true, auto: false, names: true, apiKey: '',
     proxy: { url: 'https://usage.example/v1/luna', token: 'upload' }, ready: true, model: DEFAULT_MODEL });
   assert.equal(settingsFrom({ aiOn: false }, server).on, false, 'turned off stays off');
+  // The driver-name check has its own switch (maintainer, 2026-11-07, AI-15): on unless turned off, whatever Suggest answers says.
+  assert.deepEqual([settingsFrom({ aiOn: false }, server).names, settingsFrom({ lunaNames: false }, server).names, settingsFrom({ lunaNames: 'false' }, server).names], [true, false, true]);
   assert.equal(settingsFrom({ lunaKey: 'own' }, server).proxy, null, "the agent's own key goes straight to OpenAI");
   assert.equal(settingsFrom({}, { serverUrl: '' }).ready, false, 'no server, no key: not ready');
   assert.equal(settingsFrom({}, { serverUrl: 'not a url' }).proxy, null);
@@ -527,6 +556,48 @@ test("without a key of the agent's own, the request goes to the server with its 
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(501) }), /isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under AI./);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(424) }), /TNI's server right now/);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(401) }), error => /TNI's server refused/.test(error.message) && !/OpenAI API key/.test(error.message));
+  // Audit 2026-11-07, AI-09: the server gave up on OpenAI (its LUNA_TIMEOUT_MS, under the panel's own wait).
+  await assert.rejects(callModel({ proxy, body, fetchImpl: status(504) }), /The AI assistant took too long\. Nothing was applied\.$/);
+});
+
+// Audit 2026-11-07, AI-09: a page of several groups was its calls one after the other.
+test("groups are asked two at a time, each still with both its calls, and their answers go in the questions' order", async () => {
+  const pending = [], started = [];
+  let inFlight = 0, most = 0;
+  const call = ({ body }) => {
+    const state = JSON.parse(body.input[0].content);
+    const fields = Object.keys(state.proposed ?? state.fields);
+    started.push(`${state.proposed ? 'check' : 'ask'} ${fields.length}`);
+    most = Math.max(most, ++inFlight);
+    return new Promise((resolve) => pending.push(() => { inFlight--; resolve(state.proposed ? groupCheck(body) : groupAnswer(body)); }));
+  };
+  const fields = questions(30);
+  const review = suggest(fields, context, { apiKey: 'synthetic' }, { call });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  // The prompt hash is worked out (crypto.subtle) before the first call.
+  for (let i = 0; i < 200 && started.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 1));
+  for (let i = 0; i < 5; i++) await flush();
+  assert.deepEqual(started, ['ask 12', 'ask 12'], 'the first two groups are asked at once, the third waits');
+  // The second group answers first: its evidence check starts, and still the third waits for the wave.
+  pending.splice(1, 1)[0]();
+  await flush();
+  assert.deepEqual(started, ['ask 12', 'ask 12', 'check 12']);
+  while (pending.length) { pending.shift()(); await flush(); }
+  const result = await review;
+  assert.deepEqual(started.slice(3), ['check 12', 'ask 6', 'check 6']);
+  assert.equal(most, 2);
+  assert.equal(result.modelCalls, 6);
+  assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id), "in the questions' order");
+  assert.ok(result.suggestions.every(x => !x.leave && x.verified));
+  // The first failure in the questions' order is the review's, after the whole wave has ended.
+  let n = 0;
+  const failing = async ({ body }) => {
+    const state = JSON.parse(body.input[0].content);
+    if (!state.proposed && ++n === 1) throw new AssistError('Luna is rate-limited. Try again shortly.');
+    return state.proposed ? groupCheck(body) : groupAnswer(body);
+  };
+  const outcome = await suggest(questions(24), context, { apiKey: 'synthetic' }, { call: failing }).then(() => null, (e) => e);
+  assert.match(outcome.message, /rate-limited/);
 });
 
 // Audit 2026-11-07, AI-01: the panel's bound went from 48,000 characters to MAX_REQUEST_CHARS, and
@@ -557,7 +628,7 @@ test("a server from before the larger bound refuses a request over its own: that
   // A cut connection is the old server's only above its body limit (bytes, twice its bound): below
   // that it is a network failure, as before (CodeRabbit on #357). Three-byte characters count three.
   const reset = async () => { throw new TypeError('connection reset'); };
-  await assert.rejects(callModel({ proxy, body: big, fetchImpl: reset }), e => !(e instanceof OldServerLimit) && /Cannot reach Luna/.test(e.message));
+  await assert.rejects(callModel({ proxy, body: big, fetchImpl: reset }), e => !(e instanceof OldServerLimit) && /Cannot reach the AI assistant/.test(e.message));
   const wide = buildRequest(questions(1).map(x => ({ ...x, label: '€'.repeat(OLD_SERVER_CHARS) })), context);
   assert.ok(JSON.stringify(wide).length < 2 * OLD_SERVER_CHARS && new TextEncoder().encode(JSON.stringify(wide)).length > 2 * OLD_SERVER_CHARS);
   await assert.rejects(callModel({ proxy, body: wide, fetchImpl: reset }), OldServerLimit);
@@ -569,11 +640,13 @@ test('against a server from before the larger bound, the page is planned again a
   const calls = [];
   const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
   const result = await suggest(fields, context, { apiKey: '', proxy }, { call: (args) => callModel({ ...args, fetchImpl: oldServer(calls) }) });
-  assert.ok(calls[0] > OLD_SERVER_CHARS, 'planned first at the larger bound');
-  assert.ok(calls.slice(1).every(n => n <= OLD_SERVER_CHARS), "then at the old server's");
+  // Two groups are asked at once (AI-09): both of the first wave may be refused, which costs nothing.
+  const over = calls.filter(n => n > OLD_SERVER_CHARS).length;
+  assert.ok(over >= 1 && over <= 2 && calls.slice(0, over).every(n => n > OLD_SERVER_CHARS), 'planned first at the larger bound');
+  assert.ok(calls.slice(over).every(n => n <= OLD_SERVER_CHARS), "then at the old server's");
   assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id));
   assert.ok(result.suggestions.every(x => !x.leave && x.choice === 'No'));
-  assert.equal(result.modelCalls, calls.length - 1, 'the refused request was never a model call');
+  assert.equal(result.modelCalls, calls.length - over, 'a refused request was never a model call');
   // The current server takes the larger groups: fewer calls.
   const current = [];
   await suggest(fields, context, { apiKey: '', proxy }, { call: async ({ body }) => {
@@ -859,7 +932,7 @@ test('driver names: only first names are sent, the answer is a bounded guess, li
   const reply = (d0, d1 = 'likely_male') => envelope({ drivers: { d0, d1 } });
   const items = nameWarnings(parseNameReview(reply('likely_female'), review), review, record);
   assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.driver-gender', 'drivers[0].gender', 'check']]);
-  assert.match(items[0].msg, /^Luna: driver 1 is filled Male \(TNI standard\), but "Maria" is more often a woman's name: a guess from the first name only\. Check\./);
+  assert.match(items[0].msg, /^AI assistant: driver 1 is filled Male \(TNI standard\), but "Maria" is more often a woman's name: a guess from the first name only\. Check\./);
   assert.deepEqual(items[0].choices, [{ label: 'Use Female', path: 'drivers[0].gender', value: 'FEMALE' }, { label: 'Keep Male', path: 'drivers[0].gender', value: 'MALE' }]);
   assert.deepEqual(nameWarnings(parseNameReview(reply('unclear'), review), review, record), [], 'unclear: the standard stands');
   // Set meanwhile, or a renamed driver: no item.
@@ -988,7 +1061,7 @@ test('leave reasons: missing information, conflict, no source and a refused evid
   const parsed = parseResponse(answer(body), items, body);
   const [refused] = verifyResponse(envelope({ decisions: { f1: { supported: false, gap: 'The notes mention placarded loads.' } } }), parsed);
   assert.equal(refused.leaveWhy, 'unverified');
-  assert.equal(refused.tip, 'Luna could not verify an answer: The notes mention placarded loads.');
+  assert.equal(refused.tip, 'The AI assistant could not verify an answer: The notes mention placarded loads.');
   assert.match(buildVerification(parsed, context).instructions, /gap says/);
   // The gap is required, a string, and bounded.
   for (const gap of [undefined, null, 'x'.repeat(501)]) {
