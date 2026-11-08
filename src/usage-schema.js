@@ -51,9 +51,10 @@ export const EVENT_FIELDS = {
   // run: one fill invocation, shared with its fill_field events; rules: the rule files'
   // fingerprint; settings: the panel's filling switches; step: a one-address application's step
   // (AmWINS). The server checks their shapes (RUN_FIELDS): a malformed value refuses the event.
+  // retried: the second click of a Continue whose page stayed unchanged (true only), on its fill_run or fill_error.
   // background: the quote tab filled while the agent was on another; hiddenMs: how long its page was
   // hidden meanwhile (Chrome slows a hidden tab's timers).
-  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
+  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'retried', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
   // source: where the answer comes from (plan.js; the server's FIELD_SOURCES); standard, manualOnly,
   // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
@@ -62,7 +63,7 @@ export const EVENT_FIELDS = {
   agent_click: ['text', 'step'],
   // The agent dismissed a "needs you" item (×): the question, and why it needed them.
   check_dismissed: ['q', 'key', 'label', 'mark'],
-  fill_error: ['run', 'rules', 'settings', 'auto', 'error'],
+  fill_error: ['run', 'rules', 'settings', 'auto', 'retried', 'error'],
   field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
   // many seconds before the report).

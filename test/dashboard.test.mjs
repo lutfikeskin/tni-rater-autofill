@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createServer } from '../server/index.mjs';
-import { summarize, renderDashboard, quoteSessions, testSessions, testIntakesFrom, prepare } from '../server/dashboard.mjs';
+import { summarize, renderDashboard, quoteSessions, testSessions, testIntakesFrom, prepare, eventReader } from '../server/dashboard.mjs';
 import { quoteSessions as reviewQuotes } from '../scripts/lib/events.mjs';
 import { signals, testSessionsOf } from '../scripts/lib/signals.mjs';
 
@@ -259,4 +259,15 @@ test('the chart: no busiest day without quotes, and every day the period reaches
   assert.equal(lit('7d')[0], '2026-10-26');
   assert.equal(lit('7d').length, 8);
   assert.equal(lit('30d').length, 30);
+});
+
+// The review of #425: a line written before a failed flush is in the files again after its retry,
+// possibly the next day. The dashboard reads each event once, by its id.
+test('the dashboard reads an event retried after a failed flush once', () => {
+  const dir = tmp();
+  const now = Date.parse('2026-11-07T12:00:00Z');
+  const line = (o) => `${JSON.stringify(o)}\n`;
+  fs.writeFileSync(path.join(dir, '2026-11-06.jsonl'), line({ id: 'a', type: 'problem_report' }) + line({ id: 'b', type: 'intake_loaded' }));
+  fs.writeFileSync(path.join(dir, '2026-11-07.jsonl'), line({ id: 'a', type: 'problem_report' }) + line({ id: 'c', type: 'intake_loaded' }) + line({ id: 'c', type: 'intake_loaded' }));
+  assert.deepEqual(eventReader(dir)(7, now).map((e) => e.id), ['a', 'b', 'c']);
 });

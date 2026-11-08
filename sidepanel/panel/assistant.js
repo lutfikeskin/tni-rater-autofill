@@ -919,4 +919,4 @@ async function renderAiSettings() {
   renderUsage();
 }
 
-export { aiActs, aiDecisionEvent, aiSettings, applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, ntlPrimaryEdited, pendingAi, remarkAi, renderAiSettings, reviewClaimsBox, reviewDriverGender, reviewIntake, runAssist, syncAiBanner };
+export { aiActs, aiDecisionEvent, aiSettings, applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, ntlNotesItem, ntlPrimaryEdited, pendingAi, remarkAi, renderAiSettings, reviewClaimsBox, reviewDriverGender, reviewIntake, runAssist, syncAiBanner };

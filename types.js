@@ -875,6 +875,7 @@
  * @property {string} [step]
  * @property {boolean} [background]  the panel filled the quote tab while the agent was on another tab
  * @property {number} [hiddenMs]  how long the quote tab's page was hidden during the fill, only when it was
+ * @property {boolean} [retried]  the second click of a Continue whose page stayed unchanged for about 6 s (watchNextStep)
  * @property {number} fields
  * @property {number} rounds
  * @property {number} filled
@@ -1301,6 +1302,14 @@
  * @property {any} [detailsReturn]
  * @property {any} [browserWindow]
  * @property {boolean} [closing]
+ * @property {boolean} [defaultsOn] agent defaults: whether this copy of the panel shows the feature
+ *   (agent-defaults/store.js `show`): the Settings section, the quote's question, the client pill.
+ * @property {boolean} [defaultsDev] whether the developer's switch for it is drawn (every copy but the store build).
+ * @property {{ v: 1, active: string | null, activeFor: string | null, profiles: Record<string, DefaultsProfile> } | null} [agentDefaults]
+ *   the stored defaults profiles, null until read.
+ * @property {string | null} [defaultsInitials] the agent's initials the profiles need.
+ * @property {any} [defaultsChip] what the client strip's defaults pill says for this quote (agent-defaults/store.js).
+ * @property {number} [rowsDrawn] bumped when a report row's record changes, so report-view.jsx draws it again.
  */
 
 /**
