@@ -29,8 +29,12 @@ test('muted text is 4.5:1 on every surface it sits on (WCAG 1.4.3)', () => {
   }
 });
 
-test('an input’s edge and the switch’s off track are 3:1 on white (WCAG 1.4.11)', () => {
-  assert.ok(ratio(token('border-control'), token('surface')) >= 3, ratio(token('border-control'), token('surface')).toFixed(2));
+test('an input’s edge and the switch’s off track are 3:1 on white and on what they sit on (WCAG 1.4.11)', () => {
+  // Against the white box inside it and whatever it sits on: the canvas, the sunken surface, a hovered row
+  // (CodeRabbit on #459: a picker's select on the canvas).
+  for (const ground of ['surface', 'canvas', 'surface-sunken', 'surface-hover']) {
+    assert.ok(ratio(token('border-control'), token(ground)) >= 3, `--border-control on --${ground}: ${ratio(token('border-control'), token(ground)).toFixed(2)}`);
+  }
   // Every input, select and textarea with a grey edge takes the control border, and so does the
   // switch. Left as they are: the AI key's box, edged in brand blue (above 3:1), and client details'
   // filled boxes, which have no edge (the 2026-10-29 design's quiet rows, each beside its label).
