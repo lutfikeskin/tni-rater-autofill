@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Learns from usage events what each carrier question's answer should be.
 //
 // For every quote (session) and question it works out the final answer and who gave it:
