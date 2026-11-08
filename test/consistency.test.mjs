@@ -274,14 +274,16 @@ function unknownPaths(text, doc, tracked, names) {
   const bare = ticked.filter((p) => /^[\w-]+(\.[\w-]+)*\.\w+$/.test(p) && !tracked.has(p) && !names.has(p)
     && (/\.(?:js|mjs|cjs|jsx|json|md|ya?ml|html|toml|txt)$/.test(p) || stems.has(p.replace(/\.[^.]+$/, ''))));
   const linked = [...text.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]).filter((l) => !/^[a-z]+:|^#/.test(l))
-    .map((l) => path.posix.normalize(path.posix.join(path.posix.dirname(doc), decodeURIComponent(l.replace(/#.*$/, '')))));
+    // A link starting with / is from the repository's root, as GitHub reads it.
+    .map((l) => decodeURIComponent(l.replace(/#.*$/, '')))
+    .map((l) => path.posix.normalize(l.startsWith('/') ? l.slice(1) : path.posix.join(path.posix.dirname(doc), l)));
   return [...named, ...linked, ...bare].map((x) => x.replace(/\/$/, '')).filter((p) => !tracked.has(p) && !NOT_TRACKED[p]);
 }
 test('a misspelled path is found, in a folder, at the root or in a link', () => {
   const tracked = new Set(['manifest.json', 'src', 'src/usage.js', 'docs', 'docs/testing.md']);
   const names = new Set(['manifest.json', 'usage.js', 'testing.md']);
-  const text = '`src/usag.js`, `manifest.jso`, `usage.js`, `manifest.json`, `fill_run`, `README.md` [x](testng.md) [y](testing.md)';
-  assert.deepEqual(unknownPaths(text, 'docs/a.md', tracked, names), ['src/usag.js', 'docs/testng.md', 'manifest.jso', 'README.md']);
+  const text = '`src/usag.js`, `manifest.jso`, `usage.js`, `manifest.json`, `fill_run`, `README.md` [x](testng.md) [y](testing.md) [z](/manifest.json) [w](/docs/testng.md)';
+  assert.deepEqual(unknownPaths(text, 'docs/a.md', tracked, names), ['src/usag.js', 'docs/testng.md', 'docs/testng.md', 'manifest.jso', 'README.md']);
 });
 test('paths the README, AGENTS.md and docs/ name are in the repository', (t) => {
   let files;
