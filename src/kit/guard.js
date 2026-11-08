@@ -5,6 +5,7 @@ import { radioHost, deepQueryAll, collectControls, fieldKey, shadowOf } from './
 import { closestOwn, withAdapter } from './adapter.js';
 
 /** @import { PageControl } from './dom.js' */
+/** @import { FailCode } from '../../types.js' */
 
 export const EDIT_HALT = 'An agent edit interrupted filling. Review before resuming.';
 export const EDIT_HALT_ANSWERS = 'an agent edit interrupted applying the answers; review the page, then request fresh suggestions';
@@ -121,7 +122,7 @@ export const clearAnswerEditSession = () => { answerEditSession = null; };
  * Manages multi-frame AI answer edit protection session.
  * @param {'read' | 'begin' | 'end' | string} [command]
  * @param {string} [token]
- * @returns {Array<{ key: string, label: string | null, ok: false, protected: true, reason: string }> | null}
+ * @returns {Array<{ key: string, label: string | null, ok: false, protected: true, code: FailCode, reason: string }> | null}
  */
 export function answerEdits(command = 'read', token = '') {
   if (command === 'begin') {
@@ -136,6 +137,7 @@ export function answerEdits(command = 'read', token = '') {
     label,
     ok: /** @type {const} */ (false),
     protected: /** @type {const} */ (true),
+    code: /** @type {FailCode} */ ('answer.agent-edited'),
     reason: 'you changed this question yourself while the AI answers went in; your answer stays',
   }));
   if (command === 'end') {

@@ -444,10 +444,13 @@ test('keeps a panel crash with its bounded message and extension frames only', a
     const r = await (await post({ events: [
       ev({ type: 'client_error', filled: undefined, where: 'panel', error: 'Cannot read properties of null', stack: ['sidepanel/sidepanel.js:12:5'] }),
       ev({ type: 'client_error', filled: undefined, where: 'carrier page', error: 'x'.repeat(301), stack: ['https://carrier.example/app.js:1:1'] }),
+      // The page's recorder's own exception (LEARN-10).
+      ev({ type: 'client_error', filled: undefined, where: 'recorder', error: 'Cannot read properties of undefined', stack: ['src/content/recorder.js:120:9'] }),
     ] })).json();
-    assert.equal(r.accepted, 2);
+    assert.equal(r.accepted, 3);
   });
-  const [ok, bad] = stored(dataDir);
+  const [ok, bad, recorder] = stored(dataDir);
+  assert.deepEqual([recorder.where, recorder.stack], ['recorder', ['src/content/recorder.js:120:9']]);
   assert.deepEqual([ok.where, ok.error, ok.stack], ['panel', 'Cannot read properties of null', ['sidepanel/sidepanel.js:12:5']]);
   assert.deepEqual([bad.where, bad.error, bad.stack], [undefined, undefined, undefined]);
   assert.deepEqual(bad.dropped.sort(), ['error', 'stack', 'where']);
@@ -513,6 +516,20 @@ test('keeps the install id, the platform and a lost-events count, in their shape
   assert.deepEqual([loaded.install, loaded.platform], [install, { os: 'Windows', chrome: 141 }]);
   assert.deepEqual([lost.type, lost.count], ['usage_lost', 12]);
   assert.deepEqual([odd.install, odd.platform], [undefined, undefined]);
+});
+
+// Audit 2026-11-07, LEARN-09: why an answer failed, as a code (types.js FailCode), never text.
+test('keeps a failed answer\'s code in its shape only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'fill_field', filled: undefined, result: 'failed', q: '2B9D', code: 'option.no-match', reason: 'no option matches "…"' }),
+      ev({ type: 'fill_field', filled: undefined, result: 'failed', q: '2B9E', code: 'No option for John Smith' }),
+    ] });
+  });
+  const [ok, odd] = stored(dataDir);
+  assert.deepEqual([ok.code, ok.reason], ['option.no-match', 'no option matches "…"']);
+  assert.deepEqual([odd.code, odd.dropped], [undefined, ['code']]);
 });
 
 test('keeps why an answer was given, and a dismissed check, in their shapes only', async () => {

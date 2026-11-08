@@ -5,7 +5,7 @@ import { redactionTerms } from '../../src/plan.js';
 import { get } from '../../src/util.js';
 import { redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
-import { collectItems, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
+import { collectItems, pseudonymizeChoices, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
 import { claimsTruncated, firstNameOf } from '../../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../../src/ai/providers.js';
 import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
@@ -13,7 +13,7 @@ import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
 import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout } from './coordinator.js';
-import { drawRow, fillPage, runKit } from './fill.js';
+import { drawRow, fillPage, resumeHeldFill, runKit } from './fill.js';
 import { aiHolder } from './ai-view.jsx';
 import { needId, setHead } from './report-rows.js';
 import { renderUsage } from './usage-panel.js';
@@ -314,8 +314,12 @@ async function runAssist(frames, ctx) {
   const provider = PROVIDERS[cfg.provider];
   // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
-  const items = collected.items.filter(x => !agentEdited(ctx.page, x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
-  const blocked = collected.blocked;
+  // A question whose choices name the client goes to Luna with placeholders, and its pick comes back
+  // as the page's own choice; one whose choices code can't tell apart stays with the agent
+  // (pseudonymizeChoices, common.js).
+  const named = pseudonymizeChoices(collected.items, record);
+  const items = collected.items.filter(x => !named.held.includes(x) && !agentEdited(ctx.page, x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
+  const blocked = [...collected.blocked, ...named.held];
   // Messages, the approval card and suggestions without a list item go above "Needs you", in the
   // report's holder (aiHolder in ai-view.jsx), which draws what it is told (`say`).
   const head = $('report').querySelector('.needs-head');
@@ -339,7 +343,7 @@ async function runAssist(frames, ctx) {
   const run = ++state.aiRun;
   ctx.run = run;
   try {
-    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
   } catch { return; }
   // Why this request's answer can't be used at all: its settings, tab, page, intake or
   // driver/vehicle are no longer the panel's. Null while they are.
@@ -390,8 +394,8 @@ async function runAssist(frames, ctx) {
     sigs.forEach((sig) => state.aiAsking.set(sig, pending));
     try {
       // Stopped between model calls only for an answer that would be discarded.
-      const result = await suggest(missing, context, cfg, { isStale: () => !!discardWhy() });
-      const fresh = result.suggestions;
+      const result = await suggest(missing.map(named.toSend), context, cfg, { isStale: () => !!discardWhy() });
+      const fresh = result.suggestions.map(named.restore);
       // An answer that came too late is still logged (its tokens were spent), with the reason.
       const why = discardWhy();
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
@@ -507,6 +511,7 @@ async function applyAi(list, ctx, decision) {
     page: editScope(ctx.page, ctx.carrier), keys: state.agentKeys, epoch: state.agentKeysEpochs?.get(usage.currentSession()?.intakeId) ?? 0 };
   let dispatched = false, prepared = false, guarding = false;
   const guardToken = crypto.randomUUID();
+  state.fillingKind = 'ai';
   state.filling = true;
   await tellRecorder('pause', ctx.tabId);
   try {
@@ -514,9 +519,9 @@ async function applyAi(list, ctx, decision) {
     // Watch every frame before the snapshot and pending-hold writes. An idle frame stays
     // guarded while another waits on its server, until the full apply finishes.
     guarding = true;
-    await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [guardToken]);
+    await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit?.answerEdits('begin', t), [guardToken]);
     if (!isCurrent()) return false;
-    const current = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+    const current = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
     if (!isCurrent()) return false;
     if (!snapshotsEqual(current, ctx.snapshots)) {
       for (const x of list) x.error = 'the page changed; click Fill this page for fresh suggestions';
@@ -555,7 +560,7 @@ async function applyAi(list, ctx, decision) {
     // including later answers in the active frame.
     const results = [];
     const readEdits = async (command = 'read') => {
-      const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit.answerEdits(c, t), [command, guardToken]);
+      const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit?.answerEdits(c, t), [command, guardToken]);
       for (const frame of frames) for (const item of frame.result ?? []) {
         if (item?.protected) results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
       }
@@ -580,7 +585,7 @@ async function applyAi(list, ctx, decision) {
       startedFrames.add(frameId);
       dispatched = true;
       // The carrier's stop steps go along: after a reload no fill has told this document about them.
-      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit.answer(a, snapshots, t, o),
+      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit?.answer(a, snapshots, t, o),
         [[a], expected, guardToken, { stopSteps: Object.keys(ctx.carrier.stopSteps ?? {}) }], [frameId]);
       for (const frame of answerFrames) for (const item of frame.result ?? []) {
         if (item && typeof item === 'object') results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
@@ -596,7 +601,7 @@ async function applyAi(list, ctx, decision) {
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
       const ok = !protectedKeys.includes(x.key) && mine.find((r) => r.ok);
-      const problem = mine.find((r) => !r.ok && !/no longer on this page/.test(r.reason ?? '')) ?? mine[0];
+      const problem = mine.find((r) => !r.ok && r.code !== 'field.missing') ?? mine[0];
       if (ok) {
         x.origin = aiOriginRecord({ frameId: ok.frameId, documentId: ok.documentId,
           questionHash: aiQuestionHash(x), fieldHash: aiLiveFieldHash({ ...x, current: ok.shown }) });
@@ -621,7 +626,7 @@ async function applyAi(list, ctx, decision) {
     if (list.some((x) => x.done) || protectedKeys.length) noteChangedAfterDone(ctx.carrier, ctx.page, tabStep(ctx.carrier, ctx.tabId), ctx.tabId);
     await persistGuardedEdits(editOrigin, protectedKeys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
-    const after = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+    const after = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
     for (const x of list) if (x.done) {
       x.snapshots = after;
       x.snapshotHash = snapshotFingerprint(after);
@@ -637,7 +642,7 @@ async function applyAi(list, ctx, decision) {
   } finally {
     if (guarding) {
       try {
-        const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('end', t), [guardToken]);
+        const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit?.answerEdits('end', t), [guardToken]);
         // Even a failed answer transport must preserve edits the still-live guards caught.
         const edited = frames.flatMap(frame => frame.result ?? []).filter(item => item?.protected);
         await persistGuardedEdits(editOrigin, edited.map(item => item.key));
@@ -658,6 +663,8 @@ async function applyAi(list, ctx, decision) {
     }
     await tellRecorder('resume', ctx.tabId);
     state.filling = false;
+    // A page a hold kept back, whose hold lifted while the picks went in.
+    resumeHeldFill();
     // The recorder was paused while Luna's picks went in, so it won't report the questions they
     // revealed or hid: ask for the page's layout, if that tab is still the one followed (a job
     // is built from the followed tab, and checks the page).
@@ -706,7 +713,7 @@ function renderAi(holder, suggestions, ctx) {
       // Approve only what the page still shows as the AI left it; a pick whose page changed since
       // is rejected so the agent reviews it after a fresh fill.
       let now;
-      try { now = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); }
+      try { now = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null)); }
       catch {
         if (!aiActionCurrent(ctx, list)) return;
         for (const x of list) x.error = 'the page is unavailable; return to it and run Fill again';
@@ -756,7 +763,7 @@ function renderAi(holder, suggestions, ctx) {
     for (const x of list) {
       let present = false;
       try {
-        const result = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
+        const result = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
         present = aiCurrentAnswerPresent(result, x);
       } catch { /* page navigating */ }
       if (!aiActionCurrent(ctx, list)) return;
