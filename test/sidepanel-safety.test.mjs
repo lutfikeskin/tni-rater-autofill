@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
-import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
+import { fillEvents, loggedTimeline, sha256Hex, knownStep } from '../src/usage.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
@@ -5179,7 +5179,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
     planFor: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
     fillOptions: () => ({}), pendingAi: () => [], ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
     runKit: async (tabId, carrier, func, args) => { seen.options = args[1]; markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
-    fillEvents, isStandard, resolutionOf, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
+    fillEvents, loggedTimeline, isStandard, resolutionOf, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
     renderReport: (frames, ctx) => { seen.rendered++; seen.reportTabs.push(ctx?.tabId); }, renderSite() {}, renderSteps() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
     reportKey: (tabId) => `${tabId}|report`, watchFill: () => () => {}, showFinish() {}, reportShown: () => true,
     fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text }); },
@@ -5196,6 +5196,29 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   } }];
   return { state, ui, seen, context, intakeA, started, release, reject, results };
 }
+
+// CodeRabbit on #431: the timeline of a fill whose call rejected was read after `finally` had
+// resumed the recorder and could start the next fill, whose traceReset empties the kit's ring. It is
+// read, and the error logged with it, before the recorder resumes.
+test('a rejected fill logs its timeline before the recorder resumes or another fill starts', async () => {
+  for (const auto of [false, true]) {
+    const t = fillHarness();
+    const order = [];
+    const timeline = [{ what: 'wait', at: 0, why: 'answer', ms: 15000, ended: 'limit' }];
+    let calls = 0;
+    t.context.runKit = async () => {
+      if (calls++ === 0) throw new Error('Frame was removed');
+      // The page answers the timeline read a moment later.
+      await new Promise((resolve) => { setImmediate(resolve); });
+      return [{ frameId: 0, result: timeline }];
+    };
+    t.context.tellRecorder = async (what) => { order.push(what); };
+    t.context.usage.log = (...events) => { for (const e of events) order.push(e.type); t.seen.logged.push(...events); };
+    if (auto) { t.state.autoPages.add('/quote-A'); await t.context.autoFill('/quote-A'); } else await t.context.fillPage();
+    assert.deepEqual(order, ['pause', 'fill_error', 'resume'], auto ? 'a follow-up' : 'a fill the agent asked for');
+    assert.deepEqual(t.seen.logged.find((e) => e.type === 'fill_error').timeline, timeline);
+  }
+});
 
 // Codex reproduction (stale-fill-reproduction.mjs): a fill's results came back after the agent had
 // loaded another intake and moved to its tab, and were remembered and logged as that intake's.

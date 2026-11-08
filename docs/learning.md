@@ -60,11 +60,11 @@ Each usage event the extension logs, when, and the fields the collection server 
 | `page_layout` | a page's questions as it arrives and as they change (and a Recalculate's trace, reason `recalculate`) | `context`, `fields`, `buttons`, `reason`, `step`, `messages` |
 | `quote_premium` | the premium a page quotes, when it is current and differs from the last logged | `step`, `total`, `termMonths`, `dueToday`, `payments`, `payment` |
 | `layout_error` | a page's layout couldn't be read | `reason`, `error` |
-| `fill_run` | one fill invocation; also one with `auto: 'stop'`, no `run` and `fields: 0`, when a carrier stop page or step arrives (its `blockerList` names it; `blockers` is the count) | `run`, `rules`, `settings`, `step`, `overwrite`, `auto`, `background`, `hiddenMs`, `retried`, `ms`, `fields`, `rounds`, `filled`, `kept`, `noData`, `failed`, `leftRequired`, `unknown`, `clicked`, `blockers`, `blockerList`, `advanced`, `pageChanged`, `reworded`, `renamed`, `defaultsHash` |
+| `fill_run` | one fill invocation; also one with `auto: 'stop'`, no `run` and `fields: 0`, when a carrier stop page or step arrives (its `blockerList` names it; `blockers` is the count) | `run`, `rules`, `settings`, `step`, `overwrite`, `auto`, `background`, `hiddenMs`, `retried`, `ms`, `fields`, `rounds`, `filled`, `kept`, `noData`, `failed`, `leftRequired`, `unknown`, `clicked`, `blockers`, `blockerList`, `advanced`, `pageChanged`, `reworded`, `renamed`, `timeline`, `defaultsHash` |
 | `fill_field` | one question of a fill run | `run`, `step`, `result`, `q`, `key`, `label`, `path`, `controlKind`, `shown`, `code`, `reason`, `options`, `timing`, `how`, `source`, `standard`, `manualOnly`, `review` |
 | `agent_click` | a button or link the agent clicks on a carrier page | `text`, `step` |
 | `check_dismissed` | the agent's Mark done on a "needs you" item | `q`, `key`, `label`, `mark` |
-| `fill_error` | a fill that failed with no result, came back stale, or whose Continue didn't take | `run`, `rules`, `settings`, `auto`, `retried`, `error`, `defaultsHash` |
+| `fill_error` | a fill that failed with no result, came back stale, or whose Continue didn't take | `run`, `rules`, `settings`, `auto`, `retried`, `error`, `timeline`, `defaultsHash` |
 | `field_change` | an answer changes on the page, by the agent or the page | `step`, `q`, `key`, `label`, `kind`, `by`, `autofilled`, `change`, `vsAutofill`, `matchesIntake`, `from`, `to` |
 | `problem_report` | the agent's report from the panel | `text`, `run`, `step`, `blockerList`, `since` |
 | `client_error` | a crash nothing in the panel caught (`where: panel`), or an exception the page's recorder caught and told the panel (`where: recorder`) | `where`, `error`, `stack` |

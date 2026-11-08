@@ -481,8 +481,10 @@ async function autoFill(page) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
     // The message may quote the page, so it's redacted with the origin intake.
-    fillTimeline(ctx).then((timeline) => logFillError(ctx, e, timeline));
     fillProblem(ctx, 'Automatic filling paused after an error. Check the page, then fill again.');
+    // Its timeline read before `finally` resumes the recorder or starts the next fill, which empties
+    // the kit's ring (traceReset); a second at most (CodeRabbit on #431).
+    logFillError(ctx, e, await fillTimeline(ctx));
   } finally {
     unwatch();
     if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
