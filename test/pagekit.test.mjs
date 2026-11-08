@@ -3811,6 +3811,24 @@ test('two fills waiting on the same stopped fill take over in turn; only the new
   assert.equal(h.kit.progress(), null);
 });
 
+// CodeRabbit on #478: a fill whose first wait for the page threw left itself `running`, so every
+// fill after it waited out the takeover and failed. It lets go as it throws.
+test('a fill whose first wait throws is no longer running; the next fill begins at once', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  let broken = true;
+  h.context.Ext.Ajax.isLoading = () => { if (broken) throw new Error('page script gone'); return false; };
+  const { input } = addExtText(h, 'a', '2BA1');
+  const steps = [{ id: 'one', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'First', kind: 'text', value: 'Yes' }];
+  await assert.rejects(h.kit.fill(steps, { maxRounds: 3, run: 'thrown' }), /page script gone/);
+  assert.equal(h.kit.progress(), null, 'not running');
+  broken = false;
+  const t0 = clock.Date.now();
+  const report = await h.kit.fill(steps, { maxRounds: 3, run: 'next' });
+  assert.ok(clock.Date.now() - t0 < 5000, `began at once, ${clock.Date.now() - t0} ms`);
+  assert.ok(!report.halted, "not halted");
+  assert.equal(input.value, 'Yes');
+});
+
 test('Stop while the fill waits for a busy page to begin keeps its reason and ends at once', async () => {
   const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
   h.context.Ext.Ajax.isLoading = () => true;
@@ -9326,7 +9344,7 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.equal(seen[0].phase, null, 'answering');
   assert.equal(h.kit.progress(), null, 'the fill is over');
   // Each long wait names itself before it begins.
-  assert.match(CURSOR_SOURCE, /phase\('reading'\);[^]{0,300}try \{ settled = await settle\(\{ quietMs: fresh \? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' \}\); \} catch \(e\) \{ releaseEditGuard\(\); clearTimeout\(budget\); throw e; \}\s+phase\(null\);/);
+  assert.match(CURSOR_SOURCE, /phase\('reading'\);[^]{0,300}try \{ settled = await settle\(\{ quietMs: fresh \? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' \}\); \} catch \(e\) \{ releaseEditGuard\(\); clearTimeout\(budget\); if \(running === thisFill\) running = null; throw e; \}\s+phase\(null\);/);
   assert.match(CURSOR_SOURCE, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
   assert.match(CURSOR_SOURCE, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
   assert.match(CURSOR_SOURCE, /if \(thisRound\.helperClicked\) phase\('helper', state\.pendingAction\?\.label \?\? state\.report\.actions\.at\(-1\)\?\.text \?\? null\);/);

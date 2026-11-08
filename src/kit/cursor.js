@@ -529,7 +529,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   phase('reading');
   const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
   let settled;
-  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); clearTimeout(budget); throw e; }
+  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); clearTimeout(budget); if (running === thisFill) running = null; throw e; }
   phase(null);
   // Stopped while the page settled: nothing was done.
   if (!settled || state.report.halted) {
