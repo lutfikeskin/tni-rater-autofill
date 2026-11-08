@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The page view's list of answers in React, around the lists themselves: its title, the menu of pages
 // filled earlier on this tab, the filters with their counts, what the tags and the rater page's marks
 // mean, which earlier page is shown, how old a kept report is, what an empty list says, and Clear the

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Offline scoring and opt-in live evaluation for Luna: page reviews (cases.json), the claims-box
 // review (notes-cases.json) and the driver-name check (names-cases.json).
 //

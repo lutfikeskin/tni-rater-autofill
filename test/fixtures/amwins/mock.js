@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Plays the parts of AmWINS' own page script (application.cl.bauto.js, read from the saved site
 // on 2026-10-02) that the fill engine runs into, on the saved Business Auto application:
 // - show/hide of [app-rel-id] blocks when the answer they follow changes;
