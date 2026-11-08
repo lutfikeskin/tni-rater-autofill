@@ -17,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as buildPanel } from 'vite';
 import { zipDirectory } from './lib/zip.mjs';
-import { STAMPED, buildId, stampBuild, devManifest, bundledPanelFile, kitSourceFile, PACKAGED, packagedCommit, zipName } from './lib/package.mjs';
+import { STAMPED, buildId, stampBuild, devManifest, storeManifest, bundledPanelFile, kitSourceFile, PACKAGED, packagedCommit, zipName } from './lib/package.mjs';
 import { buildKit, KIT_OUTPUT } from './lib/kit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -61,6 +61,8 @@ const stage = path.join(root, 'dist', '.stage');
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.rmSync(out, { force: true });
 await copy(stage, 'store');
+// Without the developer copy's shortcuts (storeManifest).
+fs.writeFileSync(path.join(stage, 'manifest.json'), `${JSON.stringify(storeManifest(manifest), null, 2)}\n`);
 fs.writeFileSync(out, zipDirectory(stage));
 fs.rmSync(stage, { recursive: true, force: true });
 // The unpacked copy (Load unpacked in chrome://extensions): the same, plus the fixed ID.

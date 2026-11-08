@@ -46,6 +46,7 @@ Read `reviews/recording-<id>.md` whole, then open a moment's screenshot or saved
 4. **Questions drawn late**: a question the page drew after the last action, and whether the fill answered it, left it or had already ended.
 5. **Order down the page**: answers given out of page order (the cursor going back up).
 6. **The agent's actions**: what they set, changed back or clicked by hand during or after a fill. A change to the fill's answer is a correction (see [Corrections](../../../docs/corrections.md)); a helper or Continue clicked by hand is extra agent work.
+7. **Outcome of each fill**: each fill run's counts and the fields that failed, were left for the agent or were unfamiliar, with their reasons (from the usage events copied in), and each answer not taken with why (its `code`). A `moment` line names a layout in the zip's `layouts/` (the form as data, as Alt+Shift+C saves it, taken when a fill left something or at a note): open it when a finding needs which questions and options the page had then.
 
 ## 3. Find the speed candidates
 

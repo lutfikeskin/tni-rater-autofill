@@ -76,6 +76,13 @@ const SPANS = { fill: ['a fill started', 'the fill ended'], pick: ["the panel be
 const WAITS = { answer: 'after an answer', round: 'after a round of answers', load: 'for a new view to load', 'before-load': 'before a button that loads a view',
   rated: 'for the premium', continue: 'before pressing Continue', continued: 'after pressing Continue', drawn: 'for a late question', start: 'before the fill',
   helper: 'for a lookup\'s answer' };
+// Why an answer didn't take, as the kit's code says it (FailCode, REC-01); another code is said as it is.
+const NOT_TAKEN = { 'fill.interrupted': 'not given: you stopped the fill', 'option.no-match': 'not given: no option matched', 'option.ambiguous': 'not given: more than one option matched',
+  'answer.refused': 'not given: the field refused it', 'kit.exception': 'not given: the extension failed on it', 'page.unsettled': "not kept: the page didn't settle after it",
+  'field.vanished': 'not kept: the question went away after it', 'answer.not-kept': "not kept: the page didn't keep it" };
+const notTakenSaid = (code) => NOT_TAKEN[code] ?? (code ? `not kept (\`${code}\`)` : 'not kept');
+// How a fill was asked, as its end marker says (core.js, REC-01).
+const FILL_HOW = { agent: 'Fill this page', page: 'as the page opened', 'follow-up': 'a follow-up', 'looks-right': 'Looks right', continue: "the dock's Continue" };
 // An action the page may answer: anyone's click, key or change, or the fill's answer or press.
 const isAction = (e) => ['click', 'key', 'change'].includes(e.kind) || (e.kind === 'kit' && (e.what === 'answer' || e.what === 'press'));
 
@@ -170,7 +177,7 @@ function actions(events) {
       const timing = e.timing ?? null;
       const after = [timing?.settleMs ? `then waited ${secs(timing.settleMs)} for the page` : '', timing?.ajax ? many(timing.ajax, 'request') : '',
         timing?.revealed ? `it drew ${timing.revealed}` : '', timing?.removed ? `took away ${timing.removed}` : ''].filter(Boolean).join(', ');
-      lines.push({ t: e.start ?? e.t, text: `the extension answered ${fieldName(e)} in ${secs(e.applyMs ?? 0)}${after ? `, ${after}` : ''}${e.ok === false ? ' (not kept)' : ''}` });
+      lines.push({ t: e.start ?? e.t, text: `the extension answered ${fieldName(e)} in ${secs(e.applyMs ?? 0)}${after ? `, ${after}` : ''}${e.ok === false ? ` (${notTakenSaid(e.code)})` : ''}` });
     } else if (e.kind === 'kit' && e.what === 'wait' && e.why !== 'answer') {
       const held = e.held?.busy ? ', the page still busy' : e.held?.changing ? ', the page still changing' : e.held?.requests ? ', requests still finishing' : '';
       const ended = e.ended === 'quiet' ? 'the page was quiet' : `at its limit of ${secs(e.maxMs ?? 0)}${held}`;
@@ -186,10 +193,13 @@ function actions(events) {
       lines.push({ t: e.t, text: `the page ${[drew, took].filter(Boolean).join(' and ')}${e.sinceAction != null ? `, ${secs(e.sinceAction)} after the last action` : ''}` });
     } else if (e.kind === 'fill') {
       // What went in (`what`): a fill, the agent's pick from a row, an AI answer (none said: a fill,
-      // as recordings before it).
+      // as recordings before it). Its end names its run and how it was asked (REC-01).
       const [began, ended] = SPANS[e.what] ?? SPANS.fill;
-      lines.push({ t: e.t, text: e.on ? began : `${ended}${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
+      const which = e.run ? `: run \`${e.run}\`${e.how ? `, ${FILL_HOW[e.how] ?? e.how}` : ''}` : '';
+      lines.push({ t: e.t, text: e.on ? began : `${ended}${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}${which}` });
     }
+    // The page as it was at a moment that mattered (REC-05): its layout file in the recording.
+    else if (e.kind === 'moment') lines.push({ t: e.t, text: e.layout ? `the page was saved as ${e.layout} (${e.why}${e.fields != null ? `, ${many(e.fields, 'question')}` : ''})` : `the page couldn't be saved (${e.why}: ${e.error ?? 'error'})` });
     // A request the carrier's server refused or failed (HTTP 400 and up): its own error, not the fill's.
     else if (e.kind === 'request' && failed(e)) lines.push({ t: e.t, text: `the page's request to ${codePath(e.path)} failed: HTTP ${e.status} after ${secs(e.ms ?? 0)}` });
     // A document's load, from its navigation start (REC-03): its server's answer, ready, loaded.
@@ -250,6 +260,40 @@ function timeTable(ordered, told, end) {
     out.push(`| ${n} | ${s.page}${s.step ? ` · ${s.step}` : ''} | ${cells(row)} |`);
   }
   out.push(`| | All | ${cells(all)} |`, '');
+  return out;
+}
+
+/**
+ * How each fill ended, for correctness rather than time (REC-01): per run, as the usage log's
+ * fill_run (copied in while recording) says it, what it filled, failed, left for the agent or didn't
+ * know, whether it continued and what held it, then each failed, left or unfamiliar question with
+ * its reason (fill_field). A fill with no fill_run (a practice page, a recording from before the
+ * usage log was copied in) is told by the kit's own end: its counts and its answers not taken.
+ */
+function outcomes(ordered, t0) {
+  const usage = ordered.filter((e) => e.kind === 'usage' && e.event);
+  const runs = usage.filter((e) => e.event.type === 'fill_run');
+  const ends = ordered.filter((e) => e.kind === 'kit' && e.what === 'run' && e.on === false);
+  if (!runs.length && !ends.length) return [];
+  const out = ['## Outcome of each fill', ''];
+  const marker = (run) => ordered.find((e) => e.kind === 'fill' && e.on === false && e.run === run);
+  for (const { t, event: r } of runs) {
+    const how = FILL_HOW[marker(r.run)?.how] ?? (r.auto ? (r.auto === true ? 'automatic' : String(r.auto)) : 'Fill this page');
+    const blockers = (r.blockerList ?? []).map((b) => quote(b)).join(', ');
+    out.push(`- ${clock(t - t0)} ${r.page ?? '?'}${r.step ? ` · ${r.step}` : ''}, ${how}${r.run ? ` (run \`${r.run}\`)` : ''}: ${r.filled ?? 0} filled, ${r.failed ?? 0} failed, ${r.leftRequired ?? 0} left for you, ${r.unknown ?? 0} unfamiliar, ${r.noData ?? 0} without data; ${r.advanced ? `continued (${quote(r.advanced)})` : 'not continued'}${blockers ? `, held by ${blockers}` : ''}`);
+    for (const { event: f } of usage.filter((e) => e.event.type === 'fill_field' && e.event.run === r.run && ['failed', 'leftRequired', 'unfamiliar'].includes(e.event.result))) {
+      out.push(`  - ${f.result === 'leftRequired' ? 'left for you' : f.result}: ${quote(f.label || f.key || 'a question')}${f.reason ? `: ${String(f.reason).replace(/\s+/g, ' ').slice(0, 160)}` : ''}`);
+    }
+  }
+  if (!runs.length) {
+    for (const e of ends) {
+      const notTaken = ordered.filter((a) => a.kind === 'kit' && a.what === 'answer' && a.ok === false && a.frame === e.frame && (a.start ?? a.t) <= e.t && (a.start ?? a.t) >= (ordered.findLast((x) => x.kind === 'kit' && x.what === 'run' && x.on && x.frame === e.frame && x.t <= e.t)?.t ?? 0));
+      out.push(`- ${clock(e.t - t0)} the extension's fill${(e.frame ?? 0) ? ` (frame ${e.frame})` : ''}: ${e.filled ?? 0} filled${e.failed != null ? `, ${e.failed} failed, ${e.leftRequired ?? 0} left for you, ${e.blockers ?? 0} holding Continue, ${e.unknown ?? 0} unfamiliar` : ''}${e.halted ? ', halted' : ''}`);
+      for (const a of notTaken) out.push(`  - ${fieldName(a)}: ${notTakenSaid(a.code)}`);
+    }
+    out.push('', 'No fill_run in this recording (a practice page, or one recorded before the usage log was copied in): the fields left and why are in the usage log.');
+  }
+  out.push('');
   return out;
 }
 
@@ -337,6 +381,7 @@ export function recordingReport({ manifest, events }) {
   }
   out.push('');
   if (ordered.some((e) => e.kind === 'kit')) out.push(...timeTable(ordered, told, end));
+  out.push(...outcomes(ordered, t0));
 
   for (const { s, lines, n } of told) {
     out.push(`## ${n}. ${s.page}${s.step ? ` · ${s.step}` : ''}`, '');

@@ -12,7 +12,7 @@ import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
 import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, resumeHeldFill, showNextNeed } from './panel/fill.js';
-import { noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording } from './panel/dev-recording.js';
+import { discardUnfinished, noteCaptured, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording, toggleRecording } from './panel/dev-recording.js';
 import { aiActs, renderAiSettings, reviewIntake } from './panel/assistant.js';
 import { renderUsage, settingsActs, uploadNow, wireUsage } from './panel/usage-panel.js';
 import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, clientNote, closeDetails, closePdf, drawPdf, newQuote, noteStep, openDetails, openPdf, openPdfInTab, pdfPage, pdfPan, pdfZoom, workSaid } from './panel/pdf-view.js';
@@ -55,6 +55,8 @@ function wire() {
   // Capture page layout, and the developer recording's buttons, offered in unpacked builds only
   // (canRecord), never in the store's. Then the footer's Recording usage line.
   const recordable = inExtension && canRecord(usage.build().channel);
+  // `note(text)`: the footer pill's own box; without text, Settings' Note box.
+  const devrecActs = { start: () => startRecording(), note: (text) => noteRecording(text), stop: () => stopRecording(), recover: () => recoverRecording(), discard: () => discardUnfinished() };
   mountSettings($('settings'), {
     done: () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); },
     ...settingsActs(),
@@ -64,9 +66,10 @@ function wire() {
     // agent defaults: the developer's switch (unpacked copies only; store.js ignores it in the store build).
     defaultsShown: async (on) => { await setDefaultsShown(on); renderSteps(); resumeHeldFill(); },
     capture: () => capturePage(),
-    devrec: recordable ? { start: () => startRecording(), note: () => noteRecording(), stop: () => stopRecording(), recover: () => recoverRecording() } : null,
+    devrec: recordable ? devrecActs : null,
   });
-  mountRecordingLine($('recording-root'));
+  // The footer: Recording usage, and the developer recording's pill while one runs (REC-17).
+  mountRecordingLine($('recording-root'), recordable ? devrecActs : null);
   mountSteps($('steps'), {
     check: () => setView('check'),
     fill: () => setView('page'),
@@ -171,7 +174,14 @@ function wire() {
     },
   });
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
-  if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') captureFromShortcut(); });
+  // During a developer recording it is also a note naming the capture's file (REC-17); Alt+Shift+R
+  // starts or stops one (unpacked builds only).
+  if (inExtension) {
+    chrome.commands?.onCommand.addListener((command) => {
+      if (command === 'capture-page') captureFromShortcut().then((file) => { if (recordable && file) noteCaptured(file); });
+      if (command === 'record-toggle' && recordable) toggleRecording();
+    });
+  }
   // Developer recording (its card in Settings, above): unpacked builds only.
   if (recordable) {
     chrome.runtime.onMessage.addListener(onTraceMessage);

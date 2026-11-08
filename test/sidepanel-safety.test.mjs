@@ -4929,7 +4929,8 @@ test('a manual capture is numbered in its scenario, keeps a redacted note and sc
   context.state.intake = null;
   await context.capturePage();
   assert.equal(downloads.length, 3);
-  assert.match(SIDEPANEL, /chrome\.commands\?\.onCommand\.addListener\(\(command\) => \{ if \(command === 'capture-page'\) captureFromShortcut\(\); \}\)/);
+  assert.match(SIDEPANEL, /if \(command === 'capture-page'\) captureFromShortcut\(\)\.then\(\(file\) => \{ if \(recordable && file\) noteCaptured\(file\); \}\);/);
+  assert.match(SIDEPANEL, /if \(command === 'record-toggle' && recordable\) toggleRecording\(\);/);
   assert.match(extractFunction('captureFromShortcut'), /mine\.id !== focused\.id\) return;/, 'only the focused window\'s panel captures');
 });
 
@@ -9244,7 +9245,7 @@ test('the panel keeps only the recorded tab\'s trace events, redacted with their
   const kept = [];
   const state = { filling: false, recording: null };
   const steps = [];
-  const context = { state, knownStep: (carrier, s) => { steps.push([carrier.id, s]); return null; },
+  const context = { state, momentAfterRun() {}, knownStep: (carrier, s) => { steps.push([carrier.id, s]); return null; },
     stampEvents: (events, opts) => events.map((e) => ({ ...e, frame: opts.frame, filling: opts.fillingAt(e.t), step: opts.stepName(e.step ?? ''), label: opts.redact(e.label) })) };
   vm.runInNewContext(extractFunction('onTraceMessage'), context);
   const replies = [];
@@ -9267,7 +9268,10 @@ test('the panel keeps only the recorded tab\'s trace events, redacted with their
   assert.match(view, /<DevRecording act=\{act\.devrec\} \/>/);
   const wire = extractFunction('wire');
   assert.match(wire, /const recordable = inExtension && canRecord\(usage\.build\(\)\.channel\);/);
-  assert.match(wire, /\n    devrec: recordable \? \{ start: \(\) => startRecording\(\),[^\n]*\} : null,\n/);
+  assert.match(wire, /const devrecActs = \{ start: \(\) => startRecording\(\),[^\n]*\};\n/);
+  assert.match(wire, /\n    devrec: recordable \? devrecActs : null,\n/);
+  // The footer's pill too (REC-17), only where the build may record.
+  assert.match(wire, /mountRecordingLine\(\$\('recording-root'\), recordable \? devrecActs : null\);/);
   assert.match(wire, /if \(recordable\) \{\s+chrome\.runtime\.onMessage\.addListener\(onTraceMessage\);/, 'its trace is taken there only');
 });
 
@@ -9289,7 +9293,7 @@ test('a new recording first stops a trace a closed panel left in the tab', async
   let manifest = null;
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
     usage: { build: () => ({}), currentSession: () => ({ id: 'session-1', intakeId: 'intake-1' }) }, RecordingStore: { start: async (m) => { manifest = m; done.push('store'); return {}; } },
-    setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => { done.push('inject'); },
+    setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, copyUsage: () => () => {}, ensureRecorder: async () => { done.push('inject'); },
     rulesFingerprint: () => 'rules-1', fillDefaultsHash: () => null, navigator: { platform: 'Win32', userAgentData: { platform: 'Windows' } },
     chrome: { tabs: { sendMessage: async (tabId, msg) => { done.push(`${msg.ra}:${msg.cmd}:${tabId}`); } } } };
   vm.runInNewContext(extractFunction('startRecording'), context);
@@ -9304,7 +9308,7 @@ test('the recording\'s manifest names the trace and recorder its top frame\'s fi
   const manifest = { versions: { trace: null, recorder: null } };
   const store = { manifest, add() {} };
   const state = { recording: { tabId: 4, store, fills: [], redact: (s) => s, carrier: {} } };
-  const context = { state, stampEvents: (events) => events, knownStep: () => null };
+  const context = { state, stampEvents: (events) => events, knownStep: () => null, momentAfterRun() {} };
   vm.runInNewContext(extractFunction('onTraceMessage'), context);
   context.onTraceMessage({ ra: 'trace', events: [], v: 2, recorder: 12 }, { tab: { id: 4 }, frameId: 3 }, () => {});
   assert.deepEqual({ ...manifest.versions }, { trace: null, recorder: null }, 'a frame\'s is not the page\'s');
@@ -9318,7 +9322,7 @@ test('a recording started during a fill begins with that fill, so its end isn\'t
   const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: true, fillingKind: 'pick' };
   const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
     usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => ({ add: (events) => added.push(...events) }) },
-    setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => {}, Date,
+    setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, copyUsage: () => () => {}, ensureRecorder: async () => {}, Date,
     rulesFingerprint: () => null, fillDefaultsHash: () => null, navigator: {},
     chrome: { tabs: { sendMessage: async () => {} } } };
   vm.runInNewContext(extractFunction('startRecording'), context);
@@ -10941,7 +10945,7 @@ test('the recording follows its own tab whatever tab the panel follows, says whe
   const injected = [];
   const said = [];
   const stops = [];
-  const store = { count: 0, durable: true, add: (events) => added.push(...events) };
+  const store = { count: 0, durable: true, writeFailures: 0, beat() {}, add: (events) => added.push(...events) };
   const state = { tab: { id: 4 }, recording: { tabId: 4, started: 0, stopping: false, carrier: { pageAdapter: 'src/content/carriers/progressive.js' }, store }, devrec: {} };
   const context = { state, Date, Number,
     devrecSaid: (s) => said.push(s), stopRecording: (why) => { stops.push(why); state.recording.stopping = true; },
@@ -10988,4 +10992,97 @@ test('the recording follows its own tab whatever tab the panel follows, says whe
   const sets = [...refresh.matchAll(/^\s*state\.tab = (?!null; return).*$/gm)];
   assert.equal(sets.length, 2);
   for (const m of sets) assert.match(refresh.slice(m.index + m[0].length), /^\s*(?:\/\/.*\s*)*noteFollowed\(\);/, 'each tab the panel follows is noted as it is set');
+});
+
+// REC-01 (audit 2026-11-07): the recording didn't say which fill run it was, nor what it left and
+// why; those facts were in the usage log only.
+test('a recording copies in the usage events of its own quote as they are logged, and its fill ends name their run', async () => {
+  const added = [];
+  let tap = null;
+  const rec = { stopping: false, store: { manifest: { session: 's1' }, add: (events) => added.push(...events) } };
+  const state = { recording: rec };
+  const context = { state, Date, Number, usage: { onLogged: (fn) => { tap = fn; return () => { tap = null; }; } } };
+  vm.runInNewContext(extractFunction('copyUsage'), context);
+  const untap = context.copyUsage(rec);
+  tap([{ type: 'fill_run', run: 'r1' }, { type: 'fill_field', run: 'r1', result: 'failed' }], { t: '2026-11-07T10:00:00.000Z', session: 's1' });
+  tap([{ type: 'page_view' }], { t: '2026-11-07T10:00:01.000Z', session: 's2' });
+  assert.deepEqual(added.map((e) => [e.kind, e.t, e.frame, e.event.type]), [['usage', Date.parse('2026-11-07T10:00:00.000Z'), 0, 'fill_run'], ['usage', Date.parse('2026-11-07T10:00:00.000Z'), 0, 'fill_field']], 'another quote\'s are not');
+  rec.stopping = true;
+  tap([{ type: 'fill_run' }], { t: '2026-11-07T10:00:02.000Z', session: 's1' });
+  assert.equal(added.length, 2, 'nothing once the recording stops');
+  untap();
+  assert.equal(tap, null);
+  // The usage log tells its taps each event as it is logged.
+  const usageLog = await import('../sidepanel/usage-log.js');
+  const told = [];
+  const off = usageLog.onLogged((events, at) => told.push([events.map((e) => e.type), at.session]));
+  await usageLog.log({ type: 'page_view' });
+  off();
+  await usageLog.log({ type: 'page_view' });
+  assert.deepEqual(told, [[['page_view'], null]]);
+  // A fill's end marker names its run, how it was asked and its page (core.js), as fill.js and
+  // coordinator.js say them on fillingFor.
+  assert.match(SIDEPANEL, /const which = f\?\.run \? \{ run: f\.run, how: f\.how \?\? null, page: f\.page \?\? null \} : \{\};\n\s+rec\.store\.add\(\[\{ kind: 'fill', t, frame: 0, on, what: fillingWhat, \.\.\.which \}\]\);/);
+  // A problem report keeps the page's layout as it is (REC-08), once the report is on its way.
+  assert.match(extractFunction('wireUsage'), /await uploadNow\(\);\n\s+\/\/[^\n]*\n\s+\/\/[^\n]*\n\s+if \(page\) scheduleLayout\(page, 'problem'\);/);
+  assert.match(extractFunction('fillPage'), /how: auto \? String\(auto\) : confirmed \? 'looks-right' : continuing \? 'continue' : 'agent', page \};/);
+  assert.match(extractFunction('autoFill'), /stopping: false, how: 'follow-up', page, auto: true, started: Date\.now\(\) \};/);
+});
+
+// REC-05 (audit 2026-11-07): nothing showed what the page looked like at a failure.
+test('a fill that ended with something failed, left or holding Continue, and a note, keep the page\'s layout in the recording', async () => {
+  const added = [];
+  const layouts = [];
+  const asked = [];
+  const rec = { tabId: 4, carrier: { id: 'amwins', layoutSteps: true }, stopping: false, momentBusy: false,
+    store: { layouts: 0, manifest: { id: 'amwins-x' }, add: (events) => added.push(...events), addLayout: async (l) => { layouts.push(l); return `layouts/000${++rec.store.layouts}.json`; } } };
+  const state = { recording: rec, intake: { record: {} }, active: {}, filling: false, layoutChain: Promise.resolve() };
+  const frames = [{ isTopFrame: true, page: '/application', step: 'Drivers', controls: [{}, {}] }, { isTopFrame: false, controls: [] }];
+  const context = { state, Date, String, Error, Object, Promise, setTimeout, MOMENT_WAIT_MS: 60_000, planFor: () => [], redactionTerms: () => [],
+    runKit: async (tabId) => { asked.push(tabId); return frames.map((result) => ({ result })); } };
+  vm.runInNewContext(['takeMoment', 'momentAfterRun'].map(extractFunction).join('\n'), context);
+  context.momentAfterRun([{ kind: 'kit', what: 'run', on: false, filled: 3, failed: 0, leftRequired: 0, blockers: 0 }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(added, [], 'a fill that left nothing: no moment');
+  // Asked as the kit's run ends, while the panel's fill is still under way: read once it has ended
+  // (a capture during a fill could catch the page half filled, or get in the fill's way).
+  state.filling = true;
+  context.momentAfterRun([{ kind: 'kit', what: 'run', on: false, filled: 3, failed: 1, leftRequired: 2, blockers: 0 }]);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.deepEqual(asked, [], 'never read while filling');
+  state.filling = false;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.deepEqual(asked, [4], 'the recorded tab is read');
+  assert.deepEqual(added.map((e) => [e.kind, e.why, e.layout, e.fields]), [['moment', 'fill ended: 1 failed, 2 left for you', 'layouts/0001.json', 2]]);
+  assert.deepEqual([layouts[0].kind, layouts[0].version, layouts[0].note, layouts[0].page, layouts[0].step, layouts[0].frames.length], ['page-capture', 2, 'fill ended: 1 failed, 2 left for you', '/application', 'Drivers', 1]);
+  // A note takes one too, with its words; a capture taken meanwhile is a note naming its file.
+  const noted = { ...context, $: () => ({ value: '' }) };
+  rec.redact = (s) => s;
+  vm.runInNewContext(['noteRecording', 'noteCaptured'].map(extractFunction).join('\n'), noted);
+  noted.takeMoment = (why, extra) => added.push({ kind: 'moment', why, ...extra });
+  assert.equal(noted.noteRecording('waited too long'), true);
+  noted.noteCaptured('capture-amwins-x-001-application.json');
+  assert.deepEqual(added.slice(1).map((e) => [e.kind, e.text ?? e.why, e.note ?? e.capture ?? null]),
+    [['note', 'waited too long', null], ['moment', 'note', 'waited too long'], ['note', 'capture capture-amwins-x-001-application.json', 'capture-amwins-x-001-application.json']]);
+  // It only reads the page: no click, value or event of its own.
+  assert.doesNotMatch(extractFunction('takeMoment'), /\.click\(|\.value\s*=|dispatchEvent/);
+});
+
+// REC-15 (audit 2026-11-07): an unfinished recording could not be removed.
+test('Discard deletes an unfinished recording only once the developer confirms it can\'t be undone', async () => {
+  const said = [];
+  const discarded = [];
+  let answer = false;
+  const state = { devrec: { unfinished: { id: 'geico-x' } } };
+  const asked = [];
+  const context = { state, devrecSaid: (s) => said.push(s), renderUnfinished: async () => {},
+    confirm: (q) => { asked.push(q); return answer; },
+    RecordingStore: { reopen: async (id) => ({ discard: async () => discarded.push(id) }) } };
+  vm.runInNewContext(extractFunction('discardUnfinished'), context);
+  await context.discardUnfinished();
+  assert.deepEqual(discarded, [], 'not without a yes');
+  assert.match(asked[0], /can't be undone/);
+  answer = true;
+  await context.discardUnfinished();
+  assert.deepEqual([discarded, said], [['geico-x'], ['Deleted the unfinished recording geico-x.']]);
 });

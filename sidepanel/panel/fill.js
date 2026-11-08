@@ -147,7 +147,9 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   let plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
   // The page view lists the answers as they go in and the dock has Stop; the new report replaces
   // the last one when it comes (kept until then, in case this fill stops before it gets anywhere).
-  state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false };
+  state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false,
+    // How it was asked and its page, for the developer recording's fill marker (core.js, REC-01).
+    how: auto ? String(auto) : confirmed ? 'looks-right' : continuing ? 'continue' : 'agent', page };
   const unwatch = watchFill(ctx);
   renderSteps();
   const started = Date.now();
@@ -1352,7 +1354,7 @@ async function captureFromShortcut() {
     const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
     if (mine && focused && mine.id !== focused.id) return;
   }
-  capturePage();
+  return capturePage();
 }
 
 // What a capture did, under its button in Settings (never over a fill report): state.captureStatus,
@@ -1412,11 +1414,14 @@ async function capturePage() {
       scenario, quote, n, note, page: top?.page ?? page, step: (carrier.layoutSteps && top?.step) || null, view: view ?? null, context, frames };
     const slug = (s, max) => String(s ?? '').replace(/^https?:\/\/[^/]+/, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, max) || 'page';
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    Object.assign(document.createElement('a'), { href: url, download: `capture-${carrier.id}-${slug(scenario, 30)}${quote ? `-${quote.slice(0, 4)}` : ''}-${String(n).padStart(3, '0')}-${slug(data.page, 30)}.json` }).click();
+    const file = `capture-${carrier.id}-${slug(scenario, 30)}${quote ? `-${quote.slice(0, 4)}` : ''}-${String(n).padStart(3, '0')}-${slug(data.page, 30)}.json`;
+    Object.assign(document.createElement('a'), { href: url, download: file }).click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
     // Only the note this capture took: one being typed for the next step stays.
     if (/** @type {*} */ ($('capture-note'))?.value === typedNote) /** @type {*} */ ($('capture-note')).value = '';
     captureSaid(`Saved capture ${n} of "${scenario}" (${frames.reduce((k, f) => k + f.controls.length, 0)} fields${top?.openLists?.length ? ', an open list' : ''}) to Downloads. Client details are [client]. Move it to layouts/ and skim it before sharing.`);
+    // The file's name, for a developer recording running meanwhile (sidepanel.js: its note).
+    return file;
   } catch (e) {
     captureSaid(`Couldn't capture this page: ${e.message}`);
   }

@@ -537,7 +537,13 @@ panelStore.subscribe((stateNow) => {
       const t = Date.now();
       if (on) rec.fills.push({ start: t, end: null, what: fillingWhat });
       else if (rec.fills.at(-1)) rec.fills.at(-1).end = t;
-      rec.store.add([{ kind: 'fill', t, frame: 0, on, what: fillingWhat }]);
+      // A fill's end also says which run it was (the usage log's fill_run and fill_field carry the
+      // same `run`), how it was asked (`how`: 'agent' for Fill this page, 'page' as a page opened,
+      // 'follow-up', 'looks-right', 'continue') and its page (REC-01): its start can't, as the run is
+      // named after state.filling is set.
+      const f = !on ? stateNow.fillingFor ?? state.fillingFor : null;
+      const which = f?.run ? { run: f.run, how: f.how ?? null, page: f.page ?? null } : {};
+      rec.store.add([{ kind: 'fill', t, frame: 0, on, what: fillingWhat, ...which }]);
     }
     fillingPrevious = on;
   }

@@ -11,7 +11,7 @@
 // boxes are the agent's: the panel reads and writes their values by id, so the upload token and the
 // AI key never go into the panel's state.
 // One part of the panel; sidepanel.js mounts it (mountSettings, mountRecordingLine).
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
@@ -110,6 +110,8 @@ function DevRecording({ act }) {
         <button type="button" id="devrec-note" className="ghost small-btn" hidden={!on} onClick={() => act?.note()}>Note</button>
         <button type="button" id="devrec-stop" className="ghost small-btn" hidden={!on} onClick={() => act?.stop()}>Stop and save</button>
         <button type="button" id="devrec-recover" className="ghost small-btn" hidden={!left} data-id={left?.id ?? ''} onClick={() => act?.recover()}>{left?.label ?? 'Save the unfinished recording'}</button>
+        {/* Deletes the newest unfinished one after a confirm that it can't be undone (REC-15). */}
+        <button type="button" id="devrec-discard" className="ghost small-btn danger" hidden={!left} onClick={() => act?.discard()}>Discard it</button>
       </div>
       <p id="devrec-status" className="fine" role="status" hidden={!devrec?.status}>{devrec?.status ?? ''}</p>
     </div>
@@ -208,9 +210,38 @@ function Settings({ act }) {
 
 // The footer's "Recording usage": while an intake is loaded, except on a practice page (render,
 // renderSite, renderUsage say it: state.recordingLine).
-function RecordingLine() {
+// `act`: the developer recording's (devrec: note(text), stop), whose pill shows here while one runs,
+// or null where it isn't offered.
+function RecordingLine({ act = null }) {
   const on = useStore(panelStore, (s) => !!s.recordingLine);
-  return <span id="recording" className="recording" title="Usage is recorded, never client information. See Settings." hidden={!on}><span className="rec-dot">●</span> Recording usage</span>;
+  return (
+    <>
+      <span id="recording" className="recording" title="Usage is recorded, never client information. See Settings." hidden={!on}><span className="rec-dot">●</span> Recording usage</span>
+      {act ? <DevRecordingPill act={act} /> : null}
+    </>
+  );
+}
+
+// While a developer recording runs: its time and events, Note (a one-line box here, so a note
+// doesn't mean leaving the quote for Settings) and Stop and save (REC-17).
+function DevRecordingPill({ act }) {
+  const devrec = useStore(panelStore, (s) => s.devrec);
+  const [noting, setNoting] = useState(false);
+  const [text, setText] = useState('');
+  if (!devrec?.on || !devrec.pill) return null;
+  const send = () => { if (act.note(text)) setText(''); setNoting(false); };
+  return (
+    <span id="devrec-pill" className="devrec-pill" role="status">
+      <span className="rec-dot devrec-dot" aria-hidden="true">●</span>
+      <span id="devrec-pill-text">Developer recording {devrec.pill}</span>
+      {noting
+        ? <input id="devrec-pill-note" type="text" maxLength={200} autoFocus placeholder="What's wrong here" aria-label="Note for the recording" value={text}
+          onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send(); if (e.key === 'Escape') setNoting(false); }} />
+        : <button type="button" id="devrec-pill-noting" className="link small" onClick={() => setNoting(true)}>Note</button>}
+      {noting ? <button type="button" id="devrec-pill-add" className="link small" onClick={send}>Add</button> : null}
+      <button type="button" id="devrec-pill-stop" className="link small" onClick={() => act.stop()}>Stop</button>
+    </span>
+  );
 }
 
 // Draws Settings into #settings, before it returns (showScreen shows or hides it).
@@ -219,10 +250,11 @@ function mountSettings(host, act) {
   flushSync(() => root.render(<Settings act={act} />));
 }
 
-// Draws the footer's Recording usage line into #recording-root, before it returns.
-function mountRecordingLine(host) {
+// Draws the footer's Recording usage line (and the developer recording's pill) into #recording-root,
+// before it returns.
+function mountRecordingLine(host, act = null) {
   const root = createRoot(host);
-  flushSync(() => root.render(<RecordingLine />));
+  flushSync(() => root.render(<RecordingLine act={act} />));
 }
 
 export { mountRecordingLine, mountSettings, RecordingLine, Settings };
