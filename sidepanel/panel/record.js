@@ -298,6 +298,23 @@ function fieldRow(path, label, kind, flagged, shown = false) {
   return { ...row, original, restore: () => restoreField(path, was, kind) };
 }
 
+// The USDOT or MC box restored (restoreField): its "no number" flag as the intake read it, and the
+// note that says it there, or none.
+function restoreNoNumber(intake, path) {
+  const box = { 'applicant.dot': ['noDot', 'dot.none', 'USDOT'], 'applicant.mc': ['noMc', 'mc.none', 'MC'] }[path];
+  const read = intake.intakeRecord?.applicant;
+  if (!box || !read || !intake.record.applicant) return;
+  const [flag, code, name] = box;
+  intake.record.applicant[flag] = read[flag] ?? null;
+  const i = intake.warnings.findIndex((w) => w.code === code);
+  if (read[flag] && i < 0) intake.warnings.push({ code, path, level: 'info', msg: `${name} #: the client has no ${name} number, as the intake says.` });
+  if (!read[flag] && i >= 0) {
+    // `done` holds checks by their place: those after it move up one.
+    intake.warnings.splice(i, 1);
+    intake.done = (intake.done ?? []).filter((d) => d !== i).map((d) => (d > i ? d - 1 : d));
+  }
+}
+
 // Restore: the intake's own value back in the field, no longer the agent's, and its derived values
 // following it again (agentEdit with `restore`). Logged as a correction undone, without the value.
 async function restoreField(path, was, kind) {
@@ -334,6 +351,9 @@ async function agentEdit(path, after, kind, { restore = false } = {}) {
   // drawer is said again without it (it would go under the agent's eyes as they typed).
   const checks = [...state.intake.warnings];
   const derived = [...rederive(state.intake.record, path, { keep: edited, intake: state.intake })];
+  // Restored, the USDOT or MC box's "no number" is the intake's again too (`noDot`, `noMc`, and its
+  // note): an empty box alone says nothing about it (CodeRabbit on #474).
+  if (restore) restoreNoNumber(state.intake, path);
   if (derived.length) renderSections({ keep: derived });
   if (state.intake.warnings.length !== checks.length || state.intake.warnings.some((w, i) => w !== checks[i])) renderWarnings();
   intakeEdited();

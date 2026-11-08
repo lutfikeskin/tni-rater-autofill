@@ -6925,7 +6925,7 @@ test('client details mark the agent\'s corrections, show the intake\'s value wit
     claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {}, profileLater() {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'restoreField', 'agentEdit'].map(extractFunction).join('\n'), sandbox);
+  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'restoreField', 'restoreNoNumber', 'agentEdit'].map(extractFunction).join('\n'), sandbox);
   sandbox.renderSections();
   const rows = () => JSON.parse(JSON.stringify(sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path)));
   const live = () => sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path);
@@ -6974,6 +6974,27 @@ test('client details mark the agent\'s corrections, show the intake\'s value wit
   assert.ok(rows().length > 3, 'all of them again');
   // The intake keeps its record as read from the PDF, before any correction.
   assert.match(SIDEPANEL, /intakeRecord: JSON\.parse\(JSON\.stringify\(result\.record\)\)/);
+
+  // CodeRabbit on #474: restoring the USDOT box put back the empty box but not the intake's "no
+  // number". The intake said No (noDot, its note); the agent typed a number (rederive cleared both);
+  // Restore brings both back. And an intake with a blank box, after the agent's typed No: Restore
+  // takes the No and its note away again, the checks after it keeping their Looks right.
+  const noDot = (applicant, warnings, done) => {
+    const rec = { applicant: { ...applicant } };
+    sandbox.state.intake = { record: rec, intakeRecord: { applicant: { ...applicant } }, warnings, done, agentEdited: ['applicant.dot'] };
+    return rec;
+  };
+  const said = noDot({ dot: null, noDot: true }, [{ code: 'dot.none', path: 'applicant.dot', level: 'info', msg: 'x' }], []);
+  said.applicant.dot = '1234567';
+  said.applicant.noDot = null;
+  sandbox.state.intake.warnings = [];
+  await sandbox.restoreField('applicant.dot', null, 'text');
+  assert.deepEqual(JSON.parse(JSON.stringify([said.applicant, sandbox.state.intake.warnings.map((w) => w.code), sandbox.state.intake.agentEdited])),
+    [{ dot: null, noDot: true }, ['dot.none'], []]);
+  const blank = noDot({ dot: null, noDot: null }, [{ code: 'dot.none', path: 'applicant.dot', level: 'info', msg: 'typed No' }, { code: 'mc.none', path: 'applicant.mc', level: 'info', msg: 'm' }], [1]);
+  blank.applicant.noDot = true;
+  await sandbox.restoreField('applicant.dot', null, 'text');
+  assert.deepEqual(JSON.parse(JSON.stringify([blank.applicant.noDot, sandbox.state.intake.warnings.map((w) => w.code), sandbox.state.intake.done])), [null, ['mc.none'], [0]]);
 });
 
 for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transport of ['complete', 'failure']) {
