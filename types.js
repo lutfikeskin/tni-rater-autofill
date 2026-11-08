@@ -1281,7 +1281,7 @@
  * @property {any} [dock]
  * @property {any} [feed]
  * @property {Record<string, any>} [cards]
- * @property {{ usage: any, window: any }} [notes]
+ * @property {{ usage: any, window: any, storage?: any, whatsNew?: any }} [notes]
  * @property {any} [loadError]
  * @property {any[]} [siteTrack]
  * @property {any} [checks]

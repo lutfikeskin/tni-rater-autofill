@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["node", "chrome"]
   },
-  "include": ["types.js", "vite.config.js", "vitest.config.js", "server", "scripts", "test"]
+  "include": ["types.js", "vite.config.js", "vitest.config.js", "server", "scripts", "test", ".claude/skills"]
 }

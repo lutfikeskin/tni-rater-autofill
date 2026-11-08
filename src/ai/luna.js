@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Luna resolves bounded choices; code gates automatic picks and the agent approves them.
 import { AssistError, RequestTooLarge, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake, rowsFor, entityOf, intakeValue, rulesSent } from './common.js';
 import { sha256Hex } from '../usage.js';

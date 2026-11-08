@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Guards for things that broke (or would break) silently when one part changes without another:
 // event types the server doesn't accept, carrier hosts the manifest doesn't allow, versions out of
 // step, committed fixtures with client data, docs naming commands that don't exist.
@@ -9,7 +10,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { EVENT_FIELDS, COMMON, COMMON_SHAPES, RUN_FIELDS, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT } from '../server/index.mjs';
+import crypto from 'node:crypto';
+import { EVENT_FIELDS, COMMON, COMMON_SHAPES, RUN_FIELDS, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT, SCHEMA_VERSION as SERVER_SCHEMA } from '../server/index.mjs';
+import * as SCHEMA from '../src/usage-schema.js';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms, SOURCES } from '../src/plan.js';
@@ -81,6 +84,33 @@ test('carrier ids and the extension\'s version are in the shapes the server keep
   assert.ok(COMMON_SHAPES.v(JSON.parse(read('package.json')).version));
   assert.deepEqual(Object.keys(COMMON_SHAPES).sort(), COMMON.filter((k) => ['t', 'agent', 'session', 'intakeId', 'carrier', 'page', 'v'].includes(k)).sort(),
     'id, channel, commit, install, seq, type and view keep their own checks');
+});
+
+// Audit 2026-11-07, SRV-14: the event contract is one module both sides import
+// (src/usage-schema.js). A change to it (an event type, a field, a profile group or field) changes
+// the fingerprint, and the schema's version must go up with it: an extension that sends the new
+// fields is then refused by an older server in words it retries, never stored with them dropped.
+const profileShape = (spec) => (typeof spec === 'function' ? true : Array.isArray(spec) ? [profileShape(spec[0])]
+  : Object.fromEntries(Object.keys(spec).sort().map((k) => [k, profileShape(spec[k])])));
+const schemaFingerprint = () => crypto.createHash('sha256').update(JSON.stringify({
+  common: COMMON, events: Object.keys(EVENT_FIELDS).sort().map((t) => [t, EVENT_FIELDS[t]]), profile: profileShape(PROFILE),
+})).digest('hex').slice(0, 12);
+// Every schema version's fingerprint, one entry a version. A version's entry is never rewritten:
+// a contract that changed is a new version with its own entry, so the fingerprint can't be brought
+// up to date while the version stays (the review of #378).
+const VERSION_FINGERPRINTS = { 1: '4e730dd257f0', 2: 'df6f4ac901ac' };
+test('the event contract is shared, and its version goes up whenever it changes', () => {
+  assert.equal(COMMON, SCHEMA.COMMON, 'the server keeps the shared COMMON');
+  assert.deepEqual(Object.keys(EVENT_FIELDS), Object.keys(SCHEMA.EVENT_FIELDS), 'the server knows every shared event type, and only those');
+  for (const [type, fields] of Object.entries(SCHEMA.EVENT_FIELDS)) assert.deepEqual(EVENT_FIELDS[type].slice(0, fields.length), [...fields], type);
+  assert.equal(EXTENSION_ID_LIKE, SCHEMA.ID_LIKE);
+  assert.equal(SERVER_SCHEMA, SCHEMA.SCHEMA_VERSION);
+  const versions = Object.keys(VERSION_FINGERPRINTS).map(Number);
+  assert.deepEqual(versions, Array.from({ length: SCHEMA.SCHEMA_VERSION }, (_, i) => i + 1), 'one fingerprint for each version up to the current one');
+  assert.equal(new Set(Object.values(VERSION_FINGERPRINTS)).size, versions.length, 'each version a different contract');
+  const next = SCHEMA.SCHEMA_VERSION + 1;
+  assert.equal(VERSION_FINGERPRINTS[SCHEMA.SCHEMA_VERSION], schemaFingerprint(),
+    `the event contract changed: raise SCHEMA_VERSION in src/usage-schema.js to ${next} and add ${next}: '${schemaFingerprint()}' to VERSION_FINGERPRINTS here, leaving the earlier entries as they are`);
 });
 
 // The business profile: every value the extension sends fits the server's shape for it, and each

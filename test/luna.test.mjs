@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intakePathOf } from '../src/ai/common.js';
