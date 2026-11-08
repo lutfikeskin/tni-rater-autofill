@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The real extension (dist/tni-rater-autofill, rebuilt by npm run package) in Chromium, its side
 // panel opened as a page, on the AmWINS mock (test/fixtures/amwins, served by npm run replay on
 // port 8792): loads the sample intake, clears one client fact in All client details (the sample

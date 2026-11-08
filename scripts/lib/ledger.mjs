@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The weekly review's ledger read back (step 2 of .claude/skills/weekly-review): each item line of
 // the open `weekly-review` issue, the fix that closed it, which builds in the usage log contain that
 // fix, and what the period's events from those builds say about it, with the weekly numbers set
