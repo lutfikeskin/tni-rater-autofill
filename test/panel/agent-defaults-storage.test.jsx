@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import { expect, test, vi } from 'vitest';
 
 // Agents' own defaults when Chrome's storage refuses a write (docs/agent-defaults-spec.md, phase 5):
