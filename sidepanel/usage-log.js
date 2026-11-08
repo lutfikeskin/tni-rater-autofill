@@ -46,9 +46,12 @@ export async function saveSettings(patch) {
 // src/managed-schema.json; audit 2026-11-07, UX-12 d): the usage server and its upload token, and
 // the AI's defaults (aiOn: Suggest answers, lunaAuto: Put checked picks in). Each takes the place of
 // the extension's own default; what the agent set in Settings still wins (Advanced is for setup,
-// such as a local test server). A value out of its shape is ignored; no policy, or a managed area
-// that can't be read, is none.
+// such as a local test server). The agent's initials are the exception: a policy that sets them
+// (`initials`, 1 to 6 letters) sets them for every event, and Settings shows them locked (the
+// maintainer, 2026-11-08: initials stay the display name, no Workspace identity). A value out of its
+// shape is ignored; no policy, or a managed area that can't be read, is none.
 const MANAGED_SHAPES = {
+  initials: (v) => typeof v === 'string' && /^[A-Za-z]{1,6}$/.test(v.trim()),
   serverUrl: (v) => typeof v === 'string' && (v === '' || /^https?:\/\/[^\s]+$/i.test(v)),
   serverToken: (v) => typeof v === 'string' && v.length <= 200,
   aiOn: (v) => typeof v === 'boolean',
@@ -67,10 +70,19 @@ export async function managedSettings() {
 // The agent's settings over what the policy deployed (managedSettings), its token left out: what
 // the AI and the settings log go by. A setting the agent never touched is the policy's.
 export async function settingsWithPolicy() {
-  const [saved, { serverToken: _token, ...policy }] = await Promise.all([settings(), managedSettings()]);
+  const [saved, { serverToken: _token, initials, ...policy }] = await Promise.all([settings(), managedSettings()]);
   const out = { ...policy };
   for (const [k, v] of Object.entries(saved)) if (v !== undefined) out[k] = v;
+  // The policy's initials are the agent's, whatever Settings holds.
+  if (initials) out.agent = initials.trim().toUpperCase();
   return out;
+}
+
+// The agent's initials in force: the policy's when it sets them (`managed`: Settings shows the box
+// locked), else what the agent typed in Settings.
+export async function agentInitials() {
+  const [{ agent = null }, { initials }] = await Promise.all([settings(), managedSettings()]);
+  return initials ? { agent: initials.trim().toUpperCase(), managed: true } : { agent: agent ?? null, managed: false };
 }
 
 const SEQ_KEY = 'usageSeq';
@@ -101,7 +113,7 @@ export function log(...events) {
   const t = new Date().toISOString();
   const { id: sessionId = null, intakeId = null } = session ?? {};
   queue = queue.then(() => exclusive(async () => {
-    const { agent = null } = await settings();
+    const { agent } = await agentInitials();
     const install = await installId();
     let list = (await local.get(LOG_KEY)) ?? [];
     let seq = (await local.get(SEQ_KEY)) ?? 0;
@@ -141,7 +153,7 @@ export async function count() {
 export async function exportLog() {
   await queue;
   const events = [...((await local.get(REJECTED_KEY)) ?? []), ...((await local.get(LOG_KEY)) ?? [])];
-  const { agent } = await settings();
+  const { agent } = await agentInitials();
   const data = { tool: 'tni-rater-autofill', kind: 'usage-log', version, exportedAt: new Date().toISOString(), agent: agent ?? null, events };
   const day = new Date().toISOString().slice(0, 10);
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
@@ -238,7 +250,7 @@ function noteConfirmed(ids) {
 // `timeoutMs`: per request (tests shorten it).
 export function upload({ timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
   queue = queue.then(() => exclusive(async () => {
-    const { agent = null } = await settings();
+    const { agent } = await agentInitials();
     const { serverUrl, serverToken } = await serverConfig();
     if (!serverUrl) { uploadStatus = { state: 'off' }; return; }
     let sent = 0;

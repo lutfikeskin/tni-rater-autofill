@@ -96,15 +96,16 @@ Apps & extensions → the extension → Policy for extensions**, a JSON object w
 `src/managed-schema.json` declares (Chrome reads them into `chrome.storage.managed`):
 
 ```json
-{ "serverUrl": "https://usage-server-production.up.railway.app", "serverToken": "…", "aiOn": true, "lunaAuto": false }
+{ "initials": "JK", "serverUrl": "https://usage-server-production.up.railway.app", "serverToken": "…", "aiOn": true, "lunaAuto": false }
 ```
 
+- `initials` (1 to 6 letters) are the agent's initials, the name their quotes count under. The policy sets them for every event, and Settings shows them locked, "Set by your organization". There is no Workspace or Google-account identity: the maintainer decided on 2026-11-08 that initials stay the display name.
 - `serverUrl` and `serverToken` take the place of the built-in central server and its token. The
   server must be at a host the manifest's `host_permissions` allow. A policy token alone goes to the
   central server; the built-in token never goes to another server.
 - `aiOn` (**Suggest answers**) and `lunaAuto` (**Put checked picks in**) are the defaults the agent
   starts with.
-- What the agent sets in Settings still wins (Advanced is for setup, such as a local test server).
+- Except for the initials, what the agent sets in Settings still wins (Advanced is for setup, such as a local test server).
   Settings says when uploads go to a server the organization set. A value out of its type is
   ignored. The schema adds no permission and no install warning.
 

@@ -122,6 +122,38 @@ test('a server, token and AI defaults set by policy are used until the agent set
   }
 });
 
+// The maintainer, 2026-11-08: initials stay the display name (no Workspace identity); a policy can
+// set them, and then they are the agent's for every event and locked in Settings.
+test('initials set by policy are the agent\'s, over what Settings holds, and said as managed', async () => {
+  let policy = {};
+  globalThis.chrome = { storage: { managed: { get: async () => policy } } };
+  try {
+    await usage.saveSettings({ agent: 'JK' });
+    assert.deepEqual(await usage.agentInitials(), { agent: 'JK', managed: false }, 'no policy: the typed initials');
+    policy = { initials: ' ab ' };
+    assert.deepEqual(await usage.agentInitials(), { agent: 'AB', managed: true });
+    assert.equal((await usage.settingsWithPolicy()).agent, 'AB', 'what the AI, the settings log and the PDF gate read');
+    assert.equal('initials' in (await usage.settingsWithPolicy()), false);
+    // Out of shape (digits, more than 6 letters, not a string): no policy initials.
+    for (const initials of ['A1', 'ABCDEFG', 7, '']) {
+      policy = { initials };
+      assert.deepEqual(await usage.agentInitials(), { agent: 'JK', managed: false }, String(initials));
+    }
+    // Each event logged, exported and uploaded carries the initials in force.
+    const panel = fs.readFileSync(new URL('../sidepanel/usage-log.js', import.meta.url), 'utf8');
+    assert.equal(panel.match(/const \{ agent \} = await agentInitials\(\);/g)?.length, 3, 'log, export and upload read the initials in force');
+    // Settings: the box locked and said as the organization's; a typed value isn't kept.
+    const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
+    assert.match(view, /\{health\?\.agentManaged \? 'Set by your organization' : 'So your quotes count as yours'\}/);
+    assert.match(view, /id="agent"[^>]*disabled=\{!!health\?\.agentManaged\}/);
+    const settingsPanel = fs.readFileSync(new URL('../sidepanel/panel/usage-panel.js', import.meta.url), 'utf8');
+    assert.match(settingsPanel, /agent: async \(value\) => \{\n[^\n]*\n\s+if \(\(await usage\.agentInitials\(\)\)\.managed\) \{ renderUsage\(\); return; \}/);
+  } finally {
+    delete globalThis.chrome;
+    await usage.saveSettings({ agent: undefined });
+  }
+});
+
 test('the policy, its upload token among it, is kept from content scripts like local storage', () => {
   const bg = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
   assert.match(bg, /for \(const area of \['local', 'managed'\]\)[\s\S]{0,80}chrome\.storage\[area\]\?\.setAccessLevel\?\.\(\{ accessLevel: 'TRUSTED_CONTEXTS' \}\)/);

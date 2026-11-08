@@ -6881,7 +6881,7 @@ test('the usage card says a server the organization set, after an upload as befo
     const state = {};
     const context = { state, document: { activeElement: null }, $: () => ({ value: '' }), renderHealth() {},
       usage: { count: async () => 0, settings: async () => ({}), serverConfig: async () => ({ serverUrl: 'https://usage.agency.test', ...(managed ? { managed: true } : {}) }),
-        lastUpload: () => up } };
+        lastUpload: () => up, agentInitials: async () => ({ agent: '', managed: false }) } };
     vm.runInNewContext(`${extractFunction('renderUsage')}
 var run = renderUsage;`, context);
     await context.run();
@@ -6902,7 +6902,7 @@ function settingsActsHarness() {
   const state = { switches: { autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true }, usageNote: '' };
   const record = (name) => (...args) => { calls.push([name, ...args]); };
   const context = { state, calls, confirm: () => true,
-    usage: { saveSettings: async (patch) => { calls.push(['save', { ...patch }]); }, settings: async () => ({}), count: async () => 3, exportLog: async () => 3, clearLog: async () => { calls.push(['clearLog']); } },
+    usage: { saveSettings: async (patch) => { calls.push(['save', { ...patch }]); }, settings: async () => ({}), count: async () => 3, exportLog: async () => 3, clearLog: async () => { calls.push(['clearLog']); }, agentInitials: async () => ({ agent: '', managed: !!state.agentManaged }) },
     logSettings: record('logSettings'), renderSite: record('renderSite'), renderSteps: record('renderSteps'), uploadNow: record('uploadNow'), renderAiSettings: record('renderAiSettings'), renderUsage: record('renderUsage') };
   vm.runInNewContext(`${extractFunction('settingsActs')}\nvar acts = settingsActs();`, context);
   return { acts: context.acts, calls, state, context };
@@ -6931,6 +6931,11 @@ test('Settings\' usage boxes and buttons: a server that isn\'t a URL is refused,
   t.context.confirm = () => true;
   await t.acts.clearLog();
   assert.deepEqual([t.calls.at(-2), t.calls.at(-1), t.state.usageNote], [['clearLog'], ['renderUsage'], 'Usage log cleared.']);
+  // Initials the organization set aren't saved over from Settings: the row is only drawn again.
+  t.calls.length = 0;
+  t.state.agentManaged = true;
+  await t.acts.agent('XY');
+  assert.deepEqual(t.calls, [['renderUsage']], 'managed initials: nothing saved');
 });
 
 test('Looks right sends the top frame\'s receipt with a fill, only for the page in front', async () => {

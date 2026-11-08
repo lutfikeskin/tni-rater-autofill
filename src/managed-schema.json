@@ -1,6 +1,11 @@
 {
   "type": "object",
   "properties": {
+    "initials": {
+      "title": "Agent initials",
+      "description": "The agent's initials (1 to 6 letters), the name their quotes count under. Set here, they are locked in Settings for the agent.",
+      "type": "string"
+    },
     "serverUrl": {
       "title": "Usage server",
       "description": "The collection server's address (https://host). Empty: no server, export only. It must be at a host the extension's manifest allows (host_permissions). An agent's own setting under Settings, Advanced still wins.",

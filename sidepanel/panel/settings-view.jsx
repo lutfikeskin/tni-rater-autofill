@@ -145,7 +145,7 @@ function Settings({ act }) {
       <div className="group">
         <div className="eyebrow">You</div>
         <div className="card">
-          <label className="opt"><span className="opt-text"><b>Your initials</b><span>So your quotes count as yours</span></span><TextBox id="agent" className={health?.agentMissing ? 'missing' : undefined} type="text" maxLength={6} autoComplete="off" placeholder="e.g. JK" onChange={act.agent} /></label>
+          <label className="opt"><span className="opt-text"><b>Your initials</b><span>{health?.agentManaged ? 'Set by your organization' : 'So your quotes count as yours'}</span></span><TextBox id="agent" className={health?.agentMissing ? 'missing' : undefined} type="text" maxLength={6} autoComplete="off" placeholder="e.g. JK" disabled={!!health?.agentManaged} onChange={act.agent} /></label>
         </div>
       </div>
 

@@ -21,7 +21,9 @@ import { markSwitch } from './tab-mark.js';
 // events wait here, and the last upload, in its tone.
 async function renderUsage() {
   const n = await usage.count();
-  const { agent = '', serverToken = '' } = await usage.settings();
+  const { serverToken = '' } = await usage.settings();
+  const { agent: initials } = await usage.agentInitials();
+  const agent = initials ?? '';
   const { serverUrl, managed } = await usage.serverConfig();
   const up = usage.lastUpload();
   const when = up.at ? new Date(up.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
@@ -54,7 +56,8 @@ async function renderUsage() {
 async function renderHealth({ up }) {
   const version = inExtension ? chrome.runtime.getManifest().version : 'dev';
   $('foot-version').textContent = `v${version}`;
-  const { agent = '' } = await usage.settings();
+  // The initials in force: the organization's policy's when it sets them (locked in Settings).
+  const { agent, managed: agentManaged } = await usage.agentInitials();
   const ai = await aiSettings();
   const setup = [
     !agent && 'add your initials',
@@ -63,7 +66,7 @@ async function renderHealth({ up }) {
   ].filter(Boolean);
   // Said in Settings as data (state.health; settings-view.jsx): the version, the setup note (null:
   // none) and the initials' box marked while empty.
-  state.health = { version: `Version ${version}`, setup: setup.length ? `To finish setup, ${joinAnd(setup)}.` : null, agentMissing: !agent };
+  state.health = { version: `Version ${version}`, setup: setup.length ? `To finish setup, ${joinAnd(setup)}.` : null, agentMissing: !agent, agentManaged };
   $('settings-dot').hidden = !setup.length;
   // Events that can't even be saved here are lost: that is said where the agent works.
   const saved = usage.lastSave();
@@ -114,6 +117,8 @@ function settingsActs() {
     serverToken: async (value) => { await usage.saveSettings({ serverToken: value.trim() }); uploadNow(); renderAiSettings(); },
     upload: () => uploadNow(),
     agent: async (value) => {
+      // Set by the organization's policy: the box is locked, and nothing typed is kept.
+      if ((await usage.agentInitials()).managed) { renderUsage(); return; }
       const initials = value.trim().toUpperCase().slice(0, 6) || null;
       await usage.saveSettings({ agent: initials });
       // agent defaults: new initials, no active profile until one is picked again.
