@@ -19,6 +19,16 @@ import { rulebookFor } from '../../src/ai/tni-rules.js';
 import { SECTIONS } from '../../src/schema.js';
 import { agentsOwn, decision } from './learn.mjs';
 
+/** @typedef {{ value: string, count: number, share: number }} Share */
+/**
+ * A candidate, an entry of learn().undecided: the question, how often it was left to the agent, the
+ * agents' final answers and the intake fields their typed answers matched.
+ * @typedef {{ carrier: string, page: string, step?: string, q?: string | null, field?: string | null, label: string,
+ *   kind?: string | null, options?: string[], left: number, quotes: number, intakes: number, answers?: number,
+ *   agentAnswers?: Share[], typed?: number, typedMatches?: Share[] }} Candidate
+ */
+/** @typedef {{ path: string, label: string, kind: string, options?: string[] }} IntakeField */
+
 export const KINDS = Object.freeze(['intake-path', 'standard-candidate', 'agents']);
 // What an enum field holds when it doesn't apply (no path, no answer): strict schemas want every key.
 export const NONE = '__none__';
@@ -31,8 +41,10 @@ const object = (properties) => ({ type: 'object', properties, required: Object.k
 const oneOf = (values) => ({ type: 'string', enum: [...new Set([...values, NONE])] });
 
 // The intake schema as Luna reads it: each field's path, label, kind and, for a choice, its options.
+/** @returns {IntakeField[]} */
 export function intakeFields() {
-  return SECTIONS.flatMap((s) => s.fields.map(([path, label, kind = 'text', options]) => ({ path, label, kind, ...(options ? { options } : {}) })));
+  return SECTIONS.flatMap((s) => s.fields.map(([path, label, kind = 'text', options]) => ({ path: String(path), label: String(label), kind: String(kind),
+    ...(Array.isArray(options) ? { options } : {}) })));
 }
 
 // The values a mapping may map from: a yes/no field's, or a choice field's options; none for text.
@@ -40,8 +52,8 @@ const valuesOf = (field) => (field?.kind === 'bool' ? ['true', 'false'] : field?
 
 /**
  * The request for one candidate (an entry of learn().undecided), or `{ tooLarge: true }`.
- * @param {object} c
- * @param {{ rules?: {id: string, kind: string, text: string}[], fields?: object[], limit?: number }} [options]
+ * @param {Candidate} c
+ * @param {{ rules?: {id: string, kind: string, text: string}[], fields?: IntakeField[], limit?: number }} [options]
  */
 export function proposalRequest(c, { rules = rulebookFor(c.carrier), fields = intakeFields(), limit = MAX_REQUEST_CHARS } = {}) {
   const answers = [...new Set([...(c.options ?? []), ...(c.agentAnswers ?? []).map((a) => a.value)].map(String).filter((v) => v !== '' && v !== NONE))];
@@ -128,8 +140,8 @@ export function scoreProposal(p, c) {
 
 /**
  * Drafts a proposal for each candidate, one request at a time, offline.
- * @param {object[]} candidates  learn().undecided
- * @param {{ apiKey: string, call?: Function, max?: number, rules?: (carrier: string) => object[], fields?: object[] }} options
+ * @param {Candidate[]} candidates  learn().undecided
+ * @param {{ apiKey: string, call?: Function, max?: number, rules?: (carrier: string) => {id: string, kind: string, text: string}[], fields?: IntakeField[] }} options
  */
 export async function proposeRules(candidates, { apiKey, call = callModel, max = 20, rules = rulebookFor, fields = intakeFields() }) {
   const results = [];
