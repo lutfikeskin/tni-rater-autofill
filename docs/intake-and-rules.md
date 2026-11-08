@@ -80,7 +80,7 @@ Every carrier rule with a `value` declares where its answer comes from ([test/pr
 
 | `source` | Meaning | Step |
 | --- | --- | --- |
-| `intake` | A record path, no computed value | Filled from the intake |
+| `intake` | A record path, no computed value | Filled from the intake. A value its field's kind can't hold (the text as written, which `normalizeIntake` and an agent's edit through `parseEdit` keep when it doesn't parse: "13/45/1980" for a date, "around 40k" for an amount, "20O1" for a year, a phone that isn't 10 digits) is never filled: `value: null`, `manualOnly: true` and the note "<name>: the intake says "…", which isn't a valid date. Answer it yourself." (the same for a whole number, a dollar amount and a 10-digit US phone number), beside the Intake step's check for it. A step that only checks the page against the value (`verifyOnly`) or leaves the page's answer (`ignore`) is unchanged, and a rule with its own `note` keeps it |
 | `derived` | Computed from intake facts, with the evidence in the rule | Filled; may carry its own `warn` or `note` (a missing fact gives a note, never a guess); its step's `from` names the intake answers read, shown on the PDF |
 | `standard` | A TNI coverage or workflow standard | Filled and marked `standard: true`; the carrier page marks it blue (an intake answer is green) and the panel's fill report tags it "standard" |
 | `fact` | A client fact the intake doesn't supply (loss runs, current-carrier tenure, the year licensed without a readable date of birth, other business coverages when the notes say the client has general liability, …) | Never filled: `value: null`, `manualOnly: true` (the AI assistant leaves it) and the rule's `note` (else "<name> isn't on the intake: answer it yourself") |
