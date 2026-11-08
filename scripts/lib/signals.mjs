@@ -11,6 +11,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { quoteSessions } from './events.mjs';
+import { reportsOf } from './carrier-reports.mjs';
 import { receivedAt } from './daily.mjs';
 import { defaultsInForce, isOwnDefault } from './agent-defaults.mjs';
 
@@ -36,26 +37,16 @@ const byVersion = (a, b) => {
   return String(a).localeCompare(String(b));
 };
 
-// The page (or one-address application step) where a quote is done, per carrier: Progressive's
-// quote summary, print confirmation or the printed quote PDF, AmWINS' last application step
-// (Underwriting) or its submission notice, GEICO's steps after Quote & Coverages (its stop steps,
-// reached with a rated quote; the agent's from there). A heuristic for the weekly numbers, not a
-// carrier's definition. A printed quote is done (TNI, 2026-10-20): Print/Send opens the PDF in a tab the
-// panel then follows, so the confirmation page in the quote tab may not be logged after it. The
-// panel's own page strip (a carrier's `quoteSteps`) is a separate list.
-export const FINAL = {
-  progressive: /^(Quote|PrintEmailFaxConfirm|\/Express\/PDFHandler\.ashx)$/i,
-  amwins: /› (Underwriting|Thank you for the submission)/,
-  geico: /› (Final Quote Details|MVR & CLUE|Payment Information)$/,
+// Where a quote is done, per carrier (carrier-reports.mjs finalPage, finalClick): a heuristic for
+// the weekly numbers, not a carrier's definition. The panel's own page strip (a carrier's
+// `quoteSteps`) is a separate list.
+const finalPage = (carrier, page) => !!reportsOf(carrier)?.finalPage.test(page ?? '');
+const finalClick = (e) => {
+  const c = reportsOf(e.carrier)?.finalClick;
+  return e.type === 'agent_click' && !!c && c.page.test(e.page) && c.text.test(String(e.text ?? '').trim());
 };
-// The agent's own click that ends a quote, on the page it is made: Progressive's Print/Send (the
-// agent's since 2026-10-07; logged in the quote tab, whether or not the PDF's page is).
-export const FINAL_CLICK = {
-  progressive: { page: /^PrintEmailFax$/, text: /^print\s*\/\s*send$/i },
-};
-const finalClick = (e) => e.type === 'agent_click' && !!FINAL_CLICK[e.carrier]?.page.test(e.page) && FINAL_CLICK[e.carrier].text.test(String(e.text ?? '').trim());
 // A carrier's login page reached in the middle of a quote: the carrier's session ran out.
-const LOGIN = /\/(auth\/)?login\b|\/login\//i;
+const loginPage = (e) => !!reportsOf(e.carrier)?.loginPage.test(e.page ?? '');
 
 // A test run: an intake the agent marked as a test (`test` on intake_loaded), or one of the
 // fingerprints the reviewer listed (`testIntakes`, full or leading hex).
@@ -134,11 +125,11 @@ export function quoteOutcomes(events, quotes) {
     if (e.type === 'fill_run') q.seenWork = true;
     // Only after this quote's own fill: the page the panel opens on may be the previous client's
     // confirmation, or an old quote the agent reopened.
-    if (q.seenWork && (FINAL[e.carrier]?.test(page) || FINAL[e.carrier]?.test(e.page) || finalClick(e))) q.done = true;
+    if (q.seenWork && (finalPage(e.carrier, page) || finalPage(e.carrier, e.page) || finalClick(e))) q.done = true;
     // A stop page is the carrier's refusal (Progressive's DeclinationNotice); a stop step that is a
     // final page (GEICO's) is the agent's part of a quote that got there.
-    if (e.type === 'fill_run' && !FINAL[e.carrier]?.test(page) && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
-    if (e.type === 'page_view' && LOGIN.test(e.page) && q.seenWork) q.logins++;
+    if (e.type === 'fill_run' && !finalPage(e.carrier, page) && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
+    if (e.type === 'page_view' && loginPage(e) && q.seenWork) q.logins++;
     perQuote.set(k, q);
   }
   return [...perQuote.values()];

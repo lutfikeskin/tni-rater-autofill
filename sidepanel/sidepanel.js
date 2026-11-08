@@ -5,7 +5,7 @@
 import * as usage from './usage-log.js';
 import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
-import { $, migrateStoredData, restoreAiPending, state, store } from './panel/core.js';
+import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
 import { firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty, showScreen } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
@@ -48,6 +48,7 @@ function wire() {
   // that didn't work, and a PDF that couldn't be read.
   mountSiteTrack($('site-track'));
   mountNote($('notices'), 'usage');
+  mountNote($('storage-note'), 'storage');
   mountNote($('window-note'), 'window');
   mountLoadError($('load-error'));
   // Settings: Done, the switches and boxes (settingsActs), the AI's (aiActs), the test-run mark,
@@ -95,8 +96,8 @@ function wire() {
       state.fileConfirm = null;
       render();
       if (what === 'replace') replacing.answered(true);
-      if (what === 'clear') clearClient();
-      if (what === 'new-quote') newQuote();
+      if (what === 'clear') clearClient().catch(storageSaid);
+      if (what === 'new-quote') newQuote().catch(storageSaid);
     },
   });
   // Step 1's checks and their All client details row.
@@ -211,6 +212,7 @@ async function init() {
   holdLayouts();
   state.intake = (await store.get('intake')) ?? null;
   if (state.intake) state.view = firstView(state.intake);
+  await restoreHold();
   state.active = (await store.get('active')) ?? state.active;
   // The selection saved for that tab, kept should the panel reach another tab first.
   state.savedActive = state.active;
@@ -243,6 +245,13 @@ async function init() {
   renderAiSettings();
   reviewIntake();
   await refreshTab();
+}
+
+// The panel opened again: an intake whose New quote failed still holds its fills (fillsHeld, also
+// when the list can't be read), said again.
+async function restoreHold() {
+  state.newQuoteFailed = await fillsHeld(state.intake?.intakeId);
+  if (state.newQuoteFailed) state.clientNote = FILLS_HELD_NOTE;
 }
 
 init();
