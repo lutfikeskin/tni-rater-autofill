@@ -200,6 +200,8 @@ export function startupError({ host, token }) {
 export { COMMON, SCHEMA_VERSION };
 /** @type {Record<string, string[]>} */
 export const EVENT_FIELDS = Object.fromEntries(Object.entries(SHARED_FIELDS).map(([type, fields]) => [type, [...fields]]));
+// Why Luna left a question (src/ai/luna.js leaveWhy).
+const AI_LEAVE_WHY = ['restricted', 'missing', 'conflict', 'chose', 'noSource', 'unverified', 'tooLarge'];
 for (const [type, fields] of Object.entries(AGENT_DEFAULT_FIELDS)) EVENT_FIELDS[type].push(...fields);
 
 // The run-identity fields (audit 2026-10-08, finding 7; Contract 1): their exact shapes, since a
@@ -458,6 +460,9 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       if (out[k] !== undefined && !(out[k] === null || (typeof out[k] === 'number' && Number.isFinite(out[k]) && out[k] >= 0 && out[k] <= 1)
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
     }
+    if (out.type === 'ai_decision' && out.ruleIds !== undefined && !(Array.isArray(out.ruleIds) && out.ruleIds.length <= 12
+      && out.ruleIds.every((id) => typeof id === 'string' && id.length <= 80 && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id)))) drop('ruleIds');
+    if (out.type === 'ai_leave' && out.leaveWhy !== undefined && !AI_LEAVE_WHY.includes(out.leaveWhy)) drop('leaveWhy');
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
     if (out.type === 'agent_click' && out.text !== undefined && !(typeof out.text === 'string' && out.text.length <= 60)) drop('text');
     // A problem report's words, at most the panel's 1,000 characters (audit 2026-11-07, SRV-04).
