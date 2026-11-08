@@ -11,6 +11,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { quoteSessions } from './events.mjs';
+import { reportsOf } from './carrier-reports.mjs';
 import { receivedAt } from './daily.mjs';
 import { defaultsInForce, isOwnDefault } from './agent-defaults.mjs';
 
@@ -33,26 +34,16 @@ const byVersion = (a, b) => {
   return String(a).localeCompare(String(b));
 };
 
-// The page (or one-address application step) where a quote is done, per carrier: Progressive's
-// quote summary, print confirmation or the printed quote PDF, AmWINS' last application step
-// (Underwriting) or its submission notice, GEICO's steps after Quote & Coverages (its stop steps,
-// reached with a rated quote; the agent's from there). A heuristic for the weekly numbers, not a
-// carrier's definition. A printed quote is done (TNI, 2026-10-20): Print/Send opens the PDF in a tab the
-// panel then follows, so the confirmation page in the quote tab may not be logged after it. The
-// panel's own page strip (a carrier's `quoteSteps`) is a separate list.
-export const FINAL = {
-  progressive: /^(Quote|PrintEmailFaxConfirm|\/Express\/PDFHandler\.ashx)$/i,
-  amwins: /› (Underwriting|Thank you for the submission)/,
-  geico: /› (Final Quote Details|MVR & CLUE|Payment Information)$/,
+// Where a quote is done, per carrier (carrier-reports.mjs finalPage, finalClick): a heuristic for
+// the weekly numbers, not a carrier's definition. The panel's own page strip (a carrier's
+// `quoteSteps`) is a separate list.
+const finalPage = (carrier, page) => !!reportsOf(carrier)?.finalPage.test(page ?? '');
+const finalClick = (e) => {
+  const c = reportsOf(e.carrier)?.finalClick;
+  return e.type === 'agent_click' && !!c && c.page.test(e.page) && c.text.test(String(e.text ?? '').trim());
 };
-// The agent's own click that ends a quote, on the page it is made: Progressive's Print/Send (the
-// agent's since 2026-10-07; logged in the quote tab, whether or not the PDF's page is).
-export const FINAL_CLICK = {
-  progressive: { page: /^PrintEmailFax$/, text: /^print\s*\/\s*send$/i },
-};
-const finalClick = (e) => e.type === 'agent_click' && !!FINAL_CLICK[e.carrier]?.page.test(e.page) && FINAL_CLICK[e.carrier].text.test(String(e.text ?? '').trim());
 // A carrier's login page reached in the middle of a quote: the carrier's session ran out.
-const LOGIN = /\/(auth\/)?login\b|\/login\//i;
+const loginPage = (e) => !!reportsOf(e.carrier)?.loginPage.test(e.page ?? '');
 
 // A test run: an intake the agent marked as a test (`test` on intake_loaded), or one of the
 // fingerprints the reviewer listed (`testIntakes`, full or leading hex).
@@ -131,11 +122,11 @@ export function quoteOutcomes(events, quotes) {
     if (e.type === 'fill_run') q.seenWork = true;
     // Only after this quote's own fill: the page the panel opens on may be the previous client's
     // confirmation, or an old quote the agent reopened.
-    if (q.seenWork && (FINAL[e.carrier]?.test(page) || FINAL[e.carrier]?.test(e.page) || finalClick(e))) q.done = true;
+    if (q.seenWork && (finalPage(e.carrier, page) || finalPage(e.carrier, e.page) || finalClick(e))) q.done = true;
     // A stop page is the carrier's refusal (Progressive's DeclinationNotice); a stop step that is a
     // final page (GEICO's) is the agent's part of a quote that got there.
-    if (e.type === 'fill_run' && !FINAL[e.carrier]?.test(page) && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
-    if (e.type === 'page_view' && LOGIN.test(e.page) && q.seenWork) q.logins++;
+    if (e.type === 'fill_run' && !finalPage(e.carrier, page) && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
+    if (e.type === 'page_view' && loginPage(e) && q.seenWork) q.logins++;
     perQuote.set(k, q);
   }
   return [...perQuote.values()];
@@ -213,6 +204,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   const left = new Map();
   const leftQuestions = new Map();
   const failed = new Map();
+  const failedCodes = new Map();
   for (const e of events) {
     if (e.type !== 'fill_field' || ['filled', 'kept'].includes(e.result)) continue;
     const once = `${e.session}|${e.page}|${e.view ?? ''}|${e.key ?? e.q ?? ''}|${e.label ?? ''}`;
@@ -223,7 +215,12 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     const q = leftQuestions.get(e.result) ?? new Map();
     tally(q, `${where(e)}: "${mask(e.label)}"`);
     leftQuestions.set(e.result, q);
-    if (e.result === 'failed') tally(failed, `${where(e)}: "${mask(e.label)}" · ${mask(e.reason)}`);
+    // By its code (types.js FailCode), so a reworded message stays one row; a build before codes by
+    // its masked text.
+    if (e.result === 'failed') {
+      tally(failed, `${where(e)}: "${mask(e.label)}" · ${e.code ?? mask(e.reason)}`);
+      tally(failedCodes, e.code ?? `no code: ${mask(e.reason)}`);
+    }
   }
 
   // What held Continue (fill_run blockerList), per quote.
@@ -360,7 +357,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
 
   // Crashes in the panel (client_error), by build and message; test runs too.
   const crashes = new Map();
-  for (const e of periodAll.filter((x) => x.type === 'client_error')) tally(crashes, `${build(e)} · ${mask(e.error)}${e.stack?.[0] ? ` @ ${e.stack[0]}` : ''}`);
+  for (const e of periodAll.filter((x) => x.type === 'client_error')) tally(crashes, `${build(e)} · ${e.where ?? 'panel'} · ${mask(e.error)}${e.stack?.[0] ? ` @ ${e.stack[0]}` : ''}`);
 
   // The settings in force for each quote: its last agent_settings; how many quotes had each on.
   const lastSettings = new Map();
@@ -425,6 +422,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     funnel: Object.fromEntries([...funnel].map(([c, list]) => [c, { quotes: list.quotes, pages: list.pages.slice(0, 25) }])),
     left: Object.fromEntries([...left].map(([result, s]) => [result, { answers: s.size, top: top(leftQuestions.get(result), n) }])),
     failed: top(failed, n),
+    failedCodes: top(failedCodes, n),
     blockers: [...blockers].map(([b, s]) => [b, s.size]).sort((a, b) => b[1] - a[1]).slice(0, n),
     blockedRuns: runs.filter((r) => r.blockers > 0).length,
     runs: runs.length,
@@ -493,13 +491,13 @@ export function markdown(s, { noTestList = false } = {}) {
   }
   L.push('## Left to the agent', '', 'Each question counted once per quote, page and unit. unfamiliar: no rule; leftRequired: required and unanswered; noData: the intake has no answer; failed: the fill could not set it.', '');
   for (const [result, x] of Object.entries(s.left)) L.push(`**${result}**: ${x.answers}`, '', ...list(x.top), '');
-  L.push('## Fill failures by reason', '', ...list(s.failed), '');
+  L.push('## Fill failures by reason', '', 'Each question once per quote, page and unit, by why it failed (its code; `kit.exception` is an error of the kit itself, a defect rather than a refusal; a build before codes by its text).', '', ...list(s.failedCodes), '', ...list(s.failed), '');
   L.push('## What held Continue', '', `Blockers at the end of fill runs, by the number of quotes they held.`, '', ...list(s.blockers, ' quotes'), '');
   L.push('## Restricted actions by the extension', '', s.restricted.length ? '**Safety finding: the extension clicked something that reads as a restricted action.**' : 'None: every click the extension made was a helper or a continuation.', ...(s.restricted.length ? list(s.restricted, ' runs') : []), '', `Its clicks: ${s.actions.map(([a, c]) => `${a} ×${c}`).join(', ') || 'none'}.`, '');
   L.push('## Signs a carrier changed a page', '', ...list(s.pageChanges, ' runs'), '');
   L.push('## Fills of a hidden tab', '', 'Fill runs while the quote tab was in the background or its page hidden, where Chrome slows timers: their median time against the other runs on that carrier.', '',
     ...(Object.keys(s.hiddenFills ?? {}).length ? Object.entries(s.hiddenFills).map(([c, h]) => `- ${c}: ${h.background} in the background, ${h.hidden} hidden, of ${h.runs} runs · median ${h.medianMs ?? '—'} ms against ${h.medianMsOthers ?? '—'} ms`) : ['None.']), '');
-  L.push('## Panel crashes', '', 'Errors nothing in the panel caught (client_error), by build; test runs included. Each one is a finding.', '', ...list(s.crashes), '');
+  L.push('## Crashes', '', 'Errors nothing in the panel caught (where panel), and exceptions the recorder on the page caught and reported (where recorder): client_error, by build and where; test runs included. Each one is a finding.', '', ...list(s.crashes), '');
   L.push('## Settings in force', '', `The last agent_settings of each quote (${s.settings.quotes} quotes reported one).`, '', ...list(s.settings.on, ' quotes'), '');
   L.push("## Agents' own defaults", '', `The defaults each quote's last agent_settings logged in place of TNI's (${s.ownDefaults.quotes} quotes reported them), by the number of quotes and who had them. An answer they filled reads as agent-default below, never as a TNI standard.`, '', ...(s.ownDefaults.defaults.length ? s.ownDefaults.defaults.map((d) => `- ${d.quotes} quotes · ${d.text} · ${d.agents.join(', ') || '?'}`) : ['None.']), '');
   L.push('## Buttons agents clicked themselves', '', 'By the number of quotes: a helper the extension has (Recalculate, Print, Lookup VIN) clicked by hand is one it didn\'t do.', '', ...list(s.agentClicks, ' quotes'), '');

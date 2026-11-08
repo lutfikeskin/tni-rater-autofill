@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  buildContains, cellNumber, combine, compareVersions, fixOf, gitEnv, gitReader, judgeItem, markdown, matches,
+  buildContains, cellNumber, combine, compareVersions, fixOf, gitEnv, gitReader, judgeItem, judgePattern, markdown, matches,
   parseItemLine, parseLedger, parsePattern, parseSignature, scenarioOf, unknownField, weeklyRows,
 } from '../scripts/lib/ledger.mjs';
 import { NO_TEST_LIST } from '../scripts/lib/signals.mjs';
@@ -116,6 +116,27 @@ test('a structured signature names kind, event, conditions and scenario; free te
   assert.match(parseSignature('`symptom fill_field page`').error, /isn't field=value/);
   assert.throws(() => parsePattern('watch fill_field'), /opens with expect or symptom/);
   assert.throws(() => parsePattern('expect fill_run blockers>many'), /compares with a number/);
+});
+
+// Audit 2026-11-07, LEARN-09: a text condition no event ever met may name a reworded message, so a
+// "verified" on it is marked; a code condition doesn't depend on the wording.
+test('a text condition no event ever met is marked, a code condition is not', () => {
+  const ev = (i, x) => ({ id: `e${i}`, t: `2026-10-0${i}T00:00:00Z`, session: `s${i}`, type: 'fill_field', page: 'AddDriver', result: 'failed', ...x });
+  const history = [ev(1, { code: 'answer.not-kept', reason: 'the page did not keep the answer; check it' }), ev(2, { result: 'filled', label: 'Driver license number' })];
+  const yes = () => 'yes';
+  const judge = (sig) => judgePattern(parsePattern(sig), history, yes, new Set(), history);
+  assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~"did not keep"').unmatchedText, false);
+  assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~"didn\'t stick"').unmatchedText, true, 'the message reads otherwise now');
+  assert.equal(judge('symptom fill_field page=AddDriver result=failed code=answer.not-kept').unmatchedText, false);
+  // A sticky (y) regex is tested from the start each time, and still only there (CodeRabbit on PR #402).
+  assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~/the.page/y').unmatchedText, false);
+  assert.equal(judge('symptom fill_field page=AddDriver result=failed reason~/page.did/y').unmatchedText, true, 'sticky: from the start only');
+  // Each text condition on its own: two met by different events were both met (CodeRabbit on PR #402).
+  assert.equal(judge('symptom fill_field reason~"did not keep" label~"license"').unmatchedText, false);
+  assert.equal(judge('symptom fill_field reason~"did not keep" label~"licence"').unmatchedText, true, 'one of them never met');
+  // Its `when` scenario's text conditions too (CodeRabbit on PR #402).
+  assert.equal(judge('symptom fill_field page=AddDriver result=filled when fill_field reason~"did not keep"').unmatchedText, false);
+  assert.equal(judge('symptom fill_field page=AddDriver result=filled when fill_field reason~"didn\'t stick"').unmatchedText, true, 'a scenario that reads otherwise now');
 });
 
 test('a condition on a field the server never keeps for that event is refused, not counted', () => {

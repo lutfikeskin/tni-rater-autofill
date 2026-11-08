@@ -5,7 +5,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { fillEvents, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { $, clearAgentKeys, persistAiPending, state, store } from './core.js';
+import { $, clearAgentKeys, FILLS_HELD_NOTE, holdFills, persistAiPending, releaseFills, state, store } from './core.js';
 import { loadFile, logProfile, profileTimer } from './intake.js';
 import { render, showScreen } from './record.js';
 import { pageOf, samePage } from './usage.js';
@@ -373,12 +373,34 @@ async function newQuote() {
     const bytes = await intakePdfBytes();
     if (!bytes) { clientNote('The PDF isn’t kept here: load it again with Change file to start a new quote.'); return; }
     const scope = usage.currentSession()?.intakeId;
+    // Held first (holdFills): should the records go only in part, or the panel close meanwhile, this
+    // intake fills nothing until a New quote for it finishes. Not saved: nothing is let go, and the
+    // quote on screen keeps its records (CodeRabbit on PR #395).
+    if (!(await holdFills(scope))) {
+      clientNote('The new quote didn’t start: this computer couldn’t save that it was starting. Nothing was changed: try New quote again.');
+      render();
+      return;
+    }
     if (inExtension && state.tab?.carrier) await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit?.clear?.()).catch(() => {});
     state.tabSessions.clear();
     state.agentKeys = new Map();
     state.doneActions = new Set();
     state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
-    await clearAgentKeys(scope);
+    try {
+      await clearAgentKeys(scope);
+    } catch (err) {
+      // The records couldn't all be removed: no new quote is loaded, and the quote on screen has
+      // lost the panel's records of it (edits on the page, helpers clicked, unit forms), some of the
+      // stored ones too. No fill runs for this intake, by itself or asked, until a New quote for it
+      // finishes, so none refills a changed answer or adds a vehicle again (CodeRabbit on PR #395):
+      // held before anything went (holdFills above), so a Clear, another intake or the panel opening
+      // again doesn't lift it.
+      state.newQuoteFailed = true;
+      clientNote(FILLS_HELD_NOTE);
+      render();
+      throw err;
+    }
+    await releaseFills(scope);
     state.intake.ntlAdded = false;
     await loadFile(new File([bytes], state.intake.fileName || 'intake.pdf', { type: 'application/pdf' }), { reset: true });
   } finally {
@@ -421,11 +443,16 @@ async function clearClient() {
     await store.remove('session');
     await forgetPdf();
     await persistAiPending();
-    await clearAgentKeys(scope);
-    // agent defaults: no client, no question.
-    refreshDefaults();
-    render();
-    renderSite();
+    // The client is gone from the panel even when its records couldn't be removed: that failure is
+    // said (persistFailed's card) and still fails the Clear.
+    try {
+      await clearAgentKeys(scope);
+    } finally {
+      // agent defaults: no client, no question.
+      refreshDefaults();
+      render();
+      renderSite();
+    }
   } finally {
     state.resetDepth -= 1;
     state.resetting = state.resetDepth > 0;
