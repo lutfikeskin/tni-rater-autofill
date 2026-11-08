@@ -6,7 +6,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { redactionTerms, supportedClass } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
 import { advanceFor } from '../../src/units.js';
-import { quoteProgress, stopScreen } from '../../src/carriers.js';
+import { quoteProgress, stopScreen, raterNames } from '../../src/carriers.js';
 import { quotedCarrierPolicy } from '../../src/util.js';
 import { fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../../src/usage.js';
 import { stateCode, stateMismatch } from '../../src/quote-state.js';
@@ -948,12 +948,8 @@ function renderSite() {
     carrier && state.tab?.background ? 'In background' : null,
   ].filter(Boolean).join(' · ');
   caption.hidden = !caption.textContent;
-  const paths = {
-    progressive: 'assets/raters/progressive.svg',
-    geico: 'assets/raters/geico.gif',
-    amwins: 'assets/raters/amwins.svg',
-  };
-  const src = paths[carrier?.id] || null;
+  // The carrier's own logo (CarrierConfig `logo`, under sidepanel/).
+  const src = carrier?.logo || null;
   const title = state.tab?.background ? 'Working on the quote tab. Go back to it to see the marks.' : '';
   caption.title = title;
   logo.alt = carrier?.name || '';
@@ -1317,7 +1313,7 @@ function dockFor() {
   if (!carrier) {
     return state.tab && !state.tab.url
       ? { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.' }
-      : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? 'Progressive, GEICO or AmWINS.' };
+      : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? `${raterNames()}.` };
   }
   const page = pageOf(state.tab.url);
   const step = tabStep(carrier);

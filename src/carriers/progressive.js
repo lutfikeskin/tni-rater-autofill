@@ -564,6 +564,8 @@ const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
+  // The panel's header logo, a file under sidepanel/.
+  logo: 'assets/raters/progressive.svg',
   hosts: [/(^|\.)foragentsonly\.com$/, /(^|\.)progressive\.com$/],
   // ExtJS components are only reachable from the page's own JavaScript world.
   world: 'MAIN',

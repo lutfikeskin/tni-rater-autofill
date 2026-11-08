@@ -61,6 +61,13 @@ export const CARRIERS = [
   },
 ];
 
+// The raters the panel fills, by name, for its "Open the client's quote on a rater" line:
+// "Progressive, GEICO or AmWINS" (every carrier with rules of its own; the local test page has none).
+export const raterNames = () => {
+  const names = CARRIERS.filter((c) => c.rules.length).map((c) => c.name);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0] ?? '';
+};
+
 // Practice copies of carrier pages served from this repo (test/replay, test/mock-progressive,
 // test/fixtures/amwins, test/fixtures/geico).
 // They get the real carrier's rules, but aren't real quotes, so usage isn't recorded for them.

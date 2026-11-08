@@ -472,6 +472,8 @@ const perRow = (rules) => rules.map(/** @returns {CarrierRule} */ (rule) => {
 export const amwins = {
   id: 'amwins',
   name: 'AmWINS',
+  // The panel's header logo, a file under sidepanel/.
+  logo: 'assets/raters/amwins.svg',
   hosts: [/(^|\.)amwinsadmittedplacement\.com$/],
   // What its pages draw that no other carrier does (its loading overlay, a tab per step),
   // injected before the fill engine.

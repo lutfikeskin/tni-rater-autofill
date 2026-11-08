@@ -336,6 +336,7 @@
  * @property {RegExp} [fillOnDraw]
  * @property {string[]} [layoutSteps]
  * @property {QuoteStep[]} [quoteSteps]
+ * @property {string} [logo]  the panel's header logo for this carrier, a path under sidepanel/ (assets/raters/)
  * @property {boolean} [useGenericRules]
  * @property {string[]} [rowSections]
  * @property {SupportedClass[]} [supportedClasses]

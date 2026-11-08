@@ -970,6 +970,8 @@ const named = (rules) => rules.map(/** @returns {CarrierRule} */ (rule) => (rule
 export const geico = {
   id: 'geico',
   name: 'GEICO',
+  // The panel's header logo, a file under sidepanel/.
+  logo: 'assets/raters/geico.gif',
   hosts: [/(^|\.)geico\.com$/],
   // The buttons the fill presses are clicked from the page's own world (src/content/page-press.js),
   // inside an event the browser dispatches: GEICO's submit buttons send their own part of the request
