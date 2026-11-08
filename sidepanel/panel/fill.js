@@ -85,6 +85,25 @@ function resumeHeldFill() {
   fillPage({ auto: 'page' });
 }
 
+// A fill dropped because the panel moved to another tab before the kit was asked: its page's report
+// says so, rather than keeping what it said before, as if this fill had run there (CodeRabbit on
+// #410). An automatic one too: going back to the tab doesn't start it again (the recorder there
+// announces no page), so the agent fills it. An earlier fill's error on that report stays, since it
+// already says to fill again and a notice would hide it. A report made only for the notice is
+// `unfilled`: the page is still one no fill has answered, so the next fill there is its opening fill,
+// with its report, never a follow-up (`filledReport`; CodeRabbit on #410).
+/** @param {any} ctx */
+function noteTabLeft(ctx) {
+  const key = reportKey(ctx.tabId, ctx.page, ctx.carrier, ctx.active ?? state.active);
+  const before = state.reports.get(key);
+  if (before?.error) return;
+  fillProblem(ctx, ctx.auto
+    ? 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.'
+    : 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.', 'notice');
+  const made = state.reports.get(key);
+  if (!before && made) made.unfilled = true;
+}
+
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
 // `retried`: the second click of a Continue whose page stayed unchanged (watchNextStep): the step it is
@@ -144,7 +163,15 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   if (retried) ctx.retried = retried;
   await pickListItem(carrier, page, ctx);
   // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
-  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); resumeHeldFill(); return; }
+  // A fill the tab switch dropped says so on its page (noteTabLeft), as one dropped later does.
+  if (staleFill(ctx) || state.tab?.id !== tabId) {
+    state.filling = false;
+    renderSite();
+    if (!staleFill(ctx)) noteTabLeft(ctx);
+    runPendingPage(ctx);
+    resumeHeldFill();
+    return;
+  }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
@@ -163,7 +190,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     await tellRecorder('pause', tabId);
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (!fillCurrent(ctx)) return;
+    if (!fillCurrent(ctx)) { noteTabLeft(ctx); return; }
     // The agent's edits on this page as the fill's tab holds them (retiring AI picks may just
     // have released some), never the tab in front.
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
@@ -186,7 +213,11 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     // by the agent's Fill this page too, as by an automatic fill (fillOptions' `takenBack`): what
     // the extension didn't write may be the agent's (the maintainer, 2026-11-07, in place of giving
     // it again, 2026-10-21). Replace existing answers still gives it again.
-    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    // The intake changed or was corrected during that wait (`pageMoved`), or the panel moved to
+    // another tab: nothing is filled, and each is said as what it is.
+    if (staleFill(ctx)) { noteStaleFill(ctx); return; }
+    if (!fillCurrent(ctx)) { noteTabLeft(ctx); return; }
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed, ctx);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
