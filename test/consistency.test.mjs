@@ -262,6 +262,7 @@ const NOT_TRACKED = {
   'summary.json': "a file inside a developer recording's zip",
   '.claude/worktrees': "other sessions' worktrees, local and ignored by the linter",
   'recording.json': "a file inside a developer recording's zip",
+  '.claude/worktrees': 'local git worktrees agents work in, ignored',
 };
 // A document's paths that aren't in the repository: backticked ones under its own folders, backticked
 // file names with no folder (a root file, or a tracked file's own name), and relative links.
