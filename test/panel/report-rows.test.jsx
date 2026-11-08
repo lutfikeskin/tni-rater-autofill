@@ -231,7 +231,7 @@ test('the AI’s card is drawn in its row’s slot and kept when the row is draw
   a.aiCard = { kind: 'picked', choice: 'No', tip: null, notes: [], approve: () => { approved++; }, reject: () => {} };
   redraw(a);
   const card = slot().firstChild;
-  expect([card.className, card.querySelector('.ai-says').textContent]).toEqual(['ai-box', 'Picked by the AI: No']);
+  expect([card.className, card.querySelector('.ai-says').textContent]).toEqual(['ai-box', 'Picked by the AI assistant: No']);
   const approve = card.querySelector('.accept');
   approve.focus();
   const head = node(b).querySelector('.row-value');
