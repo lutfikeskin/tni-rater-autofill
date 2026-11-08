@@ -1139,7 +1139,7 @@ function renderSteps() {
     tone: !onRater ? '' : error || (stopped && !filled) ? 'bad' : !filled ? 'active' : report.halted ? 'warn' : finished || report.advanced || !left ? 'done' : 'active',
     note: !onRater ? 'Open a rater' : filling ? `Filling… ${state.fillingFor.filled ?? 0} in` : error ? 'Didn’t finish'
       : !filled ? (stopped ? 'Stopped' : 'Ready to fill')
-        : finished ? 'Quote done' : report.advanced ? 'Continued' : left ? `${left} need${left === 1 ? 's' : ''} you`
+        : finished ? 'Quote done' : report.advanced ? (report.halted ? 'Continued · filling stopped' : 'Continued') : left ? `${left} need${left === 1 ? 's' : ''} you`
           : report.halted ? 'Filling stopped' : `${report.filled} filled${report.auto ? ' automatically' : ''}`,
     current: state.view === 'page',
     review: filled,

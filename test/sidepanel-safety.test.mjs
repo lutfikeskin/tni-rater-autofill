@@ -10447,6 +10447,8 @@ test('This page never says a halted fill is done', () => {
   const steps = extractFunction('renderSteps');
   assert.match(steps, /: !filled \? 'active' : report\.halted \? 'warn' : finished \|\| report\.advanced \|\| !left \? 'done' : 'active',/);
   assert.match(steps, /: report\.halted \? 'Filling stopped' : `\$\{report\.filled\} filled/);
+  // Stop pressed during Continue's wait: the report is both advanced and halted (the second review).
+  assert.match(steps, /report\.advanced \? \(report\.halted \? 'Continued · filling stopped' : 'Continued'\)/);
 });
 
 // Review of PR #170 (Claude): "Quote done" over a fill that halted (its list says "Filling stopped"),
