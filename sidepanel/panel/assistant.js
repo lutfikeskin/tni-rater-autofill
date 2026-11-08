@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The side panel: the Luna assistant.
 // One part of the panel; sidepanel.js wires the parts together.
 import { ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE, ntlWithPrimary, NTL_PRIMARY_MESSAGE } from '../../src/normalize.js';
@@ -122,7 +123,7 @@ function supersedeClaimsItems(intake) {
   intake.warnings.forEach((w, i) => {
     if (['ai.ntl', 'ai.coverage-change', 'ai.years-in-business', 'ai.gl'].includes(w.code) ||(w.code === 'ai.claims-truncated' && !truncated)) {
       if (w.code === 'ai.ntl' && intake.record.claims) intake.record.claims.aiNtl = false;
-      intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box or Additional Notes since edited: ${w.msg}` };
+      intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier AI assistant item, for a claims box or Additional Notes since edited: ${w.msg}` };
     }
   });
 }
@@ -178,7 +179,7 @@ async function reviewClaimsBox({ retry = false } = {}) {
       if (changed) { again = true; return; }
       // Warnings are marked checked by position: an earlier failure, or Luna's items from a claims
       // box the agent has since edited, are replaced in place, never removed.
-      if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Luna reviewed the claims box and Additional Notes after an earlier failure.' };
+      if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'The AI assistant reviewed the claims box and Additional Notes after an earlier failure.' };
       supersedeClaimsItems(intake);
       // One long-claims-box item, kept from an earlier review.
       const kept = intake.warnings.some((w) => w.code === 'ai.claims-truncated');
@@ -190,7 +191,7 @@ async function reviewClaimsBox({ retry = false } = {}) {
       const msg = e instanceof AssistError ? e.message : 'The claims-box review failed.';
       usage.log({ ...logged, ms: Date.now() - started, ...spentOf(e), error: msg.slice(0, 200) });
       if (state.intake !== intake) return;
-      if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Luna couldn't review the claims box and Additional Notes. Read them for coverage requests, e.g. NTL or a different limit." });
+      if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "The AI assistant couldn't review the claims box and Additional Notes. Read them for coverage requests, e.g. NTL or a different limit." });
       intake.notesReview = { failed: true, model: cfg.model };
     }
     await save();
@@ -216,7 +217,7 @@ function driverNamesContext(record) {
 
 function supersedeGenderItems(intake) {
   intake.warnings.forEach((w, i) => {
-    if (w.code === 'ai.driver-gender') intake.warnings[i] = { code: 'ai.driver-gender-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a driver name since edited: ${w.msg}` };
+    if (w.code === 'ai.driver-gender') intake.warnings[i] = { code: 'ai.driver-gender-superseded', path: w.path, level: 'info', msg: `Earlier AI assistant item, for a driver name since edited: ${w.msg}` };
   });
 }
 
@@ -252,7 +253,7 @@ async function reviewDriverGender({ retry = false } = {}) {
       }
       if (replaced) return;
       if (changed) { again = true; return; }
-      if (failed >= 0) intake.warnings[failed] = { code: 'ai.driver-names-reviewed', path: 'drivers', level: 'info', msg: 'Luna checked the drivers\' first names after an earlier failure.' };
+      if (failed >= 0) intake.warnings[failed] = { code: 'ai.driver-names-reviewed', path: 'drivers', level: 'info', msg: 'The AI assistant checked the drivers\' first names after an earlier failure.' };
       // A driver whose gender the agent set meanwhile keeps it: no item for them.
       intake.warnings.push(...result.warnings.filter((w) => !get(intake.record, w.path)));
       intake.namesReview = { done: true, model: cfg.model, flagged: result.flagged, context: read };
@@ -260,7 +261,7 @@ async function reviewDriverGender({ retry = false } = {}) {
       const msg = e instanceof AssistError ? e.message : 'The driver-name check failed.';
       usage.log({ ...logged, ms: Date.now() - started, ...spentOf(e), error: msg.slice(0, 200) });
       if (state.intake !== intake) return;
-      if (failed < 0) intake.warnings.push({ code: 'ai.driver-names-failed', path: 'drivers', level: 'info', msg: "Luna couldn't check the drivers' first names. Gender is filled Male (TNI standard) unless you set it under All client details." });
+      if (failed < 0) intake.warnings.push({ code: 'ai.driver-names-failed', path: 'drivers', level: 'info', msg: "The AI assistant couldn't check the drivers' first names. Gender is filled Male (TNI standard) unless you set it under All client details." });
       intake.namesReview = { failed: true, model: cfg.model };
     }
     await save();
@@ -337,7 +338,7 @@ async function runAssist(frames, ctx) {
   }
   const holder = placed();
   if (!cfg.ready) {
-    holder.say({ needsKey: { text: `${provider.name} needs an ${provider.keyLabel}. `, add: () => openSettings('ai-openai-key') } });
+    holder.say({ needsKey: { text: `The AI assistant needs an ${provider.keyLabel}. `, add: () => openSettings('ai-openai-key') } });
     return;
   }
   const run = ++state.aiRun;
@@ -362,7 +363,7 @@ async function runAssist(frames, ctx) {
   // Also in a report kept while another tab or step is in front: it says so when that one is back.
   const dropped = (what, next = 'Click Fill this page to ask again.') => {
     if (run !== state.aiRun) { holder.remove(); return; }
-    holder.say({ bad: `${provider.name}: ${what}. ${next}` });
+    holder.say({ bad: `AI assistant: ${what}. ${next}` });
   };
   // Reuse an answer for the same question (as the page shows it now) in the same intake and
   // driver/vehicle, model and policy. Not keyed on the rest of the page: every automatic
@@ -370,7 +371,7 @@ async function runAssist(frames, ctx) {
   // checks the page snapshot (applyAi), and approving checks it again.
   const contextHash = aiFingerprint(ctx.contextKey);
   const sigOf = x => aiCacheSignature({ tabId: ctx.tabId, page: ctx.page, model: cfg.model, policy: provider.policy, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl) });
-  const asking = (n) => holder.say({ wait: `Asking ${provider.name} about ${n} question${n === 1 ? '' : 's'} left for you…` });
+  const asking = (n) => holder.say({ wait: `Asking the AI assistant about ${n} question${n === 1 ? '' : 's'} left for you…` });
   // Questions an earlier request is still asking (same signature: this page as it shows them now)
   // are waited for, not asked again: its answer is cached when it comes.
   const earlier = [...new Set(items.map((x) => state.aiAsking.get(sigOf(x))).filter(Boolean))];
@@ -394,7 +395,7 @@ async function runAssist(frames, ctx) {
     sigs.forEach((sig) => state.aiAsking.set(sig, pending));
     try {
       // Stopped between model calls only for an answer that would be discarded.
-      const result = await suggest(missing.map(named.toSend), context, cfg, { isStale: () => !!discardWhy() });
+      const result = await suggest(missing.map(named.toSend), context, cfg, { isStale: () => !!discardWhy(), ...lunaTrace(ctx) });
       const fresh = result.suggestions.map(named.restore);
       // An answer that came too late is still logged (its tokens were spent), with the reason.
       const why = discardWhy();
@@ -408,12 +409,12 @@ async function runAssist(frames, ctx) {
         ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),
       }));
     } catch (e) {
-      const msg = e instanceof AssistError ? e.message : 'The assistant could not review this page. Nothing was applied.';
+      const msg = e instanceof AssistError ? e.message : 'The AI assistant could not review this page. Nothing was applied.';
       // Which prompt failed (luna.js suggest: error.promptHash), only as its 12 hex characters, and what
       // a failed or dropped review spent before it stopped (error.usage).
       const prompt = /^[0-9a-f]{12}$/.test(e?.promptHash ?? '') ? { promptHash: e.promptHash } : {};
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, ...prompt, ...spentOf(e), error: redactor(redactionTerms(record))(msg).slice(0, 200) });
-      if (!stale()) holder.say({ bad: `AI assistant: ${msg}` });
+      if (!stale()) holder.say({ bad: /AI assistant/.test(msg) ? msg : `AI assistant: ${msg}` });
       else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;
     } finally {
@@ -480,7 +481,7 @@ async function remarkAi(ctx) {
   if (!answered.length) return;
   try {
     await runKit(ctx.tabId, ctx.carrier, (list) => list.forEach(([k, l, n]) => globalThis.__raterKit?.markKey(k, l, 'ai', n)),
-      [answered.map((x) => [x.key, x.label, x.done === 'auto' && !x.approved ? 'selected by the AI: approve it in the side panel' : 'AI answer'])]);
+      [answered.map((x) => [x.key, x.label, x.done === 'auto' && !x.approved ? 'selected by the AI assistant: approve it in the side panel' : 'AI answer'])]);
   } catch { /* page navigating */ }
   await syncAiBanner(ctx);
 }
@@ -536,7 +537,7 @@ async function applyAi(list, ctx, decision) {
     const answers = list.map((x) => ({
       key: x.key, label: x.label, value: x.choice,
       expected: { kind: x.controlKind, section: x.section, options: x.options, current: x.current },
-      note: `${decision === 'auto' ? 'selected by the AI' : 'AI suggestion you accepted'}: ${x.tip}`.slice(0, 240),
+      note: `${decision === 'auto' ? 'selected by the AI assistant' : 'AI suggestion you accepted'}: ${x.tip}`.slice(0, 240),
     }));
     // Persist a conservative hold before dispatch. The carrier can change a field before answer()
     // returns, so replacing the intake or clearing a cache must never erase that operation.
@@ -674,6 +675,20 @@ async function applyAi(list, ctx, decision) {
   }
 }
 
+// While a developer recording runs on this tab: each Luna call goes into it (kind `luna`), what it was
+// asked and answered, every string through the recording's redactor (docs/developer-recording.md).
+// Audit 2026-11-07, AI-08: a wrong suggestion couldn't be traced to the rules, the context or the model.
+function lunaTrace(ctx) {
+  const rec = state.recording;
+  if (!rec || rec.stopping || rec.tabId !== ctx.tabId) return {};
+  const redactAll = (v) => (typeof v === 'string' ? rec.redact(v) : Array.isArray(v) ? v.map(redactAll)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redactAll(x)])) : v);
+  return { trace: (x) => {
+    if (state.recording !== rec || rec.stopping) return;
+    rec.store.add([{ kind: 'luna', t: Date.now(), frame: 0, page: ctx.page, ...redactAll(x) }]);
+  } };
+}
+
 function aiDecisionEvent(x, ctx, decision) {
   const redact = redactor(redactionTerms(state.intake.record));
   return {
@@ -807,7 +822,7 @@ function renderAi(holder, suggestions, ctx) {
     if (x.dismissed) return null;
     if (x.leave || !x.applyable) {
       // Its recommendation (luna.js nextStep): what to confirm or check, never an answer.
-      return { kind: 'tip', says: x.leave ? 'AI: this one is yours to decide.' : 'AI tip', tip: x.tip || null, next: x.leave && x.nextStep ? x.nextStep : null };
+      return { kind: 'tip', says: x.leave ? 'The AI assistant leaves this one to you.' : 'Tip from the AI assistant', tip: x.tip || null, next: x.leave && x.nextStep ? x.nextStep : null };
     }
     return { kind: 'suggest', choice: x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice, tip: x.tip || null, why: why(x), ...rules(x),
       use: () => act([x], 'accepted'),
@@ -840,8 +855,8 @@ function renderAi(holder, suggestions, ctx) {
       item.pending = waiting;
       if (settled) {
         setHead(item, { icon: '✓', value: x.manual ? 'Your answer on the page' : x.choice, tag: x.manual ? { kind: 'you', text: 'You' }
-          : { kind: 'ai', text: x.done === 'auto' ? 'AI · approved' : 'AI · you chose', title: 'AI suggestion, chosen by you' } });
-      } else if (waiting) setHead(item, { icon: '?', value: x.choice, tag: { kind: 'ai', text: 'AI picked · approve', title: 'Picked by the AI: approve or reject it' } });
+          : { kind: 'ai', text: x.done === 'auto' ? 'AI · approved' : 'AI · you chose', title: 'AI assistant suggestion, chosen by you' } });
+      } else if (waiting) setHead(item, { icon: '?', value: x.choice, tag: { kind: 'ai', text: 'AI picked · approve', title: 'Picked by the AI assistant: approve or reject it' } });
       else item.head = null;
     }
     drawRow(item);

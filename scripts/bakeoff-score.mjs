@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Scores bake-off runs (saved from the replay page with "Finish & save results") against the
 // answer key: which answers are right, wrong or missing, which required buttons were clicked,
 // whether a forbidden button was clicked, and how long it took.

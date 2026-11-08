@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The panel's chrome.* in the preview (preview/index.html): the extension APIs the panel uses,
 // answered by the preview page (preview/preview.js) instead of Chrome. Vite's dev server puts this
 // classic script before the panel's own code (vite.config.js); a build never includes it. The panel
