@@ -52,8 +52,8 @@ function AnswerKey({ open }) {
         {own ? <span><span className="mark own" />Your default</span> : null}
         <span><span className="mark needs" />Needs you</span>
         <span><span className="mark failed" />Couldn’t fill</span>
-        <span><span className="mark ai" />AI answer</span>
-        <span><span className="mark agent" />Your pick</span>
+        <span><span className="mark ai" />AI</span>
+        <span><span className="mark agent" />You</span>
       </div>
     </div>
   );
