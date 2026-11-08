@@ -564,6 +564,8 @@ const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
+  // The quote is started on the agent home page (quoteState below).
+  display: { logo: 'assets/raters/progressive.svg', portalUrl: 'https://www.foragentsonly.com/home/', product: 'Commercial auto', classesSaid: 'expediters and general freight' },
   hosts: [/(^|\.)foragentsonly\.com$/, /(^|\.)progressive\.com$/],
   // ExtJS components are only reachable from the page's own JavaScript world.
   world: 'MAIN',

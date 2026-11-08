@@ -1034,6 +1034,14 @@ test('the panel\'s answer to "Does the owner drive?": Looks right, Undo and the 
   const yes = { ...normalizeIntake({ ...raw, owner_drives: 'Yes' }, today), done: [], agentEdited: [] };
   ownerDrivesAnswered(yes, { edit: 'applicant.ownerDrives' });
   assert.deepEqual(yes.done, []);
+  // CodeRabbit on #474: client details' Restore puts the intake's No back. It is the intake's again,
+  // not the agent's answer: the check is open, and the owner is a driver until they answer it.
+  const restored = load();
+  restored.record.applicant.ownerDrives = true;
+  ownerDrivesAnswered(restored, { edit: 'applicant.ownerDrives' });
+  restored.record.applicant.ownerDrives = false;
+  ownerDrivesAnswered(restored, { restore: 'applicant.ownerDrives' });
+  assert.deepEqual([restored.record.applicant.ownerDrivesAnswered, restored.done.includes(at(restored)), exclude(restored)], [false, false, false]);
 });
 
 // TNI, 2026-10-27 (answer to PR question V4): the owner is always the first driver on the intake's
