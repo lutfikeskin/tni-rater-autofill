@@ -95,7 +95,8 @@
   <section id="ai">
     <h2>AI assistant</h2>
     <ul>
-      <li>TNI's rules answer first. The AI assistant only proposes one of the options the page shows for a question the rules left open. It never types names, numbers, dates or amounts.</li>
+      <li><b>On the intake:</b> once per client, it reads the claims box and notes. A line that names non-trucking liability, asks for coverage the form didn't tick, or states years in business different from the form's becomes an <b>Intake</b> check, quoting the line. Review these checks like the others before you quote. It also checks whether each driver's first name is more often a woman's, so you can confirm gender.</li>
+      <li><b>On the carrier's page:</b> TNI's rules answer first. The AI assistant only proposes one of the options the page shows for a question the rules left open. It never types names, numbers, dates or amounts.</li>
       <li><b>Use this answer</b> puts a suggestion in, marked purple. <b>No thanks</b> dismisses it.</li>
       <li>A pick it put in by itself holds Continue until you approve it, in its row or with <b>Approve</b> in the bar.</li>
       <li>A suggestion is not proof it is right: check it against the intake.</li>
@@ -106,6 +107,7 @@
     <h2>What stays where</h2>
     <ul>
       <li>The intake and its PDF stay in this browser and are cleared when Chrome closes, or with <b>Clear this client</b>.</li>
+      <li>With the AI assistant on, some of the intake does leave the browser for OpenAI, through TNI's server or with your own key: the open questions and their options, the TNI rules that apply, and the intake facts they need, plus the claims box and notes. Client names, dates of birth, the street, contact details and ID numbers are replaced by <b>[client]</b> where written as on the form. Drivers' first names go alone in a separate check. The garaging state, business class, coverages, vehicle details and prior carrier are sent as they are. Turn the assistant off in Settings if a client shouldn't be sent.</li>
       <li>Usage events, with client names and numbers redacted, go to TNI's server.</li>
       <li>Something wrong? Click <b>Report a problem</b> at the bottom of the panel. Don't type client names, numbers or addresses there.</li>
     </ul>
