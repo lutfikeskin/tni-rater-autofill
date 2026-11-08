@@ -20,7 +20,7 @@ afterEach(cleanup);
 
 const $ = (container, sel) => container.querySelector(sel);
 const acts = (calls, more = {}) => ({
-  ...Object.fromEntries(['done', 'upload', 'exportLog', 'clearLog', 'capture', 'keyEdit', 'keySave'].map((name) => [name, () => calls.push([name])])),
+  ...Object.fromEntries(['done', 'upload', 'exportLog', 'clearLog', 'clearLogYes', 'clearLogNo', 'capture', 'keyEdit', 'keySave'].map((name) => [name, () => calls.push([name])])),
   ...Object.fromEntries(['agent', 'serverUrl', 'serverToken', 'testRun', 'aiOn', 'aiAuto'].map((name) => [name, (v) => calls.push([name, v])])),
   switch: (name, on) => calls.push(['switch', name, on]),
   keyKey: (e) => calls.push(['keyKey', e.key]),
@@ -167,6 +167,15 @@ test('Advanced: the test-run mark with an intake, the server boxes on their chan
   for (const id of ['capture', 'upload-usage', 'export-usage', 'clear-usage']) fireEvent.click($(container, `#${id}`));
   expect(calls.slice(3)).toEqual([['capture'], ['upload'], ['exportLog'], ['clearLog']]);
   expect($(container, '#clear-usage').className).toBe('ghost small-btn danger');
+  // Clear log's question, in the panel under its button (audit 2026-11-07, UX-17), as the panel says it.
+  const ask = $(container, '#usage-confirm');
+  expect([ask.hidden, $(container, '#clear-usage').getAttribute('aria-expanded')]).toEqual([true, 'false']);
+  act(() => { state.usageAsk = { text: "3 events aren't uploaded or exported. Delete them anyway?", yes: 'Delete them' }; });
+  expect([ask.hidden, ask.getAttribute('role'), $(container, '#usage-confirm-text').textContent, $(container, '#usage-confirm-yes').textContent, $(container, '#clear-usage').getAttribute('aria-expanded')])
+    .toEqual([false, 'group', "3 events aren't uploaded or exported. Delete them anyway?", 'Delete them', 'true']);
+  fireEvent.click($(container, '#usage-confirm-no'));
+  fireEvent.click($(container, '#usage-confirm-yes'));
+  expect(calls.slice(7)).toEqual([['clearLogNo'], ['clearLogYes']]);
 });
 
 test('the developer recording: only with its buttons, which follow a recording, the unfinished one to save, and its line', () => {

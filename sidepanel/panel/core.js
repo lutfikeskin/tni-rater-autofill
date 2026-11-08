@@ -405,7 +405,7 @@ const state = storeState({
   // settings by init, and by the agent; the panel reads each from its box by id); the AI's card
   // (renderAiSettings: `ai`, null until first said; `keyFormOpen` while the key's box is open: the key
   // is only ever in that box); the usage card (renderUsage: `usageCard`; `usageNote`, the line under
-  // it); the version, what is left to set up and the initials' box marked (renderHealth: `health`);
+  // it; `usageAsk`, Clear log's question while it is asked); the version, what is left to set up and the initials' box marked (renderHealth: `health`);
   // the test-run mark (render: `testRun`, null with no intake); Capture page layout off (renderSite:
   // `captureOff`) and what it did (captureSaid: `captureStatus`); and the developer recording's card
   // (dev-recording.js: `devrec`, whether one runs, its line and the unfinished one to save). And the
@@ -415,6 +415,7 @@ const state = storeState({
   keyFormOpen: false,
   usageCard: null,
   usageNote: '',
+  usageAsk: null,
   health: null,
   testRun: null,
   captureOff: false,

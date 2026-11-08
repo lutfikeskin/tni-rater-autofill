@@ -123,17 +123,23 @@ function settingsActs() {
       state.usageNote = `Exported ${n} events to your Downloads.`;
       renderUsage();
     },
+    // Clear log asks first, in the panel under its button (state.usageAsk, as the client's file tools
+    // ask: askFile), never with a browser dialog, which would hold the panel and a fill's Stop while open.
     clearLog: async () => {
       const { lastExportCount = 0 } = await usage.settings();
       const n = await usage.count();
-      const msg = n > lastExportCount
-        ? `${n} events aren't uploaded or exported. Delete them anyway?`
-        : `Delete the ${n} exported events from this computer?`;
-      if (!confirm(msg)) return;
+      state.usageAsk = n > lastExportCount
+        ? { text: `${n} events aren't uploaded or exported. Delete them anyway?`, yes: 'Delete them' }
+        : { text: `Delete the ${n} exported events from this computer?`, yes: 'Delete' };
+    },
+    clearLogYes: async () => {
+      if (!state.usageAsk) return;
+      state.usageAsk = null;
       await usage.clearLog();
       state.usageNote = 'Usage log cleared.';
       renderUsage();
     },
+    clearLogNo: () => { state.usageAsk = null; },
   };
 }
 

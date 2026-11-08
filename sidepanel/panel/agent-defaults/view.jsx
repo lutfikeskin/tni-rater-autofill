@@ -101,6 +101,9 @@ export function TniDefaults({ act }) {
   const initials = useStore(panelStore, (s) => s.defaultsInitials);
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
+  // The profile Delete profile asks about, until Delete or Cancel: asked here, as the client's file
+  // tools ask (client-view.jsx), never with a browser dialog, which holds the panel and a fill's Stop.
+  const [deleting, setDeleting] = useState(null);
   if (!on) return null;
   const profiles = Object.entries(stored?.profiles ?? {});
   const active = stored?.active ? stored.profiles[stored.active] : null;
@@ -119,7 +122,15 @@ export function TniDefaults({ act }) {
                   {profiles.map(([id, p]) => <option key={id} value={id}>{p.name}</option>)}
                 </select>
               </label>
-              {naming ? (
+              {active && deleting === stored.active ? (
+                <div id="defaults-confirm" className="file-confirm" role="group" aria-labelledby="defaults-confirm-text">
+                  <p id="defaults-confirm-text" className="small">{`Delete ${active.name}'s defaults?`}</p>
+                  <div className="actions">
+                    <button type="button" id="defaults-confirm-yes" className="ghost danger" onClick={() => { setDeleting(null); act.remove(stored.active); }}>Delete</button>
+                    <button type="button" id="defaults-confirm-no" className="ghost" onClick={() => setDeleting(null)}>Cancel</button>
+                  </div>
+                </div>
+              ) : naming ? (
                 <div className="defaults-actions">
                   <input id="defaults-new-name" type="text" maxLength={40} autoComplete="off" placeholder="Your name, e.g. Jordan K." value={name}
                     onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} />
@@ -129,7 +140,7 @@ export function TniDefaults({ act }) {
               ) : (
                 <div className="defaults-actions">
                   <button type="button" id="defaults-new" className="ghost small-btn" onClick={() => setNaming(true)}>New profile</button>
-                  {active ? <button type="button" id="defaults-delete" className="ghost small-btn danger" onClick={() => { if (confirm(`Delete ${active.name}'s defaults?`)) act.remove(stored.active); }}>Delete profile</button> : null}
+                  {active ? <button type="button" id="defaults-delete" className="ghost small-btn danger" onClick={() => setDeleting(stored.active)}>Delete profile</button> : null}
                 </div>
               )}
               {active ? REGISTRY.filter((e) => !e.locked).map((entry) => (

@@ -6553,14 +6553,28 @@ test('Settings\' usage boxes and buttons: a server that isn\'t a URL is refused,
   assert.deepEqual(t.calls, [['save', { serverToken: 'tok' }], ['uploadNow'], ['renderAiSettings'], ['save', { agent: 'JKABCD' }], ['renderUsage']]);
   await t.acts.exportLog();
   assert.equal(t.state.usageNote, 'Exported 3 events to your Downloads.');
-  let asked = null;
-  t.context.confirm = (msg) => { asked = msg; return false; };
+  // Clear log asks in the panel (state.usageAsk), never with a browser dialog (audit 2026-11-07, UX-17).
+  t.context.confirm = () => { throw new Error('no browser dialog'); };
   await t.acts.clearLog();
-  assert.equal(asked, '3 events aren\'t uploaded or exported. Delete them anyway?');
+  assert.deepEqual({ ...t.state.usageAsk }, { text: '3 events aren\'t uploaded or exported. Delete them anyway?', yes: 'Delete them' });
   assert.ok(!t.calls.some(([c]) => c === 'clearLog'), 'not cleared without a yes');
-  t.context.confirm = () => true;
+  t.acts.clearLogNo();
+  assert.equal(t.state.usageAsk, null, 'Cancel takes the question down');
+  await t.acts.clearLogYes();
+  assert.ok(!t.calls.some(([c]) => c === 'clearLog'), 'a yes with nothing asked deletes nothing');
   await t.acts.clearLog();
-  assert.deepEqual([t.calls.at(-2), t.calls.at(-1), t.state.usageNote], [['clearLog'], ['renderUsage'], 'Usage log cleared.']);
+  await t.acts.clearLogYes();
+  assert.deepEqual([t.calls.at(-2), t.calls.at(-1), t.state.usageNote, t.state.usageAsk], [['clearLog'], ['renderUsage'], 'Usage log cleared.', null]);
+  t.context.usage.settings = async () => ({ lastExportCount: 3 });
+  await t.acts.clearLog();
+  assert.deepEqual({ ...t.state.usageAsk }, { text: 'Delete the 3 exported events from this computer?', yes: 'Delete' });
+});
+
+test('the panel opens no browser dialog: its questions are asked in the panel', () => {
+  const files = [...fs.readdirSync('sidepanel/panel').filter((n) => /\.jsx?$/.test(n)).map((n) => `sidepanel/panel/${n}`),
+    ...fs.readdirSync('sidepanel/panel/agent-defaults').map((n) => `sidepanel/panel/agent-defaults/${n}`), 'sidepanel/sidepanel.js'];
+  const dialogs = files.filter((f) => /(^|[^.\w])(confirm|alert|prompt)\s*\(/m.test(fs.readFileSync(f, 'utf8').replace(/\/\/.*$/gm, '')));
+  assert.deepEqual(dialogs, []);
 });
 
 test('Looks right sends the top frame\'s receipt with a fill, only for the page in front', async () => {
