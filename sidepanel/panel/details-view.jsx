@@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { HelpLink } from './help-link.jsx';
 
 // A field's box (fieldSaid in record.js). Its edit is made as the box's own change event says it: a
 // text box's when the agent leaves it or presses Enter, not each key. The record's value is shown
@@ -70,6 +71,7 @@ function Details({ act }) {
           <div className="grow"><h2 id="details-title">Client details</h2><p id="details-sub" className="sheet-sub">Your edits are what gets filled.</p></div>
           {/* Fields the intake leaves blank are hidden unless flagged, to keep the list short (showEmpty). */}
           <button type="button" id="details-empty" className="link small subtle" aria-pressed={showEmpty} hidden={!details?.toggle} onClick={() => act.showEmpty()}>{details?.toggle ?? ''}</button>
+          <HelpLink topic="details" />
           <button type="button" id="details-close" className="icon-btn" aria-label="Close client details" onClick={() => act.close()}><svg aria-hidden="true"><use href="#close" /></svg></button>
         </div>
         <div id="sections" className="drawer-body">

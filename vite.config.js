@@ -1,5 +1,6 @@
 // The side panel's build: sidepanel/sidepanel.html and everything it imports (the panel, src/, the
-// vendored PDF.js) bundled into one page for the extension. The fill engine injected into carrier
+// vendored PDF.js) bundled into one page for the extension, with the agent's guide (guide.html, a
+// static page the panel's '?' links open). The fill engine injected into carrier
 // pages is built too, from src/kit/ (scripts/lib/kit.mjs); the manifest, background.js and the other
 // scripts injected into carrier pages are packaged as they are.
 //
@@ -94,8 +95,9 @@ export default defineConfig(({ command, mode }) => ({
     assetsInlineLimit: 0,
     modulePreload: { polyfill: false },
     rollupOptions: {
-      // The page the manifest names (side_panel.default_path), not Vite's index.html.
-      input: path.join(here, 'sidepanel/sidepanel.html'),
+      // The page the manifest names (side_panel.default_path), not Vite's index.html, and the
+      // agent's guide that each view's '?' opens (guide.html, no script).
+      input: { sidepanel: path.join(here, 'sidepanel/sidepanel.html'), guide: path.join(here, 'sidepanel/guide.html') },
       output: {
         entryFileNames: 'bundle/[name].js',
         chunkFileNames: 'bundle/[name].js',
