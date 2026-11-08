@@ -12,6 +12,11 @@ npm test
 npm run package          # -> dist/tni-rater-autofill-<version>.zip
 ```
 
+A build made to try out rather than upload (a test build for the correction loop) is named by the
+script: `npm run package -- --label test-build` writes
+`dist/tni-rater-autofill-<version>-test-build-<commit>.zip` (`-dirty` when the packaged files had
+changes the commit doesn't hold). A label is lowercase words and hyphens.
+
 The zip holds only what the extension runs: `manifest.json`, `background.js`, `icons/`, `lib/`,
 `sidepanel/`, `src/`. Raise `version` in `manifest.json` (and `package.json`) for every upload:
 the store refuses a version it already has.
