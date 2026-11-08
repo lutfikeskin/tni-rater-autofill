@@ -478,6 +478,9 @@ const state = storeState({
   // All client details, in a drawer over the panel, and where focus was when it opened.
   detailsOpen: false,
   detailsReturn: null,
+  // The quote summary over the panel (quote-summary.js openSummary), and where focus was when it opened.
+  summary: null,
+  summaryReturn: null,
   // The browser window of the tab in view, for Dock (popped out), and whether this copy of the
   // panel is giving way to a newer one (giveWay).
   browserWindow: null,

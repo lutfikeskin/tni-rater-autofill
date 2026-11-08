@@ -1355,10 +1355,12 @@ function dockFor() {
   const fill = { button: 'fill', label: filledBefore || report?.fields ? 'Fill this page again' : 'Fill this page' };
   if (report?.error) return { phase: 'error', tone: 'bad', eyebrow: 'Didn’t finish', title: 'Check the page, then fill again', sub: 'Your changes are kept.', ...fill };
   // The quote is done where TNI stops on this rater (quoteFinished): said, in place of "Moving on
-  // is yours" or "Ready for Continue" on a page that is the end of the quote.
+  // is yours" or "Ready for Continue" on a page that is the end of the quote, with the quote's
+  // summary to open (audit 2026-11-07, UX-05: summary-view.jsx).
   if (report && quoteFinished(carrier, report, page, step) && !pendingAi(state.tab.id, page).length) {
     return { phase: 'finished', tone: 'good', eyebrow: 'Quote done', title: carrier.finishedAt?.said ?? carrier.finishedSaid ?? 'The quote proposal is printed',
-      sub: carrier.finishedAt?.sub ?? `This is where TNI stops on ${carrier.name}. Nothing is submitted or bound.`, alt: 'fill-again', altLabel: 'Fill this page again' };
+      sub: carrier.finishedAt?.sub ?? `This is where TNI stops on ${carrier.name}. Nothing is submitted or bound.`, button: 'dock-summary', label: 'Quote summary',
+      alt: 'fill-again', altLabel: 'Fill this page again' };
   }
   // A page the fill had no question for and left nothing on (a unit list with every unit on it):
   // Continue is next (W43-40: the dock offered Fill this page again on finished vehicle lists).

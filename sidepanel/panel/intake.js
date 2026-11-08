@@ -97,6 +97,7 @@ async function loadFile(file, { reset = false } = {}) {
     state.aiDocks = new Map();
     state.pastKey = null;
     state.detailsOpen = false;
+    state.summary = null;
     state.settingsOpen = false;
     state.fileConfirm = null;
     state.pdf = null;

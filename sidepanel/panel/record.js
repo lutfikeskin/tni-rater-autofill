@@ -55,6 +55,7 @@ function showScreen() {
   $('settings').hidden = !settings;
   $('pdf-view').hidden = !(has && !settings && state.pdf);
   $('details-view').hidden = !(has && !settings && state.detailsOpen && !state.pdf);
+  $('summary-view').hidden = !(has && !settings && state.summary && !state.pdf);
   // (The client's name and the checks' All client details row say whether it is open themselves:
   // client-view.jsx, checks-view.jsx.)
   $('home').hidden = settings || has;

@@ -9779,11 +9779,12 @@ test('the quote is done where TNI stops on the rater: the finishing action click
   const prog = { name: 'Progressive', finishedBy: 'print', actions: [{ id: 'print', page: 'CoveragesRates' }] };
   assert.equal(context.quoteFinished(prog, report, 'CoveragesRates', undefined, new Set(['print'])), true);
   assert.equal(context.quoteFinished(prog, report, 'Drivers', undefined, new Set(['print'])), false, 'another page\'s report');
-  // The dock says so, with Fill this page again beside it; the strip's Review page says Quote done.
+  // The dock says so, with the quote's summary to open (UX-05) and Fill this page again beside it;
+  // the strip's Review page says Quote done.
   const d = dockHarness({ carrier: geicoLike, step: 'Quote & Coverages', extra: { showReport: () => report, quoteFinished: context.quoteFinished } });
   d.state.doneActions = done;
   const word = d.dock();
-  assert.deepEqual([word.phase, word.eyebrow, word.title, word.button ?? null, word.alt], ['finished', 'Quote done', 'The quote proposal is printed', null, 'fill-again']);
+  assert.deepEqual([word.phase, word.eyebrow, word.title, word.button ?? null, word.label, word.alt], ['finished', 'Quote done', 'The quote proposal is printed', 'dock-summary', 'Quote summary', 'fill-again']);
   assert.equal(word.sub, 'This is where TNI stops on GEICO. Nothing is submitted or bound.');
   // (quoteFinished reads the done actions of the state it was extracted with: the same Set.)
   done.delete('printProposal');
@@ -10359,7 +10360,7 @@ test('AmWINS\'s quote is done at the declaration: Underwriting with nothing else
   const d = dockHarness({ carrier: amwins, step: 'Underwriting', extra: { showReport: () => report, quoteFinished: context.quoteFinished } });
   const word = d.dock();
   assert.deepEqual([word.phase, word.eyebrow, word.title, word.sub, word.button ?? null, word.alt],
-    ['finished', 'Quote done', 'Tick the declaration, then click Submit', 'Both are yours on AmWINS. Nothing is ticked, submitted or bound for you.', null, 'fill-again']);
+    ['finished', 'Quote done', 'Tick the declaration, then click Submit', 'Both are yours on AmWINS. Nothing is ticked, submitted or bound for you.', 'dock-summary', 'fill-again']);
 });
 
 test('the AmWINS fill that reaches the declaration chimes once; one that leaves more doesn\'t', () => {

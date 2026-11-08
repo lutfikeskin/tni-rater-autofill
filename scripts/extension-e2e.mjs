@@ -478,6 +478,34 @@ if (earlierOk) {
   earlierOk &&= await panel.locator('#past').isHidden() && await panel.locator('#report').isVisible();
 }
 if (!earlierOk) console.log('EARLIER PAGES: the page menu did not show Insured Info read-only and come back to this step.');
+// The quote summary from the client strip (UX-05): every step filled, each answer with its source,
+// read only; Save summary puts one HTML file in Downloads; the carrier's page doesn't change.
+let summaryOk = false;
+let at = 'open';
+try {
+  const mockBefore = await mock.evaluate(() => JSON.stringify(window.__amwinsMock));
+  await panel.click('#quote-summary');
+  at = 'shown';
+  await panel.locator('#summary-view').waitFor({ state: 'visible', timeout: 5000 });
+  const pages = await panel.locator('.summary-page > summary .title').allTextContents();
+  const rows = await panel.locator('.summary-row').count();
+  const boxes = await panel.locator('#summary-view input, #summary-view select, #summary-view textarea').count();
+  const download = panel.waitForEvent('download', { timeout: 10000 });
+  download.catch(() => {});
+  at = 'save';
+  await panel.click('#summary-save');
+  at = 'download';
+  const file = await download;
+  const html = fs.readFileSync(await file.path(), 'utf8');
+  const saved = await panel.locator('#summary-saved').textContent();
+  await panel.click('#summary-back');
+  await panel.locator('#summary-view').waitFor({ state: 'hidden', timeout: 5000 });
+  const mockAfter = await mock.evaluate(() => JSON.stringify(window.__amwinsMock));
+  console.log('Quote summary:', JSON.stringify({ pages, rows, boxes, file: file.suggestedFilename(), bytes: html.length, saved, pageUnchanged: mockBefore === mockAfter }));
+  summaryOk = pages.includes('Insured Info') && rows > 10 && boxes === 0 && /^quote-summary-.+\.html$/.test(file.suggestedFilename())
+    && html.startsWith('<!doctype html>') && !/<script/i.test(html) && html.includes('AmWINS') && /Saved quote-summary-/.test(saved ?? '') && mockBefore === mockAfter;
+} catch (e) { console.log('QUOTE SUMMARY:', at, String(e.message).split(String.fromCharCode(10)).slice(0, 12).join(' | ')); }
+if (!summaryOk) console.log('QUOTE SUMMARY: the summary did not list the steps read-only, save its HTML file, or left the carrier page changed.');
 // The events the panel uploaded (it sends right after the intake loads, then every minute).
 await panel.evaluate(() => document.getElementById('upload-usage')?.click()).catch(() => {});
 const eventsIn = () => {
@@ -583,6 +611,6 @@ if (DEFAULTS) {
 }
 console.log(`Errors: ${errors.length}${errors.length ? ` (${errors.join('; ')})` : ''}`);
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = channelOk && defaultsOk && usageOk && !errors.length && !docScrolled && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? `OK: ${DEFAULTS === 'advanced' ? 'the quote asked whose defaults it takes and held filling, AmWINS\' own UM $500K (Advanced, over the basic $300K) and the comprehensive $500 were filled marked as the agent\'s own and logged with the carrier, ' : DEFAULTS === 'mine' ? 'the quote asked whose defaults it takes and held filling, the agent\'s UM $300K and comprehensive $500 were filled marked as their own on the page and logged in agent_settings, ' : DEFAULTS === 'tni' ? 'the quote asked whose defaults it takes and held filling, Use TNI\'s filled TNI\'s amounts marked as standards and logged an empty list, ' : ''}manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone with the earlier steps’ reports, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.` : !channelOk ? `FAILED: the ${CHANNEL} build's channel (above).` : !defaultsOk ? 'FAILED: agents\' own defaults (above).' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: the panel’s document scrolled, manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
+const ok = channelOk && defaultsOk && usageOk && !errors.length && !docScrolled && earlierOk && summaryOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? `OK: ${DEFAULTS === 'advanced' ? 'the quote asked whose defaults it takes and held filling, AmWINS\' own UM $500K (Advanced, over the basic $300K) and the comprehensive $500 were filled marked as the agent\'s own and logged with the carrier, ' : DEFAULTS === 'mine' ? 'the quote asked whose defaults it takes and held filling, the agent\'s UM $300K and comprehensive $500 were filled marked as their own on the page and logged in agent_settings, ' : DEFAULTS === 'tni' ? 'the quote asked whose defaults it takes and held filling, Use TNI\'s filled TNI\'s amounts marked as standards and logged an empty list, ' : ''}manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the quote summary listed the steps read-only and saved its HTML file, the panel popped out alone with the earlier steps’ reports, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.` : !channelOk ? `FAILED: the ${CHANNEL} build's channel (above).` : !defaultsOk ? 'FAILED: agents\' own defaults (above).' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: the panel’s document scrolled, manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, the quote summary failed, or Pop out failed.');
 process.exit(ok ? 0 : 1);
