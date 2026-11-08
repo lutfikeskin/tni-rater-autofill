@@ -243,7 +243,8 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
   // build is never "current".
   const rules = rulesOpt === undefined ? newestRules(events) : rulesOpt;
   const contexts = sessionContexts(events);
-  const answers = finalAnswers(events);
+  const ids = fieldIdentities(events);
+  const answers = finalAnswers(events, ids);
   const byId = new Map(carriers.map((c) => [c.id, c]));
   // A question is mapped when a current rule claims it, as the fill engine and the coverage report
   // pair them (fieldStatus: by data-model name, else its text on its page). With an id, 'unsure'
@@ -420,7 +421,7 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
     candidate = null;
     const before = suggested();
     consider(key, obs);
-    if (candidate && suggested() === before) undecided.push(undecidedOf(candidate, support));
+    if (candidate && suggested() === before) undecided.push(undecidedOf(candidate, support, ids));
   }
   // A question known only by its text (AmWINS) gets a rule by its label, which no step constrains:
   // two observed steps' questions reading the same would get one selector, even when only one has
@@ -446,7 +447,7 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
 // against. Its options as the page's layouts drew them, the agents' final picks, and for a text box
 // the intake fields the typed answers matched (field_change matchesIntake: the paths, never the
 // values). `left`: how many answers (a quote's units each count) it was left to the agent in.
-function undecidedOf({ base, first, field, left, choices, obs }, support) {
+function undecidedOf({ base, first, field, left, choices, obs }, support, ids) {
   // Each answer counts a value once, and shares are of the answers: a typed answer can match two
   // intake fields.
   const tally = (perAnswer) => {
@@ -455,7 +456,11 @@ function undecidedOf({ base, first, field, left, choices, obs }, support) {
     return share(counts, perAnswer.length);
   };
   const typed = obs.filter((o) => o.matches && o.source === 'agent');
-  const options = [...new Set(obs.flatMap((o) => o.layout?.opts ?? []).map(String))];
+  // A question without an id (AmWINS, GEICO) has no layout of its own: its page's captured layout
+  // gives its options by its caption, when that caption names one question there (byCaption), so a
+  // choice no agent picked can still be proposed (CodeRabbit on #419).
+  const layoutOf = (o) => o.layout ?? ids.byCaption.get(`${o.carrier}|${o.page}|${textOf(o.label)}`) ?? null;
+  const options = [...new Set(obs.flatMap((o) => layoutOf(o)?.opts ?? []).map(String))];
   const kind = first.kind ?? obs.find((o) => o.kind)?.kind ?? null;
   return { ...base, ...support(left), field, kind, options, left: left.length,
     answers: choices.length, agentAnswers: tally(choices.map((o) => [String(o.value)])),

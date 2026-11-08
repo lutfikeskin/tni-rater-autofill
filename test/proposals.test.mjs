@@ -56,6 +56,24 @@ test('learning: a question left to the agent repeatedly that no suggestion answe
   assert.equal(learn(week(), { carriers: noRules, minIntakes: 6 }).undecided.length, 0, 'fewer intake PDFs than the minimum: no candidate');
 });
 
+// CodeRabbit on #419: a question without an id (AmWINS) has no layout of its own, so its options
+// came only from the agents' picks; its page's captured layout gives them, by its caption.
+test('learning: a candidate without an id takes its options from its page\'s layout, by its caption', () => {
+  const events = [];
+  let t = Date.parse('2026-11-02T12:00:00Z');
+  const e = (session, x) => events.push({ id: `${session}-${events.length}`, t: new Date(t += 1000).toISOString(), session, carrier: 'amwins', intakeId: `intake${session}`, ...x });
+  for (let i = 0; i < 5; i++) {
+    const s = `a${i}`;
+    e(s, { type: 'intake_loaded', carrier: undefined, state: 'VA' });
+    e(s, { type: 'page_layout', page: '/application/businessauto', fields: [{ label: 'Any team drivers?', kind: 'radio', options: ['Yes', 'No', 'Unknown'] }] });
+    e(s, { type: 'fill_field', page: '/application/businessauto', label: 'Any team drivers?', controlKind: 'radio', result: 'unfamiliar' });
+    e(s, { type: 'field_change', page: '/application/businessauto', label: 'Any team drivers?', kind: 'radio', by: 'agent', to: i < 3 ? 'Yes' : 'No' });
+  }
+  const [team] = learn(events, { carriers: [{ id: 'amwins', rules: [], useGenericRules: false }], minIntakes: 5 }).undecided;
+  assert.ok(team, 'a candidate');
+  assert.deepEqual(team.options, ['Yes', 'No', 'Unknown'], 'Unknown, which no agent picked, is offered too');
+});
+
 test('rule proposals: the request offers only the schema\'s paths, the answers seen and TNI\'s rule ids, with no intake values', () => {
   const [team] = learn(week(), { carriers: noRules, minIntakes: 5 }).undecided.filter((c) => c.q === '9B01');
   const req = proposalRequest(team);
