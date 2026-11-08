@@ -490,6 +490,8 @@ export const amwins = {
   // The rules below answer these sections row by row; a generic label rule never does. A row the
   // intake doesn't describe stays the agent's: on 2026-10-08 a trailer added by hand as a second
   // vehicle got the first vehicle's body type from the generic "body type" rule.
+  // The generic label rules (src/rules.js) fill AmWINS' single questions, never its row sections.
+  useGenericRules: true,
   rowSections: [DRIVER, VEHICLE, VEHICLE_COVERAGES],
   // The risk state on the start page (filled from the intake): the panel warns when the one picked
   // isn't the intake's garaging state, e.g. an agent's change (src/quote-state.js).

@@ -134,7 +134,7 @@ const kindOf = (rule) => rule.kind ?? (rule.path ? fieldInfo(rule.path).kind : '
 function ruleByPath(carrier, path, unique = false) {
   if (!path) return null;
   const want = path.replace(/\[\d+\]/g, '[]');
-  const rules = [...(carrier.rules ?? []), ...(carrier.useGenericRules === false ? [] : GENERIC_RULES)];
+  const rules = [...(carrier.rules ?? []), ...(carrier.useGenericRules !== true ? [] : GENERIC_RULES)];
   const found = rules.filter((r) => (r.path ?? (r.q ? `${carrier.id}.q${r.q}` : null)) === want);
   // Rules that repeat a path (the owner's and the business's city) can't be told apart by it.
   return unique && found.length > 1 ? null : found[0] ?? null;
@@ -191,7 +191,7 @@ function today(a, unit, record, carrier, element, overlay = null) {
   const skipped = new Set();
   while (f.kind === 'checkbox' && claim.def && kindOf(claim.def) !== 'bool' && skipped.size < 20) {
     skipped.add(claim.def);
-    const rules = [...(carrier.rules ?? []), ...(carrier.useGenericRules === false ? [] : GENERIC_RULES)].filter((r) => !skipped.has(r));
+    const rules = [...(carrier.rules ?? []), ...(carrier.useGenericRules !== true ? [] : GENERIC_RULES)].filter((r) => !skipped.has(r));
     claim = claimingRule(f, { ...carrier, rules, useGenericRules: false }, a.page);
     claim.generic = !!claim.def && GENERIC_RULES.includes(claim.def);
   }

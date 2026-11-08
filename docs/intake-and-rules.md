@@ -60,7 +60,7 @@ The maintainer's round-7 answers (TNI, 2026-10-27: answers to the PR's round-6 o
 "New authority", "Brand new" and "New venture" as the box's whole answer (in any case, with a final period) are 0 years too, as NEW is (TNI, 2026-10-26: answer to PR question, R15). "new trucks", "Brand new trucks" or "New authority pending" are not: those keep the `years-experience.invalid` check.
 The carriers that ask it follow the record: AmWINS' years in business is that figure ("5+" from 5) instead of New Venture, and its year established the start year the notes give, else this year, as before; GEICO's "How many years has this business been operating?" gets its band (it was the agent's). Progressive asks no years in business.
 
-[plan.js](../src/plan.js) resolves values before they enter the page. Rules come from [carriers.js](../src/carriers.js), [carrier modules](../src/carriers/), and [generic rules](../src/rules.js) unless the carrier disables them. Progressive and GEICO disable them (`useGenericRules: false`).
+[plan.js](../src/plan.js) resolves values before they enter the page. Rules come from [carriers.js](../src/carriers.js), [carrier modules](../src/carriers/), and [generic rules](../src/rules.js) only for a carrier that opts in (`useGenericRules: true`: AmWINS, outside its row sections, and the local test page). Progressive and GEICO say `false`; a carrier that says nothing gets none.
 
 | Rule responsibility | Current mechanism |
 | --- | --- |

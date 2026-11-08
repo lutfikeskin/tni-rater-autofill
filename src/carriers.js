@@ -58,6 +58,8 @@ export const CARRIERS = [
     name: 'Local test page',
     hosts: [/^(localhost|127\.0\.0\.1)$/],
     rules: [],
+    // The local test page is filled by the generic label rules alone.
+    useGenericRules: true,
   },
 ];
 
