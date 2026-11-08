@@ -10,7 +10,7 @@ import * as usage from '../usage-log.js';
 import { $, persistUnitForms, state } from './core.js';
 import { profileLater, save } from './intake.js';
 import { pageOf } from './usage.js';
-import { intakeEdited, renderDock, renderSite, renderSteps, scheduleLayout, scrollBehavior } from './coordinator.js';
+import { intakeEdited, noteStaleFills, renderDock, renderSite, renderSteps, scheduleLayout, scrollBehavior } from './coordinator.js';
 import { refreshAnswers } from './fill.js';
 import { applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, ntlPrimaryEdited, renderAiSettings, reviewClaimsBox, reviewDriverGender } from './assistant.js';
 import { openDetails, openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
@@ -297,6 +297,8 @@ async function agentEdit(path, after, kind) {
   if (derived.length) renderSections({ keep: derived });
   if (state.intake.warnings.length !== checks.length || state.intake.warnings.some((w, i) => w !== checks[i])) renderWarnings();
   intakeEdited();
+  // Pages already filled with the old value are named for the agent (GAP-01).
+  noteStaleFills([path, ...derived]);
   // Log that the agent corrected the intake here (and whether it was flagged), not the value.
   usage.log({ type: 'intake_edit', path, kind, change: before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
   profileLater();

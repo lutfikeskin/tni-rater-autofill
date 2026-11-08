@@ -903,7 +903,11 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
     persistUnitForms(tabId, maps.unitForms);
     if (copied) persistAgentKeys(tabId, maps.agentKeys);
   }
-  for (const x of frames.flatMap((f) => f.filled)) maps.filled.set(x.key, { path: x.path, shown: x.shown, standard: isStandard(x, 'filled'), own: isOwnDefault(x, 'filled') });
+  // With where it was filled (`page`, `step`, `label`, `carrier`: the carrier's name), so an intake
+  // correction made after it is traced to it (noteStaleFills).
+  for (const f of frames) for (const x of f.filled ?? []) maps.filled.set(x.key, { path: x.path, shown: x.shown, standard: isStandard(x, 'filled'), own: isOwnDefault(x, 'filled'),
+    page: page ?? null, step: knownStep(carrier, f.stepKey) ?? null, label: x.label || x.name || null, carrier: carrier?.name ?? null });
+  retireStaleFills(tabId, page, frames.flatMap((f) => (f.filled ?? []).map((x) => x.path)));
   // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
   const quoteKey = carrier?.quoteState?.key;
   const pickedState = quoteKey && frames.flatMap((f) => f.filled).find((x) => x.key === quoteKey);
@@ -1264,6 +1268,51 @@ function noteChangedAfterDone(carrier, page, step, tabId = state.tab?.id) {
   doneActions.add(`${id}:changed`);
   persistDoneActions(tabId, doneActions);
   return true;
+}
+
+// The agent corrected the intake after a page was filled with it (audit 2026-11-07, GAP-01): each
+// answer a fill put in from the corrected path or one derived from it (`paths`: record.js agentEdit),
+// on any tab the panel kept (tabMaps), is said in a card above the page's answers, with its carrier,
+// step and field. Nothing fills by itself: the agent fills the page again (a text field the page
+// holds is kept and flagged as differing, cursor.js keptDiffers) or changes it on the carrier page. A
+// fill of that page that puts the answer in again lifts it (retireStaleFills); so does Got it, and a
+// new intake (state.staleFills cleared with the tabs' maps).
+function noteStaleFills(paths) {
+  const changed = new Set(paths.filter(Boolean));
+  if (!changed.size) return;
+  const here = state.tab?.id;
+  const tabs = [...[...state.tabSessions].filter(([id]) => id !== here), ...(Number.isInteger(here) ? [[here, state]] : [])];
+  const staleKey = (s) => `${s.tabId}|${s.page}|${s.path}|${s.label}`;
+  const said = new Map((state.staleFills ?? []).map((s) => [staleKey(s), s]));
+  for (const [tabId, maps] of tabs) {
+    for (const entry of maps.filled?.values?.() ?? []) {
+      if (!changed.has(entry.path) || entry.page == null) continue;
+      const s = { tabId, carrier: entry.carrier ?? null, page: entry.page, step: entry.step ?? null, path: entry.path, label: entry.label ?? entry.path };
+      said.set(staleKey(s), s);
+    }
+  }
+  state.staleFills = [...said.values()];
+  showStaleNote();
+}
+
+// A fill of the page put these paths' answers in again: no longer from before the correction.
+function retireStaleFills(tabId, page, paths) {
+  if (!state.staleFills?.length) return;
+  const filled = new Set(paths);
+  const left = state.staleFills.filter((s) => !(s.tabId === tabId && s.page === page && filled.has(s.path)));
+  if (left.length === state.staleFills.length) return;
+  state.staleFills = left;
+  showStaleNote();
+}
+
+function showStaleNote() {
+  const list = state.staleFills ?? [];
+  if (!list.length) { state.cards = { ...state.cards, stale: null }; return; }
+  state.cards = { ...state.cards, stale: issueSaid({ tone: 'warn',
+    title: list.length === 1 ? 'You corrected the intake after this answer was filled' : `You corrected the intake after ${list.length} answers were filled`,
+    text: 'The page may still hold the answer from before your correction. Fill the page again and check what it flags, or change the answer on the carrier page.',
+    compare: list.map((s) => [[s.carrier, s.step ?? s.page].filter(Boolean).join(' · '), s.label]),
+    actions: [{ label: 'Got it', className: 'ghost', onClick: () => { state.staleFills = []; showStaleNote(); } }] }) };
 }
 
 // A short chime when the quote is done where TNI stops on the rater (the maintainer, 2026-10-25: "a
@@ -1652,4 +1701,4 @@ function stopPageIsOurs() {
   return !state.layoutHold || state.layoutReadyTabs.has(state.tab?.id);
 }
 
-export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, rulesFingerprint, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };
+export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, noteStaleFills, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, rulesFingerprint, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };

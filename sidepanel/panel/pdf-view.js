@@ -383,6 +383,8 @@ async function newQuote() {
     }
     if (inExtension && state.tab?.carrier) await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit?.clear?.()).catch(() => {});
     state.tabSessions.clear();
+    state.staleFills = [];
+    state.cards = { ...state.cards, stale: null };
     state.agentKeys = new Map();
     state.doneActions = new Set();
     state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };

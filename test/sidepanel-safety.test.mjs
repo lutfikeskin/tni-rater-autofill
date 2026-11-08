@@ -175,7 +175,7 @@ function extractFunction(name) {
 const HELPERS_START = SIDEPANEL.indexOf('const samePage =');
 const HELPERS_END = SIDEPANEL.indexOf('\n\n// Watch the rater tab', HELPERS_START);
 const PAGE_HELPERS = SIDEPANEL.slice(HELPERS_START, HELPERS_END);
-const FUNCTIONS = ['rememberFill', 'scheduleAutoFill', 'tabInView', 'quoteUnderWay', 'refreshTab', 'showHeldNote', 'quoteHere', 'backToQuote', 'issueSaid', 'quoteFinished'].map(extractFunction).join('\n') + LAYOUT_STUB;
+const FUNCTIONS = ['rememberFill', 'retireStaleFills', 'showStaleNote', 'scheduleAutoFill', 'tabInView', 'quoteUnderWay', 'refreshTab', 'showHeldNote', 'quoteHere', 'backToQuote', 'issueSaid', 'quoteFinished'].map(extractFunction).join('\n') + LAYOUT_STUB;
 
 function harness() {
   const state = {
@@ -318,6 +318,47 @@ test('invalidated actions are removed before newly successful actions are record
   }]);
 
   assert.deepEqual([...h.state.doneActions].sort(), ['fresh-lookup', 'keep-me']);
+});
+
+// Audit 2026-11-07, GAP-01: an intake correction made after a page was filled wasn't traced to the
+// pages and tabs holding the old value. A fill's answers keep where they were filled; an edit of
+// their path (or one derived from it) names each in a card; filling that page again with it, or Got
+// it, lifts it. Nothing fills by itself.
+test('an intake correction after a fill names each page and tab that holds the old answer', () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1), carrier: { id: 'progressive', name: 'Progressive' } };
+  h.state.staleFills = [];
+  h.rememberFill([{ fields: 2, stepKey: 'AddVehicle', filled: [{ key: 'zip', path: 'garaging.zip', shown: '33101', label: 'Garaging ZIP' }, { key: 'yr', path: 'vehicles[0].year', shown: '2020', label: 'Year' }] }],
+    { tabId: 1, carrier: { id: 'progressive', name: 'Progressive' }, page: 'AddVehicle' });
+  assert.deepEqual(JSON.parse(JSON.stringify(h.state.filled.get('zip'))), { path: 'garaging.zip', shown: '33101', standard: false, own: false, page: 'AddVehicle', step: null, label: 'Garaging ZIP', carrier: 'Progressive' });
+
+  const context = { state: {
+    tab: { id: 1 }, cards: {}, staleFills: [], filled: h.state.filled,
+    tabSessions: new Map([[1, { filled: new Map() }], [2, { filled: new Map([['dob', { path: 'drivers[0].dob', page: '/drivers', step: 'Drivers & Incidents', label: 'Date of birth', carrier: 'GEICO' }]]) }]]),
+  }, issueSaid: h.context.issueSaid };
+  vm.createContext(context);
+  vm.runInContext(['noteStaleFills', 'retireStaleFills', 'showStaleNote'].map(extractFunction).join('\n'), context);
+  const { state } = context;
+  context.noteStaleFills(['operations.radius']);
+  assert.equal(state.cards.stale ?? null, null, 'a path nothing was filled from: no card');
+  context.noteStaleFills(['drivers[0].dob']);
+  assert.equal(state.cards.stale.title, 'You corrected the intake after this answer was filled');
+  assert.deepEqual(JSON.parse(JSON.stringify(state.cards.stale.compare)), [['GEICO · Drivers & Incidents', 'Date of birth']]);
+  // A derived path too (agentEdit passes the edited path and rederive's), and the same answer once.
+  context.noteStaleFills(['garaging.zip', 'drivers[0].dob']);
+  assert.equal(state.cards.stale.title, 'You corrected the intake after 2 answers were filled');
+  assert.deepEqual(JSON.parse(JSON.stringify(state.cards.stale.compare)), [['GEICO · Drivers & Incidents', 'Date of birth'], ['Progressive · AddVehicle', 'Garaging ZIP']]);
+  assert.match(state.cards.stale.text, /Fill the page again and check what it flags, or change the answer on the carrier page/);
+  // That page filled again with it: lifted there only.
+  context.retireStaleFills(1, 'AddVehicle', ['vehicles[0].year']);
+  assert.equal(state.staleFills.length, 2, 'another answer filled: still said');
+  context.retireStaleFills(1, 'AddVehicle', ['garaging.zip']);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.staleFills.map((x) => x.label))), ['Date of birth']);
+  state.cards.stale.actions[0].onClick();
+  assert.deepEqual([state.staleFills.length, state.cards.stale], [0, null], 'Got it');
+
+  // agentEdit says it after the rederive, with the edited and the derived paths.
+  assert.match(extractFunction('agentEdit'), /intakeEdited\(\);\n(?:\s*\/\/[^\n]*\n)*\s*noteStaleFills\(\[path, \.\.\.derived\]\);/);
 });
 
 test('combo choices from every fill are kept per tab, for the usage log', async () => {
@@ -3682,7 +3723,7 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   const sandbox = {
     noNumberEdit: () => false,
     state: { intake: { record: { claims: { text: 'No' }, notes: { text: null }, applicant: {} }, warnings: [] } },
-    get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, usage: { log: () => {} }, save: async () => {}, profileLater() {},
+    get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, noteStaleFills: () => {}, usage: { log: () => {} }, save: async () => {}, profileLater() {},
     renderSections() {}, renderWarnings() {},
     claimsTextEdited: () => calls.push('claimsTextEdited'), reviewClaimsBox: () => calls.push('reviewClaimsBox'), reviewDriverGender: () => {},
   };
@@ -3709,7 +3750,7 @@ test('a panel edit of the claims box recomputes what derives from it and says th
     warnings: [{ code: 'ownership.missing', path: 'operations.vehicleOwnership', level: 'check', msg: 'Not selected.' }], done: [], agentEdited: [], readFrom: {},
   };
   const sandbox = {
-    state: { intake }, get, set, rederive, noNumberEdit: () => false, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    state: { intake }, get, set, rederive, noNumberEdit: () => false, document: { getElementById: () => null }, intakeEdited: () => {}, noteStaleFills: () => {}, save: async () => {}, profileLater() {},
     usage: { log: (e) => calls.push(['log', e.path, e.warnings]) },
     renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings', intake.warnings[0].level]),
     claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
@@ -5188,7 +5229,7 @@ async function stateNoteHarness() {
     // The page's quote-state control as the page shows it (chrome.scripting in the extension).
     readQuoteState: async () => page.shown,
   };
-  vm.runInNewContext(`${PAGE_HELPERS}\n${['onRecorderMessage', 'showStateNote', 'stateIssue', 'dismissState', 'noteQuoteState', 'seedQuoteState', 'inheritQuoteState', 'rememberFill', 'quoteFinished', 'intakeEdited', 'viewOf', 'saveViews', 'stepScope', 'editScope'].map(extractFunction).join('\n')}`, context);
+  vm.runInNewContext(`${PAGE_HELPERS}\n${['onRecorderMessage', 'showStateNote', 'stateIssue', 'dismissState', 'noteQuoteState', 'seedQuoteState', 'inheritQuoteState', 'rememberFill', 'retireStaleFills', 'showStaleNote', 'quoteFinished', 'intakeEdited', 'viewOf', 'saveViews', 'stepScope', 'editScope'].map(extractFunction).join('\n')}`, context);
   const pick = (after, key = 'QuoteStateList', at = '/home/', tabId = 7) =>
     context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: at, changes: [{ key, after, agent: true }] }, { tab: { id: tabId }, frameId: 0 });
   const arrive = async (at, from = null, tabId = 7) => {
@@ -5392,7 +5433,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
     stateCode: () => null, noteQuoteState() {},
   };
   vm.createContext(context);
-  vm.runInContext(['rememberFill', 'fillPage', 'autoFill'].map(extractFunction).join('\n'), context);
+  vm.runInContext(['rememberFill', 'retireStaleFills', 'showStaleNote', 'fillPage', 'autoFill'].map(extractFunction).join('\n'), context);
   const results = [{ frameId: 0, result: {
     fields: 1, filled: [{ key: 'old-field', path: 'clientA.field', shown: 'A value', controlKind: 'select' }], actions: [{ id: 'old-helper' }], protectedKeys: ['old-manual-edit'],
     labels: [['old-field', 'Old field']], choices: [['old-choice', ['A']]], invalidatedActions: [], halted: false, stepKey: 'Vehicles / A value',
@@ -6855,7 +6896,7 @@ test('editing a source field in the panel recomputes what derives from it and re
     noNumberEdit: () => false,
     state: { intake: { record, warnings: [], done: [] }, detailsClosed: new Set(), showEmpty: false, details: null },
     get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES,
-    intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
+    intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]), noteStaleFills: () => {},
     usage: { log: (e) => calls.push(['log', e.type, e.path]) },
     save: async () => { calls.push(['save']); stored = structuredClone(sandbox.state.intake); },
     claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {}, profileLater() {},
@@ -7500,7 +7541,7 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
     state: { intake, view: 'check' }, $, get, set, rederive, ownerDrivesAnswered, fieldInfo: (p) => ({ label: p }), sourcePlace: () => null, pdfPageSaid: () => '',
     document: { getElementById: () => null, querySelector: () => null },
     renderSteps() {}, renderSections: () => calls.push(['renderSections', get(record, 'drivers[0].gender') ?? null]), jumpTo() {}, openPdf() {},
-    intakeEdited: () => calls.push(['intakeEdited']), usage: { log: (e) => calls.push(['log', e.type, e.path, e.code ?? null]) },
+    intakeEdited: () => calls.push(['intakeEdited']), noteStaleFills: () => {}, usage: { log: (e) => calls.push(['log', e.type, e.path, e.code ?? null]) },
     save: async () => calls.push(['save']), claimsTextEdited() {}, reviewClaimsBox: () => calls.push(['reviewClaimsBox']), reviewDriverGender: () => calls.push(['reviewDriverGender']),
     profileLater() {},
   };
@@ -10334,7 +10375,7 @@ test('a panel edit of "No" into the USDOT box saves no number, and says the row 
   const calls = [];
   const intake = { record: { applicant: { dot: '1234567', noDot: null } }, warnings: [], done: [], agentEdited: [] };
   const sandbox = {
-    state: { intake, fieldRevs: new Map() }, get, set, noNumberEdit, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    state: { intake, fieldRevs: new Map() }, get, set, noNumberEdit, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, noteStaleFills: () => {}, save: async () => {}, profileLater() {},
     usage: { log: (e) => calls.push(['log', e.path]) }, renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings']),
     claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
   };

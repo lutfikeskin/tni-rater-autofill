@@ -324,6 +324,9 @@ const state = storeState({
   notesAsking: null, // the intake whose claims box Luna is reading now
   notesRetry: null, // that intake again, when the settings changed meanwhile
   tabSessions: new Map(),
+  // Answers a fill put in before the agent corrected the intake ({ tabId, carrier, page, step, path,
+  // label }: coordinator.js noteStaleFills, GAP-01), said in the stale card until filled again.
+  staleFills: [],
   // Another rater's tab in front while the panel stays on the quote tab ({ id, carrier, windowId },
   // tab.js refreshTab), and the tab the agent asked to move the quote to (quoteHere), until followed.
   lookingAt: null,
