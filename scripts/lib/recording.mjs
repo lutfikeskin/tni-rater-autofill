@@ -188,7 +188,8 @@ function actions(events) {
       lines.push({ t: e.start ?? e.t, text: `the extension answered ${fieldName(e)} in ${secs(e.applyMs ?? 0)}${after ? `, ${after}` : ''}${e.ok === false ? ' (not kept)' : ''}` });
     } else if (e.kind === 'kit' && e.what === 'wait' && e.why !== 'answer') {
       const slack = slackSaid(e);
-      lines.push({ t: e.start ?? e.t, text: `the extension waited ${secs(e.ms ?? 0)} ${WAITS[e.why] ?? 'for the page'} (quiet ${e.quietMs ?? '?'} ms${e.requests ? ' and its requests' : ''}): ${endedSaid(e)}${slack ? `; ${slack}` : ''}` });
+      const unseen = e.slackTrace != null && e.slackTrace - e.slack >= 250 ? ` (the wait saw the page change or busy ${secs(e.slackTrace - e.slack)} after the trace's last change: not slack)` : '';
+      lines.push({ t: e.start ?? e.t, text: `the extension waited ${secs(e.ms ?? 0)} ${WAITS[e.why] ?? 'for the page'} (quiet ${e.quietMs ?? '?'} ms${e.requests ? ' and its requests' : ''}): ${endedSaid(e)}${slack ? `; ${slack}` : ''}${unseen}` });
     } else if (e.kind === 'kit' && e.what === 'press') lines.push({ t: e.t, text: `the extension pressed the ${quote(e.button?.text)} button` });
     else if (e.kind === 'burst' && (e.drawnCount || e.removed)) {
       const names = (e.drawn ?? []).map((d) => quote(d.label || d.key || 'a question')).join(', ');
@@ -306,6 +307,13 @@ export function recordingReport({ manifest, events }) {
     if (e.kind === 'kit' && e.what === 'wait' && typeof e.start === 'number' && typeof e.ms === 'number') {
       const waitEnd = e.start + e.ms;
       e.slack = waitEnd - activity.reduce((m, a) => (a.frame === (e.frame ?? 0) && a.at <= waitEnd && a.at > m ? a.at : m), e.start);
+      // What the wait saw itself (REC-02): the attributes it watches, a busy page, an undefined
+      // component, a request going; the trace sees none of them. The later of the two counts, and a
+      // disagreement is said (`slackTrace`). A recording from before has the trace's alone.
+      if (typeof e.lastChange === 'number' || typeof e.lastHeld === 'number') {
+        const kitLast = Math.min(waitEnd, Math.max(e.start, e.lastChange ?? e.start, e.lastHeld ?? e.start));
+        if (waitEnd - kitLast < e.slack) { e.slackTrace = e.slack; e.slack = waitEnd - kitLast; }
+      }
     }
     if (e.kind === 'burst') {
       const last = actionTimes.reduce((m, a) => (a < e.t && (m == null || a > m) ? a : m), null);

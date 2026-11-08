@@ -4,7 +4,7 @@ import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intak
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
   firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES, isLunaModel,
-  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION } from '../src/ai/luna.js';
+  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION, citedSaid, citedRuleFull } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { CARRIER_PARTS } from '../src/ai/tni-rules.js';
 import { settingsFrom } from '../src/ai/providers.js';
@@ -139,6 +139,34 @@ test('multiple citations remain visible without attributing support to the first
   assert.equal(x.intakePath, null);
   assert.equal(x.evidenceSources.length, 2);
   assert.deepEqual(x.evidenceSources.map(x => x.path), ['operations.hazPlacard', 'operations.notes']);
+});
+
+// Audit 2026-11-07, AI-12: the card said "cited evidence: operations.hazPlacard" and never the value.
+test('each cited source is said as the agent reads it: the field label with its row and value, or the rule text', () => {
+  const [x] = parseResponse(answer(buildRequest(items, context)), items, buildRequest(items, context));
+  assert.deepEqual(x.cited, ['Hazmat placard: No']);
+  assert.equal(citedSaid({ basis: 'intake', path: 'drivers[1].licenseState', value: 'TX' }), 'License state (driver 2): TX');
+  assert.equal(citedSaid({ basis: 'intake', path: 'vehicles[0].vin', value: '1FT  ABC\n' }), 'VIN (vehicle 1): 1FT ABC');
+  assert.equal(citedSaid({ basis: 'intake', path: 'operations.usesEld', value: true }), 'Uses ELD: Yes');
+  const long = citedSaid({ basis: 'intake', path: 'claims.text', value: 'word '.repeat(40) });
+  assert.ok(long.startsWith('Claims box, as written: word word') && long.endsWith('…') && long.length < 120, long);
+  const rule = citedSaid({ basis: 'tni_rule', id: 'r1', rule: `No hazmat\nunless ${'the intake says so '.repeat(10)}` });
+  assert.ok(rule.startsWith('TNI rule: No hazmat unless the intake') && rule.endsWith('…') && rule.length <= 'TNI rule: '.length + 120, rule);
+  // CodeRabbit on PR #393: a shortened rule stays whole for the card to open; a short one needs none.
+  const longRule = { basis: 'tni_rule', id: 'r1', rule: `No hazmat\nunless ${'the intake says so '.repeat(10)}` };
+  assert.equal(citedRuleFull(longRule), `TNI rule: No hazmat unless ${'the intake says so '.repeat(10).trim()}`);
+  assert.equal(citedRuleFull({ basis: 'tni_rule', id: 'r2', rule: 'No hazmat unless the intake says so.' }), null);
+  assert.equal(citedRuleFull({ basis: 'intake', path: 'claims.text', value: 'word '.repeat(40) }), null);
+  // Facts Luna is given that the intake has no box for, and any other path, read as words, never as a path.
+  assert.equal(citedSaid({ basis: 'intake', path: 'computed.priorPolicyExpired', value: true }), 'Prior policy expired (worked out from the intake): Yes');
+  assert.equal(citedSaid({ basis: 'intake', path: 'computed.noPriorInsurance', value: false }), 'No prior insurance (worked out from the intake): No');
+  assert.equal(citedSaid({ basis: 'intake', path: 'applicant.hasDOT', value: true }), 'Has a USDOT #: Yes');
+  assert.equal(citedSaid({ basis: 'intake', path: 'claims.aiNtl', value: true }), "NTL in the claims box or notes (Luna's review): Yes");
+  assert.equal(citedSaid({ basis: 'intake', path: 'operations.notes', value: 'No placards.' }), 'Notes: No placards.');
+  assert.equal(citedSaid({ basis: 'intake', path: 'trailers[1].someNewThing', value: 'x' }), 'Some new thing (trailer 2): x');
+  // A left question cites nothing.
+  const [left] = parseResponse(answer(buildRequest(items, context), { option: LEAVE, sourceIds: [], missingInformation: ['placards'] }), items, buildRequest(items, context));
+  assert.deepEqual(left.cited, []);
 });
 
 test('incomplete, refused, wrong-model and tool-call responses never yield an answer', () => {
@@ -495,7 +523,7 @@ test("without a key of the agent's own, the request goes to the server with its 
   assert.equal((await callModel({ apiKey: '', proxy, body, fetchImpl })).model, DEFAULT_MODEL);
   assert.deepEqual(seen, { url: proxy.url, auth: 'Bearer upload', body });
   const status = (s) => async () => ({ ok: false, status: s, json: () => { throw new Error('echoed-private-input'); } });
-  await assert.rejects(callModel({ proxy, body, fetchImpl: status(501) }), /isn't set up on TNI's server/);
+  await assert.rejects(callModel({ proxy, body, fetchImpl: status(501) }), /isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under AI./);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(424) }), /TNI's server right now/);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(401) }), error => /TNI's server refused/.test(error.message) && !/OpenAI API key/.test(error.message));
 });
@@ -591,8 +619,8 @@ test('HTTP integration sends the key only to OpenAI and hides provider errors', 
   assert.equal(calls, 2);
   const refused = async () => ({ ok: false, status: 401, json: () => { throw new Error('echoed-private-input'); } });
   await assert.rejects(callModel({ apiKey: 'synthetic', body, fetchImpl: refused }), error =>
-    /OpenAI API key was refused/.test(error.message) && !error.message.includes('private'));
-  await assert.rejects(callModel({ body, fetchImpl }), /needs an OpenAI API key/);
+    /OpenAI API key was refused. Check it in Settings, under AI/.test(error.message) && !error.message.includes('private'));
+  await assert.rejects(callModel({ body, fetchImpl }), /needs an OpenAI API key. Add it in Settings, under AI./);
 });
 
 // Synthetic claims box. PR #17 moved from Jev to Luna: flags only, one call, nothing applied.
