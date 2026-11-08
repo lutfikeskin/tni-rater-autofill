@@ -324,6 +324,17 @@ test('a fill run keeps whether it ran in the background and how long its page wa
     [[true, 4200, []], [null, null, ['background', 'hiddenMs']], [null, null, ['hiddenMs']]]);
 });
 
+// Audit 2026-11-07, FLOW-11: a fill run or error from a lost Continue's second click keeps `retried`
+// (true only); anything else there is dropped and named.
+test('a Continue retry is kept on its fill_run and fill_error, true only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [ev({ retried: true }), ev({ type: 'fill_error', error: 'continue did not take', retried: true }), ev({ retried: 'yes' })] });
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((e) => [e.type, e.retried ?? null, (e.dropped ?? []).includes('retried')]), [['fill_run', true, false], ['fill_error', true, false], ['fill_run', null, true]]);
+});
+
 // Codex on PR #47: stored events uploaded again (npm run push-logs) keep what was dropped before.
 test('a re-uploaded event keeps the names an earlier server dropped', async () => {
   const dataDir = tmp();
