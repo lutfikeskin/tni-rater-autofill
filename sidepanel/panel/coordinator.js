@@ -341,6 +341,14 @@ function logFillError(ctx, error) {
     rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, ...(ctx.retried ? { retried: true } : {}), error: fillErrorText(ctx, error), ...ctx.ids });
 }
 
+// Whether a fill has answered the page whose report this is: one made only to say a fill was dropped
+// before it began (noteTabLeft's `unfilled`) hasn't, so the page's next fill is its opening one.
+/** @param {string | null} key */
+function filledReport(key) {
+  const report = key ? state.reports.get(key) : null;
+  return !!report && !report.unfilled;
+}
+
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
@@ -349,7 +357,7 @@ function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.inta
   // report yet (AmWINS' next step at the same address, which autoFill fills as a new page) is a page's
   // opening fill: fillPage keeps it for resumeHeldFill, to run once the hold lifts.
   if (stateIssue() || defaultsHold()) {
-    if (ctx.tabId === state.tab?.id && pageOf(state.tab?.url) === page && !state.reports.has(reportKey(ctx.tabId, page, state.tab.carrier))) fillPage({ auto: 'page' });
+    if (ctx.tabId === state.tab?.id && pageOf(state.tab?.url) === page && !filledReport(reportKey(ctx.tabId, page, state.tab.carrier))) fillPage({ auto: 'page' });
     return;
   }
   if (drawn) state.autoDrawn = page;
@@ -370,7 +378,7 @@ async function autoFill(page) {
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
   // step themselves (same address, new questions). It's filled as a new page, with its report.
-  if (!state.reports.has(reportKey(tabId, page, carrier))) { fillPage({ auto: 'page' }); return; }
+  if (!filledReport(reportKey(tabId, page, carrier))) { fillPage({ auto: 'page' }); return; }
   const stepBefore = state.tabSteps?.get(tabId);
   // A step the carrier redraws on every answer (GEICO's Quote & Coverages: newQuestionsOnlySteps)
   // is filled when it opens, on Fill this page, and when it draws new questions (the cargo

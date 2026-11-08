@@ -89,13 +89,19 @@ function resumeHeldFill() {
 // says so, rather than keeping what it said before, as if this fill had run there (CodeRabbit on
 // #410). An automatic one too: going back to the tab doesn't start it again (the recorder there
 // announces no page), so the agent fills it. An earlier fill's error on that report stays, since it
-// already says to fill again and a notice would hide it.
+// already says to fill again and a notice would hide it. A report made only for the notice is
+// `unfilled`: the page is still one no fill has answered, so the next fill there is its opening fill,
+// with its report, never a follow-up (`filledReport`; CodeRabbit on #410).
 /** @param {any} ctx */
 function noteTabLeft(ctx) {
-  if (state.reports.get(reportKey(ctx.tabId, ctx.page, ctx.carrier, ctx.active ?? state.active))?.error) return;
+  const key = reportKey(ctx.tabId, ctx.page, ctx.carrier, ctx.active ?? state.active);
+  const before = state.reports.get(key);
+  if (before?.error) return;
   fillProblem(ctx, ctx.auto
     ? 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.'
     : 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.', 'notice');
+  const made = state.reports.get(key);
+  if (!before && made) made.unfilled = true;
 }
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
@@ -153,7 +159,15 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   if (retried) ctx.retried = retried;
   await pickListItem(carrier, page, ctx);
   // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
-  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); resumeHeldFill(); return; }
+  // A fill the tab switch dropped says so on its page (noteTabLeft), as one dropped later does.
+  if (staleFill(ctx) || state.tab?.id !== tabId) {
+    state.filling = false;
+    renderSite();
+    if (!staleFill(ctx)) noteTabLeft(ctx);
+    runPendingPage(ctx);
+    resumeHeldFill();
+    return;
+  }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.

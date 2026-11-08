@@ -143,7 +143,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'continuedKey']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'continuedKey']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -997,7 +997,7 @@ test('an automatic follow-up on a step without a report fills it as a new page, 
   // autoFill alone: its helpers (fillContext and the rest) are the stubs above; its stop check is
   // the panel's own (no stop here).
   context.renderSteps ??= () => {};
-  vm.runInNewContext(`${extractFunction('autoFill').split('\nfunction ')[0]}\n${extractFunction('stopNoteFor')}`, context);
+  vm.runInNewContext(`${extractFunction('autoFill').split('\nfunction ')[0]}\n${extractFunction('stopNoteFor')}\n${extractFunction('filledReport')}`, context);
   await context.autoFill('Quote');
   assert.deepEqual(JSON.parse(JSON.stringify(fills)), [{ auto: 'page' }]);
   // Back on the step that has its report: a follow-up there stays a follow-up.
@@ -5487,6 +5487,40 @@ test('a dropped fill says why on its page, keeping an earlier error there', asyn
   assert.equal(corrected.seen.problems.length, 1);
   assert.match(corrected.seen.problems[0].text, /You corrected the intake during the fill/);
   assert.deepEqual(corrected.seen.logged.map((e) => e.error), ['stale: intake changed during the fill']);
+  // CodeRabbit on #410: the tab switched while the unit list was read (pickListItem), the fill's
+  // first wait, is said the same way.
+  const listed = fillHarness();
+  listed.context.pickListItem = async () => { listed.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: listed.state.tab.carrier }; };
+  await listed.context.fillPage();
+  assert.deepEqual(listed.seen.problems, [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+});
+
+// CodeRabbit on #410: a report made only to say a fill was dropped isn't a filled page's, so the
+// page's next fill (an earlier AmWINS step at the same address filled, a later edit) is its opening
+// fill with its report, not a follow-up.
+test('a page whose only report says its fill was dropped gets an opening fill next, not a follow-up', async () => {
+  const t = fillHarness();
+  t.state.reports = new Map();
+  t.context.fillProblem = (ctx, text, kind) => { t.state.reports.set(`${ctx.tabId}|report`, { key: `${ctx.tabId}|report`, [kind]: text }); };
+  t.context.pageMoved = async () => { t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier }; return false; };
+  await t.context.fillPage({ auto: 'page' });
+  assert.equal(t.state.reports.get('7|report').unfilled, true);
+  // Back on tab 7: the follow-up there fills the page as a new one.
+  t.state.tab = { id: 7, url: 'https://carrier.test/quote-A', carrier: t.state.tab.carrier };
+  t.state.autoPages.add('/quote-A');
+  let opening = 0;
+  const fillPage = t.context.fillPage;
+  t.context.fillPage = (o) => { if (o?.auto === 'page') opening++; return fillPage(o); };
+  t.context.pageMoved = async () => false;
+  t.context.runKit = async () => [];
+  await t.context.autoFill('/quote-A');
+  assert.equal(opening, 1, 'filled as the page\'s opening fill');
+  // A report a fill made is a filled page's: a follow-up there stays one.
+  t.state.reports.set('7|report', { key: '7|report', fields: 3 });
+  opening = 0;
+  t.context.runKit = async () => [];
+  await t.context.autoFill('/quote-A');
+  assert.equal(opening, 0);
 });
 
 // Codex reproduction (stale-fill-reproduction.mjs): a fill's results came back after the agent had
