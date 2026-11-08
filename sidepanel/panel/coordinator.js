@@ -930,13 +930,13 @@ function renderSite() {
   // dock says what to open).
   $('carrier-line').hidden = !carrier;
   $('brand').hidden = !!carrier;
-  // Where the tab is in the quote: its step, "Page 3 of 7" and a bar (carriers.js quoteProgress).
+  // Where the tab is in the quote: its step, "Stage 3 of 7" and a bar (carriers.js quoteProgress).
   const page = pageOf(state.tab?.url);
   const progress = carrier ? quoteProgress(carrier, page, state.tabSteps.get(state.tab.id)) : null;
   $('site-step').hidden = !progress;
   $('site-step').textContent = progress ? `${progress.name} page` : '';
   $('site-count').hidden = !progress;
-  $('site-count').textContent = progress ? `Page ${progress.index + 1} of ${progress.count}` : '';
+  $('site-count').textContent = progress ? `Stage ${progress.index + 1} of ${progress.count}` : '';
   const filledHere = reportShown() && !!state.reportFor.fields;
   $('site-track').hidden = !progress;
   // Its marks, drawn by site-view.jsx.

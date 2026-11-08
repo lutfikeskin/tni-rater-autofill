@@ -10,7 +10,7 @@ import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 
 // Two tabs: the intake, and the page in front (its fill, then what is left on it for the agent).
-// Not a wizard: the page tab is one view, and the header's "Page n of m" is the quote's place (audit
+// Not a wizard: the page tab is one view, and the header's "Stage n of m" is the quote's place (audit
 // 2026-11-07, UX-04: three numbered steps, two of them the same view, beside the header's "Step n
 // of m"). `prefix`: the id of its note (#check-summary, #fill-summary: the harnesses read them).
 const TABS = [

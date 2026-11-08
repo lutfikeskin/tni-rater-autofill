@@ -7660,14 +7660,14 @@ test('on a stop step the panel offers no fill; on the other steps it names the s
   assert.deepEqual([stoppedDock.phase, stoppedDock.button, stoppedDock.alt], ['yours', undefined, undefined]);
   assert.deepEqual([stoppedDock.title, stoppedDock.sub], ['Finish MVR & CLUE yourself', 'Nothing on this step is filled or clicked.']);
   const stopped = siteHarness(geico, 'MVR & CLUE');
-  assert.deepEqual([stopped['site-step'].textContent, stopped['site-count'].textContent], ['MVR & CLUE page', 'Page 8 of 9']);
+  assert.deepEqual([stopped['site-step'].textContent, stopped['site-count'].textContent], ['MVR & CLUE page', 'Stage 8 of 9']);
   const vehiclesDock = dock('Vehicles');
   assert.deepEqual([vehiclesDock.phase, vehiclesDock.button, vehiclesDock.label, vehiclesDock.title], ['ready', 'fill', 'Fill this page', 'Fill the Vehicles page']);
   assert.equal(vehiclesDock.sub, 'Nothing is submitted. Review, then click Next yourself.');
   const vehicles = siteHarness(geico, 'Vehicles');
-  assert.deepEqual([vehicles['site-step'].textContent, vehicles['site-count'].textContent], ['Vehicles page', 'Page 3 of 9']);
+  assert.deepEqual([vehicles['site-step'].textContent, vehicles['site-count'].textContent], ['Vehicles page', 'Stage 3 of 9']);
   // Audit 2026-11-07, UX-04: "Step n of m" in the header beside the start dock's "Step 1 of 3" (the
-  // panel's own steps): the header says the quote's page, the start dock no step number.
+  // panel's own steps): the header says the quote's stage (several pages may share one: review of #454), the start dock no step number.
   const start = dockHarness({ carrier: geico });
   start.state.intake = null;
   assert.deepEqual([start.dock().phase, start.dock().eyebrow], ['start', 'Start']);
