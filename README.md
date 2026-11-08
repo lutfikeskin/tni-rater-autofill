@@ -112,6 +112,7 @@ Every script reads the server folder, exported logs, or both. `npm run review` r
 ```bash
 npm run review    # everything below, plus AI accept/reject per question and problem reports
 npm run learn     # rule suggestions: possible standards to decide, per-state answers, new intake mappings, rules agents keep correcting
+npm run proposals # questions left to the agent with no suggestion; with --live (OPENAI_API_KEY), a Luna-drafted rule proposal for each, scored against agents' answers
 npm run layouts   # carrier page layouts per state/product -> captures/<carrier>/generated/
 npm run transitions  # when follow-up questions show, answers not seen yet, what changed after an answer -> reviews/
 npm run captures  # manual captures in layouts/, per scenario in order, with what changed between them -> reviews/
