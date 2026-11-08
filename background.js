@@ -1,6 +1,7 @@
 // @ts-check
 import { createTabMarker } from './src/tab-mark.js';
 import { pruneKeptWork } from './src/kept-work.js';
+import { createFillWatch } from './src/fill-watch.js';
 
 // Clicking the toolbar icon opens the side panel.
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
@@ -22,6 +23,10 @@ try {
 // gave in Settings) and on the toolbar icon (a badge): what the panel says over its 'tab-mark' port,
 // let go when the panel closes (src/tab-mark.js).
 createTabMarker(chrome).listen();
+
+// A fill whose panel went away (closed, or reloaded, while it ran) is stopped as Stop does: what
+// the panel says over its 'fill-watch' port (src/fill-watch.js).
+createFillWatch(chrome).listen();
 
 // The agent's corrections and checks kept past their day (src/kept-work.js) are deleted as Chrome
 // starts, whether or not the panel is opened.

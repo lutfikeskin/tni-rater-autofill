@@ -3753,6 +3753,37 @@ test('Stop during a wait on a page that stays busy ends the fill within one wake
   assert.equal(h.kit.progress(), null, 'the fill is over');
 });
 
+// Audit 2026-11-07, UX-03: a panel closed while it filled left the fill running, and a fill begun
+// from the reopened panel ran beside it in the same frame, its Stop reaching only the new one. A
+// fill that begins stops the one still running there; the worker's stopRun stops its run only.
+test('a fill that begins stops one still running in its frame; stopRun stops only its own run', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  let busy = true;
+  h.context.Ext.Ajax.isLoading = () => busy;
+  const { input } = addExtText(h, 'a', '2BA1');
+  const steps = [{ id: 'one', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'First', kind: 'text', value: 'Yes' }];
+  // The orphan: waiting for the page to begin.
+  const orphan = h.kit.fill(steps, { maxRounds: 3, run: 'old' });
+  let second = null;
+  setTimeout(() => { second = h.kit.fill(steps, { maxRounds: 3, run: 'new' }); }, 500);
+  const left = await orphan;
+  assert.equal(left.halted, true, 'the fill left running stops');
+  assert.match(left.reason, /You stopped the fill/);
+  // The worker's stop for the old run: the new fill keeps going.
+  assert.equal(h.kit.stopRun('old'), false);
+  assert.equal(h.kit.progress() != null, true, 'the new fill still runs');
+  assert.equal(h.kit.stopRun('new'), true);
+  const report = await second;
+  assert.equal(report.halted, true);
+  assert.equal(input.value, '', 'neither wrote anything');
+  // A run stopped before it begins here halts as it starts.
+  busy = false;
+  assert.equal(h.kit.stopRun('later'), false);
+  const late = await h.kit.fill(steps, { maxRounds: 3, run: 'later' });
+  assert.equal(late.halted, true);
+  assert.equal(input.value, '');
+});
+
 test('Stop while the fill waits for a busy page to begin keeps its reason and ends at once', async () => {
   const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
   h.context.Ext.Ajax.isLoading = () => true;

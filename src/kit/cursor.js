@@ -88,6 +88,15 @@ export function stop(run = null) {
   running.halt(STOP_HALT);
   return true;
 }
+// One run stopped, as Stop does, and no other (audit 2026-11-07, UX-03): the service worker's, for
+// a fill whose panel went away (src/fill-watch.js). A fill another panel began since is left alone;
+// one with that id that hasn't begun here yet halts as it starts.
+export function stopRun(run) {
+  if (run == null) return false;
+  if (!running || running.run !== run) { stoppedRuns.add(run); return false; }
+  running.halt(STOP_HALT);
+  return true;
+}
 
 // Each report item's resolution, as the fill returns: the answer, how it was decided, why, and
 // what it needs, from its list and its own fields (src/resolution.js itemResolution). The panel
@@ -474,6 +483,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // Set below with the fill's deadline: whether its time is spent, halting it if so.
   const thisFill = { report: state.report, halt, run, phase: null, timeUp: () => false };
   const phase = (name, what = null) => { thisFill.phase = name ? { name, what } : null; };
+  // A fill still running here as this one begins was left by a panel that went away (closed while it
+  // ran, or reloaded): it stops as on Stop, so two fills never type in one frame and this one's Stop
+  // reaches all that runs (audit 2026-11-07, UX-03).
+  if (running && running !== thisFill) running.halt(STOP_HALT);
   running = thisFill;
   // Its time in all (`budgetMs`): once it is spent, the fill stops as on Stop, its waits with it, and
   // the report says why (`outOfTime`). A fill begun again in its frame (below) keeps this one's end

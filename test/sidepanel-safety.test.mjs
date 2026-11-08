@@ -6027,7 +6027,7 @@ test('while a fill runs the panel asks each frame only for new rows and keeps th
   const asked = [];
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; },
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; },
     setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { asked.push(JSON.parse(JSON.stringify(o.args[0]))); return reply; } } },
   };
@@ -6066,7 +6066,7 @@ test('while a fill runs the panel streams the items judged with the answers, in 
   const asked = [];
   const state = { fillingFor: { run: 'r1', tabId: 3, filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; },
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; },
     setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { asked.push(JSON.parse(JSON.stringify(o.args[0]))); return reply; } } },
   };
@@ -6105,7 +6105,7 @@ test('a fill whose page stops answering is said in the dock, and the word goes w
   let renders = 0;
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, UNANSWERED_MS: 5000,
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; }, UNANSWERED_MS: 5000,
     Date: { now: () => clock }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: () => new Promise((resolve) => { answer = resolve; }) } },
   };
@@ -6143,7 +6143,7 @@ test('the page not answering and Stop are said in a new fillingFor', async () =>
   const stopped = [];
   const button = { disabled: false };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps() {}, UNANSWERED_MS: 5000, $: () => button,
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps() {}, UNANSWERED_MS: 5000, $: () => button,
     Date: { now: () => clock }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { if (o.args[0] === 'r1') stopped.push(o.target.tabId); return new Promise(() => {}); } } },
   };
@@ -9124,7 +9124,7 @@ test('watchFill says a quiet automatic fill as one once it has gone on QUIET_MS,
   const state = { fillingFor: { run: 'r', auto: true, rows: [], started: 1000 } };
   let now = 1000;
   const context = { state, inExtension: true, QUIET_MS: 1500, UNANSWERED_MS: 5000, Date: { now: () => now }, renderSteps: () => { drawn++; },
-    setInterval: (fn) => { ticks.push(fn); return 1; }, clearInterval() {}, worldFor: () => 'ISOLATED',
+    setInterval: (fn) => { ticks.push(fn); return 1; }, clearInterval() {}, worldFor: () => 'ISOLATED', fillRunning() {}, fillEnded() {},
     chrome: { scripting: { executeScript: async () => [] } } };
   vm.runInNewContext(extractFunction('watchFill'), context);
   context.watchFill({ run: 'r', tabId: 7, carrier: {} });
@@ -9999,7 +9999,7 @@ test('the live list and the dock say what the kit waits on (its phase), and a ph
   let reply = [];
   let renders = 0;
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
-  const wctx = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+  const wctx = { inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async () => reply } } };
   vm.runInNewContext(extractFunction('watchFill'), wctx);
   wctx.watchFill({ run: 'r1', tabId: 3, carrier: {} });
@@ -10339,7 +10339,7 @@ test('the live list takes the top frame\'s phase while its fill runs', async () 
   let tick = null;
   let reply = [];
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
-  const context = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => {}, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+  const context = { inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => {}, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async () => reply } } };
   vm.runInNewContext(extractFunction('watchFill'), context);
   context.watchFill({ run: 'r1', tabId: 3, carrier: {} });

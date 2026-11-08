@@ -28,6 +28,7 @@ import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishin
 import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
 import { markTab } from './tab-mark.js';
+import { fillEnded, fillRunning } from './fill-watch.js';
 import { bindQuoteTab, quoteOwnerIssue } from './quote-owner.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
@@ -208,6 +209,9 @@ function notePageMoved(ctx) {
 const UNANSWERED_MS = 5000;
 function watchFill(ctx) {
   if (!inExtension) return () => {};
+  // Said to the service worker while it runs, so it is stopped if this panel goes away meanwhile
+  // (fill-watch.js; audit 2026-11-07, UX-03).
+  fillRunning(ctx.run, ctx.tabId, worldFor(ctx.carrier));
   const lists = new Map();
   // Each frame's latest items (pagekit `itemsAt`, the round's snapshot, and its list).
   const judged = new Map();
@@ -263,7 +267,7 @@ function watchFill(ctx) {
       ...(order.length ? { frames: order } : {}), phase, phaseKey };
     renderSteps();
   }, 500);
-  return () => clearInterval(timer);
+  return () => { clearInterval(timer); fillEnded(ctx.run); };
 }
 
 // Step 2's Stop: halts the running fill in every frame of its tab (pagekit stop), as an agent edit
