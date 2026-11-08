@@ -299,6 +299,11 @@ test('what the extension\'s fill says is kept by its own time; anything else on 
   await h.advance(400);
   const [run, answered] = h.events().filter((e) => e.kind === 'kit').slice(-2);
   assert.deepEqual([run.source, 'source' in answered], ['ai', false]);
+  // REC-02: what the wait saw itself, as numbers only.
+  say(JSON.stringify({ what: 'wait', t: ORIGIN + 4000, start: ORIGIN + 3800, ms: 200, ended: 'quiet', lastChange: ORIGIN + 3950, lastHeld: 'Sam Smith' }));
+  await h.advance(400);
+  const last = h.events().filter((e) => e.kind === 'kit').at(-1);
+  assert.deepEqual([last.lastChange, 'lastHeld' in last], [ORIGIN + 3950, false]);
 });
 
 // Review of PR #257: the page can dispatch the same event, so what it holds is built afresh from

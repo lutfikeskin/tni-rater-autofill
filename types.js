@@ -611,6 +611,7 @@
  * @property {any} [confirmed]  the page's receipt as the agent approved it
  * @property {string | null} [run]
  * @property {number} [loadResultMs]
+ * @property {number} [budgetMs]  how long the fill may run in all (FILL_BUDGET_MS, 5 minutes), then it stops as on Stop
  * @property {string[]} [filledBefore]
  * @property {string | null} [expectPage]
  * @property {{ list: UnitList, text: string, names: string[][], active: number, label: string } | null} [formUnit]
@@ -620,6 +621,7 @@
  *   shows another unit's answer (`givenForOtherUnit`)
  * @property {UnitPager | null} [pager]  the carrier's `unitPager`
  * @property {boolean} [restarted]  the kit's own: a frame's fill begun again on the page it turned into (pagekit fill)
+ * @property {number | null} [deadline]  the kit's own: when that fill's time in all ends, the time of the fill it began again from
  * @property {boolean} [trace]  a developer recording runs on the tab: the kit says what it waits
  *   for, answers and presses as `rater-trace` events (pagekit `kitTrace`, docs/developer-recording.md)
  */
@@ -754,6 +756,7 @@
  * @property {string[]} invalidatedActions
  * @property {boolean} halted
  * @property {string} [reason]  why it halted
+ * @property {boolean} [outOfTime]  it halted because its time in all (`budgetMs`) was spent
  * @property {string[]} [blockers]  what holds Continue
  * @property {{ list: UnitList, id: string } | null} unitForm
  * @property {{ list: UnitList, id: string } | null} unitHeld
