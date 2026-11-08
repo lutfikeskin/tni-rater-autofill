@@ -9,6 +9,7 @@ import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 
+/** @param {{ dob?: string, year?: number | string, value?: number | string }} [o] a year or value may be unreadable text */
 const record = ({ dob = '01/02/1980', year = 2022, value = 45000 } = {}) => ({
   applicant: { name: 'Synthetic Expediter LLC', dot: '1234567', owner1: 'Zed Other', ownerDrives: true },
   garaging: { street: '1 Test Way', city: 'Testville', state: 'OH', zip: '07000' },

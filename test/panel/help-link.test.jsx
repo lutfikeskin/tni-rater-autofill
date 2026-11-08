@@ -13,10 +13,10 @@ const read = (rel) => fs.readFileSync(rel, 'utf8');
 
 test('each view has a ? that opens the guide at its own section in a new tab', () => {
   const guide = read('sidepanel/guide.html');
-  for (const topic of Object.keys(HELP_TOPICS)) {
+  for (const topic of /** @type {(keyof typeof HELP_TOPICS)[]} */ (Object.keys(HELP_TOPICS))) {
     const { container } = render(<HelpLink topic={topic} />);
     const a = container.querySelector('a.help-link');
-    expect([a.getAttribute('href'), a.target, a.rel, a.getAttribute('aria-label'), a.textContent])
+    expect([a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel'), a.getAttribute('aria-label'), a.textContent])
       .toEqual([`guide.html#${topic}`, '_blank', 'noopener', HELP_TOPICS[topic], '?']);
     expect(guide, `the guide has a section for ${topic}`).toMatch(new RegExp(`<section id="${topic}">`));
     cleanup();
