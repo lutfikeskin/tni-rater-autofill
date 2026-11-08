@@ -546,6 +546,21 @@ test('keeps a panel crash with its bounded message and extension frames only', a
   assert.deepEqual(bad.dropped.sort(), ['error', 'stack', 'where']);
 });
 
+test('keeps a carrier rule that threw while a plan was built, named by its concept and question', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'client_error', filled: undefined, where: 'plan', error: 'x is not a function', concept: 'driver.dob', q: '28A7' }),
+      ev({ type: 'client_error', filled: undefined, where: 'plan', error: 'x', concept: 'Jane Doe 01/02/1980', q: 'q'.repeat(81) }),
+    ] })).json();
+    assert.equal(r.accepted, 2);
+  });
+  const [ok, bad] = stored(dataDir);
+  assert.deepEqual([ok.where, ok.concept, ok.q], ['plan', 'driver.dob', '28A7']);
+  assert.deepEqual([bad.concept, bad.q], [undefined, undefined]);
+  assert.deepEqual(bad.dropped.sort(), ['concept', 'q']);
+});
+
 test('a page layout keeps the page\'s messages, bounded', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {

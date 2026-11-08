@@ -386,6 +386,7 @@
  * @property {boolean} standard
  * @property {boolean} reviewRequired
  * @property {boolean} manualOnly
+ * @property {boolean} [ruleError]  its rule threw while the plan was built: no answer, the agent's
  * @property {string | null} q
  * @property {string | null} tni  the TNI rulebook entry its rule names (CarrierRule `tni`)
  * @property {{ id: string, amount?: string, tni?: string, ask?: boolean }} [agentDefault]  the agent's own default
@@ -554,6 +555,18 @@
  * buildPlan's options.
  * @typedef {object} PlanOptions
  * @property {StepOverlay | null} [overlay]
+ * @property {((error: unknown, at: RuleErrorAt) => void) | null} [onRuleError]  told of each rule
+ *   that threw while the plan was built; that rule's step is the agent's (`ruleError`)
+ */
+
+/**
+ * Which rule threw while a plan was built (src/plan.js fieldSteps): the rule's own names, never a
+ * value from the record.
+ * @typedef {object} RuleErrorAt
+ * @property {string | null} carrier
+ * @property {string | null} concept
+ * @property {string | null} q
+ * @property {string | null} name
  */
 
 // Agents' own defaults (src/agent-defaults/, docs/agent-defaults-spec.md)
@@ -841,9 +854,11 @@
 /**
  * @typedef {object} ClientErrorEvent
  * @property {'client_error'} type
- * @property {string} [where]
+ * @property {string} [where]  panel, recorder, or plan (a carrier rule that threw while a plan was built)
  * @property {string} error
  * @property {string[]} [stack]
+ * @property {string} [concept]  where 'plan': the rule's concept
+ * @property {string} [q]  where 'plan': the rule's question id
  */
 
 /**
