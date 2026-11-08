@@ -1,4 +1,4 @@
-# Only server/ is needed to build the usage server (server/Dockerfile).
+# Only server/ and src/usage-schema.js are needed to build the usage server (server/Dockerfile).
 node_modules
 layouts
 server-data

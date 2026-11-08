@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom, SCHEMA_VERSION } from '../server/index.mjs';
 import { MAX_EVENTS } from '../src/usage.js';
 import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
@@ -301,6 +301,7 @@ test('dropped fields are named on the event (names only, bounded), and health na
     const hash = crypto.createHash('sha256');
     const copied = imageFiles(fs.readFileSync(new URL('../server/Dockerfile', import.meta.url), 'utf8')).filter((f) => f !== 'server/Dockerfile');
     assert.ok(copied.includes('server/privacy.html'));
+    assert.ok(copied.includes('src/usage-schema.js'), 'the shared event contract too');
     for (const f of copied) hash.update(fs.readFileSync(new URL(`../${f}`, import.meta.url)));
     assert.equal(health.server, hash.digest('hex').slice(0, 12));
     assert.equal(health.server, SERVER_HASH);
@@ -354,14 +355,14 @@ test('health names the server version for anyone; how many events are stored onl
   await withServer({ dataDir, token: 'up' }, async ({ post, base }) => {
     await post({ events: [ev()] }, { authorization: 'Bearer up' });
     const anyone = await (await fetch(`${base}/v1/health`)).json();
-    assert.deepEqual(anyone, { ok: true, server: SERVER_HASH }, 'no admin token configured: never a count');
+    assert.deepEqual(anyone, { ok: true, server: SERVER_HASH, schema: SCHEMA_VERSION }, 'no admin token configured: never a count');
     const uploader = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer up' } })).json();
     assert.equal(uploader.events, undefined, 'the token every extension carries is not enough');
   });
   await withServer({ dataDir, token: 'up', adminToken: 'admin' }, async ({ base }) => {
     assert.equal((await (await fetch(`${base}/v1/health`)).json()).events, undefined);
     const { metrics, ...admin } = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json();
-    assert.deepEqual(admin, { ok: true, server: SERVER_HASH, events: 1 });
+    assert.deepEqual(admin, { ok: true, server: SERVER_HASH, schema: SCHEMA_VERSION, events: 1 });
     assert.ok(metrics && typeof metrics.uptimeS === 'number', 'and the counters (below)');
   });
 });
@@ -1341,4 +1342,24 @@ test('the request\'s agent is used only in the shape of an event\'s', async () =
     for (const agent of ['AYAZ', 'x'.repeat(40), { initials: 'AB' }, 'a@b.c']) await post({ agent, events: [ev()] });
   });
   assert.deepEqual(stored(dataDir).map((e) => e.agent), ['AYAZ', null, null, null]);
+});
+
+// Audit 2026-11-07, SRV-14: an extension released before its server sent fields the server dropped
+// for good. Events carry the schema they were logged under; one newer than the server's is refused
+// in words the extension retries, so it waits for the deploy instead of losing its new fields.
+test('an event of a newer schema than the server\'s is refused, saying so; this one and older ones are kept with their schema', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ schema: SCHEMA_VERSION + 1, newField: 'x' }), ev({ schema: SCHEMA_VERSION }), ev(), ev({ schema: 0 }), ev({ schema: '1' }), ev({ type: 'a_new_type', schema: SCHEMA_VERSION + 1 }),
+    ] })).json();
+    assert.deepEqual(r.rejected, [
+      { index: 0, error: `schema newer than server (${SCHEMA_VERSION + 1} > ${SCHEMA_VERSION})` },
+      { index: 3, error: 'schema is not a valid schema version' },
+      { index: 4, error: 'schema is not a valid schema version' },
+      { index: 5, error: `schema newer than server (${SCHEMA_VERSION + 1} > ${SCHEMA_VERSION})` },
+    ]);
+    assert.equal(r.accepted, 2);
+  });
+  assert.deepEqual(stored(dataDir).map((e) => [e.schema, e.dropped]), [[SCHEMA_VERSION, undefined], [undefined, undefined]], 'kept, never in dropped; an older client\'s has none');
 });
