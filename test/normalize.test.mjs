@@ -1376,6 +1376,38 @@ test('the notes\' wordings of years in business, and of a start year (W44-09)', 
   assert.equal(noYears('Established 2019\nIn business for 7 years').record.applicant.yearsInBusiness, 7);
 });
 
+// The maintainer, 2026-11-08 (audit DATA-15): "Est.", "Started", "Opened" and "Business started" with a
+// year fill years in business, with the check to confirm; "Operating for N years" may mean the trucks,
+// so it is the agent's with the line quoted, never the blank standard's New Venture.
+test('a start year said as Est., Started, Opened or Business started; Operating for N years is the agent\'s', () => {
+  for (const [notes, est] of [['Est. 2015', 2015], ['Est 2015', 2015], ['Started business in 2018', 2018], ['Business started 2019', 2019],
+    ['Opened in 2020', 2020], ['Started in 2021', 2021], ['Company opened 2017', 2017]]) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearEstablished, est, notes);
+    assert.equal(r.record.applicant.yearsInBusiness, 2026 - est, notes);
+    const check = r.warnings.find((w) => w.code === 'years-in-business.notes');
+    assert.match(check?.msg ?? '', new RegExp(`"${notes.replace('.', '\\.')}": years in business is ${2026 - est}, established ${est}\\. Confirm\\.`), notes);
+    assert.ok(!r.warnings.some((w) => w.code === 'years-in-business.default'), notes);
+  }
+  for (const notes of ['Operating for 4 years', 'Started the business a few years ago']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearsInBusiness, null, notes);
+    assert.equal(r.record.applicant.yearsInBusinessUnread, true, notes);
+    assert.match(r.warnings.find((w) => w.code === 'years-in-business.notes')?.msg ?? '', new RegExp(`"${notes}".*left to you`), notes);
+    assert.ok(!r.warnings.some((w) => w.code === 'years-in-business.default'), notes);
+    const years = buildPlan(r.record, amwins).find((s) => s.selector === '#yrsInBusiness');
+    assert.equal(years.value, null, `${notes}: no New Venture`);
+    assert.match(years.note, /answer it yourself/);
+  }
+  // Not the business's start: still the blank standard.
+  for (const notes of ['Started driving in 2015', 'Started hauling in 2018', 'Est. value 2015', 'Operating radius 200 miles']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearEstablished, null, notes);
+    assert.equal(r.record.applicant.yearsInBusinessUnread ?? null, null, notes);
+    assert.ok(r.warnings.some((w) => w.code === 'years-in-business.default'), notes);
+  }
+});
+
 test('numbers in the notes about something else stay out of years in business (W44-09)', () => {
   for (const notes of ['10 years driving', 'CDL for 5 years', '5 years experience in business', 'Driver experience: 3+ years in business', 'POP is for 1+ year',
     'WITH STATEFARM A YEAR', 'insured for 14 month', 'Policy term 1 year', 'Accident in 2019', 'Insured since 2019', '20 years in the business',
