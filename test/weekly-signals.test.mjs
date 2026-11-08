@@ -216,12 +216,25 @@ test("signals says how much Luna suggested, what agents kept or changed, what it
   e({ type: 'field_change', q: '5C', view: 't1', by: 'agent', kind: 'radio', from: 'No', to: 'Yes' });
   const viewed = signals(events, { since: '2026-10-06' });
   assert.deepEqual([viewed.kpis.aiPutIn, viewed.kpis.aiChangedLater], [5, 3]);
-  assert.deepEqual(s.aiLeft, [['progressive · 7Z · missing', 2], ['progressive · 7Z · noSource', 1]]);
+  // CodeRabbit on PR #413: a question without a code (AmWINS, GEICO) is known by its label (masked
+  // as the report masks it), on its page and in its view.
+  e({ type: 'ai_decision', label: 'Years at "[client]"', view: 't1', decision: 'accepted' });
+  e({ type: 'field_change', label: 'Years at "[client]"', view: 't1', by: 'agent', kind: 'select', from: '1', to: '3' });
+  e({ type: 'ai_decision', label: 'Any team drivers?', view: 't1', decision: 'auto' });
+  e({ type: 'field_change', label: 'Any team drivers? (optional)', view: 't1', by: 'agent', kind: 'radio', from: 'No', to: 'Yes' });
+  const labelled = signals(events, { since: '2026-10-06' });
+  assert.deepEqual([labelled.kpis.aiPutIn, labelled.kpis.aiChangedLater], [7, 4], 'by label: one matched, another label is another question');
+  // The leave tally keeps one label's questions on different pages apart.
+  e({ type: 'ai_leave', label: 'Any team drivers?', leaveWhy: 'missing' });
+  events.push({ ...events.at(-1), id: 'leave-other-page', page: 'Drivers' });
+  assert.deepEqual(signals(events, { since: '2026-10-06' }).aiLeft.filter(([k]) => k.includes('team')).sort(),
+    [['progressive · Drivers · Any team drivers? · missing', 1], ['progressive · Quote · Any team drivers? · missing', 1]]);
+  assert.deepEqual(s.aiLeft, [['progressive · Quote · 7Z · missing', 2], ['progressive · Quote · 7Z · noSource', 1]]);
   assert.deepEqual(s.aiRules, [['general.cdl-blank · auto', 1], ['general.cdl-blank · approved', 1], ['progressive.um · accepted', 1]]);
   const md = markdown(s);
   assert.match(md, /\| AI: questions suggested · decisions accepted or approved \| 25% · 75% \|/);
   assert.match(md, /\| AI answers put in that the agent changed later \| 1 of 2 \|/);
-  assert.match(md, /## Questions Luna left most[\s\S]*- 2 · progressive · 7Z · missing/);
+  assert.match(md, /## Questions Luna left most[\s\S]*- 2 · progressive · Quote · 7Z · missing/);
   assert.match(md, /## TNI rules Luna cited[\s\S]*- 1 · progressive\.um · accepted/);
 });
 

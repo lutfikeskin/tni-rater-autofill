@@ -297,10 +297,11 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     ai.set(build(e), a);
   }
 
-  // The questions Luna left most (ai_leave: carrier, question code or label, why), and the TNI rules
-  // its decisions cited, by what the agent did with them (audit 2026-11-07, AI-07).
+  // The questions Luna left most (ai_leave: carrier, page, question code or label, why), and the TNI
+  // rules its decisions cited, by what the agent did with them (audit 2026-11-07, AI-07). The page
+  // keeps one label's questions on two pages apart (CodeRabbit on PR #413); ai_leave carries no step.
   const aiLeft = new Map();
-  for (const e of events.filter((x) => x.type === 'ai_leave')) tally(aiLeft, `${e.carrier ?? '?'} · ${e.q ?? mask(e.label ?? '?')} · ${e.leaveWhy ?? '?'}`);
+  for (const e of events.filter((x) => x.type === 'ai_leave')) tally(aiLeft, `${e.carrier ?? '?'} · ${e.page ?? '?'} · ${e.q ?? mask(e.label ?? '?')} · ${e.leaveWhy ?? '?'}`);
   const aiRules = new Map();
   for (const e of events.filter((x) => x.type === 'ai_decision' && Array.isArray(x.ruleIds))) for (const id of e.ruleIds) tally(aiRules, `${id} · ${e.decision ?? '?'}`);
 
@@ -358,15 +359,18 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   // not a count of wrong answers, since a wrong answer the agent left in place isn't counted and a
   // client may have changed their mind. Each answer once. A decision from a build that logged no
   // view (before 2026-11-07) matches a change in any view of its page (CodeRabbit on PR #413).
-  const aiOnce = (e, view = e.view ?? '') => `${e.session}|${e.page}|${view}|${e.q}`;
+  // A question without a code (AmWINS, GEICO) by its label, masked as the report masks it: both
+  // events log it redacted the same way, and neither logs the control's key (CodeRabbit on PR #413).
+  const questionOf = (e) => (e.q ? `q:${e.q}` : e.label ? `label:${mask(e.label)}` : null);
+  const aiOnce = (e, view = e.view ?? '') => `${e.session}|${e.page}|${view}|${questionOf(e)}`;
   const putIn = new Map();
-  for (const e of aiDecisions.filter((x) => (x.decision === 'accepted' || x.decision === 'auto') && x.q)) {
+  for (const e of aiDecisions.filter((x) => (x.decision === 'accepted' || x.decision === 'auto') && questionOf(x))) {
     const k = aiOnce(e, e.view ?? '*');
     if (!putIn.has(k)) putIn.set(k, e.t);
   }
   const changedAfter = new Set();
   for (const e of events) {
-    if (e.type !== 'field_change' || e.by !== 'agent' || !e.q) continue;
+    if (e.type !== 'field_change' || e.by !== 'agent' || !questionOf(e)) continue;
     const k = [aiOnce(e), aiOnce(e, '*')].find((x) => putIn.has(x));
     if (k && e.t > putIn.get(k)) changedAfter.add(k);
   }
