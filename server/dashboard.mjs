@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The maintainer's live usage page (GET /dashboard on the usage server, server/index.mjs): the
 // last 24 hours, 7 and 30 days of the events this server stored, in plain server-rendered HTML
 // that reloads itself every minute. Behind RATER_DASHBOARD_TOKEN (HTTP Basic, any user name, the

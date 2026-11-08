@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Each plan step's and report item's `resolution` (src/resolution.js) agrees with the old fields it
 // is built from (source, standard, manualOnly, reviewRequired / review, note, warn): for every
 // carrier, on the fixture intakes, a blank one and one in review mode. The page kit's report items
