@@ -6897,7 +6897,7 @@ test('a settings change is logged only with an intake and session open, and a fa
   let failing = false;
   const sandbox = {
     state: { intake: null }, $: () => null,
-    usage: { currentSession: () => session, settings: async () => { if (failing) throw new Error('storage'); return {}; }, log: (e) => logged.push(e), DEFAULT_SERVER: 'https://example.test' },
+    usage: { currentSession: () => session, settingsWithPolicy: async () => { if (failing) throw new Error('storage'); return {}; }, log: (e) => logged.push(e), DEFAULT_SERVER: 'https://example.test' },
     agentSettingsEvent: (saved, opts) => ({ type: 'agent_settings', reason: opts.reason, changed: opts.changed }),
   };
   vm.createContext(sandbox);

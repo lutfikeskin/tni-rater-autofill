@@ -21,7 +21,7 @@ import { markSwitch } from './tab-mark.js';
 async function renderUsage() {
   const n = await usage.count();
   const { agent = '', serverToken = '' } = await usage.settings();
-  const { serverUrl } = await usage.serverConfig();
+  const { serverUrl, managed } = await usage.serverConfig();
   const up = usage.lastUpload();
   const when = up.at ? new Date(up.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
   state.usageCard = {
@@ -33,7 +33,7 @@ async function renderUsage() {
       ok: `Uploaded to the server at ${when}.`,
       error: `Upload failed at ${when}: ${up.message}. Saved here and retried every minute.`,
       off: 'No server set. Use Export log to hand it in.',
-      idle: serverUrl ? `Uploads to ${serverUrl} every minute.` : '',
+      idle: serverUrl ? `Uploads to ${serverUrl} every minute${managed ? ', as your organization set it' : ''}.` : '',
     }[up.state] ?? '',
     uploadTone: up.state === 'ok' ? 'ok' : up.state === 'error' || up.state === 'off' ? 'warn' : '',
   };

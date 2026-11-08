@@ -55,6 +55,54 @@ test('uploads go to the central server with the built-in token unless the agent 
   assert.equal((await usage.serverConfig()).serverUrl, '', 'blank: export only');
 });
 
+// Managed setup (audit 2026-11-07, UX-12 d): what an organization deploys by policy
+// (chrome.storage.managed) takes the place of the extension's defaults; the agent's own settings win.
+test('a server, token and AI defaults set by policy are used until the agent sets their own', async () => {
+  let policy = {};
+  globalThis.chrome = { storage: { managed: { get: async () => policy } } };
+  try {
+    await usage.saveSettings({ serverUrl: undefined, serverToken: '', aiOn: undefined, lunaAuto: undefined });
+    assert.deepEqual(await usage.serverConfig(), { serverUrl: usage.DEFAULT_SERVER, serverToken: usage.DEFAULT_TOKEN }, 'no policy: as before');
+
+    policy = { serverUrl: 'https://usage.agency.test', serverToken: 'agency-token', aiOn: false, lunaAuto: true, extra: 'x' };
+    assert.deepEqual(await usage.serverConfig(), { serverUrl: 'https://usage.agency.test', serverToken: 'agency-token', managed: true });
+    assert.deepEqual(await usage.settingsWithPolicy(), { serverUrl: 'https://usage.agency.test', aiOn: false, lunaAuto: true, serverToken: '' },
+      'the policy\'s defaults, never its token; the agent\'s blank token box stays theirs');
+
+    // A token alone goes to the central server; the built-in one never to the policy's server.
+    policy = { serverToken: 'agency-token' };
+    assert.deepEqual(await usage.serverConfig(), { serverUrl: usage.DEFAULT_SERVER, serverToken: 'agency-token' });
+    policy = { serverUrl: 'https://usage.agency.test' };
+    assert.deepEqual(await usage.serverConfig(), { serverUrl: 'https://usage.agency.test', serverToken: '', managed: true });
+
+    // The agent's own settings win, and the policy's token doesn't follow them to their server.
+    policy = { serverUrl: 'https://usage.agency.test', serverToken: 'agency-token', aiOn: false };
+    await usage.saveSettings({ serverUrl: 'http://localhost:8787', aiOn: true });
+    assert.deepEqual(await usage.serverConfig(), { serverUrl: 'http://localhost:8787', serverToken: '' });
+    assert.equal((await usage.settingsWithPolicy()).aiOn, true);
+
+    // Values out of their shape are ignored, and a managed area that can't be read is no policy.
+    await usage.saveSettings({ serverUrl: undefined, aiOn: undefined });
+    policy = { serverUrl: 'ftp://x', serverToken: 7, aiOn: 'no', lunaAuto: 1 };
+    assert.deepEqual(await usage.managedSettings(), {});
+    globalThis.chrome = { storage: { managed: { get: async () => { throw new Error('no managed storage'); } } } };
+    assert.deepEqual(await usage.serverConfig(), { serverUrl: usage.DEFAULT_SERVER, serverToken: usage.DEFAULT_TOKEN });
+  } finally {
+    delete globalThis.chrome;
+    await usage.saveSettings({ serverUrl: undefined, serverToken: '', aiOn: undefined, lunaAuto: undefined });
+  }
+});
+
+test('the manifest declares the policy\'s keys in its managed schema, each with its type', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+  const schema = JSON.parse(fs.readFileSync(new URL(`../${manifest.storage.managed_schema}`, import.meta.url), 'utf8'));
+  assert.deepEqual(Object.keys(schema.properties).sort(), [...usage.MANAGED_KEYS].sort());
+  for (const [k, p] of Object.entries(schema.properties)) {
+    assert.equal(p.type, ['aiOn', 'lunaAuto'].includes(k) ? 'boolean' : 'string', k);
+    assert.ok(p.title && p.description, k);
+  }
+});
+
 // A fake collection server: `reply(body)` answers each upload; health checks just say ok.
 function fakeServer(reply) {
   const requests = [];

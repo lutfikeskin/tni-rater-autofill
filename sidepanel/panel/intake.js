@@ -159,7 +159,8 @@ function problemContext(tab, page) {
 async function logSettings(reason, changed) {
   try {
     if (reason === 'changed' && !(state.intake && usage.currentSession())) return;
-    const saved = await usage.settings();
+    // As in force: a setting the agent never touched is the organization's policy's.
+    const saved = await usage.settingsWithPolicy();
     // agent defaults: the quote's own defaults once the agent answered whose they are.
     usage.log(agentSettingsEvent(saved, { overwrite: switchOn('overwrite', 'overwrite'), reason, changed, centralServer: usage.DEFAULT_SERVER, defaults: settingsDefaults() }));
   } catch { /* the settings log is best effort */ }

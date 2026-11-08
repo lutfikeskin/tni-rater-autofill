@@ -41,6 +41,37 @@ export async function saveSettings(patch) {
   await local.set('settings', { ...(await settings()), ...patch });
 }
 
+// What an organization deployed by policy (chrome.storage.managed, its keys in
+// src/managed-schema.json; audit 2026-11-07, UX-12 d): the usage server and its upload token, and
+// the AI's defaults (aiOn: Suggest answers, lunaAuto: Put checked picks in). Each takes the place of
+// the extension's own default; what the agent set in Settings still wins (Advanced is for setup,
+// such as a local test server). A value out of its shape is ignored; no policy, or a managed area
+// that can't be read, is none.
+const MANAGED_SHAPES = {
+  serverUrl: (v) => typeof v === 'string' && (v === '' || /^https?:\/\/[^\s]+$/i.test(v)),
+  serverToken: (v) => typeof v === 'string' && v.length <= 200,
+  aiOn: (v) => typeof v === 'boolean',
+  lunaAuto: (v) => typeof v === 'boolean',
+};
+// The policy's keys, as src/managed-schema.json declares them (test/usage-log.test.mjs keeps them in step).
+export const MANAGED_KEYS = Object.keys(MANAGED_SHAPES);
+export async function managedSettings() {
+  const area = globalThis.chrome?.storage?.managed;
+  if (!area) return {};
+  let raw;
+  try { raw = await area.get(null); } catch { return {}; }
+  return Object.fromEntries(Object.entries(MANAGED_SHAPES).filter(([k, ok]) => ok(raw?.[k])).map(([k]) => [k, raw[k]]));
+}
+
+// The agent's settings over what the policy deployed (managedSettings), its token left out: what
+// the AI and the settings log go by. A setting the agent never touched is the policy's.
+export async function settingsWithPolicy() {
+  const [saved, { serverToken: _token, ...policy }] = await Promise.all([settings(), managedSettings()]);
+  const out = { ...policy };
+  for (const [k, v] of Object.entries(saved)) if (v !== undefined) out[k] = v;
+  return out;
+}
+
 const SEQ_KEY = 'usageSeq';
 // A random id for this copy of the extension on this computer, made once and stamped on every
 // event (`install`): with `seq`, which numbers this computer's events, a review tells two computers
@@ -132,11 +163,16 @@ export const DEFAULT_SERVER = 'https://usage-server-production.up.railway.app';
 export const DEFAULT_TOKEN = 'f1bc92546c9f329c321dbc6a33611c07';
 
 // The server and token in use: the agent's own settings when set (a local server for testing),
-// otherwise the central one. A blank server setting means "no server" (export only).
+// otherwise the one the organization's policy names (managedSettings: `managed`), otherwise the
+// central one. A blank server setting means "no server" (export only). The policy's token goes
+// with the server it is for (the policy's, or the central one when the policy names no server),
+// the built-in token only to the central server.
 export async function serverConfig() {
-  const { serverUrl, serverToken = '' } = await settings();
-  const url = serverUrl === undefined ? DEFAULT_SERVER : serverUrl;
-  return { serverUrl: url, serverToken: serverToken || (url === DEFAULT_SERVER ? DEFAULT_TOKEN : '') };
+  const [{ serverUrl, serverToken = '' }, policy] = await Promise.all([settings(), managedSettings()]);
+  const managed = serverUrl === undefined && policy.serverUrl !== undefined;
+  const url = serverUrl !== undefined ? serverUrl : policy.serverUrl ?? DEFAULT_SERVER;
+  const policyToken = policy.serverToken && url === (policy.serverUrl ?? DEFAULT_SERVER) ? policy.serverToken : '';
+  return { serverUrl: url, serverToken: serverToken || policyToken || (url === DEFAULT_SERVER ? DEFAULT_TOKEN : ''), ...(managed ? { managed: true } : {}) };
 }
 const REJECTED_KEY = 'usageRejected';
 const BATCH = 500;
