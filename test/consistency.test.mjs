@@ -293,6 +293,7 @@ const NOT_TRACKED = {
   'live.json': "a file in a developer recording's folder in the browser, while it records",
   'recording.json': "a file inside a developer recording's zip",
   '.claude/worktrees': 'local git worktrees agents work in, ignored',
+  'THIRD_PARTY_NOTICES.txt': 'written into each packaged copy by scripts/package.mjs',
 };
 // A document's paths that aren't in the repository: backticked ones under its own folders, backticked
 // file names with no folder (a root file, or a tracked file's own name), and relative links.

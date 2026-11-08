@@ -472,6 +472,8 @@ const perRow = (rules) => rules.map(/** @returns {CarrierRule} */ (rule) => {
 export const amwins = {
   id: 'amwins',
   name: 'AmWINS',
+  // The quote is started from Commercial Lines (its nav link on the application's pages).
+  display: { logo: 'assets/raters/amwins.svg', portalUrl: 'https://myagency.amwinsadmittedplacement.com/commerciallines', product: 'Commercial auto', classesSaid: 'expediters and general freight' },
   hosts: [/(^|\.)amwinsadmittedplacement\.com$/],
   // What its pages draw that no other carrier does (its loading overlay, a tab per step),
   // injected before the fill engine.

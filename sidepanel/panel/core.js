@@ -372,6 +372,7 @@ const state = storeState({
   // automatic fills wait on a quote page whose quote wasn't started with the intake loaded.
   quoteOwners: new Map(),
   quoteEntries: new Set(), // tabs whose next quote starts with the intake loaded when they reach it
+  portalTabs: new Map(), // tabs a rater's logo opened -> the page it opened (quote-owner.js portalHold)
   viewTabs: new Map(), // tab id -> its order in this quote, for events' `view` (viewOf)
   layoutLatest: null, // the capture asked for last (waiting or queued), which later changes feed
   layoutErrors: 0,
@@ -520,6 +521,9 @@ const state = storeState({
   // All client details, in a drawer over the panel, and where focus was when it opened.
   detailsOpen: false,
   detailsReturn: null,
+  // The quote summary over the panel (quote-summary.js openSummary), and where focus was when it opened.
+  summary: null,
+  summaryReturn: null,
   // The browser window of the tab in view, for Dock (popped out), and whether this copy of the
   // panel is giving way to a newer one (giveWay).
   browserWindow: null,
