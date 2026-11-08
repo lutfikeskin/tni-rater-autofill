@@ -14,7 +14,7 @@ import { notePremium, premiumHere } from '../../src/premium.js';
 import { isStandard } from '../../src/resolution.js';
 import * as usage from '../usage-log.js';
 import { inExtension, popped } from './env.js';
-import { $, forgetKeptReports, persistAgentKeys, persistDoneActions, persistUnitForms, retireAiOrigins, state, store, switchOn } from './core.js';
+import { $, forgetKeptReports, keepJournal, persistAgentKeys, persistDoneActions, persistUnitForms, retireAiOrigins, state, store, switchOn } from './core.js';
 import { firstUnits, save } from './intake.js';
 import { checkShown, renderPickers, renderWarnings, showScreen } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
@@ -477,6 +477,7 @@ async function autoFill(page) {
     if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
     await tellRecorder('resume', tabId);
     state.filling = false;
+    keepJournal(tabId);
     renderSteps();
     // A follow-up asked for while this ran: this page's, or the tab's the agent moved to meanwhile (a
     // tab switch lets go of the last tab's, so one left is that tab's: audit 2026-11-07, FLOW-07).
@@ -761,7 +762,7 @@ function tabMaps(tabId) {
   let saved = state.tabSessions.get(tabId);
   if (!saved) {
     saved = { filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false, triedAgain: null,
-      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null, unitNamed: null, active: firstUnits() };
+      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), advanceRetried: new Set(), assistPage: null, unitNamed: null, active: firstUnits() };
     state.tabSessions.set(tabId, saved);
   }
   return saved;
@@ -1542,6 +1543,7 @@ function noteQuoteState(tabId, carrier, code) {
   const same = was && was.carrier === carrier && was.code === code;
   if (code) state.quoteStates.set(tabId, same ? was : { carrier, code, session: usage.currentSession()?.id ?? null, dismissed: null });
   else state.quoteStates.delete(tabId);
+  keepJournal(tabId, code ? {} : { dropped: ['quoteState'] });
   showStateNote();
 }
 
@@ -1576,7 +1578,7 @@ async function readQuoteState(tabId, carrier) {
 function inheritQuoteState(tab) {
   if (!state.intake) return;
   const pick = state.quoteStates.get(tab?.openerTabId);
-  if (pick && Number.isInteger(tab.id) && !state.quoteStates.has(tab.id)) state.quoteStates.set(tab.id, { ...pick });
+  if (pick && Number.isInteger(tab.id) && !state.quoteStates.has(tab.id)) { state.quoteStates.set(tab.id, { ...pick }); keepJournal(tab.id); }
 }
 
 // The tab's quote state against the intake's garaging state (stateIssue): said in red above the
@@ -1610,7 +1612,7 @@ function showStateNote() {
 function stateIssue() {
   const tabId = state.tab?.id;
   let pick = state.quoteStates.get(tabId);
-  if (pick && state.tab?.carrier && pick.carrier !== state.tab.carrier.id) { state.quoteStates.delete(tabId); pick = null; }
+  if (pick && state.tab?.carrier && pick.carrier !== state.tab.carrier.id) { state.quoteStates.delete(tabId); pick = null; keepJournal(tabId, { dropped: ['quoteState'] }); }
   const intakeId = usage.currentSession()?.intakeId ?? null;
   const off = !pick || !state.intake || pick.carrier !== state.tab?.carrier?.id || pick.dismissed === `${intakeId}|${pick.code}`;
   const differs = off ? null : stateMismatch(pick.code, state.intake.record);
@@ -1623,6 +1625,7 @@ function dismissState() {
   const issue = stateIssue();
   if (!issue) return;
   issue.pick.dismissed = `${issue.intakeId}|${issue.pick.code}`;
+  keepJournal(state.tab.id);
   showStateNote();
   renderSteps();
 }

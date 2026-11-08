@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Progressive's page adapter: how its Duck Creek ("DCT") rater draws questions, injected before
 // pagekit.js only on Progressive's tabs (the carrier config's `pageAdapter`). Classic script, no
 // imports; it registers itself as globalThis.__raterAdapter, which the kit reads when it needs it.
