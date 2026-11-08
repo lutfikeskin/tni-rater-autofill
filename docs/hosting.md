@@ -138,6 +138,16 @@ its `COPY` sources) have no uncommitted or untracked changes, then runs
 needs) and waits up to 5 minutes in all, a stalled request included, for Railway's production `/v1/health` (never `RATER_SERVER`) to name this checkout's server. `--dry-run` only
 checks. A failed build exits 1, and the previous deployment keeps serving.
 
+After a merge to `main` that changes what the image is built from (`server/`, `.railwayignore`, or
+any other file `server/Dockerfile` copies: `test/deploy.test.mjs` holds the workflow's paths to it), [deploy-server.yml](../.github/workflows/deploy-server.yml) runs the same
+script on GitHub, one deploy at a time (the maintainer, 2026-11-07). It needs the repository secret
+`RAILWAY_TOKEN`, a Railway project token for the production environment; without it the job says
+`RAILWAY_TOKEN is not set: nothing deployed` and succeeds, so deploy by hand as above. Only the
+step that checks for the token and the deploy step get it, not the install of Railway's CLI. It checks
+out `main` as it is when the job starts, not the pushed commit, so a later merge that changes no
+server file and starts no run of its own doesn't stop the deploy. Actions → Deploy usage server →
+Run workflow deploys `main` again on demand.
+
 Before deploying, confirm `RATER_TOKEN` is set in the service's Variables. The server fails closed:
 bound to anything but loopback (`127.0.0.1`, `localhost`, `::1`) without `RATER_TOKEN`, it exits
 with `RATER_TOKEN is not set and HOST=0.0.0.0 is not loopback: refusing to start an open upload
@@ -162,17 +172,33 @@ root-owned, and a non-root process that can't write there would answer every upl
 `server/Dockerfile`, check `ls -ld /data` and a test write as `node` in the running container
 (or add an entrypoint that chowns `/data` first), then redeploy and confirm `/v1/events` still
 stores an event.
-Deploy a server change that accepts new event fields before releasing the extension that sends
-them: an older server drops unknown fields (and refuses layouts over its size limit) rather than
-storing them. The run-identity fields (`run`, `rules`, `settings`, `step` on fill and field-change
+The event contract, which event types there are and which fields each keeps (`COMMON`,
+`EVENT_FIELDS`), with the profile's text tests (`ID_LIKE`, `LIMIT`, `PROFILE_UNITS`) and the schema's
+version, is one module the extension and the server both import: `src/usage-schema.js`, which has
+no imports and which the image copies (`server/Dockerfile`; `railway up` uploads it, and its text is
+in the `server` hash). The server adds agent defaults' fields to its own copy and checks every
+value's shape itself. Every event carries the `schema` it was logged under (`SCHEMA_VERSION`;
+none before 2026-11-07), and `/v1/health` names the server's (`schema`). An event of a newer schema
+than the server's is refused, per event in the reply's `rejected`, as `schema newer than server
+(N > M)`; the extension keeps it aside like an unknown event type and sends it again on each
+upload, so once the server is deployed it is stored with every field. Until then nothing of that
+extension's is stored (its events wait on the agents' computers, which keep 20,000 each), so deploy
+soon after. A change to the contract (an event type, a field, a profile group or field) changes its
+fingerprint, and `test/consistency.test.mjs`, which holds each version's fingerprint, fails until
+`SCHEMA_VERSION` is raised and the new version's fingerprint (which the failure names) is added,
+earlier versions' entries left as they are. A shape check alone (tighter
+validation, no new field) needs no new version. An event without `schema`, from an extension
+released before it, is kept as before: such an extension's new fields still need the server
+deployed first, as an older server drops unknown fields (and refuses layouts over its size limit)
+rather than storing them. The run-identity fields (`run`, `rules`, `settings`, `step` on fill and field-change
 events, [learning](learning.md)) are such a change: deploy the server that keeps them before the
 extension that sends them, or every fill run until then is stored with those names in `dropped`.
 That server also refuses an event whose run id, rules hash, settings object or step is malformed
-(per event, in the reply's `rejected`). Historical `page_layout` events may retain `step: null` when no step was recognized, including queued or re-uploaded layouts; this exception does not permit malformed non-null steps or null steps on fill/field-change events. Failed fills also retain `rules` and `settings` on `fill_error`, with the same exact validation as `fill_run`. A fill's `timeline` on `fill_run` and `fill_error` is kept only in its own shape (`validTimeline`: at most 40 events, each a wait, press, answer or run with its time `at`, of the kit's documented fields, its texts bounded); anything else there is dropped, named in `dropped`. For agents' own defaults ([spec](agent-defaults-spec.md), a proposal no build sends yet), the server already keeps, all from its own module `server/agent-defaults.mjs` (removal steps at its top), a `fill_field` `source` of `agent-default`, `agent_settings.defaults` (`DEFAULTS_SHAPE`: a list of at most 40 objects with only the keys `id`, `value` and optionally `carrier`; `id` is 1–24 ASCII letters, as `medPay`; `carrier` is the extension's lowercase carrier id, 1–20 letters (`geico`, never `GEICO`); `value` is a number from 0 to 100,000,000, the string `ask`, or a string of 1–40 characters from letters, digits, `_`, space and `$ , . / & + -`; one entry out of shape drops the whole list, named in `dropped`) and a fill's `defaultsHash` on `fill_run` and `fill_error` (validated like `rules`: a malformed one refuses the event). Older AI clients emitted `probability`, `support`, `evidenceProbability` and `confidence` on `ai_decision`: ingestion preserves scores from 0 to 1, null for unavailable evidence, and the original `high`/`medium`/`low` confidence enum for queued uploads and historical exports. Invalid shapes are dropped; current Luna clients do not emit these scores, and retaining them does not make them calibrated accuracy evidence. The obsolete `ai_suggest.cached` field remains excluded. It keeps an event's `channel` (store, unpacked or source) and `commit` (a short
+(per event, in the reply's `rejected`). Historical `page_layout` events may retain `step: null` when no step was recognized, including queued or re-uploaded layouts; this exception does not permit malformed non-null steps or null steps on fill/field-change events. Failed fills also retain `rules` and `settings` on `fill_error`, with the same exact validation as `fill_run`. A fill's `timeline` on `fill_run` and `fill_error` (schema 2) is kept only in its own shape (`validTimeline`: at most 40 events, each a wait, press, answer or run with its time `at`, of the kit's documented fields, its texts bounded); anything else there is dropped, named in `dropped`. For agents' own defaults ([spec](agent-defaults-spec.md), a proposal no build sends yet), the server already keeps, all from its own module `server/agent-defaults.mjs` (removal steps at its top), a `fill_field` `source` of `agent-default`, `agent_settings.defaults` (`DEFAULTS_SHAPE`: a list of at most 40 objects with only the keys `id`, `value` and optionally `carrier`; `id` is 1–24 ASCII letters, as `medPay`; `carrier` is the extension's lowercase carrier id, 1–20 letters (`geico`, never `GEICO`); `value` is a number from 0 to 100,000,000, the string `ask`, or a string of 1–40 characters from letters, digits, `_`, space and `$ , . / & + -`; one entry out of shape drops the whole list, named in `dropped`) and a fill's `defaultsHash` on `fill_run` and `fill_error` (validated like `rules`: a malformed one refuses the event). Older AI clients emitted `probability`, `support`, `evidenceProbability` and `confidence` on `ai_decision`: ingestion preserves scores from 0 to 1, null for unavailable evidence, and the original `high`/`medium`/`low` confidence enum for queued uploads and historical exports. Invalid shapes are dropped; current Luna clients do not emit these scores, and retaining them does not make them calibrated accuracy evidence. The obsolete `ai_suggest.cached` field remains excluded. It keeps an event's `channel` (store, unpacked or source) and `commit` (a short
 commit, optionally `+dirty`) only in those shapes. Every event's common fields are kept only in their shapes (`COMMON_SHAPES`), and an event with one out of its shape is refused (in the reply's `rejected`, naming the field), never stored with it or trimmed: `t` an ISO time in UTC (`…Z`), a real date and time (not `2025-02-30` or `24:00`), from 2025 to 30 days ahead of the server's clock; `agent` initials as typed (1–12 letters, digits, spaces and `. ' -`); `session` a UUID; `intakeId` the intake PDF's SHA-256 (64 lowercase hex); `carrier` a carrier id's shape (lowercase letters, digits and `-`, at most 20, so a new carrier needs no server change); `page` a page name or path (at most 200 of letters, digits, space and `_ . : / ~ % + ( ) , -`); `v` a version number or `dev`. Each may be null but `t`. The request's `agent`, which fills an event without one, is used only in that shape, otherwise not at all. Every event stored from the pilot up to 2026-11-06 (98,872) passes these checks. It refuses events from the local test page (`carrier: 'test'`, localhost), which are
 no quote; the review scripts also skip the ones stored before. The server names what it dropped on
 the stored event (`dropped`: field names only, at most 20, `droppedMore` counts the rest), and
-`/v1/health` names its version (`server`, a hash of every file the image copies, in `server/Dockerfile`'s order: `server/index.mjs`, `server/dashboard.mjs`, `server/agent-defaults.mjs` and `server/privacy.html`; a test holds the list to the Dockerfile's). `node scripts/server-check.mjs` compares that with this checkout, without
+`/v1/health` names its version (`server`, a hash of every file the image copies, in `server/Dockerfile`'s order: `server/index.mjs`, `server/dashboard.mjs`, `server/agent-defaults.mjs`, `server/privacy.html` and `src/usage-schema.js`; a test holds the list to the Dockerfile's; and `schema`, its schema version). `node scripts/server-check.mjs` compares that with this checkout, without
 sending any event: after a deploy it should say `same`.
 
 The server accepts `intake_profile`, a profile of the client's business (`PROFILE` in

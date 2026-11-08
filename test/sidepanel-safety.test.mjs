@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -119,6 +120,8 @@ function extractFunction(name) {
           // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
           // elsewhere none is running.
           noteFollowed: '() => {}',
+          // A tab's journal (FLOW-06) has its own tests: elsewhere nothing is kept.
+          keepJournal: '() => Promise.resolve()', forgetJournals: '() => Promise.resolve()', restoreJournal: 'async () => {}',
           // The agent's corrections and checks kept on this computer (FLOW-17) have their own test:
           // elsewhere nothing is kept or brought back.
           forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}', editChecks: '() => {}', ownerDrivesAnswered: '() => false', clearKeptWork: 'async () => "cleared"', keptWorkCleared: 'async () => ({ known: true, after: -Infinity })', holdKeptWork: '() => {}',
@@ -2457,6 +2460,165 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   assert.deepEqual([...back.state.doneActions].sort(), ['lookupVin:0', 'trailerEntered:0'], 'tab 7 kept');
 });
 
+// Audit 2026-11-07, FLOW-06: a panel opened again forgot the steps it had continued from (an
+// automatic fill on a step the agent went back to clicked Next again), a pause, the pages whose
+// follow-ups fill by themselves and the tab's quote-state hold. Each tab's journal is kept in
+// storage.session (the panel's `store`), keys and ids only, and read as the panel comes to the tab.
+// `memory`: the store's contents; `writes`: each key written.
+function journalHarness(memory, { session = { intakeId: 'intake-a' }, tabId = 7 } = {}) {
+  const writes = [];
+  const state = { tab: { id: tabId }, tabSessions: new Map(), quoteStates: new Map(), doneSteps: new Set(), autoPages: new Set(), autoPaused: false, advanceRetried: new Set() };
+  const context = {
+    state, usage: { currentSession: () => session },
+    store: { get: async (k) => structuredClone(memory[k]), set: async (k, v) => { writes.push(k); memory[k] = structuredClone(v); }, remove: async (k) => { delete memory[k]; }, keys: async () => Object.keys(memory) },
+  };
+  const block = SIDEPANEL.slice(SIDEPANEL.indexOf("const JOURNAL_PREFIX = 'journal:';"), SIDEPANEL.indexOf('function journalOf('));
+  const names = ['journalOf', 'journalMerged', 'keepJournal', 'forgetJournals', 'restoreJournal'].filter((name) => SIDEPANEL.includes(`function ${name}(`));
+  vm.runInNewContext(`${block}\n${names.map(extractFunction).join('\n')}`, context);
+  return { context, state, writes };
+}
+
+test('a tab’s continued steps, pause, filled pages and quote state outlive the panel (FLOW-06)', async () => {
+  // Made in the harness's realm: compared as plain data.
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+  const memory = {};
+  const session = { intakeId: 'intake-a' };
+  const pick = { carrier: 'progressive', code: 'CA', session: 's1', dismissed: null };
+  const before = journalHarness(memory, { session });
+  Object.assign(before.state, { doneSteps: new Set(['application|v0|Vehicles@next']), autoPages: new Set(['application']), autoPaused: true, advanceRetried: new Set(['application|v1|Vehicles@next']) });
+  before.state.quoteStates.set(7, pick);
+  await before.context.keepJournal(7);
+  await before.context.keepJournal(7);
+  assert.deepEqual(before.writes, ['journal:7'], 'written once while nothing changed');
+  // Another tab's, from its kept session: its own key.
+  before.state.tabSessions.set(8, { doneSteps: new Set(['Drivers|d0|next']), autoPages: new Set(), autoPaused: false });
+  await before.context.keepJournal(8);
+  assert.deepEqual(plain([memory['journal:8'].doneSteps, memory['journal:8'].quoteState]), [['Drivers|d0|next'], null]);
+  // No answer or client text: keys, pages and the state's code only.
+  assert.deepEqual(Object.keys(memory['journal:7']).sort(), ['advanceRetried', 'autoPages', 'autoPaused', 'doneSteps', 'quoteState', 'scope']);
+
+  // The panel opened again on that tab: all of it is back, once.
+  const after = journalHarness(memory, { session });
+  await after.context.restoreJournal(7);
+  assert.deepEqual(plain([[...after.state.doneSteps], [...after.state.autoPages], after.state.autoPaused, [...after.state.advanceRetried], after.state.quoteStates.get(7)]),
+    [['application|v0|Vehicles@next'], ['application'], true, ['application|v1|Vehicles@next'], pick]);
+  after.state.autoPaused = false;
+  after.state.doneSteps.clear();
+  await after.context.restoreJournal(7);
+  assert.deepEqual([after.state.autoPaused, after.state.doneSteps.size], [false, 0], 'once: what the panel did since stays');
+  // A tab no longer in front by the time the journal is read: left for its own arrival.
+  const moved = journalHarness(memory, { session });
+  const reading = moved.context.restoreJournal(7);
+  moved.state.tab = { id: 9 };
+  await reading;
+  assert.deepEqual([moved.state.doneSteps.size, moved.state.quoteStates.size], [0, 0]);
+  // Another intake: the tab's quote state only (it outlives the intake), no fill's record.
+  const other = journalHarness(memory, { session: { intakeId: 'intake-b' } });
+  await other.context.restoreJournal(7);
+  assert.deepEqual(plain([other.state.doneSteps.size, other.state.autoPages.size, other.state.autoPaused, other.state.quoteStates.get(7)]), [0, 0, false, pick]);
+
+  // A new, cleared or reloaded client: every journal keeps its quote state only; a closed tab's goes.
+  await after.context.forgetJournals();
+  assert.deepEqual([plain(memory['journal:7']), memory['journal:8']], [{ scope: null, quoteState: pick }, undefined]);
+  const reloaded = journalHarness(memory, { session });
+  await reloaded.context.restoreJournal(7);
+  assert.deepEqual(plain([reloaded.state.doneSteps.size, reloaded.state.autoPaused, reloaded.state.quoteStates.get(7)]), [0, false, pick]);
+  await after.context.forgetJournals(7);
+  assert.equal(memory['journal:7'], undefined);
+
+  // Read as the panel comes to a tab, before the page's layout is asked for; kept as each fill ends,
+  // as Continue is clicked again or pauses, as the agent's Fill lifts a pause, and as the quote state
+  // changes. Forgotten on a new or cleared client and a closed tab.
+  assert.match(extractFunction('refreshTab'), /await restoreJournal\(state\.tab\?\.id\);[\s\S]*scheduleLayout\(/);
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /\} finally \{[\s\S]*?state\.filling = false;[\s\S]*?keepJournal\(tabId\);/, name);
+  assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false; keepJournal\(state\.tab\.id, \{ dropped: \['autoPaused'\] \}\); \}/);
+  assert.equal(extractFunction('watchNextStep').match(/keepJournal\(tabId(, \{ dropped: [^\n]*\})?\);/g)?.length, 2);
+  for (const name of ['noteQuoteState', 'inheritQuoteState', 'stateIssue', 'dismissState']) assert.match(extractFunction(name), /keepJournal\(/, name);
+  assert.match(extractFunction('loadFile'), /state\.doneSteps = new Set\(\);[\s\S]*await forgetJournals\(\);/);
+  assert.match(extractFunction('clearClient'), /await forgetJournals\(\);/);
+  assert.match(SIDEPANEL, /chrome\.tabs\.onRemoved\.addListener\(\(tabId\) => \{[^\n]*forgetJournals\(tabId\);/);
+});
+
+// #401 review: a journal written before the panel read it back (a recorder message reaching
+// noteQuoteState while refreshTab waited) replaced the stored one; the Continues clicked again were
+// the panel's, not the tab's; and a write that failed was taken as written.
+test('a tab’s journal written before it is read back keeps what was stored, each tab its own retried Continues', async () => {
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+  const pick = { carrier: 'progressive', code: 'CA', session: 's1', dismissed: null };
+  const memory = { 'journal:7': { scope: 'intake-a', doneSteps: ['application|v0|Vehicles@next'], autoPages: ['application'], autoPaused: true, advanceRetried: ['application|v1|Vehicles@next'], quoteState: null } };
+  const early = journalHarness(memory);
+  early.state.quoteStates.set(7, pick);
+  await early.context.keepJournal(7);
+  assert.deepEqual(plain(memory['journal:7']), { scope: 'intake-a', doneSteps: ['application|v0|Vehicles@next'], autoPages: ['application'], autoPaused: true,
+    advanceRetried: ['application|v1|Vehicles@next'], quoteState: pick }, 'the stored journal stays, with the quote state added');
+  await early.context.restoreJournal(7);
+  assert.deepEqual(plain([[...early.state.doneSteps], [...early.state.autoPages], early.state.autoPaused, [...early.state.advanceRetried]]),
+    [['application|v0|Vehicles@next'], ['application'], true, ['application|v1|Vehicles@next']]);
+
+  // Each tab's own retried Continues: tab 8's kept session, not the tab in front.
+  early.state.tabSessions.set(8, { doneSteps: new Set(), autoPages: new Set(), autoPaused: false, advanceRetried: new Set(['Drivers|d0|next']) });
+  await early.context.keepJournal(8);
+  assert.deepEqual(plain(memory['journal:8'].advanceRetried), ['Drivers|d0|next']);
+  assert.match(extractFunction('refreshTab'), /const keys = \[[^\]]*'advanceRetried'[^\]]*\];/);
+  assert.match(extractFunction('refreshTab'), /Object\.assign\(state, previous \?\? \{[\s\S]*?advanceRetried: new Set\(\)[\s\S]*?\}\);/);
+  assert.match(extractFunction('tabMaps'), /saved = \{[\s\S]*?advanceRetried: new Set\(\)[\s\S]*?\};/);
+
+  // A write that fails is written again by the next call, unchanged as the journal is.
+  const failing = journalHarness({});
+  failing.state.doneSteps.add('application|v0|Vehicles@next');
+  const set = failing.context.store.set;
+  failing.context.store.set = async () => { throw new Error('quota'); };
+  await failing.context.keepJournal(7);
+  failing.context.store.set = set;
+  await failing.context.keepJournal(7);
+  assert.deepEqual(failing.writes, ['journal:7']);
+});
+
+// #401 review: a journal merged before it was read back could only add, so a quote state the panel
+// forgot (another carrier, no state), a pause the agent's Fill lifted, or a step to continue from
+// again came back from the stored copy, and a stale pick then held every fill on the tab.
+test('what the panel takes out of a tab’s journal before reading it back stays out', async () => {
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+  const pick = { carrier: 'progressive', code: 'CA', session: 's1', dismissed: null };
+  const memory = { 'journal:7': { scope: 'intake-a', doneSteps: ['application|v0|Vehicles@next', 'Drivers|d0|next'], autoPages: ['application'], autoPaused: true, advanceRetried: [], quoteState: pick } };
+  const early = journalHarness(memory);
+  // The panel had the pick, then forgot it; Fill lifted the pause; a lost Continue is to be clicked again.
+  await early.context.keepJournal(7, { dropped: ['quoteState', 'autoPaused', 'step:Drivers|d0|next'] });
+  assert.deepEqual(plain([memory['journal:7'].quoteState, memory['journal:7'].autoPaused, memory['journal:7'].doneSteps]), [null, false, ['application|v0|Vehicles@next']]);
+  // Stored before the change (the write failed, or another copy's): the read-back leaves them out too.
+  memory['journal:7'] = { scope: 'intake-a', doneSteps: ['Drivers|d0|next'], autoPages: [], autoPaused: true, advanceRetried: [], quoteState: pick };
+  const later = journalHarness(memory);
+  later.context.store.set = async () => { throw new Error('quota'); };
+  await later.context.keepJournal(7, { dropped: ['quoteState', 'autoPaused', 'step:Drivers|d0|next'] });
+  await later.context.restoreJournal(7);
+  assert.deepEqual([later.state.quoteStates.has(7), later.state.autoPaused, later.state.doneSteps.size], [false, false, 0]);
+  // #401 review: a write before the read-back merged the stored pick in, but cached the copy's own
+  // journal, so forgetting the pick, which leaves that journal as it was, wrote nothing, and a panel
+  // opened later brought the pick back. The cache holds what was stored.
+  memory['journal:7'] = { scope: 'intake-a', doneSteps: [], autoPages: [], autoPaused: false, advanceRetried: [], quoteState: pick };
+  const cached = journalHarness(memory);
+  await cached.context.keepJournal(7);
+  assert.deepEqual(plain(memory['journal:7'].quoteState), pick, 'a fill ending first keeps the stored pick');
+  await cached.context.keepJournal(7, { dropped: ['quoteState'] });
+  assert.equal(memory['journal:7'].quoteState, null, 'the pick forgotten is written out');
+  await cached.context.restoreJournal(7);
+  const reopened = journalHarness(memory);
+  await reopened.context.restoreJournal(7);
+  assert.equal(reopened.state.quoteStates.has(7), false, 'and a panel opened later has none');
+  // Another copy wrote the old pick back after this one forgot it, before this one read the tab's
+  // journal back: the read-back leaves it out here and writes it out there, whatever was cached.
+  const raced = journalHarness(memory);
+  await raced.context.keepJournal(7, { dropped: ['quoteState'] });
+  memory['journal:7'] = { ...memory['journal:7'], quoteState: pick };
+  await raced.context.restoreJournal(7);
+  assert.deepEqual([raced.state.quoteStates.has(7), memory['journal:7'].quoteState], [false, null]);
+  // Where they are taken out.
+  assert.match(extractFunction('noteQuoteState'), /else state\.quoteStates\.delete\(tabId\);\n\s*keepJournal\(tabId, code \? \{\} : \{ dropped: \['quoteState'\] \}\);/);
+  assert.match(extractFunction('stateIssue'), /state\.quoteStates\.delete\(tabId\); pick = null; keepJournal\(tabId, \{ dropped: \['quoteState'\] \}\);/);
+  assert.match(extractFunction('fillPage'), /state\.autoPaused = false; keepJournal\(state\.tab\.id, \{ dropped: \['autoPaused'\] \}\);/);
+  assert.match(extractFunction('watchNextStep'), /state\.doneSteps\.delete\(doneKey\);\n\s*keepJournal\(tabId, \{ dropped: \[`step:\$\{doneKey\}`\] \}\);/);
+});
+
 // Audit 2026-11-07, FLOW-17 (the maintainer: 24 hours on this computer): after a browser restart the
 // same PDF came back with none of the agent's corrections and checks. Each save keeps them in local
 // storage (keepKeptWork); the same intake loaded with no copy in the session gets them back
@@ -3512,8 +3674,10 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   const { rederive } = await import('../src/normalize.js');
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake: { record: { claims: { text: 'No' }, notes: { text: null }, applicant: {} }, warnings: [] } },
     get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, usage: { log: () => {} }, save: async () => {}, profileLater() {},
+    renderSections() {}, renderWarnings() {},
     claimsTextEdited: () => calls.push('claimsTextEdited'), reviewClaimsBox: () => calls.push('reviewClaimsBox'), reviewDriverGender: () => {},
   };
   vm.createContext(sandbox);
@@ -3524,6 +3688,39 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   assert.deepEqual(calls.splice(0), ['claimsTextEdited', 'reviewClaimsBox']);
   await sandbox.agentEdit('applicant.name', 'X', 'text');
   assert.deepEqual(calls, []);
+});
+
+// Audit 2026-11-07, DATA-04: a correction in the panel left what was derived from the corrected box
+// as the intake had it. The edit recomputes it from the corrected record (the claims answer, the
+// ownership its notes give), the checks follow in place, and the check list is said again.
+test('a panel edit of the claims box recomputes what derives from it and says the checks again', async () => {
+  const { get, set } = await import('../src/util.js');
+  const { rederive } = await import('../src/normalize.js');
+  const calls = [];
+  const intake = {
+    record: { claims: { text: 'Clean MVR', hasClaims: false, notes: null }, notes: { text: null }, applicant: { yearEstablished: 2021, yearsInBusiness: 5 },
+      operations: { vehicleOwnership: null }, vehicles: [{ type: 'Box Truck' }], coverage: {} },
+    warnings: [{ code: 'ownership.missing', path: 'operations.vehicleOwnership', level: 'check', msg: 'Not selected.' }], done: [], agentEdited: [], readFrom: {},
+  };
+  const sandbox = {
+    state: { intake }, get, set, rederive, noNumberEdit: () => false, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    usage: { log: (e) => calls.push(['log', e.path, e.warnings]) },
+    renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings', intake.warnings[0].level]),
+    claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  await sandbox.agentEdit('claims.text', 'Yes - 1 accident 2024\nFinanced', 'textarea');
+  assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes, intake.record.operations.vehicleOwnership], [true, 'Financed', 'Financed']);
+  assert.deepEqual(intake.readFrom, { 'operations.vehicleOwnership': ['claims_details'] });
+  assert.equal(intake.warnings.length, 1, 'kept by position');
+  assert.deepEqual(calls.map(([what]) => what), ['renderSections', 'renderWarnings', 'log']);
+  assert.ok(['claims.hasClaims', 'claims.notes', 'operations.vehicleOwnership'].every((p) => calls[0][1].includes(p)), 'the recomputed rows stay shown');
+  assert.equal(calls[1][1], 'info', 'the check list is said again with the ownership check retired');
+  // An edit that changes no check says nothing again.
+  calls.length = 0;
+  await sandbox.agentEdit('applicant.name', 'X', 'text');
+  assert.deepEqual(calls.map(([what]) => what), ['log']);
 });
 
 // Codex on PR #22: an edit retires Luna's old items even when no new review can run.
@@ -6672,6 +6869,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   const record = { operations: { radius: '100', radiusMiles: 100 }, applicant: {} };
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake: { record, warnings: [], done: [] }, detailsClosed: new Set(), showEmpty: false, details: null },
     get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES,
     intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
@@ -7302,6 +7500,7 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   ] };
   const calls = [];
   const sandbox = {
+    noNumberEdit: () => false,
     state: { intake, view: 'check' }, $, get, set, rederive, ownerDrivesAnswered, fieldInfo: (p) => ({ label: p }), sourcePlace: () => null, pdfPageSaid: () => '',
     document: { getElementById: () => null, querySelector: () => null },
     renderSteps() {}, renderSections: () => calls.push(['renderSections', get(record, 'drivers[0].gender') ?? null]), jumpTo() {}, openPdf() {},
@@ -9072,7 +9271,7 @@ test('automatic filling paused on the tab in front is said under the dock\'s wor
   assert.equal(context.pausedSaid({ phase: 'ready' }), '');
   // The dock carries it (renderDock), and the agent's own Fill lifts it (fillPage).
   assert.match(extractFunction('renderDock'), /busy: !!state\.filling, paused: pausedSaid\(d\) \};/);
-  assert.match(extractFunction('fillPage'), /if \(!auto\) state\.autoPaused = false;/);
+  assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false;/);
 });
 
 // W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
@@ -10105,6 +10304,37 @@ test('an agent change on the finishing step after the print, or a stopped fill, 
   assert.match(SIDEPANEL, /const byAgent = msg\.changes\.filter\(\(c\) => c\.agent\);\s+if \(byAgent\.length\) \{\s+const page = samePage\(msg\.page\);\s+if \(noteChangedAfterDone\(state\.tab\.carrier, page, step, sender\.tab\.id\)\) renderSteps\(\);/);
   assert.match(SIDEPANEL, /for \(const a of frames\.flatMap\(\(f\) => f\.actions \?\? \[\]\)\) \{ maps\.doneActions\.add\(a\.id\); maps\.doneActions\.delete\(`\$\{a\.id\}:changed`\); \}/);
   assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;/);
+});
+
+// The maintainer, 2026-11-07 (answer 1 on PR #367): "No" typed into the USDOT box in the panel is
+// saved as no number, as the intake's own No: the box empty, noDot true, the note said, and the row
+// and the checks said again.
+test('a panel edit of "No" into the USDOT box saves no number, and says the row and the note again', async () => {
+  const { get, set } = await import('../src/util.js');
+  const { noNumberEdit, rederive } = await import('../src/normalize.js');
+  const calls = [];
+  const intake = { record: { applicant: { dot: '1234567', noDot: null } }, warnings: [], done: [], agentEdited: [] };
+  const sandbox = {
+    state: { intake, fieldRevs: new Map() }, get, set, noNumberEdit, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    usage: { log: (e) => calls.push(['log', e.path]) }, renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings']),
+    claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  await sandbox.agentEdit('applicant.dot', 'No', 'text');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, [...intake.agentEdited]], [null, true, ['applicant.dot']]);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['dot.none', 'info']]);
+  assert.equal(sandbox.state.fieldRevs.get('applicant.dot'), 1, 'its box is said again with the record value (details-view.jsx rev)');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['renderSections', ['applicant.dot']], ['renderWarnings'], ['log', 'applicant.dot']]);
+  calls.length = 0;
+  await sandbox.agentEdit('applicant.dot', '7654321', 'text');
+  assert.equal(intake.record.applicant.dot, '7654321', 'a number stays as typed');
+  // Reviews of PR #376: the number clears the No and retires its note (rederive), said again.
+  assert.deepEqual([intake.record.applicant.noDot, intake.warnings[0].msg.startsWith('No longer applies after your edit: ')], [null, true]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['renderSections', ['applicant.noDot']], ['renderWarnings'], ['log', 'applicant.dot']]);
+  // Review of PR #376 (CodeRabbit): words near a No ("none yet") are not one: kept as typed, no No.
+  await sandbox.agentEdit('applicant.dot', 'none yet', 'text');
+  assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, sandbox.state.fieldRevs.get('applicant.dot')], ['none yet', null, 1]);
 });
 
 // Review of PR #170: a field the agent emptied in the drawer went with the blank ones (hidden at the

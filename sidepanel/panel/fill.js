@@ -11,7 +11,7 @@ import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../.
 import * as usage from '../usage-log.js';
 import { isStandard } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
-import { $, aiSnapshotFieldMatches, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
+import { $, aiSnapshotFieldMatches, keepJournal, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
@@ -124,7 +124,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     if (!auto) fillProblem({ tabId: state.tab.id, page: pageOf(state.tab.url), carrier: state.tab.carrier }, 'This is the portal. Open a quote, then fill.', 'notice');
     return;
   }
-  if (!auto) state.autoPaused = false;
+  if (!auto && state.autoPaused) { state.autoPaused = false; keepJournal(state.tab.id, { dropped: ['autoPaused'] }); }
   state.fillingKind = 'fill';
   state.filling = true;
   clearTimeout(state.autoTimer);
@@ -219,6 +219,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     await tellRecorder('resume', tabId);
     state.filling = false;
     if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
+    // Steps continued, pages filled, a pause: kept for the panel opened again (FLOW-06).
+    keepJournal(tabId);
     renderSite();
     // The page in front, which this fill wasn't for, gets its own fill: one this tab moved on to, or
     // one that opened on the tab the agent moved to meanwhile, however this fill ended.
@@ -554,11 +556,13 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     if (retries && unchanged >= patience && doneKey && !state.filling && !state.advanceRetried.has(doneKey)) {
       state.advanceRetried.add(doneKey);
       state.doneSteps.delete(doneKey);
+      keepJournal(tabId, { dropped: [`step:${doneKey}`] });
       fillPage({ auto: 'page', retried: doneKey });
       return;
     }
     if (unchanged >= patience && doneKey && !state.filling && (!retries || state.advanceRetried.has(doneKey))) {
       state.autoPaused = true;
+      keepJournal(tabId);
       fillProblem({ tabId, page, carrier }, 'Continue didn\'t take: click it yourself.');
       if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, ...(run ? { run } : {}), auto: 'page', error: 'continue did not take' });
       return;

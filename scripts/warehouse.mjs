@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Builds the quoting history warehouse: a DuckDB file of TNI's quotes, their intake profiles, the
 // carriers they went to and every final answer, for SQL (docs/quoting-history-database.md). Run it
 // after npm run pull. Each run builds the whole file again from the usage log, which stays the

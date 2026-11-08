@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Read-only page-layout capture, for pasting into a devtools console (or a browser automation
 // tool) on a rater page while an agent does a real quote. Same idea as the extension's
 // "Capture page layout", without needing the extension. Records labels, ids, options and which

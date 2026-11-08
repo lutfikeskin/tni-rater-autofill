@@ -46,9 +46,10 @@
  * @property {{ fields: number, filled: number }} stats
  * @property {{ drivers: number[], vehicles: number[], trailers: number[] }} rows  the form row (1-4) each unit was read from
  * @property {Record<string, string[]>} readFrom  record path -> the form fields an answer was read
- *   from when that isn't its own box (years in business stated in the notes: `claims_details`,
- *   `additional_notes`); the panel marks it there on the PDF (intake-source.js sourcePlace). Empty
- *   otherwise; absent on an intake saved before it.
+ *   from when that isn't its own box (years in business, a year established or an ownership stated
+ *   in the notes: `claims_details`, `additional_notes`); the panel marks it there on the PDF
+ *   (intake-source.js sourcePlace), and a correction of the notes recomputes it (normalize.js
+ *   rederive, which keeps it current). Empty otherwise; absent on an intake saved before it.
  */
 
 /** @typedef {'vehicles' | 'drivers' | 'trailers'} UnitList */
@@ -134,7 +135,8 @@
  *   SOURCES (Contract 2, docs/intake-and-rules.md), which test/provenance.test.mjs checks for every rule
  * @property {string} [tni]  the id of the TNI rulebook entry that states this answer (src/ai/rulebook/:
  *   general.js or this carrier's part); every rule that can be `standard` has one, which
- *   test/rulebook.test.mjs checks with the entry's kind and part. Nothing at fill time reads it
+ *   test/rulebook.test.mjs checks with the entry's kind and part (a function source counts when it
+ *   returns `standard` for any record of the test's matrix, through a wrapper too). Nothing at fill time reads it
  * @property {string} [kind]  a value kind (src/schema.js: bool, choice, date, int, money, state, text), or
  *   how the page kit picks it (address-suggest, first-option, pick-not, search-select, selected-option)
  * @property {string} [q]  the carrier's question id (Duck Creek)
@@ -1291,7 +1293,7 @@
  * @property {any} [dock]
  * @property {any} [feed]
  * @property {Record<string, any>} [cards]
- * @property {{ usage: any, window: any }} [notes]
+ * @property {{ usage: any, window: any, storage?: any, whatsNew?: any }} [notes]
  * @property {any} [loadError]
  * @property {any[]} [siteTrack]
  * @property {any} [checks]

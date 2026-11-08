@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // TNI's answer key: the right answer to each question a set of recorded quotes met, as a reviewer at
 // TNI decided it, and today's rules scored against it.
 //
