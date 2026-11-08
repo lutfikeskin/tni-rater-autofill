@@ -6674,11 +6674,79 @@ test('editing a source field in the panel recomputes what derives from it and re
   assert.equal(stored.record.operations.radiusMiles, 77, 'and saved that way');
   sandbox.state.intake = { record, warnings: [], done: [] };
   // A new intake starts clean: its derived values follow their source again.
-  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places, test, intakeId: summary\.intakeId \};/, 'a loaded intake starts with no edits');
+  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places, test, intakeId: summary\.intakeId, intakeRecord: JSON\.parse\(JSON\.stringify\(result\.record\)\) \};/, 'a loaded intake starts with no edits, the record as read kept');
   sandbox.renderSections();
   await edit('operations.radius', '250');
   assert.equal(record.operations.radiusMiles, 250, 'another intake: the miles follow the edit');
   assert.equal(row('operations.radiusMiles').value, '250');
+});
+
+// Audit 2026-11-07, UX-07: a correction in client details looked like an intake value afterwards,
+// what the client wrote was gone, and undoing a typo meant retyping it from the PDF; 96 fields had no
+// search. An edited row says so, with the intake's value and Restore; a box finds fields, and Your
+// corrections lists only the agent's.
+test('client details mark the agent\'s corrections, show the intake\'s value with Restore, and find fields', async () => {
+  const { get, set, STATES } = await import('../src/util.js');
+  const { parseEdit, rederive } = await import('../src/normalize.js');
+  const read = { operations: { radius: '100', radiusMiles: 100 }, applicant: { name: 'Acme Freight', yearEstablished: 2010, yearsInBusiness: 15 } };
+  const record = structuredClone(read);
+  const logged = [];
+  const sandbox = {
+    state: { intake: { record, intakeRecord: read, warnings: [], done: [], agentEdited: [] }, detailsClosed: new Set(['operations']), showEmpty: false, details: null, detailsQuery: '', detailsEditedOnly: false },
+    get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES, flushSync: (fn) => fn(),
+    intakeEdited() {}, usage: { log: (e) => logged.push([e.path, e.change]) }, save: async () => {},
+    claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {}, profileLater() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'restoreField', 'agentEdit'].map(extractFunction).join('\n'), sandbox);
+  sandbox.renderSections();
+  const rows = () => JSON.parse(JSON.stringify(sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path)));
+  const live = () => sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path);
+  const row = (path) => live().find((r) => r.path === path);
+  assert.deepEqual([row('operations.radius').edited, row('operations.radius').original, sandbox.state.details.edited], [false, undefined, null], 'nothing corrected: no mark, no Your corrections');
+
+  await row('operations.radius').edit('Unlimited');
+  sandbox.renderSections();
+  assert.deepEqual([row('operations.radius').edited, row('operations.radius').original, record.operations.radiusMiles], [true, '100', null]);
+  assert.equal(row('operations.radiusMiles').edited, false, 'a derived value that followed is not the agent\'s');
+  assert.equal(sandbox.state.details.edited, 'Your corrections (1)');
+  // Restore: the intake's value back, no longer the agent's, the miles following it again.
+  await row('operations.radius').restore();
+  assert.deepEqual([record.operations.radius, record.operations.radiusMiles, [...sandbox.state.intake.agentEdited]], ['100', 100, []]);
+  assert.deepEqual([row('operations.radius').edited, row('operations.radius').original], [false, undefined]);
+  assert.deepEqual(logged, [['operations.radius', 'changed'], ['operations.radius', 'restored']], 'logged as undone, without the value');
+  // A field the intake left blank, corrected: its original is said as blank.
+  await row('applicant.name').edit('');
+  sandbox.renderSections();
+  assert.equal(row('applicant.name').original, 'Acme Freight');
+  sandbox.state.intake.agentEdited = ['applicant.fein'];
+  set(record, 'applicant.fein', '12-3456789');
+  sandbox.renderSections();
+  assert.equal(row('applicant.fein').original, 'blank on the form');
+  // An intake saved by an older build (no record as read): marked, but nothing to restore to.
+  sandbox.state.intake.intakeRecord = undefined;
+  sandbox.renderSections();
+  assert.deepEqual([row('applicant.fein').edited, row('applicant.fein').restore], [true, undefined]);
+  sandbox.state.intake.intakeRecord = read;
+
+  // Find: by label, empty fields too, folded sections opened; nothing else listed.
+  sandbox.state.details.search('radius');
+  assert.deepEqual(rows().map((r) => [r.path, r.empty]), [['operations.radius', false], ['operations.radiusMiles', false]]);
+  assert.equal(sandbox.state.details.sections[0].open, true, 'a folded section with a match is open');
+  assert.equal(sandbox.state.details.toggle, null, 'no empty-fields button while finding');
+  sandbox.state.details.fold('operations', false);
+  assert.ok(sandbox.state.detailsClosed.has('operations') && sandbox.state.detailsClosed.size === 1, 'folding while finding leaves the drawer\'s folds as they were');
+  sandbox.state.details.search('no such field');
+  assert.deepEqual([rows().length, sandbox.state.details.nothing], [0, 'No field matches.']);
+  sandbox.state.details.search('');
+  // Your corrections: only the agent's.
+  sandbox.state.details.editedToggle();
+  assert.deepEqual(rows().map((r) => r.path), ['applicant.fein']);
+  assert.equal(sandbox.state.details.editedOnly, true);
+  sandbox.state.details.editedToggle();
+  assert.ok(rows().length > 3, 'all of them again');
+  // The intake keeps its record as read from the PDF, before any correction.
+  assert.match(SIDEPANEL, /intakeRecord: JSON\.parse\(JSON\.stringify\(result\.record\)\)/);
 });
 
 for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transport of ['complete', 'failure']) {

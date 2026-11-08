@@ -477,6 +477,9 @@ const state = storeState({
   // always are), and the sections the agent folded (by id).
   showEmpty: false,
   detailsClosed: new Set(),
+  // Client details' filter box and its Your corrections switch (UX-07).
+  detailsQuery: '',
+  detailsEditedOnly: false,
   // The intake PDF: its bytes (also kept in session storage, keepPdf), the document pdf.js opened,
   // and the viewer's page, zoom and the item marked on it ({ path, label, kind, place }); null
   // while the viewer is closed.

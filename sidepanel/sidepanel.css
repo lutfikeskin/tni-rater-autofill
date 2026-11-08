@@ -309,6 +309,13 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .field-stack { display: grid; gap: 2px; font-size: 11.5px; color: var(--ink-secondary); }
 .field-stack :is(input, select, textarea) { min-height: 30px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 2px 8px; width: 100%; font-size: 12.5px; }
 .field textarea { resize: vertical; min-height: 56px; }
+/* A field the agent corrected: the report's Your edit tag, and what the intake said with Restore (UX-07). */
+.field label .tag { margin-left: 6px; padding: 1px 6px; }
+.field-was { grid-column: 2; display: flex; align-items: baseline; gap: 8px; margin: -2px 0 4px; font-size: 11.5px; color: var(--ink-muted); overflow-wrap: anywhere; }
+.field-was span { flex: 1; min-width: 0; }
+#details-view .drawer-panel { grid-template-rows: auto auto minmax(0, 1fr); }
+.details-tools { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border-soft); }
+.details-tools input { flex: 1; min-width: 0; min-height: 30px; padding: 2px 8px; font-size: 12.5px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
 /* Fields the intake leaves blank are hidden unless flagged (showEmpty): the drawer's "Show N empty". */
 .drawer-panel[data-empty="hidden"] .field.empty:not(.flagged) { display: none; }
 .drawer-panel[data-empty="hidden"] .section.all-empty .section-body { display: none; }

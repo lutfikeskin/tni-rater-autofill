@@ -47,9 +47,18 @@ function Section({ section, fold }) {
       <div className="section-body">
         {section.rows.map((row, n) => (row.path
           ? (
-            <div key={row.path} className={`field${row.flagged ? ' flagged' : ''}${row.empty ? ' empty' : ''}`} data-path={row.path}>
-              <label htmlFor={row.id}>{row.label}</label>
+            <div key={row.path} className={`field${row.flagged ? ' flagged' : ''}${row.empty ? ' empty' : ''}${row.edited ? ' edited' : ''}`} data-path={row.path}>
+              <label htmlFor={row.id}>{row.label}{row.edited ? <span className="tag you" title="Your correction in the panel">Your edit</span> : null}</label>
               <FieldBox field={row} />
+              {/* A field the agent changed: what the intake said, and Restore, which puts it back (UX-07). */}
+              {row.original != null
+                ? (
+                  <p className="field-was">
+                    <span>{`On the intake: ${row.original}`}</span>
+                    <button type="button" className="link small" aria-label={`Restore ${row.label} to the intake's value`} onClick={() => row.restore()}>Restore</button>
+                  </p>
+                )
+                : null}
             </div>
           )
           : <p key={`item-${n}`} className="item-title">{row.item}</p>))}
@@ -72,7 +81,15 @@ function Details({ act }) {
           <button type="button" id="details-empty" className="link small subtle" aria-pressed={showEmpty} hidden={!details?.toggle} onClick={() => act.showEmpty()}>{details?.toggle ?? ''}</button>
           <button type="button" id="details-close" className="icon-btn" aria-label="Close client details" onClick={() => act.close()}><svg aria-hidden="true"><use href="#close" /></svg></button>
         </div>
+        {/* Find a field by its label or section, and list only the agent's corrections (UX-07). */}
+        <div className="details-tools">
+          <input id="details-find" type="search" placeholder="Find a field" aria-label="Find a field" value={details?.query ?? ''}
+            onChange={(e) => details?.search(e.currentTarget.value)} />
+          <button type="button" id="details-edited" className="link small subtle" aria-pressed={!!details?.editedOnly} hidden={!details?.edited}
+            onClick={() => details?.editedToggle()}>{details?.edited ?? ''}</button>
+        </div>
         <div id="sections" className="drawer-body">
+          {details?.nothing ? <p className="feed-empty">{details.nothing}</p> : null}
           {(details?.sections ?? []).map((section) => <Section key={section.id} section={section} fold={details.fold} />)}
         </div>
       </section>
