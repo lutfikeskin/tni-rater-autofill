@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
+import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, ntlHeld, ntlHoldOr, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance } from '../src/util.js';
@@ -2178,4 +2178,24 @@ test('"no" in the FEIN box is no FEIN (W44-15)', () => {
   }
   assert.equal(normalizeIntake({ ...raw, fein: '12-345' }, W44).warnings.find((w) => w.code === 'fein.invalid')?.level, 'check', 'a short number is still checked');
   assert.equal(normalizeIntake({ ...raw, fein: '12-3456789' }, W44).record.applicant.fein, '12-3456789');
+});
+
+// Audit 2026-11-07, CARR-02: the NTL hold wraps each carrier's USDOT and filings rules the same way,
+// from one definition, so a fourth carrier can't copy a drifted one.
+test('the NTL hold is one shared wrapper: held, the rule is the agent\'s with the hold\'s note; otherwise its own', async () => {
+  const fs = await import('node:fs');
+  const held = { coverage: { ntl: true, autoLiability: 'Yes' } };
+  const free = { coverage: { ntl: false, autoLiability: 'Yes' } };
+  const source = (r, a) => (a?.vehicles === 1 ? 'derived' : 'standard');
+  assert.equal(ntlHeld(source)(held, {}), 'fact');
+  assert.equal(ntlHeld(source)(free, {}), 'standard');
+  assert.equal(ntlHeld(source)(free, { vehicles: 1 }), 'derived', 'the unit reaches the rule');
+  assert.equal(ntlHeld('derived')(free, {}), 'derived');
+  assert.match(ntlHoldOr((r) => 'own note')(held, {}), /primary auto liability/);
+  assert.equal(ntlHoldOr((r) => 'own note')(free, {}), 'own note');
+  assert.equal(ntlHoldOr()(free, {}), null);
+  for (const carrier of ['progressive', 'geico', 'amwins']) {
+    const text = fs.readFileSync(new URL(`../src/carriers/${carrier}.js`, import.meta.url), 'utf8');
+    assert.doesNotMatch(text, /const (held|holdOr|vehicleValueNote) = /, `${carrier} defines its own copy`);
+  }
 });
