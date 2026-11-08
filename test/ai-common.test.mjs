@@ -4,12 +4,14 @@ import {
   AssistError,
   LEAVE,
   assistContextKey,
+  pseudonymizeChoices,
   collectItems,
   evidenceFor,
   manualOnlyReason,
   neverReason,
   scopedIntake,
 } from '../src/ai/common.js';
+import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 
 // These records are synthetic. The two entity rows make sure common context
 // helpers keep only the active driver and vehicle.
@@ -57,6 +59,27 @@ test('context keys include the intake and active rows', () => {
   assert.equal(key, assistContextKey(reversed(record), reversed(context.active)));
   assert.notEqual(key, assistContextKey(record, { ...context.active, vehicles: 0 }));
   assert.notEqual(key, assistContextKey({ ...record, coverage: { reeferBreakdown: true } }, context.active));
+});
+
+// Audit 2026-11-07, AI-05: the key is what Luna's answers rest on. An edit Luna never sees keeps the
+// cached answers; one it sees, in any row, a rulebook change or an agent's own default asks again.
+test("context keys follow what Luna sees, rows and the carrier's rules with the agent's defaults included", (t) => {
+  const key = (r = record, carrier = 'progressive') => assistContextKey(r, context.active, carrier);
+  const edit = (path, value) => { const r = structuredClone(record); path.reduce((o, k, i) => (i === path.length - 1 ? (o[k] = value) : o[k]), r); return r; };
+  for (const unseen of [['applicant', 'phone'], ['drivers', 1, 'phone'], ['vehicles', 1, 'vin'], ['extraPrivateValue']]) {
+    assert.equal(key(edit(unseen, 'changed-value')), key(), `${unseen.join('.')} is never sent`);
+  }
+  for (const seen of [['claims', 'text'], ['vehicles', 0, 'value'], ['drivers', 0, 'cdl'], ['operations', 'radius']]) {
+    assert.notEqual(key(edit(seen, 'changed-value')), key(), `${seen.join('.')} is sent (a row other than the active one too)`);
+  }
+  assert.notEqual(key(record, 'geico'), key(), "another carrier's rules");
+  setAgentDefaultsOn(true);
+  t.after(() => { setActiveDefaults(null); setAgentDefaultsOn(RELEASED_TO_AGENTS); });
+  const before = key();
+  setActiveDefaults({ values: { umCsl: { value: 300_000 }, medPay: { value: 2_000 }, compDeductible: { value: 500 }, collDeductible: { value: 500 } } });
+  assert.notEqual(key(), before, "the agent's own defaults rewrite the rules Luna gets");
+  setActiveDefaults(null);
+  assert.equal(key(), before);
 });
 
 test('payment and billing choices stay agent-owned while Medical Payments coverage remains eligible', () => {
@@ -204,4 +227,55 @@ test('a USDOT "belongs" question the fill could not answer stays off the assista
 test('common errors remain typed for callers', () => {
   assert.equal(typeof AssistError, 'function');
   assert.equal(typeof LEAVE, 'string');
+});
+
+// Audit 2026-11-07, AI-13 (the maintainer, 2026-11-07: pseudonymize): Luna gets the client's people
+// and place as [client], so a choice naming them goes as a placeholder saying whose it is, and the pick
+// comes back as the page's own choice. No name or address is sent.
+test("choices naming the client's driver, owner or place go to Luna as placeholders and come back as the page's", () => {
+  const record = { applicant: { name: 'Reefer Express LLC', owner1: 'Dana Q Sample', owner2: 'Lee Sample' },
+    garaging: { street: '12 Elm Road', city: 'Springfield', zip: '62704' },
+    drivers: [{ first: 'Maria', last: 'Lopez' }, { first: 'Juan', last: 'Lopez' }, { first: 'Dana', last: 'Sample' }] };
+  const q = (id, options, current = null) => ({ id, key: id, label: id, options, current });
+  const items = [
+    q('operator', ['Lopez, Maria', 'JUAN LOPEZ', 'Other'], 'Other'),
+    q('owner', ['Dana Q. Sample', 'Lee Sample', 'Someone else'], 'Lee Sample'),
+    q('city', ['Springfield', 'Chicago']), q('zip', ['62704', '60601']),
+    q('class', ['Reefer', 'Dry Van']), q('yes', ['Yes', 'No']), q('none', undefined),
+    // Code can't tell whose: part of a name, two drivers in one choice, a person and the address,
+    // two choices for one placeholder, a current answer naming the client that isn't a choice.
+    q('part', ['Maria', 'Other']), q('both', ['Maria and Juan Lopez', 'Other']), q('mixed', ['Maria Lopez, Springfield', 'Other']),
+    q('twice', ['Maria Lopez', 'M. Lopez (Maria)']), q('typed', ['Yes', 'No'], 'Maria Lopez'),
+  ];
+  const named = pseudonymizeChoices(items, record);
+  const sent = Object.fromEntries(named.items.map((x) => [x.id, x]));
+  assert.deepEqual(sent.operator.options, ['Driver 1 (intake drivers[0])', 'Driver 2 (intake drivers[1])', 'Other']);
+  assert.equal(sent.operator.current, 'Other');
+  assert.deepEqual(sent.owner.options, ['Driver 3 (intake drivers[2]), also Owner (intake applicant.owner1)', 'Owner 2 (intake applicant.owner2)', 'Someone else'],
+    'a driver who is also the owner says both');
+  assert.equal(sent.owner.current, 'Owner 2 (intake applicant.owner2)', 'the current answer as its placeholder');
+  assert.deepEqual([sent.city.options, sent.zip.options], [['Garaging city', 'Chicago'], ['Garaging ZIP', '60601']]);
+  for (const id of ['class', 'yes', 'none']) assert.equal(sent[id], items.find((x) => x.id === id), `${id}: as it is`);
+  assert.deepEqual(named.held.map((x) => x.id), ['part', 'both', 'mixed', 'twice', 'typed']);
+  const json = JSON.stringify(named.items);
+  for (const leak of ['Maria', 'Juan', 'Lopez', 'Dana', 'Lee', 'Springfield', '62704']) assert.ok(!json.includes(leak), `${leak} is sent`);
+  assert.equal(named.toSend(items[0]), sent.operator);
+  assert.equal(named.toSend(items[4]), items[4]);
+
+  // Luna's pick back: the page's own choice, never automatic (picking a person is an identity match).
+  const back = named.restore({ ...sent.operator, choice: 'Driver 2 (intake drivers[1])', leave: false, autoOk: true });
+  assert.deepEqual([back.choice, back.options, back.current, back.autoOk, back.pseudonymized], ['JUAN LOPEZ', items[0].options, 'Other', false, true]);
+  assert.equal(named.restore({ ...sent.city, choice: 'Chicago', autoOk: true }).choice, 'Chicago');
+  assert.equal(named.restore({ ...sent.owner, choice: null, leave: true }).choice, null, 'a question left stays left');
+  const plain = { ...items[5], choice: 'Yes', autoOk: true };
+  assert.equal(named.restore(plain), plain, 'any other suggestion as it is');
+  // CodeRabbit on PR #418: a numeric garaging value is a value of its own, never part of an amount
+  // or a longer number.
+  const unit = pseudonymizeChoices([q('limit', ['$100,000/$300,000', '$250,000/$500,000']), q('miles', ['100-200 miles', '1000']),
+    q('suite', ['Suite 100', 'Suite 200']), q('zip9', ['627041', '62704-1234', '62704-12'])], { garaging: { unit: '100', zip: '62704' } });
+  assert.deepEqual(unit.held, []);
+  assert.deepEqual(unit.items.map((x) => x.options), [['$100,000/$300,000', '$250,000/$500,000'], ['100-200 miles', '1000'],
+    ['Garaging unit', 'Suite 200'], ['627041', 'Garaging ZIP', '62704-12']], 'a ZIP with its four more digits is the ZIP');
+  assert.deepEqual(pseudonymizeChoices(items, null).held, [], 'no intake, nothing to match');
+  assert.equal(pseudonymizeChoices(items, null).items.length, items.length);
 });

@@ -11,7 +11,9 @@
 // questions without a rule) for the daily review's issue (scripts/daily-issue.mjs).
 // --tests: the test-run list (readTestList in scripts/lib/signals.mjs, as weekly-signals.mjs; default:
 // this repository's reviews/test-intakes.txt; a git worktree has none, so pass the main checkout's).
-// Rule suggestions and layouts always use all the data (they need many quotes).
+// Rule suggestions and layouts use all the data, not only the period's (they need many quotes);
+// rule suggestions leave test runs out (the same --tests list), layouts keep them (they record the
+// pages' structure, not answers).
 // Reports go to reviews/review-<date>.md (git-ignored, like generated layouts: review first). With
 // --out outside reviews/, the transitions and captures reports and the generated layouts go next
 // to that file instead of into this repository's reviews/ and captures/.
@@ -23,7 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadEvents, quoteSessions } from './lib/events.mjs';
 import { loadLayouts, report as coverageReport } from './coverage.mjs';
-import { receivedAt, uncoveredQuestions, lastReceipts } from './lib/daily.mjs';
+import { alerts, receivedAt, uncoveredQuestions, lastReceipts } from './lib/daily.mjs';
 import { questionOf } from './lib/learn.mjs';
 import { readTestList, signals, testSessionsOf } from './lib/signals.mjs';
 
@@ -87,7 +89,8 @@ const run = (script, scriptArgs) => {
   }
 };
 const summary = live.length ? run('summarize-usage.mjs', [recentFile]) : '(no events in this period)';
-const learn = run('learn-rules.mjs', inputs).replace(/^# /m, '### ');
+// The child runs in the repository's root: the list by its full path, as this review read it.
+const learn = run('learn-rules.mjs', [...inputs, ...(testsOpt ? ['--tests', path.resolve(testsOpt)] : [])]).replace(/^# /m, '### ');
 const layouts = run('build-layouts.mjs', [...inputs, ...(sideDir ? ['--out', path.join(sideDir, 'captures')] : [])]);
 const transitions = run('transitions.mjs', [...inputs, ...sideOut('transitions')]);
 // Manual captures kept in layouts/ (developer captures; not in the usage log).
@@ -249,6 +252,8 @@ if (opt('summary')) {
     problems: problems.map((e) => ({ t: e.t, receivedAt: e.receivedAt ?? null, agent: e.agent ?? null, page: e.page ?? null, build: buildOf(e), test: tests.has(e.session), text: e.text ?? '' })),
     newQuestions: uncovered.new,
     uncoveredTotal: uncovered.total,
+    // What needs the maintainer before the weekly review, from the agents' events of the period.
+    alerts: alerts(live),
     // The newest receipt in the whole log, test runs left out, and each install's: the daily heartbeat.
     ...lastReceipts(all, tests),
   }, null, 1));

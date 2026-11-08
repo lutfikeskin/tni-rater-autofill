@@ -41,39 +41,41 @@ class Button {
   getBoundingClientRect() { return { left: 10, top: 700, width: 80, height: 30 }; }
 }
 
-function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.example/quote', pathname = '/quote' } = {}) {
+// `elements`: the page's other elements (a design-system host with its shadow root), as `*` finds them.
+function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.example/quote', pathname = '/quote', navigation = null, startAt = 0, elements = [] } = {}) {
   const controls = [];
   const listeners = new Map();
   const on = (target) => (type, fn) => { const key = `${target}:${type}`; (listeners.get(key) ?? (listeners.set(key, new Set()), listeners.get(key))).add(fn); };
   const off = (target) => (type, fn) => listeners.get(`${target}:${type}`)?.delete(fn);
   const messageListeners = new Set();
   const sent = [];
-  let now = 0;
+  let now = startAt;
   let nextId = 1;
   const timers = new Map();
   const document = {
     title: 'Synthetic quote',
     visibilityState: 'visible',
     documentElement: { scrollHeight: 2400 },
-    querySelectorAll: (selector) => (/input|select|textarea/.test(selector) ? [...controls] : []),
+    querySelectorAll: (selector) => (/input|select|textarea/.test(selector) ? [...controls] : selector === '*' ? [...elements] : []),
     getElementById: () => null,
     createTreeWalker: () => ({ currentNode: null, previousNode: () => false }),
     addEventListener: on('document'),
     removeEventListener: off('document'),
   };
   // The page's own changes and requests, handed to the trace by the test (mutate, resource).
-  const observers = { mutation: null, resource: null };
+  // `observed`: what the mutation observer was asked to watch, in order.
+  const observers = { mutation: null, resource: null, resourceOptions: null, observed: [] };
   const context = {
     document,
     location: { href, pathname, search: '', origin: 'https://synthetic.example' },
     URL,
     URLSearchParams,
-    MutationObserver: class { constructor(fn) { this.fn = fn; observers.mutation = this; } observe() {} disconnect() { observers.mutation = null; } },
+    MutationObserver: class { constructor(fn) { this.fn = fn; observers.mutation = this; } observe(target) { observers.observed.push(target); } disconnect() { observers.mutation = null; } },
     // `queued`: entries the browser finished but hasn't handed the callback yet (takeRecords).
-    PerformanceObserver: class { constructor(fn) { this.fn = fn; this.queued = []; observers.resource = this; } observe() {} takeRecords() { const q = this.queued; this.queued = []; return q; } disconnect() { this.queued = []; observers.resource = null; } },
+    PerformanceObserver: class { constructor(fn) { this.fn = fn; this.queued = []; observers.resource = this; } observe(options) { observers.resourceOptions = options; } takeRecords() { const q = this.queued; this.queued = []; return q; } disconnect() { this.queued = []; observers.resource = null; } },
     NodeFilter: { SHOW_TEXT: 4 },
     getComputedStyle: () => ({ visibility: 'visible' }),
-    performance: { timeOrigin: ORIGIN, now: () => now },
+    performance: { timeOrigin: ORIGIN, now: () => now, getEntriesByType: (type) => (type === 'navigation' && navigation ? [navigation] : []) },
     innerWidth: 1280,
     innerHeight: 800,
     devicePixelRatio: 1,
@@ -132,6 +134,14 @@ function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.examp
     set now(ms) { now = ms; },
   };
 }
+
+// REC-10 (audit 2026-11-07): the recording's manifest names the trace and recorder that wrote it.
+test('each batch says which trace and recorder wrote it', async () => {
+  const h = harness();
+  await h.advance(1000);
+  const [batch] = h.trace();
+  assert.deepEqual([batch.v, batch.recorder], [Number(TRACE.match(/const VERSION = (\d+);/)[1]), Number(RECORDER.match(/const VERSION = (\d+);/)[1])]);
+});
 
 test('a change is stamped with the page clock, its question named as the recorder names it, a choice by its words', async () => {
   const h = harness();
@@ -283,6 +293,11 @@ test('what the extension\'s fill says is kept by its own time; anything else on 
   assert.deepEqual(kit.map((e) => [e.what, e.t]), [['wait', ORIGIN + 3000.5], ['press', ORIGIN + 3200]]);
   assert.deepEqual([kit[0].ms, kit[0].why, kit[0].kind, kit[0].seq !== 99, 'frame' in kit[0], 'filling' in kit[0]], [120, 'answer', 'kit', true, false, false]);
   assert.deepEqual(kit[1].button, { text: 'Continue' });
+  // REC-02: what the wait saw itself, as numbers only.
+  say(JSON.stringify({ what: 'wait', t: ORIGIN + 4000, start: ORIGIN + 3800, ms: 200, ended: 'quiet', lastChange: ORIGIN + 3950, lastHeld: 'Sam Smith' }));
+  await h.advance(400);
+  const last = h.events().filter((e) => e.kind === 'kit').at(-1);
+  assert.deepEqual([last.lastChange, 'lastHeld' in last], [ORIGIN + 3950, false]);
 });
 
 // Review of PR #257: the page can dispatch the same event, so what it holds is built afresh from
@@ -443,4 +458,141 @@ test('every wait the fill engine names is kept by the trace and said by the repo
     assert.ok(kept.has(why), `the trace keeps "${why}"`);
     assert.ok(said.has(why), `the report says "${why}"`);
   }
+});
+
+// REC-20 (audit 2026-11-07): a request the carrier's server failed looked like one that finished.
+test('a page request carries the HTTP status its server answered, when the browser says it', async () => {
+  const h = harness();
+  h.resource([
+    { initiatorType: 'fetch', name: 'https://synthetic.example/api/rate', startTime: 2000, responseEnd: 2300, responseStatus: 500 },
+    { initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/save', startTime: 2400, responseEnd: 2500, responseStatus: 200 },
+    { initiatorType: 'fetch', name: 'https://synthetic.example/api/old', startTime: 2600, responseEnd: 2700 },
+  ]);
+  await h.advance(400);
+  assert.deepEqual(h.events().filter((e) => e.kind === 'request').map((e) => [e.path, e.status ?? null]), [['/api/rate', 500], ['/api/save', 200], ['/api/old', null]]);
+});
+
+// REC-03 (audit 2026-11-07): a new document's first page was stamped when the trace was put in,
+// seconds after its navigation began, and the requests it made before that were never seen: a full
+// page load's time was charged to the step before, or lost.
+test('a document the trace is in from its load: stamped at its navigation start, its load said, its earlier requests read', async () => {
+  const navigation = { type: 'navigate', responseEnd: 800, domContentLoadedEventEnd: 1500, loadEventEnd: 2100 };
+  const h = harness({ navigation, startAt: 2500 });
+  assert.deepEqual({ ...h.observers.resourceOptions }, { type: 'resource', buffered: true });
+  await h.advance(1000);
+  const [page, load] = h.events();
+  assert.deepEqual([page.kind, page.t, page.injectedAt], ['page', ORIGIN, ORIGIN + 2500]);
+  assert.deepEqual([load.kind, load.t, load.how, load.response, load.ready, load.loaded], ['load', ORIGIN, 'navigate', ORIGIN + 800, ORIGIN + 1500, ORIGIN + 2100]);
+  // Put in again in the same document (a trace the panel left, gone): no second load, no buffer.
+  h.context.__raterTrace.dispose();
+  vm.runInContext(TRACE, h.context);
+  assert.deepEqual({ ...h.observers.resourceOptions }, { type: 'resource', buffered: false });
+  await h.advance(1000);
+  assert.equal(h.events().filter((e) => e.kind === 'load').length, 1);
+  assert.equal(h.events().filter((e) => e.kind === 'page').at(-1).injectedAt, undefined);
+  // A page long loaded when the recording began (the trace put in a minute on): as before.
+  const later = harness({ navigation, startAt: 60_000 });
+  assert.deepEqual({ ...later.observers.resourceOptions }, { type: 'resource', buffered: false });
+  await later.advance(1000);
+  assert.deepEqual(later.events().map((e) => [e.kind, e.t]), [['page', ORIGIN + 60_000]]);
+});
+
+// REC-19 (audit 2026-11-07): GEICO draws its controls inside open shadow roots (gds-*), and the
+// trace watched only the light DOM: a control redrawn there left no change in the recording.
+test('open shadow roots are watched too: those on the page as it starts, and those a change brings, once each', async () => {
+  const shadowHost = (name) => {
+    const root = { nodeType: 11, querySelectorAll: () => [] };
+    return { tagName: 'GDS-RADIO-BUTTON', nodeType: 1, name, shadowRoot: root, querySelectorAll: () => [], matches: () => false };
+  };
+  const first = shadowHost('first');
+  const h = harness({ elements: [first] });
+  assert.equal(h.observers.observed.includes(first.shadowRoot), true, 'one on the page as the trace starts');
+  // A component drawn later, inside a new section.
+  const later = shadowHost('later');
+  const section = { tagName: 'DIV', nodeType: 1, querySelectorAll: (sel) => (sel === '*' ? [later] : []), matches: () => false };
+  h.mutate([{ addedNodes: [section], removedNodes: [] }]);
+  h.mutate([{ addedNodes: [section], removedNodes: [] }]);
+  assert.equal(h.observers.observed.filter((x) => x === later.shadowRoot).length, 1, 'one a change brings, once');
+  assert.equal(h.observers.observed.filter((x) => x === first.shadowRoot).length, 1);
+  // A change inside a shadow root is a burst as any other.
+  h.mutate([{ target: later.shadowRoot, addedNodes: [], removedNodes: [] }]);
+  await h.advance(1000);
+  assert.equal(h.events().filter((e) => e.kind === 'burst').length, 1);
+});
+
+// Review of PR #377: the cap on the look for shadow roots didn't bound the work (the whole page was
+// listed and looked through first), and the roots found past it were never looked in.
+test('a large page is looked through for shadow roots in bounded turns, to the end, nested roots too', async () => {
+  const plainEl = () => ({ nodeType: 1, shadowRoot: null });
+  const nested = { tagName: 'GDS-INPUT', nodeType: 1, shadowRoot: { nodeType: 11, querySelectorAll: () => [] } };
+  const host = { tagName: 'GDS-CARD', nodeType: 1, shadowRoot: { nodeType: 11, querySelectorAll: (sel) => (sel === '*' ? [nested] : []) } };
+  const h = harness({ elements: [...Array.from({ length: 6000 }, plainEl), host] });
+  assert.equal(h.observers.observed.includes(host.shadowRoot), false, 'past the first turn as the trace starts');
+  await h.advance(10);
+  assert.equal(h.observers.observed.includes(host.shadowRoot), true, 'a later turn reaches it');
+  assert.equal(h.observers.observed.includes(nested.shadowRoot), true, 'the root found inside a root is looked in too');
+});
+
+test('a node added inside another added in the same change is looked through once, with it', async () => {
+  const h = harness();
+  const looks = { child: 0 };
+  const child = { tagName: 'DIV', nodeType: 1, querySelectorAll: (sel) => { if (sel === '*') looks.child++; return []; } };
+  const parent = { tagName: 'SECTION', nodeType: 1, querySelectorAll: (sel) => (sel === '*' ? [child] : []) };
+  child.parentNode = parent;
+  h.mutate([{ addedNodes: [parent], removedNodes: [] }, { addedNodes: [child], removedNodes: [] }]);
+  await h.advance(10);
+  assert.equal(looks.child, 0, 'the parent\'s look took it in');
+});
+
+test('a component a change adds with its question already drawn in its shadow root counts it as drawn', async () => {
+  const h = harness();
+  const trailer = new Control('select', { name: 'trailer', label: 'Trailer type', options: [{ text: 'Flatbed', value: 'F' }] });
+  const root = { nodeType: 11, querySelectorAll: (sel) => (sel === '*' ? [] : [trailer]) };
+  const host = { tagName: 'GDS-SELECT', nodeType: 1, shadowRoot: root, querySelectorAll: () => [], matches: () => false };
+  h.now = 1000;
+  h.mutate([{ addedNodes: [host], removedNodes: [] }]);
+  await h.advance(400);
+  const bursts = h.events().filter((e) => e.kind === 'burst');
+  assert.equal(bursts.length, 1);
+  assert.deepEqual([bursts[0].drawnCount, bursts[0].drawn.map((d) => d.label)], [1, ['Trailer type']]);
+});
+
+// Review of PR #377 (second round): a large added subtree was listed whole (querySelectorAll) before
+// the turn's budget applied, and a root attached after its host was looked at was never watched.
+test('a large added subtree is walked a turn\'s elements at a time, never listed whole', async () => {
+  const h = harness();
+  let walked = 0;
+  // A tree walker over elements' `children`, as the browser's walks (the recorder's walker kept).
+  const textWalker = h.context.document.createTreeWalker;
+  h.context.document.createTreeWalker = (root, what) => {
+    if (what !== 1) return textWalker(root, what);
+    const todo = [...(root.children ?? [])].reverse();
+    return { nextNode: () => { const n = todo.pop() ?? null; if (n) { walked++; todo.push(...[...(n.children ?? [])].reverse()); } return n; } };
+  };
+  const listed = [];
+  const host = { tagName: 'GDS-CARD', localName: 'gds-card', nodeType: 1, children: [], shadowRoot: { nodeType: 11, children: [], querySelectorAll: () => [] } };
+  const section = { tagName: 'SECTION', localName: 'section', nodeType: 1, matches: () => false,
+    children: [...Array.from({ length: 12_000 }, () => ({ tagName: 'DIV', localName: 'div', nodeType: 1, children: [], shadowRoot: null })), host],
+    querySelectorAll: (sel) => { if (sel === '*') listed.push(sel); return []; } };
+  h.mutate([{ addedNodes: [section], removedNodes: [] }]);
+  assert.ok(walked <= 5000, `one turn's elements in the change's callback (${walked})`);
+  assert.equal(h.observers.observed.includes(host.shadowRoot), false);
+  await h.advance(10);
+  assert.equal(walked, 12_001);
+  assert.equal(h.observers.observed.includes(host.shadowRoot), true);
+  assert.deepEqual(listed, [], 'never listed whole');
+});
+
+test('a component whose shadow root comes after it was looked at is watched once it has one, its questions drawn then', async () => {
+  const h = harness();
+  const trailer = new Control('select', { name: 'trailer', label: 'Trailer type', options: [{ text: 'Flatbed', value: 'F' }] });
+  const host = { tagName: 'GDS-SELECT', localName: 'gds-select', nodeType: 1, isConnected: true, shadowRoot: null, querySelectorAll: () => [], matches: () => false };
+  h.mutate([{ addedNodes: [host], removedNodes: [] }]);
+  await h.advance(400);
+  // Defined later: its upgrade attaches its root, which no change says.
+  host.shadowRoot = { nodeType: 11, isConnected: true, querySelectorAll: (sel) => (sel === '*' ? [] : [trailer]) };
+  await h.advance(1000);
+  assert.equal(h.observers.observed.filter((x) => x === host.shadowRoot).length, 1);
+  const drew = h.events().filter((e) => e.kind === 'burst' && e.drawnCount);
+  assert.deepEqual(drew.map((b) => b.drawn.map((d) => d.label)), [['Trailer type']]);
 });

@@ -8,7 +8,7 @@
 
 /** @param {any} kit */
 export function createAddressDriver(kit) {
-  const { adapter, withAdapter, deepQueryAll, oneLine, sleep, settle, hasValue, unpicked } = kit;
+  const { adapter, withAdapter, deepQueryAll, oneLine, sleep, settle, hasValue, unpicked, halted, interrupted } = kit;
 
   // Address boxes with the carrier's own address suggestions: type the whole one-line address,
   // wait for the suggestion list, pick its first entry for that address (which fills street, city
@@ -56,7 +56,7 @@ export function createAddressDriver(kit) {
     let first = null;
     let offered = false;
     try {
-      for (const start = Date.now(); !first && Date.now() - start < 4000;) {
+      for (const start = Date.now(); !first && Date.now() - start < 4000 && !halted();) {
         await sleep(200);
         const fresh = shownSuggestions().filter((x) => !before.has(x));
         offered ||= fresh.length > 0;
@@ -65,6 +65,8 @@ export function createAddressDriver(kit) {
     } finally {
       mo?.disconnect();
     }
+    // Stopped meanwhile (the agent's Stop, or their edit): the typed text stays, nothing is picked.
+    if (halted()) return interrupted();
     if (!first) {
       // A box with its own city/ZIP boxes gets back just the street.
       if (step.fallback) {
@@ -75,9 +77,9 @@ export function createAddressDriver(kit) {
       }
       el.blur?.();
       if (step.checkNumber) unpicked.set(el, el.value);
-      if (offered) return { ok: false, reason: `none of the page's address suggestions has the intake's house number${wantZip ? ' and ZIP' : ''}: pick the address yourself` };
+      if (offered) return { ok: false, code: 'address.no-suggestion', reason: `none of the page's address suggestions has the intake's house number${wantZip ? ' and ZIP' : ''}: pick the address yourself` };
       const seen = [...new Set(added.filter((n) => n.getClientRects?.().length).map((n) => `${n.tagName.toLowerCase()}${n.id ? `#${String(n.id).replace(/\d{3,}/g, '#')}` : ''}${typeof n.className === 'string' && n.className.trim() ? `.${n.className.trim().split(/\s+/).slice(0, 3).join('.')}` : ''}${n.getAttribute?.('role') ? `[role=${n.getAttribute('role')}]` : ''}`))].slice(0, 8);
-      return { ok: false, reason: `the page offered no address suggestion; check the address, city and ZIP${seen.length ? ` (new on the page: ${seen.join(', ')})` : ''}` };
+      return { ok: false, code: 'address.no-suggestion', reason: `the page offered no address suggestion; check the address, city and ZIP${seen.length ? ` (new on the page: ${seen.join(', ')})` : ''}` };
     }
     const shown = oneLine(first.textContent).slice(0, 120);
     if (first.classList?.contains('pac-item') || / pac-item /.test(` ${first.className} `)) {
@@ -85,6 +87,7 @@ export function createAddressDriver(kit) {
       await settle({ quietMs: 300, maxMs: 5000 });
       // Still the typed text: Google didn't take the keys; click the suggestion instead.
       if (el.value !== text) return { ok: true, shown };
+      if (halted()) return interrupted();
     }
     for (const type of ['mousedown', 'mouseup']) first.dispatchEvent(new Event(type, { bubbles: true }));
     first.click?.();

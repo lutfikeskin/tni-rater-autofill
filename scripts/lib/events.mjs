@@ -7,6 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { reportsOf } from './carrier-reports.mjs';
 
 function* files(p) {
   const stat = fs.statSync(p);
@@ -79,4 +80,14 @@ export function sessionContexts(events) {
   const out = new Map();
   for (const e of events) if (e.type === 'intake_loaded' && e.session) out.set(e.session, e);
   return out;
+}
+
+// The quote's own pages (the answer key's and the learner's): not a carrier's login or portal pages,
+// nor another product's application; each carrier's in carrier-reports.mjs (quotePage, loginPage).
+// A carrier the reports don't know: every page.
+export function quotePage(carrier, page) {
+  const p = String(page ?? '');
+  const r = reportsOf(carrier);
+  if (!r) return true;
+  return !r.loginPage.test(p) && r.quotePage(p);
 }

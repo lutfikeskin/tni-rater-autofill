@@ -90,6 +90,19 @@ test('the dock shows dockFor\'s word, its one button and its alternative, with t
   expect(shown(container)).toEqual([]);
 });
 
+// Audit 2026-11-07, FLOW-13: automatic filling paused on the tab in front (renderDock's `paused`) is
+// said under the dock's word, as a status line, on whatever page the tab is on.
+test('the dock says when automatic filling is paused on the tab, and stops saying it once lifted', () => {
+  const { container } = render(<Dock act={acts().act} />);
+  const word = { phase: 'ready', eyebrow: 'Next', title: 'Fill the Vehicles page', sub: 'Clicks Continue once nothing is left for you.', button: 'fill', label: 'Fill this page', hidden: false, report: '', busy: false };
+  act(() => { state.dock = { ...word, paused: 'Automatic filling is paused on this tab. Your next Fill turns it back on.' }; });
+  const line = $(container, 'dock-paused');
+  expect([line.hidden, line.getAttribute('role'), line.textContent]).toEqual([false, 'status', 'Automatic filling is paused on this tab. Your next Fill turns it back on.']);
+  expect($(container, 'dock-sub').textContent).toBe('Clicks Continue once nothing is left for you.');
+  act(() => { state.dock = { ...word, paused: '' }; });
+  expect(line.hidden).toBe(true);
+});
+
 // From the safety test 'a page with nothing to fill and nothing left offers Continue, a fill that
 // replaces nothing' (renderDock set #fill's data-go; its listener read it) and the one holding Fill
 // while the quote's state differs: what Fill and the alternative ask the panel with.
@@ -153,4 +166,64 @@ test('mountSteps and mountDock draw before they return', () => {
   });
   nav.remove();
   foot.remove();
+});
+
+// Audit 2026-11-07, UX-08: Fill this page hid as Stop showed, and keyboard focus fell to the page;
+// a keyboard or screen-reader agent had to tab back through the panel to reach Stop.
+test('keyboard focus stays in the dock as its button changes, and is never taken from elsewhere', () => {
+  const t = acts();
+  const { container } = render(<><button id="elsewhere">elsewhere</button><Dock act={t.act} /></>);
+  const say = (word) => act(() => { state.dock = { title: 'x', hidden: false, report: '', busy: false, ...word }; });
+  say({ phase: 'ready', button: 'fill', label: 'Fill this page' });
+  $(container, 'fill').focus();
+  // Fill pressed: Stop shows in its place, and takes the focus.
+  say({ phase: 'filling', button: 'fill-stop', label: 'Stop', busy: true });
+  expect(document.activeElement.id).toBe('fill-stop');
+  // Stop pressed: it stays, disabled, as Stopping…; then the next word's button takes it.
+  say({ phase: 'filling', button: 'fill-stop', label: 'Stopping…', disabled: true, busy: true });
+  say({ phase: 'needs', button: 'dock-next', label: 'Show the next one', alt: 'fill-again', altLabel: 'Fill this page again' });
+  expect(document.activeElement.id).toBe('dock-next');
+  // A word with no button: its alternative.
+  say({ phase: 'finished', alt: 'fill-again', altLabel: 'Fill this page again' });
+  expect(document.activeElement.id).toBe('dock-alt');
+  // Stop pressed with nothing else in the dock: the browser drops focus from it (blur, to the page),
+  // and the agent then moves on to a control outside the dock before the next word: that is theirs
+  // (review of #390, CodeRabbit).
+  say({ phase: 'filling', button: 'fill-stop', label: 'Stopping…', disabled: true, busy: true });
+  act(() => { document.activeElement.blur(); });
+  $(container, 'elsewhere').focus();
+  act(() => { document.activeElement.blur(); });
+  say({ phase: 'ready', button: 'fill', label: 'Fill this page again' });
+  expect(document.activeElement).toBe(document.body);
+  // Focus elsewhere: the dock's changes leave it there.
+  $(container, 'elsewhere').focus();
+  say({ phase: 'ready', button: 'fill', label: 'Fill this page' });
+  say({ phase: 'filling', button: 'fill-stop', label: 'Stop', busy: true });
+  expect(document.activeElement.id).toBe('elsewhere');
+});
+
+// Audit 2026-11-07, FLOW-05: while a quiet automatic fill ran (no answer in yet), the dock still
+// offered Looks right, Show the next one or Fill this page again, and a click did nothing. While
+// answers go in every button but Stop waits, and says why.
+test('while answers go in, every dock button but Stop is held and says why', () => {
+  const t = acts();
+  const { container } = render(<Dock act={t.act} />);
+  const why = 'Wait for the answers going in to finish.';
+  for (const word of [
+    { phase: 'check', button: 'look-right', label: 'Looks right, continue', alt: 'fill-again', altLabel: 'Fill this page again' },
+    { phase: 'needs', button: 'dock-next', label: 'Show the next one', alt: 'fill-again', altLabel: 'Fill this page again' },
+    { phase: 'ready', button: 'fill', label: 'Fill this page again', alt: 'fill-again', altLabel: 'Fill this page again' },
+  ]) {
+    act(() => { state.dock = { ...word, title: 'x', hidden: false, report: '1700', busy: true }; });
+    const button = $(container, word.button);
+    expect([button.hidden, button.disabled, button.title]).toEqual([false, true, why]);
+    expect([$(container, 'dock-alt').disabled, $(container, 'dock-alt').title]).toEqual([true, why]);
+    act(() => { state.dock = { ...state.dock, busy: false }; });
+    expect([button.disabled, button.title, $(container, 'dock-alt').disabled]).toEqual([false, '', false]);
+  }
+  // Stop never waits.
+  act(() => { state.dock = { phase: 'elsewhere', title: 'Filling your other GEICO tab', button: 'fill-stop', label: 'Stop', disabled: false, hidden: false, report: '', busy: true }; });
+  expect([$(container, 'fill-stop').disabled, $(container, 'fill-stop').title]).toEqual([false, '']);
+  fireEvent.click($(container, 'fill-stop'));
+  expect(t.calls.at(-1)?.[0]).toBe('stop');
 });

@@ -18,12 +18,12 @@ import { $, forgetKeptReports, persistAgentKeys, persistDoneActions, persistUnit
 import { firstUnits, save } from './intake.js';
 import { checkShown, renderPickers, renderWarnings, showScreen } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
-import { afterFill, appendRows, assistAfterFill, fillPage, noteMissingUnit, pickListItem, renderReport, runKit, worldFor } from './fill.js';
+import { afterFill, appendRows, assistAfterFill, fillPage, noteMissingUnit, pickListItem, renderReport, resumeHeldFill, runKit, worldFor } from './fill.js';
 import { pendingAi } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNameFor, unitScope } from './scope.js';
 import { fillCurrent, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded } from './fill-checks.js';
-import { DOCK_PHASES, phaseSaid } from './live.js';
+import { DOCK_PHASES, QUIET_MS, fillShown, phaseSaid } from './live.js';
 import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
 import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
@@ -75,7 +75,7 @@ const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 
   // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
   // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only. The
   // agent's Fill this page passes none (fillPage): it gives the answer again.
-  takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: Object.fromEntries([...(state.filled?.keys() ?? [])].map((key) => [key, true])) } : null,
+  takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: Object.fromEntries([...Object.keys(givenEarlier(state.tab?.id)), ...(state.filled?.keys() ?? [])].map((key) => [key, true])) } : null,
   // The field keys this tab's fills answered: one the page has reset since is given again only on a
   // quiet page (W43-21). Keys only.
   filledBefore: [...(state.filled?.keys() ?? [])],
@@ -114,8 +114,9 @@ const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 
   // filled only for the driver the plan is for (W43-37).
   formUnit: unitNameFor(carrier, extra.expectPage ?? pageOf(state.tab?.url), active, state.intake?.record),
   // What this tab's fills gave, by field key, with the unit each was for: a field still showing
-  // another unit's answer gets this unit's (W43-38).
-  givenBefore: Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])),
+  // another unit's answer gets this unit's (W43-38), and one showing otherwise now is kept (pagekit
+  // `changedSince`). Those given before the panel opened too (givenEarlier), from the tab's kept reports.
+  givenBefore: { ...givenEarlier(state.tab?.id), ...Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },
   // A page that shows a few units' rows at a time (Progressive's Rates): the kit pages through them.
   pager: carrier.unitPager ?? null,
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
@@ -126,6 +127,12 @@ const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 
   ...extra,
 });
 
+// What the tab's fills gave before the panel opened (state.givenEarlier), for this intake only.
+function givenEarlier(tabId) {
+  const kept = state.givenEarlier?.get(tabId);
+  return kept && kept.scope === usage.currentSession()?.intakeId ? Object.fromEntries(kept.given) : {};
+}
+
 // Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
 // from the extension's own package when the panel starts, on every fill_run. Null outside the
 // extension or until it's read; then the run just carries none.
@@ -134,6 +141,8 @@ if (inExtension) {
   Promise.all(RULE_FILES.map((f) => fetch(chrome.runtime.getURL(f)).then((r) => r.text()))).then(rulesHash)
     .then((hash) => { rulesVersion = hash; }).catch(() => {});
 }
+// The same fingerprint, for a developer recording's manifest (null until read).
+const rulesFingerprint = () => rulesVersion;
 
 // What a fill is about, taken before it waits on anything (audit 2026-10-08, finding 5): its own
 // id (`run`, shared by its events), the tab, carrier and page it fills, the intake and revision it
@@ -149,6 +158,8 @@ function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = f
   const session = usage.currentSession();
   return {
     run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite, asked,
+    // The quote tab filled while the agent is on another one (refreshTab's `background`).
+    background: !!state.tab?.background && state.tab.id === tabId,
     intake: state.intake, revision: state.intakeRevision, ids: { session: session?.id ?? null, intakeId: session?.intakeId ?? null },
     view: viewOf(tabId, page, carrier), scope: editScope(page, carrier, tabStep(carrier, tabId)), active: { ...state.active },
     settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages'), overwrite: !!overwrite },
@@ -203,6 +214,12 @@ function watchFill(ctx) {
   let reading = null;
   const timer = setInterval(async () => {
     if (state.fillingFor?.run !== ctx.run) { clearInterval(timer); return; }
+    // A quiet automatic fill that has gone on a while is said as a fill from now (fillShown).
+    const quiet = state.fillingFor;
+    if (quiet.auto && !quiet.shown && Date.now() - (quiet.started ?? 0) >= QUIET_MS) {
+      state.fillingFor = { ...quiet, shown: true };
+      renderSteps();
+    }
     if (reading != null) {
       if (Date.now() - reading >= UNANSWERED_MS && !state.fillingFor.unanswered) {
         state.fillingFor = { ...state.fillingFor, unanswered: true };
@@ -297,6 +314,9 @@ function showFinish({ auto = false } = {}) {
 /** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {FillReport[]} frames */
 function logFill(ctx, frames, results, started) {
   if (ctx.carrier.practice) return;
+  // The kept answers logged in this quote (fillEvents' keptLogged): a new usage session, a new set.
+  const session = usage.currentSession()?.id ?? null;
+  if (state.keptLogged?.session !== session) state.keptLogged = { session, seen: new Set() };
   const redact = redactor(redactionTerms(ctx.intake.record));
   state.lastRuns?.set(`${ctx.tabId}|${ctx.page}`, { run: ctx.run, at: Date.now(), step: stepOfResults(ctx.carrier, results),
     blockers: frames.flatMap((f) => f.blockers ?? []).slice(0, 6).map((b) => redact(String(b)).slice(0, 120)) });
@@ -304,20 +324,28 @@ function logFill(ctx, frames, results, started) {
   usage.log(...fillEvents(ctx.listNote ? [...frames, { blockers: [ctx.listNote] }] : frames, {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
-    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash,
+    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background, retried: !!ctx.retried,
+    keptLogged: state.keptLogged.seen,
   }));
 }
 // A rejected fill has no fill_run result to carry its rule version and switches.
 function logFillError(ctx, error) {
   if (ctx.carrier.practice) return;
   usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run,
-    rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, error: fillErrorText(ctx, error), ...ctx.ids });
+    rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, ...(ctx.retried ? { retried: true } : {}), error: fillErrorText(ctx, error), ...ctx.ids });
 }
 
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || stateIssue() || defaultsHold() || quoteOwnerIssue(ctx.tabId)) return;
+  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || quoteOwnerIssue(ctx.tabId)) return;
+  // Held by the quote's state or the defaults question, a follow-up waits for nothing. A step with no
+  // report yet (AmWINS' next step at the same address, which autoFill fills as a new page) is a page's
+  // opening fill: fillPage keeps it for resumeHeldFill, to run once the hold lifts.
+  if (stateIssue() || defaultsHold()) {
+    if (ctx.tabId === state.tab?.id && pageOf(state.tab?.url) === page && !state.reports.has(reportKey(ctx.tabId, page, state.tab.carrier))) fillPage({ auto: 'page' });
+    return;
+  }
   if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
@@ -330,7 +358,7 @@ async function autoFill(page) {
   const drawn = state.autoDrawn === page;
   state.autoDrawn = null;
   // The client may have been cleared while this fill was waiting to run.
-  if (state.autoPaused || state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
+  if (state.autoPaused || state.filling || state.closing || state.resetting || state.newQuoteFailed || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   // Nor on a tab whose quote wasn't started with this intake (quote-owner.js).
   if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue()) return;
   const { id: tabId, carrier } = state.tab;
@@ -350,8 +378,11 @@ async function autoFill(page) {
   // A fill the agent started while the list was read (Fill this page, Looks right) goes first;
   // this one follows it rather than running beside it.
   if (state.filling) { state.autoPending = true; if (drawn) state.autoDrawn = page; return; }
+  state.fillingKind = 'fill';
   state.filling = true;
   state.autoPending = false;
+  // The dock's buttons wait while it runs (`busy`), from now, not from its first answer.
+  renderSteps();
   const started = Date.now();
   let assistFrames = null;
   let followUp = false;
@@ -369,23 +400,23 @@ async function autoFill(page) {
     // report is shown, as a new step's is (FL live run 6, 2026-10-21: vehicles 2 and 3 were filled by
     // follow-ups while the panel still showed the answers of the vehicle before).
     const unseen = !state.reports.has(reportKey(tabId, page, carrier, ctx.active, stepBefore));
-    // Honor the latest switch after preparation, and log the same value used by the kit. The unit the
-    // fill adds (pickUnitToAdd) has its "+" and chooser Next clicked only with it on (`click`).
-    ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
-    const plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // The tab moved on to another page meanwhile: that one gets its own fill (fillPage).
     if (await pageMoved(ctx)) { moved = true; notePageMoved(ctx); return; }
+    // Continue's switch as now, nothing awaited before the kit gets it; the add clicks follow it.
+    ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
+    if (ctx.adding) ctx.adding = { ...ctx.adding, click: !!(ctx.settings.autoPages || ctx.settings.autoAdvance || ctx.asked) };
+    const plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     // Its answers listed as they go in, as a fill the agent asked for, from the first one in (`auto`:
     // a follow-up that answers nothing never replaces the report; W43-42, 2026-10-22: a 29-second
     // automatic fill showed nothing until it ended).
-    state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false, auto: true };
+    state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false, auto: true, started: Date.now() };
     unwatch = watchFill(ctx);
-    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
+    if (results.some((r) => r.result?.pageMoved) || results.some((r) => r.frameId === 0 && r.result == null)) { moved = true; notePageMoved(ctx); return; }
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
@@ -443,12 +474,14 @@ async function autoFill(page) {
     await tellRecorder('resume', tabId);
     state.filling = false;
     renderSteps();
-    if (fillCurrent(ctx) && state.autoPending) scheduleAutoFill(page);
+    // A follow-up asked for while this ran: this page's, or the tab's the agent moved to meanwhile (a
+    // tab switch lets go of the last tab's, so one left is that tab's: audit 2026-11-07, FLOW-07).
+    if (state.autoPending && !staleFill(ctx)) scheduleAutoFill(fillCurrent(ctx) ? page : pageOf(state.tab?.url));
     // The page in front, which this fill wasn't for: its stop card, or its own fill.
-    if (moved && fillCurrent(ctx)) {
-      if (stopNoteFor(state.tab?.carrier, pageOf(state.tab?.url))) showStopPage();
-      runPendingPage(ctx);
-    }
+    if (moved && fillCurrent(ctx) && stopNoteFor(state.tab?.carrier, pageOf(state.tab?.url))) showStopPage();
+    runPendingPage(ctx);
+    // A page a hold kept back, whose hold lifted while this ran.
+    resumeHeldFill();
   }
   if (!fillCurrent(ctx)) return;
   // The page moved on to a stop page while this ran: its card stays on top of this fill's report.
@@ -460,12 +493,16 @@ async function autoFill(page) {
   if (assistFrames && !unread) assistAfterFill(assistFrames, { tabId, page, carrier }, followUp);
 }
 
+// A page that opened while a fill ran (`pagePending`, { tabId, page }: fillPage, watchNextStep), filled
+// once that fill ends, whichever tab it ran on: the tab and page must be the ones in front then, and
+// the intake the one the fill began with (audit 2026-11-07, FLOW-07: a page that opened on the tab the
+// agent moved to was dropped when the fill on the other tab ended). Called from every end of a fill;
+// the first takes it.
 function runPendingPage(ctx) {
   const pending = state.pagePending;
   state.pagePending = null;
-  if (pending && pending === pageOf(state.tab?.url)) setTimeout(() => {
-    if (fillCurrent(ctx) && pending === pageOf(state.tab?.url)) fillPage({ auto: 'page' });
-  }, 300);
+  const here = () => !staleFill(ctx) && !!pending && pending.tabId === state.tab?.id && pending.page === pageOf(state.tab?.url);
+  if (here()) setTimeout(() => { if (here()) fillPage({ auto: 'page' }); }, 300);
 }
 
 // Each page's question layout (ids, question text, options, which choice is picked; no typed
@@ -522,7 +559,7 @@ async function captureLayout(job, reason) {
   if (fillStarted()) return waitForFill(job);
   const { tabId, carrier, page } = job;
   try {
-    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
+    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit?.capture(p, r),
       [planFor(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
     if (!jobCurrent(job) || superseded(job)) return;
     if (fillStarted()) return waitForFill(job);
@@ -687,7 +724,7 @@ async function layoutWhenQuiet(job, tries = 0) {
   if (state.filling) return afterFill();
   let busy;
   try {
-    busy = (await runKit(job.tabId, job.carrier, () => globalThis.__raterKit.busy())).some((r) => r.result);
+    busy = (await runKit(job.tabId, job.carrier, () => globalThis.__raterKit?.busy())).some((r) => r.result);
   } catch (e) {
     // Couldn't ask the page: the same as a layout that couldn't be read, unless it moved on.
     if (live()) layoutFailed(job, reason(), layoutErrorKind(e));
@@ -1078,8 +1115,9 @@ function renderSteps() {
   const stopped = !!stopNoteFor(carrier, page);
   const report = showReport();
   // The fill running on this tab: its answers in so far, in place of the report.
-  // A quiet automatic fill (no rows yet) leaves the report in place, as the live list and the dock do.
-  const filling = state.filling && !!state.fillingFor && state.fillingFor.tabId === state.tab?.id && (!state.fillingFor.auto || !!state.fillingFor.rows?.length);
+  // A quick quiet automatic fill (no rows yet) leaves the report in place, as the live list and the
+  // dock do (fillShown).
+  const filling = state.filling && fillShown(state.fillingFor) && state.fillingFor.tabId === state.tab?.id;
   const filled = !filling && !!report?.fields;
   // Why the last fill didn't finish, or what it found instead of questions (a portal page).
   const error = filling ? null : report?.error ?? null;
@@ -1272,23 +1310,14 @@ function dockFor() {
   const checksSaid = state.view === 'check' && open ? `${open} intake item${open === 1 ? '' : 's'} not looked at yet. You can still fill.` : null;
   const carrier = state.tab?.carrier;
   if (!inExtension) return { phase: 'off', eyebrow: 'Preview', title: 'Filling works only in the Chrome extension' };
+  // A fill running, here or on another tab, is said with its Stop (audit 2026-11-07, FLOW-05: a
+  // quiet follow-up, or one on another quote tab, ran with no Stop under buttons that did nothing).
+  const f = state.fillingFor;
+  if (state.filling && fillShown(f)) return fillingSaid(f);
   if (!carrier) {
     return state.tab && !state.tab.url
       ? { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.' }
       : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? 'Progressive, GEICO or AmWINS.' };
-  }
-  const f = state.fillingFor;
-  if (state.filling && f?.tabId === state.tab.id && (!f.auto || !!f.rows?.length)) {
-    const last = f.rows?.at(-1);
-    // The page hasn't answered for a while (watchFill): a message box open on it waits for the agent.
-    if (f.unanswered) {
-      return { phase: 'filling', tone: 'warn', progress: true, eyebrow: f.stopping ? 'Stopping' : `Filling · ${f.filled ?? 0} in`,
-        title: 'The page isn’t answering', sub: 'If it shows a message box, answer it there. The fill goes on after.',
-        button: 'fill-stop', label: f.stopping ? 'Stopping…' : 'Stop', disabled: !!f.stopping };
-    }
-    return { phase: 'filling', tone: 'blue', progress: true, eyebrow: f.stopping ? 'Stopping' : `Filling · ${f.filled ?? 0} in`,
-      title: f.stopping ? 'Stopping after the answer going in now…' : f.phase && DOCK_PHASES.has(f.phase.name) ? `${phaseSaid(f.phase)[0]}…` : last ? `Just filled: ${last.label || 'an answer'}` : 'Reading the page…',
-      sub: 'Keep this tab open.', button: 'fill-stop', label: f.stopping ? 'Stopping…' : 'Stop', disabled: !!f.stopping };
   }
   const page = pageOf(state.tab.url);
   const step = tabStep(carrier);
@@ -1367,13 +1396,47 @@ function dockFor() {
   return { phase: 'ready', eyebrow: 'Next', title: progress ? `Fill the ${progress.name} page` : 'Fill this page', sub: checksSaid ?? hint, ...fill };
 }
 
+// The dock while a fill runs (fillShown), with Stop. On another tab than the one in front (the agent
+// moved on while it ran): named, as that tab's ('elsewhere': the tab in front keeps its mark).
+function fillingSaid(f) {
+  const stop = { button: 'fill-stop', label: f.stopping ? 'Stopping…' : 'Stop', disabled: !!f.stopping };
+  const eyebrow = f.stopping ? 'Stopping' : `Filling · ${f.filled ?? 0} in`;
+  if (f.tabId !== state.tab?.id) {
+    return { phase: 'elsewhere', tone: 'blue', progress: true, eyebrow, title: f.stopping ? 'Stopping after the answer going in now…' : `Filling your other ${f.carrier?.name ?? 'quote'} tab`,
+      sub: 'Its answers show when you go back to it.', ...stop };
+  }
+  // The page hasn't answered for a while (watchFill): a message box open on it waits for the agent.
+  if (f.unanswered) {
+    return { phase: 'filling', tone: 'warn', progress: true, eyebrow, title: 'The page isn’t answering', sub: 'If it shows a message box, answer it there. The fill goes on after.', ...stop };
+  }
+  const last = f.rows?.at(-1);
+  return { phase: 'filling', tone: 'blue', progress: true, eyebrow,
+    title: f.stopping ? 'Stopping after the answer going in now…' : f.phase && DOCK_PHASES.has(f.phase.name) ? `${phaseSaid(f.phase)[0]}…` : last ? `Just filled: ${last.label || 'an answer'}` : 'Reading the page…',
+    sub: 'Keep this tab open.', ...stop };
+}
+
 // What the dock says now (state.dock, drawn by steps-view.jsx): dockFor's word, hidden while Settings
-// is open, with the fill it is about (`report`: none while one runs) and whether a fill runs, which
-// holds its Fill (`busy`). The quote's tab in the tab strip and its toolbar badge follow it (markTab).
+// is open unless it offers Stop (a fill running stays stoppable from Settings: audit 2026-11-07,
+// UX-02), with the fill it is about (`report`: none while one runs) and whether a fill runs, which
+// holds its Fill (`busy`), and `paused` (pausedSaid). The quote's tab in the tab strip and its toolbar
+// badge follow it (markTab).
 function renderDock() {
   const d = dockFor();
-  state.dock = { ...d, hidden: state.settingsOpen, report: state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '', busy: !!state.filling };
+  state.dock = { ...d, hidden: state.settingsOpen && d.button !== 'fill-stop', report: state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '', busy: !!state.filling, paused: pausedSaid(d) };
   markTab(d);
+}
+
+// Automatic filling paused on the tab in front (`autoPaused`: a Stop, an agent edit during a fill, a
+// fill that failed or halted, a Continue that didn't take): no page fills as it opens and no
+// follow-up runs there until the agent's own Fill, which lifts it (fillPage). Said under the dock's
+// word on every page of that tab, not only the one it paused on (audit 2026-11-07, FLOW-13: on the
+// next page the dock read as if nothing were different, and agents said "it stopped filling").
+// Only where one of those switches is on, and not while a fill runs or where nothing is filled.
+const PAUSE_QUIET = new Set(['start', 'off', 'portal', 'stopped', 'finished', 'filling', 'elsewhere']);
+function pausedSaid(d) {
+  if (!state.intake || !state.tab?.carrier || !state.autoPaused || state.filling || PAUSE_QUIET.has(d.phase)) return '';
+  if (!switchOn('autoPages', 'auto-pages') && !switchOn('autoFollowUps', 'auto-followups')) return '';
+  return 'Automatic filling is paused on this tab. Your next Fill turns it back on.';
 }
 
 // The intake's current insurance is with the carrier the tab is on (util.js sameCarrier: GEICO or
@@ -1529,7 +1592,8 @@ function showStateNote() {
     text: `${before ? `Quote started in ${picked} before this intake was loaded. ` : ''}Start the quote in ${intake}, or check the intake.`,
     compare: [['Rater', picked], [`Intake${place ? pdfPageSaid(place.page, ' page ') : ''}`, address || intake]],
     actions: [
-      { label: `${picked} is right`, className: 'tinted', onClick: dismissState },
+      // The page's opening fill it held goes on (resumeHeldFill); the dock's Fill anyway fills it as the agent's.
+      { label: `${picked} is right`, className: 'tinted', onClick: () => { dismissState(); resumeHeldFill(); } },
       pdf ? { label: `See intake${pdfPageSaid(place.page, ' · p')}`, className: 'ghost', onClick: () => openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' }) } : null,
     ] }) };
 }
@@ -1587,4 +1651,4 @@ function stopPageIsOurs() {
   return !state.layoutHold || state.layoutReadyTabs.has(state.tab?.id);
 }
 
-export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };
+export { announce, cancelLayouts, dismissState, dropReports, fillContext, fillOptions, fillProblem, holdLayouts, inheritQuoteState, intakeEdited, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteQuoteDone, noteQuoteState, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, resetViews, rulesFingerprint, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, seedQuoteState, showFinish, showOwnerNote, showPast, showReport, showStateNote, showStopPage, stateIssue, stopFill, stopFillFirst, stopPageIsOurs, tabMaps, unlockAudio, viewOf, watchFill };

@@ -1,8 +1,8 @@
 // @ts-check
 // Control matching, value application orchestration, driver registry, and agreement checks.
 
-import { oneLine, squash, humanize, sleep, loose, multiValue, isPlaceholderOption, STATE_NAMES } from './text.js';
-import { adapter, withAdapter, stepKey, stepIs, currentPage, settle, setAdapterHooks } from './adapter.js';
+import { oneLine, squash, humanize, loose, multiValue, isPlaceholderOption, STATE_NAMES } from './text.js';
+import { adapter, withAdapter, stepKey, stepIs, currentPage, settle, setAdapterHooks, pause, waitsStopped, INTERRUPTED } from './adapter.js';
 import { deepQueryAll, optionsOf, selectedText, hasValue, optionOn, setNativeValue, textFor, safeMatches, shownControl, hasOptions, labelFor } from './dom.js';
 import { unitFormsOf } from './units.js';
 import { createLocator } from './locator.js';
@@ -10,7 +10,7 @@ import { createAddressDriver } from './drivers/address.js';
 import { createSelect2Drivers } from './drivers/select2.js';
 
 /** @import { PageControl } from './dom.js' */
-/** @import { PlanStep } from '../../types.js' */
+/** @import { FailCode, PlanStep, WriteResult } from '../../types.js' */
 
 export const extraRowKeys = new Map();
 export const waitedOut = new WeakSet();
@@ -25,6 +25,10 @@ export const LOAD_RESULT_MS = 20000;
 export const LOAD_QUIET_MS = 1000;
 export const LOAD_HALT = 'The page was still loading after a minute: wait for it, then fill again.';
 export const KEPT_WATCH_MS = 15000;
+// How long one fill may run in all (audit 2026-11-07, ENG-12): its waits are bounded one by one, but
+// a fill making its way through many of them had no end but Stop. Past it the fill stops as on Stop.
+export const FILL_BUDGET_MS = 5 * 60 * 1000;
+export const BUDGET_HALT = 'The fill ran for 5 minutes and stopped there: check the page, then fill again.';
 export const ONCE_UNVERIFIED = 'it was clicked, but the page showed no current premium afterwards. Check the page and click Recalculate yourself: the fill clicks it once a quote.';
 export const NOTHING_LEFT = 'nothing left for you on the page';
 export const AGENT_PRESSED = 'you clicked a button during the fill: Continue is yours';
@@ -36,10 +40,11 @@ export const RESET_QUIET_MS = 1000;
  * Returns a standardized noMatch report object.
  * @param {any} step
  * @param {any[]} options
- * @returns {{ ok: false, reason: string, options: string[] }}
+ * @returns {{ ok: false, code: FailCode, reason: string, options: string[] }}
  */
 export const noMatch = (step, options) => ({
   ok: false,
+  code: /** @type {FailCode} */ ('option.no-match'),
   reason: `no option matches "${step.value}"`,
   options: options.filter((o) => !isPlaceholderOption(o.text)).map((o) => o.text).slice(0, 25),
 });
@@ -89,14 +94,16 @@ export const {
 // Configure adapter create() hooks
 setAdapterHooks({ matchOption, noMatch, textFor, hasOptions, labelFor });
 
-const driverKit = { adapter, withAdapter, deepQueryAll, oneLine, squash, sleep, settle, hasValue, unpicked, optionsOf, matchOption, noMatch, selectedText, multiValue };
+// `sleep` ends early once the running fill stops (`halted`): a driver checks it before it writes.
+const interrupted = () => ({ ok: /** @type {false} */ (false), code: /** @type {FailCode} */ ('fill.interrupted'), reason: INTERRUPTED });
+const driverKit = { adapter, withAdapter, deepQueryAll, oneLine, squash, sleep: pause, halted: waitsStopped, interrupted, settle, hasValue, unpicked, optionsOf, matchOption, noMatch, selectedText, multiValue };
 const { select2, searchSelect } = createSelect2Drivers(driverKit);
 
 export const drivers = [
   createAddressDriver(driverKit),
   searchSelect,
   { name: 'adapter', writes: (step, c) => !!(c.widget || c.options?.some((o) => o.widget)), write: (step, c) => adapter().apply(step, c) },
-  { name: 'read-only', writes: (step, c) => !!c.el.readOnly, write: () => ({ ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' }) },
+  { name: 'read-only', writes: (step, c) => !!c.el.readOnly, write: () => ({ ok: false, code: 'field.read-only', reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' }) },
   select2,
 ];
 
@@ -104,9 +111,11 @@ export const drivers = [
  * Applies a plan step value to control c using the matching driver.
  * @param {any} step
  * @param {PageControl} c
- * @returns {Promise<{ ok: boolean, shown?: string | null, reason?: string, options?: string[] }>}
+ * @returns {Promise<WriteResult>}
  */
 export async function apply(step, c) {
+  // Stopped (the agent's Stop, or their edit): nothing more is written.
+  if (waitsStopped()) return interrupted();
   const driver = drivers.find((d) => d.writes(step, c));
   if (driver) return driver.write(step, c);
 
@@ -118,21 +127,21 @@ export async function apply(step, c) {
     for (const o of options) o.el.selected = picks.includes(o);
     c.el.dispatchEvent(new Event('input', { bubbles: true }));
     c.el.dispatchEvent(new Event('change', { bubbles: true }));
-    if (!options.every((o) => o.el.selected === picks.includes(o))) return { ok: false, reason: 'the page did not keep these picks' };
+    if (!options.every((o) => o.el.selected === picks.includes(o))) return { ok: false, code: 'answer.not-kept', reason: 'the page did not keep these picks' };
     return { ok: true, shown: picks.map((o) => o.text).join('; ') };
   }
 
   if (c.kind === 'text') {
     const text = textFor(step, c);
     const hEl = /** @type {HTMLInputElement | HTMLTextAreaElement} */ (c.el);
-    if ('maxLength' in hEl && hEl.maxLength > 0 && text.length > hEl.maxLength) return { ok: false, reason: `value is longer than the field allows (${hEl.maxLength})` };
+    if ('maxLength' in hEl && hEl.maxLength > 0 && text.length > hEl.maxLength) return { ok: false, code: 'answer.too-long', reason: `value is longer than the field allows (${hEl.maxLength})` };
     setNativeValue(c.el, text);
-    if (hEl.value === '') return { ok: false, reason: 'the page cleared the value (it may need a different format)' };
+    if (hEl.value === '') return { ok: false, code: 'answer.cleared', reason: 'the page cleared the value (it may need a different format)' };
     return { ok: true, shown: hEl.value };
   }
 
   if (c.kind === 'checkbox') {
-    if (typeof step.value !== 'boolean') return { ok: false, reason: 'checkbox needs a yes/no answer' };
+    if (typeof step.value !== 'boolean') return { ok: false, code: 'answer.invalid', reason: 'checkbox needs a yes/no answer' };
     const hEl = /** @type {HTMLInputElement} */ (c.el);
     if (hEl.checked !== step.value) hEl.click();
     return { ok: true, shown: step.value ? 'checked' : 'unchecked' };
@@ -141,11 +150,12 @@ export async function apply(step, c) {
   let options = optionsOf(c);
   let opt = matchOption(options, step);
   const loading = () => new Set(options.map((o) => oneLine(o.text)).filter(Boolean)).size <= 1;
-  for (const start = Date.now(); !opt && c.kind === 'select' && loading() && Date.now() - start < 6000;) {
-    await sleep(250);
+  for (const start = Date.now(); !opt && c.kind === 'select' && loading() && Date.now() - start < 6000 && !waitsStopped();) {
+    await pause(250);
     options = optionsOf(c);
     opt = matchOption(options, step);
   }
+  if (waitsStopped()) return interrupted();
   if (!opt) return noMatch(step, options);
   if (c.kind === 'select') setNativeValue(c.el, opt.value);
   else if (!optionOn(opt)) {

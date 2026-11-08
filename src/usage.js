@@ -311,9 +311,15 @@ function digest(s) {
 // box for a dropdown (date pickers look like dropdowns), these still never reach the log.
 const LOOKS_TYPED = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|@|\d{5,}/;
 
+const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+// A question's text as logged: without the page's markup (GEICO's analytics wrapper,
+// <span data-qm-encrypt='true'>, reached field changes' labels), on one line, so a fill's and a
+// change's label for one field read the same (audit 2026-11-07, LEARN-04). Absent stays absent.
+/** @param {string | null | undefined} s */
+export const tidyLabel = (s) => (s == null ? s : oneLine(String(s).replace(/<\/?[a-z][^>]*>/gi, '')));
+
 // A combo box (ExtJS) holds whatever is in its box: a pick, or a search the agent typed. Its values
 // are choices only when each one is empty or one of the options the fill engine saw for it.
-const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 function isComboPick(change, choices) {
   const options = choices?.get(change.key);
   return [change.before, change.after].every((v) => !oneLine(v) || !!options?.has(oneLine(v)));
@@ -340,7 +346,7 @@ export function fieldChangeEvent(change, { record, filled, redact, labels, choic
     type: 'field_change',
     q: change.q ?? null,
     key: fieldKeyOf(change.key, redact, keySalt),
-    label: redact(labels?.get(change.key) ?? change.label),
+    label: redact(tidyLabel(labels?.get(change.key) ?? change.label)),
     kind,
     by: change.agent ? 'agent' : 'page',
     autofilled: ours ? ours.path : null,
@@ -409,22 +415,36 @@ function fieldWhy(x, list) {
 // Fill results, minus typed values (text boxes) and client names.
 //   run: one fill invocation's id, shared by its fill_run and fill_field events (and a fill_error);
 //   rules: the rule files' fingerprint (rulesHash); settings: the panel's filling switches in force
-//   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep).
+//   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep);
+//   keptLogged: the kept answers already logged in this quote (the panel's, per usage session).
+// A kept answer (the page already held the rule's answer) is logged once per quote, tab and unit
+// (`view`), page, step, question and what the field shows as the fill ends (reconcile's `now`), or again when it differs from the rule's: every fill run of a
+// page re-logged each one, 59% of fill events for nothing new (audit 2026-11-07, LEARN-11). The run
+// still counts them all (`kept`). Without `keptLogged`, every one is logged.
 /**
  * @param {Partial<FillReport>[]} frames  the page kit's fill reports, one per frame (a stop page's: its blockers only)
- * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string }} ctx
+ * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean, retried?: boolean, keptLogged?: Set<string> }} ctx
  * @returns {UsageEvent[]}
  */
-export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash }) {
+export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false, retried = false, keptLogged }) {
   // Typed for the report list it reads (the body takes any key).
   /** @type {<K extends keyof FillReport>(k: K) => NonNullable<FillReport[K]>} */
   const all = /** @param {any} k @returns {any} */ (k) => frames.flatMap((f) => f[k] ?? []);
   const isChoice = (x) => x.controlKind && x.controlKind !== 'text';
   const stepField = stepOf(step, redact);
+  // The longest a frame's page was hidden during the fill (pagekit tracedFill).
+  const hiddenMs = Math.max(0, ...frames.map((f) => (Number.isFinite(f.hiddenMs) ? f.hiddenMs : 0)));
   /** @type {UsageEvent[]} */
   const events = [{
     type: 'fill_run', carrier, page, view, overwrite, auto, ms,
     ...(run ? { run } : {}), ...(rules ? { rules } : {}), ...(settings ? { settings } : {}), ...(defaultsHash ? { defaultsHash } : {}), ...stepField,
+    // A fill of the quote tab while the agent was on another (`background`), and how long its page
+    // was hidden meanwhile (`hiddenMs`): Chrome slows a hidden tab's timers, so the weekly review can
+    // tell those fills from slow carriers (audit 2026-11-07, FLOW-12).
+    ...(background ? { background: true } : {}), ...(hiddenMs ? { hiddenMs } : {}),
+    // The second click of a Continue whose page stayed unchanged (the panel's watchNextStep, audit 2026-11-07,
+    // FLOW-11): the weekly review counts them to judge whether the retry is still needed.
+    ...(retried ? { retried: true } : {}),
     fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0),
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,
@@ -450,7 +470,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   }];
   /** @type {(result: FillFieldEvent['result'], list?: string) => (x: FillItem) => FillFieldEvent} */
   const item = (result, list = result) => (x) => ({
-    type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
+    type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(tidyLabel(x.label)), path: x.path ?? null, controlKind: x.controlKind ?? null,
     how: x.how ?? undefined,
     // Why this answer, from its resolution (resolution.js): where it comes from (its method: intake,
     // derived, standard, fact, attestation), a TNI standard, the agent's only (never the AI's); and
@@ -458,13 +478,20 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     // check items (never logged), so it is the item's own `review`.
     ...fieldWhy(x, list),
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
+    ...(x.code ? { code: x.code } : {}),
     reason: x.reason ? redact(x.reason) : undefined,
     options: x.options?.map(redact),
     // Per-answer timing and side effects (filled answers only): see scripts/review.mjs, Speed.
     ...(x.timing ? { timing: x.timing } : {}),
   });
   events.push(...all('filled').map(item('filled')), ...all('failed').map(item('failed')), ...all('noData').map(item('noData')),
-    ...all('kept').map(item('kept')), ...all('leftRequired').map(item('leftRequired')), ...all('unknown').map(item('unfamiliar', 'unknown')));
+    ...all('kept').filter((x) => {
+      if (!keptLogged || x.differs) return true;
+      const once = JSON.stringify([carrier, view, page, step ?? null, x.key ?? x.q ?? null, x.label ?? null, x.now ?? x.current ?? x.shown ?? null]);
+      if (keptLogged.has(once)) return false;
+      keptLogged.add(once);
+      return true;
+    }).map(item('kept')), ...all('leftRequired').map(item('leftRequired')), ...all('unknown').map(item('unfamiliar', 'unknown')));
   // A helper the fill clicked that rates the answers (GEICO's Recalculate, W43-44), as a layout the
   // review scripts don't read as the page's (reason 'recalculate'): each choice it kept, what the
   // page showed at the click (`selected`) and after it ([ms after the click, value]), whether the
