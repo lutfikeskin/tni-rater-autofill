@@ -14,7 +14,7 @@ beforeEach(() => { state = storeState({ client: null, clientNote: null, newQuote
 afterEach(cleanup);
 
 const $ = (container, sel) => container.querySelector(sel);
-const acts = (calls) => Object.fromEntries(['details', 'pdf', 'replace', 'newQuote', 'clear', 'yes', 'cancel'].map((name) => [name, () => calls.push(name)]));
+const acts = (calls) => Object.fromEntries(['details', 'pdf', 'summary', 'replace', 'newQuote', 'clear', 'yes', 'cancel'].map((name) => [name, () => calls.push(name)]));
 
 test('the header: the client\'s name and what the quote is about, a button to client details that says whether they are open', () => {
   const calls = [];
@@ -30,10 +30,10 @@ test('the header: the client\'s name and what the quote is about, a button to cl
   expect(card.getAttribute('aria-expanded')).toBe('true');
   // The tools, in this order, each asking for its own thing.
   const tools = [...container.querySelectorAll('.client-tools > button')];
-  expect(tools.map((b) => b.id)).toEqual(['open-pdf', 'replace', 'new-quote', 'clear-client']);
-  expect(tools.map((b) => b.getAttribute('aria-label'))).toEqual([null, 'Change file', 'New quote with this intake', 'Clear this client']);
+  expect(tools.map((b) => b.id)).toEqual(['open-pdf', 'quote-summary', 'replace', 'new-quote', 'clear-client']);
+  expect(tools.map((b) => b.getAttribute('aria-label'))).toEqual([null, 'Quote summary', 'Change file', 'New quote with this intake', 'Clear this client']);
   for (const b of tools) fireEvent.click(b);
-  expect(calls.slice(1)).toEqual(['pdf', 'replace', 'newQuote', 'clear']);
+  expect(calls.slice(1)).toEqual(['pdf', 'summary', 'replace', 'newQuote', 'clear']);
 });
 
 test('the PDF button only with the PDF kept; New quote off while answers go in', () => {

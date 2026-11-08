@@ -970,6 +970,8 @@ const named = (rules) => rules.map(/** @returns {CarrierRule} */ (rule) => (rule
 export const geico = {
   id: 'geico',
   name: 'GEICO',
+  // The quote is started from the agent gateway.
+  display: { logo: 'assets/raters/geico.gif', portalUrl: 'https://gateway2.geico.com/', product: 'Commercial auto', classesSaid: 'expediters and general freight' },
   hosts: [/(^|\.)geico\.com$/],
   // The buttons the fill presses are clicked from the page's own world (src/content/page-press.js),
   // inside an event the browser dispatches: GEICO's submit buttons send their own part of the request
