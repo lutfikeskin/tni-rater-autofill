@@ -74,6 +74,26 @@ test('learning: a candidate without an id takes its options from its page\'s lay
   assert.deepEqual(team.options, ['Yes', 'No', 'Unknown'], 'Unknown, which no agent picked, is offered too');
 });
 
+// CodeRabbit on #419: two steps of a one-address application that share a caption (each with one
+// such question) made the page's caption lookup null; each step's own layout gives its options.
+test('learning: a candidate without an id takes its options from its own step\'s layout when steps share a caption', () => {
+  const events = [];
+  let t = Date.parse('2026-11-02T12:00:00Z');
+  const e = (session, x) => events.push({ id: `${session}-${events.length}`, t: new Date(t += 1000).toISOString(), session, carrier: 'amwins', intakeId: `intake${session}`, ...x });
+  const page = '/application/businessauto';
+  for (let i = 0; i < 5; i++) {
+    const s = `b${i}`;
+    e(s, { type: 'intake_loaded', carrier: undefined, state: 'VA' });
+    e(s, { type: 'page_layout', page, step: 'Drivers', fields: [{ label: 'Any losses?', kind: 'radio', options: ['Yes', 'No', 'Unknown'] }] });
+    e(s, { type: 'page_layout', page, step: 'Vehicles', fields: [{ label: 'Any losses?', kind: 'radio', options: ['Yes', 'No', 'Not asked'] }] });
+    e(s, { type: 'fill_field', page, step: 'Drivers', label: 'Any losses?', controlKind: 'radio', result: 'unfamiliar' });
+    e(s, { type: 'field_change', page, step: 'Drivers', label: 'Any losses?', kind: 'radio', by: 'agent', to: i < 3 ? 'Yes' : 'No' });
+  }
+  const [losses] = learn(events, { carriers: [{ id: 'amwins', rules: [], useGenericRules: false }], minIntakes: 5 }).undecided;
+  assert.ok(losses, 'a candidate');
+  assert.deepEqual(losses.options, ['Yes', 'No', 'Unknown'], "the Drivers step's options, not the Vehicles step's");
+});
+
 test('rule proposals: the request offers only the schema\'s paths, the answers seen and TNI\'s rule ids, with no intake values', () => {
   const [team] = learn(week(), { carriers: noRules, minIntakes: 5 }).undecided.filter((c) => c.q === '9B01');
   const req = proposalRequest(team);
