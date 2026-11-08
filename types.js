@@ -321,12 +321,26 @@
  */
 
 /**
+ * How the side panel presents a carrier (audit 2026-11-07, UX-14: these were written into the panel's
+ * code): its logo in the header and on the "open a rater" card, the agent portal that card's logo
+ * opens in a new tab (a navigation the agent asks for; nothing is filled there), the product named
+ * under the carrier on a page outside the quote's steps, and the business classes its rules were
+ * written for, as review mode says them (they describe `supportedClasses`, which decides).
+ * @typedef {object} CarrierDisplay
+ * @property {string} logo  the image's path from sidepanel/ (`assets/raters/<carrier>.<ext>`)
+ * @property {string} portalUrl  the carrier's agent home page, on one of its `hosts`
+ * @property {string} product  "Commercial auto"
+ * @property {string} classesSaid  "expediters and general freight", after "<carrier>'s rules cover"
+ */
+
+/**
  * A carrier's settings and mappings (src/carriers.js describes each). `practice` is set by
  * carrierForUrl on the repository's practice pages, never by a carrier file.
  * @typedef {object} CarrierConfig
  * @property {string} id
  * @property {string} name
  * @property {RegExp[]} hosts  also needs a manifest.json host permission
+ * @property {CarrierDisplay} [display]  how the panel shows it; every carrier with rules has one (test/carriers.test.mjs)
  * @property {CarrierRule[]} rules
  * @property {CarrierAction[]} [actions]
  * @property {CarrierAdvance} [advance]
@@ -1209,6 +1223,37 @@
  */
 
 /**
+ * One answer or item of the quote summary (sidepanel/panel/quote-summary.js): the question, what went
+ * in (or what happened to it), where it came from (`source`: intake, derived, standard, own,
+ * edited, ai, you, page, clicked, changed, marked, pending, open) as the summary says it, and a note
+ * (why it was left for the agent, what the page shows now).
+ * @typedef {object} QuoteSummaryRow
+ * @property {string} label
+ * @property {string} value
+ * @property {string} source
+ * @property {string} sourceSaid
+ * @property {string | null} note
+ * @property {string} [carrier]  the carrier tab it is on, in the summary's lists
+ * @property {string} [page]  its page's title, in the summary's lists
+ */
+
+/**
+ * The quote summary (quote-summary.js quoteSummary): every page of the quote per carrier tab with
+ * its answers and their sources, then the agent's overrides, the AI's decisions and the items marked
+ * done without an answer. Shown read-only in the panel, saved as HTML to Downloads.
+ * @typedef {object} QuoteSummary
+ * @property {{ name: string, fileName: string | null, state: string | null }} client
+ * @property {string} at  when it was made, ISO
+ * @property {string} version  the extension's version
+ * @property {{ id: string, name: string, tabId: number, practice: boolean, pages: { title: string, at: string, said: string | null, counts: { source: string, sourceSaid: string, n: number }[], rows: QuoteSummaryRow[] }[] }[]} carriers
+ * @property {{ kind: string, carrier: string | null, page: string | null, label: string, value: string, said: string }[]} overrides
+ * @property {QuoteSummaryRow[]} ai
+ * @property {QuoteSummaryRow[]} marked
+ * @property {number} open  items still left for the agent
+ * @property {number} answers  answers in (not counting items open, marked or waiting for approval)
+ */
+
+/**
  * The side panel state shape managed by panelStore in state-store.js.
  * @typedef {object} PanelState
  * @property {any} [intake]
@@ -1250,6 +1295,7 @@
  * @property {Set<number>} [layoutReadyTabs]
  * @property {Set<number>} [layoutNewTabs]
  * @property {Map<number, number>} [viewTabs]
+ * @property {Map<number, string>} [portalTabs]  tabs a rater's logo opened (quote-owner.js openPortal) -> the page opened: nothing fills there by itself
  * @property {any} [layoutLatest]
  * @property {number} [layoutErrors]
  * @property {Set<string>} [layoutErrorsLogged]
@@ -1295,6 +1341,8 @@
  * @property {any} [audio]
  * @property {boolean} [showEmpty]
  * @property {Set<string>} [detailsClosed]
+ * @property {string} [detailsQuery] client details' filter box: fields whose label or section has it
+ * @property {boolean} [detailsEditedOnly] client details' Your corrections: only the fields the agent changed
  * @property {Uint8Array | null} [pdfBytes]
  * @property {any} [pdfDoc]
  * @property {number} [pdfDraw]
@@ -1313,6 +1361,8 @@
  * @property {any} [pdfReturn]
  * @property {boolean} [detailsOpen]
  * @property {any} [detailsReturn]
+ * @property {{ summary: QuoteSummary, saved: string | null } | null} [summary]  the quote summary open over the panel, and what Save summary said
+ * @property {any} [summaryReturn]
  * @property {any} [browserWindow]
  * @property {boolean} [closing]
  * @property {boolean} [defaultsOn] agent defaults: whether this copy of the panel shows the feature
