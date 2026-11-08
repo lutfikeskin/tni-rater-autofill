@@ -1224,7 +1224,7 @@ export const geico = {
       { concept: 'operations.eld', field: 'GiveElectronicLoggingDevice', ask: 'Does the customer have an electronic logging device (ELD) in their vehicle(s)?', path: 'operations.usesEld', name: 'Electronic logging device (ELD)', kind: 'bool',
         note: (r) => (typeof r.operations.usesEld === 'boolean' ? null : 'The intake doesn\'t say whether the vehicles have an ELD: answer it yourself.') },
       // Not shown on the captured quotes (what reveals it isn't known).
-      { concept: 'filings.which', field: 'GiveFilingType', name: 'State or federal filing', kind: 'choice', source: held((r) => (ntlNoFilings(r) ? 'standard' : 'derived')), clientFact: true, value: filingType, note: holdOr(filingTypeNote) },
+      { concept: 'filings.which', field: 'GiveFilingType', tni: 'geico.ntl-usdot-filings', name: 'State or federal filing', kind: 'choice', source: held((r) => (ntlNoFilings(r) ? 'standard' : 'derived')), clientFact: true, value: filingType, note: holdOr(filingTypeNote) },
       // Questions shown for other kinds of business (hidden on the captured quotes): not on the
       // intake, a general freight class doesn't make them No.
       fact('operations.delivery', 'GiveAnyVehicleTransportFoodYesNo', 'Food delivery (UberEats, DoorDash)'),
@@ -1239,7 +1239,7 @@ export const geico = {
     ]),
     // Shown with a USDOT number (and hidden on Additional Business Info).
     ...on([BUSINESS_CLASS, MORE_BUSINESS], {}, [
-      { concept: 'business.usdot', field: 'GiveDepartmentOfTransportationNumberStatus', ask: 'Does the customer have a USDOT Number registered to themselves or their business?', name: 'Has a USDOT number',
+      { concept: 'business.usdot', field: 'GiveDepartmentOfTransportationNumberStatus', tni: 'geico.ntl-usdot-filings', ask: 'Does the customer have a USDOT Number registered to themselves or their business?', name: 'Has a USDOT number',
         kind: 'choice', source: held(dotStatusSource), clientFact: true, value: dotStatus, note: holdOr(dotStatusNote) },
       // "USDOT Information: Is this the customer's business?", under GEICO's record of the number:
       // Yes when the record (the question's text) shows the intake's house number, street and ZIP;

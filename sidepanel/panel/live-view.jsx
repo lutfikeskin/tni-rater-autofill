@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The side panel's live fill view in React: the answers going in now, one row each as the page takes
 // them, the items left for the agent as the fill judges them (top to bottom: only questions above
 // where it has got to), all in the page's order (liveEntries), and a row for the one coming: read
