@@ -235,7 +235,7 @@ Updates reach agents through the Chrome Web Store; their usage logs go to TNI's 
 | `scripts/` | The tools behind the `npm run` scripts in `package.json`: review, learning, layouts, mocks, fixtures, packaging, the warehouse and the daily review (shared code in `scripts/lib/`) |
 | `test/replay/` | Replay test pages built from layout files |
 | `test/tools/` | Capture snippets for following a live quote without the extension |
-| `lib/` | pdf.js, vendored (MV3 can't load remote code). Refresh with `npm run vendor`. |
+| `lib/` | PDF.js and fflate, vendored (MV3 can't load remote code); the panel's build bundles them, so the package leaves `lib/` out. Refresh with `npm run vendor`. |
 | `icons/`, `scripts/package.mjs` | Store icons; `npm run package` builds the Web Store zip in `dist/` |
 
 ## Development

@@ -261,6 +261,7 @@ const NOT_TRACKED = {
   'test/fixtures/recording': "developer-recording.md's proposal, not built",
   'summary.json': "a file inside a developer recording's zip",
   'recording.json': "a file inside a developer recording's zip",
+  'THIRD_PARTY_NOTICES.txt': 'written into each packaged copy by scripts/package.mjs',
 };
 // A document's paths that aren't in the repository: backticked ones under its own folders, backticked
 // file names with no folder (a root file, or a tracked file's own name), and relative links.
