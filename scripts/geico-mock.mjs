@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // GEICO end to end, without the live site: the one-file quote (test/fixtures/geico/quote.html,
 // built from the saved NE pages and the FL captures, client details replaced) with the site's
 // behaviour played by test/fixtures/geico/mock.js, filled step by step by the real fill engine and

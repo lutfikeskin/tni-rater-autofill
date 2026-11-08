@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intakePathOf } from '../src/ai/common.js';
@@ -161,7 +162,7 @@ test('each cited source is said as the agent reads it: the field label with its 
   assert.equal(citedSaid({ basis: 'intake', path: 'computed.priorPolicyExpired', value: true }), 'Prior policy expired (worked out from the intake): Yes');
   assert.equal(citedSaid({ basis: 'intake', path: 'computed.noPriorInsurance', value: false }), 'No prior insurance (worked out from the intake): No');
   assert.equal(citedSaid({ basis: 'intake', path: 'applicant.hasDOT', value: true }), 'Has a USDOT #: Yes');
-  assert.equal(citedSaid({ basis: 'intake', path: 'claims.aiNtl', value: true }), "NTL in the claims box or notes (Luna's review): Yes");
+  assert.equal(citedSaid({ basis: 'intake', path: 'claims.aiNtl', value: true }), "NTL in the claims box or notes (the AI assistant's review): Yes");
   assert.equal(citedSaid({ basis: 'intake', path: 'operations.notes', value: 'No placards.' }), 'Notes: No placards.');
   assert.equal(citedSaid({ basis: 'intake', path: 'trailers[1].someNewThing', value: 'x' }), 'Some new thing (trailer 2): x');
   // A left question cites nothing.
@@ -411,7 +412,7 @@ test('a question too large even alone is left to the agent, said so, and the res
   assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id), "in the page's order");
   for (const x of result.suggestions.filter(x => ['f2', 'f4'].includes(x.id))) {
     assert.deepEqual([x.leave, x.leaveWhy, x.choice, x.autoOk, x.nextStep], [true, 'tooLarge', null, false, null]);
-    assert.match(x.tip, /Too long for Luna.*Answer it on the page/);
+    assert.match(x.tip, /Too long for the AI assistant.*Answer it on the page/);
   }
   assert.ok(result.suggestions.filter(x => ['f1', 'f3', 'f5'].includes(x.id)).every(x => x.choice === 'No'));
   assert.equal(result.modelCalls, 2, 'one proposal and one evidence check; nothing for the questions left');
@@ -583,7 +584,7 @@ test("a server from before the larger bound refuses a request over its own: that
   // A cut connection is the old server's only above its body limit (bytes, twice its bound): below
   // that it is a network failure, as before (CodeRabbit on #357). Three-byte characters count three.
   const reset = async () => { throw new TypeError('connection reset'); };
-  await assert.rejects(callModel({ proxy, body: big, fetchImpl: reset }), e => !(e instanceof OldServerLimit) && /Cannot reach Luna/.test(e.message));
+  await assert.rejects(callModel({ proxy, body: big, fetchImpl: reset }), e => !(e instanceof OldServerLimit) && /Cannot reach the AI assistant/.test(e.message));
   const wide = buildRequest(questions(1).map(x => ({ ...x, label: '€'.repeat(OLD_SERVER_CHARS) })), context);
   assert.ok(JSON.stringify(wide).length < 2 * OLD_SERVER_CHARS && new TextEncoder().encode(JSON.stringify(wide)).length > 2 * OLD_SERVER_CHARS);
   await assert.rejects(callModel({ proxy, body: wide, fetchImpl: reset }), OldServerLimit);
@@ -885,7 +886,7 @@ test('driver names: only first names are sent, the answer is a bounded guess, li
   const reply = (d0, d1 = 'likely_male') => envelope({ drivers: { d0, d1 } });
   const items = nameWarnings(parseNameReview(reply('likely_female'), review), review, record);
   assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.driver-gender', 'drivers[0].gender', 'check']]);
-  assert.match(items[0].msg, /^Luna: driver 1 is filled Male \(TNI standard\), but "Maria" is more often a woman's name: a guess from the first name only\. Check\./);
+  assert.match(items[0].msg, /^AI assistant: driver 1 is filled Male \(TNI standard\), but "Maria" is more often a woman's name: a guess from the first name only\. Check\./);
   assert.deepEqual(items[0].choices, [{ label: 'Use Female', path: 'drivers[0].gender', value: 'FEMALE' }, { label: 'Keep Male', path: 'drivers[0].gender', value: 'MALE' }]);
   assert.deepEqual(nameWarnings(parseNameReview(reply('unclear'), review), review, record), [], 'unclear: the standard stands');
   // Set meanwhile, or a renamed driver: no item.
@@ -1014,7 +1015,7 @@ test('leave reasons: missing information, conflict, no source and a refused evid
   const parsed = parseResponse(answer(body), items, body);
   const [refused] = verifyResponse(envelope({ decisions: { f1: { supported: false, gap: 'The notes mention placarded loads.' } } }), parsed);
   assert.equal(refused.leaveWhy, 'unverified');
-  assert.equal(refused.tip, 'Luna could not verify an answer: The notes mention placarded loads.');
+  assert.equal(refused.tip, 'The AI assistant could not verify an answer: The notes mention placarded loads.');
   assert.match(buildVerification(parsed, context).instructions, /gap says/);
   // The gap is required, a string, and bounded.
   for (const gap of [undefined, null, 'x'.repeat(501)]) {

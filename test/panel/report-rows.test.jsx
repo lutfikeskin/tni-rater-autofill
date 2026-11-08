@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
@@ -230,7 +231,7 @@ test('the AI’s card is drawn in its row’s slot and kept when the row is draw
   a.aiCard = { kind: 'picked', choice: 'No', tip: null, notes: [], approve: () => { approved++; }, reject: () => {} };
   redraw(a);
   const card = slot().firstChild;
-  expect([card.className, card.querySelector('.ai-says').textContent]).toEqual(['ai-box', 'Picked by the AI: No']);
+  expect([card.className, card.querySelector('.ai-says').textContent]).toEqual(['ai-box', 'Picked by the AI assistant: No']);
   const approve = card.querySelector('.accept');
   approve.focus();
   const head = node(b).querySelector('.row-value');
