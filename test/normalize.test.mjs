@@ -1391,7 +1391,7 @@ test('a start year said as Est., Started, Opened or Business started; Operating 
     assert.ok(!r.warnings.some((w) => w.code === 'years-in-business.default'), notes);
   }
   for (const notes of ['Operating for 4 years', 'Operating for four years', 'Operating for 1.5 years', 'Operating for one and a half years', 'Operating twenty-two years', 'Operating 6 yrs', 'Operating since 2019 or so', 'Started the business a few years ago', 'Started a business a few years ago',
-    'Est. a few years ago']) {
+    'Est. a few years ago', '3 years in business and operating for four years']) {
     const r = noYears(notes);
     assert.equal(r.record.applicant.yearsInBusiness, null, notes);
     assert.equal(r.record.applicant.yearsInBusinessUnread, true, notes);

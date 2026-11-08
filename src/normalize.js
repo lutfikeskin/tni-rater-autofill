@@ -620,7 +620,12 @@ const NEGATED = /\b(?:not|never|no)\b|n't\b/i;
 // duration may be in words or with a decimal ("for four years", "1.5 years", "one and a half years"):
 // it is only recognised here, never read into a figure (the statement is the agent's).
 const DURATION = `(?:(?:a\\s+few|a|an|and|half|several|many|some|over|about|almost|nearly|${WORD_NUMBER}|\\d+(?:\\.\\d+)?\\+?)[\\s-]+)*(?:years?|yrs?|months?|mos?|decades?)\\b`;
-const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded|${STARTED}\\s+(?:(?:the|a|my|our|his|her|their)\\s+)?(?:business|biz|company)|(?:business|biz|company)\\s+${STARTED})\\b|\\b(?:operating(?:\\s+for)?|est\\b\\.?)\\s+(?:since\\b|${DURATION})|\\bold\\s+${AGE_OF_BUSINESS}`, 'i');
+// "Operating for N years" (or "Est." with a duration) is never read into a figure, so it is the
+// agent's even beside a figure the clause does read ("3 years in business and operating for four
+// years": the maintainer's DATA-15 answer, with round 7's statement beside a figure read).
+const OPERATING_TIME = `\\b(?:operating(?:\\s+for)?|est\\b\\.?)\\s+(?:since\\b|${DURATION})`;
+const OPERATING_SAID = new RegExp(OPERATING_TIME, 'i');
+const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded|${STARTED}\\s+(?:(?:the|a|my|our|his|her|their)\\s+)?(?:business|biz|company)|(?:business|biz|company)\\s+${STARTED})\\b|${OPERATING_TIME}|\\bold\\s+${AGE_OF_BUSINESS}`, 'i');
 const BIZ_TIME = /\b(?:years?|yrs?|months?|mos?|decades?|since|ago|long|while|(?:19|20)\d{2})\b/i;
 const statesBusinessTime = (clause) => BIZ_MENTION.test(clause) && BIZ_TIME.test(clause);
 // A qualifier just before the match that the match itself doesn't hold (",less than 3 years").
@@ -697,6 +702,7 @@ export function yearsInBusinessFromNotes(boxes, year) {
         const start = quote.match(BIZ_START);
         if (start) found.push({ years: year - Number(start[1]), established: Number(start[1]), quote, field, reading: null });
         if (found.length === before) unread();
+        else if (OPERATING_SAID.test(quote)) found.push({ unread: true, years: null, established: null, quote, field, reading: null });
       }
     }
   }
