@@ -32,6 +32,7 @@ import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaul
 import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
 import { forgetQuoteTab, noteNewTab, openPortal, restoreQuoteOwners } from './panel/quote-owner.js';
 import { fileReplacer } from './panel/file-drop.js';
+import { showWhatsNew } from './panel/whats-new.js';
 import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
@@ -49,6 +50,7 @@ function wire() {
   mountSiteTrack($('site-track'));
   mountNote($('notices'), 'usage');
   mountNote($('storage-note'), 'storage');
+  mountNote($('whats-new'), 'whatsNew');
   mountNote($('window-note'), 'window');
   mountLoadError($('load-error'));
   // Settings: Done, the switches and boxes (settingsActs), the AI's (aiActs), the test-run mark,
@@ -250,6 +252,7 @@ async function init() {
   renderUsage();
   renderAiSettings();
   reviewIntake();
+  showWhatsNew();
   await refreshTab();
 }
 
