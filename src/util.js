@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // normalize.js imports this module too: both only call each other's functions, never at load.
 import { toMoney, otherNotes } from './normalize.js';
 import { nameWords } from './answers/owner.js';

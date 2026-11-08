@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // GEICO's buttons, pressed from the page's own world (W43-44, FL, 2026-10-22). GEICO's submit
 // buttons (Recalculate, Next, Save and Continue, Print Quote Proposal) set their own part of the
 // request (the button's entry and its processor) after an await, and the page's React (18) applies
