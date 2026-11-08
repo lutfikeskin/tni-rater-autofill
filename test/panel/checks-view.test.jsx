@@ -64,9 +64,11 @@ test('a check card\'s box shows the record\'s value after an edit saved it as it
   fireEvent.input(box, { target: { value: 'No' } });
   fireEvent.change(box);
   say(0);
-  expect(/** @type {HTMLInputElement} */ (container.querySelector('#warnings .check-body input')).value).toBe('No');
+  /** @returns {HTMLInputElement} */
+  const shown = () => /** @type {HTMLInputElement} */ (container.querySelector('#warnings .check-body input'));
+  expect(shown().value).toBe('No');
   say(1);
-  expect(/** @type {HTMLInputElement} */ (container.querySelector('#warnings .check-body input')).value).toBe('');
+  expect(shown().value).toBe('');
 });
 
 test('a check card\'s box shows the intake\'s answer again when it changes, and its dropdown keeps a value off the list', () => {
