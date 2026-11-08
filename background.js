@@ -1,5 +1,6 @@
 // @ts-check
 import { createTabMarker } from './src/tab-mark.js';
+import { pruneKeptWork } from './src/kept-work.js';
 
 // Clicking the toolbar icon opens the side panel.
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
@@ -21,3 +22,7 @@ try {
 // gave in Settings) and on the toolbar icon (a badge): what the panel says over its 'tab-mark' port,
 // let go when the panel closes (src/tab-mark.js).
 createTabMarker(chrome).listen();
+
+// The agent's corrections and checks kept past their day (src/kept-work.js) are deleted as Chrome
+// starts, whether or not the panel is opened.
+chrome.runtime.onStartup.addListener(() => { pruneKeptWork(chrome.storage.local).catch((e) => console.warn('kept work not pruned:', e?.message ?? e)); });

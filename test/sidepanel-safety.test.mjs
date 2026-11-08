@@ -12,7 +12,9 @@ import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
-import { intakeNotes } from '../src/normalize.js';
+import { intakeNotes, rederive } from '../src/normalize.js';
+import { KEPT_WORK_MS, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, pruneKeptWork } from '../src/kept-work.js';
+import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
@@ -117,6 +119,9 @@ function extractFunction(name) {
           // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
           // elsewhere none is running.
           noteFollowed: '() => {}',
+          // The agent's corrections and checks kept on this computer (FLOW-17) have their own test:
+          // elsewhere nothing is kept or brought back.
+          forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}', editChecks: '() => {}', ownerDrivesAnswered: '() => false', clearKeptWork: 'async () => "cleared"', keptWorkCleared: 'async () => ({ known: true, after: -Infinity })', holdKeptWork: '() => {}',
           // A page a hold kept back (resumeHeldFill) has its own test: elsewhere none waits.
           resumeHeldFill: '() => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
@@ -2425,6 +2430,165 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   const back = make();
   await back.restoreDoneActions(7);
   assert.deepEqual([...back.state.doneActions].sort(), ['lookupVin:0', 'trailerEntered:0'], 'tab 7 kept');
+});
+
+// Audit 2026-11-07, FLOW-17 (the maintainer: 24 hours on this computer): after a browser restart the
+// same PDF came back with none of the agent's corrections and checks. Each save keeps them in local
+// storage (keepKeptWork); the same intake loaded with no copy in the session gets them back
+// (restoreKeptWork), the derived values following; a new client's intake or Clear lets them go.
+test('the agent\'s corrections and checks of an intake come back after a browser restart, for a day', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); }, remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const context = { keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, get: getPath, set: setPath, rederive, JSON, Date, structuredClone, keptHeld: new Set() };
+  vm.runInNewContext(['keepKeptWork', 'restoreKeptWork'].map(extractFunction).join('\n'), context);
+  const warnings = [{ code: 'drivers.cdl', path: 'drivers[0].cdl' }, { code: 'garaging.zip', path: 'garaging.zip' }];
+  const fresh = () => ({ intakeId: 'pdf-1', record: { garaging: { zip: '33101' }, drivers: [{ cdl: null }] }, warnings: warnings.map((w) => ({ ...w })), agentEdited: [], done: [] });
+  const intake = fresh();
+  intake.record.garaging.zip = '33139';
+  intake.agentEdited = ['garaging.zip'];
+  intake.done = [0];
+  await context.keepKeptWork(intake);
+  const key = `${KEPT_WORK_PREFIX}pdf-1`;
+  const at = memory[key].at;
+  assert.deepEqual([memory[key].edits, memory[key].checks], [[['garaging.zip', '33139']], [{ code: 'drivers.cdl', path: 'drivers[0].cdl', n: 0 }]]);
+  // A save that changed neither leaves their day as it was.
+  memory[key].at = at - 1000;
+  await context.keepKeptWork(intake);
+  assert.equal(memory[key].at, at - 1000);
+  // The same PDF read again with no session copy: they are back.
+  const again = fresh();
+  assert.equal(JSON.stringify(await context.restoreKeptWork(again)), JSON.stringify({ edits: 1, checks: 1 }));
+  assert.deepEqual([again.record.garaging.zip, [...again.agentEdited], [...again.done]], ['33139', ['garaging.zip'], [0]]);
+  // Past the day: nothing comes back, and the kept copy goes.
+  memory[key].at = Date.now() - KEPT_WORK_MS - 1;
+  assert.equal(await context.restoreKeptWork(fresh()), null);
+  assert.equal(memory[key], undefined);
+  // Undone: nothing left to keep, so nothing is kept.
+  const undone = fresh();
+  await context.keepKeptWork({ ...undone, agentEdited: ['garaging.zip'] });
+  assert.ok(memory[key]);
+  await context.keepKeptWork(undone);
+  assert.equal(memory[key], undefined);
+  // Kept with each save; brought back only where no copy of the same intake was in the session, after
+  // the last client's go; Clear this client and the panel opening let theirs go.
+  assert.match(extractFunction('save'), /await store\.set\('intake', state\.intake\);\n\s+await keepKeptWork\(state\.intake\);/);
+  const load = extractFunction('loadFile');
+  assert.match(load, /if \(same\) keepWork\(state\.intake, same\);[\s\S]{0,400}await forgetKeptWork\(\{ except: summary\.intakeId \}\);[\s\S]{0,400}const restored = gate\?\.known \? await restoreKeptWork\(state\.intake, gate\.after\) : null;[\s\S]{0,200}state\.view = firstView\(state\.intake\);/);
+  assert.match(load, /restored \? `Same intake as earlier: you \$\{work\}, and that's back \(kept on this computer for a day\)\.`/);
+  assert.match(extractFunction('clearClient'), /await clearKeptWork\(\)/);
+  assert.match(extractFunction('init'), /\n\s+forgetKeptWork\(\);\n/);
+});
+
+// #436 review: Clear this client said nothing when the kept corrections couldn't be deleted, and the
+// same PDF loaded before their day ran out brought them back. A failed Clear is said, remembered (in
+// memory, and in local storage where it can be), and tried again, for what was kept before it,
+// before anything kept is read back; while it still fails, nothing comes back.
+test('a Clear that could not delete the kept corrections says so, and is tried again before any come back', async () => {
+  const memory = { 'keptWork:pdf-1': { at: 1, edits: [['garaging.zip', '33139']], checks: [] } };
+  let failing = true;
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, memory[x]])),
+    set: async (o) => { Object.assign(memory, o); },
+    remove: async (k) => { if (failing && k.some((x) => x.startsWith('keptWork:'))) throw new Error('storage'); for (const x of k) delete memory[x]; },
+    getKeys: async () => Object.keys(memory),
+  };
+  // forgetKeptWork as core.js has it (null when the storage refused).
+  assert.match(SIDEPANEL, /const forgetKeptWork = \(options = \{\}\) => pruneKeptWork\(keptWorkLocal, options\)\.catch\(\(\) => null\);/);
+  const context = { keptWorkLocal: local, forgetKeptWork: (options = {}) => pruneKeptWork(local, options).catch(() => null), Date, Number };
+  vm.runInNewContext(`let keptClearAt = null;\nconst KEPT_CLEAR_KEY = 'keptWorkClear';\n${['clearKeptWork', 'keptWorkCleared'].map(extractFunction).join('\n')}`, context);
+  assert.equal(await context.clearKeptWork(), 'retry');
+  assert.ok(memory['keptWork:pdf-1'], 'still there');
+  const at = memory.keptWorkClear;
+  assert.ok(Number.isFinite(at), 'the failed Clear is remembered');
+  // Still failing: only what was kept since the Clear may come back.
+  assert.deepEqual({ ...(await context.keptWorkCleared()) }, { known: true, after: at });
+  failing = false;
+  assert.deepEqual({ ...(await context.keptWorkCleared()) }, { known: true, after: -Infinity });
+  assert.deepEqual(Object.keys(memory), []);
+  // #436 review: the failed Clear can't be noted either: it says the work may come back.
+  const unnoted = { ...context, keptWorkLocal: { ...local, set: async () => { throw new Error('storage'); } } };
+  failing = true;
+  memory['keptWork:pdf-1'] = { at: 1, edits: [], checks: [] };
+  vm.runInNewContext(`let keptClearAt = null;\nconst KEPT_CLEAR_KEY = 'keptWorkClear';\n${['clearKeptWork', 'keptWorkCleared'].map(extractFunction).join('\n')}`, unnoted);
+  assert.equal(await unnoted.clearKeptWork(), 'unsure');
+  // The note can't be read: not known, so nothing comes back.
+  const unread = { ...context, keptWorkLocal: { ...local, get: async () => { throw new Error('storage'); } } };
+  vm.runInNewContext(`let keptClearAt = null;\nconst KEPT_CLEAR_KEY = 'keptWorkClear';\n${['clearKeptWork', 'keptWorkCleared'].map(extractFunction).join('\n')}`, unread);
+  assert.deepEqual({ ...(await unread.keptWorkCleared()) }, { known: false });
+  // Said where Clear leaves the panel, as it stands, and tried again before the same PDF's work is
+  // read back, which brings back only what was kept after the Clear.
+  const clear = extractFunction('clearClient');
+  assert.match(clear, /const cleared = await clearKeptWork\(\);\n\s+if \(cleared !== 'cleared'\) \{[\s\S]{0,700}\$\('load-error'\)\.hidden = false;/);
+  assert.match(clear, /cleared === 'unsure'/);
+  const load = extractFunction('loadFile');
+  assert.match(load, /const gate = same \? null : await keptWorkCleared\(\);\n\s+const restored = gate\?\.known \? await restoreKeptWork\(state\.intake, gate\.after\) : null;/);
+  assert.match(load, /if \(gate && !gate\.known\) holdKeptWork\(state\.intake\.intakeId\);/);
+  assert.match(extractFunction('init'), /\n\s+keptWorkCleared\(\);\n/);
+});
+
+// #436 review: after a failed Clear, the next client's corrections were made and kept; the same PDF
+// loaded again while the Clear still failed brought nothing back, and the save after it deleted
+// them. What was kept after the Clear comes back; where the kept copy can't be read, saves leave
+// it alone.
+test('corrections kept after a failed Clear come back, and an unreadable kept copy is never overwritten', async () => {
+  const memory = {};
+  let unreadable = false;
+  const local = {
+    get: async (k) => { if (unreadable) throw new Error('storage'); return Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])); },
+    set: async (o) => { Object.assign(memory, structuredClone(o)); }, remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const context = { keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, get: getPath, set: setPath, rederive, JSON, Date, structuredClone, keptHeld: new Set() };
+  vm.runInNewContext(['keepKeptWork', 'restoreKeptWork'].map(extractFunction).join('\n'), context);
+  const fresh = () => ({ intakeId: 'pdf-1', record: { garaging: { zip: '33101' } }, warnings: [], agentEdited: [], done: [] });
+  const now = Date.now();
+  memory['keptWork:pdf-1'] = { at: now - 10, edits: [['garaging.zip', '33139']], checks: [] };
+  const again = fresh();
+  assert.ok(await context.restoreKeptWork(again, now - 1000), 'kept after the Clear: back');
+  assert.equal(again.record.garaging.zip, '33139');
+  assert.equal(await context.restoreKeptWork(fresh(), now), null, 'kept before it: not back');
+  // Unreadable: nothing comes back, and a save leaves the kept copy as it is.
+  unreadable = true;
+  const held = fresh();
+  assert.equal(await context.restoreKeptWork(held), null);
+  unreadable = false;
+  await context.keepKeptWork(held);
+  assert.deepEqual(memory['keptWork:pdf-1'].edits, [['garaging.zip', '33139']]);
+});
+
+// #436 review: a correction can raise a check of its own (NTL set to Yes with cargo: agentEdit's
+// ntlCargoEdited). The PDF read again after a restart has no such check, so its kept Looks right had
+// nothing to land on, and the next save dropped it. The checks a correction raises are raised again
+// before the kept checks are matched, as agentEdit does; Owner drives answered likewise, by its edit
+// and by its check's Looks right.
+test('a correction brought back after a restart raises its own checks again, and keeps their Looks right', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); }, remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const replayed = [];
+  const context = { keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, get: getPath, set: setPath, rederive, JSON, Date, structuredClone, keptHeld: new Set(),
+    ntlWithCargo: (r) => r.coverage.ntl === true && r.coverage.cargo === true, NTL_CARGO_MESSAGE: 'NTL and cargo',
+    ntlAnswerEdited: (intake, path) => replayed.push(['answer', path]), ntlPrimaryEdited: () => replayed.push(['primary']), ntlNotesItem: () => replayed.push(['notes']),
+    ownerDrivesAnswered: (intake, what) => { replayed.push(['owner', what]); return false; } };
+  const names = ['keepKeptWork', 'restoreKeptWork', 'ntlCargoEdited', 'editChecks'].filter((name) => name === 'ntlCargoEdited' || PANEL_SOURCE.includes(`function ${name}(`));
+  vm.runInNewContext(names.map(extractFunction).join('\n'), context);
+  const fresh = () => ({ intakeId: 'pdf-2', record: { coverage: { ntl: false, cargo: true, autoLiability: 'Yes' }, applicant: {} },
+    warnings: [{ code: 'drivers.owner-excluded', path: 'applicant.ownerDrives' }], agentEdited: [], done: [] });
+  // The agent set NTL to Yes (agentEdit raised the NTL-and-cargo check), then said Looks right on it and on the owner's.
+  const intake = fresh();
+  intake.record.coverage.ntl = true;
+  intake.agentEdited = ['coverage.ntl'];
+  context.ntlCargoEdited(intake);
+  intake.done = [0, 1];
+  await context.keepKeptWork(intake);
+  const again = fresh();
+  await context.restoreKeptWork(again);
+  assert.deepEqual(JSON.parse(JSON.stringify([again.warnings.map((w) => w.code), [...again.done].sort()])), [['drivers.owner-excluded', 'coverage.ntl-cargo'], [0, 1]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(replayed)), [['answer', 'coverage.ntl'], ['primary'], ['owner', { check: { i: 0, done: true } }]]);
 });
 
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
