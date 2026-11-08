@@ -115,9 +115,10 @@ export function rulesPlugin(root) {
   };
 }
 
-// Panel files the build bundles (sidepanel/*.js, .html, .css): left out of the copy, which gets the
-// build's instead. Its sounds and images stay, since the panel names some of them at run time.
-export const bundledPanelFile = (rel) => /^sidepanel\/.*\.(js|html|css)$/.test(rel.replaceAll('\\', '/'));
+// Panel files the build bundles (sidepanel/*.js, .jsx, .html, .css): left out of the copy, which
+// gets the build's instead. Its sounds and images stay, since the panel names some of them at run
+// time. The React views (.jsx) were shipped raw beside the bundle (audit 2026-11-07, QA-09).
+export const bundledPanelFile = (rel) => /^sidepanel\/.*\.(jsx?|html|css)$/.test(rel.replaceAll('\\', '/'));
 
 // The fill engine's source (src/kit/): left out of the copy, which gets the built kit instead
 // (scripts/lib/kit.mjs) at src/content/pagekit.js.
