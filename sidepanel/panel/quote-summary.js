@@ -38,7 +38,8 @@ const SOURCES = {
 // The order the sources are counted in on a page's line (most of a quote first).
 const SOURCE_ORDER = Object.keys(SOURCES);
 
-// An answer as the summary writes it.
+// An answer as the summary writes it; an intake field the agent emptied is "Blank", not "—" (missing).
+const blank = (v) => v == null || v === '';
 const said = (v) => (v === true ? 'Yes' : v === false ? 'No' : v == null || v === '' ? '—' : String(v));
 
 /**
@@ -116,7 +117,7 @@ function quoteSummary({ reports = new Map(), intake = null, quoteStates = new Ma
   // The agent's corrections to the intake, what they answered or changed on a page, their own
   // defaults, and a quote state they kept though the intake says another.
   const edits = (intake?.agentEdited ?? []).map((path) => ({ kind: 'edit', carrier: null, page: null, label: fieldSaid(path),
-    value: said(get(record, path)), said: 'Corrected in the panel' }));
+    value: blank(get(record, path)) ? 'Blank' : said(get(record, path)), said: 'Corrected in the panel' }));
   const states = [...quoteStates].filter(([, p]) => p?.dismissed && p.dismissed === `${intakeId}|${p.code}`).map(([tabId, p]) => ({ kind: 'state',
     carrier: carriers.find((c) => c.tabId === tabId)?.name ?? p.carrier ?? null, page: null,
     label: 'Quote state', value: STATES[p.code] ?? String(p.code), said: `Kept, though the intake says ${STATES[g.state] ?? g.state ?? 'another state'}` }));
@@ -198,7 +199,8 @@ function summaryNow() {
 // Quote summary, from the Quote done dock or the client strip: the sheet over the panel, made from
 // what the panel holds as it opens. Focus goes into it and back where it was when it closes.
 function openSummary() {
-  if (!state.intake) return;
+  // Not while the intake is being replaced or reset: the reports may still be the last client's.
+  if (!state.intake || state.resetting) return;
   if (!state.summary) state.summaryReturn = document.activeElement;
   flushSync(() => {
     state.detailsOpen = false;
@@ -213,7 +215,9 @@ function closeSummary() {
   showScreen();
   const back = state.summaryReturn;
   state.summaryReturn = null;
-  (back?.isConnected ? back : $('quote-summary'))?.focus();
+  // Back where it was, unless that button went away meanwhile (the dock's, on a page that moved on).
+  const usable = (el) => !!el?.isConnected && !el.hidden && !el.disabled && el.offsetParent !== null;
+  (usable(back) ? back : $('quote-summary'))?.focus();
 }
 
 // The summary as TNI's collection server keeps it (quote_summary, server/index.mjs SUMMARY_SHAPE):
@@ -244,7 +248,7 @@ function summaryEvent(s) {
 // rest of the usage log. Practice pages only: not sent, as nothing from them is.
 function saveSummary() {
   const open = state.summary;
-  if (!open) return;
+  if (!open || state.resetting) return;
   let said;
   try {
     const name = downloadSummary(open.summary);
