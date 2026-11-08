@@ -396,7 +396,7 @@ async function runAssist(frames, ctx) {
     sigs.forEach((sig) => state.aiAsking.set(sig, pending));
     try {
       // Stopped between model calls only for an answer that would be discarded.
-      const result = await suggest(missing.map(named.toSend), context, cfg, { isStale: () => !!discardWhy() });
+      const result = await suggest(missing.map(named.toSend), context, cfg, { isStale: () => !!discardWhy(), ...lunaTrace(ctx) });
       const fresh = result.suggestions.map(named.restore);
       // An answer that came too late is still logged (its tokens were spent), with the reason.
       const why = discardWhy();
@@ -674,6 +674,20 @@ async function applyAi(list, ctx, decision) {
     if (prepared) await persistAiPending();
     if (isCurrent() && state.autoPending) scheduleAutoFill(ctx.page);
   }
+}
+
+// While a developer recording runs on this tab: each Luna call goes into it (kind `luna`), what it was
+// asked and answered, every string through the recording's redactor (docs/developer-recording.md).
+// Audit 2026-11-07, AI-08: a wrong suggestion couldn't be traced to the rules, the context or the model.
+function lunaTrace(ctx) {
+  const rec = state.recording;
+  if (!rec || rec.stopping || rec.tabId !== ctx.tabId) return {};
+  const redactAll = (v) => (typeof v === 'string' ? rec.redact(v) : Array.isArray(v) ? v.map(redactAll)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redactAll(x)])) : v);
+  return { trace: (x) => {
+    if (state.recording !== rec || rec.stopping) return;
+    rec.store.add([{ kind: 'luna', t: Date.now(), frame: 0, page: ctx.page, ...redactAll(x) }]);
+  } };
 }
 
 function aiDecisionEvent(x, ctx, decision) {

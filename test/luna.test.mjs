@@ -234,6 +234,33 @@ test('suggestions wait for both calls; stale verification responses are discarde
   await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call, isStale: () => count >= 2 }), /changed/);
 });
 
+// Audit 2026-11-07, AI-08: a developer recording keeps what Luna was asked and answered, per call.
+test('with a trace, each call says what Luna was asked and answered, failures too, and a failing trace stops nothing', async () => {
+  const seen = [];
+  let count = 0;
+  const call = async ({ body }) => ++count === 1 ? answer(body) : envelope({ decisions: { f1: { supported: true, gap: '' } } });
+  const result = await suggest(items, context, { apiKey: 'synthetic' }, { call, trace: (x) => seen.push(x) });
+  assert.equal(result.suggestions[0].choice, 'No');
+  assert.deepEqual(seen.map((x) => [x.call, x.model, x.outcome, x.tokensIn, x.tokensOut, x.error]),
+    [['propose', DEFAULT_MODEL, 'completed', 100, 30, null], ['verify', DEFAULT_MODEL, 'completed', 100, 30, null]]);
+  assert.equal(seen[0].request.fields.f1.label, 'Hazardous materials requiring placards?');
+  assert.ok(Object.values(seen[0].request.sources).some((s) => s.path === 'operations.hazPlacard' && s.value === false));
+  assert.equal(seen[0].answer.decisions.f1.explanation, 'The intake explicitly says No.');
+  assert.deepEqual(seen[1].answer.decisions.f1, { supported: true, gap: '' });
+  assert.ok(seen.every((x) => Number.isFinite(x.ms) && x.ms >= 0));
+  // A call that fails is said with its error; an answer Luna's contract refuses has no answer.
+  const failed = [];
+  await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async () => { throw new AssistError('Luna is rate-limited. Try again shortly.'); }, trace: (x) => failed.push(x) }), /rate-limited/);
+  assert.deepEqual([failed.length, failed[0].call, failed[0].answer, failed[0].error], [1, 'propose', null, 'Luna is rate-limited. Try again shortly.']);
+  const odd = [];
+  await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async () => ({ ...envelope({}), model: 'other' }), trace: (x) => odd.push(x) }));
+  assert.deepEqual([odd[0].answer, odd[0].model], [null, 'other']);
+  // Without a trace nothing is built; with one that throws, the review goes on.
+  count = 0;
+  const kept = await suggest(items, context, { apiKey: 'synthetic' }, { call, trace: () => { throw new Error('recording gone'); } });
+  assert.equal(kept.suggestions[0].choice, 'No');
+});
+
 test('twelve questions need two calls with complete facts and deduplicated verification evidence', async () => {
   const calls = [], fields = questions(12);
   const ctx = { ...context, carrier: 'amwins', record: { ...context.record,
