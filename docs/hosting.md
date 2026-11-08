@@ -84,6 +84,27 @@ maintainer's computer (`server-data/warehouse.duckdb`, git-ignored). It runs not
 leaves this volume the only full copy of the log. Its tables, the richer intake profile it plans and
 optional quoted premiums are in [quoting history database](quoting-history-database.md).
 
+The extension deletes its copy of an upload once the server answers 200, so `store` in
+`server/index.mjs` flushes the day file to the volume (`fsync`) before that answer, and then the events folder,
+which holds a new day file's name (on Linux; Windows opens no folder). It flushes the folder on
+every upload, so the retry of one whose folder flush failed flushes it too. A write or flush
+that fails answers 500 (`could not store events`), and the extension keeps the events and sends
+them again, so a line written before a failed flush can be in the file twice (readers, the
+dashboard included, de-duplicate by id). A restarted server flushes every day file it reads, and
+the folder, before taking uploads: a retry it answers as a duplicate of such a line is then on the
+disk too.
+
+**Backups.** Railway's Hobby plan has no volume backups. The maintainer's computer keeps a daily
+copy instead (audit 2026-11-07, SRV-05): `~/.config/tni-rater/backup-usage-server.mjs`, a
+standalone script outside the repository, pulls `/v1/export` with the admin token into
+`~/Backups/tni-usage-server/<UTC day>/events/*.jsonl`, refuses an export that was cut off, keeps
+the last 14 copies and logs each run to `backup.log` in that folder. A Windows scheduled task runs
+it every day at 12:00. To restore, deploy the server and push a copy back:
+`npm run push-logs -- ~/Backups/tni-usage-server/<UTC day>/events` (events already stored are
+skipped by id; each is stored with a new `receivedAt`). Luna's day counts (`DATA_DIR/luna/`) are
+not copied: a lost day file is counted again from 0 (above), and the next day starts its own.
+`npm run pull` also leaves a plain copy of the days it downloads in the maintainer's `server-data/`.
+
 ### Upload limits and the disk guard
 
 The upload token ships in the extension, so `/v1/events` bounds what one address can send and stops
