@@ -16,9 +16,52 @@ const entriesOf = (part) => part.sections.flatMap((s) => s.rules);
 const GENERAL_IDS = new Map(entriesOf(GENERAL).map((e) => [e.id, e]));
 const partIds = (carrier) => new Map(entriesOf(CARRIER_PARTS[carrier.id] ?? { sections: [] }).map((e) => [e.id, e]));
 const where = (carrier, rule) => `${carrier.id}: ${rule.name ?? rule.q ?? rule.field ?? rule.selector ?? rule.label ?? rule.path ?? rule.id}`;
-// A rule fills a TNI standard when its source is 'standard', or a function of the record that can
-// return it (every such function names 'standard' in its own text).
-const canBeStandard = (rule) => rule.source === 'standard' || (typeof rule.source === 'function' && /'standard'/.test(String(rule.source)));
+// A rule fills a TNI standard when its source is 'standard', or a function of the record that
+// returns it for some record of the matrix below.
+// Audit 2026-11-07, CARR-03: which rules can fill a standard is read from what they return, not
+// from their text, so a wrapper (`held`, `holdOr`, a future one) can't hide one. Every function
+// source is run over a matrix of synthetic records: NTL Yes / No / mentioned / with primary auto
+// liability, a USDOT number or none (with or without an MC number, each 60-day and "no" answer),
+// each filings answer and which-filings text, each business class, and TX, FL and another state.
+const base = () => ({
+  applicant: { name: 'Synthetic Expediter LLC', dot: '1234567', mc: null, noDot: null, mcDotWithin60Days: null, owner1: 'Amina Kone', ownerDrives: true, phone: '(555) 010-0100', email: 'client@example.test', fein: null, yearEstablished: 2019, yearsInBusiness: 5, yearsExperience: 3 },
+  garaging: { street: '1 Test Way', unit: null, city: 'Testville', state: 'NJ', zip: '07000' },
+  operations: { businessClass: 'Expediter', whatHaul: 'General freight', radius: 'Unlimited', radiusMiles: null, vehicleOwnership: 'Owned', personalUse: false, hazmat: null, hazPlacard: null, filingsRequired: null, filingsWhich: null, usesEld: false, equipVehicle: null },
+  drivers: [{ first: 'Amina', middle: null, last: 'Kone', dob: '01/02/1980', licenseNumber: 'NJ1234567', licenseState: 'NJ', cdl: true, cdlYear: 2015, maritalStatus: 'Married', excluded: null }],
+  vehicles: [{ type: 'Van', year: 2022, make: 'FORD', model: 'Transit', vin: '1FTBR3X87MKA12345', value: 45000 }],
+  trailers: [{ type: 'Dry Van', year: 2015, make: 'GREAT DANE', model: null, vin: '1GRAA0621FB700000', value: 25000 }],
+  trailerInfo: { ownership: 'Owned', equipTrailer: null },
+  priorInsurance: [{ type: 'Commercial Auto', carrier: 'Other', limit: '$500k CSL', expiration: '10/31/2099' }],
+  coverage: { autoLiability: 'Yes', autoLiabLimit: '$1M CSL', cargo: true, cargoLimit: 100000, cargoDeductible: 1000, gl: false, glLimit: null, reeferBreakdown: null, ntl: null },
+  claims: { hasClaims: false, text: 'No', notes: null },
+  notes: { text: null },
+});
+const set = (r, changes) => {
+  for (const [path, value] of Object.entries(changes)) {
+    const keys = path.split('.');
+    let cur = r;
+    for (const k of keys.slice(0, -1)) cur = cur[k];
+    cur[keys.at(-1)] = value;
+  }
+  return r;
+};
+const AXES = [
+  [{}, { 'coverage.ntl': true, 'coverage.autoLiability': 'Non-Trucking' }, { 'coverage.ntl': false }, { 'coverage.ntl': true, 'coverage.autoLiability': 'Yes' }, { 'notes.text': 'Needs NTL' }],
+  [{}, { 'applicant.dot': null }, { 'applicant.dot': null, 'applicant.mc': 'MC-765432' }, { 'applicant.dot': null, 'applicant.mcDotWithin60Days': true }, { 'applicant.dot': null, 'applicant.mcDotWithin60Days': false }, { 'applicant.dot': null, 'applicant.noDot': true }, { 'applicant.mc': 'MC-765432' }],
+  [{}, { 'operations.filingsRequired': true, 'operations.filingsWhich': 'Federal Liability Filing' }, { 'operations.filingsRequired': false }, { 'operations.filingsWhich': 'SR-22' }, { 'operations.filingsWhich': 'BMC-34' }, { 'operations.filingsRequired': true, 'operations.filingsWhich': 'State filing' }],
+  [{}, { 'operations.businessClass': 'Freight Hauler' }, { 'operations.businessClass': 'Landscaper' }, { 'operations.businessClass': null }],
+  [{}, { 'garaging.state': 'TX' }, { 'garaging.state': 'FL' }],
+];
+const RECORDS = AXES.reduce((all, axis) => all.flatMap((changes) => axis.map((more) => ({ ...changes, ...more }))), [{}]).map((changes) => set(base(), changes));
+const ACTIVE = [{}, { vehicles: 0, drivers: 0, trailers: 0 }];
+const returnsStandard = (rule) => RECORDS.some((r) => ACTIVE.some((a) => {
+  try {
+    return rule.source(r, a) === 'standard';
+  } catch {
+    return false;
+  }
+}));
+const canBeStandard = (rule) => rule.source === 'standard' || (typeof rule.source === 'function' && returnsStandard(rule));
 
 test('every carrier with rules has a rulebook part, and nothing else does', () => {
   assert.deepEqual(Object.keys(CARRIER_PARTS).sort(), RULE_CARRIERS.map((c) => c.id).sort());
