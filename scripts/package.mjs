@@ -4,6 +4,8 @@
 //
 //   npm run package        -> dist/tni-rater-autofill-<version>.zip, and the same files unpacked
 //                             in dist/tni-rater-autofill/ (for Load unpacked)
+//   npm run package -- --label test-build
+//                          -> dist/tni-rater-autofill-<version>-test-build-<commit>.zip (zipName)
 //
 // Both carry the side panel built by Vite (vite.config.js) in place of its source files, the fill
 // engine built from src/kit/ (scripts/lib/kit.mjs) at src/content/pagekit.js, and the page scripts
@@ -15,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as buildPanel } from 'vite';
 import { zipDirectory } from './lib/zip.mjs';
-import { STAMPED, buildId, stampBuild, devManifest, bundledPanelFile, kitSourceFile, PACKAGED } from './lib/package.mjs';
+import { STAMPED, buildId, stampBuild, devManifest, bundledPanelFile, kitSourceFile, PACKAGED, packagedCommit, zipName } from './lib/package.mjs';
 import { buildKit, KIT_OUTPUT } from './lib/kit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -52,7 +54,9 @@ const copy = async (to, channel) => {
 
 // The store zip, from a staged copy: the files as they are but the built panel, with the page
 // scripts stamped.
-const out = path.join(root, 'dist', `tni-rater-autofill-${manifest.version}.zip`);
+const at = process.argv.indexOf('--label');
+const label = at >= 0 ? process.argv[at + 1] ?? '' : null;
+const out = path.join(root, 'dist', zipName(manifest.version, label == null ? {} : { label, commit: packagedCommit(root) }));
 const stage = path.join(root, 'dist', '.stage');
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.rmSync(out, { force: true });
