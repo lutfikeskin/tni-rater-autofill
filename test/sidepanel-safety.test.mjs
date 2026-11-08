@@ -9040,7 +9040,7 @@ test('a panel edit of "No" into the USDOT box saves no number, and says the row 
   const calls = [];
   const intake = { record: { applicant: { dot: '1234567', noDot: null } }, warnings: [], done: [], agentEdited: [] };
   const sandbox = {
-    state: { intake }, get, set, noNumberEdit, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
+    state: { intake, fieldRevs: new Map() }, get, set, noNumberEdit, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, save: async () => {}, profileLater() {},
     usage: { log: (e) => calls.push(['log', e.path]) }, renderSections: (o) => calls.push(['renderSections', o.keep]), renderWarnings: () => calls.push(['renderWarnings']),
     claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
   };
@@ -9049,6 +9049,7 @@ test('a panel edit of "No" into the USDOT box saves no number, and says the row 
   await sandbox.agentEdit('applicant.dot', 'No', 'text');
   assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, [...intake.agentEdited]], [null, true, ['applicant.dot']]);
   assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['dot.none', 'info']]);
+  assert.equal(sandbox.state.fieldRevs.get('applicant.dot'), 1, 'its box is said again with the record value (details-view.jsx rev)');
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['renderSections', ['applicant.dot']], ['renderWarnings'], ['log', 'applicant.dot']]);
   calls.length = 0;
   await sandbox.agentEdit('applicant.dot', '7654321', 'text');
