@@ -218,7 +218,9 @@ await panel.locator('#details-view').waitFor({ state: 'hidden' });
 console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#dock-sub'));
 // The developer recording, end to end in the unpacked copy (REC-18): Record before the first fill,
 // a note from the footer's pill, the fill, then Stop from the pill; the zip it saves must hold the
-// page's, the fill's and the panel's events and a moment's layout, and the report must read it.
+// page's, the fill's and the panel's events and a moment's layout, and the report must read it. The
+// mock is a practice page, whose fills log no usage events (logFill), so none are copied in here:
+// that copy is the unit tests' (test/sidepanel-safety.test.mjs).
 const RECORDS = CHANNEL === 'unpacked' && !DEFAULTS;
 if (RECORDS) {
   await panel.evaluate(() => document.querySelector('#devrec-start').click());
@@ -233,13 +235,6 @@ let recordingOk = !RECORDS;
 if (RECORDS) {
   try {
     await panel.waitForFunction(() => { const dock = document.querySelector('#dock'); return dock.dataset.phase !== 'filling' && !!dock.dataset.report; }, null, { timeout: 30000, polling: 100 });
-    // The fill's usage events (fill_run, fill_field) are logged as its report is made: Stop once the
-    // pill's count of events has held through two of its redraws (one a second), so they are in.
-    await panel.waitForFunction(() => {
-      const w = /** @type {any} */ (window), n = (document.querySelector('#devrec-pill-text')?.textContent ?? '').match(/(\d+) events/)?.[1];
-      if (n !== w.__pillCount) { w.__pillCount = n; w.__pillSince = Date.now(); }
-      return Date.now() - w.__pillSince >= 2500;
-    }, null, { timeout: 20000, polling: 100 });
     const saved = panel.waitForEvent('download', { timeout: 15000 });
     await panel.click('#devrec-pill-stop');
     const zip = unzipSync(fs.readFileSync(await (await saved).path()));
@@ -255,7 +250,6 @@ if (RECORDS) {
     const fillEnd = events.find((e) => e.kind === 'fill' && e.on === false);
     console.log('Recording:', JSON.stringify({ id: manifest.id, ended: !!manifest.ended, events: events.length, counts, layout: layout?.kind ?? null, fillRun: !!fillEnd?.run }));
     recordingOk = !!manifest.ended && has('page') && has('burst') && has('kit', 'run') && has('kit', 'answer') && has('kit', 'wait') && !!fillEnd?.run
-      && events.some((e) => e.kind === 'usage' && e.event?.type === 'fill_run' && e.event.run === fillEnd.run)
       && events.some((e) => e.kind === 'note' && e.text === 'before the first fill') && layout?.kind === 'page-capture'
       && /## Where the time went/.test(report) && /## Outcome of each fill/.test(report) && !events.some((e) => e.kind === 'gap');
     if (!recordingOk) console.log('RECORDING: the saved recording lacks the page\'s, the fill\'s or the panel\'s events, its moment\'s layout, or the report\'s sections (above).');
