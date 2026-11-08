@@ -1911,7 +1911,7 @@ test('a question Luna left shows its recommendation; an answered one shows none'
   context.renderAi(holder, [left], ctx);
   // Drawn as "AI: this one is yours to decide.", its tip, then "Luna recommends: …" (ai-view.jsx).
   const { card } = holder.said.orphans[0];
-  assert.deepEqual({ ...card }, { kind: 'tip', says: 'AI: this one is yours to decide.', tip: 'Not on the intake.',
+  assert.deepEqual({ ...card }, { kind: 'tip', says: 'The AI assistant leaves this one to you.', tip: 'Not on the intake.',
     next: 'The intake leaves "Needs SR-22" blank: confirm it with the client, then add it under All client details.' });
   assert.equal(card.use, undefined, 'a recommendation is no answer to put in');
   context.renderAi(holder, [{ ...left, leave: false, choice: 'No', nextStep: null, evidenceSources: [] }], ctx);
@@ -3144,7 +3144,7 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   } });
   await t.context.runAssist([{}], t.ctx);
   const text = JSON.stringify(t.holder().said);
-  assert.match(text, /Luna: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
+  assert.match(text, /AI assistant: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
   assert.doesNotMatch(text, /Asking/);
   assert.equal(t.rendered.length, 0, 'stale suggestions are never shown as current');
   assert.equal(t.state.aiCache.size, 0, 'nor cached');
@@ -3167,7 +3167,7 @@ test('Luna without a key says so above the list, and a failed review says it fai
   keyless.context.openSettings = (id) => opened.push(id);
   await keyless.context.runAssist([{}], keyless.ctx);
   const { needsKey } = keyless.holder().said;
-  assert.equal(needsKey.text, 'Luna needs an OpenAI API key. ');
+  assert.equal(needsKey.text, 'The AI assistant needs an OpenAI API key. ');
   needsKey.add();
   assert.deepEqual([opened, keyless.logged], [['ai-openai-key'], []], 'Add the key opens its field; nothing is asked');
   const failed = assistHarness({ suggest: async () => { throw new failed.context.AssistError('Luna is rate-limited. Try again shortly.'); } });
@@ -3288,7 +3288,7 @@ test('a Luna answer that comes after a fill of the same page redrew it is kept, 
   await settle();
   assert.equal(luna.calls.length, 1, 'the same questions are not asked twice while the first request answers them');
   assert.equal(luna.calls[0].opts.isStale(), false, 'Luna is not stopped between its calls for a newer request of the same page');
-  assert.match(JSON.stringify(t.holder().said), /Asking Luna about 1 question left for you/);
+  assert.match(JSON.stringify(t.holder().said), /Asking the AI assistant about 1 question left for you/);
   luna.calls[0].resolve();
   await Promise.all([first, second]);
   assert.equal(t.logged.length, 1);
