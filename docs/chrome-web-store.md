@@ -12,8 +12,8 @@ npm test
 npm run package          # -> dist/tni-rater-autofill-<version>.zip
 ```
 
-A version tagged on `main` has this zip, built from its tagged commit, on its GitHub Release
-([updates](#5-updates)); upload that one when it exists.
+A version tagged on `main` gets this zip, built from its tagged commit, on its GitHub Release
+([updates](#5-updates)); upload that one when the release workflow attached it.
 
 A build made to try out rather than upload (a test build for the correction loop) is named by the
 script: `npm run package -- --label test-build` writes
@@ -91,12 +91,20 @@ pin the extension → click it to open the side panel. Then, once each:
 ## 5. Updates
 
 Raise the version and merge it to `main`, then wait for that push's **Release tag** run to finish
-all its jobs: the release is made before its zip is built and attached. Upload the zip the release
-then carries (below), `tni-rater-autofill-<version>.zip`, built from the tagged commit, on the
-item's **Package** tab, and submit. Only when that run finished and the release has no zip, check
-out the version's own commit (`git checkout v<version>`, or for an untagged version the commit that
-set it in `manifest.json`), run `npm run package` there from a clean tree (the usage events name the
-commit they were packaged from, `+dirty` otherwise), and upload that zip.
+all its jobs: the release is made before its zip is built and attached. When the run passed and its
+attach job uploaded `tni-rater-autofill-<version>.zip` (its log has no "already has
+tni-rater-autofill-<version>.zip: left as it is" line), that zip is the tagged commit's: upload it
+on the item's **Package** tab, and submit. Otherwise build it yourself:
+
+1. If the run failed because `v<version>` already names another commit, stop: resolve the tag by
+   hand first, so that it names the commit that set the version in `manifest.json`.
+2. Check out that commit (`git checkout v<version>`, or for an untagged version the commit that set
+   it), then run `npm ci`, so `node_modules` matches its lockfile.
+3. Run `npm run package` there from a clean tree (the usage events name the commit they were
+   packaged from, `+dirty` otherwise), and upload that zip.
+
+A zip the release already had before the run (uploaded by hand) is unchecked: build it yourself as
+above rather than upload it.
 In the version's PR, add what agents will see differently to `src/whats-new.js` under the new
 version: one to five short lines in the agent's words. The panel shows them once, as "What's new in
 v<version>", the first time it opens after the update, with every version's lines since the one it
@@ -115,8 +123,9 @@ to be checked by hand. A second job then checks out the tagged commit and runs `
 packaging runs the project's dependencies. A third job, which runs nothing of the project, attaches
 `tni-rater-autofill-<version>.zip` to the release, with the source maps' zip beside it when the
 package makes one. A missing store zip fails the run, and an asset the release already has is left
-as it is, unchecked: the workflow vouches only for a zip it attached itself, which its attach job's
-log names ("gh release upload"), not for one uploaded to the release by hand. The tag says which
+as it is, unchecked: the workflow vouches only for a zip it attached itself, and its attach job's
+log says when it left one ("already has …: left as it is"), not for one uploaded to the release by
+hand. The tag says which
 commit a store version came from, the notes what changed, and the release's zip, when that run
 attached it, is the one built from that commit and the one to upload; the workflow uploads nothing
 to the store.
