@@ -89,6 +89,15 @@ function resumeHeldFill() {
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
 // `retried`: the second click of a Continue whose page stayed unchanged (watchNextStep): the step it is
 // for (its doneSteps key), logged as a retry only when this fill continued that step.
+// The agent's own fill, dropped because the panel moved to another tab before the kit was asked:
+// its page's report says so, rather than keeping what it said before, as if this fill had run there
+// (CodeRabbit on #410). An automatic one ends quietly: its page fills when it opens again.
+/** @param {any} ctx */
+function noteTabLeft(ctx) {
+  if (ctx.auto) return;
+  fillProblem(ctx, 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.', 'notice');
+}
+
 /** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean, retried?: string | false }} [options] */
 async function fillPage({ auto = false, confirmed = null, continuing = false, retried = false } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
@@ -159,7 +168,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     await tellRecorder('pause', tabId);
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (!fillCurrent(ctx)) return;
+    if (!fillCurrent(ctx)) { noteTabLeft(ctx); return; }
     // The agent's edits on this page as the fill's tab holds them (retiring AI picks may just
     // have released some), never the tab in front.
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
@@ -183,7 +192,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     // the extension didn't write may be the agent's (the maintainer, 2026-11-07, in place of giving
     // it again, 2026-10-21). Replace existing answers still gives it again.
     // The panel moved to another tab during that wait: nothing is filled (and the options are this tab's).
-    if (!fillCurrent(ctx)) return;
+    if (!fillCurrent(ctx)) { noteTabLeft(ctx); return; }
     const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed, ctx);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
