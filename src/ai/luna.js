@@ -386,8 +386,6 @@ export async function callModel({ apiKey, proxy = null, body, fetchImpl = global
   } finally { clearTimeout(timer); }
 }
 
-// A failed or dropped review carries its prompt hash too (error.promptHash), so its log can be told
-// apart by the instructions and rules that produced it.
 // One model call as Luna got it and answered, for the developer recording (`trace`, while one runs;
 // docs/developer-recording.md): which call, the request's state (the intake already redacted as sent;
 // the questions and their options as the page shows them), the answer it gave, its usage and time.
@@ -417,6 +415,8 @@ function traced(call, trace) {
   };
 }
 
+// A failed or dropped review carries its prompt hash too (error.promptHash), so its log can be told
+// apart by the instructions and rules that produced it.
 export async function suggest(items, context, config, options = {}) {
   const prompt = await promptHash(context.carrier);
   try {
