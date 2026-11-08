@@ -457,12 +457,14 @@ function undecidedOf({ base, first, field, left, choices, obs }, support, ids) {
   };
   const typed = obs.filter((o) => o.matches && o.source === 'agent');
   // A question without an id (AmWINS, GEICO) has no layout of its own: its page's captured layout
-  // gives its options by its caption, when that caption names one question there, within its step
-  // when the answer names one (byStepCaption, else byCaption), so a choice no agent picked can still
-  // be proposed (CodeRabbit on #419).
-  const layoutOf = (o) => o.layout
-    ?? (o.step ? ids.byStepCaption.get(`${o.carrier}|${o.page} › ${layoutStep(o)}|${textOf(o.label)}`) : null)
-    ?? ids.byCaption.get(`${o.carrier}|${o.page}|${textOf(o.label)}`) ?? null;
+  // gives its options by its caption, when that caption names one question there (byCaption; within
+  // its step, byStepCaption, when the answer names one), so a choice no agent picked can still be
+  // proposed (CodeRabbit on #419).
+  // An answer that names its step looks in that step only: another step's options sharing the
+  // caption are not its question's.
+  const layoutOf = (o) => o.layout ?? (o.step
+    ? ids.byStepCaption.get(`${o.carrier}|${o.page} › ${layoutStep(o)}|${textOf(o.label)}`)
+    : ids.byCaption.get(`${o.carrier}|${o.page}|${textOf(o.label)}`)) ?? null;
   const options = [...new Set(obs.flatMap((o) => layoutOf(o)?.opts ?? []).map(String))];
   const kind = first.kind ?? obs.find((o) => o.kind)?.kind ?? null;
   return { ...base, ...support(left), field, kind, options, left: left.length,

@@ -92,6 +92,10 @@ test('learning: a candidate without an id takes its options from its own step\'s
   const [losses] = learn(events, { carriers: [{ id: 'amwins', rules: [], useGenericRules: false }], minIntakes: 5 }).undecided;
   assert.ok(losses, 'a candidate');
   assert.deepEqual(losses.options, ['Yes', 'No', 'Unknown'], "the Drivers step's options, not the Vehicles step's");
+  // CodeRabbit on #419: with only another step's layout captured, its options are not this question's.
+  const onlyOther = events.filter((x) => !(x.type === 'page_layout' && x.step === 'Drivers'));
+  const [other] = learn(onlyOther, { carriers: [{ id: 'amwins', rules: [], useGenericRules: false }], minIntakes: 5 }).undecided;
+  assert.deepEqual(other.options, [], "the Vehicles step's options are not offered for the Drivers question");
 });
 
 test('rule proposals: the request offers only the schema\'s paths, the answers seen and TNI\'s rule ids, with no intake values', () => {
