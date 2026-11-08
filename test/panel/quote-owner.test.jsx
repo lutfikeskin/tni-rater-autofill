@@ -3,7 +3,7 @@ import { carrierForUrl } from '../../src/carriers.js';
 import { state, store } from '../../sidepanel/panel/core.js';
 import { fillPage } from '../../sidepanel/panel/fill.js';
 import { scheduleAutoFill, showOwnerNote } from '../../sidepanel/panel/coordinator.js';
-import { bindQuoteTab, forgetQuoteTab, noteNewTab, noteQuoteTab, quoteOwnerIssue, restoreQuoteOwners, settleQuoteEntries } from '../../sidepanel/panel/quote-owner.js';
+import { bindQuoteTab, forgetQuoteTab, noteNewTab, noteQuoteTab, openPortal, portalHold, quoteOwnerIssue, restoreQuoteOwners, settleQuoteEntries } from '../../sidepanel/panel/quote-owner.js';
 
 // Audit 2026-11-07 FLOW-03: the agent loads client B while client A's Progressive quote is still open
 // in a tab (to email or print it). Every automatic fill (a page as it opens, a follow-up, a held
@@ -174,4 +174,48 @@ test('a panel opened again keeps whose quote each tab is (storage.session)', asy
   expect(state.quoteOwners.get(7)).toBe('A');
   expect([...state.quoteEntries]).toEqual([9]);
   expect(await store.get('quoteOwners')).toEqual({ owners: { 7: 'A' }, entries: [9] });
+});
+
+// Review of #468 (CodeRabbit): a rater's logo opens its agent home page, and AmWINS' is Commercial
+// Lines, where a fill picks the risk state and clicks Open new application. A logo is a page the
+// agent asked to see: nothing fills there by itself until the agent opens the application, or fills.
+test('a tab a rater\'s logo opened fills nothing by itself until the agent opens a quote there, or fills it', async () => {
+  const LINES = 'https://myagency.amwinsadmittedplacement.com/commerciallines';
+  const APPLICATION = 'https://myagency.amwinsadmittedplacement.com/application/businessauto/123/insured';
+  const created = [];
+  const chromeBefore = globalThis.chrome;
+  // Only what openPortal reads of the new tab: its id.
+  /** @type {any} */
+  const tabs = { ...chromeBefore?.tabs, create: async ({ url }) => { created.push(url); return { id: 9, url }; } };
+  globalThis.chrome = { ...chromeBefore, tabs };
+  try {
+    state.intake = intake('B');
+    await openPortal(LINES);
+    expect(created).toEqual([LINES]);
+    noteNewTab({ id: 9, url: '' });
+    onTab(9, LINES);
+    expect(portalHold()).toBe(true);
+    // A sign-in on the way there keeps it held.
+    onTab(9, 'https://login.amwinsadmittedplacement.com/signin');
+    expect(portalHold()).toBe(true);
+    onTab(9, LINES);
+    const opening = fillPage({ auto: 'page' });
+    expect(state.filling).toBe(false);
+    await opening;
+    state.autoPages.add('/commerciallines');
+    scheduleAutoFill('/commerciallines');
+    expect(state.autoTimer).toBeNull();
+    // The agent opened the application themselves: their quote, filled by itself from then on.
+    noteQuoteTab(9, APPLICATION);
+    onTab(9, APPLICATION);
+    expect(portalHold()).toBe(false);
+    expect(state.portalTabs.has(9)).toBe(false);
+    // A tab closed forgets it.
+    await openPortal(LINES);
+    forgetQuoteTab(9);
+    expect(state.portalTabs.has(9)).toBe(false);
+  } finally {
+    globalThis.chrome = chromeBefore;
+    state.portalTabs.clear();
+  }
 });

@@ -19,7 +19,7 @@ import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
-import { quoteProgress, stopScreen } from '../src/carriers.js';
+import { quoteProgress, ratersSaid, stopScreen } from '../src/carriers.js';
 import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
@@ -113,7 +113,7 @@ function extractFunction(name) {
           initialsChanged: 'async () => {}', refreshDefaults: '() => {}', quoteStarting: '() => {}', settingsDefaults: '() => undefined',
           // Whose quote a tab is (quote-owner.js) has its own tests (test/panel/quote-owner.test.jsx):
           // elsewhere every tab is this intake's, unless the harness says otherwise.
-          quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
+          quoteOwnerIssue: '() => null', portalHold: '() => false', releasePortal: '() => {}', openPortal: 'async () => {}', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
           stopFillFirst: 'async () => {}',
@@ -7420,7 +7420,7 @@ function namesHarness() {
   const context = {
     state, AssistError, Date, get: (obj, path) => path.split(/[.[\]]+/).filter(Boolean).reduce((o, k) => o?.[k], obj),
     firstNameOf: (v) => String(v ?? '').trim().split(/\s+/)[0] || null,
-    aiSettings: async () => ({ on: !state.offline, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, names: !state.namesOff, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
     reviewDriverNames: async (record, cfg) => {
       requests.push({ record: structuredClone(record), cfg });
       const reply = t.reply;
@@ -7437,17 +7437,30 @@ function namesHarness() {
 }
 const namesIntake = () => ({ record: { drivers: [{ first: 'Maria', last: 'Sample' }, { first: 'John', last: 'Sample' }], coverage: {} }, warnings: [{ code: 'other', level: 'check' }], done: [] });
 
-test('Luna checks driver first names once per intake, never with the assistant off, and fails to an info note', async () => {
-  // Off, or no key: nothing is sent, nothing changes (gender stays the TNI standard).
-  for (const flag of ['offline', 'noKey']) {
+test('Luna checks driver first names once per intake, never with its switch off, and fails to an info note', async () => {
+  // The check's own switch off, or no key: nothing is sent, nothing changes (gender stays the TNI standard).
+  for (const flag of ['namesOff', 'noKey']) {
     const t = namesHarness();
     const intake = namesIntake();
     t.state.intake = intake;
     t.state[flag] = true;
-    await t.review({ retry: true });
+    // Not awaited: a request sent would wait on its answer (gates) and hold the test.
+    t.review({ retry: true });
+    for (let i = 0; i < 5; i++) await t.settle();
     assert.equal(t.requests.length, 0, flag);
     assert.deepEqual(intake.warnings.map((w) => w.code), ['other'], flag);
     assert.equal(intake.namesReview, undefined, flag);
+  }
+  // Maintainer, 2026-11-07 (AI-15): the check has its own switch, so Suggest answers off doesn't stop it.
+  {
+    const t = namesHarness();
+    const intake = namesIntake();
+    t.state.intake = intake;
+    t.state.offline = true;
+    t.review({ retry: true });
+    await t.answer();
+    assert.equal(t.requests.length, 1, 'Suggest answers off: the names are still checked');
+    assert.equal(intake.namesReview.done, true);
   }
   const t = namesHarness();
   const intake = namesIntake();
@@ -7922,6 +7935,28 @@ function siteHarness(carrier, step, filled = false) {
   context.renderSite();
   return Object.assign(ui, { siteTrack: plain(state.siteTrack) });
 }
+
+// Audit 2026-11-07, UX-14: the header's logo and caption, the dock's raters and review mode's words
+// come from the carrier's `display`, not from the panel's code.
+test('the header, the dock and review mode say the carrier as its display says it', () => {
+  const page = siteHarness({ ...amwins, quoteSteps: undefined });
+  assert.equal(page['site-caption'].textContent, 'Commercial auto');
+  assert.doesNotMatch(extractFunction('renderSite'), /assets\/raters|'Commercial auto'/);
+  assert.match(extractFunction('renderSite'), /const src = carrier\?\.display\?\.logo \|\| null;/);
+  const off = dockHarness({ carrier: null, extra: { ratersSaid } });
+  assert.equal(off.dock().sub, 'Progressive, GEICO or AmWINS.');
+  const review = (carrier) => {
+    const state = { tab: { carrier }, intake: { record: { operations: { businessClass: 'Towing' } } }, cards: {} };
+    const context = { state, supportedClass: () => false, issueSaid: (c) => c };
+    vm.runInNewContext(extractFunction('showReviewMode'), context);
+    context.showReviewMode();
+    return state.cards.review.text;
+  };
+  assert.equal(review(geico), 'GEICO\'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.');
+  assert.equal(review({ name: 'New carrier' }), 'New carrier\'s rules weren’t written for this business class. Confirm the marked answers: Continue waits on each page.');
+  // A logo opens the agent site in a new tab, only in the extension.
+  assert.match(SIDEPANEL, /mountCards\(\$\('cards-root'\), \{ portal: \(url\) => \{ if \(inExtension\) openPortal\(url\); \} \}\);/);
+});
 
 test('on a stop step the panel offers no fill; on the other steps it names the step', () => {
   // The dock: on a stop step no button at all, and why; elsewhere Fill, named after the step.
@@ -9297,6 +9332,7 @@ test('automatic filling paused on the tab in front is said under the dock\'s wor
   // The dock carries it (renderDock), and the agent's own Fill lifts it (fillPage).
   assert.match(extractFunction('renderDock'), /busy: !!state\.filling, paused: pausedSaid\(d\) \};/);
   assert.match(extractFunction('fillPage'), /if \(!auto && state\.autoPaused\) \{ state\.autoPaused = false;/);
+  assert.match(extractFunction('fillPage'), /if \(!auto\) releasePortal\(state\.tab\.id\);/);
 });
 
 // W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
@@ -10237,11 +10273,12 @@ test('the quote is done where TNI stops on the rater: the finishing action click
   const prog = { name: 'Progressive', finishedBy: 'print', actions: [{ id: 'print', page: 'CoveragesRates' }] };
   assert.equal(context.quoteFinished(prog, report, 'CoveragesRates', undefined, new Set(['print'])), true);
   assert.equal(context.quoteFinished(prog, report, 'Drivers', undefined, new Set(['print'])), false, 'another page\'s report');
-  // The dock says so, with Fill this page again beside it; the strip's Review page says Quote done.
+  // The dock says so, with the quote's summary to open (UX-05) and Fill this page again beside it;
+  // the strip's Review page says Quote done.
   const d = dockHarness({ carrier: geicoLike, step: 'Quote & Coverages', extra: { showReport: () => report, quoteFinished: context.quoteFinished } });
   d.state.doneActions = done;
   const word = d.dock();
-  assert.deepEqual([word.phase, word.eyebrow, word.title, word.button ?? null, word.alt], ['finished', 'Quote done', 'The quote proposal is printed', null, 'fill-again']);
+  assert.deepEqual([word.phase, word.eyebrow, word.title, word.button ?? null, word.label, word.alt], ['finished', 'Quote done', 'The quote proposal is printed', 'dock-summary', 'Quote summary', 'fill-again']);
   assert.equal(word.sub, 'This is where TNI stops on GEICO. Nothing is submitted or bound.');
   // (quoteFinished reads the done actions of the state it was extracted with: the same Set.)
   done.delete('printProposal');
@@ -10848,7 +10885,7 @@ test('AmWINS\'s quote is done at the declaration: Underwriting with nothing else
   const d = dockHarness({ carrier: amwins, step: 'Underwriting', extra: { showReport: () => report, quoteFinished: context.quoteFinished } });
   const word = d.dock();
   assert.deepEqual([word.phase, word.eyebrow, word.title, word.sub, word.button ?? null, word.alt],
-    ['finished', 'Quote done', 'Tick the declaration, then click Submit', 'Both are yours on AmWINS. Nothing is ticked, submitted or bound for you.', null, 'fill-again']);
+    ['finished', 'Quote done', 'Tick the declaration, then click Submit', 'Both are yours on AmWINS. Nothing is ticked, submitted or bound for you.', 'dock-summary', 'fill-again']);
 });
 
 test('the AmWINS fill that reaches the declaration chimes once; one that leaves more doesn\'t', () => {
@@ -11086,8 +11123,13 @@ test('Assistant names whose key Luna uses: the agent\'s, TNI\'s server, or anoth
   // On without a key: it says so, and its fold opens (warn). The picks switch is disabled only while
   // AI is off (or with a provider that can't pick).
   assert.deepEqual([none.ai.keyEdit, none.ai.keyTone, none.ai.warn, none.ai.note, none.ai.noteTone, none.ai.autoOff], ['Add key', 'warn', true, 'Needs a key', 'warn', false]);
-  const off = await said({ on: false });
-  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown], [false, 'Off', 'off', true, true]);
+  const off = await said({ on: false, names: false });
+  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown, off.ai.names], [false, 'Off', 'off', true, true, false]);
+  // Maintainer, 2026-11-07 (AI-15): the driver-name check has its own switch; on alone, the card says so.
+  const names = await said({ on: false, names: true, apiKey: 'sk-own', ready: true });
+  assert.deepEqual([names.ai.on, names.ai.names, names.ai.warn, names.ai.note, names.ai.noteTone], [false, true, false, 'On. Checks driver names.', 'on']);
+  const namesNoKey = await said({ on: false, names: true });
+  assert.deepEqual([namesNoKey.ai.warn, namesNoKey.ai.note], [true, 'Needs a key'], 'the check on without a key: it can\'t run yet');
 });
 
 // The AI key (CLAUDE.md: credentials stay out of logs): Add key opens its box with the saved key in
@@ -11120,13 +11162,17 @@ test('the AI key is put in its box and read from it, never into the panel\'s sta
   assert.deepEqual(calls.find((c) => c[0] === 'logSettings'), ['logSettings', 'changed', 'aiKey']);
   assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, focused.at(-1), prevented], ['', false, 'key-edit', 1]);
   assert.deepEqual([...state.aiCache.keys()], ['b'], 'answers asked with the old key are dropped');
+  // The driver-name check's switch (AI-15) saves its own setting and logs it by its name.
+  await context.acts.aiNames(false);
+  assert.deepEqual(calls.filter((c) => c[0] === 'save').at(-1), ['save', { lunaNames: false }]);
+  assert.deepEqual(calls.filter((c) => c[0] === 'logSettings').at(-1), ['logSettings', 'changed', 'aiNames']);
   // Escape: emptied and closed without saving; stopped, so Settings stays open.
   await context.acts.keyEdit();
   el('ai-openai-key').value = 'typed';
   let stopped = 0;
   context.acts.keyKey({ key: 'Escape', preventDefault() {}, stopPropagation: () => { stopped++; } });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 1]);
+  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 2]);
   assert.doesNotMatch(JSON.stringify([...Object.entries(state)]), /sk-/, 'no key in the panel\'s state');
   // The box and its button in Settings (settings-view.jsx): a password box, never given a value by React.
   const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');

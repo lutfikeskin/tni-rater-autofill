@@ -26,7 +26,12 @@ const BATCH_SIZE = 12;
 export const MAX_REQUEST_CHARS = 120_000;
 export const OLD_SERVER_CHARS = 48_000;
 const MAX_SCHEMA_ENUM_VALUES = 1000;
-const TIMEOUT_MS = 45000;
+// The usage server gives OpenAI LUNA_TIMEOUT_MS (45 s, server/index.mjs) and answers 504 after it:
+// the panel waits longer, so that 504 reaches it (and is said as too long) instead of the panel giving
+// up while the server's call can still finish and be paid for (audit 2026-11-07, AI-09).
+export const TIMEOUT_MS = 55000;
+// Groups of a page asked at the same time.
+const GROUPS_AT_ONCE = 2;
 const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const strings = { type: 'array', items: { type: 'string' }, maxItems: 4 };
 
@@ -372,6 +377,7 @@ export async function callModel({ apiKey, proxy = null, body, fetchImpl = global
       if (!res.ok && !apiKey) throw new AssistError(({ 401: "TNI's server refused this copy of the extension. Tell TNI.",
         404: notSetUp, 501: notSetUp,
         424: "The AI assistant isn't working on TNI's server right now. Tell TNI.", 400: 'The AI assistant could not review this page context. Answer it manually.',
+        504: 'The AI assistant took too long. Nothing was applied.',
         429: 'The AI assistant is rate-limited. Try again shortly.' })[res.status]
         ?? `The AI assistant returned HTTP ${res.status}. Try again shortly.`);
       if (!res.ok) throw new AssistError(({ 401: 'The OpenAI API key was refused. Check it in Settings, under AI assistant.',
@@ -460,37 +466,45 @@ async function reviewGroups(items, context, config, { call, fresh, usage, counte
   // None fits: the review stops before any paid call.
   if (!groups.length && tooLarge.length) throw tooLarge[0].error;
   for (const { at } of tooLarge) suggestions[at] = tooLargeLeave(items[at]);
-  for (let i = 0; i < groups.length; i++) {
-    const { batch, at, body } = groups[i];
-    let parsed;
-    try {
+  // One group: its choices, then the evidence check of what it picked, both required.
+  const review = async ({ batch, body }) => {
+    fresh();
+    const json = await call({ apiKey: config.apiKey, proxy: config.proxy, body });
+    usage(json);
+    fresh();
+    let parsed = parseResponse(json, batch, body);
+    if (parsed.some(x => !x.leave)) {
+      const checked = await call({ apiKey: config.apiKey, proxy: config.proxy, body: buildVerification(parsed, context, { limit }) });
+      usage(checked);
       fresh();
-      const json = await call({ apiKey: config.apiKey, proxy: config.proxy, body });
-      usage(json);
-      fresh();
-      parsed = parseResponse(json, batch, body);
-      if (parsed.some(x => !x.leave)) {
-        const checked = await call({ apiKey: config.apiKey, proxy: config.proxy, body: buildVerification(parsed, context, { limit }) });
-        usage(checked);
-        fresh();
-        parsed = verifyResponse(checked, parsed);
-      }
-    } catch (error) {
-      // TNI's server from before 2026-11-07: the questions not yet reviewed are planned again at its
-      // bound, before any further paid call, and this group is asked again in the new plan.
-      if (!(error instanceof OldServerLimit) || limit === OLD_SERVER_CHARS) throw error;
-      limit = OLD_SERVER_CHARS;
-      const again = requestGroups(items, context, limit, at[0]);
-      // Nothing reviewed and nothing fits that server: the review stops, as when none fits at all
-      // (not cached as leaves, so the next fill asks again).
-      if (i === 0 && !again.groups.length) throw again.tooLarge[0]?.error ?? error;
-      suggestions.length = at[0];
-      for (const x of again.tooLarge) suggestions[x.at] = tooLargeLeave(items[x.at]);
-      groups = [...groups.slice(0, i), ...again.groups];
-      i--;
-      continue;
+      parsed = verifyResponse(checked, parsed);
     }
-    parsed.forEach((x, k) => { suggestions[at[k]] = x; });
+    return parsed;
+  };
+  // Up to GROUPS_AT_ONCE groups are asked at the same time (audit 2026-11-07, AI-09: one after the
+  // other, a page of 3 groups was 6 calls in a row). Each still needs both its calls, results go in
+  // the questions' order, and the first failure in that order is the review's, once every group of
+  // the wave has ended, so what they spent is counted.
+  for (let i = 0; i < groups.length;) {
+    const wave = groups.slice(i, i + GROUPS_AT_ONCE);
+    const ended = await Promise.allSettled(wave.map(review));
+    let k = 0;
+    for (; k < ended.length && ended[k].status === 'fulfilled'; k++) ended[k].value.forEach((x, j) => { suggestions[wave[k].at[j]] = x; });
+    if (k === ended.length) { i += wave.length; continue; }
+    const error = ended[k].reason, { at } = wave[k];
+    // TNI's server from before 2026-11-07: the questions not yet reviewed are planned again at its
+    // bound, before any further paid call, and this group is asked again in the new plan (a group
+    // after it in the same wave too: its answer, if any, is not used).
+    if (!(error instanceof OldServerLimit) || limit === OLD_SERVER_CHARS) throw error;
+    limit = OLD_SERVER_CHARS;
+    const again = requestGroups(items, context, limit, at[0]);
+    // Nothing reviewed and nothing fits that server: the review stops, as when none fits at all
+    // (not cached as leaves, so the next fill asks again).
+    if (i + k === 0 && !again.groups.length) throw again.tooLarge[0]?.error ?? error;
+    suggestions.length = at[0];
+    for (const x of again.tooLarge) suggestions[x.at] = tooLargeLeave(items[x.at]);
+    groups = [...groups.slice(0, i + k), ...again.groups];
+    i += k;
   }
   return { suggestions: suggestions.map(x => ({ ...x, promptHash: prompt })), promptHash: prompt, ...counters };
 }
