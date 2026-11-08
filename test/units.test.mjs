@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { geico } from '../src/carriers/geico.js';
-import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
+import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { buildPlan } from '../src/plan.js';
 
 const VEH = 'Vehicles';
@@ -229,4 +229,31 @@ test('the owner GEICO\'s quote leaves out is never named missing from its driver
     assert.ok(item, `${why}: the needs-you item`);
     assert.match(item.missing, /no driver besides the owner, who doesn't drive/, why);
   }
+});
+
+// Audit 2026-11-07, GAP-02: a list with as many rows as the intake or more but not the intake's (a
+// row added by hand or left from another intake) said so only in the usage log; the agent saw
+// nothing, and the intake's missing vehicle wasn't added (the rows look full). Each one is named.
+test('a full list that isn\'t the intake\'s names each intake unit missing from it and the rows the intake doesn\'t have', () => {
+  const record = { vehicles: [{ vin: VIN(1) }, { vin: VIN(2) }], trailers: [], drivers: [] };
+  let out = unitToAdd(geico, record, VEH, { forms: [], lists: [{ rows: 3, shown: [true, false] }, null] });
+  assert.deepEqual([out.adding, out.complete, out.missing, out.extra], [null, false, [{ list: 'vehicles', index: 1 }], 2]);
+  // Every intake vehicle shown with one row more: only the row.
+  out = unitToAdd(geico, record, VEH, { forms: [], lists: [{ rows: 3, shown: [true, true] }, null] });
+  assert.deepEqual([out.missing, out.extra], [[], 1]);
+  // The intake's list exactly: nothing.
+  out = unitToAdd(geico, record, VEH, { forms: [], lists: [{ rows: 2, shown: [true, true] }, null] });
+  assert.deepEqual([out.complete, out.missing, out.extra], [true, [], 0]);
+  // A trailer without a VIN may be any row: not missing, and its row not extra.
+  const trailer = { vehicles: [{ vin: VIN(1) }], trailers: [{ vin: null }], drivers: [] };
+  out = unitToAdd(geico, trailer, VEH, { forms: [], lists: [{ rows: 2, shown: [true, false] }, null] });
+  assert.deepEqual([out.missing, out.extra], [[], 0]);
+
+  const missing = unitMissingItem(geico, record, { list: 'vehicles', index: 1 });
+  assert.equal(missing.resolution.status, 'open');
+  const extra = unitExtraRowsItem(geico, ['vehicles', 'trailers'], 2);
+  assert.equal(extra.label, 'Check the vehicle list');
+  assert.match(extra.note, /vehicle list has 2 rows the intake doesn't: check them/);
+  assert.equal(extra.resolution.status, 'open');
+  assert.match(unitExtraRowsItem(geico, ['drivers'], 1).note, /driver list has a row the intake doesn't: check it/);
 });
