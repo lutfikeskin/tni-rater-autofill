@@ -780,10 +780,11 @@ function renderAi(holder, suggestions, ctx) {
     if (canContinue && !pendingAi(ctx.tabId, ctx.page).length
       && aiActionCurrent(ctx, list)) fillPage();
   };
-  const why = (x) => [
-    x.evidenceSources?.length ? `cited evidence: ${x.evidenceSources.map(source => source.basis === 'intake' ? source.path : 'TNI rule').join(', ')}` : null,
-    'Evidence checked · needs your review',
-  ].filter(Boolean).join(' · ');
+  // What the suggestion rests on, as the agent reads it (luna.js citedSaid): each cited intake field's
+  // label and value, or the TNI rule's text.
+  const why = (x) => (x.cited?.length ? `Based on ${x.cited.join(' · ')}` : null);
+  // A cited rule shortened there, whole, for the agent to open and check its exceptions (citedRuleFull).
+  const rules = (x) => (x.citedRules?.length ? { rules: [...x.citedRules] } : {});
   const answer = (x) => (x.controlKind === 'text' ? `typing “${x.choice}”` : `“${x.choice}”`);
   // Said of a pick waiting for approval that came from before a change, or a retired assistant.
   const notes = (x) => [x.retired ? 'From a retired assistant: review the page answer.' : null,
@@ -808,7 +809,7 @@ function renderAi(holder, suggestions, ctx) {
       // Its recommendation (luna.js nextStep): what to confirm or check, never an answer.
       return { kind: 'tip', says: x.leave ? 'AI: this one is yours to decide.' : 'AI tip', tip: x.tip || null, next: x.leave && x.nextStep ? x.nextStep : null };
     }
-    return { kind: 'suggest', choice: x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice, tip: x.tip || null, why: why(x), checks: [...x.checks],
+    return { kind: 'suggest', choice: x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice, tip: x.tip || null, why: why(x), ...rules(x),
       use: () => act([x], 'accepted'),
       noThanks: () => { x.dismissed = true; if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } };
   };
