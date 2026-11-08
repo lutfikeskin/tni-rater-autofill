@@ -61,7 +61,14 @@ test('the Filling switches: in order, as saved, Let me look first off with Conti
   expect(boxes.map((b) => b.closest('label').querySelector('b').textContent)).toEqual([
     'Fill pages when they open', 'Fill follow-up questions', 'Continue when the page is done', 'Let me look first', 'Replace prefilled answers', 'Sound when the quote is done']);
   const row = $(container, '#check-continue-row');
-  expect([row.className, row.title]).toEqual(['opt sub', 'Waits for you to press Looks right, continue']);
+  expect([row.className, row.title]).toEqual(['opt sub', '']);
+  // What each does is written under its name, not in a tooltip (audit 2026-11-07, UX-10), the AI's too.
+  const said = (b) => b.closest('label').querySelector('.opt-text > span')?.textContent ?? null;
+  expect(boxes.map(said)).toEqual(['You won’t need to press Fill this page', 'Some answers open more questions', 'Only when nothing is left for you',
+    'Waits for you to press Looks right, continue', 'Off keeps what the rater filled itself, like a DOT lookup', null]);
+  expect(['#ai-on', '#ai-auto'].map((id) => said($(container, id)))).toEqual(['For questions the intake doesn’t answer', 'Shown in purple. You still approve them before Continue.']);
+  expect([...boxes, $(container, '#ai-on'), $(container, '#ai-auto'), $(container, '#agent')].map((b) => b.closest('label').title)).toEqual(Array(9).fill(''));
+  expect(said($(container, '#agent'))).toBe('So your quotes count as yours');
   for (const b of boxes) fireEvent.click(b);
   expect(calls).toEqual([['switch', 'autoPages', false], ['switch', 'autoFollowUps', false], ['switch', 'autoAdvance', false],
     ['switch', 'checkBeforeContinue', false], ['switch', 'overwrite', true], ['switch', 'finishSound', false]]);
@@ -203,4 +210,22 @@ test('mountSettings and mountRecordingLine draw before they return', () => {
   });
   host.remove();
   foot.remove();
+});
+
+// Audit 2026-11-07, UX-02: a switch flipped in Settings while a fill ran had no effect on the answers
+// going in (their options went to the kit as the fill began), and nothing said so. A follow-up after
+// them reads the switch again (review of #389), so the note says the change reaches what comes after.
+test('while answers go in, the Filling switches say a change reaches what is filled after, and that Stop keeps Continue from being clicked', () => {
+  const calls = [];
+  const { container } = render(<Settings act={acts(calls)} />);
+  const note = $(container, '#filling-now-note');
+  expect([note.hidden, note.getAttribute('role')]).toEqual([true, 'status']);
+  act(() => { state.filling = true; });
+  expect([note.hidden, note.textContent]).toEqual([false, 'Answers are going in. A change here reaches what is filled after (a follow-up on this page included), and this fill only if it is still getting ready. To keep Continue from being clicked now, press Stop below.']);
+  // The switches still work: the change reaches what is filled after (each fill reads Continue's
+  // switch again before it asks the kit: fillPage, autoFill).
+  fireEvent.click($(container, '#auto-advance'));
+  expect(calls.at(-1)).toEqual(['switch', 'autoAdvance', false]);
+  act(() => { state.filling = false; });
+  expect(note.hidden).toBe(true);
 });

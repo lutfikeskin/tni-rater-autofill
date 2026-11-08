@@ -52,4 +52,21 @@ test('a fill starting and ending is noted in the recording', () => {
   expect(rec.fills).toHaveLength(1);
   expect(rec.fills[0].end).toBeGreaterThanOrEqual(rec.fills[0].start);
   expect(added.map((e) => [e.kind, e.on])).toEqual([['fill', true], ['fill', false]]);
+  // What went in (audit 2026-11-07, FLOW-15): the agent's pick from a row and an AI answer say so,
+  // the end as its start, whatever the kind is set to meanwhile; none said is a fill.
+  for (const kind of ['pick', 'ai', null]) {
+    state.fillingKind = kind;
+    state.filling = true;
+    state.fillingKind = 'fill';
+    state.filling = false;
+  }
+  expect(added.slice(2).map((e) => [e.on, e.what])).toEqual([[true, 'pick'], [false, 'pick'], [true, 'ai'], [false, 'ai'], [true, 'fill'], [false, 'fill']]);
+  expect(rec.fills.slice(1).map((f) => f.what)).toEqual(['pick', 'ai', 'fill']);
+  // Each place that puts something in says what before it sets `filling`.
+  const fill = readFileSync('sidepanel/panel/fill.js', 'utf8');
+  expect(fill).toMatch(/state\.fillingKind = 'fill';\n\s+state\.filling = true;/);
+  expect(fill).toMatch(/state\.fillingKind = 'pick';\n\s+state\.filling = true;/);
+  expect(readFileSync('sidepanel/panel/coordinator.js', 'utf8')).toMatch(/state\.fillingKind = 'fill';\n\s+state\.filling = true;/);
+  expect(readFileSync('sidepanel/panel/assistant.js', 'utf8')).toMatch(/state\.fillingKind = 'ai';\n\s+state\.filling = true;/);
+  expect((fill + readFileSync('sidepanel/panel/coordinator.js', 'utf8') + readFileSync('sidepanel/panel/assistant.js', 'utf8')).match(/state\.filling = true;/g)).toHaveLength(4);
 });

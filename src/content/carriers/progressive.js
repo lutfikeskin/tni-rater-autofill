@@ -74,7 +74,7 @@
     const { oneLine, sleep, matchOption, noMatch, textFor, hasOptions, labelFor } = kit;
     // The fill stopped (the agent's Stop, or their edit) during a wait below: nothing is picked.
     const halted = () => !!kit.halted?.();
-    const interrupted = () => kit.interrupted?.() ?? { ok: false, reason: 'the agent interrupted filling' };
+    const interrupted = () => kit.interrupted?.() ?? { ok: false, code: 'fill.interrupted', reason: 'the agent interrupted filling' };
     const ext = () => (typeof globalThis.Ext?.getCmp === 'function' ? globalThis.Ext : null);
     const widget = (el) => (el?.id && ext() ? ext().getCmp(el.id.replace(/-inputEl$/, '')) ?? null : null);
     const words = (html) => oneLine(String(html ?? '').replace(/<[^>]+>/g, ' '));
@@ -133,9 +133,9 @@
         const isOn = () => (opt.widget ? !!opt.widget.getValue() : opt.el.checked);
         if (!isOn()) opt.el.click();
         if (!isOn() && opt.widget) opt.widget.setValue(true);
-        return isOn() ? { ok: true, shown: opt.text } : { ok: false, reason: "the page didn't accept the choice" };
+        return isOn() ? { ok: true, shown: opt.text } : { ok: false, code: 'answer.refused', reason: "the page didn't accept the choice" };
       }
-      if (cmp?.readOnly) return { ok: false, reason: 'the field is read-only — set it by hand' };
+      if (cmp?.readOnly) return { ok: false, code: 'field.read-only', reason: 'the field is read-only — set it by hand' };
       if (c.kind === 'select') {
         // `search`: the word an agent types to narrow the list (Progressive's LA business description,
         // "Trucking"); the answer is picked among its results only, none of them is a miss.
@@ -174,14 +174,14 @@
         return { ok: true, shown: cmp.getRawValue?.() || opt.text };
       }
       if (c.kind === 'checkbox') {
-        if (typeof step.value !== 'boolean') return { ok: false, reason: 'checkbox needs a yes/no answer' };
+        if (typeof step.value !== 'boolean') return { ok: false, code: 'answer.invalid', reason: 'checkbox needs a yes/no answer' };
         if (!!cmp.getValue() !== step.value) cmp.setValue(step.value);
         return { ok: true, shown: step.value ? 'checked' : 'unchecked' };
       }
       const text = textFor(step, c);
-      if (c.el.maxLength > 0 && text.length > c.el.maxLength) return { ok: false, reason: `value is longer than the field allows (${c.el.maxLength})` };
+      if (c.el.maxLength > 0 && text.length > c.el.maxLength) return { ok: false, code: 'answer.too-long', reason: `value is longer than the field allows (${c.el.maxLength})` };
       focusAndBlur(cmp, el, () => cmp.setValue(text));
-      if (!el.value && !cmp.getValue()) return { ok: false, reason: 'the page cleared the value (it may need a different format)' };
+      if (!el.value && !cmp.getValue()) return { ok: false, code: 'answer.cleared', reason: 'the page cleared the value (it may need a different format)' };
       return { ok: true, shown: el.value || String(cmp.getValue()) };
     }
 
