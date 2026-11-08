@@ -260,7 +260,6 @@ const NOT_TRACKED = {
   'src/content/page-watch.js': "developer-recording.md's proposal, not built",
   'test/fixtures/recording': "developer-recording.md's proposal, not built",
   'summary.json': "a file inside a developer recording's zip",
-  '.claude/worktrees': "other sessions' worktrees, local and ignored by the linter",
   'recording.json': "a file inside a developer recording's zip",
   '.claude/worktrees': 'local git worktrees agents work in, ignored',
 };
