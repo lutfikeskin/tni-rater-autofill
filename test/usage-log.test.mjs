@@ -93,6 +93,11 @@ test('a server, token and AI defaults set by policy are used until the agent set
   }
 });
 
+test('the policy, its upload token among it, is kept from content scripts like local storage', () => {
+  const bg = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+  assert.match(bg, /for \(const area of \['local', 'managed'\]\)[\s\S]{0,80}chrome\.storage\[area\]\?\.setAccessLevel\?\.\(\{ accessLevel: 'TRUSTED_CONTEXTS' \}\)/);
+});
+
 test('the manifest declares the policy\'s keys in its managed schema, each with its type', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
   const schema = JSON.parse(fs.readFileSync(new URL(`../${manifest.storage.managed_schema}`, import.meta.url), 'utf8'));
