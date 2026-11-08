@@ -163,7 +163,8 @@ tr.open td,tr.pending td{background:#fff6e5}tr.ai td:last-child{color:#5b3fb5}tr
 </style></head><body>
 <h1>Quote summary: ${esc(s.client.name)}</h1>
 <p class="meta">${[s.client.state, s.client.fileName, `Saved ${when}`, s.version ? `Rater Autofill ${s.version}` : null].filter(Boolean).map(esc).join(' · ')}</p>
-<p class="meta">${s.answers} answer${s.answers === 1 ? '' : 's'} in · ${s.open} left for the agent · ${s.marked.length} marked done without an answer. Nothing was submitted or bound by the extension.</p>
+<p class="meta">${s.answers} answer${s.answers === 1 ? '' : 's'} in · ${s.open} left for the agent · ${s.marked.length} marked done without an answer.</p>
+<p class="meta">This summary is read from the extension's side panel as it was when saved: what the extension filled and what was left for the agent. It is not a record of what was done on the carrier's site afterwards. The extension never submits, binds or purchases.</p>
 ${list('Your overrides', s.overrides, (r) => `${where(r) ? `${where(r)}: ` : ''}<b>${esc(r.label)}</b>: ${esc(r.value)} <span class="note">(${esc(r.said)})</span>`)}
 ${list('AI decisions', s.ai, (r) => `${where(r)}: <b>${esc(r.label)}</b>: ${esc(r.value)} <span class="note">(${esc(r.sourceSaid)}${r.note ? `. ${esc(r.note)}` : ''})</span>`)}
 ${list('Marked done without an answer', s.marked, (r) => `${where(r)}: <b>${esc(r.label)}</b>${r.note ? ` <span class="note">(${esc(r.note)})</span>` : ''}`)}

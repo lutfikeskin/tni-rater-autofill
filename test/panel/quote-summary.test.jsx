@@ -90,6 +90,8 @@ test('Save summary\'s file: one HTML page, no scripts, every value escaped, name
   expect(html).not.toMatch(/<script/i);
   expect(html).toContain('Quote summary: Acme &lt;Hauling&gt;');
   expect(html).not.toContain('Acme <Hauling>');
+  expect(html).toContain('It is not a record of what was done on the carrier');
+  expect(html).not.toContain('Nothing was submitted');
   for (const said of ['Your overrides (6)', 'AI decisions (2)', 'Marked done without an answer (1)', 'Business &amp; Owner Info', 'GEICO (tab 2)', 'Now on the page: x@y.z']) expect(html).toContain(said);
   expect(summaryFileName(s)).toBe('quote-summary-Acme-Hauling-2026-11-07-15-04.html');
 });
