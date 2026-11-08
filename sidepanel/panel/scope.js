@@ -1,7 +1,9 @@
+// @ts-check
 // The side panel's decision logic: which page, step, form and unit an answer or an agent edit
 // belongs to, and what a fill leaves alone because of it. No DOM: the views draw what it decides.
 // One part of the panel; sidepanel.js wires the parts together.
 import { state } from './core.js';
+/** @import { FillOptions } from '../../types.js' */
 
 // The step a tab of a one-address application (AmWINS, GEICO) is on, as the panel last heard it
 // (noteStep, renderReport); undefined for carriers whose pages have their own addresses. It can lag
