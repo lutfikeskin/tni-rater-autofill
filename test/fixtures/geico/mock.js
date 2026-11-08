@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Plays the parts of GEICO's commercial auto quote application (sales.geico.com/quote, one address for
 // every step) that the fill engine runs into, on the one-file fixture quote.html (built by
 // scripts/geico-fixture.mjs from the NE pages saved 2026-10-20 and the FL captures of the same week):
