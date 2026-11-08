@@ -170,6 +170,22 @@ test('each cited source is said as the agent reads it: the field label with its 
   assert.deepEqual(left.cited, []);
 });
 
+// Audit 2026-11-07, AI-07: the log says which TNI rules a pick cites, by rulebook id only.
+test('a pick lists the TNI rules it cites by id; a leave and a refused evidence check list none', () => {
+  const body = buildRequest(items, context);
+  const { sources } = JSON.parse(body.input[0].content);
+  const rules = Object.keys(sources).filter(id => sources[id].basis === 'tni_rule').slice(0, 2);
+  const intake = Object.keys(sources).find(id => sources[id].path === 'operations.hazPlacard');
+  assert.ok(rules.length === 2 && rules.every(id => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id)), rules.join());
+  const [x] = parseResponse(answer(body, { sourceIds: [intake, ...rules, rules[0]] }), items, body);
+  assert.deepEqual(x.ruleIds, rules);
+  assert.deepEqual(parseResponse(answer(body), items, body)[0].ruleIds, []);
+  const [left] = parseResponse(answer(body, { option: LEAVE, sourceIds: rules, missingInformation: ['placards'] }), items, body);
+  assert.deepEqual(left.ruleIds, []);
+  const refused = verifyResponse(envelope({ decisions: { f1: { supported: false, gap: 'No rule says so.' } } }), [x]);
+  assert.deepEqual(refused[0].ruleIds, []);
+});
+
 test('incomplete, refused, wrong-model and tool-call responses never yield an answer', () => {
   const body = buildRequest(items, context), good = answer(body);
   for (const json of [{ ...good, status: 'incomplete' }, { ...good, model: 'other-model' },

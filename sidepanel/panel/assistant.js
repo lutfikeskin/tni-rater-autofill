@@ -13,7 +13,7 @@ import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPr
 import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
-import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout } from './coordinator.js';
+import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout, viewOf } from './coordinator.js';
 import { drawRow, fillPage, resumeHeldFill, runKit } from './fill.js';
 import { aiHolder } from './ai-view.jsx';
 import { needId, setHead } from './report-rows.js';
@@ -404,7 +404,9 @@ async function runAssist(frames, ctx) {
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length, ...leaveCounts(fresh),
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
         reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
-        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
+        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) },
+        // A discarded answer left nothing to the agent: no ai_leave (CodeRabbit on PR #413).
+        ...(why ? [] : aiLeaveEvents(fresh, ctx, redactor(redactionTerms(record)))));
       if (why) { dropped(`it answered after ${why}, so nothing was applied`); return; }
       fresh.forEach(x => state.aiCache.set(sigOf(x), {
         ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),
@@ -694,10 +696,22 @@ function lunaTrace(ctx) {
 function aiDecisionEvent(x, ctx, decision) {
   const redact = redactor(redactionTerms(state.intake.record));
   return {
-    type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
+    // Its view (tab, vehicle or driver), as the field changes after it have (CodeRabbit on PR #413).
+    type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, view: viewOf(ctx.tabId, ctx.page, ctx.carrier), q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
     decision, choice: x.controlKind !== 'text' && x.choice ? redact(x.choice) : undefined,
     model: x.model, policy: x.policy, promptHash: x.promptHash ?? undefined, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
+    // Which TNI rules the pick cites, by id (audit 2026-11-07, AI-07).
+    ruleIds: x.ruleIds?.length ? x.ruleIds.slice(0, 12) : undefined,
   };
+}
+
+// One per question Luna left (audit 2026-11-07, AI-07): which question, why, and the intake field it
+// maps to, if any; the questions it keeps leaving are where a deterministic rule would pay off.
+function aiLeaveEvents(list, ctx, redact) {
+  return list.filter((x) => x.leave).map((x) => ({
+    type: 'ai_leave', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label ?? ''), controlKind: x.controlKind,
+    leaveWhy: x.leaveWhy ?? null, intakePath: x.rulePath ?? null,
+  }));
 }
 
 // Each suggestion goes on its question's row (AI suggests …, Use this answer / No thanks; its pick
