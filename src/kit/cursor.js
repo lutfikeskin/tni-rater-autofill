@@ -527,9 +527,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     halt(EDIT_HALT);
   });
   phase('reading');
-  const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
+  // The page's own calls (pageBusy: Progressive's Ext.Ajax.isLoading) can throw in the fresh-page
+  // check as in the wait: either way the fill lets go as it throws (CodeRabbit on #478).
   let settled;
-  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); clearTimeout(budget); if (running === thisFill) running = null; throw e; }
+  try {
+    const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
+    settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' });
+  } catch (e) { releaseEditGuard(); clearTimeout(budget); if (running === thisFill) running = null; throw e; }
   phase(null);
   // Stopped while the page settled: nothing was done.
   if (!settled || state.report.halted) {

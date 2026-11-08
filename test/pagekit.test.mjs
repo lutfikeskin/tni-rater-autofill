@@ -3829,6 +3829,26 @@ test('a fill whose first wait throws is no longer running; the next fill begins 
   assert.equal(input.value, 'Yes');
 });
 
+// CodeRabbit on #478: after a helper's fill left its settled page, the next fill's fresh-page check
+// asks the page (Ext.Ajax.isLoading) before its first wait; one that threw there left it running.
+test('a fill whose fresh-page check throws is no longer running either', async () => {
+  const h = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  addButton(h, 'Cargo Van').onclick = () => {
+    h.context.location.search = '?pageName=AddVehicle';
+    addExtText(h, 'c', '2BA1');
+  };
+  const tile = { id: 'tile', kind: 'action', action: 'vehicleTile:0', text: '^Cargo Van$', unique: true, label: 'Vehicle type', missing: 'Pick the vehicle yourself.',
+    path: 'action.vehicleTile', name: 'Click vehicleTile', pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  const abs = { id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' };
+  assert.equal((await h.kit.fill([tile], { maxRounds: 3 })).navigatedTo, 'AddVehicle');
+  // The page's next call throws once: the fresh-page check's.
+  let throwOnce = true;
+  h.context.Ext.Ajax.isLoading = () => { if (throwOnce) { throwOnce = false; throw new Error('page script gone'); } return false; };
+  await assert.rejects(h.kit.fill([abs], { maxRounds: 2 }), /page script gone/);
+  assert.equal(throwOnce, false, 'it threw in the fresh-page check');
+  assert.equal(h.kit.progress(), null, 'not running');
+});
+
 test('Stop while the fill waits for a busy page to begin keeps its reason and ends at once', async () => {
   const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
   h.context.Ext.Ajax.isLoading = () => true;
@@ -9344,7 +9364,7 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.equal(seen[0].phase, null, 'answering');
   assert.equal(h.kit.progress(), null, 'the fill is over');
   // Each long wait names itself before it begins.
-  assert.match(CURSOR_SOURCE, /phase\('reading'\);[^]{0,300}try \{ settled = await settle\(\{ quietMs: fresh \? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' \}\); \} catch \(e\) \{ releaseEditGuard\(\); clearTimeout\(budget\); if \(running === thisFill\) running = null; throw e; \}\s+phase\(null\);/);
+  assert.match(CURSOR_SOURCE, /phase\('reading'\);[^]{0,300}try \{\s+const fresh = [^\n]*pageBusy\(\)[^\n]*\n\s+settled = await settle\(\{ quietMs: fresh \? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' \}\);\s+\} catch \(e\) \{ releaseEditGuard\(\); clearTimeout\(budget\); if \(running === thisFill\) running = null; throw e; \}\s+phase\(null\);/);
   assert.match(CURSOR_SOURCE, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
   assert.match(CURSOR_SOURCE, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
   assert.match(CURSOR_SOURCE, /if \(thisRound\.helperClicked\) phase\('helper', state\.pendingAction\?\.label \?\? state\.report\.actions\.at\(-1\)\?\.text \?\? null\);/);
