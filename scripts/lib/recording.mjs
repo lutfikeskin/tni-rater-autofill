@@ -83,7 +83,7 @@ const endedSaid = (e) => {
   const held = holding.length ? `, ${holding.join(' and ')}` : '';
   return e.ended === 'quiet' ? 'the page was quiet' : e.ended === 'stopped' ? 'the fill stopped' : `at its limit of ${secs(e.maxMs ?? 0)}${held}`;
 };
-const slackSaid = (e) => (e.slack == null ? '' : e.slack >= (e.ms ?? 0) ? 'the page did nothing during it' : `${secs(e.slack)} after the page's last change`);
+const slackSaid = (e) => (e.slack == null ? '' : e.running ? 'a page request was still running as it ended: no slack' : e.slack >= (e.ms ?? 0) ? 'the page did nothing during it' : `${secs(e.slack)} after the page's last change`);
 const median = (xs) => {
   const s = [...xs].sort((a, b) => a - b);
   return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
@@ -385,6 +385,7 @@ function prepared({ manifest, events }) {
   // the page was quiet from its start), in its own frame: a wait watches its own document, so another
   // frame's change didn't hold it. A burst's time since the last action before it.
   // An answer is an action from when it began (its event comes once its wait is over).
+  const requests = ordered.filter((e) => e.kind === 'request');
   const activity = ordered.filter((e) => e.kind === 'burst' || e.kind === 'request').map((e) => ({ at: e.end ?? e.t, frame: e.frame ?? 0 }));
   const actionTimes = ordered.filter(isAction).map((e) => (e.kind === 'kit' && e.what === 'answer' ? e.start ?? e.t : e.t));
   for (const e of ordered) {
@@ -398,6 +399,11 @@ function prepared({ manifest, events }) {
         const kitLast = Math.min(waitEnd, Math.max(e.start, e.lastChange ?? e.start, e.lastHeld ?? e.start));
         if (waitEnd - kitLast < e.slack) { e.slackTrace = e.slack; e.slack = waitEnd - kitLast; }
       }
+      // A request is said as it ends (its event's `t` is its start): one in the wait's frame that began
+      // before the wait ended and ended after it was still running then, so none of the wait is
+      // slack (review of PR #481).
+      e.running = requests.some((r) => (r.frame ?? 0) === (e.frame ?? 0) && r.t < waitEnd && (r.end ?? r.t) > waitEnd);
+      if (e.running) e.slack = 0;
     }
     if (e.kind === 'burst') {
       const last = actionTimes.reduce((m, a) => (a < e.t && (m == null || a > m) ? a : m), null);
@@ -537,17 +543,19 @@ export function compareReport(a, b) {
   };
   const A = lastBy(a.answers), B = lastBy(b.answers);
   const name = (x) => quote(x.label || x.key || 'a question');
-  const kept = (m, k) => m.get(k)?.ok === true;
-  const onlyA = [...A.keys()].filter((k) => kept(A, k) && !B.has(k));
-  const onlyB = [...B.keys()].filter((k) => kept(B, k) && !A.has(k));
-  const lostInB = [...A.keys()].filter((k) => kept(A, k) && B.has(k) && !kept(B, k));
-  const gainedInB = [...B.keys()].filter((k) => kept(B, k) && A.has(k) && !kept(A, k));
-  // A key the fill kept more often in A than in B (GEICO gives each vehicle's form the same keys, so
-  // one vehicle's answer missing in B leaves the key answered): flagged by how many times each kept it.
-  // A refill of a kept answer counts too, so a flag here is a question to look at, not proof.
+  // A key counts as kept by how many of its answers the page kept, not by its last attempt: a refill
+  // that failed after two kept answers leaves both kept (review of PR #481). GEICO gives each
+  // vehicle's form the same keys, so one vehicle's answer missing in B leaves the key answered: a key
+  // kept fewer times in B is flagged. A refill of a kept answer counts too, so a flag is a question to
+  // look at, not proof, and equal counts can still hide a missing unit the trace doesn't name.
   const keptTimes = (s) => s.answers.reduce((m, x) => (x.ok ? m.set(keyOf(x), (m.get(keyOf(x)) ?? 0) + 1) : m), new Map());
   const timesA = keptTimes(a), timesB = keptTimes(b);
-  const fewerInB = [...timesA.keys()].filter((k) => kept(A, k) && kept(B, k) && (timesB.get(k) ?? 0) < timesA.get(k));
+  const inA = (k) => timesA.get(k) ?? 0, inB = (k) => timesB.get(k) ?? 0;
+  const onlyA = [...A.keys()].filter((k) => inA(k) && !B.has(k));
+  const onlyB = [...B.keys()].filter((k) => inB(k) && !A.has(k));
+  const lostInB = [...A.keys()].filter((k) => inA(k) && B.has(k) && !inB(k));
+  const gainedInB = [...B.keys()].filter((k) => inB(k) && A.has(k) && !inA(k));
+  const fewerInB = [...A.keys()].filter((k) => inB(k) && inB(k) < inA(k));
   const out = [`# Recordings compared: A ${a.id} · B ${b.id}`, '',
     `A: ${a.carrier} · ${quote(a.scenario)} · build ${a.build?.version ?? '?'}${a.build?.commit ? ` (${a.build.commit})` : ''} · ${many(a.answers.length, 'answer')} · ${secs(a.all.onScreenMs)}`,
     `B: ${b.carrier} · ${quote(b.scenario)} · build ${b.build?.version ?? '?'}${b.build?.commit ? ` (${b.build.commit})` : ''} · ${many(b.answers.length, 'answer')} · ${secs(b.all.onScreenMs)}`, ''];

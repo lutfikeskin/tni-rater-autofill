@@ -451,6 +451,18 @@ test('a wait\'s slack counts what the wait saw itself, and says when the trace s
   assert.match(report({}), /the page did nothing during it\n/);
 });
 
+// Review of PR #481: a request is said once it ends, so one still running as a wait ended read as slack.
+test('a wait that ended while a page request in its frame was still running has no slack', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const page = { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true };
+  const wait = { kind: 'kit', t: t0 + 3000, seq: 2, frame: 0, what: 'wait', why: 'continue', quietMs: 500, maxMs: 6000, requests: false, start: t0 + 1000, ms: 2000, ended: 'quiet' };
+  const request = (frame) => ({ kind: 'request', t: t0 + 1500, seq: 3, frame, path: '/api/rate', end: t0 + 3500, ms: 2000, via: 'fetch', status: 200 });
+  const report = (more) => recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:04.000Z' }, events: [page, { ...wait }, ...more] });
+  assert.match(report([request(0)]), /the extension waited 2\.0 s before pressing Continue \(quiet 500 ms\): the page was quiet; a page request was still running as it ended: no slack\n/);
+  assert.match(report([request(1)]), /the page did nothing during it\n/, 'another frame\'s request didn\'t hold it');
+  assert.match(report([]), /the page did nothing during it\n/);
+});
+
 // REC-03 (audit 2026-11-07): a page's load time was invisible, charged to the step before it.
 test('a page loaded with the trace in it says how long it took, in the Flow and its own lines', () => {
   const t0 = Date.parse('2026-10-23T14:12:00.000Z');
@@ -539,6 +551,12 @@ test('--compare flags what A answered and kept that B didn\'t, and sets the butt
   const two = recordingSummary({ manifest: manifestFor('a-2'), events: [page, answer(100, 'ref:Year', 'Year'), answer(500, 'ref:Year', 'Year')] });
   const one = recordingSummary({ manifest: manifestFor('b-2'), events: [page, answer(100, 'ref:Year', 'Year')] });
   assert.match(compareReport(two, one), /- \*\*KEPT FEWER TIMES IN B\*\*: "Year", 2 times in A, 1 in B/);
+  // Kept twice in A, then a refill that failed: still kept twice, so B's one is flagged and B isn't
+  // said to have kept what A didn't (review of PR #481).
+  const twoThenFailed = recordingSummary({ manifest: manifestFor('a-3'), events: [page, answer(100, 'ref:Year', 'Year'), answer(500, 'ref:Year', 'Year'), answer(900, 'ref:Year', 'Year', false)] });
+  const refilled = compareReport(twoThenFailed, one);
+  assert.match(refilled, /- \*\*KEPT FEWER TIMES IN B\*\*: "Year", 2 times in A, 1 in B/);
+  assert.doesNotMatch(refilled, /kept in B, not in A/);
   // The same answers both times: said so, nothing flagged.
   const same = compareReport(a, a);
   assert.match(same, /Every answer A's fill gave and the page kept, B's gave and the page kept too\./);
