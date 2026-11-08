@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Answer provenance (Contract 2, docs/intake-and-rules.md): every carrier rule that computes an
 // answer says where it comes from; facts and attestations the intake doesn't supply are never
 // filled; standards are marked, and become check items for a business class the rules weren't

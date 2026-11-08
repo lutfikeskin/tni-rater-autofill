@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Agents' own defaults (src/agent-defaults/, docs/agent-defaults-spec.md): the module is switched off,
 // so the panel's plans and Luna's rulebook stay the rules' own; its overlay, applied directly, changes
 // only TNI standards, exactly the rules naming the replaced standard, and gives the agent whatever it
