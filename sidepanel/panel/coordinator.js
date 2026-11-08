@@ -6,7 +6,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { redactionTerms, supportedClass } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
 import { advanceFor } from '../../src/units.js';
-import { quoteProgress, stopScreen } from '../../src/carriers.js';
+import { quoteProgress, ratersSaid, stopScreen } from '../../src/carriers.js';
 import { quotedCarrierPolicy } from '../../src/util.js';
 import { fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../../src/usage.js';
 import { stateCode, stateMismatch } from '../../src/quote-state.js';
@@ -29,7 +29,7 @@ import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
 import { markTab } from './tab-mark.js';
 import { fillEnded, fillRunning } from './fill-watch.js';
-import { bindQuoteTab, quoteOwnerIssue } from './quote-owner.js';
+import { bindQuoteTab, portalHold, quoteOwnerIssue } from './quote-owner.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -342,7 +342,7 @@ function logFillError(ctx, error) {
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || quoteOwnerIssue(ctx.tabId)) return;
+  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || quoteOwnerIssue(ctx.tabId) || portalHold(ctx.tabId)) return;
   // Held by the quote's state or the defaults question, a follow-up waits for nothing. A step with no
   // report yet (AmWINS' next step at the same address, which autoFill fills as a new page) is a page's
   // opening fill: fillPage keeps it for resumeHeldFill, to run once the hold lifts.
@@ -364,7 +364,7 @@ async function autoFill(page) {
   // The client may have been cleared while this fill was waiting to run.
   if (state.autoPaused || state.filling || state.closing || state.resetting || state.newQuoteFailed || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   // Nor on a tab whose quote wasn't started with this intake (quote-owner.js).
-  if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue()) return;
+  if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue() || portalHold()) return;
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
   // step themselves (same address, new questions). It's filled as a new page, with its report.
@@ -949,16 +949,12 @@ function renderSite() {
     name: step.name, at: i < progress.index ? 'done' : i === progress.index ? `here${filledHere ? ' filled' : ''}` : null,
   })) : [];
   caption.textContent = [
-    carrier ? (carrier.practice ? 'Practice page' : progress ? null : 'Commercial auto') : null,
+    carrier ? (carrier.practice ? 'Practice page' : progress ? null : carrier.display?.product ?? null) : null,
     carrier && state.tab?.background ? 'In background' : null,
   ].filter(Boolean).join(' · ');
   caption.hidden = !caption.textContent;
-  const paths = {
-    progressive: 'assets/raters/progressive.svg',
-    geico: 'assets/raters/geico.gif',
-    amwins: 'assets/raters/amwins.svg',
-  };
-  const src = paths[carrier?.id] || null;
+  // The carrier's logo (its `display`, carriers.js); the name, without one.
+  const src = carrier?.display?.logo || null;
   const title = state.tab?.background ? 'Working on the quote tab. Go back to it to see the marks.' : '';
   caption.title = title;
   logo.alt = carrier?.name || '';
@@ -1322,7 +1318,7 @@ function dockFor() {
   if (!carrier) {
     return state.tab && !state.tab.url
       ? { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.' }
-      : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? 'Progressive, GEICO or AmWINS.' };
+      : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? ratersSaid() };
   }
   const page = pageOf(state.tab.url);
   const step = tabStep(carrier);
@@ -1360,10 +1356,12 @@ function dockFor() {
   const fill = { button: 'fill', label: filledBefore || report?.fields ? 'Fill this page again' : 'Fill this page' };
   if (report?.error) return { phase: 'error', tone: 'bad', eyebrow: 'Didn’t finish', title: 'Check the page, then fill again', sub: 'Your changes are kept.', ...fill };
   // The quote is done where TNI stops on this rater (quoteFinished): said, in place of "Moving on
-  // is yours" or "Ready for Continue" on a page that is the end of the quote.
+  // is yours" or "Ready for Continue" on a page that is the end of the quote, with the quote's
+  // summary to open (audit 2026-11-07, UX-05: summary-view.jsx).
   if (report && quoteFinished(carrier, report, page, step) && !pendingAi(state.tab.id, page).length) {
     return { phase: 'finished', tone: 'good', eyebrow: 'Quote done', title: carrier.finishedAt?.said ?? carrier.finishedSaid ?? 'The quote proposal is printed',
-      sub: carrier.finishedAt?.sub ?? `This is where TNI stops on ${carrier.name}. Nothing is submitted or bound.`, alt: 'fill-again', altLabel: 'Fill this page again' };
+      sub: carrier.finishedAt?.sub ?? `This is where TNI stops on ${carrier.name}. Nothing is submitted or bound.`, button: 'dock-summary', label: 'Quote summary',
+      alt: 'fill-again', altLabel: 'Fill this page again' };
   }
   // A page the fill had no question for and left nothing on (a unit list with every unit on it):
   // Continue is next (W43-40: the dock offered Fill this page again on finished vehicle lists).
@@ -1477,8 +1475,10 @@ function showReviewMode() {
   const on = !!carrier && !!record && !supportedClass(record, carrier);
   if (!on) { state.cards = { ...state.cards, review: null }; return; }
   const cls = String(record.operations?.businessClass ?? '').trim();
+  // The classes the carrier's rules were written for, as its display says them (supportedClasses decides).
+  const covers = carrier.display?.classesSaid ? 'cover ' + carrier.display.classesSaid : 'weren’t written for this business class';
   state.cards = { ...state.cards, review: issueSaid({ tone: 'warn', title: `Review mode: ${cls ? `"${cls}"` : 'no business class'} on the intake`,
-    text: `${carrier.name}'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.` }) };
+    text: `${carrier.name}'s rules ${covers}. Confirm the marked answers: Continue waits on each page.` }) };
 }
 
 // A card above the page's answers (or in them): what's wrong or different, in the panel's own
