@@ -358,10 +358,10 @@ test('a panel crash is logged redacted, with frames from the extension only', ()
 test('the agent\'s settings event has every setting, defaults included, and never the AI key', () => {
   const central = 'https://central.example';
   assert.deepEqual(agentSettingsEvent({}, { reason: 'intake', centralServer: central }), { type: 'agent_settings', reason: 'intake', values: {
-    autoFollowUps: true, autoAdvance: true, autoPages: true, overwrite: false, aiOn: true, aiAuto: false, aiKey: false, uploads: 'central' } });
-  const e = agentSettingsEvent({ autoAdvance: false, autoPages: true, aiOn: true, lunaAuto: true, lunaKey: 'sk-secret', serverUrl: 'http://localhost:8787' },
+    autoFollowUps: true, autoAdvance: true, autoPages: true, overwrite: false, aiOn: true, aiAuto: false, aiNames: true, aiKey: false, uploads: 'central' } });
+  const e = agentSettingsEvent({ autoAdvance: false, autoPages: true, aiOn: true, lunaAuto: true, lunaNames: false, lunaKey: 'sk-secret', serverUrl: 'http://localhost:8787' },
     { overwrite: true, reason: 'changed', changed: 'aiKey', centralServer: central });
-  assert.deepEqual(e.values, { autoFollowUps: true, autoAdvance: false, autoPages: true, overwrite: true, aiOn: true, aiAuto: true, aiKey: true, uploads: 'other' });
+  assert.deepEqual(e.values, { autoFollowUps: true, autoAdvance: false, autoPages: true, overwrite: true, aiOn: true, aiAuto: true, aiNames: false, aiKey: true, uploads: 'other' });
   assert.equal(e.changed, 'aiKey');
   assert.ok(!JSON.stringify(e).includes('sk-secret'), 'never the key');
   assert.equal(agentSettingsEvent({ serverUrl: '' }, { reason: 'opened', centralServer: central }).values.uploads, 'off');

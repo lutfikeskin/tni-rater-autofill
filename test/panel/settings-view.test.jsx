@@ -21,7 +21,7 @@ afterEach(cleanup);
 const $ = (container, sel) => container.querySelector(sel);
 const acts = (calls, more = {}) => ({
   ...Object.fromEntries(['done', 'upload', 'exportLog', 'clearLog', 'capture', 'keyEdit', 'keySave'].map((name) => [name, () => calls.push([name])])),
-  ...Object.fromEntries(['agent', 'serverUrl', 'serverToken', 'testRun', 'aiOn', 'aiAuto'].map((name) => [name, (v) => calls.push([name, v])])),
+  ...Object.fromEntries(['agent', 'serverUrl', 'serverToken', 'testRun', 'aiOn', 'aiAuto', 'aiNames'].map((name) => [name, (v) => calls.push([name, v])])),
   switch: (name, on) => calls.push(['switch', name, on]),
   keyKey: (e) => calls.push(['keyKey', e.key]),
   devrec: null,
@@ -221,4 +221,17 @@ test('while answers go in, the Filling switches say a change reaches what is fil
   expect(calls.at(-1)).toEqual(['switch', 'autoAdvance', false]);
   act(() => { state.filling = false; });
   expect(note.hidden).toBe(true);
+});
+
+// Maintainer, 2026-11-07 (AI-15): the driver-name check has its own switch, apart from Suggest answers.
+test('the driver-name check has its own switch, on while Suggest answers is off', () => {
+  const calls = [];
+  const { container } = render(<Settings act={acts(calls)} />);
+  act(() => { state.ai = { on: false, auto: false, names: true, autoOff: true, autoShown: true, keyStatus: 'Saved on this computer', keyTone: 'ok', keyEdit: 'Change', warn: false, note: 'On. Checks driver names.', noteTone: 'on' }; });
+  const names = $(container, '#ai-names');
+  expect([names.getAttribute('role'), names.checked, names.disabled, $(container, '#ai-on').checked]).toEqual(['switch', true, false, false]);
+  fireEvent.click(names);
+  expect(calls).toEqual([['aiNames', false]]);
+  act(() => { state.ai = { ...state.ai, names: false, note: 'Off', noteTone: 'off' }; });
+  expect(names.checked).toBe(false);
 });

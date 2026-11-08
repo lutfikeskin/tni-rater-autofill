@@ -797,7 +797,7 @@
  * @property {'agent_settings'} type
  * @property {string} [reason]  intake, opened or changed
  * @property {string} [changed]
- * @property {{ autoFollowUps: boolean, autoAdvance: boolean, autoPages: boolean, overwrite: boolean, aiOn: boolean, aiAuto: boolean, aiKey: boolean, uploads: 'off' | 'central' | 'other' }} values
+ * @property {{ autoFollowUps: boolean, autoAdvance: boolean, autoPages: boolean, overwrite: boolean, aiOn: boolean, aiAuto: boolean, aiNames: boolean, aiKey: boolean, uploads: 'off' | 'central' | 'other' }} values
  */
 
 /**

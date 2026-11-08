@@ -6650,7 +6650,7 @@ function namesHarness() {
   const context = {
     state, AssistError, Date, get: (obj, path) => path.split(/[.[\]]+/).filter(Boolean).reduce((o, k) => o?.[k], obj),
     firstNameOf: (v) => String(v ?? '').trim().split(/\s+/)[0] || null,
-    aiSettings: async () => ({ on: !state.offline, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, names: !state.namesOff, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
     reviewDriverNames: async (record, cfg) => {
       requests.push({ record: structuredClone(record), cfg });
       const reply = t.reply;
@@ -6667,17 +6667,30 @@ function namesHarness() {
 }
 const namesIntake = () => ({ record: { drivers: [{ first: 'Maria', last: 'Sample' }, { first: 'John', last: 'Sample' }], coverage: {} }, warnings: [{ code: 'other', level: 'check' }], done: [] });
 
-test('Luna checks driver first names once per intake, never with the assistant off, and fails to an info note', async () => {
-  // Off, or no key: nothing is sent, nothing changes (gender stays the TNI standard).
-  for (const flag of ['offline', 'noKey']) {
+test('Luna checks driver first names once per intake, never with its switch off, and fails to an info note', async () => {
+  // The check's own switch off, or no key: nothing is sent, nothing changes (gender stays the TNI standard).
+  for (const flag of ['namesOff', 'noKey']) {
     const t = namesHarness();
     const intake = namesIntake();
     t.state.intake = intake;
     t.state[flag] = true;
-    await t.review({ retry: true });
+    // Not awaited: a request sent would wait on its answer (gates) and hold the test.
+    t.review({ retry: true });
+    for (let i = 0; i < 5; i++) await t.settle();
     assert.equal(t.requests.length, 0, flag);
     assert.deepEqual(intake.warnings.map((w) => w.code), ['other'], flag);
     assert.equal(intake.namesReview, undefined, flag);
+  }
+  // Maintainer, 2026-11-07 (AI-15): the check has its own switch, so Suggest answers off doesn't stop it.
+  {
+    const t = namesHarness();
+    const intake = namesIntake();
+    t.state.intake = intake;
+    t.state.offline = true;
+    t.review({ retry: true });
+    await t.answer();
+    assert.equal(t.requests.length, 1, 'Suggest answers off: the names are still checked');
+    assert.equal(intake.namesReview.done, true);
   }
   const t = namesHarness();
   const intake = namesIntake();
@@ -10080,8 +10093,13 @@ test('Assistant names whose key Luna uses: the agent\'s, TNI\'s server, or anoth
   // On without a key: it says so, and its fold opens (warn). The picks switch is disabled only while
   // AI is off (or with a provider that can't pick).
   assert.deepEqual([none.ai.keyEdit, none.ai.keyTone, none.ai.warn, none.ai.note, none.ai.noteTone, none.ai.autoOff], ['Add key', 'warn', true, 'Needs a key', 'warn', false]);
-  const off = await said({ on: false });
-  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown], [false, 'Off', 'off', true, true]);
+  const off = await said({ on: false, names: false });
+  assert.deepEqual([off.ai.warn, off.ai.note, off.ai.noteTone, off.ai.autoOff, off.ai.autoShown, off.ai.names], [false, 'Off', 'off', true, true, false]);
+  // Maintainer, 2026-11-07 (AI-15): the driver-name check has its own switch; on alone, the card says so.
+  const names = await said({ on: false, names: true, apiKey: 'sk-own', ready: true });
+  assert.deepEqual([names.ai.on, names.ai.names, names.ai.warn, names.ai.note, names.ai.noteTone], [false, true, false, 'On. Checks driver names.', 'on']);
+  const namesNoKey = await said({ on: false, names: true });
+  assert.deepEqual([namesNoKey.ai.warn, namesNoKey.ai.note], [true, 'Needs a key'], 'the check on without a key: it can\'t run yet');
 });
 
 // The AI key (CLAUDE.md: credentials stay out of logs): Add key opens its box with the saved key in
@@ -10114,13 +10132,17 @@ test('the AI key is put in its box and read from it, never into the panel\'s sta
   assert.deepEqual(calls.find((c) => c[0] === 'logSettings'), ['logSettings', 'changed', 'aiKey']);
   assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, focused.at(-1), prevented], ['', false, 'key-edit', 1]);
   assert.deepEqual([...state.aiCache.keys()], ['b'], 'answers asked with the old key are dropped');
+  // The driver-name check's switch (AI-15) saves its own setting and logs it by its name.
+  await context.acts.aiNames(false);
+  assert.deepEqual(calls.filter((c) => c[0] === 'save').at(-1), ['save', { lunaNames: false }]);
+  assert.deepEqual(calls.filter((c) => c[0] === 'logSettings').at(-1), ['logSettings', 'changed', 'aiNames']);
   // Escape: emptied and closed without saving; stopped, so Settings stays open.
   await context.acts.keyEdit();
   el('ai-openai-key').value = 'typed';
   let stopped = 0;
   context.acts.keyKey({ key: 'Escape', preventDefault() {}, stopPropagation: () => { stopped++; } });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 1]);
+  assert.deepEqual([el('ai-openai-key').value, state.keyFormOpen, stopped, focused.at(-1), calls.filter((c) => c[0] === 'save').length], ['', false, 1, 'key-edit', 2]);
   assert.doesNotMatch(JSON.stringify([...Object.entries(state)]), /sk-/, 'no key in the panel\'s state');
   // The box and its button in Settings (settings-view.jsx): a password box, never given a value by React.
   const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');

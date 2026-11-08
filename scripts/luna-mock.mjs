@@ -616,8 +616,19 @@ try {
   await panel.waitForTimeout(1000);
   verify('turning assistance off discards an in-flight Luna response', await panel.locator('#report .row.pending').count(), 0);
   verify('stale provider response never fills the page', await mock.locator('#mockLunaChoice').inputValue(), '');
-  // With assistance off a new intake gets neither check: nothing sent, GL and gender untouched.
+  // Suggest answers off: the driver-name check still runs, on its own switch (AI-15), and the
+  // claims box isn't read.
   phase = 'intake-checks-off';
+  const offClaims = claimsRequests, offNames = namesRequests;
+  await closeAgent();
+  await openMock(); await loadPdf();
+  await panel.waitForTimeout(1000);
+  verify('Suggest answers off: the claims box is not sent', claimsRequests, offClaims);
+  verify('Suggest answers off: the driver-name check runs on its own switch', namesRequests > offNames, true);
+  // Both off, a new intake gets neither check: nothing sent, GL and gender untouched.
+  await openAgent();
+  await panel.locator('#ai-names').uncheck();
+  await waitSetting('lunaNames', false);
   const offBefore = claimsRequests + namesRequests;
   flagIntake = true;
   await closeAgent();
