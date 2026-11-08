@@ -456,7 +456,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .ai-says b { color: var(--ai-ink); }
 .ai-tip { color: var(--ink-secondary); text-wrap: pretty; }
 .ai-why { color: var(--ink-secondary); font-size: 11.5px; }
-.ai-check { color: var(--warning); font-size: 11px; }
+.ai-rule summary { cursor: pointer; }
 .ai-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .ai-actions .accept, .primary.ai { color: #fff; background: var(--ai); border-color: var(--ai); }
 .ai-actions .accept:hover:not(:disabled), .primary.ai:hover:not(:disabled) { background: var(--ai-dark); border-color: var(--ai-dark); }
@@ -646,8 +646,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .problem { padding: 8px 12px 0; display: grid; gap: 6px; border-top: 1px solid var(--border-faint); }
 .problem textarea { color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 8px; resize: vertical; font-size: 12.5px; }
 .problem-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.problem-said { margin: 0; padding: 6px 12px 0; font-size: 12px; color: var(--ink-secondary); }
 .foot-row { padding: 4px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--border-faint); }
-.dock-root:has(> .dock[hidden]) + .problem + .foot-row { border-top: 0; }
+.dock-root:has(> .dock[hidden]) + .problem + .problem-said + .foot-row { border-top: 0; }
 .recording, .foot-version { font: 500 11px/1 var(--font-sans); color: var(--ink-muted); white-space: nowrap; }
 /* The host React draws #recording into (settings-view.jsx): no box of its own, so the footer row lays it out as before. */
 .recording-root { display: contents; }
