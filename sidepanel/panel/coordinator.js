@@ -8,7 +8,7 @@ import { planFor } from './plan-for.js';
 import { advanceFor } from '../../src/units.js';
 import { quoteProgress, stopScreen } from '../../src/carriers.js';
 import { quotedCarrierPolicy } from '../../src/util.js';
-import { fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../../src/usage.js';
+import { fillEvents, redactor, sha256Hex, knownStep } from '../../src/usage.js';
 import { stateCode, stateMismatch } from '../../src/quote-state.js';
 import { notePremium, premiumHere } from '../../src/premium.js';
 import { isStandard } from '../../src/resolution.js';
@@ -133,15 +133,12 @@ function givenEarlier(tabId) {
   return kept && kept.scope === usage.currentSession()?.intakeId ? Object.fromEntries(kept.given) : {};
 }
 
-// Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
-// from the extension's own package when the panel starts, on every fill_run. Null outside the
-// extension or until it's read; then the run just carries none.
-let rulesVersion = null;
-if (inExtension) {
-  Promise.all(RULE_FILES.map((f) => fetch(chrome.runtime.getURL(f)).then((r) => r.text()))).then(rulesHash)
-    .then((hash) => { rulesVersion = hash; }).catch(() => {});
-}
-// The same fingerprint, for a developer recording's manifest (null until read).
+// Which rules this copy fills with, on every fill_run: the rule files' fingerprint (src/usage.js
+// rulesHash), stamped here by the panel's build from the files it bundles (scripts/lib/package.mjs
+// rulesPlugin). Null where the panel runs unbuilt (the tests, the preview); then the run carries none.
+const RULES_VERSION = null;
+const rulesVersion = RULES_VERSION;
+// The same fingerprint, for a developer recording's manifest.
 const rulesFingerprint = () => rulesVersion;
 
 // What a fill is about, taken before it waits on anything (audit 2026-10-08, finding 5): its own
