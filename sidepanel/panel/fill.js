@@ -27,7 +27,7 @@ import { mountRows } from './report-view.jsx';
 import { mountReportHead } from './notes-view.jsx';
 import { flushSync } from 'react-dom';
 import { defaultsHold, isOwnDefault } from './agent-defaults/store.js';
-import { bindQuoteTab, quoteOwnerIssue } from './quote-owner.js';
+import { bindQuoteTab, portalHold, quoteOwnerIssue, releasePortal } from './quote-owner.js';
 /** @import { CarrierConfig, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -110,6 +110,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   // The tab's quote wasn't started with this intake (quote-owner.js): maybe the last client's quote,
   // left open. Nothing fills there by itself; the agent's own Fill this page fills it for this client.
   if (auto && state.intake && quoteOwnerIssue()) { showOwnerNote(); renderSteps(); return; }
+  // A tab a rater's logo opened (quote-owner.js openPortal): nothing fills there by itself.
+  if (auto && portalHold()) { renderSteps(); return; }
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
   // Kept with its tab: the fill running may be on another one (audit 2026-11-07, FLOW-07).
@@ -124,7 +126,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     if (!auto) fillProblem({ tabId: state.tab.id, page: pageOf(state.tab.url), carrier: state.tab.carrier }, 'This is the portal. Open a quote, then fill.', 'notice');
     return;
   }
-  if (!auto) state.autoPaused = false;
+  if (!auto) { state.autoPaused = false; releasePortal(state.tab.id); }
   state.fillingKind = 'fill';
   state.filling = true;
   clearTimeout(state.autoTimer);

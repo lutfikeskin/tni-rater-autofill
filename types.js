@@ -1254,6 +1254,7 @@
  * @property {Set<number>} [layoutReadyTabs]
  * @property {Set<number>} [layoutNewTabs]
  * @property {Map<number, number>} [viewTabs]
+ * @property {Map<number, string>} [portalTabs]  tabs a rater's logo opened (quote-owner.js openPortal) -> the page opened: nothing fills there by itself
  * @property {any} [layoutLatest]
  * @property {number} [layoutErrors]
  * @property {Set<string>} [layoutErrorsLogged]

@@ -28,7 +28,7 @@ import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishin
 import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
 import { markTab } from './tab-mark.js';
-import { bindQuoteTab, quoteOwnerIssue } from './quote-owner.js';
+import { bindQuoteTab, portalHold, quoteOwnerIssue } from './quote-owner.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -338,7 +338,7 @@ function logFillError(ctx, error) {
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || quoteOwnerIssue(ctx.tabId)) return;
+  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || quoteOwnerIssue(ctx.tabId) || portalHold(ctx.tabId)) return;
   // Held by the quote's state or the defaults question, a follow-up waits for nothing. A step with no
   // report yet (AmWINS' next step at the same address, which autoFill fills as a new page) is a page's
   // opening fill: fillPage keeps it for resumeHeldFill, to run once the hold lifts.
@@ -360,7 +360,7 @@ async function autoFill(page) {
   // The client may have been cleared while this fill was waiting to run.
   if (state.autoPaused || state.filling || state.closing || state.resetting || state.newQuoteFailed || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   // Nor on a tab whose quote wasn't started with this intake (quote-owner.js).
-  if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue()) return;
+  if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue() || portalHold()) return;
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
   // step themselves (same address, new questions). It's filled as a new page, with its report.

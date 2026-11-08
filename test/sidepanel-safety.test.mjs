@@ -112,7 +112,7 @@ function extractFunction(name) {
           initialsChanged: 'async () => {}', refreshDefaults: '() => {}', quoteStarting: '() => {}', settingsDefaults: '() => undefined',
           // Whose quote a tab is (quote-owner.js) has its own tests (test/panel/quote-owner.test.jsx):
           // elsewhere every tab is this intake's, unless the harness says otherwise.
-          quoteOwnerIssue: '() => null', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
+          quoteOwnerIssue: '() => null', portalHold: '() => false', releasePortal: '() => {}', openPortal: 'async () => {}', bindQuoteTab: '() => {}', noteQuoteTab: '() => {}', noteNewTab: '() => {}', settleQuoteEntries: 'async () => {}',
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
           stopFillFirst: 'async () => {}',
@@ -7672,7 +7672,7 @@ test('the header, the dock and review mode say the carrier as its display says i
   assert.equal(review(geico), 'GEICO\'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.');
   assert.equal(review({ name: 'New carrier' }), 'New carrier\'s rules weren’t written for this business class. Confirm the marked answers: Continue waits on each page.');
   // A logo opens the agent site in a new tab, only in the extension.
-  assert.match(SIDEPANEL, /mountCards\(\$\('cards-root'\), \{ portal: \(url\) => \{ if \(inExtension && url\) chrome\.tabs\.create\(\{ url \}\); \} \}\);/);
+  assert.match(SIDEPANEL, /mountCards\(\$\('cards-root'\), \{ portal: \(url\) => \{ if \(inExtension\) openPortal\(url\); \} \}\);/);
 });
 
 test('on a stop step the panel offers no fill; on the other steps it names the step', () => {
@@ -9048,7 +9048,7 @@ test('automatic filling paused on the tab in front is said under the dock\'s wor
   assert.equal(context.pausedSaid({ phase: 'ready' }), '');
   // The dock carries it (renderDock), and the agent's own Fill lifts it (fillPage).
   assert.match(extractFunction('renderDock'), /busy: !!state\.filling, paused: pausedSaid\(d\) \};/);
-  assert.match(extractFunction('fillPage'), /if \(!auto\) state\.autoPaused = false;/);
+  assert.match(extractFunction('fillPage'), /if \(!auto\) \{ state\.autoPaused = false; releasePortal\(state\.tab\.id\); \}/);
 });
 
 // W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
