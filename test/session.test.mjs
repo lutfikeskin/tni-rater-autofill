@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { problemJoin, problemLines, sessionStory } from '../scripts/lib/session.mjs';
+import { problemJoin, problemLines, sessionCommand, sessionStory } from '../scripts/lib/session.mjs';
 
 // REC-08 (audit 2026-11-07): a problem report had to be joined to its fill by hand, and no command
 // told one quote or run as a story.
@@ -41,4 +41,10 @@ test('npm run session tells a quote, a fill run or a problem report as a timelin
   assert.match(sessionStory('r1', events), /^# Fill run r1/);
   assert.match(sessionStory('s1', events), /· 6 events\./, 'a filled field is left out');
   assert.equal(sessionStory('nope', events), null);
+});
+
+// Review of PR #471: an exported log's id went into the printed command as it was.
+test('the review prints npm run session only for an id that is one plain word', () => {
+  assert.equal(sessionCommand('e6-AB_12'), 'npm run session -- e6-AB_12');
+  for (const id of ['e6; rm -rf ~', '$(whoami)', 'a b', '', 'x'.repeat(65), 42, undefined]) assert.equal(sessionCommand(id), null, String(id));
 });

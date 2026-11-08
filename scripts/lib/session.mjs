@@ -31,6 +31,16 @@ export function problemJoin(report, events) {
 }
 
 /**
+ * The command that tells an event's quote, or null for an id a shell could read as more than one
+ * word: an exported log isn't checked as the server checks what it takes, and a reviewer may paste
+ * the line into a shell (review of PR #471).
+ * @param {unknown} id
+ */
+export function sessionCommand(id) {
+  return typeof id === 'string' && /^[\w-]{1,64}$/.test(id) ? `npm run session -- ${id}` : null;
+}
+
+/**
  * The join as Markdown lines, indented under a report's own line.
  * @param {ReturnType<typeof problemJoin>} join
  */
