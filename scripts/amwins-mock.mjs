@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // AmWINS end to end, without the live site: the saved Business Auto application
 // (test/fixtures/amwins/application.html, client details removed) with the site's behaviour
 // played by test/fixtures/amwins/mock.js, filled step by step by the real fill engine and AmWINS

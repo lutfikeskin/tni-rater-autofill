@@ -319,7 +319,7 @@ const state = storeState({
   autoPages: new Set(),
   // Steps already continued from, keyed by stepScope (AmWINS steps, Progressive's per-vehicle pages).
   doneSteps: new Set(),
-  advanceRetried: new Set(), // steps whose lost Continue was clicked a second time (once each)
+  advanceRetried: new Set(), // the tab's steps whose lost Continue was clicked a second time (once each)
   assistPage: null, // a page whose Luna request waits for a helper's follow-up fill (per tab, like the above)
   notesAsking: null, // the intake whose claims box Luna is reading now
   notesRetry: null, // that intake again, when the settings changed meanwhile
@@ -479,6 +479,9 @@ const state = storeState({
   // always are), and the sections the agent folded (by id).
   showEmpty: false,
   detailsClosed: new Set(),
+  // Client details: how many times an edit saved a field otherwise than typed (path -> count; "No"
+  // in the USDOT box is saved empty), so its box shows the record's value again (details-view.jsx).
+  fieldRevs: new Map(),
   // The intake PDF: its bytes (also kept in session storage, keepPdf), the document pdf.js opened,
   // and the viewer's page, zoom and the item marked on it ({ path, label, kind, place }); null
   // while the viewer is closed.
@@ -950,6 +953,108 @@ async function restoreReports(tabId) {
   refreshAnswers();
 }
 
+// What a quote tab's fills have been through, kept for the browser session (`store`, storage.session)
+// so the panel opened again goes on as it was (audit 2026-11-07, FLOW-06): the steps continued from
+// (`doneSteps`: a step the agent goes back to isn't continued again), the pages filled (`autoPages`:
+// their follow-up questions fill by themselves), automatic filling paused (`autoPaused`), the lost
+// Continues clicked a second time (`advanceRetried`), and the state the tab's quote was picked for
+// (`quoteState`, with "<state> is right"). Keys and ids only, no answer. One storage key per tab;
+// all but the quote state are the loaded intake's (`scope`), as the tab's quote state outlives the
+// intake (state.quoteStates). The tab's step and stop screen aren't kept: the page is read for them
+// as the panel opens (scheduleLayout, noteStep), and one kept could be one the agent has left.
+const JOURNAL_PREFIX = 'journal:';
+const journalWritten = new Map(); // tab id -> the journal as last stored (merged, before its read-back), as JSON
+const journalRestored = new Set();
+// tab id -> what this copy took out of the tab's journal before reading it back (keepJournal's
+// `dropped`: 'quoteState', 'autoPaused', or `step:<doneSteps key>`), so the stored copy doesn't
+// bring it back.
+const journalDropped = new Map();
+let journalQueue = Promise.resolve();
+const journalIds = (list) => (Array.isArray(list) ? list : []).filter((x) => typeof x === 'string' && x);
+function journalOf(tabId) {
+  const maps = state.tab?.id === tabId ? state : state.tabSessions.get(tabId);
+  const pick = state.quoteStates.get(tabId);
+  return { scope: usage.currentSession()?.intakeId ?? null, doneSteps: [...(maps?.doneSteps ?? [])], autoPages: [...(maps?.autoPages ?? [])],
+    autoPaused: !!maps?.autoPaused, advanceRetried: [...(maps?.advanceRetried ?? [])], quoteState: pick ? { ...pick } : null };
+}
+// A tab's journal not yet read back for this intake (restoreJournal) adds to the stored one rather
+// than replacing it: a recorder message or a fill ending before the panel came to the tab would
+// otherwise leave it with only what this copy learned. What this copy took out meanwhile
+// (`dropped`) isn't taken from the stored one.
+function journalMerged(was, journal, dropped = new Set()) {
+  if (!was || typeof was !== 'object') return journal;
+  const same = !!journal.scope && was.scope === journal.scope;
+  const union = (key, prefix = '') => (same ? [...new Set([...journalIds(was[key]).filter((x) => !dropped.has(`${prefix}${x}`)), ...journal[key]])] : journal[key]);
+  const pick = !dropped.has('quoteState') && was.quoteState && typeof was.quoteState.carrier === 'string' && typeof was.quoteState.code === 'string' && was.quoteState.code ? was.quoteState : null;
+  return { ...journal, doneSteps: union('doneSteps', 'step:'), autoPages: union('autoPages'), autoPaused: journal.autoPaused || (same && was.autoPaused === true && !dropped.has('autoPaused')),
+    advanceRetried: union('advanceRetried'), quoteState: journal.quoteState ?? pick };
+}
+// Called where a tab's fill ends and where its quote state changes; written only when it changed.
+// `dropped`: what the caller just took out (a quote state forgotten, a pause lifted, a step to
+// continue from again), kept from coming back while the tab's journal isn't read back yet.
+function keepJournal(tabId, { dropped = [] } = {}) {
+  if (!Number.isInteger(tabId)) return journalQueue;
+  const journal = journalOf(tabId);
+  const restored = journalRestored.has(`${journal.scope}|${tabId}`);
+  // A removal is always written: what is stored may still hold it.
+  if (dropped.length) journalWritten.delete(tabId);
+  if (!restored && dropped.length) journalDropped.set(tabId, new Set([...(journalDropped.get(tabId) ?? []), ...dropped]));
+  const json = JSON.stringify(journal);
+  if (journalWritten.get(tabId) === json) return journalQueue;
+  const key = `${JOURNAL_PREFIX}${tabId}`;
+  journalQueue = journalQueue.then(async () => {
+    const out = restored ? journal : journalMerged(await store.get(key), journal, journalDropped.get(tabId));
+    await store.set(key, out);
+    journalWritten.set(tabId, JSON.stringify(out));
+  }).catch(() => { journalWritten.delete(tabId); }); // not stored: the next call writes it again
+  return journalQueue;
+}
+// A new or cleared client, or the same PDF loaded again, starts the fills over: every tab's
+// journal keeps only its quote state. A closed tab's goes (`tabId`).
+function forgetJournals(tabId = null) {
+  journalQueue = journalQueue.then(async () => {
+    for (const k of (await store.keys()).filter((key) => key.startsWith(JOURNAL_PREFIX))) {
+      const id = Number(k.slice(JOURNAL_PREFIX.length));
+      if (tabId != null && id !== tabId) continue;
+      journalWritten.delete(id);
+      if (tabId != null) journalDropped.delete(id);
+      const was = tabId == null ? await store.get(k) : null;
+      await (was?.quoteState ? store.set(k, { scope: null, quoteState: was.quoteState }) : store.remove(k));
+    }
+  }).catch(() => {});
+  return journalQueue;
+}
+// Once per tab and intake while the panel is open, as the panel comes to the tab (refreshTab): what
+// the panel has learned since it opened stays, and the journal adds to it.
+async function restoreJournal(tabId) {
+  const scope = usage.currentSession()?.intakeId ?? null;
+  const done = `${scope}|${tabId}`;
+  if (!Number.isInteger(tabId) || journalRestored.has(done)) return;
+  await journalQueue; // a reset's forgetting still queued is done first
+  const was = await store.get(`${JOURNAL_PREFIX}${tabId}`).catch(() => null);
+  if (state.tab?.id !== tabId || (usage.currentSession()?.intakeId ?? null) !== scope || journalRestored.has(done)) return;
+  journalRestored.add(done);
+  // What this copy took out before now (keepJournal's `dropped`) stays out.
+  const dropped = journalDropped.get(tabId) ?? new Set();
+  journalDropped.delete(tabId);
+  if (!was || typeof was !== 'object') return;
+  const pick = was.quoteState;
+  if (!state.quoteStates.has(tabId) && !dropped.has('quoteState') && pick && typeof pick.carrier === 'string' && typeof pick.code === 'string' && pick.code) {
+    state.quoteStates.set(tabId, { carrier: pick.carrier, code: pick.code, session: pick.session ?? null, dismissed: typeof pick.dismissed === 'string' ? pick.dismissed : null });
+  }
+  if (scope && was.scope === scope) {
+    for (const key of journalIds(was.doneSteps)) if (!dropped.has(`step:${key}`)) state.doneSteps.add(key);
+    for (const page of journalIds(was.autoPages)) state.autoPages.add(page);
+    for (const key of journalIds(was.advanceRetried)) state.advanceRetried.add(key);
+    if (was.autoPaused === true && !dropped.has('autoPaused')) state.autoPaused = true;
+  }
+  // What this copy learned before reading it, stored with it; nothing written when they agree.
+  const json = JSON.stringify(journalOf(tabId));
+  // Stored otherwise (another copy wrote it since, say): written out whatever was cached.
+  if (JSON.stringify(was) === json) journalWritten.set(tabId, json);
+  else { journalWritten.delete(tabId); await keepJournal(tabId); }
+}
+
 async function restoreDoneActions(tabId) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId) || doneRestored.has(`${scope}|${tabId}`)) return;
@@ -1078,4 +1183,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, logCrash, storageSaid, FILLS_HELD_NOTE, fillsHeld, holdFills, releaseFills, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes, clearKeptWork, forgetKeptWork, keptWorkCleared, keptWorkLocal };
+export { $, logCrash, storageSaid, FILLS_HELD_NOTE, fillsHeld, holdFills, releaseFills, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes, clearKeptWork, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals, keepJournal, restoreJournal };
