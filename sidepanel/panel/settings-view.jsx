@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Settings in React, over everything but the header: the agent's initials, the Filling switches, the
 // AI's card and its key, the usage log, and Advanced (the test-run mark, the usage server, page
 // captures and the developer recording). Drawn from what the panel says: the switches (state.switches,

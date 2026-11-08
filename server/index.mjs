@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Usage-log collection server for the rater autofill extension.
 //
 //   node server/index.mjs                  # http://127.0.0.1:8787, data in ./server-data

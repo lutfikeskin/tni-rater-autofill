@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Guards for things that broke (or would break) silently when one part changes without another:
 // event types the server doesn't accept, carrier hosts the manifest doesn't allow, versions out of
 // step, committed fixtures with client data, docs naming commands that don't exist.
