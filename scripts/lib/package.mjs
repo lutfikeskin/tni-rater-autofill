@@ -32,6 +32,16 @@ export function stampProvenance(text, { channel, commit }) {
 }
 
 // What the extension runs: the files and folders npm run package copies (the panel's built).
+// The store zip's name: tni-rater-autofill-<version>.zip, or for a build made to try out
+// (`npm run package -- --label test-build`) its label and the commit it was packaged from as well,
+// tni-rater-autofill-<version>-<label>-<commit>.zip, so a test build is named by the script, never
+// by hand (audit 2026-11-07, QA-17). A label is lowercase words and hyphens.
+export function zipName(version, { label = null, commit = null } = {}) {
+  if (label == null) return `tni-rater-autofill-${version}.zip`;
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(label) || label.length > 40) throw new Error(`a label is lowercase words and hyphens: ${label}`);
+  return `tni-rater-autofill-${version}-${label}-${(commit ?? 'nocommit').replace('+', '-')}.zip`;
+}
+
 export const PACKAGED = ['manifest.json', 'background.js', 'icons', 'lib', 'sidepanel', 'src'];
 
 // The commit the packaged files come from, +dirty when they, or what builds the panel, have changes
