@@ -99,8 +99,12 @@ here without changing anything: `node scripts/release-notes.mjs --version 0.9.32
 that brings the version bump tags it: a version already on `main` before that push is never
 tagged, and there is no manual run, so versions released before the workflow stay untagged. A tag
 that already names the same commit is left as it is; one that names another commit fails the run,
-to be checked by hand. The tag says which commit a store version came from, and the notes what changed; it
-uploads nothing to the store.
+to be checked by hand. The workflow's second job then checks out the tagged commit, runs
+`npm run package` and attaches `tni-rater-autofill-<version>.zip` to the release, with the
+source maps' zip beside it when the package makes one; an asset the release already has is left as
+it is. The tag says which commit a store version came from, the notes what changed, and the
+release's zip is the one built from that commit, the one to upload; the workflow uploads nothing to
+the store.
 
 Agents' own defaults ([spec](agent-defaults-spec.md)) ship hidden in the store build until TNI's
 managers approve them: that release's PR sets `RELEASED_TO_AGENTS` to `true` in

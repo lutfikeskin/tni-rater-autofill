@@ -35,6 +35,27 @@ test('the release workflow tags only what a push to main brought, from main\'s h
   assert.match(workflow, /"\$existing" != "\$TARGET"[\s\S]*exit 1/);
 });
 
+// Audit 2026-11-07, QA-17: a release named the version and its pull requests, but the zip uploaded
+// to the store was built by hand and kept nowhere. The release's second job packages the tagged
+// commit and attaches the zip, never replacing one the release has, and uploads nothing to the store.
+test('the release workflow attaches the tagged commit\'s packaged zip to its release', () => {
+  const workflow = fs.readFileSync(new URL('../.github/workflows/release-tag.yml', import.meta.url), 'utf8');
+  const job = workflow.slice(workflow.indexOf('\n  package:\n'));
+  assert.ok(job.length > 20, 'a package job');
+  assert.match(workflow, /outputs:\n {6}tag: \$\{\{ steps\.release\.outputs\.tag \}\}\n {6}target: \$\{\{ steps\.release\.outputs\.target \}\}\n {6}version: \$\{\{ steps\.release\.outputs\.version \}\}/);
+  assert.match(job, /needs: tag\n {4}if: needs\.tag\.outputs\.tag != ''/);
+  assert.match(job, /ref: \$\{\{ needs\.tag\.outputs\.target \}\}/, 'the commit the tag names, not main\'s head');
+  assert.match(job, /persist-credentials: false/);
+  assert.match(job, /- run: npm ci\n {6}- run: npm run package\n/);
+  assert.match(job, /"dist\/tni-rater-autofill-\$VERSION\.zip" "dist\/tni-rater-autofill-\$VERSION-sourcemaps\.zip"/);
+  assert.match(job, /gh release upload "\$TAG" "\$zip" --repo "\$GITHUB_REPOSITORY"\n/);
+  assert.doesNotMatch(job, /--clobber/, 'an asset the release has is left as it is');
+  assert.match(job, /grep -qxF "\$\(basename "\$zip"\)"/);
+  assert.doesNotMatch(workflow, /chromewebstore|webstore\/upload|CHROME_|client_secret|refresh_token/i, 'nothing goes to the Chrome Web Store');
+  // The zip it attaches is the one npm run package names for the store (scripts/lib/package.mjs).
+  assert.match(fs.readFileSync(new URL('../scripts/lib/package.mjs', import.meta.url), 'utf8'), /return `tni-rater-autofill-\$\{version\}\.zip`;/);
+});
+
 test('a version\'s release commit is the one on main that set manifest.json to it, with the version before it', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-release-'));
   const git = (...a) => {
