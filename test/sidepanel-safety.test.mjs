@@ -6920,7 +6920,7 @@ test('client details mark the agent\'s corrections, show the intake\'s value wit
   const logged = [];
   const sandbox = {
     state: { intake: { record, intakeRecord: read, warnings: [], done: [], agentEdited: [] }, detailsClosed: new Set(['operations']), showEmpty: false, details: null, detailsQuery: '', detailsEditedOnly: false },
-    get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES, flushSync: (fn) => fn(),
+    get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES, flushSync: (fn) => fn(), noNumberEdit: () => false, renderWarnings() {},
     intakeEdited() {}, usage: { log: (e) => logged.push([e.path, e.change]) }, save: async () => {},
     claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {}, profileLater() {},
   };
