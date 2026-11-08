@@ -46,9 +46,10 @@
  * @property {{ fields: number, filled: number }} stats
  * @property {{ drivers: number[], vehicles: number[], trailers: number[] }} rows  the form row (1-4) each unit was read from
  * @property {Record<string, string[]>} readFrom  record path -> the form fields an answer was read
- *   from when that isn't its own box (years in business stated in the notes: `claims_details`,
- *   `additional_notes`); the panel marks it there on the PDF (intake-source.js sourcePlace). Empty
- *   otherwise; absent on an intake saved before it.
+ *   from when that isn't its own box (years in business, a year established or an ownership stated
+ *   in the notes: `claims_details`, `additional_notes`); the panel marks it there on the PDF
+ *   (intake-source.js sourcePlace), and a correction of the notes recomputes it (normalize.js
+ *   rederive, which keeps it current). Empty otherwise; absent on an intake saved before it.
  */
 
 /** @typedef {'vehicles' | 'drivers' | 'trailers'} UnitList */
@@ -1271,7 +1272,7 @@
  * @property {any} [dock]
  * @property {any} [feed]
  * @property {Record<string, any>} [cards]
- * @property {{ usage: any, window: any }} [notes]
+ * @property {{ usage: any, window: any, storage?: any, whatsNew?: any }} [notes]
  * @property {any} [loadError]
  * @property {any[]} [siteTrack]
  * @property {any} [checks]

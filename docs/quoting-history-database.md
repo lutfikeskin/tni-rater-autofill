@@ -22,7 +22,7 @@ The database is a copy for analysis. The extension never reads it, the JSONL fil
 
 ## What the log holds today
 
-Every row here is a field the usage server keeps today (`EVENT_FIELDS` in [server/index.mjs](../server/index.mjs)).
+Every row here is a field the usage server keeps today (`EVENT_FIELDS`: the event contract in [src/usage-schema.js](../src/usage-schema.js), as [server/index.mjs](../server/index.mjs) keeps it).
 
 | Question | Where it is | What to know |
 | --- | --- | --- |
@@ -424,7 +424,7 @@ The profile goes first: the warehouse can load all history whenever it arrives, 
 ## Related code
 
 - [warehouse.mjs](../scripts/warehouse.mjs) (the command) and [its lib](../scripts/lib/warehouse.mjs): `TABLES`, `warehouseRows`, `writeWarehouse`.
-- [server/index.mjs](../server/index.mjs): what the server keeps (`COMMON`, `EVENT_FIELDS`, `RUN_FIELDS`; `PROFILE` in #148).
+- [server/index.mjs](../server/index.mjs): what the server keeps (`COMMON` and `EVENT_FIELDS` from [src/usage-schema.js](../src/usage-schema.js), `RUN_FIELDS`; `PROFILE` in #148).
 - [usage.js](../src/usage.js): `intakeSummary`, `fillEvents`, `fieldChangeEvent`, `redactor`; `intakeProfile` and `ID_LIKE` (#149).
 - [schema.js](../src/schema.js), [normalize.js](../src/normalize.js): the client record the profile reads.
 - [events.mjs](../scripts/lib/events.mjs), [signals.mjs](../scripts/lib/signals.mjs), [learn.mjs](../scripts/lib/learn.mjs): quotes, test runs, outcomes and final answers.
