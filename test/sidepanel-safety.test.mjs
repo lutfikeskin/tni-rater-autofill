@@ -1911,7 +1911,7 @@ test('a question Luna left shows its recommendation; an answered one shows none'
   context.renderAi(holder, [left], ctx);
   // Drawn as "AI: this one is yours to decide.", its tip, then "Luna recommends: …" (ai-view.jsx).
   const { card } = holder.said.orphans[0];
-  assert.deepEqual({ ...card }, { kind: 'tip', says: 'AI: this one is yours to decide.', tip: 'Not on the intake.',
+  assert.deepEqual({ ...card }, { kind: 'tip', says: 'The AI assistant leaves this one to you.', tip: 'Not on the intake.',
     next: 'The intake leaves "Needs SR-22" blank: confirm it with the client, then add it under All client details.' });
   assert.equal(card.use, undefined, 'a recommendation is no answer to put in');
   context.renderAi(holder, [{ ...left, leave: false, choice: 'No', nextStep: null, evidenceSources: [] }], ctx);
@@ -3110,7 +3110,7 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
     syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
-  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('runAssist'), context);
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('spentOf') + extractFunction('lunaTrace') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
   return { state, context, ctx, report, logged, rendered, applied, session, holder: () => holders.find((made) => made.node === report.children.at(-1)) };
 }
@@ -3144,7 +3144,7 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   } });
   await t.context.runAssist([{}], t.ctx);
   const text = JSON.stringify(t.holder().said);
-  assert.match(text, /Luna: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
+  assert.match(text, /AI assistant: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
   assert.doesNotMatch(text, /Asking/);
   assert.equal(t.rendered.length, 0, 'stale suggestions are never shown as current');
   assert.equal(t.state.aiCache.size, 0, 'nor cached');
@@ -3167,7 +3167,7 @@ test('Luna without a key says so above the list, and a failed review says it fai
   keyless.context.openSettings = (id) => opened.push(id);
   await keyless.context.runAssist([{}], keyless.ctx);
   const { needsKey } = keyless.holder().said;
-  assert.equal(needsKey.text, 'Luna needs an OpenAI API key. ');
+  assert.equal(needsKey.text, 'The AI assistant needs an OpenAI API key. ');
   needsKey.add();
   assert.deepEqual([opened, keyless.logged], [['ai-openai-key'], []], 'Add the key opens its field; nothing is asked');
   const failed = assistHarness({ suggest: async () => { throw new failed.context.AssistError('Luna is rate-limited. Try again shortly.'); } });
@@ -3227,6 +3227,35 @@ test("a question whose choices name a driver goes to Luna with placeholders and 
 
 // 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions
 // were left, as counts.
+// Audit 2026-11-07, AI-08: while a developer recording runs on the tab, each Luna call goes into it,
+// redacted with the recording's redactor; on another tab, or once it stops, nothing does.
+test("a developer recording on the tab keeps each Luna call, redacted, and nothing otherwise", async () => {
+  let opts;
+  const t = assistHarness({ suggest: async (items, context, cfg, o) => {
+    opts = o;
+    o.trace?.({ call: 'propose', ms: 5, request: { fields: { f1: { label: 'Years with Acme Trucking' } } }, answer: { decisions: {} }, tokensIn: 1 });
+    return { suggestions: [], tokensIn: 1, tokensOut: 1, modelCalls: 1 };
+  } });
+  const added = [];
+  const recording = { tabId: 1, stopping: false, redact: (s) => s.replace('Acme Trucking', '[client]'), store: { add: (events) => added.push(...events) } };
+  t.state.recording = recording;
+  await t.context.runAssist([{}], t.ctx);
+  assert.equal(added.length, 1);
+  assert.deepEqual([added[0].kind, added[0].frame, added[0].page, added[0].call, added[0].request.fields.f1.label, added[0].tokensIn],
+    ['luna', 0, 'CoveragesRates', 'propose', 'Years with [client]', 1]);
+  assert.ok(Number.isFinite(added[0].t));
+  // Stopped while Luna answered: nothing more goes in.
+  recording.stopping = true;
+  opts.trace({ call: 'verify', request: {}, answer: null });
+  assert.equal(added.length, 1);
+  for (const other of [{ ...recording, stopping: false, tabId: 2 }, null]) {
+    const u = assistHarness({ suggest: async (items, context, cfg, o) => { opts = o; return { suggestions: [], tokensIn: 1, tokensOut: 1, modelCalls: 1 }; } });
+    u.state.recording = other;
+    await u.context.runAssist([{}], u.ctx);
+    assert.equal(opts.trace, undefined, 'no trace without a recording on this tab');
+  }
+});
+
 test('Luna gets the page’s other answers from the snapshot, and the log counts why questions were left', async () => {
   let sent;
   const why = ['missing', 'unverified', 'unverified', 'chose', 'tooLarge', null];
@@ -3288,7 +3317,7 @@ test('a Luna answer that comes after a fill of the same page redrew it is kept, 
   await settle();
   assert.equal(luna.calls.length, 1, 'the same questions are not asked twice while the first request answers them');
   assert.equal(luna.calls[0].opts.isStale(), false, 'Luna is not stopped between its calls for a newer request of the same page');
-  assert.match(JSON.stringify(t.holder().said), /Asking Luna about 1 question left for you/);
+  assert.match(JSON.stringify(t.holder().said), /Asking the AI assistant about 1 question left for you/);
   luna.calls[0].resolve();
   await Promise.all([first, second]);
   assert.equal(t.logged.length, 1);
