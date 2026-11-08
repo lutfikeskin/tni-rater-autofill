@@ -5657,6 +5657,16 @@ test('Home\'s setup checklist is ticked by the health checks, and gone once all 
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
   assert.match(html, /<section id="home"[\s\S]*?<div id="setup-root"><\/div>\n\s+<\/section>/);
   assert.match(SIDEPANEL, /mountSetup\(\$\('setup-root'\), \{ open: \(focus\) => openSettings\(focus\) \}\);/);
+  // Set up opens the fold that holds its box (review of #450: the AI fold closed hid ai-on).
+  for (const focus of ['agent', 'ai-on', 'server-url']) {
+    const box = { focused: false, focus() { this.focused = true; }, scrollIntoView() {} };
+    const fold = (holds) => ({ open: false, contains: (el) => el === box && holds });
+    const ui = { view: {}, advanced: fold(focus === 'server-url'), assistant: fold(focus === 'ai-on'), [focus]: box };
+    const opened = { state: {}, $: (id) => ui[id], showScreen: () => {}, openKeyForm: () => {} };
+    vm.runInNewContext(extractFunction('openSettings'), opened);
+    opened.openSettings(focus);
+    assert.deepEqual([box.focused, ui.advanced.open, ui.assistant.open], [true, focus === 'server-url', focus === 'ai-on'], focus);
+  }
 });
 
 // Contract 1 (audit 2026-10-08): a field change on a one-address application names its step.
