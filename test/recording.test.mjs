@@ -504,7 +504,7 @@ test('the report says when the panel followed another tab, and for how long, and
     { kind: 'panel', t: t0 + 5000, frame: 0, closed: true, recorded: 4 },
   ];
   const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
-  assert.match(report, /The panel followed another tab for 3\.0 s: what the quote did there is not in this recording/);
+  assert.match(report, /The panel followed another tab for 3\.0 s: its pages are not traced in this recording, which follows only the tab it began on; a fill there still shows in \*\*Outcome of each fill\*\*, under its carrier and view/);
   assert.match(report, /THE PANEL MOVED TO ANOTHER TAB/);
   assert.match(report, /the panel is back on the recorded tab/);
   assert.match(report, /THE RECORDED TAB WAS CLOSED/);
@@ -522,7 +522,7 @@ test('the report says how each fill ended: what failed or was left and why, from
     { kind: 'fill', t: t0 + 1000, frame: 0, on: true },
     { kind: 'kit', t: t0 + 1800, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Zip', label: 'ZIP' }, start: t0 + 1500, applyMs: 40, ok: false, code: 'answer.not-kept' },
     { kind: 'fill', t: t0 + 3000, frame: 0, on: false, run: 'run-1', how: 'follow-up', page: '/quote' },
-    usage(3000, { type: 'fill_run', run: 'run-1', page: '/quote', step: 'Drivers', auto: true, filled: 4, failed: 1, leftRequired: 1, unknown: 0, noData: 2, advanced: null, blockerList: ['differs: ZIP'] }),
+    usage(3000, { type: 'fill_run', run: 'run-1', carrier: 'geico', view: 'tab-7', page: '/quote', step: 'Drivers', auto: true, filled: 4, failed: 1, leftRequired: 1, unknown: 0, noData: 2, advanced: null, blockerList: ['differs: ZIP'] }),
     usage(3000, { type: 'fill_field', run: 'run-1', result: 'failed', label: 'ZIP', reason: 'the page did not keep the answer; check it' }),
     usage(3000, { type: 'fill_field', run: 'run-1', result: 'leftRequired', label: 'Marital status' }),
     usage(3000, { type: 'fill_field', run: 'run-1', result: 'filled', label: 'Birth date' }),
@@ -532,7 +532,7 @@ test('the report says how each fill ended: what failed or was left and why, from
   assert.match(report, /the extension answered "ZIP" in 0\.0 s \(not kept: the page didn't keep it\)/);
   assert.match(report, /the fill ended \(it ran 2\.0 s\): run `run-1`, a follow-up/);
   assert.match(report, /the page was saved as layouts\/0001\.json \(fill ended: 1 failed, 9 questions\)/);
-  assert.match(report, /## Outcome of each fill\n\n- 0:03\.0 \/quote · Drivers, a follow-up \(run `run-1`\): 4 filled, 1 failed, 1 left for you, 0 unfamiliar, 2 without data; not continued, held by "differs: ZIP"\n  - failed: "ZIP": the page did not keep the answer; check it\n  - left for you: "Marital status"\n\n/);
+  assert.match(report, /## Outcome of each fill\n\n- 0:03\.0 geico \/quote · Drivers \(view `tab-7`\), a follow-up \(run `run-1`\): 4 filled, 1 failed, 1 left for you, 0 unfamiliar, 2 without data; not continued, held by "differs: ZIP"\n  - failed: "ZIP": the page did not keep the answer; check it\n  - left for you: "Marital status"\n\n/);
   assert.doesNotMatch(report, /Birth date/, 'a filled field is not an outcome to look at');
   // A practice page logs no fill_run: the kit's own end, and its answers not taken.
   const practice = recordingReport({ manifest: manifestFor(), events: [...events.slice(0, 4),

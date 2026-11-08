@@ -281,7 +281,9 @@ function outcomes(ordered, t0) {
   for (const { t, event: r } of runs) {
     const how = FILL_HOW[marker(r.run)?.how] ?? (r.auto ? (r.auto === true ? 'automatic' : String(r.auto)) : 'Fill this page');
     const blockers = (r.blockerList ?? []).map((b) => quote(b)).join(', ');
-    out.push(`- ${clock(t - t0)} ${r.page ?? '?'}${r.step ? ` · ${r.step}` : ''}, ${how}${r.run ? ` (run \`${r.run}\`)` : ''}: ${r.filled ?? 0} filled, ${r.failed ?? 0} failed, ${r.leftRequired ?? 0} left for you, ${r.unknown ?? 0} unfamiliar, ${r.noData ?? 0} without data; ${r.advanced ? `continued (${quote(r.advanced)})` : 'not continued'}${blockers ? `, held by ${blockers}` : ''}`);
+    // The usage session is the quote's, not the tab's: a fill on another tab the panel followed is
+    // copied in too, so each run names its carrier and view (the tab and unit; review of PR #471).
+    out.push(`- ${clock(t - t0)} ${r.carrier ? `${r.carrier} ` : ''}${r.page ?? '?'}${r.step ? ` · ${r.step}` : ''}${r.view ? ` (view \`${r.view}\`)` : ''}, ${how}${r.run ? ` (run \`${r.run}\`)` : ''}: ${r.filled ?? 0} filled, ${r.failed ?? 0} failed, ${r.leftRequired ?? 0} left for you, ${r.unknown ?? 0} unfamiliar, ${r.noData ?? 0} without data; ${r.advanced ? `continued (${quote(r.advanced)})` : 'not continued'}${blockers ? `, held by ${blockers}` : ''}`);
     for (const { event: f } of usage.filter((e) => e.event.type === 'fill_field' && e.event.run === r.run && ['failed', 'leftRequired', 'unfamiliar'].includes(e.event.result))) {
       out.push(`  - ${f.result === 'leftRequired' ? 'left for you' : f.result}: ${quote(f.label || f.key || 'a question')}${f.reason ? `: ${String(f.reason).replace(/\s+/g, ' ').slice(0, 160)}` : ''}`);
     }
@@ -406,7 +408,7 @@ export function recordingReport({ manifest, events }) {
     else if (!e.away && awayFrom != null) { awayMs += e.t - awayFrom; awayFrom = null; }
   }
   if (awayFrom != null) awayMs += end - awayFrom;
-  if (awayMs > 0) out.push(`The panel followed another tab for ${secs(awayMs)}: what the quote did there is not in this recording, which follows only the tab it began on.`, '');
+  if (awayMs > 0) out.push(`The panel followed another tab for ${secs(awayMs)}: its pages are not traced in this recording, which follows only the tab it began on; a fill there still shows in **Outcome of each fill**, under its carrier and view, since the usage log is the quote's.`, '');
   if (ordered.some((e) => e.kind === 'panel' && e.closed)) out.push('The recorded tab was closed, which ended the recording.', '');
 
   out.push('## Flow', '', '| # | Page · step | Arrived | On screen | Actions | Left by |', '| --- | --- | --- | --- | --- | --- |');
