@@ -873,6 +873,20 @@ test("the server's wait for OpenAI ends at least 5 s before the panel's", () => 
   assert.ok(LUNA_TIMEOUT_MS + 5000 <= TIMEOUT_MS, `${LUNA_TIMEOUT_MS} vs ${TIMEOUT_MS}`);
 });
 
+// CodeRabbit on #416: OpenAI's headers in time, its body still coming when the wait ends, is a 504
+// too (the panel says "Luna took too long"), not an unreadable answer or OpenAI's own status.
+test('/v1/luna: a body still being read when the wait ends is a 504, an answer or an error alike', async () => {
+  for (const [ok, status] of [[true, 200], [false, 500]]) {
+    const fetchImpl = async (url, init) => ({ ok, status, headers: new Headers(),
+      json: () => new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))) });
+    await withServer({ dataDir: tmp(), openaiKey: 'sk-server', lunaTimeoutMs: 50, fetchImpl }, async ({ base }) => {
+      const res = await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
+      assert.equal(res.status, 504, `OpenAI ${status}`);
+      assert.deepEqual(await res.json(), { error: 'OpenAI did not answer' });
+    });
+  }
+});
+
 // Audit 2026-11-07, AI-01: the server's bound is above the panel's, so the largest request the panel
 // may send passes both the check and the body limit; one over the server's own bound is refused.
 test('/v1/luna takes the largest request the panel may send', async () => {

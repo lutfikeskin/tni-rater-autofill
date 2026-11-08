@@ -363,7 +363,7 @@ const freeSpaceOf = (dir) => () => {
 };
 
 export function createServer({ dataDir, token = '', adminToken = '', openaiKey = '', openaiUrl = 'https://api.openai.com/v1/responses',
-  lunaDailyLimit = LUNA_DAILY_LIMIT, lunaDailyTokens = LUNA_DAILY_TOKENS, fetchImpl = globalThis.fetch, dashboardToken = '', testIntakes = [], dashboardCacheMs = DASHBOARD_CACHE_MS, clock = Date.now,
+  lunaDailyLimit = LUNA_DAILY_LIMIT, lunaDailyTokens = LUNA_DAILY_TOKENS, lunaTimeoutMs = LUNA_TIMEOUT_MS, fetchImpl = globalThis.fetch, dashboardToken = '', testIntakes = [], dashboardCacheMs = DASHBOARD_CACHE_MS, clock = Date.now,
   uploadLimits = UPLOAD_LIMITS, clientIpHeader = '', minFreeBytes = MIN_FREE_MB * MB, freeSpace = freeSpaceOf(dataDir) } = {}) {
   const eventsDir = path.join(dataDir, 'events');
   fs.mkdirSync(eventsDir, { recursive: true });
@@ -639,9 +639,13 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     day.requests++;
     saveLuna();
     let upstream;
+    // One wait for the whole answer, its body included: headers in time and a body still coming
+    // when it ends is a 504 too (CodeRabbit on #416), not an unreadable answer or OpenAI's status.
+    const signal = AbortSignal.timeout(lunaTimeoutMs);
+    const gaveUp = () => done(504, { error: 'OpenAI did not answer' }, `luna ${signal.reason?.name ?? 'error'}`);
     try {
       upstream = await fetchImpl(openaiUrl, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${openaiKey}` },
-        body: JSON.stringify(body), signal: AbortSignal.timeout(LUNA_TIMEOUT_MS) });
+        body: JSON.stringify(body), signal });
     } catch (e) {
       return done(504, { error: 'OpenAI did not answer' }, `luna ${e?.name ?? 'error'}`);
     }
@@ -651,14 +655,17 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     // 424, so the panel tells the agent to tell TNI, not to check a key they don't have or retry.
     if (!upstream.ok) {
       let code = '';
-      try { const e = (await upstream.json())?.error?.code; if (typeof e === 'string' && /^[a-z0-9_]{1,40}$/.test(e)) code = e; } catch { /* no JSON */ }
+      try { const e = (await upstream.json())?.error?.code; if (typeof e === 'string' && /^[a-z0-9_]{1,40}$/.test(e)) code = e; } catch {
+        if (signal.aborted) return gaveUp();
+        /* no JSON */
+      }
       const status = [401, 403, 404].includes(upstream.status) || code === 'insufficient_quota' ? 424 : upstream.status;
       const retry = upstream.headers.get('retry-after');
       if (retry && status !== 424) res.setHeader('retry-after', retry);
       return done(status, { error: `OpenAI returned HTTP ${upstream.status}` }, `luna upstream ${upstream.status}${code ? ` ${code}` : ''}`);
     }
     let json;
-    try { json = await upstream.json(); } catch { return done(502, { error: 'OpenAI sent an unreadable answer' }, 'luna unreadable'); }
+    try { json = await upstream.json(); } catch { return signal.aborted ? gaveUp() : done(502, { error: 'OpenAI sent an unreadable answer' }, 'luna unreadable'); }
     // What it cost: OpenAI's usage counts (never the answer). An answer without them is counted at
     // the most it could have cost: a token is at least one byte of the request as sent (a token per
     // 4 characters undercounted other scripts and punctuation: CodeRabbit on #375), plus the
