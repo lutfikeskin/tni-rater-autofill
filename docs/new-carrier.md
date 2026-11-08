@@ -2,6 +2,8 @@
 
 Read this when adding a carrier, product, state, or materially different vehicle/coverage flow. A generic label match is not evidence of full support.
 
+To track the work, open an issue from the **New carrier or product** template ([new-carrier.md](../.github/ISSUE_TEMPLATE/new-carrier.md)): one box for each place below where a carrier is registered or checked, by step. [test/new-carrier.test.mjs](../test/new-carrier.test.mjs) checks that the template names every file the adapter steps link to and that its paths exist. When a step here gains a place to register, add its box there.
+
 ## Capture the behavior
 
 Define the initial supported scope: carrier/product, states, operations, vehicle types, driver/vehicle counts, requested coverages, and known exceptions. Reuse existing intake concepts where their meanings agree.
