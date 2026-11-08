@@ -5467,6 +5467,28 @@ test('a fill whose tab stopped being the panel\'s during its last wait is not se
   }
 });
 
+// CodeRabbit on #410: a page's opening fill dropped so isn't started again when the agent goes back
+// (the recorder there announces no page), so it says to fill the page; an earlier fill's error on
+// that report stays; and an intake corrected during the wait is said as a stale fill, not a tab change.
+test('a dropped fill says why on its page, keeping an earlier error there', async () => {
+  const moved = (t) => async () => { t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier }; return false; };
+  const opening = fillHarness();
+  opening.context.pageMoved = moved(opening);
+  await opening.context.fillPage({ auto: 'page' });
+  assert.deepEqual(opening.seen.problems, [{ tabId: 7, text: 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.' }]);
+  const failed = fillHarness();
+  failed.state.reports.set('7|report', { error: 'Automatic filling paused after an error. Check the page, then fill again.' });
+  failed.context.pageMoved = moved(failed);
+  await failed.context.fillPage();
+  assert.deepEqual(failed.seen.problems, [], 'the earlier error stays on the report');
+  const corrected = fillHarness();
+  corrected.context.pageMoved = async () => { corrected.state.intakeRevision++; return false; };
+  await corrected.context.fillPage();
+  assert.equal(corrected.seen.problems.length, 1);
+  assert.match(corrected.seen.problems[0].text, /You corrected the intake during the fill/);
+  assert.deepEqual(corrected.seen.logged.map((e) => e.error), ['stale: intake changed during the fill']);
+});
+
 // Codex reproduction (stale-fill-reproduction.mjs): a fill's results came back after the agent had
 // loaded another intake and moved to its tab, and were remembered and logged as that intake's.
 test('a fill whose intake changed while the carrier worked is dropped: the new intake and tab are untouched', async () => {
