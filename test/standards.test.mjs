@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // TNI's standard coverage answers (src/standards.js), decided once: every carrier's answer to
 // them shows those amounts, in the carrier's own words, and so does any amount its rule's name
 // states.

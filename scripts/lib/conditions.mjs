@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // When a question shows, inferred from page layouts one at a time. Each layout (page_layout,
 // since 0.9.5) lists the questions on the page and the choice each had picked (`selected`).
 // "F shows when T is one of V" is kept only if, over every layout of the page where T had a pick,
