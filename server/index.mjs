@@ -426,7 +426,9 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (typeof e.t !== 'string' || Number.isNaN(Date.parse(e.t))) return { error: 'event time missing or invalid' };
     if (!COMMON_SHAPES.t(e.t)) return { error: 'event time is not an ISO time in UTC from 2025 to 30 days ahead' };
     for (const [k, said] of Object.entries(COMMON_SAID)) if (e[k] !== undefined && !COMMON_SHAPES[k](e[k])) return { error: `${k} is not a valid ${said}` };
-    if (JSON.stringify(e).length > (e.type === 'page_layout' ? MAX_LAYOUT_BYTES : e.type === 'quote_summary' ? MAX_SUMMARY_BYTES : MAX_EVENT_BYTES)) return { error: 'event too large' };
+    if (JSON.stringify(e).length > (e.type === 'page_layout' ? MAX_LAYOUT_BYTES : MAX_EVENT_BYTES) && e.type !== 'quote_summary') return { error: 'event too large' };
+    // A quote summary's limit is the bytes it is stored as (UTF-8): its text is the client's, in any script.
+    if (e.type === 'quote_summary' && Buffer.byteLength(JSON.stringify(e), 'utf8') > MAX_SUMMARY_BYTES) return { error: 'event too large' };
     if (e.type === 'quote_summary' && !SUMMARY_SHAPE(e.summary)) return { error: 'quote_summary needs a summary in its shape' };
     const out = {};
     const allowed = new Set([...COMMON, ...keep]);

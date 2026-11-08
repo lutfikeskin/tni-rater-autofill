@@ -841,10 +841,12 @@ test('a quote summary is kept whole in its shape; one out of it is refused', asy
       sum({ marked: [{ ...row, value: 'x'.repeat(501) }] }),
       sum({ carriers: [{ ...summary.carriers[0], tabId: 3 }] }),
       ev({ filled: undefined, type: 'quote_summary', carrier: undefined, page: undefined }),
+      // Under 512 K characters, over 512 KB in UTF-8 (3 bytes each): too large too.
+      sum({ carriers: [{ ...summary.carriers[0], pages: Array.from({ length: 200 }, () => ({ ...summary.carriers[0].pages[0], rows: Array.from({ length: 4 }, () => ({ ...row, value: 'é'.repeat(200) + '名'.repeat(200) })) })) }] }),
       sum({ carriers: Array.from({ length: 6 }, () => ({ ...summary.carriers[0], pages: Array.from({ length: 200 }, () => ({ ...summary.carriers[0].pages[0], rows: Array.from({ length: 2 }, () => ({ ...row, value: 'v'.repeat(400) })) })) })) }),
     ] })).json();
     assert.equal(r.accepted, 1);
-    assert.deepEqual(r.rejected, [1, 2, 3, 4].map((index) => ({ index, error: 'quote_summary needs a summary in its shape' })).concat([{ index: 5, error: 'event too large' }]));
+    assert.deepEqual(r.rejected, [1, 2, 3, 4].map((index) => ({ index, error: 'quote_summary needs a summary in its shape' })).concat([5, 6].map((index) => ({ index, error: 'event too large' }))));
   });
   const [kept, ...more] = stored(dataDir);
   assert.equal(more.length, 0);
