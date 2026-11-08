@@ -100,3 +100,22 @@ test('rulebookFor\'s rewrite: none leaves the entries as written; one gives the 
   }
   assert.deepEqual(rulebookFor('unknown', { rewrite: () => { throw new Error('not called'); } }), []);
 });
+
+// Audit 2026-11-07, CARR-05: a coverage section is the carrier's (`sections`), not the kit's: the
+// plan gives a section's Done how its row is read, and a Done closing a section the carrier doesn't
+// declare is a configuration error, never a click with nothing checked.
+test('a coverage section the carrier declares: the plan gives its Done the section, an undeclared one throws', async () => {
+  const { buildPlan } = await import('../src/plan.js');
+  const fs = await import('node:fs');
+  const carrier = (sections) => ({ id: 'x', hosts: [], useGenericRules: false, sections,
+    rules: [{ name: 'Reefer question', selector: '#q', source: 'derived', value: () => 'Yes', section: { id: 'reefer', part: 'section' } }],
+    actions: [{ id: 'doneReefer', text: '^done$', verify: { closed: 'reefer' } }] });
+  const plan = buildPlan({}, carrier({ reefer: { words: 'reefer[^\\n]*', anyLimit: true } }), {});
+  assert.deepEqual(plan.find((s) => s.action === 'doneReefer').verify, { closed: 'reefer', words: 'reefer[^\\n]*', anyLimit: true });
+  assert.deepEqual(plan.find((s) => s.name === 'Reefer question').section, { id: 'reefer', part: 'section' });
+  assert.throws(() => buildPlan({}, carrier({}), {}), /doneReefer: verify closes "reefer", which its sections don't declare/);
+  // The kit names no carrier's coverage.
+  for (const file of fs.readdirSync(new URL('../src/kit/', import.meta.url)).filter((f) => f.endsWith('.js'))) {
+    assert.doesNotMatch(fs.readFileSync(new URL(`../src/kit/${file}`, import.meta.url), 'utf8'), /motor truck cargo/i, file);
+  }
+});

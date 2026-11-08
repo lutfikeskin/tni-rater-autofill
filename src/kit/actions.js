@@ -11,11 +11,9 @@ export const NEVER_CLICK = /\b(continue|next|start quote|finish|buy|bind|purchas
 export const COVERED = 'something on the page is open over Continue: close it, then fill again';
 export const COVERED_HELPER = 'something on the page is open over it';
 
-export const CLOSED_SECTIONS = {
-  cargoClosed: { tag: 'cargo', words: /motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i },
-  glClosed: { tag: 'gl', anyLimit: true },
-  interchangeClosed: { tag: 'interchange', anyLimit: true },
-};
+// A helper that closes a coverage section (`verify: { closed }`, from the carrier's `sections`:
+// src/plan.js): the section, or null.
+export const closedSection = (a) => (a?.verify && typeof a.verify === 'object' && 'closed' in a.verify ? a.verify : null);
 
 /**
  * Checks whether something modal or floating covers element el at its center.
