@@ -1390,7 +1390,7 @@ test('a start year said as Est., Started, Opened or Business started; Operating 
     assert.match(check?.msg ?? '', new RegExp(`"${notes.replace('.', '\\.')}": years in business is ${2026 - est}, established ${est}\\. Confirm\\.`), notes);
     assert.ok(!r.warnings.some((w) => w.code === 'years-in-business.default'), notes);
   }
-  for (const notes of ['Operating for 4 years', 'Operating 6 yrs', 'Operating since 2019 or so', 'Started the business a few years ago', 'Started a business a few years ago',
+  for (const notes of ['Operating for 4 years', 'Operating for four years', 'Operating for 1.5 years', 'Operating for one and a half years', 'Operating twenty-two years', 'Operating 6 yrs', 'Operating since 2019 or so', 'Started the business a few years ago', 'Started a business a few years ago',
     'Est. a few years ago']) {
     const r = noYears(notes);
     assert.equal(r.record.applicant.yearsInBusiness, null, notes);
