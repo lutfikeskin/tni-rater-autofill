@@ -221,6 +221,9 @@ function wire() {
     chrome.tabs.onUpdated.addListener(onTabUpdated);
     chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); state.tabSessions.delete(tabId); state.quoteStates.delete(tabId); forgetJournals(tabId); forgetQuoteTab(tabId); dropReports((entry) => entry.tabId === tabId); });
     chrome.windows.onFocusChanged.addListener(refreshTab);
+    // A tab dragged into another window, or back: which tab this copy holds depends on its window.
+    chrome.tabs.onAttached.addListener(refreshTab);
+    chrome.tabs.onDetached.addListener(refreshTab);
     // Settings' Mark the quote's tab follows the tabGroups permission, given or taken back anywhere.
     watchMarkSwitch();
   }
