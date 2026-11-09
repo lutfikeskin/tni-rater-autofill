@@ -79,6 +79,7 @@
     <section id="home" class="pane">
       <div class="intro">
         <h2>Start a quote</h2>
+        <a class="help-link" href="guide.html#home" target="_blank" rel="noopener" aria-label="Help: starting a quote" title="Help: starting a quote" data-help="home">?</a>
         <p class="muted">Add the client’s quote application.</p>
       </div>
       <section id="load" class="drop" tabindex="0">
@@ -88,6 +89,8 @@
       </section>
       <p class="privacy-line">Stays on this computer. Cleared when Chrome closes.</p>
       <div id="load-error" class="issue bad" role="alert" hidden></div>
+      <!-- What setting up is left, ticked by renderHealth's checks (home-view.jsx); empty when done. -->
+      <div id="setup-root"></div>
     </section>
 
     <!-- Step 1: what looked wrong or missing on the intake (#warnings), then every answer on it

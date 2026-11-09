@@ -13,6 +13,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { HelpLink } from './help-link.jsx';
 
 // The filters: all of the report, what needs the agent, what was filled.
 const FILTERS = [
@@ -93,6 +94,7 @@ function Feed({ act }) {
           </select>
           <button type="button" id="key-btn" className="key-btn" aria-label="What the tags and marks mean" title="What the tags and marks mean"
             aria-expanded={String(!!f.keyOpen)} aria-controls="answer-key" hidden={f.keyOpen == null} onClick={() => act.toggleKey()}>i</button>
+          <HelpLink topic="page" />
         </div>
         <div id="filters" ref={rail} className="filters" data-filter={f.filter} role="group" aria-label="Show answers" hidden={!f.counts}>
           <span className="filters-thumb" aria-hidden="true" />

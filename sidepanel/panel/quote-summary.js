@@ -220,16 +220,48 @@ function closeSummary() {
   (usable(back) ? back : $('quote-summary'))?.focus();
 }
 
-// Save summary: the summary shown, as an HTML file in Downloads.
+// The summary as TNI's collection server keeps it (quote_summary, server/index.mjs SUMMARY_SHAPE):
+// practice pages left out (nothing from them is logged), no tab ids, each text cut to the length
+// the server takes. Null when nothing of a quote is left to send.
+/** @param {QuoteSummary} s */
+function summaryEvent(s) {
+  const cut = (v, max) => (v == null ? v : String(v).slice(0, max));
+  const practice = new Set(s.carriers.filter((c) => c.practice).map((c) => c.name));
+  const row = (r) => ({ label: cut(r.label, 300), value: cut(r.value, 500), source: cut(r.source, 20), sourceSaid: cut(r.sourceSaid, 80), note: cut(r.note, 500),
+    ...(r.carrier !== undefined ? { carrier: cut(r.carrier, 80) } : {}), ...(r.page !== undefined ? { page: cut(r.page, 200) } : {}) });
+  const real = (r) => !practice.has(r.carrier);
+  const carriers = s.carriers.filter((c) => !c.practice).slice(0, 20).map((c) => ({ id: cut(c.id, 20), name: cut(c.name, 80), practice: false,
+    pages: c.pages.slice(0, 200).map((pg) => ({ title: cut(pg.title, 200), at: pg.at, said: cut(pg.said, 500),
+      counts: pg.counts.map((k) => ({ source: k.source, sourceSaid: cut(k.sourceSaid, 80), n: k.n })), rows: pg.rows.slice(0, 500).map(row) })) }));
+  if (!carriers.length) return null;
+  const rows = carriers.flatMap((c) => c.pages.flatMap((pg) => pg.rows));
+  return {
+    client: { name: cut(s.client.name, 200), fileName: cut(s.client.fileName, 200), state: cut(s.client.state, 40) }, at: s.at, version: cut(s.version, 20), carriers,
+    overrides: s.overrides.filter(real).slice(0, 2000).map((o) => ({ kind: cut(o.kind, 20), carrier: cut(o.carrier, 80), page: cut(o.page, 200), label: cut(o.label, 300), value: cut(o.value, 500), said: cut(o.said, 200) })),
+    ai: s.ai.filter(real).slice(0, 2000).map(row), marked: s.marked.filter(real).slice(0, 2000).map(row),
+    open: rows.filter((r) => r.source === 'open').length, answers: rows.filter((r) => !['open', 'marked', 'pending'].includes(r.source)).length,
+  };
+}
+
+// Save summary: the summary shown, as an HTML file in Downloads, and attached to this quote's usage
+// session on TNI's collection server (quote_summary; the maintainer, 2026-11-07), sent with the
+// rest of the usage log. Practice pages only: not sent, as nothing from them is.
 function saveSummary() {
   const open = state.summary;
   if (!open || state.resetting) return;
+  let said;
   try {
     const name = downloadSummary(open.summary);
-    state.summary = { ...open, saved: `Saved ${name} to Downloads. It holds the client’s answers: keep it as you keep their file.` };
+    said = `Saved ${name} to Downloads. It holds the client’s answers: keep it as you keep their file.`;
   } catch (e) {
-    state.summary = { ...open, saved: `Couldn’t save the summary: ${e?.message ?? e}` };
+    said = `Couldn’t save the summary: ${e?.message ?? e}.`;
   }
+  const summary = summaryEvent(open.summary);
+  if (summary) {
+    usage.log({ type: 'quote_summary', summary });
+    said += ' A copy goes to TNI with this quote’s usage log.';
+  }
+  state.summary = { ...open, saved: said };
 }
 
-export { SOURCES, closeSummary, openSummary, saveSummary, downloadSummary, quoteSummary, summaryFileName, summaryHtml, summaryRow };
+export { SOURCES, closeSummary, openSummary, saveSummary, summaryEvent, downloadSummary, quoteSummary, summaryFileName, summaryHtml, summaryRow };
