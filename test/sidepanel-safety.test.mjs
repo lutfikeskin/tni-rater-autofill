@@ -117,6 +117,9 @@ function extractFunction(name) {
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
           stopFillFirst: 'async () => {}',
+          // Whether a recording runs on the tab (core.js, REC-14):
+          // elsewhere no recording runs.
+          traced: '() => false',
           // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
           // elsewhere none is running.
           noteFollowed: '() => {}',
@@ -11569,6 +11572,26 @@ test('a unit missing from the list with no helper for it is left for the agent i
   const none = [{ frameId: 0, result: { noData: [], blockers: [] } }];
   context.noteMissingUnit(none, { ...ctx, unitMissing: null });
   assert.equal(none[0].result.noData.length, 0);
+});
+
+// REC-14 (audit 2026-11-07): an AI apply and the agent's own panel answer wrote the same "fill"
+// marker as a fill, and their answers said nothing to the recording.
+test('a recording\'s fill marker says what went in, and AI applies and picks from a row ask the kit to say what they do', () => {
+  // The marker says what went in (`what`, FLOW-15); the kit says its answers by whom too.
+  assert.match(SIDEPANEL, /rec\.store\.add\(\[\{ kind: 'fill', t, frame: 0, on, what: fillingWhat \}\]\);/);
+  const ai = extractFunction('applyAi');
+  assert.match(ai, /state\.fillingKind = 'ai';\s+state\.filling = true;/);
+  assert.match(ai, /\[\[a\], expected, guardToken, \{ stopSteps: Object\.keys\(ctx\.carrier\.stopSteps \?\? \{\}\), \.\.\.\(traced\(ctx\.tabId\) \? \{ trace: true \} : \{\}\) \}\]/);
+  const agent = extractFunction('agentAnswer');
+  assert.match(agent, /state\.fillingKind = 'pick';\s+state\.filling = true;/);
+  assert.match(agent, /by: 'agent', \.\.\.\(traced\(tabId\) \? \{ trace: true \} : \{\}\) \}\]/);
+  // The traced tab: only the recording's own, while it runs.
+  const at = SIDEPANEL.indexOf('const traced = ');
+  const context = { state: { recording: { tabId: 4, stopping: false } } };
+  vm.runInNewContext(SIDEPANEL.slice(at, SIDEPANEL.indexOf(';\n', at) + 1).replace('const traced', 'globalThis.traced'), context);
+  assert.deepEqual([context.traced(4), context.traced(5)], [true, false]);
+  context.state.recording.stopping = true;
+  assert.equal(context.traced(4), false);
 });
 
 // Audit 2026-11-07, GAP-02: a list holding as many rows as the intake or more that isn't the intake's
