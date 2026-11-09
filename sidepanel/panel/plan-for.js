@@ -21,7 +21,7 @@ import { overlayFor } from '../../src/agent-defaults/index.js';
  * @returns {PlanStep[]}
  */
 export function planFor(record, carrier, active = {}) {
-  return buildPlan(record, carrier, active, { overlay: overlayFor(carrier?.id), onRuleError: (error, at) => reportRuleError(error, at) });
+  return buildPlan(record, carrier, active, { overlay: overlayFor(carrier?.id), edited: editedOf(record), onRuleError: (error, at) => reportRuleError(error, at) });
 }
 
 // Where a rule that threw is told (buildPlan onRuleError): the panel's core logs it as a
@@ -30,3 +30,10 @@ export function planFor(record, carrier, active = {}) {
 let reportRuleError = () => {};
 /** @param {(error: unknown, at: RuleErrorAt) => void} fn */
 export function onPlanRuleError(fn) { reportRuleError = fn; }
+
+// The record paths the agent set or corrected in the panel for this record (the intake's
+// agentEdited), told by the panel's core: each step reading one is marked `edited` for the log.
+/** @type {(record: ClientRecord) => string[]} */
+let editedOf = () => [];
+/** @param {(record: ClientRecord) => string[]} fn */
+export function onPlanEdits(fn) { editedOf = fn; }

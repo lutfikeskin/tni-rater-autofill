@@ -3839,7 +3839,7 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
     claimsTextEdited: () => calls.push('claimsTextEdited'), reviewClaimsBox: () => calls.push('reviewClaimsBox'), reviewDriverGender: () => {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  vm.runInContext(['agentEdit', 'changedFromRead'].map(extractFunction).join('\n'), sandbox);
   await sandbox.agentEdit('notes.text', 'Needs hired auto', 'textarea');
   assert.deepEqual(calls.splice(0), ['claimsTextEdited', 'reviewClaimsBox']);
   await sandbox.agentEdit('claims.text', 'Yes', 'textarea');
@@ -3867,7 +3867,7 @@ test('a panel edit of the claims box recomputes what derives from it and says th
     claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  vm.runInContext(['agentEdit', 'changedFromRead'].map(extractFunction).join('\n'), sandbox);
   await sandbox.agentEdit('claims.text', 'Yes - 1 accident 2024\nFinanced', 'textarea');
   assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes, intake.record.operations.vehicleOwnership], [true, 'Financed', 'Financed']);
   assert.deepEqual(intake.readFrom, { 'operations.vehicleOwnership': ['claims_details'] });
@@ -7238,7 +7238,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   };
   let stored = null;
   vm.createContext(sandbox);
-  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'agentEdit'].map(extractFunction).join('\n'), sandbox);
+  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'agentEdit', 'changedFromRead'].map(extractFunction).join('\n'), sandbox);
   sandbox.renderSections();
   // A row as the drawer says it now, and the agent's edit of it (the box's change).
   const row = (path) => sandbox.state.details.sections.flatMap((s) => s.rows).find((r) => r.path === path);
@@ -7301,7 +7301,7 @@ test('client details mark the agent\'s corrections, show the intake\'s value wit
     claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {}, profileLater() {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'restoreField', 'restoreNoNumber', 'agentEdit'].map(extractFunction).join('\n'), sandbox);
+  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'restoreField', 'restoreNoNumber', 'agentEdit', 'changedFromRead'].map(extractFunction).join('\n'), sandbox);
   sandbox.renderSections();
   const rows = () => JSON.parse(JSON.stringify(sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path)));
   const live = () => sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path);
@@ -7312,12 +7312,26 @@ test('client details mark the agent\'s corrections, show the intake\'s value wit
   sandbox.renderSections();
   assert.deepEqual([row('operations.radius').edited, row('operations.radius').original, record.operations.radiusMiles], [true, '100', null]);
   assert.equal(row('operations.radiusMiles').edited, false, 'a derived value that followed is not the agent\'s');
+  // CodeRabbit on #480: the miles recomputed from the correction count as the agent's for the log
+  // (agentDerived), until the correction is restored.
+  assert.deepEqual([...sandbox.state.intake.agentDerived], ['operations.radiusMiles']);
   assert.equal(sandbox.state.details.edited, 'Your corrections (1)');
   // Restore: the intake's value back, no longer the agent's, the miles following it again.
   await row('operations.radius').restore();
   assert.deepEqual([record.operations.radius, record.operations.radiusMiles, [...sandbox.state.intake.agentEdited]], ['100', 100, []]);
+  assert.deepEqual([...sandbox.state.intake.agentDerived], [], 'restored: the miles are the intake value again');
   assert.deepEqual([row('operations.radius').edited, row('operations.radius').original], [false, undefined]);
   assert.deepEqual(logged, [['operations.radius', 'changed'], ['operations.radius', 'restored']], 'logged as undone, without the value');
+  // CodeRabbit on #480: years in business worked out again from the PDF's own year established, after
+  // a claims box edit, is still the parser's: only a value the correction changed counts.
+  const years = new Date().getFullYear() - 2010;
+  read.applicant.yearsInBusiness = years;
+  record.applicant.yearsInBusiness = years;
+  await sandbox.agentEdit('claims.text', 'No losses', 'textarea');
+  assert.equal(record.applicant.yearsInBusiness, years);
+  assert.ok(!sandbox.state.intake.agentDerived.includes('applicant.yearsInBusiness'), JSON.stringify(sandbox.state.intake.agentDerived));
+  await sandbox.restoreField('claims.text', undefined, 'textarea');
+  logged.length = 2;
   // A field the intake left blank, corrected: its original is said as blank.
   await row('applicant.name').edit('');
   sandbox.renderSections();
@@ -10895,7 +10909,7 @@ test('a panel edit of "No" into the USDOT box saves no number, and says the row 
     claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  vm.runInContext(['agentEdit', 'changedFromRead'].map(extractFunction).join('\n'), sandbox);
   await sandbox.agentEdit('applicant.dot', 'No', 'text');
   assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, [...intake.agentEdited]], [null, true, ['applicant.dot']]);
   assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['dot.none', 'info']]);

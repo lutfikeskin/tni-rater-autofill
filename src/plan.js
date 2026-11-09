@@ -52,15 +52,17 @@ export function reviewWarn(record, carrier) {
  *   step's resolution is decided; the step it returns is the plan's. None (the default) leaves every
  *   step as the rules give it. plan.js knows nothing of what plugs in (docs/agent-defaults-spec.md).
  *   onRuleError: told of each rule that threw (RuleError); its step is the agent's, the plan still built.
+ *   edited: the record paths the agent set or corrected in the panel, and those recomputed from
+ *   them (the intake's agentEdited and agentDerived).
  * @returns {PlanStep[]}
  */
-export function buildPlan(record, carrier, active = {}, { overlay = null, onRuleError = null } = {}) {
+export function buildPlan(record, carrier, active = {}, { overlay = null, edited = null, onRuleError = null } = {}) {
   // A carrier's `rowSections`: repeating sections its own rules answer row by row, where a generic
   // label rule never answers (a row the intake doesn't describe stays the agent's).
   const generic = carrier?.useGenericRules !== true ? [] : carrier?.rowSections?.length
     ? GENERIC_RULES.map((rule) => ({ ...rule, notWithin: carrier.rowSections })) : GENERIC_RULES;
   const rules = [...(carrier?.rules ?? []), ...generic];
-  return [...fieldSteps(rules, record, carrier, active, overlay, onRuleError), ...actionSteps(carrier, record, active)];
+  return [...fieldSteps(rules, record, carrier, active, overlay, edited, onRuleError), ...actionSteps(carrier, record, active)];
 }
 
 // A helper's `verify: { closed: id }`: the coverage section the carrier declares in `sections`, with
@@ -228,7 +230,8 @@ function unreadable(kind, value) {
  * @param {StepOverlay | null} overlay
  * @returns {FieldStep[]}
  */
-function fieldSteps(rules, record, carrier, active, overlay, onRuleError = null) {
+function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRuleError = null) {
+  const agentSet = new Set(edited ?? []);
   const review = !supportedClass(record, carrier);
   const reviewNote = review ? reviewWarn(record, carrier) : null;
   // A rule that throws (a record shape it didn't expect, an agent's edit that left text in a number
@@ -452,6 +455,10 @@ function fieldSteps(rules, record, carrier, active, overlay, onRuleError = null)
       withOption: typeof rule.withOption === 'function' ? rule.withOption(record, active) : rule.withOption ?? null,
       value: value === undefined || value === '' ? null : value,
       from: from?.length ? from : null,
+      // Its answer reads a record path the agent set or corrected in the panel (its own path, or one
+      // a derived answer was worked out from): the agent's value, not the parser's, for the log.
+      // A TNI standard (a fallback where the agent cleared the value, say) is never theirs (CodeRabbit on #480).
+      ...(!standard && agentSet.size && [path, ...(from ?? [])].some((p) => agentSet.has(p)) ? { edited: true } : {}),
       // Which row of a repeated question is this unit's: the one holding a control matching
       // `selector` that reads as the unit's `value` (AmWINS' vehicle rows by their VIN). The path
       // is resolved for the unit so the page kit can name it ("vehicle 2"); never its position.

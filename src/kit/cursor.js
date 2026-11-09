@@ -1162,7 +1162,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // An option matched only by a fallback (it begins with the answer's words, or has them,
           // none reading exactly so) is written and checked by the agent (the maintainer, 2026-11-07).
           const loose = looseMatch(step, judged);
-          state.report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}), ...(loose ? { matched: loose.matched } : {}) });
+          // Its answer read a value the agent corrected in the panel (plan.js `edited`): only an answer
+          // the fill wrote, never a carrier's choice it kept (CodeRabbit on #480).
+          state.report.filled.push({ ...item, ...(step.edited ? { edited: true } : {}), shown: result.shown, ...(instead ? { said: instead } : {}), ...(loose ? { matched: loose.matched } : {}) });
           state.quietDue = true;
           state.unoffered.delete(step.id);
           state.keepWait.delete(step.id);

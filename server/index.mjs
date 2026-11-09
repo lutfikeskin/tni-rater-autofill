@@ -528,7 +528,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       if (out.since !== undefined && !(Number.isSafeInteger(out.since) && out.since >= 0)) drop('since');
     }
     if (out.source !== undefined && !FIELD_SOURCES.includes(out.source)) drop('source');
-    for (const k of ['standard', 'manualOnly', 'review']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
+    for (const k of ['standard', 'manualOnly', 'review', 'edited']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
     // Why a fill's answer failed, as a code (types.js FailCode): words and dots, never text.
     if (out.type === 'fill_field' && out.code !== undefined && !(typeof out.code === 'string' && /^[a-z]+\.[a-z-]{1,30}$/.test(out.code))) drop('code');
     if (out.background !== undefined && out.background !== true) drop('background');

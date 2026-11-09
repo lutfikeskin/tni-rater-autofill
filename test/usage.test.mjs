@@ -93,6 +93,38 @@ test('change and fill events name the control, so repeated vehicle rows stay apa
   assert.deepEqual([filled.q, filled.key], ['2B9D', '2B9D@3']);
 });
 
+// Audit 2026-11-07, DATA-14: an answer from a value the agent corrected in the panel is logged as
+// such, so the parser's accuracy isn't counted with the agent's corrections.
+test('a fill_field says when its answer read the agent\'s correction, and the panel tells the plan', async () => {
+  const [, edited, plain] = fillEvents([{ filled: [
+    { key: 'k1', label: 'Date of birth', controlKind: 'text', source: 'intake', path: 'drivers[0].dob', edited: true },
+    { key: 'k2', label: 'Date of birth', controlKind: 'text', source: 'intake', path: 'drivers[1].dob' },
+  ] }], { carrier: 'progressive', page: 'AddDriver', view: 't1', overwrite: false, ms: 1, redact });
+  assert.deepEqual([edited.source, edited.edited], ['intake', true]);
+  assert.equal(plain.edited, undefined);
+  // CodeRabbit on #480: a failed answer isn't the agent's, even when its step read their correction.
+  const [, failedEv] = fillEvents([{ failed: [{ key: 'k1', label: 'Date of birth', controlKind: 'text', source: 'intake', path: 'drivers[0].dob', edited: true, code: 'answer.not-kept', reason: 'x' }] }],
+    { carrier: 'progressive', page: 'AddDriver', view: 't1', overwrite: false, ms: 1, redact });
+  assert.deepEqual([failedEv.result, failedEv.edited], ['failed', undefined]);
+  const { buildPlan } = await import('../src/plan.js');
+  const { progressive } = await import('../src/carriers/progressive.js');
+  const steps = buildPlan(record, progressive, {}, { edited: ['drivers[0].dob'] }).filter((s) => s.path === 'drivers[0].dob');
+  assert.ok(steps.length && steps.every((s) => s.edited === true));
+  assert.ok(buildPlan(record, progressive, {}).every((s) => !('edited' in s)), 'no edits, no mark');
+  const planFor = fs.readFileSync(new URL('../sidepanel/panel/plan-for.js', import.meta.url), 'utf8');
+  const core = fs.readFileSync(new URL('../sidepanel/panel/core.js', import.meta.url), 'utf8');
+  assert.match(planFor, /edited: editedOf\(record\)/);
+  assert.ok(core.includes('onPlanEdits((record) => (state.intake?.record === record ? [...(state.intake.agentEdited ?? []), ...(state.intake.agentDerived ?? [])] : []));'));
+  // CodeRabbit on #480: a value recomputed from the correction (claims box → any claims) counts, and
+  // a TNI standard never does.
+  const recordJs = fs.readFileSync(new URL('../sidepanel/panel/record.js', import.meta.url), 'utf8');
+  assert.ok(recordJs.includes('state.intake.agentDerived = [...new Set(Object.values(by).flat())];'));
+  const cleared = structuredClone(record);
+  cleared.claims = { ...(cleared.claims ?? {}), hasClaims: null };
+  const fallback = buildPlan(cleared, progressive, {}, { edited: ['claims.hasClaims'] }).filter((s) => s.standard && s.path === 'claims.hasClaims');
+  assert.ok(fallback.length && fallback.every((s) => !s.edited), 'a standard is never marked edited');
+});
+
 // Audit 2026-11-07, FLOW-12: a fill of the quote tab while the agent was on another, and how long its
 // page was hidden (the longest a frame saw), so the weekly review can tell throttled fills apart.
 test('a fill run says it ran in the background and how long its page was hidden, only when so', () => {
