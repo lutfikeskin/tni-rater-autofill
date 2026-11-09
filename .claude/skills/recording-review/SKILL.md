@@ -25,7 +25,8 @@ Before any analysis, check each recording against the question it was made for, 
 The panel saves each recording to Downloads as `recording-<id>.zip`. Move it into `layouts/recordings/` first (ignored, so it stays local), or ask the maintainer where it is.
 
 ```bash
-npm run recording -- layouts/recordings/recording-<id>.zip    # or the unzipped folder; writes reviews/recording-<id>.md
+npm run recording -- layouts/recordings/recording-<id>.zip    # or the unzipped folder; writes reviews/recording-<id>.md and its .summary.json
+npm run recording -- --compare <before>.zip <after>.zip       # two recordings of one quote side by side
 ```
 
 Check, from the report's header, **Flow** and the zip's `recording.json` (its `build`, `ended`, `events` and `dropped`):
@@ -50,7 +51,7 @@ Read `reviews/recording-<id>.md` whole, then open `events.jsonl` only when a fin
 
 ## 3. Find the speed candidates
 
-Group the waits across the recordings by what they were for (the report's words, one per `why`: before the fill `start`, after an answer `answer`, after a round of answers `round`, for a new view to load `load`, before a button that loads a view `before-load`, for the premium `rated`, before pressing Continue `continue`, after pressing Continue `continued`, for a lookup's answer `helper`, for a late question `drawn`) and by carrier. Each report's **Waits by kind** table has them for its recording: the count, the median and longest, how many ended quiet, at their limit or stopped, and the median slack. Across several recordings, combine the groups from the events rather than taking a median of medians. Find each wait's `settle(...)` call in `src/kit/` (`grep -n "why: '<why>'" src/kit/*.js`; a call with no `why`, such as the drivers' in `src/kit/drivers/`, by the `quietMs` the report names: `grep -n 'settle(' src/kit/*.js src/kit/drivers/*.js`) and note its file and line.
+Group the waits across the recordings by what they were for (the report's words, one per `why`: before the fill `start`, after an answer `answer`, after a round of answers `round`, for a new view to load `load`, before a button that loads a view `before-load`, for the premium `rated`, before pressing Continue `continue`, after pressing Continue `continued`, for a lookup's answer `helper`, for a late question `drawn`) and by carrier. Each report's **Waits by kind** table has them for its recording: the count, the median and longest, how many ended quiet, at their limit or stopped, and the median slack. Across several recordings, combine the groups from the events rather than taking a median of medians; each recording's `.summary.json` holds the same numbers as data. Find each wait's `settle(...)` call in `src/kit/` (`grep -n "why: '<why>'" src/kit/*.js`; a call with no `why`, such as the drivers' in `src/kit/drivers/`, by the `quietMs` the report names: `grep -n 'settle(' src/kit/*.js src/kit/drivers/*.js`) and note its file and line.
 
 A wait is a candidate only when all of these hold:
 
@@ -76,4 +77,4 @@ Send the brief as a file where the maintainer reads (in the Claude app, `SendUse
 
 ## After the decision
 
-Approved speed changes are made one wait group at a time, on a task branch from `origin/main`: a test that pins the new value, the mocks and replays for the carriers it touches, `npm test`, and a PR whose Checks pass. Then the maintainer records the same scenario on a build with the change, and this skill compares the two recordings: the wait's time and slack before and after, and that the fill answered, left and pressed the same things. A change whose re-recording shows a question missed, an answer not kept, or a wait now ending at its limit is reverted.
+Approved speed changes are made one wait group at a time, on a task branch from `origin/main`: a test that pins the new value, the mocks and replays for the carriers it touches, `npm test`, and a PR whose Checks pass. Then the maintainer records the same scenario on a build with the change, and this skill compares the two recordings with `npm run recording -- --compare <before> <after>`: its first section flags each answer the fill gave and the page kept before that it didn't give or keep after, then the buttons it pressed and each wait kind's count and median before and after. Read the wait's slack from each report. The comparison matches answers by their field's key; a question the fill left for the agent both times shows in neither. A change whose re-recording shows a question missed, an answer not kept, or a wait now ending at its limit is reverted.

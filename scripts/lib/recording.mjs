@@ -95,7 +95,7 @@ const endedSaid = (e) => {
   const held = holding.length ? `, ${holding.join(' and ')}` : '';
   return e.ended === 'quiet' ? 'the page was quiet' : e.ended === 'stopped' ? 'the fill stopped' : `at its limit of ${secs(e.maxMs ?? 0)}${held}`;
 };
-const slackSaid = (e) => (e.slack == null ? '' : e.slack >= (e.ms ?? 0) ? 'the page did nothing during it' : `${secs(e.slack)} after the page's last change`);
+const slackSaid = (e) => (e.slack == null ? '' : e.running ? 'a page request was still running as it ended: no slack' : e.slack >= (e.ms ?? 0) ? 'the page did nothing during it' : `${secs(e.slack)} after the page's last change`);
 const median = (xs) => {
   const s = [...xs].sort((a, b) => a - b);
   return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
@@ -106,13 +106,19 @@ const isAction = (e) => ['click', 'key', 'change'].includes(e.kind) || (e.kind =
 /**
  * `npm run recording -- <zip or folder> [--out file.md]`: the source, and where the report goes
  * (null: the default). Without --out the source is the first argument (it was skipped: live
- * recording, 2026-10-23).
+ * recording, 2026-10-23). With `--compare`, its recordings (REC-12): every argument but --out's.
  */
 export function cliArgs(argv) {
+  // Only --out (with its file) and --compare: a typo or a missing file is said, never run as
+  // something else (review of PR #481).
+  const unknown = argv.find((a) => a.startsWith('--') && a !== '--out' && a !== '--compare');
+  if (unknown) return { error: `unknown option ${unknown}` };
   const outAt = argv.indexOf('--out');
-  const out = outAt >= 0 ? argv[outAt + 1] ?? null : null;
-  const source = argv.find((a, i) => !a.startsWith('--') && (outAt < 0 || i !== outAt + 1)) ?? null;
-  return { source, out };
+  if (outAt >= 0 && (argv[outAt + 1] == null || argv[outAt + 1].startsWith('--'))) return { error: '--out needs a file name' };
+  const out = outAt >= 0 ? argv[outAt + 1] : null;
+  const given = argv.filter((a, i) => !a.startsWith('--') && (outAt < 0 || i !== outAt + 1));
+  if (argv.includes('--compare')) return { source: null, out, compare: given };
+  return { source: given[0] ?? null, out };
 }
 
 /** The top frame's pages and steps, in order, each with its events. */
@@ -240,7 +246,7 @@ function actions(events) {
  * a fill ran, its answers, its waits for the page and their slack, the page's requests, and the time
  * without a fill (the person's, or nobody's).
  */
-function timeTable(ordered, told, end) {
+function stepTimes(ordered, told, end) {
   const spans = [];
   for (const e of ordered) {
     if (e.kind !== 'fill' || (e.frame ?? 0) !== 0) continue;
@@ -264,18 +270,32 @@ function timeTable(ordered, told, end) {
   const within = (list, a, b) => list.reduce((m, [from, to]) => m + overlap(from, to, a, b), 0);
   const answers = ordered.filter((e) => e.kind === 'kit' && e.what === 'answer').map((e) => e.start ?? e.t);
   const requests = ordered.filter((e) => e.kind === 'request');
-  const out = ['## Where the time went', '',
-    "Filling: while a fill ran. Waiting: the fill waiting for the page, after its answers too; slack: the part after the page's last change or request. Without a fill: the person's time, or nobody's.", '',
-    '| # | Page · step | On screen | Filling | Answers | Waiting | Slack | Page requests | Without a fill |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- |'];
   const all = { screen: 0, filling: 0, answers: 0, waiting: 0, slack: 0, requests: 0, requestMs: 0, failed: 0 };
-  const cells = (r) => `${secs(r.screen)} | ${secs(r.filling)} | ${r.answers} | ${secs(r.waiting)} | ${secs(r.slack)} | ${r.requests} (${secs(r.requestMs)})${r.failed ? `, ${r.failed} failed` : ''} | ${secs(r.screen - r.filling)}`;
-  for (const { s, next, n } of told) {
+  const rows = told.map(({ s, next, n }) => {
     const on = (t) => t >= s.start && t < next;
     const theirs = requests.filter((e) => on(e.t));
     const row = { screen: next - s.start, filling: filling(s.start, next), answers: answers.filter(on).length,
       waiting: within(waits, s.start, next), slack: within(slacks, s.start, next),
       requests: theirs.length, requestMs: theirs.reduce((m, e) => m + (e.ms ?? 0), 0), failed: theirs.filter(failed).length };
     for (const k of Object.keys(all)) all[k] += row[k];
+    return { s, n, row };
+  });
+  return { rows, all };
+}
+
+/**
+ * **Where the time went**, per step and in all (stepTimes).
+ * @param {any[]} ordered
+ * @param {any[]} told
+ * @param {number} end
+ */
+function timeTable(ordered, told, end) {
+  const { rows, all } = stepTimes(ordered, told, end);
+  const out = ['## Where the time went', '',
+    "Filling: while a fill ran. Waiting: the fill waiting for the page, after its answers too; slack: the part after the page's last change or request. Without a fill: the person's time, or nobody's.", '',
+    '| # | Page · step | On screen | Filling | Answers | Waiting | Slack | Page requests | Without a fill |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- |'];
+  const cells = (r) => `${secs(r.screen)} | ${secs(r.filling)} | ${r.answers} | ${secs(r.waiting)} | ${secs(r.slack)} | ${r.requests} (${secs(r.requestMs)})${r.failed ? `, ${r.failed} failed` : ''} | ${secs(r.screen - r.filling)}`;
+  for (const { s, n, row } of rows) {
     out.push(`| ${n} | ${s.page}${s.step ? ` · ${s.step}` : ''} | ${cells(row)} |`);
   }
   out.push(`| | All | ${cells(all)} |`, '');
@@ -325,15 +345,11 @@ function outcomes(ordered, t0) {
  * @param {any[]} ordered
  */
 function waitTable(ordered) {
-  const waits = ordered.filter((e) => e.kind === 'kit' && e.what === 'wait' && typeof e.ms === 'number');
-  if (!waits.length) return [];
+  const groups = waitGroups(ordered);
+  if (!groups.length) return [];
   const out = ['## Waits by kind', '', '| Wait | n | Median | Longest | Quiet | At its limit | Stopped | Median slack |', '| --- | --- | --- | --- | --- | --- | --- | --- |'];
-  const kinds = [...new Set(waits.map((e) => e.why ?? null))];
-  for (const why of kinds) {
-    const of = waits.filter((e) => (e.why ?? null) === why);
-    const count = (ended) => of.filter((e) => e.ended === ended).length;
-    const slacks = of.map((e) => e.slack).filter((s) => typeof s === 'number');
-    out.push(`| ${WAITS[why] ?? why ?? 'for the page'} | ${of.length} | ${secs(median(of.map((e) => e.ms)))} | ${secs(Math.max(...of.map((e) => e.ms)))} | ${count('quiet')} | ${count('limit')} | ${count('stopped')} | ${slacks.length ? secs(median(slacks)) : '?'} |`);
+  for (const g of groups) {
+    out.push(`| ${WAITS[g.why] ?? g.why ?? 'for the page'} | ${g.n} | ${secs(g.medianMs)} | ${secs(g.maxMs)} | ${g.quiet} | ${g.limit} | ${g.stopped} | ${g.medianSlackMs == null ? '?' : secs(g.medianSlackMs)} |`);
   }
   out.push('');
   return out;
@@ -385,8 +401,29 @@ function lunaSection(ordered, t0) {
   return out;
 }
 
-/** The report, as Markdown. */
-export function recordingReport({ manifest, events }) {
+/**
+ * The fill's waits grouped by what they were for (its `why`, null for none), in the order first seen:
+ * how many, the median and longest ms, how many ended quiet, at their limit or stopped, and the
+ * median slack (null where none is known). Each frame's waits count.
+ * @param {any[]} ordered
+ */
+function waitGroups(ordered) {
+  const waits = ordered.filter((e) => e.kind === 'kit' && e.what === 'wait' && typeof e.ms === 'number');
+  return [...new Set(waits.map((e) => e.why ?? null))].map((why) => {
+    const of = waits.filter((e) => (e.why ?? null) === why);
+    const count = (ended) => of.filter((e) => e.ended === ended).length;
+    const slacks = of.map((e) => e.slack).filter((s) => typeof s === 'number');
+    return { why, n: of.length, medianMs: median(of.map((e) => e.ms)), maxMs: Math.max(...of.map((e) => e.ms)), quiet: count('quiet'), limit: count('limit'), stopped: count('stopped'),
+      medianSlackMs: slacks.length ? median(slacks) : null };
+  });
+}
+
+/**
+ * A recording read once for the report and the summary: its events in order, each fill's `ms`, each
+ * wait's `slack` and each answer's own wait worked out, its start and end, and its steps (`told`,
+ * each with its lines, its end and what left it).
+ */
+function prepared({ manifest, events }) {
   const ordered = [...events].sort((a, b) => a.t - b.t || (a.frame ?? 0) - (b.frame ?? 0) || (a.seq ?? 0) - (b.seq ?? 0));
   // How long each fill ran, on its end.
   let began = null;
@@ -399,6 +436,7 @@ export function recordingReport({ manifest, events }) {
   // the page was quiet from its start), in its own frame: a wait watches its own document, so another
   // frame's change didn't hold it. A burst's time since the last action before it.
   // An answer is an action from when it began (its event comes once its wait is over).
+  const requests = ordered.filter((e) => e.kind === 'request');
   const activity = ordered.filter((e) => e.kind === 'burst' || e.kind === 'request').map((e) => ({ at: e.end ?? e.t, frame: e.frame ?? 0 }));
   const actionTimes = ordered.filter(isAction).map((e) => (e.kind === 'kit' && e.what === 'answer' ? e.start ?? e.t : e.t));
   for (const e of ordered) {
@@ -412,6 +450,11 @@ export function recordingReport({ manifest, events }) {
         const kitLast = Math.min(waitEnd, Math.max(e.start, e.lastChange ?? e.start, e.lastHeld ?? e.start));
         if (waitEnd - kitLast < e.slack) { e.slackTrace = e.slack; e.slack = waitEnd - kitLast; }
       }
+      // A request is said as it ends (its event's `t` is its start): one in the wait's frame that began
+      // before the wait ended and ended after it was still running then, so none of the wait is
+      // slack (review of PR #481).
+      e.running = requests.some((r) => (r.frame ?? 0) === (e.frame ?? 0) && r.t < waitEnd && (r.end ?? r.t) > waitEnd);
+      if (e.running) e.slack = 0;
     }
     if (e.kind === 'burst') {
       const last = actionTimes.reduce((m, a) => (a < e.t && (m == null || a > m) ? a : m), null);
@@ -428,6 +471,23 @@ export function recordingReport({ manifest, events }) {
   const t0 = Date.parse(manifest.started) || ordered[0]?.t || 0;
   const end = Date.parse(manifest.ended) || ordered.at(-1)?.t || t0;
   const segs = segments(ordered);
+  const told = segs.map((s, i) => {
+    const next = segs[i + 1]?.start ?? end;
+    // In time order: a wait moved here from a later step is logged after this step's own lines.
+    const lines = actions(s.events).sort((x, y) => x.t - y.t);
+    // Left by the last button pressed on it: the agent's (a trusted click) or the extension's (the
+    // kit's press), whichever came last (REC-13, 2026-11-07: the agent's earlier click was named when
+    // the fill pressed Continue, and a step only the fill left showed none).
+    const leftBy = s.events.filter((e) => e.button && ((e.kind === 'click' && e.trusted !== false) || (e.kind === 'kit' && e.what === 'press')))
+      .reduce((last, e) => (!last || e.t >= last.t ? e : last), null);
+    return { s, lines, next, leftBy, n: i + 1 };
+  });
+  return { ordered, t0, end, told };
+}
+
+/** The report, as Markdown. */
+export function recordingReport({ manifest, events }) {
+  const { ordered, t0, end, told } = prepared({ manifest, events });
   const out = [`# Recording ${manifest.id}`, ''];
   out.push(`${manifest.carrier} · scenario ${quote(manifest.scenario)} · ${new Date(t0).toISOString()} · ${clock(end - t0)} long · ${ordered.length} events${manifest.dropped ? ` (${manifest.dropped} lost)` : ''}`);
   out.push(`Build ${manifest.build?.version ?? '?'} (${manifest.build?.channel ?? '?'}${manifest.build?.commit ? `, ${manifest.build.commit}` : ''})${manifest.test ? ' · a test run' : ''}${manifest.ended ? '' : ' · cut short (no end)'}`, '');
@@ -459,17 +519,6 @@ export function recordingReport({ manifest, events }) {
   if (ordered.some((e) => e.kind === 'panel' && e.closed)) out.push('The recorded tab was closed, which ended the recording.', '');
 
   out.push('## Flow', '', '| # | Page · step | Arrived | On screen | Actions | Left by |', '| --- | --- | --- | --- | --- | --- |');
-  const told = segs.map((s, i) => {
-    const next = segs[i + 1]?.start ?? end;
-    // In time order: a wait moved here from a later step is logged after this step's own lines.
-    const lines = actions(s.events).sort((x, y) => x.t - y.t);
-    // Left by the last button pressed on it: the agent's (a trusted click) or the extension's (the
-    // kit's press), whichever came last (REC-13, 2026-11-07: the agent's earlier click was named when
-    // the fill pressed Continue, and a step only the fill left showed none).
-    const leftBy = s.events.filter((e) => e.button && ((e.kind === 'click' && e.trusted !== false) || (e.kind === 'kit' && e.what === 'press')))
-      .reduce((last, e) => (!last || e.t >= last.t ? e : last), null);
-    return { s, lines, next, leftBy, n: i + 1 };
-  });
   for (const { s, lines, next, leftBy, n } of told) {
     const by = leftBy ? `${quote(leftBy.button.text)} (${leftBy.kind === 'kit' ? 'extension' : 'you'})` : '—';
     const load = s.events.find((e) => e.kind === 'load' && (e.frame ?? 0) === 0 && loadedIn(e) != null);
@@ -495,5 +544,94 @@ export function recordingReport({ manifest, events }) {
     }
     out.push('');
   }
+  return out.join('\n');
+}
+
+/**
+ * The recording's numbers as data (REC-12): what a review reads off the report by hand, for
+ * scripts and for `--compare`. Its steps (where the time went, in ms, and what left each), its waits
+ * by kind (as **Waits by kind**), the fill's answers in the order given (the field's key and label as
+ * the trace redacted them, whether the page kept it and, when not, why) and the buttons it pressed.
+ * Never a value: the trace keeps none.
+ * @param {{ manifest: any, events: any[] }} recording
+ */
+export function recordingSummary({ manifest, events }) {
+  const { ordered, t0, end, told } = prepared({ manifest, events });
+  const { rows, all } = stepTimes(ordered, told, end);
+  const at = (t) => Math.round(t - t0);
+  const stepOf = (t) => told.findLast(({ s }) => s.start <= t)?.n ?? 1;
+  const time = (r) => ({ onScreenMs: r.screen, fillingMs: r.filling, answers: r.answers, waitingMs: r.waiting, slackMs: r.slack, requests: r.requests, requestMs: r.requestMs, failedRequests: r.failed });
+  return {
+    summary: 1, id: manifest.id, carrier: manifest.carrier, scenario: manifest.scenario ?? null, started: manifest.started ?? null, ended: manifest.ended ?? null,
+    build: manifest.build ?? null, events: ordered.length,
+    steps: rows.map(({ s, n, row }) => {
+      const leftBy = told[n - 1].leftBy;
+      return { n, page: s.page, step: s.step, arrivedMs: at(s.start), ...time(row), leftBy: leftBy ? { button: leftBy.button.text ?? '', by: leftBy.kind === 'kit' ? 'extension' : 'you' } : null };
+    }),
+    all: time(all),
+    waits: waitGroups(ordered),
+    answers: ordered.filter((e) => e.kind === 'kit' && e.what === 'answer').map((e) => ({ key: e.field?.key ?? null, label: e.field?.label ?? '', ok: e.ok !== false,
+      ...(e.ok === false && e.code ? { code: e.code } : {}), ...(e.source ? { source: e.source } : {}), step: stepOf(e.start ?? e.t), atMs: at(e.start ?? e.t) })),
+    presses: ordered.filter((e) => e.kind === 'kit' && e.what === 'press').map((e) => ({ button: e.button?.text ?? '', step: stepOf(e.t), atMs: at(e.t) })),
+  };
+}
+
+/**
+ * Two recordings of the same quote side by side (REC-12, `npm run recording -- --compare a b`):
+ * the proof that a change (a shortened wait, a new rule) still answered the same things. What A's
+ * fill answered and kept that B's didn't comes first and is flagged, then what B answered that A
+ * didn't, answers kept in one and not the other, the buttons the fill pressed, the waits by kind
+ * (n and median) and the totals. Answers are matched by their field's key (its label when it has
+ * none), as the trace redacted it.
+ * @param {ReturnType<typeof recordingSummary>} a
+ * @param {ReturnType<typeof recordingSummary>} b
+ */
+export function compareReport(a, b) {
+  const keyOf = (x) => x.key ?? `label:${x.label}`;
+  const lastBy = (answers) => {
+    const m = new Map();
+    for (const x of answers) m.set(keyOf(x), x);
+    return m;
+  };
+  const A = lastBy(a.answers), B = lastBy(b.answers);
+  const name = (x) => quote(x.label || x.key || 'a question');
+  // A key counts as kept by how many of its answers the page kept, not by its last attempt: a refill
+  // that failed after two kept answers leaves both kept (review of PR #481). GEICO gives each
+  // vehicle's form the same keys, so one vehicle's answer missing in B leaves the key answered: a key
+  // kept fewer times in B is flagged. A refill of a kept answer counts too, so a flag is a question to
+  // look at, not proof, and equal counts can still hide a missing unit the trace doesn't name.
+  const keptTimes = (s) => s.answers.reduce((m, x) => (x.ok ? m.set(keyOf(x), (m.get(keyOf(x)) ?? 0) + 1) : m), new Map());
+  const timesA = keptTimes(a), timesB = keptTimes(b);
+  const inA = (k) => timesA.get(k) ?? 0, inB = (k) => timesB.get(k) ?? 0;
+  const onlyA = [...A.keys()].filter((k) => inA(k) && !B.has(k));
+  const onlyB = [...B.keys()].filter((k) => inB(k) && !A.has(k));
+  const lostInB = [...A.keys()].filter((k) => inA(k) && B.has(k) && !inB(k));
+  const gainedInB = [...B.keys()].filter((k) => inB(k) && A.has(k) && !inA(k));
+  const fewerInB = [...A.keys()].filter((k) => inB(k) && inB(k) < inA(k));
+  const out = [`# Recordings compared: A ${a.id} · B ${b.id}`, '',
+    `A: ${a.carrier} · ${quote(a.scenario)} · build ${a.build?.version ?? '?'}${a.build?.commit ? ` (${a.build.commit})` : ''} · ${many(a.answers.length, 'answer')} · ${secs(a.all.onScreenMs)}`,
+    `B: ${b.carrier} · ${quote(b.scenario)} · build ${b.build?.version ?? '?'}${b.build?.commit ? ` (${b.build.commit})` : ''} · ${many(b.answers.length, 'answer')} · ${secs(b.all.onScreenMs)}`, ''];
+  if (a.carrier !== b.carrier) out.push('**Not the same carrier: the answers can\'t be compared.**', '');
+  out.push('## Answers', '');
+  if (!onlyA.length && !lostInB.length && !fewerInB.length) out.push('Every answer A\'s fill gave and the page kept, B\'s gave and the page kept too.');
+  for (const k of onlyA) out.push(`- **NOT ANSWERED IN B**: ${name(A.get(k))} (step ${A.get(k).step} in A)`);
+  for (const k of lostInB) out.push(`- **NOT KEPT IN B**: ${name(B.get(k))}${B.get(k).code ? ` (\`${B.get(k).code}\`)` : ''}, kept in A`);
+  for (const k of fewerInB) out.push(`- **KEPT FEWER TIMES IN B**: ${name(A.get(k))}, ${timesA.get(k)} times in A, ${timesB.get(k) ?? 0} in B (one for each vehicle, driver or trailer, or a refill)`);
+  for (const k of onlyB) out.push(`- answered in B only: ${name(B.get(k))} (step ${B.get(k).step} in B)`);
+  for (const k of gainedInB) out.push(`- kept in B, not in A: ${name(A.get(k))}${A.get(k).code ? ` (\`${A.get(k).code}\` in A)` : ''}`);
+  out.push('', '## Buttons the fill pressed', '');
+  const presses = (s) => s.presses.map((p) => p.button);
+  if (JSON.stringify(presses(a)) === JSON.stringify(presses(b))) out.push(`The same, in the same order: ${presses(a).map(quote).join(', ') || 'none'}.`);
+  else out.push(`- A: ${presses(a).map(quote).join(', ') || 'none'}`, `- B: ${presses(b).map(quote).join(', ') || 'none'}`);
+  out.push('', '## Waits by kind', '', '| Wait | A n | A median | B n | B median | Median change |', '| --- | --- | --- | --- | --- | --- |');
+  const kinds = [...new Set([...a.waits, ...b.waits].map((g) => g.why ?? null))];
+  for (const why of kinds) {
+    const x = a.waits.find((g) => (g.why ?? null) === why), y = b.waits.find((g) => (g.why ?? null) === why);
+    const change = x && y ? `${y.medianMs - x.medianMs >= 0 ? '+' : '−'}${secs(Math.abs(y.medianMs - x.medianMs))}` : '—';
+    out.push(`| ${WAITS[why] ?? why ?? 'for the page'} | ${x?.n ?? 0} | ${x ? secs(x.medianMs) : '—'} | ${y?.n ?? 0} | ${y ? secs(y.medianMs) : '—'} | ${change} |`);
+  }
+  out.push('', '## Time', '', '| | A | B |', '| --- | --- | --- |');
+  for (const [label, k] of [['On screen', 'onScreenMs'], ['Filling', 'fillingMs'], ['Waiting', 'waitingMs'], ['Slack', 'slackMs']]) out.push(`| ${label} | ${secs(a.all[k])} | ${secs(b.all[k])} |`);
+  out.push(`| Answers | ${a.all.answers} | ${b.all.answers} |`, '');
   return out.join('\n');
 }
