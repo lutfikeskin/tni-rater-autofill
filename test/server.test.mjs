@@ -8,9 +8,9 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom, SCHEMA_VERSION } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, LUNA_TIMEOUT_MS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom, SCHEMA_VERSION } from '../server/index.mjs';
 import { MAX_EVENTS } from '../src/usage.js';
-import { buildRequest, MAX_REQUEST_CHARS } from '../src/ai/luna.js';
+import { buildRequest, MAX_REQUEST_CHARS, TIMEOUT_MS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
 import { imageFiles } from '../scripts/lib/deploy.mjs';
@@ -162,6 +162,26 @@ test('keeps bounded Luna usage counters and drops unrelated fields', async () =>
     { missing: 1, unverified: 1, chose: 0, tooLarge: 1 });
   assert.equal(suggest.promptHash, '0123456789ab');
   assert.equal(suggest.clientName, undefined);
+});
+
+// Audit 2026-11-07, AI-07: cited rule ids on decisions, and one event per question Luna left.
+test("keeps a decision's cited rule ids and each left question, dropping what is out of shape", async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'ai_decision', q: '4A', decision: 'accepted', ruleIds: ['general.cdl-blank', 'progressive.um'] }),
+      ev({ type: 'ai_decision', q: '4B', decision: 'accepted', ruleIds: ['The client said so'] }),
+      ev({ type: 'ai_decision', q: '4C', decision: 'accepted', ruleIds: Array.from({ length: 13 }, (_, i) => `general.r${i}`) }),
+      ev({ type: 'ai_leave', q: '7Z', label: 'Prior carrier tenure', controlKind: 'radio', leaveWhy: 'missing', intakePath: 'priorInsurance.years', value: 'x' }),
+      ev({ type: 'ai_leave', q: '7Y', leaveWhy: 'because' }),
+    ] })).json();
+    assert.equal(r.accepted, 5);
+  });
+  const [kept, text, many, left, odd] = stored(dataDir);
+  assert.deepEqual(kept.ruleIds, ['general.cdl-blank', 'progressive.um']);
+  assert.deepEqual([text.ruleIds, text.dropped.includes('ruleIds'), many.ruleIds], [undefined, true, undefined]);
+  assert.deepEqual([left.q, left.label, left.controlKind, left.leaveWhy, left.intakePath, left.value], ['7Z', 'Prior carrier tenure', 'radio', 'missing', 'priorInsurance.years', undefined]);
+  assert.deepEqual([odd.leaveWhy, odd.dropped.includes('leaveWhy')], [undefined, true]);
 });
 
 test('token, content type and size checks', async () => {
@@ -631,7 +651,7 @@ test('keeps an intake marked as a test run, and only a yes/no mark', async () =>
 
 test('keeps the agent\'s settings, booleans and where usage goes only', async () => {
   const dataDir = tmp();
-  const values = { autoFollowUps: true, autoAdvance: false, autoPages: false, overwrite: false, aiOn: true, aiAuto: false, aiKey: true, uploads: 'central' };
+  const values = { autoFollowUps: true, autoAdvance: false, autoPages: false, overwrite: false, aiOn: true, aiAuto: false, aiNames: true, aiKey: true, uploads: 'central' };
   await withServer({ dataDir }, async ({ post }) => {
     await post({ events: [
       ev({ type: 'agent_settings', filled: undefined, reason: 'changed', changed: 'autoAdvance', values }),
@@ -874,6 +894,36 @@ test('a quoted premium is kept in its shape; anything else in it is dropped', as
   assert.deepEqual([...odd.dropped].sort(), ['dueToday', 'insured', 'payments', 'termMonths']);
 });
 
+// The quote summary the agent saved (Save summary, audit 2026-11-07 UX-05): kept whole in its shape;
+// one with anything else in it, text too long, or too large, refused whole, never trimmed.
+test('a quote summary is kept whole in its shape; one out of it is refused', async () => {
+  const row = { label: 'ZIP', value: '21201', source: 'intake', sourceSaid: 'Intake', note: null };
+  const summary = { client: { name: 'Sample Hauling LLC', fileName: 'sample.pdf', state: 'Maryland' }, at: '2026-11-07T15:04:00.000Z', version: '0.9.32',
+    carriers: [{ id: 'geico', name: 'GEICO', practice: false, pages: [{ title: 'Quote & Coverages', at: '2026-11-07T15:00:00.000Z', said: null,
+      counts: [{ source: 'intake', sourceSaid: 'Intake', n: 1 }], rows: [row] }] }],
+    overrides: [{ kind: 'edit', carrier: null, page: null, label: 'Company name', value: 'Sample Hauling LLC', said: 'Corrected in the panel' }],
+    ai: [], marked: [{ ...row, label: 'Prior claims', value: 'Marked done', source: 'marked', sourceSaid: 'Marked done', carrier: 'GEICO', page: 'Quote & Coverages' }], open: 0, answers: 1 };
+  const dataDir = tmp();
+  const sum = (over) => ev({ filled: undefined, type: 'quote_summary', carrier: undefined, page: undefined, summary: { ...summary, ...over } });
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      sum({}),
+      sum({ extra: 'x' }),
+      sum({ marked: [{ ...row, value: 'x'.repeat(501) }] }),
+      sum({ carriers: [{ ...summary.carriers[0], tabId: 3 }] }),
+      ev({ filled: undefined, type: 'quote_summary', carrier: undefined, page: undefined }),
+      // Under 512 K characters, over 512 KB in UTF-8 (3 bytes each): too large too.
+      sum({ carriers: [{ ...summary.carriers[0], pages: Array.from({ length: 200 }, () => ({ ...summary.carriers[0].pages[0], rows: Array.from({ length: 4 }, () => ({ ...row, value: 'é'.repeat(200) + '名'.repeat(200) })) })) }] }),
+      sum({ carriers: Array.from({ length: 6 }, () => ({ ...summary.carriers[0], pages: Array.from({ length: 200 }, () => ({ ...summary.carriers[0].pages[0], rows: Array.from({ length: 2 }, () => ({ ...row, value: 'v'.repeat(400) })) })) })) }),
+    ] })).json();
+    assert.equal(r.accepted, 1);
+    assert.deepEqual(r.rejected, [1, 2, 3, 4].map((index) => ({ index, error: 'quote_summary needs a summary in its shape' })).concat([5, 6].map((index) => ({ index, error: 'event too large' }))));
+  });
+  const [kept, ...more] = stored(dataDir);
+  assert.equal(more.length, 0);
+  assert.deepEqual([kept.type, kept.summary, kept.dropped], ['quote_summary', summary, undefined]);
+});
+
 // A real panel request (src/ai/luna.js), so the server's check can't drift from what Luna sends.
 const lunaBody = () => buildRequest(collectItems([{ unknown: [{ key: 'haz', label: 'Hazardous materials requiring placards?', controlKind: 'select', options: ['Yes', 'No'], current: '' }] }]).items,
   { carrier: 'geico', page: 'operations', active: { drivers: 0, vehicles: 0 }, record: { operations: {}, drivers: [], vehicles: [] } });
@@ -918,6 +968,26 @@ test('/v1/luna: 501 without a key, a daily limit, and OpenAI refusing the server
     assert.equal(limited.headers.get('retry-after'), '3600');
   });
   assert.equal(lunaRequestError(lunaBody()), null);
+});
+
+// Audit 2026-11-07, AI-09: the server gives up on OpenAI well before the panel gives up on it, so the
+// panel gets the server's 504 instead of leaving a call that is still paid for.
+test("the server's wait for OpenAI ends at least 5 s before the panel's", () => {
+  assert.ok(LUNA_TIMEOUT_MS + 5000 <= TIMEOUT_MS, `${LUNA_TIMEOUT_MS} vs ${TIMEOUT_MS}`);
+});
+
+// CodeRabbit on #416: OpenAI's headers in time, its body still coming when the wait ends, is a 504
+// too (the panel says "The AI assistant took too long"), not an unreadable answer or OpenAI's own status.
+test('/v1/luna: a body still being read when the wait ends is a 504, an answer or an error alike', async () => {
+  for (const [ok, status] of [[true, 200], [false, 500]]) {
+    const fetchImpl = async (url, init) => ({ ok, status, headers: new Headers(),
+      json: () => new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))) });
+    await withServer({ dataDir: tmp(), openaiKey: 'sk-server', lunaTimeoutMs: 50, fetchImpl }, async ({ base }) => {
+      const res = await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
+      assert.equal(res.status, 504, `OpenAI ${status}`);
+      assert.deepEqual(await res.json(), { error: 'OpenAI did not answer' });
+    });
+  }
 });
 
 // Audit 2026-11-07, AI-01: the server's bound is above the panel's, so the largest request the panel

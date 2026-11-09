@@ -34,13 +34,13 @@ import { companyName, companyStructure, companyStructureWarn, companyStructureNo
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitRaised,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
-import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
+import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr } from '../normalize.js';
 import { HAZ_HAUL } from '../util.js';
 import { filingsIntent } from '../answers/filings.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreightHauler } from '../answers/classes.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingIs } from '../answers/state.js';
-import { recentModel, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
+import { recentModel, vehicleValueNote, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
 import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorLimit, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
 
 // The intake's current bodily injury limit in Progressive's words: its "State Minimum" is the
@@ -106,12 +106,6 @@ const businessNames = (r) => [companyName(r.applicant.name) || r.applicant.owner
 const noIntakeZip = (r) => !r.garaging?.zip;
 const vehicleZipNote = (r) => (noIntakeZip(r) ? 'The intake has no garaging ZIP and Progressive left this empty: enter where the vehicle is kept.' : null);
 
-// The intake's vehicle value, only when it's a dollar amount. Anything else ("N/A", "about
-// 40k") goes to the agent with the intake's text, rather than being typed and cleared.
-const vehicleValueNote = (r, a) => {
-  const v = r.vehicles?.[a.vehicles ?? 0]?.value;
-  return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
-};
 
 // "Had the vehicle less than one year": TNI's standard No (2026-10-19), except for a vehicle of this
 // model year or later (src/answers/vehicles.js recentModel): that one is the agent's to ask the client.
@@ -281,8 +275,7 @@ const filingsAsked = (r) => (ntlNoDotFilings(r) || filingsBlankNoNumber(r) ? fal
 // and not answered yet: the USDOT and filings questions (`1ED`, `1F3`, `CA`, the Federal filing)
 // are the agent's, with a note saying why (`ntlDotFilingsHold`), and Verify USDOT isn't clicked.
 // Business Owner Info comes before Rates, so the USDOT number waits for the NTL answer there too.
-const held = (source) => (r) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r) : source);
-const holdOr = (note) => (r) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r) : note ?? null);
+// `held` / `holdOr`: src/normalize.js ntlHeld / ntlHoldOr, shared by the carriers.
 const filingsSource = (r) => (ntlNoFilings(r) || filingsBlankNoNumber(r) ? 'standard' : 'derived');
 const usesEld = (r) => explicitBoolean(r, 'operations.usesEld');
 const eldNote = (r) => (usesEld(r) == null ? 'The intake does not answer the ELD question.' : null);
@@ -410,20 +403,24 @@ const forHireNote = (r) => (forHire(r) == null ? `Whether a ${r.operations.busin
 // Has a USDOT number: Yes with one; without one, the intake's 60-day answer decides, and no answer
 // is the agent's (2026-10-09; until then "will not" was asserted). "No" in the intake's USDOT box
 // (`noDot`) is No too (TNI, 2026-10-26: answer to PR question), unless the 60-day answer says one is coming.
-// So are "None" and "N/A" there (R14), and an MC number on the intake changes nothing (R12).
+// So are "None" and "N/A" there (R14), also with an MC number on the intake (R12). An MC number with a
+// blank USDOT box is the agent's, also with the 60-day No, as on GEICO (the maintainer, 2026-11-07,
+// audit CARR-02; until then that No was answered).
 // On an NTL quote No, and the number is neither typed nor verified (TNI, 2026-10-26, W44-28: "US DOT
 // is not added … if its NTL, in every case"); the intake's own No ("will not have one") stays `derived`.
 // This wording is accepted also when the client has a USDOT number (TNI, 2026-10-26: answer to PR
 // question).
 const USDOT_NO = 'No - and the customer will not have a USDOT number';
 const intakeUsdotNo = (r) => !r.applicant.dot && r.applicant.mcDotWithin60Days !== true
-  && (r.applicant.mcDotWithin60Days === false || r.applicant.noDot === true);
+  && ((r.applicant.mcDotWithin60Days === false && !r.applicant.mc) || r.applicant.noDot === true);
 const hasUsdot = (r) => (ntlNoDotFilings(r) ? USDOT_NO : r.applicant.dot ? 'Yes - the customer has a USDOT number'
   : r.applicant.mcDotWithin60Days === true ? 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days'
     : intakeUsdotNo(r) ? USDOT_NO : null);
 const hasUsdotSource = (r) => (ntlNoDotFilings(r) && !intakeUsdotNo(r) ? 'standard' : 'derived');
 const dotOnQuote = (r) => !!r.applicant.dot && !ntlNoDotFilings(r);
-const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT number and doesn\'t say whether one is expected within 60 days: answer it yourself.' : null);
+const hasUsdotNote = (r) => (hasUsdot(r) != null ? null
+  : r.applicant.mc ? 'The intake has an MC number but no USDOT number: answer it yourself.'
+    : 'The intake has no USDOT number and doesn\'t say whether one is expected within 60 days: answer it yourself.');
 
 // Rates as TNI agents work it (cargo and GL added, bill plan, back, Recalculate, Print). With NTL
 // the whole page is the agent's, Recalculate and Print too, until the
@@ -564,6 +561,8 @@ const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
+  // The quote is started on the agent home page (quoteState below).
+  display: { logo: 'assets/raters/progressive.svg', portalUrl: 'https://www.foragentsonly.com/home/', product: 'Commercial auto', classesSaid: 'expediters and general freight' },
   hosts: [/(^|\.)foragentsonly\.com$/, /(^|\.)progressive\.com$/],
   // ExtJS components are only reachable from the page's own JavaScript world.
   world: 'MAIN',

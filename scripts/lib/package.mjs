@@ -44,8 +44,70 @@ export function zipName(version, { label = null, commit = null } = {}) {
   return `tni-rater-autofill-${version}-${label}-${(commit ?? 'nocommit').replace('+', '-')}.zip`;
 }
 
-// What the extension runs: the files and folders npm run package copies (the panel's built).
-export const PACKAGED = ['manifest.json', 'background.js', 'icons', 'lib', 'sidepanel', 'src'];
+// What the extension runs: the files and folders npm run package copies (the panel's built). Not
+// lib/: the vendored PDF.js and fflate are imported only by the panel, whose build carries them
+// (audit 2026-11-07, QA-09); their licences go in THIRD_PARTY_NOTICES.txt instead.
+export const PACKAGED = ['manifest.json', 'background.js', 'icons', 'sidepanel', 'src'];
+
+// The store zip carries no source maps (audit 2026-11-07, QA-09): they are as big as the code
+// again. The store build's maps go in a zip of their own beside it, named after it, to read an
+// agent's stack trace against the code they ran; the unpacked copy keeps its maps in place.
+export const mapsZipName = (zip) => zip.replace(/\.zip$/, '-sourcemaps.zip');
+// The fill engine's built code names its map in its last line; the store copy, without the map,
+// doesn't (the panel's build leaves it out itself: sourcemap 'hidden' in store mode).
+export function withoutMapUrl(code) {
+  const out = code.replace(/\n\/\/# sourceMappingURL=[^\n]*\s*$/, '\n');
+  if (out === code) throw new Error('expected the code to end with its sourceMappingURL');
+  return out;
+}
+
+// Third-party code the package carries, and its licences (audit 2026-11-07, QA-09): the npm
+// packages the panel's build and the fill engine take in, each named by the path of a module they
+// bundled, and the files scripts/vendor.mjs copies into lib/ from the packages named here.
+export const VENDORED = { 'lib/pdf.min.mjs': 'pdfjs-dist', 'lib/pdf.worker.min.mjs': 'pdfjs-dist', 'lib/fflate.mjs': 'fflate' };
+export function packageOf(id) {
+  const file = id.replaceAll('\\', '/').replace(/^\0/, '').replace(/\?.*$/, '');
+  const at = file.lastIndexOf('/node_modules/');
+  if (at >= 0) {
+    const [first, second] = file.slice(at + '/node_modules/'.length).split('/');
+    return first.startsWith('@') ? `${first}/${second}` : first;
+  }
+  const lib = Object.keys(VENDORED).find((f) => file === f || file.endsWith(`/${f}`));
+  return lib ? VENDORED[lib] : null;
+}
+
+// What a Vite build took in from other people's code: its chunks' modules and the files it emitted
+// as they were (PDF.js's worker), as package names, added to `found`.
+export function noticesPlugin(found) {
+  return {
+    name: 'tni-notices',
+    generateBundle(_, bundle) {
+      for (const out of Object.values(bundle)) {
+        const ids = out.type === 'chunk' ? Object.keys(out.modules) : out.originalFileNames ?? [];
+        for (const id of ids) {
+          const name = packageOf(id);
+          if (name) found.add(name);
+        }
+      }
+    },
+  };
+}
+
+// THIRD_PARTY_NOTICES.txt: each package's name, version and licence, then its licence file as the
+// package ships it. A package without one fails the package, rather than going out unnoticed.
+export const NOTICES_FILE = 'THIRD_PARTY_NOTICES.txt';
+export function thirdPartyNotices(root, names) {
+  const parts = [...new Set(names)].sort().map((name) => {
+    const dir = path.join(root, 'node_modules', ...name.split('/'));
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    const file = fs.readdirSync(dir).find((f) => /^(licen[cs]e|copying)(\.(md|txt))?$/i.test(f));
+    if (!file) throw new Error(`${name} has no licence file to carry`);
+    const text = fs.readFileSync(path.join(dir, file), 'utf8').replace(/\r\n/g, '\n').trim();
+    return `${pkg.name} ${pkg.version} (${pkg.license})\n${'-'.repeat(60)}\n${text}\n`;
+  });
+  if (!parts.length) throw new Error("no third-party code found: the build didn't report its modules");
+  return `TNI Rater Autofill carries the following third-party software, under these licences.\n\n${parts.join('\n\n')}`;
+}
 
 // The commit the packaged files come from, +dirty when they, or what builds the panel, have changes
 // git doesn't have; none when git can't say (the package is still built).

@@ -6,7 +6,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { redactionTerms, supportedClass } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
 import { advanceFor } from '../../src/units.js';
-import { quoteProgress, stopScreen } from '../../src/carriers.js';
+import { quoteProgress, ratersSaid, stopScreen } from '../../src/carriers.js';
 import { quotedCarrierPolicy } from '../../src/util.js';
 import { fillEvents, redactor, sha256Hex, knownStep } from '../../src/usage.js';
 import { stateCode, stateMismatch } from '../../src/quote-state.js';
@@ -28,7 +28,8 @@ import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishin
 import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
 import { markTab } from './tab-mark.js';
-import { bindQuoteTab, quoteOwnerIssue } from './quote-owner.js';
+import { fillEnded, fillRunning } from './fill-watch.js';
+import { bindQuoteTab, portalHold, quoteOwnerIssue } from './quote-owner.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -68,35 +69,41 @@ function resetViews() {
 
 // `active`: the vehicle, driver and trailer the fill's plan is for (fillContext), which the agent's
 // picker may have left since. `unitsListed`: the unit list on screen holds every intake unit
-// (pickUnitToAdd), so its Looks Good may be clicked (advanceFor).
-/** @type {(carrier: CarrierConfig, extra?: FillOptions, autoAdvance?: boolean, active?: object, unitsListed?: boolean) => FillOptions} */
-const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 'auto-advance'), active = state.active, unitsListed = false) => ({
+// (pickUnitToAdd), so its Looks Good may be clicked (advanceFor). `fill`: the fill's own tab, its
+// address and intake (fillContext): what the options say is that tab's, from its maps (tabMaps), never
+// the tab in front, which may have changed while the fill was prepared (audit 2026-11-07, FLOW-08).
+/** @type {(carrier: CarrierConfig, extra?: FillOptions, autoAdvance?: boolean, active?: object, unitsListed?: boolean, fill?: { tabId?: number, tabUrl?: string, intake?: any }) => FillOptions} */
+const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 'auto-advance'), active = state.active, unitsListed = false,
+  fill = { tabId: state.tab?.id, tabUrl: state.tab?.url, intake: state.intake }) => fillOptionsFor(carrier, extra, autoAdvance, active, unitsListed, fill, tabMaps(fill.tabId), pageOf(fill.tabUrl));
+/** @type {(carrier: CarrierConfig, extra: FillOptions, autoAdvance: boolean, active: object, unitsListed: boolean, fill: { tabId?: number, tabUrl?: string, intake?: any }, maps: any, page: string) => FillOptions} */
+const fillOptionsFor = (carrier, extra, autoAdvance, active, unitsListed, fill, maps, page) => ({
   replaceChoices: !!carrier.replaceChoices,
   // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
   // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only. The
   // agent's Fill this page passes none (fillPage): it gives the answer again.
-  takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: Object.fromEntries([...Object.keys(givenEarlier(state.tab?.id)), ...(state.filled?.keys() ?? [])].map((key) => [key, true])) } : null,
+  takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: Object.fromEntries([...Object.keys(givenEarlier(fill.tabId)), ...(maps.filled?.keys() ?? [])].map((key) => [key, true])) } : null,
   // The field keys this tab's fills answered: one the page has reset since is given again only on a
   // quiet page (W43-21). Keys only.
-  filledBefore: [...(state.filled?.keys() ?? [])],
+  filledBefore: [...(maps.filled?.keys() ?? [])],
   // Carriers whose pages never wait on a server per answer are filled a round at a time.
   batch: !!carrier.batch,
   // Steps of a one-address application already continued from (a step the agent goes back to
   // isn't continued again). Each entry is scoped by its own step, not the one the panel last heard
   // the tab was on: GEICO's Vehicles is continued per vehicle, its other steps once a quote, and
   // each of its steps per form and button (advance `byForm`: "Vehicles@next@<form>").
-  doneSteps: [...state.doneSteps].map((s) => [s, s.slice(s.indexOf('|', String(pageOf(state.tab?.url)).length + 1) + 1)])
-    .filter(([s, raw]) => s === stepScope(pageOf(state.tab?.url), carrier, active, carrier.layoutSteps ? knownStep(carrier, raw.split('@')[0]) : undefined) + raw).map(([, raw]) => raw),
+  doneSteps: [...(maps.doneSteps ?? [])].map((s) => [s, s.slice(s.indexOf('|', String(page).length + 1) + 1)])
+    .filter(([s, raw]) => s === stepScope(page, carrier, active, carrier.layoutSteps ? knownStep(carrier, raw.split('@')[0]) : undefined) + raw).map(([, raw]) => raw),
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
-  advance: autoAdvance && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? advanceFor(carrier, unitsListed) : null,
+  // The fill's own tab's picks, of its quote: the address now when it is in front, else the one the fill was asked on.
+  advance: autoAdvance && carrier.advance && !pendingAi(fill.tabId, page, fill.tabId === state.tab?.id ? state.tab?.url : fill.tabUrl).length ? advanceFor(carrier, unitsListed) : null,
   // "Check answers before Continue": Continue only for the page as the agent approved it (Looks
   // right passes its receipt as `confirmed`). Kept on this computer, not in the usage log.
   hold: switchOn('checkBeforeContinue', 'check-continue'),
   confirmed: null,
   // Add NTL done on this intake's quote survives a panel reload (its removal hold depends on it).
-  doneActions: [...state.doneActions, ...(state.intake?.ntlAdded ? ['addNtl'] : [])],
-  visitedPages: [...state.visitedPages],
+  doneActions: [...(maps.doneActions ?? []), ...(fill.intake?.ntlAdded ? ['addNtl'] : [])],
+  visitedPages: [...(maps.visitedPages ?? [])],
   // The carrier's own stop (see showStopPage): the page kit refuses to fill or click there too.
   stopPages: Object.keys(carrier.stopPages ?? {}),
   // Steps that are the agent's (GEICO's MVR & CLUE, Payment Information), by name: the kit reads
@@ -107,23 +114,23 @@ const fillOptions = (carrier, extra = {}, autoAdvance = switchOn('autoAdvance', 
   // left for the agent (pagekit unitHeld). Element names and numbers only.
   units: {
     active: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, active?.[list] ?? 0])),
-    count: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, state.intake?.record?.[list]?.length ?? 0])),
-    bound: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...state.unitForms?.[list] }])),
+    count: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, fill.intake?.record?.[list]?.length ?? 0])),
+    bound: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...maps.unitForms?.[list] }])),
   },
   // A form that names its driver (carrier.unitNames: Progressive's "Questions about <name>") is
   // filled only for the driver the plan is for (W43-37).
-  formUnit: unitNameFor(carrier, extra.expectPage ?? pageOf(state.tab?.url), active, state.intake?.record),
+  formUnit: unitNameFor(carrier, extra.expectPage ?? page, active, fill.intake?.record),
   // What this tab's fills gave, by field key, with the unit each was for: a field still showing
   // another unit's answer gets this unit's (W43-38), and one showing otherwise now is kept (pagekit
   // `changedSince`). Those given before the panel opened too (givenEarlier), from the tab's kept reports.
-  givenBefore: { ...givenEarlier(state.tab?.id), ...Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },
+  givenBefore: { ...givenEarlier(fill.tabId), ...Object.fromEntries([...(maps.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])) },
   // A page that shows a few units' rows at a time (Progressive's Rates): the kit pages through them.
   pager: carrier.unitPager ?? null,
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
-  skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
+  skip: [...(maps.agentKeys?.get(editScope(page)) ?? [])],
   // A developer recording runs on this tab: the kit says what it waits for and does (its `trace`,
   // docs/developer-recording.md). A fill is only ever on the tab in front.
-  ...(state.recording && !state.recording.stopping && state.recording.tabId === state.tab?.id ? { trace: true } : {}),
+  ...(state.recording && !state.recording.stopping && state.recording.tabId === fill.tabId ? { trace: true } : {}),
   ...extra,
 });
 
@@ -205,6 +212,9 @@ function notePageMoved(ctx) {
 const UNANSWERED_MS = 5000;
 function watchFill(ctx) {
   if (!inExtension) return () => {};
+  // Said to the service worker while it runs, so it is stopped if this panel goes away meanwhile
+  // (fill-watch.js; audit 2026-11-07, UX-03).
+  fillRunning(ctx.run, ctx.tabId, worldFor(ctx.carrier));
   const lists = new Map();
   // Each frame's latest items (pagekit `itemsAt`, the round's snapshot, and its list).
   const judged = new Map();
@@ -260,7 +270,7 @@ function watchFill(ctx) {
       ...(order.length ? { frames: order } : {}), phase, phaseKey };
     renderSteps();
   }, 500);
-  return () => clearInterval(timer);
+  return () => { clearInterval(timer); fillEnded(ctx.run); };
 }
 
 // Step 2's Stop: halts the running fill in every frame of its tab (pagekit stop), as an agent edit
@@ -332,15 +342,23 @@ function logFillError(ctx, error) {
     rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, ...(ctx.retried ? { retried: true } : {}), error: fillErrorText(ctx, error), ...ctx.ids });
 }
 
+// Whether a fill has answered the page whose report this is: one made only to say a fill was dropped
+// before it began (noteTabLeft's `unfilled`) hasn't, so the page's next fill is its opening one.
+/** @param {string | null} key */
+function filledReport(key) {
+  const report = key ? state.reports.get(key) : null;
+  return !!report && !report.unfilled;
+}
+
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || quoteOwnerIssue(ctx.tabId)) return;
+  if (state.autoPaused || !switchOn('autoFollowUps', 'auto-followups') || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || quoteOwnerIssue(ctx.tabId) || portalHold(ctx.tabId)) return;
   // Held by the quote's state or the defaults question, a follow-up waits for nothing. A step with no
   // report yet (AmWINS' next step at the same address, which autoFill fills as a new page) is a page's
   // opening fill: fillPage keeps it for resumeHeldFill, to run once the hold lifts.
   if (stateIssue() || defaultsHold()) {
-    if (ctx.tabId === state.tab?.id && pageOf(state.tab?.url) === page && !state.reports.has(reportKey(ctx.tabId, page, state.tab.carrier))) fillPage({ auto: 'page' });
+    if (ctx.tabId === state.tab?.id && pageOf(state.tab?.url) === page && !filledReport(reportKey(ctx.tabId, page, state.tab.carrier))) fillPage({ auto: 'page' });
     return;
   }
   if (drawn) state.autoDrawn = page;
@@ -357,11 +375,11 @@ async function autoFill(page) {
   // The client may have been cleared while this fill was waiting to run.
   if (state.autoPaused || state.filling || state.closing || state.resetting || state.newQuoteFailed || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   // Nor on a tab whose quote wasn't started with this intake (quote-owner.js).
-  if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue()) return;
+  if (stopNoteFor(state.tab.carrier, page) || stateIssue() || defaultsHold() || quoteOwnerIssue() || portalHold()) return;
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
   // step themselves (same address, new questions). It's filled as a new page, with its report.
-  if (!state.reports.has(reportKey(tabId, page, carrier))) { fillPage({ auto: 'page' }); return; }
+  if (!filledReport(reportKey(tabId, page, carrier))) { fillPage({ auto: 'page' }); return; }
   const stepBefore = state.tabSteps?.get(tabId);
   // A step the carrier redraws on every answer (GEICO's Quote & Coverages: newQuestionsOnlySteps)
   // is filled when it opens, on Fill this page, and when it draws new questions (the cargo
@@ -405,7 +423,9 @@ async function autoFill(page) {
     ctx.settings.autoAdvance = switchOn('autoAdvance', 'auto-advance');
     if (ctx.adding) ctx.adding = { ...ctx.adding, click: !!(ctx.settings.autoPages || ctx.settings.autoAdvance || ctx.asked) };
     const plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
-    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    // The panel moved to another tab during that wait: nothing is filled (and the options are this tab's).
+    if (!fillCurrent(ctx)) return;
+    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed, ctx);
     // Its answers listed as they go in, as a fill the agent asked for, from the first one in (`auto`:
     // a follow-up that answers nothing never replaces the report; W43-42, 2026-10-22: a 29-second
     // automatic fill showed nothing until it ended).
@@ -942,16 +962,12 @@ function renderSite() {
     name: step.name, at: i < progress.index ? 'done' : i === progress.index ? `here${filledHere ? ' filled' : ''}` : null,
   })) : [];
   caption.textContent = [
-    carrier ? (carrier.practice ? 'Practice page' : progress ? null : 'Commercial auto') : null,
+    carrier ? (carrier.practice ? 'Practice page' : progress ? null : carrier.display?.product ?? null) : null,
     carrier && state.tab?.background ? 'In background' : null,
   ].filter(Boolean).join(' · ');
   caption.hidden = !caption.textContent;
-  const paths = {
-    progressive: 'assets/raters/progressive.svg',
-    geico: 'assets/raters/geico.gif',
-    amwins: 'assets/raters/amwins.svg',
-  };
-  const src = paths[carrier?.id] || null;
+  // The carrier's logo (its `display`, carriers.js); the name, without one.
+  const src = carrier?.display?.logo || null;
   const title = state.tab?.background ? 'Working on the quote tab. Go back to it to see the marks.' : '';
   caption.title = title;
   logo.alt = carrier?.name || '';
@@ -1315,7 +1331,7 @@ function dockFor() {
   if (!carrier) {
     return state.tab && !state.tab.url
       ? { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.' }
-      : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? 'Progressive, GEICO or AmWINS.' };
+      : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? ratersSaid() };
   }
   const page = pageOf(state.tab.url);
   const step = tabStep(carrier);
@@ -1353,10 +1369,12 @@ function dockFor() {
   const fill = { button: 'fill', label: filledBefore || report?.fields ? 'Fill this page again' : 'Fill this page' };
   if (report?.error) return { phase: 'error', tone: 'bad', eyebrow: 'Didn’t finish', title: 'Check the page, then fill again', sub: 'Your changes are kept.', ...fill };
   // The quote is done where TNI stops on this rater (quoteFinished): said, in place of "Moving on
-  // is yours" or "Ready for Continue" on a page that is the end of the quote.
+  // is yours" or "Ready for Continue" on a page that is the end of the quote, with the quote's
+  // summary to open (audit 2026-11-07, UX-05: summary-view.jsx).
   if (report && quoteFinished(carrier, report, page, step) && !pendingAi(state.tab.id, page).length) {
     return { phase: 'finished', tone: 'good', eyebrow: 'Quote done', title: carrier.finishedAt?.said ?? carrier.finishedSaid ?? 'The quote proposal is printed',
-      sub: carrier.finishedAt?.sub ?? `This is where TNI stops on ${carrier.name}. Nothing is submitted or bound.`, alt: 'fill-again', altLabel: 'Fill this page again' };
+      sub: carrier.finishedAt?.sub ?? `This is where TNI stops on ${carrier.name}. Nothing is submitted or bound.`, button: 'dock-summary', label: 'Quote summary',
+      alt: 'fill-again', altLabel: 'Fill this page again' };
   }
   // A page the fill had no question for and left nothing on (a unit list with every unit on it):
   // Continue is next (W43-40: the dock offered Fill this page again on finished vehicle lists).
@@ -1470,8 +1488,10 @@ function showReviewMode() {
   const on = !!carrier && !!record && !supportedClass(record, carrier);
   if (!on) { state.cards = { ...state.cards, review: null }; return; }
   const cls = String(record.operations?.businessClass ?? '').trim();
+  // The classes the carrier's rules were written for, as its display says them (supportedClasses decides).
+  const covers = carrier.display?.classesSaid ? 'cover ' + carrier.display.classesSaid : 'weren’t written for this business class';
   state.cards = { ...state.cards, review: issueSaid({ tone: 'warn', title: `Review mode: ${cls ? `"${cls}"` : 'no business class'} on the intake`,
-    text: `${carrier.name}'s rules cover expediters and general freight. Confirm the marked answers: Continue waits on each page.` }) };
+    text: `${carrier.name}'s rules ${covers}. Confirm the marked answers: Continue waits on each page.` }) };
 }
 
 // A card above the page's answers (or in them): what's wrong or different, in the panel's own

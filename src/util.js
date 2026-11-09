@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // normalize.js imports this module too: both only call each other's functions, never at load.
 import { toMoney, otherNotes } from './normalize.js';
 import { nameWords } from './answers/owner.js';
@@ -312,6 +311,7 @@ export function companyName(name) {
 export function companyStructure(name) {
   const company = companyName(name);
   if (!company) return { structure: 'sole', mid: false };
+  /** @type {string[]} */
   const words = company.toLowerCase().replace(/\./g, '').match(/[a-z0-9]+/g) ?? [];
   const last = words.at(-1);
   if (last === 'llc') return { structure: 'llc', mid: false };
