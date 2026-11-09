@@ -372,7 +372,29 @@ test('a vehicle\'s form and a trailer\'s never answer each other\'s questions', 
   assert.deepEqual([one(p, 'Vehicle year').path, one(p, 'Vehicle year').value], ['vehicles[1].year', 2019]);
   assert.deepEqual([one(p, 'Trailer year').path, one(p, 'Trailer year').value], ['trailers[0].year', 2015]);
   assert.deepEqual([one(p, 'Vehicle value without customizations', VEH).value, one(p, 'Trailer value without customizations').value], [30000, 12000]);
-  assert.match(one(p, 'Trailer type (the agent\'s pick)').note, /"Dry Van"/);
+  const type = p.find((x) => x.q === 'GiveOtherVehicleType.trailer');
+  assert.deepEqual([type.value, type.source, type.note ?? null], ['Dry Freight Trailer', 'derived', null]);
+});
+
+// The maintainer, 2026-11-09 (a GEICO recording: the trailer type went to the AI assistant, which
+// cited the interchange rule): the trailer form's type is the intake's trailer type by GEICO's name,
+// as for the interchange card; a type GEICO has no name for, or none, is the agent's pick.
+test('trailer type: the intake\'s Dry Van, Flatbed, Reefer, Lowboy or Tanker by GEICO\'s name; any other is the agent\'s pick', () => {
+  const r = RECORDS()[1];
+  const typeFor = (type) => plan({ ...r, trailers: [{ ...r.trailers[0], type }] }, { vehicles: 0, trailers: 0, drivers: 0 }).find((x) => x.q === 'GiveOtherVehicleType.trailer');
+  for (const [type, want] of [['Dry Van', 'Dry Freight Trailer'], ['Flatbed', 'Flatbed Trailer'], ['Reefer', 'Refrigerated Dry Freight Trailer'], ['Lowboy', 'Lowboy Trailer'], ['Tanker', 'Tank Trailer']]) {
+    const s = typeFor(type);
+    assert.deepEqual([s.value, s.source, s.note ?? null], [want, 'derived', null], type);
+  }
+  for (const type of ['Enclosed', 'Step Deck', 'Other']) {
+    const s = typeFor(type);
+    assert.deepEqual([s.value ?? null, s.source ?? null], [null, null], type);
+    assert.equal(s.note, `The trailer type is yours to pick: the intake says "${type}".`);
+  }
+  assert.equal(typeFor(undefined).note, 'The intake has no type for this trailer: pick it yourself.');
+  // Every name is on GEICO's trailer form list (FL, 2026-11-09).
+  const listed = ['Dry Freight Trailer', 'Flatbed Trailer', 'Lowboy Trailer', 'Refrigerated Dry Freight Trailer', 'Tank Trailer'];
+  for (const t of ['Dry Van', 'Flatbed', 'Reefer', 'Lowboy', 'Tanker']) assert.ok(listed.includes(typeFor(t).value), t);
 });
 
 // TNI, 2026-10-26, W44-32 (PA live run: an intake "Box Truck" was the agent's, who picked

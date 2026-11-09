@@ -647,13 +647,14 @@ export function build(rawDir) {
     return `<div><input type="checkbox" id="checkbox-Id_AddFilings_${fn}-${box}" name="Id_AddFilings_${fn}" value="${box}"><label for="checkbox-Id_AddFilings_${fn}-${box}">${esc(c.label)}</label></div>`;
   }).join('')}</div></fieldset>`;
   // The vehicle type list: never saved with its options (GEICO draws it after the vehicle is known); the
-  // FL captures hold it (its order changes per VIN: the first full list is used). Trailers: never captured.
+  // FL captures hold it (its order changes per VIN: the first full list is used). Trailers: the FL trailer
+  // form's list as a developer recording saved it (2026-11-09), GEICO's own names, no client data.
   const typeList = flAll.map((f) => JSON.parse(fs.readFileSync(path.join(rawDir, 'json_layouts_FL_DOT', f), 'utf8')).frames[0])
     .flatMap((fr) => fr.controls).find((c) => stemOf(c.name || c.id) === 'GiveOtherVehicleType' && (c.options ?? []).length > 10)?.options ?? [];
   if (typeList.some((o) => /\[client\]/.test(o))) throw new Error('the vehicle type list holds a redacted value');
   const optionsHtml = (list) => list.map((o, i) => (i === 0 && /^please select$/i.test(o) ? '' : `<option code="${esc(o)}" value="${esc(o)}">${esc(o)}</option>`)).join('');
   frags['vehicle-types'] = optionsHtml(typeList);
-  frags['trailer-types'] = optionsHtml(['Please Select', 'SAMPLE TRAILER TYPE A', 'SAMPLE TRAILER TYPE B', 'SAMPLE TRAILER TYPE C']);
+  frags['trailer-types'] = optionsHtml(['Please Select', 'Dry Freight Trailer', 'Flatbed Trailer', 'Utility Trailer > 12 ft.', 'Utility Trailer <= 12 ft.', 'Dump Body Trailer', 'Auto Hauling Trailer', 'Bulk Commodity Trailer', 'Concession Trailer', 'Gooseneck Trailer', 'Horse Trailer (1-2 stalls)', 'Livestock Trailer', 'Logging Trailer', 'Lowboy Trailer', 'Pole Trailer', 'Rag Top Trailer', 'Refrigerated Dry Freight Trailer', 'Tank Trailer', 'Tilt Trailer', 'Travel Trailer']);
 
   // Synthesized views.
   const kit = markupKit(forms);
