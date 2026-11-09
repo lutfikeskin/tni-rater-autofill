@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile, zipName, PACKAGED, mapsZipName, withoutMapUrl, packageOf, noticesPlugin, thirdPartyNotices } from '../scripts/lib/package.mjs';
+import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile, zipName, PACKAGED, mapsZipName, withoutMapUrl, packageOf, noticesPlugin, thirdPartyNotices, RULES_FILE, stampRules, rulesOf, rulesPlugin } from '../scripts/lib/package.mjs';
+import { RULE_FILES, rulesHash } from '../src/usage.js';
 import { kitCode } from '../scripts/lib/kit.mjs';
 
 const read = (f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
@@ -136,6 +137,36 @@ test('a labelled package is named by its version, label and commit; the store zi
   const script = read('scripts/package.mjs');
   assert.match(script, /process\.argv\.indexOf\('--label'\)/);
   assert.match(script, /zipName\(manifest\.version, label == null \? \{\} : \{ label, commit: packagedCommit\(root\) \}\)/);
+});
+
+// Audit 2026-11-07, QA-09: the panel fetched the rule files from its own package as it started to
+// fingerprint them, and a failure was swallowed, leaving fill_run's `rules` out. The build works it
+// out instead, from the same files, and stamps it.
+test('the panel build stamps the rules fingerprint of RULE_FILES, and fails if the build never read coordinator.js', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const expected = await rulesHash(RULE_FILES.map(read));
+  assert.equal(await rulesOf(root), expected, 'the same fingerprint the panel worked out from the packaged files');
+  const plugin = rulesPlugin(root);
+  assert.equal(plugin.enforce, 'pre');
+  const watched = [];
+  const ctx = { addWatchFile: (f) => watched.push(f) };
+  assert.equal(await plugin.transform.call(ctx, 'const x = 1;', 'C:\\repo\\sidepanel\\panel\\core.js'), null, 'other files as they are');
+  const source = read(RULES_FILE);
+  assert.match(source, /^const RULES_VERSION = null;$/m, 'unbuilt, the panel carries none');
+  const out = await plugin.transform.call(ctx, source, 'C:\\repo\\sidepanel\\panel\\coordinator.js');
+  assert.ok(out.code.includes(`const RULES_VERSION = '${expected}';`), 'Windows paths too');
+  assert.equal(watched.length, RULE_FILES.length, 'a watch build stamps it again when a rule file changes');
+  plugin.buildEnd();
+  assert.throws(() => rulesPlugin(root).buildEnd(), /coordinator\.js/);
+  assert.doesNotThrow(() => rulesPlugin(root).buildEnd(new Error('build failed')));
+  assert.throws(() => stampRules('no placeholder', expected));
+  assert.throws(() => stampRules(source, "x'; alert(1); '"));
+  // The panel no longer fetches its own files for it; every build has the plugin, the dev server none.
+  assert.doesNotMatch(source, /RULE_FILES\.map|fetch\(chrome\.runtime\.getURL\(f\)\)/);
+  const { default: config } = await import('../vite.config.js');
+  const has = (env) => config(env).plugins.flat().some((p) => p?.name === 'tni-rules');
+  assert.ok(has({ command: 'build', mode: 'store' }) && has({ command: 'build', mode: 'unpacked' }));
+  assert.ok(!has({ command: 'serve', mode: 'development' }));
 });
 
 // Audit 2026-11-07, QA-09: the store zip carried the source maps (3.7 MB for the panel's alone) and

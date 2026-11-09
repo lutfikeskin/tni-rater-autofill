@@ -12,7 +12,7 @@ import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
 import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, resumeHeldFill, showNextNeed } from './panel/fill.js';
-import { noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording } from './panel/dev-recording.js';
+import { discardUnfinished, noteCaptured, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording, toggleRecording } from './panel/dev-recording.js';
 import { aiActs, renderAiSettings, reviewIntake } from './panel/assistant.js';
 import { renderUsage, settingsActs, uploadNow, wireUsage } from './panel/usage-panel.js';
 import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, clientNote, closeDetails, closePdf, drawPdf, newQuote, noteStep, openDetails, openPdf, openPdfInTab, pdfPage, pdfPan, pdfZoom, workSaid } from './panel/pdf-view.js';
@@ -25,8 +25,11 @@ import { mountChecks, mountPickers } from './panel/checks-view.jsx';
 import { mountClient } from './panel/client-view.jsx';
 import { mountDetails } from './panel/details-view.jsx';
 import { mountPdf } from './panel/pdf-sheet-view.jsx';
+import { mountSummary } from './panel/summary-view.jsx';
+import { closeSummary, openSummary, saveSummary } from './panel/quote-summary.js';
 import { mountLoadError, mountNote } from './panel/notes-view.jsx';
 import { mountSiteTrack } from './panel/site-view.jsx';
+import { mountSetup } from './panel/home-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaultsShown } from './panel/agent-defaults/store.js';
 import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
@@ -53,10 +56,14 @@ function wire() {
   mountNote($('whats-new'), 'whatsNew');
   mountNote($('window-note'), 'window');
   mountLoadError($('load-error'));
+  // Home's setup checklist: an item left to do opens Settings at its box.
+  mountSetup($('setup-root'), { open: (focus) => openSettings(focus) });
   // Settings: Done, the switches and boxes (settingsActs), the AI's (aiActs), the test-run mark,
   // Capture page layout, and the developer recording's buttons, offered in unpacked builds only
   // (canRecord), never in the store's. Then the footer's Recording usage line.
   const recordable = inExtension && canRecord(usage.build().channel);
+  // `note(text)`: the footer pill's own box; without text, Settings' Note box.
+  const devrecActs = { start: () => startRecording(), note: (text) => noteRecording(text), stop: () => stopRecording(), recover: () => recoverRecording(), discard: () => discardUnfinished() };
   mountSettings($('settings'), {
     done: () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); },
     ...settingsActs(),
@@ -66,9 +73,10 @@ function wire() {
     // agent defaults: the developer's switch (unpacked copies only; store.js ignores it in the store build).
     defaultsShown: async (on) => { await setDefaultsShown(on); renderSteps(); resumeHeldFill(); },
     capture: () => capturePage(),
-    devrec: recordable ? { start: () => startRecording(), note: () => noteRecording(), stop: () => stopRecording(), recover: () => recoverRecording() } : null,
+    devrec: recordable ? devrecActs : null,
   });
-  mountRecordingLine($('recording-root'));
+  // The footer: Recording usage, and the developer recording's pill while one runs (REC-17).
+  mountRecordingLine($('recording-root'), recordable ? devrecActs : null);
   mountSteps($('steps'), {
     check: () => setView('check'),
     fill: () => setView('page'),
@@ -83,6 +91,7 @@ function wire() {
   mountClient($('client-root'), {
     details: () => (state.detailsOpen ? closeDetails() : openDetails()),
     pdf: () => openPdf(),
+    summary: () => (state.summary ? closeSummary() : openSummary()),
     replace: () => replacing.replace(),
     newQuote: () => {
       if (state.filling) return;
@@ -106,6 +115,8 @@ function wire() {
   mountChecks($('check-view'), { openDetails: () => openDetails() });
   // Client details: Close, the scrim, and the empty fields shown or hidden.
   mountDetails($('details-view'), { close: () => closeDetails(), showEmpty: () => showEmpty() });
+  // The quote summary (read only): Back, Close and the scrim; Save summary.
+  mountSummary($('summary-view'), { close: () => closeSummary(), save: () => saveSummary() });
   // The page's answers: their filters, an earlier page's answers on this tab (read-only) and back to
   // this page's, what the tags mean, and Clear the marks.
   // A rater's logo on the "open a rater" card opens its agent site in a new tab, where nothing fills
@@ -137,13 +148,15 @@ function wire() {
     if (w !== width && state.pdf && width) drawPdf();
     width = w;
   }).observe($('pdf-scroll'));
-  // Escape closes the PDF sheet, the client details drawer, then Settings; the sheet or the drawer
-  // keeps keyboard focus while it's open.
+  // Escape closes the PDF sheet, the quote summary, the client details drawer, then Settings; the
+  // sheet or the drawer keeps keyboard focus while it's open.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && state.pdf && !$('pdf-view').hidden) { e.preventDefault(); closePdf(); return; }
+    if (e.key === 'Escape' && state.summary && !$('summary-view').hidden) { e.preventDefault(); closeSummary(); return; }
     if (e.key === 'Escape' && state.detailsOpen && !$('details-view').hidden) { e.preventDefault(); closeDetails(); return; }
     if (e.key === 'Escape' && state.settingsOpen) { e.preventDefault(); state.settingsOpen = false; showScreen(); $('settings-btn').focus(); return; }
-    const modal = state.pdf && !$('pdf-view').hidden ? $('pdf-view') : state.detailsOpen && !$('details-view').hidden ? $('details-view') : null;
+    const modal = state.pdf && !$('pdf-view').hidden ? $('pdf-view') : state.summary && !$('summary-view').hidden ? $('summary-view')
+      : state.detailsOpen && !$('details-view').hidden ? $('details-view') : null;
     if (e.key !== 'Tab' || !modal) return;
     const stops = [...modal.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')].filter((n) => n.offsetParent !== null);
     if (!stops.length) return;
@@ -169,13 +182,22 @@ function wire() {
     approve: () => state.aiDocks.get(`${state.tab?.id}|${pageOf(state.tab?.url)}`)?.go(),
     // agent defaults: the quote's question, on the page's answers (the dock's hold off them).
     defaults: () => setView('page'),
+    // The quote done: its summary (UX-05).
+    summary: () => openSummary(),
     alt: (go) => {
       if (go === 'fill-anyway') dismissState();
       fillPage();
     },
   });
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
-  if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') captureFromShortcut(); });
+  // During a developer recording it is also a note naming the capture's file (REC-17); Alt+Shift+R
+  // starts or stops one (unpacked builds only).
+  if (inExtension) {
+    chrome.commands?.onCommand.addListener((command) => {
+      if (command === 'capture-page') captureFromShortcut().then((file) => { if (recordable && file) noteCaptured(file); });
+      if (command === 'record-toggle' && recordable) toggleRecording();
+    });
+  }
   // Developer recording (its card in Settings, above): unpacked builds only.
   if (recordable) {
     chrome.runtime.onMessage.addListener(onTraceMessage);

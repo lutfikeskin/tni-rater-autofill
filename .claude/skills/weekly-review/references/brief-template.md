@@ -25,6 +25,8 @@ From the ledger report (`npm run ledger`): this period's numbers beside the prev
 | Left to the agent per quote (unfamiliar / leftRequired / noData / failed) | | | |
 | Problem reports per 10 quotes | | | |
 | AI requests · error rate (newest build) | | | |
+| AI: questions suggested · suggestions accepted or approved | | | |
+| AI answers put in that the agent changed later | | | |
 | Restricted actions by the extension (must be 0) | | | |
 
 Builds this period: <versions and channels; how many quotes on the newest>.

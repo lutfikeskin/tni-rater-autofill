@@ -212,6 +212,8 @@ const baseId = (k) => (String(k).startsWith('ref:') ? String(k).replace(/[@#].*$
 //              (ref:<name>) or the question's text on its page (text:…), a number only when it has
 //              neither (no text: a bare number)
 //   byCaption: `<carrier>|<page>|<text>` -> the one question a text names on the page, else null
+//   byStepCaption: `<carrier>|<page> › <step>|<text>` -> the same within one step of a one-address
+//              application (AmWINS, GEICO), where two steps may share a text
 export function fieldIdentities(events) {
   const pages = new Map();
   for (const e of events) {
@@ -225,7 +227,8 @@ export function fieldIdentities(events) {
   }
   const byField = new Map();
   const byCaption = new Map();
-  for (const p of pages.values()) {
+  const byStepCaption = new Map();
+  for (const [pageKey, p] of pages) {
     const { keys, placeOf } = snapshotKeys(p.snapshots);
     const fields = new Map();
     p.snapshots.forEach((s, j) => s.fields.forEach((f, i) => addField(fields, keys[j][i], f)));
@@ -254,9 +257,10 @@ export function fieldIdentities(events) {
     for (const [text, ks] of captions) {
       const key = `${p.carrier}|${p.page}|${text}`;
       byCaption.set(key, new Set(ks.map(baseId)).size === 1 && !byCaption.has(key) ? identity(ks[0]) : null);
+      if (pageKey !== `${p.carrier}|${p.page}`) byStepCaption.set(`${pageKey}|${text}`, new Set(ks.map(baseId)).size === 1 ? identity(ks[0]) : null);
     }
   }
-  return { byField, byCaption };
+  return { byField, byCaption, byStepCaption };
 }
 
 export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_PAGES } = {}) {
