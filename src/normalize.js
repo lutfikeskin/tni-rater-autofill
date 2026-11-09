@@ -1483,10 +1483,11 @@ export function parseEdit(kind, text) {
 // Whether an intake check about one field's own value still holds for the value the agent put
 // there (audit 2026-11-07, DATA-05): a date of birth that is a date now, a VIN typed in. The same
 // tests as normalizeIntake's. undefined for a check its field's value alone doesn't settle (an
-// unusual age, a name that differs, a note), and for an invalid value the agent emptied: those
-// stay as the agent left them. `year`: this year.
+// unusual age, a name that differs, a note; the garaging address's checks, about how the whole
+// address was split, not one box), and for an invalid value the agent emptied: those stay as the
+// agent left them. `year`: this year.
 const MISSING_CHECKS = new Set(['dob.missing', 'license.missing', 'license-state.missing', 'vin.missing', 'vehicle-type.missing', 'cdl-year.missing',
-  'eld-brand.missing', 'filings-which.missing', 'auto-limit.missing', 'gl-limit.missing', 'address.missing', 'address.no-city', 'address.no-zip']);
+  'eld-brand.missing', 'filings-which.missing', 'auto-limit.missing', 'gl-limit.missing']);
 export function checkHolds(code, value, year) {
   const blank = value == null || String(value).trim() === '';
   if (MISSING_CHECKS.has(code)) return blank;

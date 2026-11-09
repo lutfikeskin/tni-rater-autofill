@@ -2628,4 +2628,6 @@ test('checkHolds: a check about a field\'s value follows the value the agent put
   assert.equal(checkHolds('dob.invalid', '', year), undefined, 'emptied: not this check\'s to say');
   assert.equal(checkHolds('dob.unusual-age', '04/12/1920', year), undefined, 'not settled by the value alone');
   assert.equal(checkHolds('drivers.owner-name-differs', 'x', year), undefined);
+  // Review of #509: the garaging address's checks are about the whole address, not the one box.
+  for (const code of ['address.missing', 'address.no-zip', 'address.no-city']) assert.equal(checkHolds(code, '07001', year), undefined, code);
 });
