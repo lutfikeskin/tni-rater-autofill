@@ -80,7 +80,9 @@ const SPANS = { fill: ['a fill started', 'the fill ended'], pick: ["the panel be
 // A wait's own words: what it was for (pagekit.js settle's `why`).
 const WAITS = { answer: 'after an answer', round: 'after a round of answers', load: 'for a new view to load', 'before-load': 'before a button that loads a view',
   rated: 'for the premium', continue: 'before pressing Continue', continued: 'after pressing Continue', drawn: 'for a late question', start: 'before the fill',
-  helper: 'for a lookup\'s answer' };
+  helper: 'for a lookup\'s answer', keep: 'before giving again an answer the page didn\'t keep', reset: 'before answering again a choice the page reset',
+  pager: 'for another group of vehicles', 'quiet-end': 'for the page to go quiet after the answers', kept: 'to see the answers stayed after Recalculate',
+  'put-back': 'after putting back answers the page changed', address: 'for an address suggestion to take', list: 'for a searchable list\'s choice to take' };
 // Why an answer didn't take, as the kit's code says it (FailCode, REC-01); another code is said as it is.
 const NOT_TAKEN = { 'fill.interrupted': 'not given: you stopped the fill', 'option.no-match': 'not given: no option matched', 'option.ambiguous': 'not given: more than one option matched',
   'answer.refused': 'not given: the field refused it', 'kit.exception': 'not given: the extension failed on it', 'page.unsettled': "not kept: the page didn't settle after it",

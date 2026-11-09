@@ -84,14 +84,14 @@ export function createAddressDriver(kit) {
     const shown = oneLine(first.textContent).slice(0, 120);
     if (first.classList?.contains('pac-item') || / pac-item /.test(` ${first.className} `)) {
       for (const [key, code] of [['ArrowDown', 40], ['Enter', 13]]) el.dispatchEvent(keyEvent('keydown', key, code));
-      await settle({ quietMs: 300, maxMs: 5000 });
+      await settle({ quietMs: 300, maxMs: 5000, why: 'address' });
       // Still the typed text: Google didn't take the keys; click the suggestion instead.
       if (el.value !== text) return { ok: true, shown };
       if (halted()) return interrupted();
     }
     for (const type of ['mousedown', 'mouseup']) first.dispatchEvent(new Event(type, { bubbles: true }));
     first.click?.();
-    await settle({ quietMs: 300, maxMs: 5000 });
+    await settle({ quietMs: 300, maxMs: 5000, why: 'address' });
     return { ok: true, shown };
   }
 
