@@ -1453,6 +1453,38 @@ test('during a quote, another rater tab in front is only looked at: the panel st
   assert.ok(h.state.filled.has('vin'));
 });
 
+// The maintainer, 2026-11-09 (a GEICO recording: the quote tab dragged out of its window and back):
+// a side panel holds the quote's tab only while it is in the panel's own window, so a tab dragged to
+// another window isn't worked by two copies at once. Popped out, the panel keeps holding it.
+test('a quote tab dragged to another window is let go by the side panel, held popped out, and held again back in its window', async () => {
+  const start = (popped) => {
+    const h = harness();
+    h.context.popped = popped;
+    h.state.intake = { record: {} };
+    h.state.tab = { ...quoteTab(1, 'AddVehicle'), carrier: { id: 'progressive', name: 'Progressive' }, windowId: 1 };
+    h.state.filled = new Map([['vin', { path: 'vehicles[0].vin', shown: '1FT' }]]);
+    h.openTab({ ...quoteTab(1, 'AddVehicle'), windowId: 2 });
+    h.setActiveTab({ id: 3, url: 'https://mail.example/inbox', windowId: 1 });
+    return h;
+  };
+  const side = start(false);
+  await side.refreshTab();
+  assert.deepEqual([side.state.tab?.id, side.state.tab?.background], [3, false], 'the side panel follows its own window\'s tab');
+  assert.equal(side.state.cards.held, null);
+  assert.ok(side.state.tabSessions.get(1).filled.has('vin'), 'the quote tab keeps its records');
+  const pop = start(true);
+  pop.context.chrome.windows.getLastFocused = async () => ({ id: 1 });
+  await pop.refreshTab();
+  assert.deepEqual([pop.state.tab?.id, pop.state.tab?.background], [1, true], 'popped out, the quote tab is still held');
+  // Dragged back into the side panel's window: held again.
+  const back = start(false);
+  back.openTab({ ...quoteTab(1, 'AddVehicle'), windowId: 1 });
+  await back.refreshTab();
+  assert.deepEqual([back.state.tab?.id, back.state.tab?.background], [1, true]);
+  // The panel reads the tab again when a tab moves between windows.
+  assert.match(SIDEPANEL, /chrome\.tabs\.onAttached\.addListener\(refreshTab\);\s+chrome\.tabs\.onDetached\.addListener\(refreshTab\);/);
+});
+
 test('another rater tab is followed when the quote has not started, when the quote tab opened it, or once the quote tab is gone', async () => {
   // No fill on the tab yet: the panel follows the rater tab in front, as before.
   const fresh = harness();

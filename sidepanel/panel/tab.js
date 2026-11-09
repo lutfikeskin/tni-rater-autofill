@@ -64,7 +64,12 @@ async function refreshTab() {
     const quote = await chrome.tabs.get(state.tab.id).catch(() => null);
     if (overtaken()) return;
     const carrier = quote?.url ? carrierForUrl(quote.url) : null;
-    if (carrier) {
+    // A side panel holds the quote's tab only while it is in the panel's own window: one dragged
+    // to another window is that window's side panel's to follow, and two copies working one tab
+    // stop each other's fills (the maintainer, 2026-11-09, after a recording where the quote tab was
+    // dragged out and back). Popped out, the panel watches every window, so it keeps holding.
+    const sameWindow = popped || quote?.windowId == null || tab?.windowId == null || quote.windowId === tab.windowId;
+    if (carrier && sameWindow) {
       state.tab = { id: quote.id, url: quote.url, carrier, background: true, windowId: quote.windowId };
       noteFollowed();
       showHeldNote(activeIsRater ? { id: tab.id, carrier: carrierForUrl(tab.url), windowId: tab.windowId } : null);
