@@ -8,6 +8,13 @@
 
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
+  '0.9.34': [
+    'The bar while a page fills shows about how many of its questions are done.',
+    'Answers going in are tagged as in the report: Worked out, Your edit, Your default, TNI standard.',
+    'Fixing a flagged value on its Intake card checks the card off for you.',
+    'Report a problem asks what kind it is and gives you a reference to quote.',
+    'When an update is ready, the panel says so, with Reload now. Optional: a tone when a fill needs you while you look elsewhere.',
+  ],
   '0.9.33': [
     'The panel has two tabs, Intake and This page, and the header says which stage of the quote you are on.',
     'Client details mark your corrections, show what the intake said, and let you Restore it.',
