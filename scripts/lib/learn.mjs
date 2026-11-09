@@ -12,12 +12,14 @@
 //   pageSets   an unmapped question the page itself answers (its own cascade), the same nearly every time
 //   agent      an unmapped question agents answer the same way that is an attestation or a client
 //              fact: the agent's (or the intake's), never a TNI standard
+// Apart from them, `undecided`: the questions left to the agent repeatedly that none of these
+// answers, which scripts/rule-proposals.mjs asks Luna to draft a proposal for, offline.
 // Suggestions are for a person to review; nothing is changed automatically. A habit is no TNI
 // standard until the maintainer decides it is and records it (AGENTS.md), so a possible standard
 // comes with its evidence and the decision to make, never with a rule line to paste.
 
 import { isPageLayout, quotePage, sessionContexts } from './events.mjs';
-import { fieldIdentities, ENTITY_PAGES } from './layouts.mjs';
+import { fieldIdentities, layoutStep, ENTITY_PAGES } from './layouts.mjs';
 import { fieldStatus } from './coverage.mjs';
 import { isOwnDefault } from './agent-defaults.mjs';
 
@@ -39,7 +41,7 @@ const blind = (label) => !/[a-z0-9]/.test(textOf(label).replace(/\[client\]/g, '
 // attestation (Claude review on PR #372).
 const ATTESTATION = /\b(i agree|agrees? to|i certify|certif(ies|ication)|attest|consent|i acknowledge|acknowledge that|i declare|declare that|e-?sign|sign (here|below)|i understand|i confirm|i authori[sz]e|i warrant)/;
 const CLIENT_FACT = /\b(filings?|mcs-?90|bmc-?\d*|federal liability|usdot|dot number|mc number|fein|social security|ssn|date of birth|vin)\b/;
-const agentsOwn = (o) => {
+export const agentsOwn = (o) => {
   const text = `${textOf(o.label)} ${String(o.field ?? '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[._]/g, ' ').toLowerCase()}`;
   return ATTESTATION.test(text) ? 'attestation' : CLIENT_FACT.test(text) ? 'fact' : null;
 };
@@ -242,7 +244,8 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
   // build is never "current".
   const rules = rulesOpt === undefined ? newestRules(events) : rulesOpt;
   const contexts = sessionContexts(events);
-  const answers = finalAnswers(events);
+  const ids = fieldIdentities(events);
+  const answers = finalAnswers(events, ids);
   const byId = new Map(carriers.map((c) => [c.id, c]));
   // A question is mapped when a current rule claims it, as the fill engine and the coverage report
   // pair them (fieldStatus: by data-model name, else its text on its page). With an id, 'unsure'
@@ -280,7 +283,14 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
   // A suggestion reports the support it qualified on, not every observation of its question.
   const support = (list) => ({ intakes: intakesOf(list), quotes: quotesOf(list) });
   const observedSteps = new Map();
-  for (const [key, obs] of byQuestion) {
+  // Questions left to the agent in at least minIntakes intake PDFs that no suggestion above answers
+  // (no standard, per-state answer, mapping, page answer, page cascade or agent's line): the
+  // offline rule proposals' candidates (scripts/rule-proposals.mjs), never a rule themselves.
+  const undecided = [];
+  const suggested = () => Object.values(suggestions).reduce((n, list) => n + list.length, 0);
+  // One question: its suggestion, if any; a candidate question left to the agent, in `candidate`.
+  let candidate = null;
+  const consider = (key, obs) => {
     const [carrier] = key.split('|');
     // The question's wording as the page draws it (a layout's caption) over an event's, which can
     // be the recorder's guess at the text before the field.
@@ -292,10 +302,10 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
     // the page's own chrome (a file button, a pager, a row's Delete), is no question to suggest a
     // rule for (the 2026-10-06 review listed "Browse" and "1 of 1").
     // A label that is only redacted text names none either, unless its key does (a coverage row).
-    if (!first.q && !field && !first.coverage && (blind(first.label) || UI_CHROME.test(textOf(first.label)))) continue;
+    if (!first.q && !field && !first.coverage && (blind(first.label) || UI_CHROME.test(textOf(first.label)))) return;
     // A question off the quote (a login, the carrier's portal: GEICO's gateway search, Progressive's
     // home page) gets no suggestion, as the answer key keys none (quotePage).
-    if (!quotePage(carrier, first.page)) continue;
+    if (!quotePage(carrier, first.page)) return;
     const selector = `${carrier}|${target({ ...first, field })}`;
     const steps = observedSteps.get(selector) ?? new Set();
     for (const o of obs) steps.add(o.step ?? '(no step)');
@@ -307,6 +317,8 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
     // how agents answer.
     const given = (o) => o.value !== undefined && o.value !== null && o.value !== '' && CHOICE.has(o.kind ?? 'select');
     const choices = obs.filter((o) => !o.pageLeft && o.source !== 'page' && given(o));
+    const left = obs.filter((o) => o.leftToAgent);
+    if (!isMapped && intakesOf(left) >= minIntakes) candidate = { base, first, field, left, choices, obs };
 
     // A question the extension left to the agent, whose page answer they let stand in nearly
     // every quote and never changed to another: a candidate to leave as the page has it. A
@@ -321,7 +333,7 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
           // Kept with the agent (a note), never left as the page has it: these are often the
           // client's decisions (a coverage limit, a payment plan), where a default proves nothing.
           rule: `{ ${target({ ...first, field })}, name: ${quote(`${String(first.label ?? '').slice(0, 70)} (agent's; page default ${ranked[0].value})`)}, note: ${quote(`The page's answer "${ranked[0].value}" was left in ${counts.get(ranked[0].value)} of ${leftAsIs.length} answers (${quotesOf(leftAsIs)} quotes, ${intakesOf(leftAsIs)} intake PDFs); confirm it for this client.`)} },` });
-        continue;
+        return;
       }
     }
 
@@ -344,7 +356,7 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
         suggestions.review.push({ ...base, ...support(filled), filled: filled.length, corrected: corrected.length, rate: corrected.length / filled.length, changes: share(changes, corrected.length),
           otherRules: counts(others.filter((o) => o.rules)), unknownRules: counts(others.filter((o) => !o.rules)) });
       }
-      continue;
+      return;
     }
 
     if (intakesOf(choices) >= minIntakes) {
@@ -356,11 +368,11 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
       const own = agentsOwn({ ...first, field });
       if (own) {
         suggestions.agent.push({ ...base, ...support(choices), answers: choices.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1), why: own, rule: agentRule({ ...first, field }, own) });
-        continue;
+        return;
       }
       if (ranked[0].share >= threshold) {
         suggestions.standard.push({ ...base, ...support(choices), answers: choices.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1), kind: first.kind, decide: decision(ranked[0].value) });
-        continue;
+        return;
       }
       // Consistent within each state?
       const states = new Map();
@@ -376,7 +388,7 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
       if (perState.length > 1 && perState.every((s) => s.share >= threshold && s.n >= 2)) {
         suggestions.byState.push({ ...base, ...support(choices), answers: choices.length, perState: perState.map(({ state, value, n }) => ({ state, value, n })) });
       }
-      continue;
+      return;
     }
 
     // What the page set on its own (a cascade from another answer), nearly always the same, where
@@ -388,7 +400,7 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
       const ranked = share(counts, pageSet.length);
       if (ranked[0].share >= threshold) {
         suggestions.pageSets.push({ ...base, ...support(pageSet), answers: pageSet.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1) });
-        continue;
+        return;
       }
     }
 
@@ -405,6 +417,12 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
         suggestions.mapping.push({ ...base, ...support(typed), answers: typed.length, path, share: ranked[0].share, rule: `{ ${target({ ...first, field })}, path: '${path}' },` });
       }
     }
+  };
+  for (const [key, obs] of byQuestion) {
+    candidate = null;
+    const before = suggested();
+    consider(key, obs);
+    if (candidate && suggested() === before) undecided.push(undecidedOf(candidate, support, ids));
   }
   // A question known only by its text (AmWINS) gets a rule by its label, which no step constrains:
   // two observed steps' questions reading the same would get one selector, even when only one has
@@ -422,8 +440,37 @@ export function learn(all, { carriers = [], minIntakes = 5, threshold = 0.9, rul
     s.rule = null;
     s.manualRule = `the same label on steps ${steps.join(', ')}: a label rule would match each step; write the rule by hand so it finds this step's question only`;
   }
-  for (const list of Object.values(suggestions)) list.sort((a, b) => b.intakes - a.intakes || b.quotes - a.quotes);
-  return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, rules, testRunsLeftOut, suggestions };
+  for (const list of [...Object.values(suggestions), undecided]) list.sort((a, b) => b.intakes - a.intakes || b.quotes - a.quotes);
+  return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, rules, testRunsLeftOut, suggestions, undecided };
+}
+
+// A question left to the agent with no suggestion: what a rule proposal is drafted from and scored
+// against. Its options as the page's layouts drew them, the agents' final picks, and for a text box
+// the intake fields the typed answers matched (field_change matchesIntake: the paths, never the
+// values). `left`: how many answers (a quote's units each count) it was left to the agent in.
+function undecidedOf({ base, first, field, left, choices, obs }, support, ids) {
+  // Each answer counts a value once, and shares are of the answers: a typed answer can match two
+  // intake fields.
+  const tally = (perAnswer) => {
+    const counts = new Map();
+    perAnswer.forEach((values) => new Set(values).forEach((v) => counts.set(v, (counts.get(v) ?? 0) + 1)));
+    return share(counts, perAnswer.length);
+  };
+  const typed = obs.filter((o) => o.matches && o.source === 'agent');
+  // A question without an id (AmWINS, GEICO) has no layout of its own: its page's captured layout
+  // gives its options by its caption, when that caption names one question there (byCaption; within
+  // its step, byStepCaption, when the answer names one), so a choice no agent picked can still be
+  // proposed (CodeRabbit on #419).
+  // An answer that names its step looks in that step only: another step's options sharing the
+  // caption are not its question's.
+  const layoutOf = (o) => o.layout ?? (o.step
+    ? ids.byStepCaption.get(`${o.carrier}|${o.page} › ${layoutStep(o)}|${textOf(o.label)}`)
+    : ids.byCaption.get(`${o.carrier}|${o.page}|${textOf(o.label)}`)) ?? null;
+  const options = [...new Set(obs.flatMap((o) => layoutOf(o)?.opts ?? []).map(String))];
+  const kind = first.kind ?? obs.find((o) => o.kind)?.kind ?? null;
+  return { ...base, ...support(left), field, kind, options, left: left.length,
+    answers: choices.length, agentAnswers: tally(choices.map((o) => [String(o.value)])),
+    typed: typed.length, typedMatches: tally(typed.map((o) => (o.matches.length ? o.matches : ['(no intake match)']).map((m) => m.replace(/:part$/, '').replace(/\[\d+\]/, '[]')))) };
 }
 
 const quote = (s) => `'${String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
@@ -440,7 +487,7 @@ function target(o) {
 // The maintainer's decision on a possible standard (maintainer, 2026-11-07: every suggested TNI
 // standard is decide-only). Only a recorded TNI standard may answer what the intake doesn't
 // (AGENTS.md), so the report asks; the rule is written once the answer is TNI's.
-const decision = (answer) => `Is "${answer}" TNI's standard here? If so, record it in TNI's rulebook (docs/intake-and-rules.md, src/ai/tni-rules.js) and write its rule with that entry (tni) and a concept; if it depends on the client, map it from the intake or keep it with the agent.`;
+export const decision = (answer) => `Is "${answer}" TNI's standard here? If so, record it in TNI's rulebook (docs/intake-and-rules.md, src/ai/tni-rules.js) and write its rule with that entry (tni) and a concept; if it depends on the client, map it from the intake or keep it with the agent.`;
 
 // An attestation or a client fact agents answer the same way: kept with the agent (a note, never
 // filled: plan.js fills no `attestation` or `fact`), or mapped from the intake by hand.

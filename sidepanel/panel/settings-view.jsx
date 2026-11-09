@@ -12,12 +12,14 @@
 // boxes are the agent's: the panel reads and writes their values by id, so the upload token and the
 // AI key never go into the panel's state.
 // One part of the panel; sidepanel.js mounts it (mountSettings, mountRecordingLine).
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { HelpLink } from './help-link.jsx';
 import { DefaultsDevSwitch, TniDefaults } from './agent-defaults/view.jsx';
+import { useAskFocus } from './ask-focus.js';
 
 // A checkbox the panel reads by id. It shows `checked` whenever that changes, or whenever `said`
 // (what it was said in) is said again, and the agent's click is passed on as the box's own change
@@ -81,6 +83,7 @@ function Assistant({ act }) {
           <span className="opt-text"><b>Put checked picks in</b><span>Shown in purple. You still approve them before Continue.</span></span>
           <Check id="ai-auto" role="switch" className="switch" checked={!!ai?.auto} said={ai} disabled={!!ai?.autoOff} onChange={act.aiAuto} />
         </label>
+        <label className="opt"><span className="opt-text"><b>Check driver names</b><span>Flags a first name more often a woman’s. You set the gender on its Intake check item.</span></span><Check id="ai-names" role="switch" className="switch" checked={!!ai?.names} said={ai} onChange={act.aiNames} /></label>
         <div className="key-row">
           <div className="opt">
             <span className="opt-text"><b id="key-label">OpenAI key</b><span id="key-status" className={ai?.keyTone}>{ai?.keyStatus ?? ''}</span></span>
@@ -111,6 +114,8 @@ function DevRecording({ act }) {
         <button type="button" id="devrec-note" className="ghost small-btn" hidden={!on} onClick={() => act?.note()}>Note</button>
         <button type="button" id="devrec-stop" className="ghost small-btn" hidden={!on} onClick={() => act?.stop()}>Stop and save</button>
         <button type="button" id="devrec-recover" className="ghost small-btn" hidden={!left} data-id={left?.id ?? ''} onClick={() => act?.recover()}>{left?.label ?? 'Save the unfinished recording'}</button>
+        {/* Deletes the newest unfinished one after a confirm that it can't be undone (REC-15). */}
+        <button type="button" id="devrec-discard" className="ghost small-btn danger" hidden={!left} onClick={() => act?.discard()}>Discard it</button>
       </div>
       <p id="devrec-status" className="fine" role="status" hidden={!devrec?.status}>{devrec?.status ?? ''}</p>
     </div>
@@ -118,7 +123,7 @@ function DevRecording({ act }) {
 }
 
 // `act`: done; the Filling switches (switch(name, on)); agent, serverUrl, serverToken (a box's new
-// value); upload, exportLog, clearLog, capture; testRun(on); the AI's aiOn(on), aiAuto(on), keyEdit,
+// value); upload, exportLog, clearLog (it asks first) with clearLogYes and clearLogNo, capture; testRun(on); the AI's aiOn(on), aiAuto(on), aiNames(on), keyEdit,
 // keySave and keyKey (a key pressed in the key's box); and the developer recording's (devrec: start,
 // note, stop, recover), or null where it isn't offered.
 function Settings({ act }) {
@@ -128,6 +133,8 @@ function Settings({ act }) {
   const health = useStore(panelStore, (s) => s.health);
   const card = useStore(panelStore, (s) => s.usageCard);
   const note = useStore(panelStore, (s) => s.usageNote);
+  const usageAsk = useStore(panelStore, (s) => s.usageAsk);
+  const askFocus = useAskFocus(!!usageAsk);
   const testRun = useStore(panelStore, (s) => s.testRun);
   const captureOff = useStore(panelStore, (s) => !!s.captureOff);
   const captureStatus = useStore(panelStore, (s) => s.captureStatus);
@@ -137,6 +144,7 @@ function Settings({ act }) {
     <>
       <div className="settings-head">
         <h2>Settings</h2>
+        <HelpLink topic="settings" />
         <button type="button" id="settings-done" className="primary small-btn" onClick={() => act.done()}>Done</button>
       </div>
       <div id="setup-note" className="setup-note" role="status" hidden={!health?.setup}><span className="bang" aria-hidden="true">!</span><span id="setup-text">{health?.setup ?? ''}</span></div>
@@ -194,7 +202,15 @@ function Settings({ act }) {
             <button type="button" id="capture" className="ghost small-btn" title="Alt+Shift+C while the panel is open" disabled={captureOff} onClick={() => act.capture()}>Capture page layout</button>
             <button type="button" id="upload-usage" className="ghost small-btn" onClick={() => act.upload()}>Upload now</button>
             <button type="button" id="export-usage" className="ghost small-btn" onClick={() => act.exportLog()}>Export log</button>
-            <button type="button" id="clear-usage" className="ghost small-btn danger" onClick={() => act.clearLog()}>Clear log</button>
+            <button type="button" id="clear-usage" ref={askFocus.opener} className="ghost small-btn danger" aria-expanded={!!usageAsk} aria-controls="usage-confirm" onClick={() => act.clearLog()}>Clear log</button>
+          </div>
+          {/* Asked before the usage log is deleted (settingsActs clearLog), as the file tools ask. */}
+          <div id="usage-confirm" ref={askFocus.group} className="file-confirm" role="group" aria-labelledby="usage-confirm-text" hidden={!usageAsk}>
+            <p id="usage-confirm-text" className="small">{usageAsk?.text ?? ''}</p>
+            <div className="actions">
+              <button type="button" id="usage-confirm-yes" className="ghost danger" onClick={() => act.clearLogYes()}>{usageAsk?.yes ?? ''}</button>
+              <button type="button" id="usage-confirm-no" ref={askFocus.cancel} className="ghost" onClick={() => act.clearLogNo()}>Cancel</button>
+            </div>
           </div>
           <p id="capture-status" className="fine" role="status" hidden={!captureStatus}>{captureStatus ?? ''}</p>
           <DevRecording act={act.devrec} />
@@ -209,9 +225,40 @@ function Settings({ act }) {
 
 // The footer's "Recording usage": while an intake is loaded, except on a practice page (render,
 // renderSite, renderUsage say it: state.recordingLine).
-function RecordingLine() {
+// `act`: the developer recording's (devrec: note(text), stop), whose pill shows here while one runs,
+// or null where it isn't offered.
+function RecordingLine({ act = null }) {
   const on = useStore(panelStore, (s) => !!s.recordingLine);
-  return <span id="recording" className="recording" title="Usage is recorded, never client information. See Settings." hidden={!on}><span className="rec-dot">●</span> Recording usage</span>;
+  return (
+    <>
+      <span id="recording" className="recording" title="Usage is recorded, never client information. See Settings." hidden={!on}><span className="rec-dot">●</span> Recording usage</span>
+      {act ? <DevRecordingPill act={act} /> : null}
+    </>
+  );
+}
+
+// While a developer recording runs: its time and events, Note (a one-line box here, so a note
+// doesn't mean leaving the quote for Settings) and Stop and save (REC-17).
+function DevRecordingPill({ act }) {
+  const devrec = useStore(panelStore, (s) => s.devrec);
+  const [noting, setNoting] = useState(false);
+  const [text, setText] = useState('');
+  if (!devrec?.on || !devrec.pill) return null;
+  const send = () => { if (act.note(text)) setText(''); setNoting(false); };
+  return (
+    // A group, not a live region: its time changes every second, and a screen reader would read it
+    // out each time. The recording's start and stop are said by #devrec-status (review of PR #471).
+    <span id="devrec-pill" className="devrec-pill" role="group" aria-label="Developer recording">
+      <span className="rec-dot devrec-dot" aria-hidden="true">●</span>
+      <span id="devrec-pill-text">Developer recording {devrec.pill}</span>
+      {noting
+        ? <input id="devrec-pill-note" type="text" maxLength={200} autoFocus placeholder="What's wrong here" aria-label="Note for the recording" value={text}
+          onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send(); if (e.key === 'Escape') setNoting(false); }} />
+        : <button type="button" id="devrec-pill-noting" className="link small" onClick={() => setNoting(true)}>Note</button>}
+      {noting ? <button type="button" id="devrec-pill-add" className="link small" onClick={send}>Add</button> : null}
+      <button type="button" id="devrec-pill-stop" className="link small" onClick={() => act.stop()}>Stop</button>
+    </span>
+  );
 }
 
 // Draws Settings into #settings, before it returns (showScreen shows or hides it).
@@ -220,10 +267,11 @@ function mountSettings(host, act) {
   flushSync(() => root.render(<Settings act={act} />));
 }
 
-// Draws the footer's Recording usage line into #recording-root, before it returns.
-function mountRecordingLine(host) {
+// Draws the footer's Recording usage line (and the developer recording's pill) into #recording-root,
+// before it returns.
+function mountRecordingLine(host, act = null) {
   const root = createRoot(host);
-  flushSync(() => root.render(<RecordingLine />));
+  flushSync(() => root.render(<RecordingLine act={act} />));
 }
 
 export { mountRecordingLine, mountSettings, RecordingLine, Settings };

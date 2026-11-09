@@ -1,6 +1,6 @@
 // Where the usage log lives: chrome.storage.local on the agent's computer until it's uploaded to
 // the collection server (server/index.mjs) or exported. Events are built by src/usage.js and
-// never contain client data.
+// never contain client data, except a quote summary the agent saves (quote_summary: quote-summary.js).
 
 import { LOG_KEY, MAX_EVENTS } from '../src/usage.js';
 import { SCHEMA_VERSION } from '../src/usage-schema.js';
@@ -60,6 +60,15 @@ async function installId() {
 // Lock (shared by all of the extension's pages) lets one of them read and write it at a time.
 const exclusive = (fn) => (globalThis.navigator?.locks ? navigator.locks.request('usage-log', fn) : fn());
 
+// Who is told of each event as it is logged: the developer recording (dev-recording.js), which
+// keeps a copy in its timeline while it runs (REC-01). Returns how to stop being told.
+const taps = new Set();
+/** @param {(events: object[], at: { t: string, session: string | null }) => void} fn */
+export function onLogged(fn) {
+  taps.add(fn);
+  return () => taps.delete(fn);
+}
+
 // Appends events in order, even when called from several places at once. The time and the quote
 // (session) are taken when log() is called, not when the queue gets to the event: Clear and
 // Replace log intake_closed just before the panel moves to another session. `seq` numbers every
@@ -69,6 +78,8 @@ const exclusive = (fn) => (globalThis.navigator?.locks ? navigator.locks.request
 export function log(...events) {
   const t = new Date().toISOString();
   const { id: sessionId = null, intakeId = null } = session ?? {};
+  // The developer recording's copy (onLogged), as logged: already redacted, nothing more leaves.
+  for (const fn of taps) { try { fn(events, { t, session: sessionId }); } catch { /* the log goes on */ } }
   queue = queue.then(() => exclusive(async () => {
     const { agent = null } = await settings();
     const install = await installId();
@@ -105,6 +116,18 @@ export async function counts() {
 export async function count() {
   const { queued, rejected } = await counts();
   return queued + rejected;
+}
+// What Clear log's question names: the events waiting (`n`) and the number of the last event logged
+// (`seq`), which a new event changes even when the capped queue's count doesn't (MAX_EVENTS: the
+// oldest go for it). clearLog({ expected }) deletes only while both are still these. Read under the
+// log's lock, so a write another panel has under way (its number saved, its queue not yet) is
+// finished first and counted.
+export async function logMark() {
+  await queue;
+  return exclusive(async () => ({
+    n: ((await local.get(LOG_KEY)) ?? []).length + ((await local.get(REJECTED_KEY)) ?? []).length,
+    seq: (await local.get(SEQ_KEY)) ?? 0,
+  }));
 }
 
 export async function exportLog() {
@@ -294,11 +317,20 @@ export async function eventFate(id) {
 }
 
 // Deletes the upload queue and the events kept aside for export: what Export wrote (audit
-// 2026-10-08: Clear left the refused events, which Export kept including).
-export async function clearLog() {
+// 2026-10-08: Clear left the refused events, which Export kept including). With `expected`, what the
+// agent was asked about (logMark): deleted only if both lists still hold that many events and no
+// event was logged since (`seq`), checked under the same lock, so an event another panel logs after
+// the question is never deleted unasked, a full queue's included. True when deleted.
+/** @param {{ expected?: { n: number, seq: number } }} [options] */
+export async function clearLog({ expected } = {}) {
   await queue;
-  await exclusive(async () => {
+  return exclusive(async () => {
+    if (expected !== undefined) {
+      const n = ((await local.get(LOG_KEY)) ?? []).length + ((await local.get(REJECTED_KEY)) ?? []).length;
+      if (n !== expected.n || ((await local.get(SEQ_KEY)) ?? 0) !== expected.seq) return false;
+    }
     await local.set(LOG_KEY, []);
     await local.set(REJECTED_KEY, []);
+    return true;
   });
 }

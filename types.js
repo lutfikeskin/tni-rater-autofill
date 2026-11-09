@@ -164,18 +164,18 @@
  * @property {ClientValue<string | null>} [warn]  filled, and marked for the agent to confirm
  * @property {ClientValue<string | null>} [emptyNote]
  * @property {ClientValue<boolean>} [ignore]
- * @property {boolean} [every]
+ * @property {boolean} [every]  with `ignore`: the rule claims every control its locator finds, not only the first (GEICO's gateway product boxes, one rule for all)
  * @property {ClientValue<boolean>} [verifyOnly]  checked against the intake, never typed
  * @property {boolean} [clientFact]  the agent's when the intake leaves it without an answer
  * @property {boolean} [optional]
- * @property {boolean} [each]
- * @property {boolean} [hidden]
+ * @property {boolean} [each]  several free controls match: the first answers it, where otherwise none would (src/kit/locator.js; Progressive's two Business Type boxes)
+ * @property {boolean} [hidden]  its control (by `selector`) is filled while the page hides it
  * @property {ClientValue<boolean>} [replace]  our answer replaces a differing one already on the page (a
  *   lookup's, or a bulk helper's such as AmWINS' "Default all answers to No"); a function: only for these clients
- * @property {boolean} [trustPage]
+ * @property {boolean} [trustPage]  an answer already on the page that differs from the rule's is kept, with no item saying it differs
  * @property {boolean} [keepChoice]
  * @property {boolean} [keepPreset]  a choice the carrier already made (a pre-selection, such as Progressive's anti-theft device from its VIN lookup) is kept as it is, without a check, also with Replace existing answers: only an empty one is answered
- * @property {boolean} [keepUnlisted]
+ * @property {boolean} [keepUnlisted]  a list without the answer that already holds the page's own (not Other): kept, with a check naming the answer (GEICO's cities for the ZIP, W43-35)
  * @property {string} [firstNot]  with `kind: 'first-option'`: a first option matching this pattern is not picked; the question is the agent's, with `unofferedNote` (Progressive's Primary Business Address listing "Enter a different address" first)
  * @property {boolean} [whenOffered]
  * @property {{ count: string, one?: string, after: string, name: string }} [orMost]
@@ -189,9 +189,7 @@
  * @property {ClientValue<string | null>} [unofferedNote]  a list without the answer, which no helper shows later (GEICO's Medical Payments without $5,000): the agent's alone at once, with this note, instead of a failure
  * @property {string[]} [needs]  the rules (their `q`) whose answer on the same unit the page needs before it offers this one (GEICO's collision, rental and road service behind comprehensive): while one of them is being given again this waits, and when one doesn't take, the unit gets one needs-you item naming them all instead of a failure each
  * @property {boolean} [checkNumber]
- * @property {'section' | 'limit' | true} [cargo]
- * @property {'section' | 'limit'} [gl]
- * @property {'section' | 'limit'} [interchange]  Progressive's trailer interchange: a question of its open section, or its limit (in the section and in the row once Done); its Done checks them (`interchangeClosed`)
+ * @property {{ id: string, part: 'section' | 'limit' | 'question' }} [section]  a question of a coverage section the carrier declares (`sections`): of its open section, its limit (in the section and in the row once Done), which the section's Done (`verify: { closed }`) checks, or another question of that coverage (`question`: Progressive's reefer breakdown, which re-arms cargo's Done but isn't checked)
  * @property {string} [group]
  * @property {ClientValue<string | null>} [summaryAfter]
  * @property {ClientValue<string[]>} [choiceAliases]  other words for the answer, in order, as an option reads; a yes/no answer
@@ -242,8 +240,8 @@
  * @property {ClientValue<string[]>} [doneWhen]
  * @property {ClientValue<string[]>} [heldBy]
  * @property {string} [resolvedBy]
- * @property {ClientValue<string[]>} [settledByPages]
- * @property {string} [nudge]
+ * @property {ClientValue<string[]>} [settledByPages]  a needs-you helper item (`missing`) is settled once the agent has been to one of these pages; no carrier uses it since Progressive's general liability became automatic (2026-10-20)
+ * @property {string} [nudge]  the path of an answer given again, once, when this button shows only after the page took that answer and hasn't shown (Progressive's Done with this coverage after the cargo commodity)
  * @property {{ all?: string[], any?: string[], answered?: boolean }} [shownBy]
  * @property {ClientValue<boolean>} [needsPremium]
  * @property {ClientValue<boolean>} [needsRecalculation]
@@ -268,7 +266,8 @@
  * How a click is known to have worked (pagekit fill): its result shows the premium, reveals more,
  * starts a download, the button goes, a coverage closes, `appears` matches more than before, or the
  * page is now `page` (a click that opens another page; with `loads`, waited for).
- * @typedef {'premium' | 'revealed' | 'download' | 'gone' | 'cargoClosed' | 'glClosed' | 'interchangeClosed' | { appears: string } | { page: string }} ActionVerify
+ * `{ closed }`: a coverage section of the carrier's `sections` closed (in a plan step, with its `words` and `anyLimit`).
+ * @typedef {'premium' | 'revealed' | 'download' | 'gone' | { closed: string, words?: string | null, anyLimit?: boolean } | { appears: string } | { page: string }} ActionVerify
  */
 
 /**
@@ -321,12 +320,26 @@
  */
 
 /**
+ * How the side panel presents a carrier (audit 2026-11-07, UX-14: these were written into the panel's
+ * code): its logo in the header and on the "open a rater" card, the agent portal that card's logo
+ * opens in a new tab (a navigation the agent asks for; nothing is filled there), the product named
+ * under the carrier on a page outside the quote's steps, and the business classes its rules were
+ * written for, as review mode says them (they describe `supportedClasses`, which decides).
+ * @typedef {object} CarrierDisplay
+ * @property {string} logo  the image's path from sidepanel/ (`assets/raters/<carrier>.<ext>`)
+ * @property {string} portalUrl  the carrier's agent home page, on one of its `hosts`
+ * @property {string} product  "Commercial auto"
+ * @property {string} classesSaid  "expediters and general freight", after "<carrier>'s rules cover"
+ */
+
+/**
  * A carrier's settings and mappings (src/carriers.js describes each). `practice` is set by
  * carrierForUrl on the repository's practice pages, never by a carrier file.
  * @typedef {object} CarrierConfig
  * @property {string} id
  * @property {string} name
  * @property {RegExp[]} hosts  also needs a manifest.json host permission
+ * @property {CarrierDisplay} [display]  how the panel shows it; every carrier with rules has one (test/carriers.test.mjs)
  * @property {CarrierRule[]} rules
  * @property {CarrierAction[]} [actions]
  * @property {CarrierAdvance} [advance]
@@ -338,7 +351,13 @@
  * @property {RegExp} [fillOnDraw]
  * @property {string[]} [layoutSteps]
  * @property {QuoteStep[]} [quoteSteps]
- * @property {boolean} [useGenericRules]
+ * @property {boolean} useGenericRules  whether the generic label rules (src/rules.js) fill this carrier's pages
+ *   too: only when true (AmWINS, the local test page), so a new carrier opts in after checking them (audit
+ *   2026-11-07, CARR-09)
+ * @property {{ [id: string]: { words?: string, anyLimit?: boolean } }} [sections]  coverage sections a page adds and closes (Progressive's cargo,
+ *   general liability, trailer interchange): rules tagged `section: { id, part }` are its questions; a helper with `verify: { closed: id }`
+ *   is its Done, accepted once none of its questions show and its row keeps the limit (`words`: a regular expression, case-insensitive, for
+ *   the row's text whose amounts show the intake's; `anyLimit`: any limit counts when the intake gives none)
  * @property {string[]} [rowSections]
  * @property {SupportedClass[]} [supportedClasses]
  * @property {boolean} [replaceChoices]
@@ -369,7 +388,7 @@
  * @property {string} [finishedSaid]  the dock's title then, in place of "The quote proposal is printed" (Progressive: "Print, Email, Fax was clicked")
  * @property {string[]} [newQuestionsOnlySteps]
  * @property {string[]} [keepTakenBack]
- * @property {boolean} [continueRetry]
+ * @property {boolean} [continueRetry]  false: a Continue whose page didn't move is never clicked a second time (GEICO, FL live run 4); otherwise it is, once (sidepanel/panel/fill.js)
  * @property {boolean} [practice]
  */
 
@@ -388,6 +407,7 @@
  * @property {boolean} standard
  * @property {boolean} reviewRequired
  * @property {boolean} manualOnly
+ * @property {boolean} [ruleError]  its rule threw while the plan was built: no answer, the agent's
  * @property {string | null} q
  * @property {string | null} tni  the TNI rulebook entry its rule names (CarrierRule `tni`)
  * @property {{ id: string, amount?: string, tni?: string, ask?: boolean }} [agentDefault]  the agent's own default
@@ -408,9 +428,7 @@
  * @property {boolean} each
  * @property {boolean} optional
  * @property {boolean} registeredName
- * @property {'section' | 'limit' | true | null} cargo
- * @property {'section' | 'limit' | null} gl
- * @property {'section' | 'limit' | null} interchange
+ * @property {{ id: string, part: 'section' | 'limit' | 'question' } | null} section
  * @property {string | null} selector
  * @property {string | null} re  the rule's `label` pattern
  * @property {string | null} ex  the rule's `not` pattern
@@ -556,6 +574,18 @@
  * buildPlan's options.
  * @typedef {object} PlanOptions
  * @property {StepOverlay | null} [overlay]
+ * @property {((error: unknown, at: RuleErrorAt) => void) | null} [onRuleError]  told of each rule
+ *   that threw while the plan was built; that rule's step is the agent's (`ruleError`)
+ */
+
+/**
+ * Which rule threw while a plan was built (src/plan.js fieldSteps): the rule's own names, never a
+ * value from the record.
+ * @typedef {object} RuleErrorAt
+ * @property {string | null} carrier
+ * @property {string | null} concept
+ * @property {string | null} q
+ * @property {string | null} name
  */
 
 // Agents' own defaults (src/agent-defaults/, docs/agent-defaults-spec.md)
@@ -837,15 +867,17 @@
  * @property {'agent_settings'} type
  * @property {string} [reason]  intake, opened or changed
  * @property {string} [changed]
- * @property {{ autoFollowUps: boolean, autoAdvance: boolean, autoPages: boolean, overwrite: boolean, aiOn: boolean, aiAuto: boolean, aiKey: boolean, uploads: 'off' | 'central' | 'other' }} values
+ * @property {{ autoFollowUps: boolean, autoAdvance: boolean, autoPages: boolean, overwrite: boolean, aiOn: boolean, aiAuto: boolean, aiNames: boolean, aiKey: boolean, uploads: 'off' | 'central' | 'other' }} values
  */
 
 /**
  * @typedef {object} ClientErrorEvent
  * @property {'client_error'} type
- * @property {string} [where]
+ * @property {string} [where]  panel, recorder, or plan (a carrier rule that threw while a plan was built)
  * @property {string} error
  * @property {string[]} [stack]
+ * @property {string} [concept]  where 'plan': the rule's concept
+ * @property {string} [q]  where 'plan': the rule's question id
  */
 
 /**
@@ -965,6 +997,18 @@
  */
 
 /**
+ * @typedef {object} AiLeaveEvent  sidepanel.js runAssist: one question Luna left (audit 2026-11-07, AI-07)
+ * @property {'ai_leave'} type
+ * @property {string} carrier
+ * @property {string} [page]
+ * @property {string | null} q  the question's code, when it has one
+ * @property {string} label  redacted
+ * @property {string} [controlKind]
+ * @property {'restricted' | 'missing' | 'conflict' | 'chose' | 'noSource' | 'unverified' | 'tooLarge' | null} leaveWhy
+ * @property {string | null} intakePath  the intake field the question maps to, if any
+ */
+
+/**
  * The events src/usage.js builds. The panel logs others of its own (sidepanel.js).
  * @typedef {IntakeProfileEvent | CheckDismissedEvent | AgentSettingsEvent | ClientErrorEvent | FieldChangeEvent | FillRunEvent | FillFieldEvent | RecalcLayoutEvent} UsageEvent
  */
@@ -977,8 +1021,15 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel, and luna (one Luna call)
+ *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel, usage, moment, and luna (one Luna call)
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
+ * @property {string} [run]  fill, as it ends: the fill run's id, the usage log's fill_run and fill_field `run`
+ * @property {UsageEvent} [event]  usage: an event the usage log logged while the recording ran, as logged (redacted)
+ * @property {string | null} [layout]  moment: the page layout it took, by its name in the zip (`layouts/0001.json`); null when it couldn't
+ * @property {number} [fields]  moment: how many questions that layout holds
+ * @property {string} [note]  moment taken for a note: the note's words
+ * @property {string} [capture]  note for an Alt+Shift+C capture taken while recording: the capture's file name
+ * @property {string | null} [error]  moment that couldn't take its layout: the error's name; luna: why the call failed
  * @property {boolean} [away]  panel: the panel follows another tab than the recorded one (true), or is back on it
  * @property {number | null} [followed]  panel: the tab the panel follows (a tab number)
  * @property {number} [recorded]  panel: the recorded tab (a tab number)
@@ -1032,24 +1083,34 @@
  * @property {'fetch' | 'xhr'} [via]  request: how the page sent it
  * @property {number} [status]  request: the HTTP status its server answered (responseStatus; 0 when the browser doesn't
  *   say; none from a browser without it): 400 and up is a failed request in the report
- * @property {'run' | 'wait' | 'answer' | 'press'} [what]  kit: what the fill said. run: it started (`on`, its `steps`) or ended (`filled`, `halted`); wait: a
+ * @property {'run' | 'wait' | 'answer' | 'press'} [what]  kit: what the fill said. run: it started (`on`, its `steps`) or ended (`filled`, `halted`,
+ *   `failed`, `leftRequired`, `blockers`, `unknown`); wait: a
  *   settle (`quietMs`, `maxMs`, `requests`, `start`, `ms`, `ended` quiet or limit, at the limit `settled` and what `held` it); answer: one answer
  *   (`field`, `stepKind`, `ok`, `start`, `applyMs`, the usage log's `timing`); press: a button it pressed (`button`, `how`: from the page's world or the kit's)
  * @property {number} [steps]  kit run, as it starts: the plan's steps
+ * @property {'fill' | 'ai' | 'agent'} [source]  fill (the panel's marker): whose the work is; kit run and answer: 'ai' or 'agent'
+ *   for the kit's `answer` (an AI apply, the agent's own answer from the panel), none for a fill
  * @property {number} [filled]  kit run, as it ends: how many answers it filled
  * @property {boolean} [halted]  kit run, as it ends: whether it halted
  * @property {number} [start]  kit wait, answer: wall-clock ms when it began (`t` is when it was said, at its end)
  * @property {number} [quietMs]  kit wait: the quiet it waited for
  * @property {number} [maxMs]  kit wait: its limit
  * @property {boolean} [requests]  kit wait: whether it waited for the page's requests too
- * @property {'quiet' | 'limit'} [ended]  kit wait: the page was quiet, or the limit came first
+ * @property {'quiet' | 'limit' | 'stopped'} [ended]  kit wait: the page was quiet, the limit came first, or the agent stopped the fill while it waited
  * @property {boolean} [settled]  kit wait at its limit: the page itself was settled (only components undefined held it)
  * @property {{ busy: boolean, changing: boolean, requests: boolean }} [held]  kit wait at its limit: what still held it
  * @property {string | null} [stepKind]  kit answer: the plan step's kind
  * @property {boolean} [ok]  kit answer: the page kept it
+ * @property {FailCode} [code]  kit answer not kept: why, as the fill report's code
+ * @property {number} [failed]  kit run, as it ends: answers that failed
+ * @property {number} [leftRequired]  kit run, as it ends: required questions left for the agent
+ * @property {number} [blockers]  kit run, as it ends: what held Continue
+ * @property {number} [unknown]  kit run, as it ends: questions no rule knows
  * @property {number} [applyMs]  kit answer: ms to give it, a list's wait for its options included
  * @property {{ ms: number, settleMs: number, ajax: number, revealed: number, removed: number, changed: number, batch?: boolean }} [timing]  kit answer: the usage log's fill_field timing
- * @property {'page' | 'kit' | 'navigate' | 'reload' | 'back_forward' | 'prerender' | null} [how]  kit press: clicked from the page's own world, or by the kit; load: how the document came (its navigation entry's type)
+ * @property {'page' | 'kit' | 'navigate' | 'reload' | 'back_forward' | 'prerender' | 'agent' | 'follow-up' | 'looks-right' | 'continue' | null} [how]  kit press: clicked from the page's
+ *   own world ('page'), or by the kit; load: how the document came (its navigation entry's type); fill, as it ends: how it was asked ('agent': Fill this
+ *   page, 'page': as the page opened, 'follow-up', 'looks-right', 'continue')
  * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
  * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
  * @property {'propose' | 'verify'} [call]  luna: the page review's first call or its evidence check (src/ai/luna.js `trace`)
@@ -1059,7 +1120,6 @@
  * @property {string | null} [outcome]  luna: the response's status as the provider said it (completed, incomplete…)
  * @property {number | null} [tokensIn]  luna: the call's input tokens
  * @property {number | null} [tokensOut]  luna: its output tokens
- * @property {string | null} [error]  luna: why the call failed
  */
 
 /**
@@ -1209,6 +1269,37 @@
  */
 
 /**
+ * One answer or item of the quote summary (sidepanel/panel/quote-summary.js): the question, what went
+ * in (or what happened to it), where it came from (`source`: intake, derived, standard, own,
+ * edited, ai, you, page, clicked, changed, marked, pending, open) as the summary says it, and a note
+ * (why it was left for the agent, what the page shows now).
+ * @typedef {object} QuoteSummaryRow
+ * @property {string} label
+ * @property {string} value
+ * @property {string} source
+ * @property {string} sourceSaid
+ * @property {string | null} note
+ * @property {string} [carrier]  the carrier tab it is on, in the summary's lists
+ * @property {string} [page]  its page's title, in the summary's lists
+ */
+
+/**
+ * The quote summary (quote-summary.js quoteSummary): every page of the quote per carrier tab with
+ * its answers and their sources, then the agent's overrides, the AI's decisions and the items marked
+ * done without an answer. Shown read-only in the panel, saved as HTML to Downloads.
+ * @typedef {object} QuoteSummary
+ * @property {{ name: string, fileName: string | null, state: string | null }} client
+ * @property {string} at  when it was made, ISO
+ * @property {string} version  the extension's version
+ * @property {{ id: string, name: string, tabId: number, practice: boolean, pages: { title: string, at: string, said: string | null, counts: { source: string, sourceSaid: string, n: number }[], rows: QuoteSummaryRow[] }[] }[]} carriers
+ * @property {{ kind: string, carrier: string | null, page: string | null, label: string, value: string, said: string }[]} overrides
+ * @property {QuoteSummaryRow[]} ai
+ * @property {QuoteSummaryRow[]} marked
+ * @property {number} open  items still left for the agent
+ * @property {number} answers  answers in (not counting items open, marked or waiting for approval)
+ */
+
+/**
  * The side panel state shape managed by panelStore in state-store.js.
  * @typedef {object} PanelState
  * @property {any} [intake]
@@ -1250,6 +1341,7 @@
  * @property {Set<number>} [layoutReadyTabs]
  * @property {Set<number>} [layoutNewTabs]
  * @property {Map<number, number>} [viewTabs]
+ * @property {Map<number, string>} [portalTabs]  tabs a rater's logo opened (quote-owner.js openPortal) -> the page opened: nothing fills there by itself
  * @property {any} [layoutLatest]
  * @property {number} [layoutErrors]
  * @property {Set<string>} [layoutErrorsLogged]
@@ -1269,6 +1361,7 @@
  * @property {boolean} [keyFormOpen]
  * @property {any} [usageCard]
  * @property {string} [usageNote]
+ * @property {{ n: number, seq: number, text: string, yes: string } | null} [usageAsk]
  * @property {any} [health]
  * @property {boolean | null} [testRun]
  * @property {boolean} [captureOff]
@@ -1295,6 +1388,8 @@
  * @property {any} [audio]
  * @property {boolean} [showEmpty]
  * @property {Set<string>} [detailsClosed]
+ * @property {string} [detailsQuery] client details' filter box: fields whose label or section has it
+ * @property {boolean} [detailsEditedOnly] client details' Your corrections: only the fields the agent changed
  * @property {Uint8Array | null} [pdfBytes]
  * @property {any} [pdfDoc]
  * @property {number} [pdfDraw]
@@ -1313,6 +1408,8 @@
  * @property {any} [pdfReturn]
  * @property {boolean} [detailsOpen]
  * @property {any} [detailsReturn]
+ * @property {{ summary: QuoteSummary, saved: string | null } | null} [summary]  the quote summary open over the panel, and what Save summary said
+ * @property {any} [summaryReturn]
  * @property {any} [browserWindow]
  * @property {boolean} [closing]
  * @property {boolean} [defaultsOn] agent defaults: whether this copy of the panel shows the feature
@@ -1328,5 +1425,12 @@
 /**
  * Zustand vanilla store for the side panel state.
  * @typedef {import('zustand/vanilla').StoreApi<PanelState>} PanelStore
+ */
+
+/**
+ * A fill the panel says is running, over its 'fill-watch' port to the service worker
+ * (sidepanel/panel/fill-watch.js to src/fill-watch.js): the worker stops that run (the kit's
+ * stopRun) if the port goes while it runs. The panel says `{ tabId: null }` once the fill ended.
+ * @typedef {{ tabId: number, run: string, world: 'MAIN' | 'ISOLATED' }} WatchedRun
  */
 

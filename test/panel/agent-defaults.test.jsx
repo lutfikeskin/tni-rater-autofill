@@ -105,6 +105,32 @@ test('a new profile is named, then created', () => {
   expect(calls).toEqual([['create', 'Jordan K.']]);
 });
 
+// Delete profile asks in the panel, never with a browser dialog (audit 2026-11-07, UX-17).
+test('Delete profile asks first, in the panel: Cancel keeps the profile, Delete removes it', () => {
+  const s = storeState({ defaultsOn: true, agentDefaults: { v: 1, active: 'p1', profiles: { p1: { name: 'Jordan K.', values: {} } } }, defaultsInitials: 'JK' });
+  const calls = [];
+  const dialog = globalThis.confirm;
+  globalThis.confirm = () => { throw new Error('no browser dialog'); };
+  try {
+    const { container, getByText } = render(<TniDefaults act={actsOf(calls)} />);
+    expect(container.querySelector('#defaults-confirm')).toBeNull();
+    fireEvent.click(getByText('Delete profile'));
+    expect(container.querySelector('#defaults-confirm-text').textContent).toBe("Delete Jordan K.'s defaults?");
+    expect(container.querySelector('#defaults-delete')).toBeNull();
+    // The focus goes to Cancel, and back to Delete profile once the question closes (a keyboard user's).
+    expect(document.activeElement?.id).toBe('defaults-confirm-no');
+    fireEvent.click(container.querySelector('#defaults-confirm-no'));
+    expect([container.querySelector('#defaults-confirm'), calls, document.activeElement?.id]).toEqual([null, [], 'defaults-delete']);
+    fireEvent.click(getByText('Delete profile'));
+    fireEvent.click(container.querySelector('#defaults-confirm-yes'));
+    expect(calls).toEqual([['remove', 'p1']]);
+    expect([container.querySelector('#defaults-confirm'), document.activeElement?.id]).toEqual([null, 'defaults-delete']);
+    // The deletion saved takes Delete profile away: the focus goes to the Profile menu, which stays.
+    act(() => { s.agentDefaults = { v: 1, active: null, profiles: {} }; });
+    expect([container.querySelector('#defaults-delete'), document.activeElement?.id]).toEqual([null, 'defaults-profile']);
+  } finally { globalThis.confirm = dialog; }
+});
+
 // The store: what the quote waits on, logs and fills with.
 let answers;
 beforeEach(async () => {

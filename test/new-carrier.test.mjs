@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { CARRIERS } from '../src/carriers.js';
+import { CARRIERS, RATERS, ratersSaid } from '../src/carriers.js';
 
 // Audit 2026-11-07, ORG-16: adding a carrier touches about a dozen places, listed only in
 // docs/new-carrier.md's prose. The new-carrier issue template lists each as a box; this keeps the
@@ -55,4 +55,82 @@ test('the template has a box for the correction keys, the agent\'s stops and whe
   // docs/new-carrier.md step 2: what the intake doesn't answer, without a TNI standard, is the agent's.
   assert.match(steps, /every question the intake doesn't answer is the agent's/);
   assert.match(template, /^- \[ \] Step 2: a question the intake doesn't answer and TNI has no standard for stays the agent's, shown as unanswered: never filled as No or not applicable$/m);
+});
+
+// Audit 2026-11-07, CARR-10: the registries outside a carrier's own file that name each carrier.
+// Each carrier with rules is in every one, or this list says why it isn't; one that fails quietly
+// (the dashboard showing its raw id, a defaults choice list missing) fails here instead.
+const LEFT_OUT = {
+  // src/util.js CARRIER_NAMES: the words of a carrier's name, for "currently insured with this carrier".
+  names: { amwins: 'AmWINS asks no same-carrier question (src/carriers/amwins.js uses no sameCarrier)' },
+  // scripts/intake-mocks.mjs: the synthetic-intake runs drive the AmWINS mock and the Progressive replays.
+  intakeMocks: { geico: 'GEICO\'s mock is its one fixture run, npm run mock:geico' },
+  // package.json: a mock:<carrier> command.
+  mock: { progressive: 'Progressive\'s fixture replays are npm run e2e' },
+};
+test('every registry names each carrier with rules, or says here why not', async () => {
+  const { RULE_FILES } = await import('../src/usage.js');
+  const { CARRIER_PARTS } = await import('../src/ai/tni-rules.js');
+  const { REGISTRY } = await import('../src/agent-defaults/registry.js');
+  const dashboard = /const CARRIERS = (\{[^}]*\})/.exec(read('server/dashboard.mjs'))?.[1] ?? '';
+  const nameKeys = [.../const CARRIER_NAMES = \{([\s\S]*?)\n\};/.exec(read('src/util.js'))?.[1].matchAll(/^ {2}(\w+): \{/gm) ?? []].map((m) => m[1]);
+  // The runner's carriers: its RUNNERS, which its default, the carriers it accepts and its dispatch
+  // all read, and nothing else picks a carrier's case.
+  const mocksText = read('scripts/intake-mocks.mjs');
+  // Its entries on one line or several.
+  const runners = /const RUNNERS = \{([\s\S]*?)\};$/m.exec(mocksText)?.[1] ?? '';
+  const intakeMocks = [...runners.matchAll(/(?:^|,)\s*(\w+): \(/g)].map((m) => m[1]);
+  assert.ok(intakeMocks.length, 'scripts/intake-mocks.mjs: its RUNNERS are found');
+  const several = /const RUNNERS = \{([\s\S]*?)\};$/m.exec('const RUNNERS = {\n  amwins: (o) => a(o),\n  progressive: (o) => p(o),\n};')?.[1] ?? '';
+  assert.deepEqual([...several.matchAll(/(?:^|,)\s*(\w+): \(/g)].map((m) => m[1]), ['amwins', 'progressive'], 'a RUNNERS on several lines is read too');
+  assert.match(mocksText, /arg\('carrier', 'both'\) === 'both' \? Object\.keys\(RUNNERS\)/, 'its default is every runner');
+  assert.match(mocksText, /carriers\.some\(c => !Object\.hasOwn\(RUNNERS, c\)\)/, 'it accepts only a carrier with a runner');
+  assert.match(mocksText, /: RUNNERS\[carrier\]\(/, 'it runs the carrier\'s own case');
+  assert.doesNotMatch(mocksText, /carrier === '/, 'no case chosen by a carrier\'s id outside RUNNERS');
+  const scripts = JSON.parse(read('package.json')).scripts;
+  const has = (where, id, yes) => assert.ok(yes || LEFT_OUT[where]?.[id], `${id}: missing from ${where}, and LEFT_OUT doesn't say why`);
+  const carriers = CARRIERS.filter((c) => c.rules?.length);
+  assert.ok(carriers.length >= 3);
+  for (const c of carriers) {
+    assert.ok(RULE_FILES.includes(`src/carriers/${c.id}.js`), `${c.id}: in RULE_FILES (src/usage.js)`);
+    assert.ok(CARRIER_PARTS[c.id], `${c.id}: a rulebook part`);
+    assert.ok(dashboard.includes(`${c.id}: '${c.name}'`), `${c.id}: the dashboard's name for it is "${c.name}" (server/dashboard.mjs)`);
+    for (const entry of REGISTRY) assert.ok(entry.choices?.[c.id], `${c.id}: agents' defaults ${entry.id} lists its choices`);
+    assert.ok(ratersSaid().includes(c.name), `${c.id}: named on the panel's "Open the client's quote" line`);
+    has('names', c.id, nameKeys.includes(c.id));
+    has('intakeMocks', c.id, intakeMocks.includes(c.id));
+    has('mock', c.id, !!scripts[`mock:${c.id}`]);
+  }
+  // A reason only for what is really left out: each one names a carrier still missing there.
+  const present = { names: (id) => nameKeys.includes(id), intakeMocks: (id) => intakeMocks.includes(id), mock: (id) => !!scripts[`mock:${id}`] };
+  assert.deepEqual(Object.keys(LEFT_OUT).sort(), Object.keys(present).sort(), 'LEFT_OUT names the registries checked here');
+  for (const [where, ids] of Object.entries(LEFT_OUT)) {
+    for (const id of Object.keys(ids)) {
+      assert.ok(carriers.some((c) => c.id === id), `${where}: ${id} is a carrier`);
+      assert.ok(!present[where](id), `${where}: ${id} is there now, so LEFT_OUT's reason is stale`);
+    }
+  }
+});
+
+// Audit 2026-11-07, UX-14: the panel's logos, the dock's list of raters, the caption and review
+// mode's wording were written into the panel's code, in four places a new carrier would miss. Each
+// carrier with rules says them in its own `display`; a logo opens its agent site, on its own hosts.
+test('every carrier with rules says how the panel shows it: a logo on disk, its agent site on its hosts, its product and classes', () => {
+  const real = CARRIERS.filter((c) => c.rules?.length);
+  assert.deepEqual(RATERS.map((c) => c.id), real.map((c) => c.id));
+  for (const { id, hosts, display } of real) {
+    assert.ok(display, `${id} has a display`);
+    assert.ok(fs.existsSync(new URL(`../sidepanel/${display.logo}`, import.meta.url)), `${id}'s logo ${display.logo} exists`);
+    const url = new URL(display.portalUrl);
+    assert.equal(url.protocol, 'https:', `${id}'s agent site is https`);
+    assert.ok(hosts.some((h) => h.test(url.hostname)), `${id}'s agent site ${url.hostname} is one of its hosts`);
+    assert.ok(display.product && display.classesSaid, `${id} names its product and classes`);
+  }
+  assert.equal(ratersSaid(), 'Progressive, GEICO or AmWINS.');
+  assert.equal(ratersSaid(RATERS.slice(0, 1)), 'Progressive.');
+});
+
+test('docs/new-carrier.md and the template name the carrier\'s display', () => {
+  assert.match(read('docs/new-carrier.md'), /`display`/);
+  assert.match(template, /`display`/);
 });
