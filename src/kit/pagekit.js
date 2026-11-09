@@ -153,7 +153,11 @@ import { fill, progress, stop, stopRun } from './cursor.js';
       // Its waits by what they were for (REC-09): the usage log's fill_run sums them over its frames.
       const waits = waitsTallied();
       if (report && waits) report.waits = waits;
-      kitTrace('run', { on: false, filled: report?.filled?.length ?? 0, halted: !!report?.halted });
+      // How it ended, as counts (REC-01): what failed, was left for the agent, held Continue or was
+      // new to the rules. Which ones, and why, are in the usage log's fill_field events, which a
+      // recording copies in.
+      kitTrace('run', { on: false, filled: report?.filled?.length ?? 0, halted: !!report?.halted,
+        failed: report?.failed?.length ?? 0, leftRequired: report?.leftRequired?.length ?? 0, blockers: report?.blockers?.length ?? 0, unknown: report?.unknown?.length ?? 0 });
       if (hiddenSince != null) hiddenMs += perfNow() - hiddenSince;
       if (report && hiddenMs >= 1) report.hiddenMs = Math.round(hiddenMs);
       return report;

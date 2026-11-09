@@ -340,6 +340,21 @@ test('an event the page dispatches as the fill\'s keeps only the documented fiel
   assert.deepEqual([run.on, run.filled, 'halted' in run, 'who' in run], [false, 3, false, false]);
 });
 
+// REC-01 (audit 2026-11-07): a recording said a fill answered, never why an answer didn't take or
+// what the fill left; the kit's reason is English text, so it crosses as the fill report's code.
+test('a fill\'s answer not taken keeps why as the kit\'s code, and its end its counts; anything else is left out', async () => {
+  const h = harness();
+  const say = (detail) => h.emit('rater-trace', h.context.document, { detail: JSON.stringify(detail) });
+  say({ what: 'answer', t: ORIGIN + 1000, start: ORIGIN + 900, ok: false, field: { key: 'ref:Zip', label: 'ZIP' }, code: 'answer.not-kept' });
+  say({ what: 'answer', t: ORIGIN + 1100, start: ORIGIN + 1000, ok: false, field: { key: 'ref:Own', label: 'Owner' }, code: 'Sam Smith did not keep it' });
+  say({ what: 'run', t: ORIGIN + 1200, on: false, filled: 3, halted: false, failed: 1, leftRequired: 2, blockers: 1, unknown: 0, extra: 'Sam Smith' });
+  await h.advance(400);
+  const [kept, other, run] = h.events().filter((e) => e.kind === 'kit');
+  assert.deepEqual([kept.code, 'code' in other], ['answer.not-kept', false]);
+  assert.deepEqual([run.failed, run.leftRequired, run.blockers, run.unknown, 'extra' in run], [1, 2, 1, 0, false]);
+  assert.ok(!JSON.stringify(h.events()).includes('Sam Smith'));
+});
+
 // Review of PR #439: a wait the agent stopped (the kit's `ended: 'stopped'`) was left out by the
 // trace, so the report's Stopped count stayed zero.
 test('a wait the agent stopped is kept, and the report counts it as stopped', async () => {

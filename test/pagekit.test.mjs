@@ -3695,6 +3695,15 @@ test('Save & Continue counts as Continue; Save & Exit and Submit never do', asyn
     await h.kit.fill([], { maxRounds: 1, advance: { text: '^(save\\s*(&|and)\\s*continue|save & exit|submit)$' } });
     assert.equal(!!button._clicked, expected, text);
   }
+  // Its aria-label or title saying "Save & Continue" again is Continue too: each name is read on
+  // its own, so the words don't make "Save" a commit word (CodeRabbit on #491).
+  const h = harness({ pathname: '/application/businessauto' });
+  const button = addButton(h, 'Save & Continue');
+  button.setAttribute('aria-label', 'Save & Continue');
+  button.setAttribute('title', 'Save and continue');
+  button.onclick = () => { button._clicked = true; };
+  await h.kit.fill([], { maxRounds: 1, advance: { text: '^(save\\s*(&|and)\\s*continue)$' } });
+  assert.equal(!!button._clicked, true, 'a repeated Save & Continue name');
 });
 
 test('a field the page fills itself (emptyNote) is flagged only when it stays empty', async () => {
@@ -6304,6 +6313,52 @@ test('discarding a form, ordering reports and signing are never clicked, as a he
   assert.deepEqual(clicks, []);
   assert.equal(report.advanced, undefined);
   assert.deepEqual(plain(report.actions), []);
+});
+
+// Audit 2026-11-07, CARR-13: the words of a commit button a new carrier or product may use are never
+// clicked either, as a helper or as Continue, however loose the pattern; and an icon button a helper
+// finds by its token is held to its aria-label and title. GEICO's View More Payment Plans still is.
+test('issuing, paying, accepting, agreeing, confirming and finalizing are never clicked; an icon button by its name too', async () => {
+  const words = ['Issue Policy', 'Pay Now', 'Make a Payment', 'Accept & Continue', 'I Agree', 'Confirm Quote', 'Finalize Application', 'Complete Purchase', 'Authorize', 'Certify and Continue', 'Attest'];
+  const h = harness({ pathname: '/quote' });
+  const clicks = [];
+  for (const text of words) {
+    const button = new FakeNode('button', { textContent: text });
+    button.onclick = () => clicks.push(text);
+    h.document.body.append(button);
+  }
+  const icon = new FakeNode('span', { attrs: { 'data-testid': 'goIcon', tabindex: '0', 'aria-label': 'Bind policy' } });
+  icon.onclick = () => clicks.push('icon');
+  const plans = new FakeNode('button', { textContent: 'View More Payment Plans' });
+  plans.onclick = () => clicks.push('plans');
+  h.document.body.append(icon, plans);
+  const actions = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [
+    { id: 'any', text: '.' }, { id: 'icon', token: 'goIcon' }, { id: 'plans', text: '^view more payment plans$' },
+  ] }).filter((s) => s.kind === 'action');
+  const report = await h.kit.fill(actions, { maxRounds: 6, advance: { text: '^(issue|pay|make|accept|i agree|confirm|finali|complete|authori|certify|attest)' } });
+  assert.deepEqual([...new Set(clicks)], ['plans'], 'only View More Payment Plans (also by the loose helper)');
+  assert.equal(report.advanced, undefined);
+});
+
+// Review on PR #491: the advance is held to a button's aria-label and title as a helper is, so a
+// Continue whose name is a commit word is never the click that moves the quote on.
+test('a Continue button named Bind policy is not the advance; Save & Continue still is', async () => {
+  const run = async (buttons, text) => {
+    const h = harness({ pathname: '/quote' });
+    const clicks = [];
+    for (const [words, attrs] of buttons) {
+      const button = new FakeNode('button', { textContent: words, attrs });
+      button.onclick = () => clicks.push(words);
+      h.document.body.append(button);
+    }
+    const report = await h.kit.fill([], { maxRounds: 2, advance: { text } });
+    return [clicks, report.advanced];
+  };
+  const [refused, advanced] = await run([['Continue', { 'aria-label': 'Bind policy' }], ['Next', { title: 'Submit application' }]], '^(continue|next)$');
+  assert.deepEqual(refused, []);
+  assert.equal(advanced, undefined);
+  const [clicked] = await run([['Save & Continue', { title: 'Continue' }]], '^save & continue$');
+  assert.deepEqual(clicked, ['Save & Continue']);
 });
 
 // GEICO's add rows and the chooser behind Add Vehicle or Trailer (FL live run, 2026-10-21): a helper

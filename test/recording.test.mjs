@@ -115,8 +115,10 @@ test('the store writes chunks as it goes, zips the recording as one folder, and 
   assert.equal(store.durable, true);
   for (let i = 0; i < 9; i++) await store.add(clicks(50, i * 50));
   const folder = await (await root.getDirectoryHandle('recordings')).getDirectoryHandle(store.manifest.id);
-  assert.deepEqual([...folder.items.keys()].sort(), ['events-00001.jsonl', 'events-00002.jsonl', 'recording.json'], 'a chunk every 200 events');
-  assert.deepEqual((await RecordingStore.unfinished()).map((m) => m.id), [store.manifest.id]);
+  assert.deepEqual([...folder.items.keys()].sort(), ['events-00001.jsonl', 'events-00002.jsonl', 'live.json', 'recording.json'], 'a chunk every 200 events');
+  // Under way (live.json fresh): not offered as unfinished; once its panel has stopped beating, it is.
+  assert.deepEqual(await RecordingStore.unfinished(), []);
+  assert.deepEqual((await RecordingStore.unfinished(Date.now() + 31_000)).map((m) => m.id), [store.manifest.id]);
   const { blob, events } = await store.zip(new Date('2026-10-23T14:30:00Z'));
   assert.equal(events, 450);
   const files = await unzipText(blob);
@@ -124,7 +126,7 @@ test('the store writes chunks as it goes, zips the recording as one folder, and 
   assert.equal(files[`${store.manifest.id}/events.jsonl`].trim().split('\n').length, 450);
   assert.equal(JSON.parse(files[`${store.manifest.id}/recording.json`]).ended, '2026-10-23T14:30:00.000Z');
   await store.discard();
-  assert.deepEqual(await RecordingStore.unfinished(), []);
+  assert.deepEqual(await RecordingStore.unfinished(Date.now() + 31_000), []);
 });
 
 test('a panel closed mid-recording leaves what it wrote, which the next panel saves', async () => {
@@ -160,6 +162,49 @@ test('without the file system the recording is kept in memory, and still saved',
   await store.add(clicks(250));
   assert.equal((await store.zip()).events, 250);
   assert.deepEqual(await RecordingStore.unfinished(), []);
+});
+
+// REC-15 (audit 2026-11-07): a chunk the file system refused went to memory without a word, and a
+// panel in another window offered the live recording as unfinished, whose save deleted its folder.
+test('a refused write is counted as kept in memory only, and a recording under way is never another panel\'s unfinished one', async () => {
+  const root = new FakeDir();
+  fileSystem.root = async () => root;
+  const store = await RecordingStore.start(manifestFor('amwins-x-20261023-0900-0003'));
+  const folder = await (await root.getDirectoryHandle('recordings')).getDirectoryHandle('amwins-x-20261023-0900-0003');
+  const getFileHandle = folder.getFileHandle.bind(folder);
+  folder.getFileHandle = async (name, opts) => { if (name.startsWith('events-')) throw new Error('QuotaExceededError'); return getFileHandle(name, opts); };
+  await store.add(clicks(200));
+  assert.deepEqual([store.durable, store.writeFailures], [true, 200]);
+  assert.equal((await store.zip()).events, 200, 'still saved from memory');
+  // Another window's panel lists only what no panel is recording.
+  assert.deepEqual(await RecordingStore.unfinished(), []);
+  // The panel that recorded it closed a minute ago: offered, and its Discard deletes it.
+  const later = Date.now() + 60_000;
+  assert.deepEqual((await RecordingStore.unfinished(later)).map((m) => m.id), ['amwins-x-20261023-0900-0003']);
+  await (await RecordingStore.reopen('amwins-x-20261023-0900-0003')).discard();
+  assert.deepEqual(await RecordingStore.unfinished(later), []);
+});
+
+// REC-05 (audit 2026-11-07): nothing showed what the page looked like at a failure.
+test('a moment\'s page layout is kept beside the events and saved in the zip as layouts/<n>.json, from a reopened recording too', async () => {
+  const root = new FakeDir();
+  fileSystem.root = async () => root;
+  const store = await RecordingStore.start(manifestFor('amwins-x-20261023-0900-0004'));
+  const name = await store.addLayout({ kind: 'page-capture', version: 2, frames: [] });
+  assert.equal(name, 'layouts/0001.json');
+  await store.add([{ kind: 'moment', t: 1000, frame: 0, why: 'note', layout: name }]);
+  let files = await unzipText((await store.zip()).blob);
+  assert.deepEqual(Object.keys(files).sort(), ['amwins-x-20261023-0900-0004/events.jsonl', 'amwins-x-20261023-0900-0004/layouts/0001.json', 'amwins-x-20261023-0900-0004/recording.json']);
+  assert.equal(JSON.parse(files['amwins-x-20261023-0900-0004/layouts/0001.json']).kind, 'page-capture');
+  const again = await RecordingStore.reopen('amwins-x-20261023-0900-0004');
+  assert.equal(await again.addLayout({ kind: 'page-capture' }), 'layouts/0002.json', 'numbered on from what the folder holds');
+  files = await unzipText((await again.zip()).blob);
+  assert.equal(Object.keys(files).filter((n) => n.includes('/layouts/')).length, 2);
+  // Without a file system, in memory.
+  fileSystem.root = async () => { throw new Error('no OPFS here'); };
+  const memoryOnly = await RecordingStore.start(manifestFor());
+  await memoryOnly.addLayout({ kind: 'page-capture' });
+  assert.deepEqual(Object.keys(await memoryOnly.layoutFiles()), ['layouts/0001.json']);
 });
 
 // Live recording, 2026-10-23: the fill's radio picks read as the agent's (a script's click on a radio
@@ -505,12 +550,41 @@ test('the report says when the panel followed another tab, and for how long, and
     { kind: 'panel', t: t0 + 5000, frame: 0, closed: true, recorded: 4 },
   ];
   const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
-  assert.match(report, /The panel followed another tab for 3\.0 s: what the quote did there is not in this recording/);
+  assert.match(report, /The panel followed another tab for 3\.0 s: its pages are not traced in this recording, which follows only the tab it began on; a fill there still shows in \*\*Outcome of each fill\*\*, under its carrier and view/);
   assert.match(report, /THE PANEL MOVED TO ANOTHER TAB/);
   assert.match(report, /the panel is back on the recorded tab/);
   assert.match(report, /THE RECORDED TAB WAS CLOSED/);
   assert.match(report, /The recorded tab was closed, which ended the recording\./);
   assert.ok(!/followed another tab/.test(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) })));
+});
+
+// REC-01 (audit 2026-11-07): a recording told where the time went, never which field failed or was
+// left and why, nor which fill run it was; the usage log's fill_run and fill_field are copied in.
+test('the report says how each fill ended: what failed or was left and why, from the usage log copied in, or the kit\'s own end', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const usage = (t, event) => ({ kind: 'usage', t: t0 + t, frame: 0, event });
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Drivers', top: true },
+    { kind: 'fill', t: t0 + 1000, frame: 0, on: true },
+    { kind: 'kit', t: t0 + 1800, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Zip', label: 'ZIP' }, start: t0 + 1500, applyMs: 40, ok: false, code: 'answer.not-kept' },
+    { kind: 'fill', t: t0 + 3000, frame: 0, on: false, run: 'run-1', how: 'follow-up', page: '/quote' },
+    usage(3000, { type: 'fill_run', run: 'run-1', carrier: 'geico', view: 'tab-7', page: '/quote', step: 'Drivers', auto: true, filled: 4, failed: 1, leftRequired: 1, unknown: 0, noData: 2, advanced: null, blockerList: ['differs: ZIP'] }),
+    usage(3000, { type: 'fill_field', run: 'run-1', result: 'failed', label: 'ZIP', reason: 'the page did not keep the answer; check it' }),
+    usage(3000, { type: 'fill_field', run: 'run-1', result: 'leftRequired', label: 'Marital status' }),
+    usage(3000, { type: 'fill_field', run: 'run-1', result: 'filled', label: 'Birth date' }),
+    { kind: 'moment', t: t0 + 3200, frame: 0, why: 'fill ended: 1 failed', layout: 'layouts/0001.json', fields: 9 },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
+  assert.match(report, /the extension answered "ZIP" in 0\.0 s \(not kept: the page didn't keep it\)/);
+  assert.match(report, /the fill ended \(it ran 2\.0 s\): run `run-1`, a follow-up/);
+  assert.match(report, /the page was saved as layouts\/0001\.json \(fill ended: 1 failed, 9 questions\)/);
+  assert.match(report, /## Outcome of each fill\n\n- 0:03\.0 geico \/quote · Drivers \(view `tab-7`\), a follow-up \(run `run-1`\): 4 filled, 1 failed, 1 left for you, 0 unfamiliar, 2 without data; not continued, held by "differs: ZIP"\n  - failed: "ZIP": the page did not keep the answer; check it\n  - left for you: "Marital status"\n\n/);
+  assert.doesNotMatch(report, /Birth date/, 'a filled field is not an outcome to look at');
+  // A practice page logs no fill_run: the kit's own end, and its answers not taken.
+  const practice = recordingReport({ manifest: manifestFor(), events: [...events.slice(0, 4),
+    { kind: 'kit', t: t0 + 2900, seq: 3, frame: 0, what: 'run', on: false, filled: 4, halted: false, failed: 1, leftRequired: 1, blockers: 0, unknown: 0 }] });
+  assert.match(practice, /- 0:02\.9 the extension's fill: 4 filled, 1 failed, 1 left for you, 0 holding Continue, 0 unfamiliar\n  - "ZIP": not kept: the page didn't keep it\n/);
+  assert.match(practice, /No fill_run in this recording/);
 });
 
 // Audit 2026-11-07, AI-08: what Luna was asked and answered, in the timeline and its own section.

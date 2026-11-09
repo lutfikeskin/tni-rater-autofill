@@ -21,6 +21,7 @@ vehicle types, driver and vehicle counts, coverages, known exceptions.
 - [ ] Step 1: its hosts in `manifest.json` (`test/consistency.test.mjs` checks them), `autoFillUrl` and `layoutUrl` kept to the quote's own pages
 - [ ] Step 1: the module, and every module it imports, in `RULE_FILES` in `src/usage.js` (`test/usage.test.mjs` checks them)
 - [ ] Step 1: the carrier in `test/provenance.test.mjs`, and any new carrier option declared in `types.js`
+- [ ] Step 1: its name in `server/dashboard.mjs`, its choices in `src/agent-defaults/registry.js`, and its same-carrier words in `src/util.js`, its synthetic-intake runs in `scripts/intake-mocks.mjs` and a `mock:<carrier>` command, or the reason it has none in `test/new-carrier.test.mjs` (`LEFT_OUT`)
 - [ ] Step 2: generic label rules on or off (`useGenericRules`), decided; a `standard` rule only for an answer TNI has recorded (docs/intake-and-rules.md)
 - [ ] Step 2: a question the intake doesn't answer and TNI has no standard for stays the agent's, shown as unanswered: never filled as No or not applicable
 - [ ] Step 3: the page adapter `src/content/carriers/<carrier>.js`, if its widgets need one (named as the carrier's `pageAdapter`)

@@ -1022,8 +1022,15 @@
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
  * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the page's own:
- *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel, and luna (one Luna call)
+ *   burst, request, load; the extension's fill as it says (pagekit kitTrace): kit; the panel's: fill, note, gap, panel, usage, moment, and luna (one Luna call)
  * @property {boolean} [on]  a fill starting (true) or ending (fill)
+ * @property {string} [run]  fill, as it ends: the fill run's id, the usage log's fill_run and fill_field `run`
+ * @property {UsageEvent} [event]  usage: an event the usage log logged while the recording ran, as logged (redacted)
+ * @property {string | null} [layout]  moment: the page layout it took, by its name in the zip (`layouts/0001.json`); null when it couldn't
+ * @property {number} [fields]  moment: how many questions that layout holds
+ * @property {string} [note]  moment taken for a note: the note's words
+ * @property {string} [capture]  note for an Alt+Shift+C capture taken while recording: the capture's file name
+ * @property {string | null} [error]  moment that couldn't take its layout: the error's name; luna: why the call failed
  * @property {boolean} [away]  panel: the panel follows another tab than the recorded one (true), or is back on it
  * @property {number | null} [followed]  panel: the tab the panel follows (a tab number)
  * @property {number} [recorded]  panel: the recorded tab (a tab number)
@@ -1077,7 +1084,8 @@
  * @property {'fetch' | 'xhr'} [via]  request: how the page sent it
  * @property {number} [status]  request: the HTTP status its server answered (responseStatus; 0 when the browser doesn't
  *   say; none from a browser without it): 400 and up is a failed request in the report
- * @property {'run' | 'wait' | 'answer' | 'press'} [what]  kit: what the fill said. run: it started (`on`, its `steps`) or ended (`filled`, `halted`); wait: a
+ * @property {'run' | 'wait' | 'answer' | 'press'} [what]  kit: what the fill said. run: it started (`on`, its `steps`) or ended (`filled`, `halted`,
+ *   `failed`, `leftRequired`, `blockers`, `unknown`); wait: a
  *   settle (`quietMs`, `maxMs`, `requests`, `start`, `ms`, `ended` quiet or limit, at the limit `settled` and what `held` it); answer: one answer
  *   (`field`, `stepKind`, `ok`, `start`, `applyMs`, the usage log's `timing`); press: a button it pressed (`button`, `how`: from the page's world or the kit's)
  * @property {number} [steps]  kit run, as it starts: the plan's steps
@@ -1094,9 +1102,16 @@
  * @property {{ busy: boolean, changing: boolean, requests: boolean }} [held]  kit wait at its limit: what still held it
  * @property {string | null} [stepKind]  kit answer: the plan step's kind
  * @property {boolean} [ok]  kit answer: the page kept it
+ * @property {FailCode} [code]  kit answer not kept: why, as the fill report's code
+ * @property {number} [failed]  kit run, as it ends: answers that failed
+ * @property {number} [leftRequired]  kit run, as it ends: required questions left for the agent
+ * @property {number} [blockers]  kit run, as it ends: what held Continue
+ * @property {number} [unknown]  kit run, as it ends: questions no rule knows
  * @property {number} [applyMs]  kit answer: ms to give it, a list's wait for its options included
  * @property {{ ms: number, settleMs: number, ajax: number, revealed: number, removed: number, changed: number, batch?: boolean }} [timing]  kit answer: the usage log's fill_field timing
- * @property {'page' | 'kit' | 'navigate' | 'reload' | 'back_forward' | 'prerender' | null} [how]  kit press: clicked from the page's own world, or by the kit; load: how the document came (its navigation entry's type)
+ * @property {'page' | 'kit' | 'navigate' | 'reload' | 'back_forward' | 'prerender' | 'agent' | 'follow-up' | 'looks-right' | 'continue' | null} [how]  kit press: clicked from the page's
+ *   own world ('page'), or by the kit; load: how the document came (its navigation entry's type); fill, as it ends: how it was asked ('agent': Fill this
+ *   page, 'page': as the page opened, 'follow-up', 'looks-right', 'continue')
  * @property {number} [slack]  kit wait, in the report only: the part after the page's last change or request
  * @property {number} [sinceAction]  burst, in the report only: ms since the last action before it
  * @property {'propose' | 'verify'} [call]  luna: the page review's first call or its evidence check (src/ai/luna.js `trace`)
@@ -1106,7 +1121,6 @@
  * @property {string | null} [outcome]  luna: the response's status as the provider said it (completed, incomplete…)
  * @property {number | null} [tokensIn]  luna: the call's input tokens
  * @property {number | null} [tokensOut]  luna: its output tokens
- * @property {string | null} [error]  luna: why the call failed
  */
 
 /**

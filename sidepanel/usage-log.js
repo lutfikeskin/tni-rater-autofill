@@ -60,6 +60,15 @@ async function installId() {
 // Lock (shared by all of the extension's pages) lets one of them read and write it at a time.
 const exclusive = (fn) => (globalThis.navigator?.locks ? navigator.locks.request('usage-log', fn) : fn());
 
+// Who is told of each event as it is logged: the developer recording (dev-recording.js), which
+// keeps a copy in its timeline while it runs (REC-01). Returns how to stop being told.
+const taps = new Set();
+/** @param {(events: object[], at: { t: string, session: string | null }) => void} fn */
+export function onLogged(fn) {
+  taps.add(fn);
+  return () => taps.delete(fn);
+}
+
 // Appends events in order, even when called from several places at once. The time and the quote
 // (session) are taken when log() is called, not when the queue gets to the event: Clear and
 // Replace log intake_closed just before the panel moves to another session. `seq` numbers every
@@ -69,6 +78,8 @@ const exclusive = (fn) => (globalThis.navigator?.locks ? navigator.locks.request
 export function log(...events) {
   const t = new Date().toISOString();
   const { id: sessionId = null, intakeId = null } = session ?? {};
+  // The developer recording's copy (onLogged), as logged: already redacted, nothing more leaves.
+  for (const fn of taps) { try { fn(events, { t, session: sessionId }); } catch { /* the log goes on */ } }
   queue = queue.then(() => exclusive(async () => {
     const { agent = null } = await settings();
     const install = await installId();

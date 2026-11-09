@@ -293,6 +293,7 @@ const NOT_TRACKED = {
   'src/content/page-watch.js': "developer-recording.md's proposal, not built",
   'test/fixtures/recording': "developer-recording.md's proposal, not built",
   'summary.json': "a file inside a developer recording's zip",
+  'live.json': "a file in a developer recording's folder in the browser, while it records",
   'recording.json': "a file inside a developer recording's zip",
   '.claude/worktrees': 'local git worktrees agents work in, ignored',
   'THIRD_PARTY_NOTICES.txt': 'written into each packaged copy by scripts/package.mjs',
