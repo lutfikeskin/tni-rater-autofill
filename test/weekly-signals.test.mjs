@@ -187,6 +187,57 @@ test('signals gives the weekly numbers per quote and how each quote ended', () =
   assert.equal(s.kpis.restrictedActions, 0);
 });
 
+// Audit 2026-11-07, AI-07: what became of Luna's answers, the questions it left and the rules it cited.
+test("signals says how much Luna suggested, what agents kept or changed, what it left and which rules it cited", () => {
+  const events = week();
+  let t = Date.parse('2026-10-06T13:00:00Z');
+  const e = (x) => events.push({ id: crypto.randomUUID(), t: new Date(t += 1000).toISOString(), receivedAt: new Date(t).toISOString(), session: 'new', v: '0.9.9', agent: 'AB', carrier: 'progressive', page: 'Quote', ...x });
+  e({ type: 'ai_suggest', items: 8, suggested: 2, leave: 6 });
+  e({ type: 'ai_decision', q: '4A', decision: 'auto', ruleIds: ['general.cdl-blank'] });
+  e({ type: 'ai_decision', q: '4A', decision: 'approved', ruleIds: ['general.cdl-blank'] });
+  e({ type: 'ai_decision', q: '4B', decision: 'accepted', ruleIds: ['progressive.um'] });
+  e({ type: 'ai_decision', q: '4C', decision: 'dismissed' });
+  // The agent changed 4A afterwards, twice (one answer), and 4B before it was put in (not counted).
+  e({ type: 'field_change', q: '4A', by: 'agent', kind: 'radio', from: 'No', to: 'Yes' });
+  e({ type: 'field_change', q: '4A', by: 'agent', kind: 'radio', from: 'Yes', to: 'No' });
+  events.push({ id: 'early-4b', t: '2026-10-06T12:59:00Z', receivedAt: '2026-10-06T12:59:00Z', session: 'new', v: '0.9.9', carrier: 'progressive', page: 'Quote', type: 'field_change', q: '4B', by: 'agent' });
+  for (const why of ['missing', 'missing', 'noSource']) e({ type: 'ai_leave', q: '7Z', label: 'Prior carrier tenure', leaveWhy: why });
+  const s = signals(events, { since: '2026-10-06' });
+  // 2 of 8 questions suggested (the failed review is left out); 3 of 4 decided kept (week() has one accepted).
+  assert.deepEqual([s.kpis.aiSuggestedPercent, s.kpis.aiAcceptedPercent, s.kpis.aiPutIn, s.kpis.aiChangedLater], [25, 75, 2, 1]);
+  // CodeRabbit on PR #413: a decision names its view, as field changes do, and is matched within it:
+  // a change of the same question for another vehicle isn't a change of Luna's answer.
+  e({ type: 'ai_decision', q: '5A', view: 't1:v0', decision: 'accepted' });
+  e({ type: 'field_change', q: '5A', view: 't1:v1', by: 'agent', kind: 'radio', from: 'No', to: 'Yes' });
+  e({ type: 'ai_decision', q: '5B', view: 't1:v0', decision: 'accepted' });
+  e({ type: 'field_change', q: '5B', view: 't1:v0', by: 'agent', kind: 'radio', from: 'No', to: 'Yes' });
+  // A decision logged without a view (an older build) matches its page's change in any view.
+  e({ type: 'ai_decision', q: '5C', decision: 'auto' });
+  e({ type: 'field_change', q: '5C', view: 't1', by: 'agent', kind: 'radio', from: 'No', to: 'Yes' });
+  const viewed = signals(events, { since: '2026-10-06' });
+  assert.deepEqual([viewed.kpis.aiPutIn, viewed.kpis.aiChangedLater], [5, 3]);
+  // CodeRabbit on PR #413: a question without a code (AmWINS, GEICO) is known by its label (masked
+  // as the report masks it), on its page and in its view.
+  e({ type: 'ai_decision', label: 'Years at "[client]"', view: 't1', decision: 'accepted' });
+  e({ type: 'field_change', label: 'Years at "[client]"', view: 't1', by: 'agent', kind: 'select', from: '1', to: '3' });
+  e({ type: 'ai_decision', label: 'Any team drivers?', view: 't1', decision: 'auto' });
+  e({ type: 'field_change', label: 'Any team drivers? (optional)', view: 't1', by: 'agent', kind: 'radio', from: 'No', to: 'Yes' });
+  const labelled = signals(events, { since: '2026-10-06' });
+  assert.deepEqual([labelled.kpis.aiPutIn, labelled.kpis.aiChangedLater], [7, 4], 'by label: one matched, another label is another question');
+  // The leave tally keeps one label's questions on different pages apart.
+  e({ type: 'ai_leave', label: 'Any team drivers?', leaveWhy: 'missing' });
+  events.push({ ...events.at(-1), id: 'leave-other-page', page: 'Drivers' });
+  assert.deepEqual(signals(events, { since: '2026-10-06' }).aiLeft.filter(([k]) => k.includes('team')).sort(),
+    [['progressive · Drivers · Any team drivers? · missing', 1], ['progressive · Quote · Any team drivers? · missing', 1]]);
+  assert.deepEqual(s.aiLeft, [['progressive · Quote · 7Z · missing', 2], ['progressive · Quote · 7Z · noSource', 1]]);
+  assert.deepEqual(s.aiRules, [['general.cdl-blank · auto', 1], ['general.cdl-blank · approved', 1], ['progressive.um · accepted', 1]]);
+  const md = markdown(s);
+  assert.match(md, /\| AI: questions suggested · decisions accepted or approved \| 25% · 75% \|/);
+  assert.match(md, /\| AI answers put in that the agent changed later \| 1 of 2 \|/);
+  assert.match(md, /## Questions Luna left most[\s\S]*- 2 · progressive · Quote · 7Z · missing/);
+  assert.match(md, /## TNI rules Luna cited[\s\S]*- 1 · progressive\.um · accepted/);
+});
+
 test('signals leaves test runs out: listed fingerprints and intakes marked as a test', () => {
   const events = week();
   events.find((e) => e.session === 'old' && e.type === 'intake_loaded').intakeId = 'ABCDEF0123';

@@ -5,11 +5,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { STANDARDS, usd, usdK } from '../src/standards.js';
-import { progressive } from '../src/carriers/progressive.js';
-import { amwins } from '../src/carriers/amwins.js';
-import { geico } from '../src/carriers/geico.js';
+import { CARRIERS as REGISTERED } from '../src/carriers.js';
 
-const CARRIERS = [progressive, amwins, geico];
+// Every carrier with rules of its own (a new one is checked once registered: audit 2026-11-07, CARR-10).
+const CARRIERS = REGISTERED.filter((c) => c.rules.length);
 
 const record = () => ({
   applicant: { name: 'Synthetic Expediter LLC', dot: '1234567', owner1: 'Amina Kone', ownerDrives: true },

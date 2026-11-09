@@ -123,6 +123,7 @@ function bindQuoteTab(tabId, intakeId = currentIntake()) {
 
 /** @param {number} tabId */
 function forgetQuoteTab(tabId) {
+  state.portalTabs.delete(tabId);
   const owned = state.quoteOwners.delete(tabId);
   const entering = state.quoteEntries.delete(tabId);
   if (owned || entering) persist();
@@ -139,4 +140,33 @@ function quoteOwnerIssue(tabId = state.tab?.id) {
   return owner === intakeId ? null : { owner, intakeId };
 }
 
-export { bindQuoteTab, forgetQuoteTab, noteNewTab, noteQuoteTab, quoteOwnerIssue, restoreQuoteOwners, settleQuoteEntries };
+// A rater's logo on the "open a rater" card opens its agent home page in a new tab (the carrier's
+// `display.portalUrl`): a page the agent asked to see, not a fill. AmWINS' is Commercial Lines, where
+// a fill picks the risk state and opens a new application, so nothing fills on that tab by itself
+// (automatic fills: fillPage's `auto`, autoFill, scheduleAutoFill) until it reaches a quote page
+// other than the one opened (the agent opened the application themselves), or the agent fills it
+// (fillPage, not automatic). A sign-in on the way there keeps it held. Kept while the panel is open.
+/** @param {string} url */
+const placeOf = (url) => {
+  try { const u = new URL(url); return `${u.host}${u.pathname}`.toLowerCase().replace(/\/$/, ''); } catch { return null; }
+};
+/** @param {string} url */
+async function openPortal(url) {
+  if (!url) return;
+  const tab = await chrome.tabs.create({ url });
+  if (Number.isInteger(tab?.id)) state.portalTabs.set(tab.id, placeOf(url));
+}
+// Whether automatic fills wait on the tab (the tab in front's address; another tab's stays held).
+/** @param {number | undefined} [tabId] */
+function portalHold(tabId = state.tab?.id) {
+  const opened = state.portalTabs.get(tabId);
+  if (opened === undefined) return false;
+  const url = tabId === state.tab?.id ? state.tab?.url : null;
+  if (url && quotePage(url) && placeOf(url) !== opened) { state.portalTabs.delete(tabId); return false; }
+  return true;
+}
+// The agent's own fill on the tab: it is theirs to fill from then on.
+/** @param {number | undefined} tabId */
+function releasePortal(tabId) { state.portalTabs.delete(tabId); }
+
+export { bindQuoteTab, forgetQuoteTab, noteNewTab, noteQuoteTab, openPortal, portalHold, quoteOwnerIssue, releasePortal, restoreQuoteOwners, settleQuoteEntries };

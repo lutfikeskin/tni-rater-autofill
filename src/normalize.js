@@ -268,12 +268,45 @@ export function parseAddress(raw) {
   return out;
 }
 
-// "$100K/$1K Ded" -> { limit: 100000, deductible: 1000 }
+// "$100K/$1K Ded" -> { limit: 100000, deductible: 1000 }. The box takes typed text too, so an amount
+// is the deductible by its label ("ded", "deductible"), wherever it is: "$1,000 ded / $100k" and
+// "100K w/ 1K ded" are a $100,000 limit and a $1,000 deductible, and "$250K - $2,500 ded" too. Amounts
+// without a label are the limit, then the deductible, in their order. Nothing is swapped: a
+// deductible not below the limit is said by a check (cargoChecks). A comma right before a "$" parts two
+// amounts ("$100,000,$1,000 deductible"); one between digits is the amount's own.
+const DED_LABEL = /\bded(?:uctible)?\b\.?/gi;
 export function parseLimitDeductible(v) {
   const s = clean(v);
   if (s == null) return { limit: null, deductible: null };
-  const [a, b] = s.split('/');
-  return { limit: toMoney(a?.replace(/ded.*/i, '')), deductible: b ? toMoney(b.replace(/ded.*/i, '')) : null };
+  const parts = s.replace(/\bw\/\s*/gi, ' with ').split(/\s*(?:\/|\bwith\b|\s[-–]\s|,\s+|,(?=\$)|;|&|\band\b)\s*/i);
+  let deductible = null;
+  const plain = [];
+  for (const part of parts) {
+    const labelled = /\bded(?:uctible)?\b/i.test(part);
+    const amount = toMoney(part.replace(DED_LABEL, '').replace(/\b(?:cargo|limit)\b:?/gi, '').trim());
+    if (amount == null) continue;
+    if (labelled) deductible ??= amount;
+    else plain.push(amount);
+  }
+  return { limit: plain[0] ?? null, deductible: deductible ?? plain[1] ?? null };
+}
+
+// The cargo checks, at load and after a panel edit (BOX_CHECKS): no limit (naming what the box says,
+// when it says something), a deductible not below the limit (never swapped: which is which is the
+// agent's), or no deductible.
+const dollars = (n) => `$${Number(n).toLocaleString('en-US')}`;
+/** @param {any} c  the record's coverage @returns {[string, string, string][]} */
+function cargoChecks(c) {
+  const said = c.cargoAsWritten ? `The cargo box says "${c.cargoAsWritten}": ` : '';
+  if (c.cargo && !c.cargoLimit) {
+    return [['cargo-limit.missing', 'coverage.cargoLimit', said ? `${said}no cargo limit read from it. Enter the limit.` : 'Wants cargo coverage but no limit chosen.']];
+  }
+  if (c.cargo && c.cargoDeductible != null && c.cargoDeductible >= c.cargoLimit) {
+    return [['cargo-limit.implausible', 'coverage.cargoLimit', `${said || 'Cargo: '}the deductible (${dollars(c.cargoDeductible)}) isn't below the limit (${dollars(c.cargoLimit)}). Check which is which.`]];
+  }
+  // No deductible: the carriers leave the cargo limit to the agent (TNI, 2026-10-27).
+  if (c.cargo && c.cargoDeductible == null) return [['cargo-deductible.missing', 'coverage.cargoDeductible', 'No cargo deductible: usually $1,000 or $2,500.']];
+  return [];
 }
 
 // License numbers are entered plain: letters (rare) and digits only, never dashes or spaces.
@@ -448,6 +481,11 @@ export const ntlDotFilingsHold = (record) => (ntlWithPrimary(record)
   : ntlUndecided(record)
     ? 'The claims box or notes mention non-trucking liability (NTL), not answered yet: set it to Yes or No on the Intake step first, then fill this page again (TNI adds no USDOT number and no filings on an NTL quote).'
     : null);
+// A carrier's USDOT or filings rule while `ntlDotFilingsHold` holds it: its source is `fact` (the
+// agent's, nothing filled) and its note says why; otherwise the rule's own source and note. Shared by
+// every carrier, so the hold reads the same everywhere (audit 2026-11-07, CARR-02).
+export const ntlHeld = (source) => (r, a) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r, a) : source);
+export const ntlHoldOr = (note) => (r, a) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r, a) : note ?? null);
 // The intake's info item when an NTL intake asks for filings or gives a USDOT number (coverage.ntl-filings).
 export const ntlFilingsMessage = (record) => `NTL quote: TNI adds no USDOT and no filings. ${record?.operations?.filingsRequired === true
   ? `Filings are answered No${record?.applicant?.dot ? ' and the USDOT number is left out' : ''}.`
@@ -600,7 +638,10 @@ const RANGE_PHRASES = [
   new RegExp(`(?<![\\w.,])${RANGE}\\s+in\\s+${BIZ}`, 'i'),
   new RegExp(`\\bin\\s+${BIZ}\\s+(?:for\\s+)?${RANGE}`, 'i'),
 ];
-const BIZ_START = new RegExp(`\\b(?:established|founded|in\\s+${BIZ}\\s+since)\\s+(?:in\\s+)?(\\d{4})\\b`, 'i');
+// A start year: also "Est. 2015", "Started business in 2018", "Business started 2019" and "Opened in
+// 2020" (the maintainer, 2026-11-08: audit DATA-15), each a year established like "established 2019".
+const STARTED = '(?:started|opened)';
+const BIZ_START = new RegExp(`(?<![\\w-])(?:established|founded|est\\.?|in\\s+${BIZ}\\s+since|${STARTED}(?:\\s+(?:the\\s+)?(?:${BIZ}|company\\b))?|(?:${BIZ}|company\\b)\\s+${STARTED})\\s+(?:in\\s+)?(\\d{4})\\b`, 'i');
 // A clause about something else than the business (driving, a CDL, insurance …), or negated.
 const OTHER_SUBJECT = /\b(?:driv\w*|cdl|licen[cs]\w*|experienced?|authority|mc|dot|usdot|insur\w*|polic(?:y|ies)|pop|coverage|carriers?|claims?|accidents?|tickets?|violations?)\b/i;
 const NEGATED = /\b(?:not|never|no)\b|n't\b/i;
@@ -609,7 +650,20 @@ const NEGATED = /\b(?:not|never|no)\b|n't\b/i;
 // a time in the same clause ("a few years", "almost 3 years", "since last year", "a long time",
 // 2019). One the reader doesn't take is the agent's, like a range; notes with none are the blank
 // standard.
-const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded)\\b|\\bold\\s+${AGE_OF_BUSINESS}`, 'i');
+// Also the business started or opened ("started the business a few years ago"), and
+// "operating": "Operating for 4 years" may mean the trucks, not the business, so it is a statement
+// the reader doesn't take, the agent's with the line quoted (the maintainer, 2026-11-08: audit DATA-15).
+// "Operating" and "Est." say the business's time only with a duration or "since" right after them:
+// "Operating long haul" or "Operating 3 trucks, 2020 Freightliner" is not years in business. The
+// duration may be in words or with a decimal ("for four years", "1.5 years", "one and a half years"):
+// it is only recognised here, never read into a figure (the statement is the agent's).
+const DURATION = `(?:(?:a\\s+few|a|an|and|half|several|many|some|over|about|almost|nearly|${WORD_NUMBER}|\\d+(?:\\.\\d+)?\\+?)[\\s-]+)*(?:years?|yrs?|months?|mos?|decades?)\\b`;
+// "Operating for N years" (or "Est." with a duration) is never read into a figure, so it is the
+// agent's even beside a figure the clause does read ("3 years in business and operating for four
+// years": the maintainer's DATA-15 answer, with round 7's statement beside a figure read).
+const OPERATING_TIME = `\\b(?:operating(?:\\s+for)?|est\\b\\.?)\\s+(?:since\\b|${DURATION})`;
+const OPERATING_SAID = new RegExp(OPERATING_TIME, 'i');
+const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded|${STARTED}\\s+(?:(?:the|a|my|our|his|her|their)\\s+)?(?:business|biz|company)|(?:business|biz|company)\\s+${STARTED})\\b|${OPERATING_TIME}|\\bold\\s+${AGE_OF_BUSINESS}`, 'i');
 const BIZ_TIME = /\b(?:years?|yrs?|months?|mos?|decades?|since|ago|long|while|(?:19|20)\d{2})\b/i;
 const statesBusinessTime = (clause) => BIZ_MENTION.test(clause) && BIZ_TIME.test(clause);
 // A qualifier just before the match that the match itself doesn't hold (",less than 3 years").
@@ -686,6 +740,7 @@ export function yearsInBusinessFromNotes(boxes, year) {
         const start = quote.match(BIZ_START);
         if (start) found.push({ years: year - Number(start[1]), established: Number(start[1]), quote, field, reading: null });
         if (found.length === before) unread();
+        else if (OPERATING_SAID.test(quote)) found.push({ unread: true, years: null, established: null, quote, field, reading: null });
       }
     }
   }
@@ -1055,6 +1110,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       cargo: yesNo(raw.cargo_cov),
       cargoLimit: null,
       cargoDeductible: null,
+      // The cargo box as written (a dropdown that takes typed text), beside the two amounts read from it.
+      cargoAsWritten: null,
       gl: yesNo(raw.gen_liability),
       glLimit: txt('gen_liab_limit'),
       reeferBreakdown: yesNo(raw.reefer_breakdown),
@@ -1335,9 +1392,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const cargo = parseLimitDeductible(raw.cargo_limit_ded);
   record.coverage.cargoLimit = cargo.limit;
   record.coverage.cargoDeductible = cargo.deductible;
-  if (record.coverage.cargo && !cargo.limit) check('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.');
-  // No deductible: the carriers leave the cargo limit to the agent (TNI, 2026-10-27).
-  else if (record.coverage.cargo && cargo.deductible == null) check('cargo-deductible.missing', 'coverage.cargoDeductible', 'No cargo deductible: usually $1,000 or $2,500.');
+  record.coverage.cargoAsWritten = txt('cargo_limit_ded');
+  for (const [code, path, msg] of cargoChecks(record.coverage)) check(code, path, msg);
   // Non-Trucking asks for a limit too: the carrier's NTL limit (the review of PR #176).
   if ((record.coverage.autoLiability === 'Yes' || nonTruckingAnswer(record.coverage.autoLiability)) && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
   if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'No GL limit. TNI default is $1M/$2M: confirm with the client.');
@@ -1493,6 +1549,18 @@ const DERIVATIONS = [
     const radius = radiusReading(r.operations.radius);
     return { values: { 'operations.radiusMiles': radius.miles }, checks: radius.warnings };
   } },
+  // The cargo box as written gives the cargo limit and deductible (parseLimitDeductible), each unless
+  // the agent set it themselves, and the cargo checks follow.
+  { from: ['coverage.cargoAsWritten'], codes: ['cargo-limit.missing', 'cargo-limit.implausible', 'cargo-deductible.missing'], run: (r, { mine }) => {
+    const c = r.coverage;
+    if (!c || (mine('coverage.cargoLimit') && mine('coverage.cargoDeductible'))) return null;
+    const read = parseLimitDeductible(c.cargoAsWritten);
+    const limit = mine('coverage.cargoLimit') ? c.cargoLimit : read.limit;
+    const deductible = mine('coverage.cargoDeductible') ? c.cargoDeductible : read.deductible;
+    const values = { 'coverage.cargoLimit': limit, 'coverage.cargoDeductible': deductible };
+    const after = { ...c, cargoLimit: limit, cargoDeductible: deductible };
+    return { values, checks: cargoChecks(after).map(([code, path, msg]) => ({ code, path, level: 'check', msg })) };
+  } },
   // Non-Trucking on auto liability is an NTL request; another answer leaves NTL to the agent (its
   // items follow in the panel: ntlAnswerEdited).
   { from: ['coverage.autoLiability'], run: (r, { mine }) => (mine('coverage.ntl') ? null
@@ -1623,12 +1691,9 @@ const BOX_CHECKS = [
     ? [chk('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.')] : []) },
   { match: /^operations\.(filingsRequired|filingsWhich)$/, codes: ['filings-which.missing'], run: (r) => (r.operations?.filingsRequired && !r.operations.filingsWhich && !ntlNoDotFilings(r)
     ? [chk('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.')] : []) },
-  { match: /^coverage\.(cargo|cargoLimit|cargoDeductible)$/, codes: ['cargo-limit.missing', 'cargo-deductible.missing'], run: (r) => {
-    const c = r.coverage ?? {};
-    if (c.cargo && !c.cargoLimit) return [chk('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.')];
-    if (c.cargo && c.cargoDeductible == null) return [chk('cargo-deductible.missing', 'coverage.cargoDeductible', 'No cargo deductible: usually $1,000 or $2,500.')];
-    return [];
-  } },
+  { match: /^coverage\.(cargo|cargoLimit|cargoDeductible)$/, codes: ['cargo-limit.missing', 'cargo-limit.implausible', 'cargo-deductible.missing'],
+    // The agent's own amounts: the box as written no longer says them, so it isn't quoted.
+    run: (r) => cargoChecks({ ...r.coverage, cargoAsWritten: null }).map(([code, path, msg]) => chk(code, path, msg)) },
   { match: /^coverage\.(autoLiability|autoLiabLimit)$/, codes: ['auto-limit.missing'], run: (r) => ((r.coverage?.autoLiability === 'Yes' || nonTruckingAnswer(r.coverage?.autoLiability)) && !r.coverage.autoLiabLimit
     ? [chk('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.')] : []) },
   { match: /^coverage\.(gl|glLimit)$/, codes: ['gl-limit.missing'], run: (r) => (r.coverage?.gl && !r.coverage.glLimit

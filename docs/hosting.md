@@ -59,7 +59,9 @@ logged and the day counts from 0, and one that can't be written is logged and th
 memory. The server neither stores nor logs the request or OpenAI's answer. OpenAI's own errors come back as their status only (the log adds OpenAI's error
 code, such as `insufficient_quota`); the server's key refused (401, 403, 404) or out of credit or
 over its budget (429 `insufficient_quota`) is 424, so the panel says to tell TNI rather than to
-check a key or try again. The upload token ships in the extension, so it is not a secret. What
+check a key or try again. OpenAI gets 45 s (`LUNA_TIMEOUT_MS`) for its whole answer, the body read included, then the server answers 504, which
+the panel says as "The AI assistant took too long"; the panel's own wait is 55 s (`TIMEOUT_MS` in
+`src/ai/luna.js`), longer, so the server's answer reaches it. The upload token ships in the extension, so it is not a secret. What
 bounds the spending is the daily limit and token budget (counted here) and the money the key can reach:
 give the key its own OpenAI project, and on prepaid credit keep auto-recharge off, so an empty
 balance stops it (429 `insufficient_quota`, which the panel shows as 424). An OpenAI spend alert on

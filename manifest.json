@@ -49,6 +49,12 @@
         "default": "Alt+Shift+C"
       },
       "description": "Capture the quote page's layout (with the side panel open)"
+    },
+    "record-toggle": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Start or stop a developer recording (developer copies only)"
     }
   }
 }
