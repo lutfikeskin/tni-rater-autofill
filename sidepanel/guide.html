@@ -1,0 +1,119 @@
+<!doctype html>
+<!-- The agent's short guide to the side panel (audit 2026-11-07, UX-12b), opened in a tab from the
+     '?' on each of the panel's views (help-link.jsx), at that view's section. A static page with no
+     script, built with the panel (vite.config.js) and shipped in the package. README.md's "Using
+     it" is the full reference; keep this page in step with it. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rater Autofill guide</title>
+  <style>
+    :root { --ink: #24303a; --ink-strong: #17222b; --ink-secondary: #4a5963; --canvas: #f8f9fa; --surface: #fff; --border: #e3e7eb; --accent: #1f5fa8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 22px; color: var(--ink-strong); letter-spacing: -0.02em; margin: 0 0 4px; }
+    h2 { font-size: 16px; color: var(--ink-strong); margin: 0 0 8px; }
+    section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin: 12px 0; scroll-margin-top: 12px; }
+    section:target { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31, 95, 168, .15); }
+    p, ul { margin: 6px 0; }
+    ul { padding-left: 20px; }
+    nav { font-size: 13px; color: var(--ink-secondary); }
+    nav a, a { color: var(--accent); }
+    .lead { color: var(--ink-secondary); margin: 0 0 8px; }
+    .mark { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: baseline; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Rater Autofill: a short guide</h1>
+  <p class="lead">The side panel fills a carrier's rater from the client's intake PDF. It never binds, buys, orders reports, signs or submits: those stay yours.</p>
+  <nav>On this page: <a href="#home">Start a quote</a> · <a href="#intake">Intake</a> · <a href="#page">This page</a> · <a href="#details">Client details</a> · <a href="#settings">Settings</a> · <a href="#ai">AI assistant</a> · <a href="#privacy">What stays where</a></nav>
+
+  <section id="home">
+    <h2>Start a quote</h2>
+    <ul>
+      <li>Drop the client's intake PDF on the panel, or click <b>Choose a PDF</b>. It must be the fillable TNI application, not a scan.</li>
+      <li>Before your first quote, open <b>Settings</b> (the gear at the top) and add your initials, so your quotes count as yours.</li>
+      <li>Then open the carrier's rater. Start the client's quote from the carrier's home page with the intake loaded, so the panel knows the quote is this client's.</li>
+      <li>The bar at the bottom always says the one next thing to do, with its button.</li>
+    </ul>
+  </section>
+
+  <section id="intake">
+    <h2>Intake: what the form got wrong or left unclear</h2>
+    <ul>
+      <li>Each card is an answer to check: an address with no commas, a VIN that fails its check, answers typed into the claims box, an unclear ownership answer.</li>
+      <li>Fix the value in the card if needed, then click <b>Looks right</b>. <b>Undo</b> gives a checked item back.</li>
+      <li><b>See intake</b> opens the PDF with that answer outlined.</li>
+      <li>You can fill pages before you finish the checks.</li>
+    </ul>
+  </section>
+
+  <section id="page">
+    <h2>This page: fill and review</h2>
+    <ul>
+      <li>Click <b>Fill this page</b>. If the client has several drivers or vehicles, first pick the one the page is about.</li>
+      <li><b>Stop</b> halts the fill after the answer going in. It keeps what is in and clicks nothing more.</li>
+      <li><b>Answers on this page</b> lists every answer and every question left for you, in the page's order. A tag says where an answer came from: no tag means the intake, then <b>Worked out</b>, <b>Your edit</b>, <b>TNI standard</b>, <b>On the page</b>, <b>Clicked</b> and <b>You</b>. The <b>i</b> next to the title explains the tags and marks.</li>
+      <li>For each item left for you, answer it on the rater page, or pick from its choices in the panel. <b>Show on page</b> scrolls to it. <b>Mark done</b> leaves it as the page has it, and <b>Undo</b> gives it back.</li>
+      <li>Continue is clicked for you only on pages the panel knows, once nothing is left for you. With <b>Let me look first</b> on, it waits for <b>Looks right, continue</b>.</li>
+      <li>The marks on the rater page:
+        <ul>
+          <li><span class="mark" style="border:2px solid #16a34a"></span>green: from the intake, or worked out from it</li>
+          <li><span class="mark" style="border:2px solid #2f6fd6"></span>blue: a TNI standard answer, an assumption rather than a fact from the intake</li>
+          <li><span class="mark" style="border:2px solid #0f766e"></span>teal: your own default in place of a TNI standard</li>
+          <li><span class="mark" style="border:2px dashed #d97706"></span>amber dashed: needs you</li>
+          <li><span class="mark" style="border:2px dashed #dc2626"></span>red dashed: couldn't fill; the panel lists the options it saw</li>
+          <li><span class="mark" style="border:2px solid #475569"></span>slate: your pick, put in from the panel's choices</li>
+          <li><span class="mark" style="border:2px solid #7c3aed"></span>purple: an AI assistant answer you used</li>
+        </ul>
+      </li>
+      <li>Report orders, exclusions, signatures, payment questions and typed answers are always yours, on the rater page.</li>
+    </ul>
+  </section>
+
+  <section id="details">
+    <h2>Client details</h2>
+    <ul>
+      <li>Click the client's name, or <b>All client details</b>, to see every answer on the intake by section.</li>
+      <li>Your edits there are what gets filled. Fields the intake leaves blank are hidden behind <b>Show N empty fields</b>.</li>
+    </ul>
+  </section>
+
+  <section id="settings">
+    <h2>Settings</h2>
+    <ul>
+      <li><b>Your initials</b>, so your quotes count as yours.</li>
+      <li><b>Filling</b>: whether pages fill as they open, follow-up questions fill by themselves, Continue is clicked when a page is done, and whether to look first. Each switch says what it does under its name.</li>
+      <li><b>AI</b>: the AI assistant, on from the start through TNI's server.</li>
+      <li><b>Advanced, for setup only</b>: the usage server and practice-run tools. Agents rarely need it.</li>
+    </ul>
+  </section>
+
+  <section id="ai">
+    <h2>AI assistant</h2>
+    <ul>
+      <li><b>On the intake:</b> once per client, it reads the claims box and notes. A line that names non-trucking liability, asks for coverage the form didn't tick, or states years in business different from the form's becomes an <b>Intake</b> check, quoting the line. Review these checks like the others before you quote. It compares only the first line that states years in business, so read the notes yourself for another, conflicting statement.</li>
+      <li><b>Driver gender:</b> a driver whose gender the intake doesn't give is filled <b>Male</b>, a TNI standard. For those drivers, the AI assistant checks whether the first name is more often a woman's. If it is, an Intake check offers <b>Use Female</b> or <b>Keep Male</b>. A name it can't call, a failed check or the assistant being off adds no check and leaves Male, so confirm each driver's gender yourself when you aren't sure.</li>
+      <li><b>On the carrier's page:</b> TNI's rules answer first. The AI assistant only proposes one of the options the page shows for a question the rules left open. It never types names, numbers, dates or amounts.</li>
+      <li><b>Use this answer</b> puts a suggestion in, marked purple. <b>No thanks</b> dismisses it.</li>
+      <li>A pick it put in by itself holds Continue until you approve it, in its row or with <b>Approve</b> in the bar.</li>
+      <li>A suggestion is not proof it is right: check it against the intake.</li>
+    </ul>
+  </section>
+
+  <section id="privacy">
+    <h2>What stays where</h2>
+    <ul>
+      <li>The intake and its PDF stay in this browser and are cleared when Chrome closes, or with <b>Clear this client</b>.</li>
+      <li>Your corrections and checks are also kept on this computer, so the same PDF loaded after Chrome restarts gets them back. They expire 24 hours after your last change and are deleted at the next cleanup after that (when Chrome starts, the panel opens or a PDF is loaded), so they can stay on the computer a while past the 24 hours. A different client's PDF, or <b>Clear this client</b>, deletes them at once.</li>
+      <li>With the AI assistant on, some of the intake does leave the browser for OpenAI, through TNI's server or with your own key: the open questions and their options, the TNI rules that apply, the other answers on the page, and the intake's sections (applicant, operations, garaging, coverage, claims, notes, prior insurance) with the driver, vehicle and trailer the page is about, plus up to two more of each that its questions name. Client names, dates of birth, the street, contact details and ID numbers are replaced by <b>[client]</b> where written as on the form; a name part shorter than three letters (a surname such as Li) is not replaced. Drivers' first names go alone in a separate check. Sent as they are: the garaging state, business class and operations answers, coverages, vehicle and trailer details, each sent driver's license state, CDL, marital status and gender, and the prior insurance. The same date or number written another way in the notes may still go. Turn the assistant off in Settings if a client shouldn't be sent.</li>
+      <li>Usage events, with client names and numbers redacted, go to TNI's server.</li>
+      <li>Something wrong? Click <b>Report a problem</b> at the bottom of the panel. Don't type client names, numbers or addresses there.</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

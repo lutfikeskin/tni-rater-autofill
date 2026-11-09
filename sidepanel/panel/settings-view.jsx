@@ -17,6 +17,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { HelpLink } from './help-link.jsx';
 import { DefaultsDevSwitch, TniDefaults } from './agent-defaults/view.jsx';
 import { useAskFocus } from './ask-focus.js';
 
@@ -141,6 +142,7 @@ function Settings({ act }) {
     <>
       <div className="settings-head">
         <h2>Settings</h2>
+        <HelpLink topic="settings" />
         <button type="button" id="settings-done" className="primary small-btn" onClick={() => act.done()}>Done</button>
       </div>
       <div id="setup-note" className="setup-note" role="status" hidden={!health?.setup}><span className="bang" aria-hidden="true">!</span><span id="setup-text">{health?.setup ?? ''}</span></div>
