@@ -45,6 +45,8 @@ const NOTES = [
   { name: 'state', id: 'state-note' },
   // The tab's quote wasn't started with this intake (coordinator.js showOwnerNote, quote-owner.js).
   { name: 'owner', id: 'owner-note' },
+  // Answers filled before the agent corrected the intake (coordinator.js showStaleNote, GAP-01).
+  { name: 'stale', id: 'stale-note' },
   // agent defaults: whose defaults this quote fills with (sidepanel/panel/agent-defaults/store.js).
   { name: 'defaults', id: 'defaults-note' },
   { name: 'stop', id: 'stop-note' },
