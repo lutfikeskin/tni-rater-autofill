@@ -21,7 +21,7 @@ import { markSwitch } from './tab-mark.js';
 async function renderUsage() {
   const n = await usage.count();
   const { agent = '', serverToken = '' } = await usage.settings();
-  const { serverUrl, managed } = await usage.serverConfig();
+  const { serverUrl, managed, locked } = await usage.serverConfig();
   const up = usage.lastUpload();
   const when = up.at ? new Date(up.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
   state.usageCard = {
@@ -37,10 +37,12 @@ async function renderUsage() {
       idle: serverUrl ? `Uploads to ${serverUrl} every minute.` : '',
     }[up.state] ?? '') + (managed && up.state !== 'off' ? ' Your organization set this server.' : ''),
     uploadTone: up.state === 'ok' ? 'ok' : up.state === 'error' || up.state === 'off' ? 'warn' : '',
+    // The store copy's server and token are TNI's or the policy's, not the agent's (SRV-16).
+    locked: !!locked,
   };
   // The boxes are the agent's: what is saved is put in them by id, unless they are typing there (the
   // token never goes into the panel's state).
-  for (const [id, v] of [['agent', agent], ['server-url', serverUrl], ['server-token', serverToken]]) {
+  for (const [id, v] of [['agent', agent], ['server-url', serverUrl], ['server-token', locked ? '' : serverToken]]) {
     if (document.activeElement !== $(id)) $(id).value = v;
   }
   state.recordingLine = !!state.intake && !state.tab?.carrier?.practice;

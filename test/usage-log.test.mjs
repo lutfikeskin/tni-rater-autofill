@@ -587,3 +587,23 @@ test('an event is found waiting, set aside as refused, or sent', async () => {
   await usage.clearLog();
   assert.equal(await usage.eventFate('report-3'), 'unknown');
 });
+
+// Audit 2026-11-07, SRV-16 (the maintainer, 2026-11-09: lock it in the store copy): the store copy
+// sends to TNI's server or the organization's, never to a server or token the agent typed; the
+// unpacked copy keeps the agent's own for a local test server.
+test('the store copy takes no server or token of the agent\'s own', async () => {
+  let policy = {};
+  globalThis.chrome = { storage: { managed: { get: async () => policy } } };
+  try {
+    await usage.saveSettings({ serverUrl: 'https://elsewhere.example', serverToken: 'mine' });
+    assert.deepEqual(await usage.serverConfig('store'), { serverUrl: usage.DEFAULT_SERVER, serverToken: usage.DEFAULT_TOKEN, locked: true });
+    assert.deepEqual(await usage.serverConfig('unpacked'), { serverUrl: 'https://elsewhere.example', serverToken: 'mine' });
+    await usage.saveSettings({ serverUrl: '' });
+    assert.equal((await usage.serverConfig('store')).serverUrl, usage.DEFAULT_SERVER, 'blank: still TNI\'s in the store copy');
+    policy = { serverUrl: 'https://usage.agency.test', serverToken: 'agency-token' };
+    assert.deepEqual(await usage.serverConfig('store'), { serverUrl: 'https://usage.agency.test', serverToken: 'agency-token', managed: true, locked: true });
+  } finally {
+    delete globalThis.chrome;
+    await usage.saveSettings({ serverUrl: undefined, serverToken: '' });
+  }
+});

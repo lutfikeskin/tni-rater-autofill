@@ -195,8 +195,10 @@ function Settings({ act }) {
         <div className="advanced-body">
           {/* For the maintainer's practice quotes; agents don't see it unless they open Advanced. Marking a test run needs an intake to mark. */}
           <label id="test-run-row" className="test-run" title="A practice or test quote, not a client's: the weekly review leaves it out of its numbers." hidden={testRun == null}><Check id="test-run" checked={!!testRun} onChange={act.testRun} /> This intake is a test run, not a client</label>
-          <label className="field-stack">Server<TextBox id="server-url" type="url" placeholder="https://usage-server-production.up.railway.app" autoComplete="off" onChange={act.serverUrl} /></label>
-          <label className="field-stack">Token<TextBox id="server-token" type="password" placeholder="if the server needs one" autoComplete="off" onChange={act.serverToken} /></label>
+          {/* The store copy uses TNI's server or the organization's, not one typed here (SRV-16): read-only. */}
+          <label className="field-stack">Server<TextBox id="server-url" type="url" placeholder="https://usage-server-production.up.railway.app" autoComplete="off" readOnly={!!card?.locked} onChange={act.serverUrl} /></label>
+          <label className="field-stack" hidden={!!card?.locked}>Token<TextBox id="server-token" type="password" placeholder="if the server needs one" autoComplete="off" onChange={act.serverToken} /></label>
+          {card?.locked ? <p id="server-locked" className="fine">This copy sends to TNI's server, or the one your organization set.</p> : null}
           <label className="field-stack">Scenario<input id="capture-scenario" type="text" placeholder="e.g. FL van, hazmat yes/no" autoComplete="off" maxLength={60} /></label>
           <label className="field-stack">Note<input id="capture-note" type="text" placeholder="what you changed (kept here)" autoComplete="off" maxLength={200} /></label>
           <div className="actions wrap">
