@@ -8,7 +8,7 @@ import { inExtension } from './env.js';
 import { $, state } from './core.js';
 import { logSettings, problemContext } from './intake.js';
 import { pageOf } from './usage.js';
-import { announce, issueSaid, renderSite, renderSteps, unlockAudio } from './coordinator.js';
+import { announce, issueSaid, renderSite, renderSteps, scheduleLayout, unlockAudio } from './coordinator.js';
 import { aiSettings, renderAiSettings } from './assistant.js';
 import { initialsChanged } from './agent-defaults/store.js';
 import { markSwitch } from './tab-mark.js';
@@ -229,6 +229,9 @@ function wireUsage() {
     }
     // Sent now rather than on the minute: the panel is often closed right after (audit 2026-10-08).
     await uploadNow();
+    // The page as it is now, under the layout rules every layout follows (reason `problem`): one
+    // unchanged since the last layout logged adds nothing, and the last one shows it (REC-08).
+    if (page) scheduleLayout(page, 'problem');
     // Said in the footer, where the box was, as this report went (and to a screen reader,
     // role=status), unless the box opened again or another report was saved meanwhile. Where it is
     // can't be read: not known.

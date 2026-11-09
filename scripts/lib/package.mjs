@@ -195,6 +195,14 @@ export const DEV_EXTENSION_ID = 'cbpjccegchfackokbiogplhdekblkccj';
 
 export const devManifest = (manifest) => ({ ...manifest, key: DEV_KEY });
 
+// Shortcuts only a developer copy acts on (the developer recording's Alt+Shift+R, REC-17): never in
+// the store zip, where the panel has no recording and the key would be taken from agents' pages.
+export const DEV_COMMANDS = ['record-toggle'];
+export const storeManifest = (manifest) => ({
+  ...manifest,
+  commands: Object.fromEntries(Object.entries(manifest.commands ?? {}).filter(([name]) => !DEV_COMMANDS.includes(name))),
+});
+
 // The extension ID Chrome derives from a manifest key.
 export function extensionId(key) {
   const hex = crypto.createHash('sha256').update(Buffer.from(key, 'base64')).digest('hex').slice(0, 32);
