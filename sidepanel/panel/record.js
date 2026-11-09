@@ -16,6 +16,7 @@ import { applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, nt
 import { openDetails, openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { tabStep } from './scope.js';
 import { flushSync } from 'react-dom';
+import { CHECKS } from './messages.js';
 
 // ---------------------------------------------------------------------------------------------
 // Rendering the client record
@@ -72,7 +73,10 @@ function openSettings(focusId = null) {
   state.settingsOpen = true;
   showScreen();
   if (!focusId) { $('view').scrollTop = 0; return; }
+  // The fold that holds the box is opened first (Home's setup checklist asks for ai-on, in the AI
+  // fold, which the agent may have closed).
   if ($('advanced').contains($(focusId))) $('advanced').open = true;
+  if ($('assistant').contains($(focusId))) $('assistant').open = true;
   if (focusId === 'ai-openai-key') openKeyForm(true);
   else $(focusId).focus();
   $(focusId).scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -137,7 +141,7 @@ function renderWarnings() {
   const pdfLink = (w, label) => {
     const place = sourcePlace(w.path, state.intake);
     return place && pdfAvailable()
-      ? { label: `See intake${pdfPageSaid(place.page, ' · p')}`, onClick: () => openPdf({ path: w.path, label, kind: 'check' }) }
+      ? { label: CHECKS.seeIntake(pdfPageSaid(place.page, ' · p')), onClick: () => openPdf({ path: w.path, label, kind: 'check' }) }
       : null;
   };
   // A card: the item's number on the intake (`i`), its field's name (`title`, or null) and what it says;
@@ -158,8 +162,8 @@ function renderWarnings() {
       pdf, details: !pdf && w.path && !info ? () => jumpTo(w.path) : null };
   });
   state.checks = {
-    title: open ? `${open} to check on the intake` : 'Intake checked',
-    sub: open ? 'Fix or confirm each one, before or after filling.' : 'Nothing else looked wrong.',
+    title: CHECKS.title(open),
+    sub: CHECKS.sub(open),
     cards,
     // A row like All client details below it, opening its notes in a card joined under it.
     cleanup: infos.map((w) => w.msg),

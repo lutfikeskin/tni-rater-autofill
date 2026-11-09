@@ -6,6 +6,25 @@
 // engine as functions called when needed (`currentPage`, `stepKey`). `extraRowKeys` is the
 // engine's own Map, shared.
 
+// A rule's patterns (`re`, `ex`, and an option rule's `not`, `prefer`, `fallback`, `firstNot`),
+// compiled once for the kit's life, not on every assign and every option (audit 2026-11-07,
+// ENG-16: assign runs several times a round). Case-insensitive and never global, so a shared one
+// keeps no state between tests (no lastIndex). The rules are a fixed set; the cap only guards
+// against an unbounded one.
+const RULE_REGEX_MAX = 2000;
+/** @type {Map<string, RegExp>} */
+const ruleRegexes = new Map();
+/** @param {string} source @returns {RegExp} */
+export function ruleRegex(source) {
+  let re = ruleRegexes.get(source);
+  if (!re) {
+    if (ruleRegexes.size >= RULE_REGEX_MAX) ruleRegexes.clear();
+    re = new RegExp(source, 'i');
+    ruleRegexes.set(source, re);
+  }
+  return re;
+}
+
 /** @param {any} kit */
 export function createLocator(kit) {
   const { squash, humanize, STATE_NAMES, isPlaceholderOption, optionsOf, safeMatches, shownControl, unitFormsOf, stepIs, stepKey, currentPage, extraRowKeys } = kit;
@@ -61,7 +80,7 @@ export function createLocator(kit) {
     const stepNow = plan.some((s) => s.steps?.length) ? stepKey() : '';
     const live = (s) => (!s.steps?.length || stepIs(s.steps, stepNow))
       && (!s.whenShown || !!shownControl(controls, s.whenShown)) && (!s.unlessShown || !shownControl(controls, s.unlessShown));
-    const steps = plan.filter(live).map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
+    const steps = plan.filter(live).map((s) => ({ ...s, reC: s.re ? ruleRegex(s.re) : null, exC: s.ex ? ruleRegex(s.ex) : null }));
     const units = unitFormsOf(controls, steps);
     // Steps of a held form: they keep their fields (no other rule takes them, and they aren't
     // unfamiliar), but answer nothing.
@@ -383,19 +402,19 @@ export function createLocator(kit) {
     // "Any option except …" (e.g. the registered USDOT address instead of "Enter a different
     // address"), preferring one that matches `prefer` when there are several.
     if (step.kind === 'pick-not') {
-      const allowed = usable.filter((o) => !new RegExp(step.value.not, 'i').test(o.text));
+      const allowed = usable.filter((o) => !ruleRegex(step.value.not).test(o.text));
       if (step.registeredName && step.businessNames?.length) {
         // One registered name listed twice ("ACME LLC", "Acme, LLC") is still one match.
         const matches = uniqueBusinessNames(allowed.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name))));
         return matches.length === 1 ? got(matches[0], 'pick-not') : null;
       }
-      return got((step.value.prefer && allowed.find((o) => new RegExp(step.value.prefer, 'i').test(o.text))) || allowed[0]
-        || (step.value.fallback && usable.find((o) => new RegExp(step.value.fallback, 'i').test(o.text))) || null, 'pick-not');
+      return got((step.value.prefer && allowed.find((o) => ruleRegex(step.value.prefer).test(o.text))) || allowed[0]
+        || (step.value.fallback && usable.find((o) => ruleRegex(step.value.fallback).test(o.text))) || null, 'pick-not');
     }
     if (step.kind === 'selected-option') return got(usable.find((o) => /^selected\b/i.test(o.text)), 'selected-option');
     // Always the page's first choice (e.g. the first offered home address).
     // Unless that first choice is no answer (`firstNot`): then none, and the question is the agent's.
-    if (step.kind === 'first-option') return step.firstNot && usable[0] && new RegExp(step.firstNot, 'i').test(usable[0].text) ? null : got(usable[0], 'first-option');
+    if (step.kind === 'first-option') return step.firstNot && usable[0] && ruleRegex(step.firstNot).test(usable[0].text) ? null : got(usable[0], 'first-option');
     const cands = candidates(step);
     // `matchStart`: the answer, else each alias in turn, as an option reading so or beginning so
     // (Progressive's business type lists: "General Freight Trucking Haul general goods…"); never one

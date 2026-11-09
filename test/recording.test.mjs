@@ -115,8 +115,10 @@ test('the store writes chunks as it goes, zips the recording as one folder, and 
   assert.equal(store.durable, true);
   for (let i = 0; i < 9; i++) await store.add(clicks(50, i * 50));
   const folder = await (await root.getDirectoryHandle('recordings')).getDirectoryHandle(store.manifest.id);
-  assert.deepEqual([...folder.items.keys()].sort(), ['events-00001.jsonl', 'events-00002.jsonl', 'recording.json'], 'a chunk every 200 events');
-  assert.deepEqual((await RecordingStore.unfinished()).map((m) => m.id), [store.manifest.id]);
+  assert.deepEqual([...folder.items.keys()].sort(), ['events-00001.jsonl', 'events-00002.jsonl', 'live.json', 'recording.json'], 'a chunk every 200 events');
+  // Under way (live.json fresh): not offered as unfinished; once its panel has stopped beating, it is.
+  assert.deepEqual(await RecordingStore.unfinished(), []);
+  assert.deepEqual((await RecordingStore.unfinished(Date.now() + 31_000)).map((m) => m.id), [store.manifest.id]);
   const { blob, events } = await store.zip(new Date('2026-10-23T14:30:00Z'));
   assert.equal(events, 450);
   const files = await unzipText(blob);
@@ -124,7 +126,7 @@ test('the store writes chunks as it goes, zips the recording as one folder, and 
   assert.equal(files[`${store.manifest.id}/events.jsonl`].trim().split('\n').length, 450);
   assert.equal(JSON.parse(files[`${store.manifest.id}/recording.json`]).ended, '2026-10-23T14:30:00.000Z');
   await store.discard();
-  assert.deepEqual(await RecordingStore.unfinished(), []);
+  assert.deepEqual(await RecordingStore.unfinished(Date.now() + 31_000), []);
 });
 
 test('a panel closed mid-recording leaves what it wrote, which the next panel saves', async () => {
@@ -160,6 +162,49 @@ test('without the file system the recording is kept in memory, and still saved',
   await store.add(clicks(250));
   assert.equal((await store.zip()).events, 250);
   assert.deepEqual(await RecordingStore.unfinished(), []);
+});
+
+// REC-15 (audit 2026-11-07): a chunk the file system refused went to memory without a word, and a
+// panel in another window offered the live recording as unfinished, whose save deleted its folder.
+test('a refused write is counted as kept in memory only, and a recording under way is never another panel\'s unfinished one', async () => {
+  const root = new FakeDir();
+  fileSystem.root = async () => root;
+  const store = await RecordingStore.start(manifestFor('amwins-x-20261023-0900-0003'));
+  const folder = await (await root.getDirectoryHandle('recordings')).getDirectoryHandle('amwins-x-20261023-0900-0003');
+  const getFileHandle = folder.getFileHandle.bind(folder);
+  folder.getFileHandle = async (name, opts) => { if (name.startsWith('events-')) throw new Error('QuotaExceededError'); return getFileHandle(name, opts); };
+  await store.add(clicks(200));
+  assert.deepEqual([store.durable, store.writeFailures], [true, 200]);
+  assert.equal((await store.zip()).events, 200, 'still saved from memory');
+  // Another window's panel lists only what no panel is recording.
+  assert.deepEqual(await RecordingStore.unfinished(), []);
+  // The panel that recorded it closed a minute ago: offered, and its Discard deletes it.
+  const later = Date.now() + 60_000;
+  assert.deepEqual((await RecordingStore.unfinished(later)).map((m) => m.id), ['amwins-x-20261023-0900-0003']);
+  await (await RecordingStore.reopen('amwins-x-20261023-0900-0003')).discard();
+  assert.deepEqual(await RecordingStore.unfinished(later), []);
+});
+
+// REC-05 (audit 2026-11-07): nothing showed what the page looked like at a failure.
+test('a moment\'s page layout is kept beside the events and saved in the zip as layouts/<n>.json, from a reopened recording too', async () => {
+  const root = new FakeDir();
+  fileSystem.root = async () => root;
+  const store = await RecordingStore.start(manifestFor('amwins-x-20261023-0900-0004'));
+  const name = await store.addLayout({ kind: 'page-capture', version: 2, frames: [] });
+  assert.equal(name, 'layouts/0001.json');
+  await store.add([{ kind: 'moment', t: 1000, frame: 0, why: 'note', layout: name }]);
+  let files = await unzipText((await store.zip()).blob);
+  assert.deepEqual(Object.keys(files).sort(), ['amwins-x-20261023-0900-0004/events.jsonl', 'amwins-x-20261023-0900-0004/layouts/0001.json', 'amwins-x-20261023-0900-0004/recording.json']);
+  assert.equal(JSON.parse(files['amwins-x-20261023-0900-0004/layouts/0001.json']).kind, 'page-capture');
+  const again = await RecordingStore.reopen('amwins-x-20261023-0900-0004');
+  assert.equal(await again.addLayout({ kind: 'page-capture' }), 'layouts/0002.json', 'numbered on from what the folder holds');
+  files = await unzipText((await again.zip()).blob);
+  assert.equal(Object.keys(files).filter((n) => n.includes('/layouts/')).length, 2);
+  // Without a file system, in memory.
+  fileSystem.root = async () => { throw new Error('no OPFS here'); };
+  const memoryOnly = await RecordingStore.start(manifestFor());
+  await memoryOnly.addLayout({ kind: 'page-capture' });
+  assert.deepEqual(Object.keys(await memoryOnly.layoutFiles()), ['layouts/0001.json']);
 });
 
 // Live recording, 2026-10-23: the fill's radio picks read as the agent's (a script's click on a radio
@@ -256,6 +301,26 @@ test('the questions a page drew, a request\'s path and what the fill answered ar
   assert.deepEqual([change.field.key, drew.drawn[0].key], ['name:[client]-dob', 'id:[client]_license']);
 });
 
+// Review of PR #439: a wait held by several things said only the first, its slack counted another
+// frame's change, and an answer could take the next answer's wait begun in the same ms.
+test('a wait says all that held it, its slack is its own frame\'s, and an answer keeps its own wait', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const at = (ms) => t0 + ms;
+  const events = [
+    { kind: 'page', t: at(100), seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'kit', t: at(2000), seq: 2, frame: 0, what: 'wait', why: 'rated', quietMs: 250, maxMs: 1000, requests: true, start: at(1000), ms: 1000, ended: 'limit', settled: false, held: { busy: true, changing: false, requests: true } },
+    { kind: 'request', t: at(1500), seq: 3, frame: 1, path: '/api/other', end: at(1900), ms: 400, via: 'xhr' },
+    { kind: 'kit', t: at(3200), seq: 4, frame: 0, what: 'answer', field: { key: 'ref:A', label: 'First' }, stepKind: 'text', ok: true, start: at(3000), applyMs: 50, timing: { ms: 200, settleMs: 150, ajax: 0, revealed: 0, removed: 0, changed: 0 } },
+    { kind: 'kit', t: at(3400), seq: 5, frame: 0, what: 'wait', why: 'answer', quietMs: 150, maxMs: 3000, requests: false, start: at(3200), ms: 200, ended: 'quiet' },
+    { kind: 'kit', t: at(3400), seq: 6, frame: 0, what: 'answer', field: { key: 'ref:B', label: 'Second' }, stepKind: 'text', ok: true, start: at(3200), applyMs: 10, timing: { ms: 200, settleMs: 200, ajax: 0, revealed: 0, removed: 0, changed: 0 } },
+  ];
+  const report = recordingReport({ manifest: manifestFor(), events });
+  assert.match(report, /at its limit of 1\.0 s, the page still busy and requests still finishing; the page did nothing during it/);
+  assert.match(report, /\| for the premium \| 1 \| 1\.0 s \| 1\.0 s \| 0 \| 1 \| 0 \| 1\.0 s \|/);
+  assert.match(report, /the extension answered "First" in 0\.1 s, then waited 0\.1 s for the page\n/, 'the wait said after it is not its own');
+  assert.match(report, /the extension answered "Second" in 0\.0 s, then waited 0\.2 s for the page \(the page was quiet; the page did nothing during it\)\n/);
+});
+
 test('the report tells what the fill answered and waited for, what the page drew and when, and where each step\'s time went', () => {
   const t0 = Date.parse('2026-10-23T14:12:00.000Z');
   const at = (ms) => t0 + ms;
@@ -283,7 +348,10 @@ test('the report tells what the fill answered and waited for, what the page drew
   const report = recordingReport(readRecording(dir));
   fs.rmSync(dir, { recursive: true, force: true });
 
-  assert.match(report, /0:01\.1 \(\+0\.1 s\) the extension answered "Vehicle year" in 0\.4 s, then waited 0\.2 s for the page, 1 request, it drew 2\n/, 'by when it began, its own wait folded in');
+  // REC-12 (audit 2026-11-07): an answer's wait says how it ended and its slack, and the waits are
+  // added up by kind, which a review did by hand from events.jsonl.
+  assert.match(report, /0:01\.1 \(\+0\.1 s\) the extension answered "Vehicle year" in 0\.4 s, then waited 0\.2 s for the page \(the page was quiet; 0\.1 s after the page's last change\), 1 request, it drew 2\n/, 'by when it began, its own wait folded in');
+  assert.match(report, /## Waits by kind\n\n\| Wait \| n \| Median \| Longest \| Quiet \| At its limit \| Stopped \| Median slack \|\n\| --- [^\n]*\n\| after an answer \| 1 \| 0\.2 s \| 0\.2 s \| 1 \| 0 \| 0 \| 0\.1 s \|\n\| before pressing Continue \| 1 \| 2\.0 s \| 2\.0 s \| 1 \| 0 \| 0 \| 2\.0 s \|\n\| for the premium \| 1 \| 6\.0 s \| 6\.0 s \| 0 \| 1 \| 0 \| 5\.9 s \|\n/);
   assert.ok(!/waited 0\.2 s after an answer/.test(report), 'an answer\'s wait is on its answer\'s line');
   assert.match(report, /the page drew 3 questions \("Make", "Model", …\), 0\.5 s after the last action/);
   assert.equal(report.match(/the page (drew|took away)/g).length, 1, 'a burst that drew no question is no line');
@@ -405,6 +473,29 @@ test('a step is left by the last button pressed on it, the agent\'s or the exten
   assert.match(report, /\| 4 \| \/quote · Summary \|[^\n]*\| — \|/);
 });
 
+// REC-14 (audit 2026-11-07): an AI apply read as "a fill started", its answers as the page's. The
+// span says what went in (`what`, FLOW-15); the kit's answers say whose they were (`source`).
+test('an AI apply and the agent\'s own pick from a row are told apart from a fill, their answers too', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: t0 + 100, frame: 0, on: true, what: 'ai' },
+    { kind: 'kit', t: t0 + 300, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Use', label: 'Vehicle use' }, ok: true, start: t0 + 200, applyMs: 50, source: 'ai', timing: { ms: 160, settleMs: 110 } },
+    { kind: 'kit', t: t0 + 350, seq: 5, frame: 0, what: 'answer', field: { key: 'ref:Garage', label: 'Garaging' }, ok: false, start: t0 + 320, applyMs: 20, source: 'ai' },
+    { kind: 'fill', t: t0 + 400, frame: 0, on: false, what: 'ai' },
+    { kind: 'fill', t: t0 + 500, frame: 0, on: true, what: 'pick' },
+    { kind: 'kit', t: t0 + 700, seq: 3, frame: 0, what: 'answer', field: { key: 'ref:Radius', label: 'Radius' }, ok: true, start: t0 + 600, applyMs: 50, source: 'agent' },
+    { kind: 'fill', t: t0 + 800, frame: 0, on: false, what: 'pick' },
+    { kind: 'fill', t: t0 + 900, frame: 0, on: true, what: 'fill' },
+    { kind: 'kit', t: t0 + 1100, seq: 4, frame: 0, what: 'answer', field: { key: 'ref:Year', label: 'Year' }, ok: true, start: t0 + 1000, applyMs: 50 },
+    { kind: 'fill', t: t0 + 1200, frame: 0, on: false, what: 'fill' },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:02.000Z' }, events });
+  assert.match(report, /the panel began putting in an AI answer\n.*the AI's answer went into "Vehicle use" in 0\.1 s, then waited 0\.1 s for the page\n.*the panel tried to put the AI's answer into "Garaging" in 0\.0 s \(not kept\)\n.*the AI answer ended/);
+  assert.match(report, /the panel began putting in the agent's pick from a row\n.*your pick from the panel went into "Radius" in 0\.1 s\n.*the pick ended/);
+  assert.match(report, /a fill started\n.*the extension answered "Year" in 0\.1 s\n.*the fill ended/);
+});
+
 // REC-02 (audit 2026-11-07): a wait held by GEICO's `active-index`, a radio's `checked` or a busy page
 // read as "the page did nothing during it", a safe speed-up to the review, from the trace's observer.
 test('a wait\'s slack counts what the wait saw itself, and says when the trace saw less', () => {
@@ -459,12 +550,41 @@ test('the report says when the panel followed another tab, and for how long, and
     { kind: 'panel', t: t0 + 5000, frame: 0, closed: true, recorded: 4 },
   ];
   const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
-  assert.match(report, /The panel followed another tab for 3\.0 s: what the quote did there is not in this recording/);
+  assert.match(report, /The panel followed another tab for 3\.0 s: its pages are not traced in this recording, which follows only the tab it began on; a fill there still shows in \*\*Outcome of each fill\*\*, under its carrier and view/);
   assert.match(report, /THE PANEL MOVED TO ANOTHER TAB/);
   assert.match(report, /the panel is back on the recorded tab/);
   assert.match(report, /THE RECORDED TAB WAS CLOSED/);
   assert.match(report, /The recorded tab was closed, which ended the recording\./);
   assert.ok(!/followed another tab/.test(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) })));
+});
+
+// REC-01 (audit 2026-11-07): a recording told where the time went, never which field failed or was
+// left and why, nor which fill run it was; the usage log's fill_run and fill_field are copied in.
+test('the report says how each fill ended: what failed or was left and why, from the usage log copied in, or the kit\'s own end', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const usage = (t, event) => ({ kind: 'usage', t: t0 + t, frame: 0, event });
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Drivers', top: true },
+    { kind: 'fill', t: t0 + 1000, frame: 0, on: true },
+    { kind: 'kit', t: t0 + 1800, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Zip', label: 'ZIP' }, start: t0 + 1500, applyMs: 40, ok: false, code: 'answer.not-kept' },
+    { kind: 'fill', t: t0 + 3000, frame: 0, on: false, run: 'run-1', how: 'follow-up', page: '/quote' },
+    usage(3000, { type: 'fill_run', run: 'run-1', carrier: 'geico', view: 'tab-7', page: '/quote', step: 'Drivers', auto: true, filled: 4, failed: 1, leftRequired: 1, unknown: 0, noData: 2, advanced: null, blockerList: ['differs: ZIP'] }),
+    usage(3000, { type: 'fill_field', run: 'run-1', result: 'failed', label: 'ZIP', reason: 'the page did not keep the answer; check it' }),
+    usage(3000, { type: 'fill_field', run: 'run-1', result: 'leftRequired', label: 'Marital status' }),
+    usage(3000, { type: 'fill_field', run: 'run-1', result: 'filled', label: 'Birth date' }),
+    { kind: 'moment', t: t0 + 3200, frame: 0, why: 'fill ended: 1 failed', layout: 'layouts/0001.json', fields: 9 },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:05.000Z' }, events });
+  assert.match(report, /the extension answered "ZIP" in 0\.0 s \(not kept: the page didn't keep it\)/);
+  assert.match(report, /the fill ended \(it ran 2\.0 s\): run `run-1`, a follow-up/);
+  assert.match(report, /the page was saved as layouts\/0001\.json \(fill ended: 1 failed, 9 questions\)/);
+  assert.match(report, /## Outcome of each fill\n\n- 0:03\.0 geico \/quote · Drivers \(view `tab-7`\), a follow-up \(run `run-1`\): 4 filled, 1 failed, 1 left for you, 0 unfamiliar, 2 without data; not continued, held by "differs: ZIP"\n  - failed: "ZIP": the page did not keep the answer; check it\n  - left for you: "Marital status"\n\n/);
+  assert.doesNotMatch(report, /Birth date/, 'a filled field is not an outcome to look at');
+  // A practice page logs no fill_run: the kit's own end, and its answers not taken.
+  const practice = recordingReport({ manifest: manifestFor(), events: [...events.slice(0, 4),
+    { kind: 'kit', t: t0 + 2900, seq: 3, frame: 0, what: 'run', on: false, filled: 4, halted: false, failed: 1, leftRequired: 1, blockers: 0, unknown: 0 }] });
+  assert.match(practice, /- 0:02\.9 the extension's fill: 4 filled, 1 failed, 1 left for you, 0 holding Continue, 0 unfamiliar\n  - "ZIP": not kept: the page didn't keep it\n/);
+  assert.match(practice, /No fill_run in this recording/);
 });
 
 // Audit 2026-11-07, AI-08: what Luna was asked and answered, in the timeline and its own section.

@@ -3,6 +3,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { RULE_FILES, rulesHash } from '../../src/usage.js';
 import { execFileSync } from 'node:child_process';
 
 // The scripts injected into the carrier page's own JavaScript world stay there across an extension
@@ -144,6 +145,38 @@ export function provenancePlugin(stamp) {
   };
 }
 
+// Which rules a copy fills with (fill_run's `rules`): the fingerprint of the rule files (src/usage.js
+// rulesHash over RULE_FILES), worked out by the panel's build from the files it bundles and stamped
+// into coordinator.js (audit 2026-11-07, QA-09). The panel used to fetch the files from its own
+// package as it started, and a failure left the fingerprint out without a word. Read as the
+// repository holds them, as the package copied and the panel fetched them, so the fingerprint is
+// the one it was. A build that never read coordinator.js fails, as for the provenance.
+export const RULES_FILE = 'sidepanel/panel/coordinator.js';
+const RULES_PLACEHOLDER = 'const RULES_VERSION = null;';
+export function stampRules(text, hash) {
+  if (text.split(RULES_PLACEHOLDER).length !== 2) throw new Error(`expected one ${RULES_PLACEHOLDER}`);
+  if (!/^[0-9a-f]{12}$/.test(hash)) throw new Error(`not a rules fingerprint: ${hash}`);
+  return text.replace(RULES_PLACEHOLDER, `const RULES_VERSION = '${hash}';`);
+}
+export const rulesOf = (root) => rulesHash(RULE_FILES.map((f) => fs.readFileSync(path.join(root, f), 'utf8')));
+export function rulesPlugin(root) {
+  let stamped = false;
+  return {
+    name: 'tni-rules',
+    enforce: 'pre',
+    async transform(code, id) {
+      if (!id.replaceAll('\\', '/').endsWith(`/${RULES_FILE}`)) return null;
+      stamped = true;
+      // A watch build stamps it again when a rule file changes.
+      for (const f of RULE_FILES) this.addWatchFile?.(path.join(root, f));
+      return { code: stampRules(code, await rulesOf(root)), map: null };
+    },
+    buildEnd(error) {
+      if (!error && !stamped) throw new Error(`the panel's build didn't include ${RULES_FILE}`);
+    },
+  };
+}
+
 // Panel files the build bundles (sidepanel/*.js, .jsx, .html, .css): left out of the copy, which
 // gets the build's instead. Its sounds and images stay, since the panel names some of them at run
 // time. The React views (.jsx) were shipped raw beside the bundle (audit 2026-11-07, QA-09).
@@ -161,6 +194,14 @@ export const DEV_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr8PERxTmrlU9
 export const DEV_EXTENSION_ID = 'cbpjccegchfackokbiogplhdekblkccj';
 
 export const devManifest = (manifest) => ({ ...manifest, key: DEV_KEY });
+
+// Shortcuts only a developer copy acts on (the developer recording's Alt+Shift+R, REC-17): never in
+// the store zip, where the panel has no recording and the key would be taken from agents' pages.
+export const DEV_COMMANDS = ['record-toggle'];
+export const storeManifest = (manifest) => ({
+  ...manifest,
+  commands: Object.fromEntries(Object.entries(manifest.commands ?? {}).filter(([name]) => !DEV_COMMANDS.includes(name))),
+});
 
 // The extension ID Chrome derives from a manifest key.
 export function extensionId(key) {

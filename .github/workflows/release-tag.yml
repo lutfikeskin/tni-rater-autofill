@@ -4,7 +4,11 @@
 # Only a version the push brought is tagged: one already on main before it never is (the
 # maintainer, 2026-11-07: no backfill), so the first run tags nothing until the next version bump.
 # A tag that exists already is left as it is when it names the same commit, and fails the run
-# when it names another. It uploads nothing to the Chrome Web Store (docs/chrome-web-store.md).
+# when it names another. Then the tagged commit is packaged (npm run package, in a job that can only
+# read) and its store zip attached to the release by a job that runs nothing of the project, with
+# its source maps' zip when the package makes one (audit 2026-11-07, QA-17): the zip a version's
+# release holds is the one to upload. It uploads nothing to the Chrome Web Store
+# (docs/chrome-web-store.md).
 name: Release tag
 
 on:
@@ -23,6 +27,10 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write   # the tag and the release
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      target: ${{ steps.release.outputs.target }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,3 +60,79 @@ jobs:
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$TARGET" --title "$VERSION" --notes-file notes.md
           fi
+
+  # The tagged commit, packaged as `npm run package` packages it, with only read access: the
+  # packaging runs the project's dependencies, so it never holds the token that can write the
+  # release (the review of #469). The zips go to the next job as an artifact.
+  package:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.target }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run package
+      - env:
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: |
+          if [ "$(jq -r .version manifest.json)" != "$VERSION" ]; then
+            echo "::error::the checked-out manifest isn't version $VERSION."
+            exit 1
+          fi
+          # The store zip must be there; its source maps' zip only when the package makes one.
+          if [ ! -f "dist/tni-rater-autofill-$VERSION.zip" ]; then
+            echo "::error::npm run package made no dist/tni-rater-autofill-$VERSION.zip."
+            exit 1
+          fi
+          mkdir release-zips
+          cp "dist/tni-rater-autofill-$VERSION.zip" release-zips/
+          if [ -f "dist/tni-rater-autofill-$VERSION-sourcemaps.zip" ]; then cp "dist/tni-rater-autofill-$VERSION-sourcemaps.zip" release-zips/; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-zips
+          path: release-zips/
+          if-no-files-found: error
+          retention-days: 1
+
+  # The zips attached to the release, with no checkout and nothing of the project run. An asset the
+  # release has already is left as it is (a run again doesn't replace a zip that may have been
+  # uploaded to the store).
+  attach:
+    needs: [tag, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write   # the release's assets
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-zips
+          path: release-zips
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: |
+          if [ ! -f "release-zips/tni-rater-autofill-$VERSION.zip" ]; then
+            echo "::error::the package job handed over no tni-rater-autofill-$VERSION.zip."
+            exit 1
+          fi
+          have=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          for zip in "release-zips/tni-rater-autofill-$VERSION.zip" "release-zips/tni-rater-autofill-$VERSION-sourcemaps.zip"; do
+            [ -f "$zip" ] || continue
+            if printf '%s\n' "$have" | grep -qxF "$(basename "$zip")"; then
+              echo "$TAG already has $(basename "$zip"): left as it is."
+            else
+              gh release upload "$TAG" "$zip" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
