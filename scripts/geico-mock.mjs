@@ -138,8 +138,9 @@ const EXPECT = {
     GiveFarthestOneWayDistance: '201-300', GiveCommercialVehicleForPersonalUse: 'No',
   },
   // The trailer's year as the agent picked it before any fill read the form (the intake has 2015),
-  // never a truck's; its type left for the agent though they picked vehicle 2's (the same field name).
-  'Vehicles: trailer 1': { GiveYear: '2016', GiveOtherVehicleType: '', GiveStreet: '1 Test Way', GiveZip: '68102', GiveCity: 'OMAHA', GiveCommercialVehicleCompCollision: 'Yes' },
+  // never a truck's; its type the intake's Dry Van as GEICO's Dry Freight Trailer, though the agent
+  // picked vehicle 2's (the same field name).
+  'Vehicles: trailer 1': { GiveYear: '2016', GiveOtherVehicleType: 'Dry Freight Trailer', GiveStreet: '1 Test Way', GiveZip: '68102', GiveCity: 'OMAHA', GiveCommercialVehicleCompCollision: 'Yes' },
   // The owner's own answers (their driver row), on the form GEICO adds for an owner who drives.
   'Drivers & Incidents: owner': { GiveDriverLicenseState: 'Nebraska', GiveCertificateOfFinancialResponsibilityDriverYesNo: 'No', CommercialDriverLicense: 'Yes' },
   // The added driver's name from the intake, though the agent corrected the owner's (the same field
@@ -184,7 +185,6 @@ const NEEDS_YOU = [
   ['Vehicles: owner check', /never filled/, ['ref:GiveSocialSecurityNumber']],
   ['Vehicles: vehicle 1', /\S/, ['ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveGrossVehicleWeight']],
-  ['Vehicles: trailer 1', /trailer/, ['ref:GiveOtherVehicleType']],
 ];
 const STOP_STEPS = Object.keys(geico.stopSteps ?? {});
 
@@ -983,15 +983,15 @@ if (unitForms.vehicles[units.vehicles[1]?.form] !== 1) fail('Vehicles: the secon
 if (unitForms.trailers[units.trailers[0]?.form] !== 0) fail('Vehicles: the trailer form is not bound to trailer 1');
 // An agent's correction protects its field only where it was made (sidepanel.js changeScopes): the
 // owner's last name on Business & Owner Info doesn't keep the added driver's (the same field name)
-// from being filled, nor vehicle 2's type (or year) the trailer's type from being left for the agent
-// with the trailer's note. Where a step asks another's questions again it does: the owner check on
+// from being filled, nor vehicle 2's type (or year) the trailer's type from being filled from the
+// intake (Dry Van: Dry Freight Trailer). Where a step asks another's questions again it does: the owner check on
 // Vehicles doesn't type the intake's last name over the agent's correction. (A choice made on a held
 // form, kept with that form once the agent picked its vehicle, and the trailer's year picked before
 // any fill read its form, are checked by corrected().)
 if (left['Drivers & Incidents: driver 2'] && !filledOn('Drivers & Incidents: driver 2', 'ref:GiveDriverRelationshipToBusiness')) fail('Drivers & Incidents: driver 2\'s relationship (Employee, TNI\'s standard) was never filled');
 for (const key of ['COMP', 'COLL'].flatMap((c) => [`cov:${c}#1`, `cov:${c}#2`])) if (left['Quote & Coverages'] && !filledOn('Quote & Coverages', key)) fail(`Quote & Coverages: ${key} was never filled with TNI's $1,000 deductible`);
 if (left['Drivers & Incidents: driver 2'] && !filledOn('Drivers & Incidents: driver 2', 'ref:GiveLastName')) fail('Drivers & Incidents: driver 2\'s last name was never filled: the agent\'s correction of the owner\'s last name on Business & Owner Info kept the fill from it');
-if (left['Vehicles: trailer 1'] && !/trailer/.test(needsSeen.get('Vehicles: trailer 1')?.get('ref:GiveOtherVehicleType') ?? '')) fail('Vehicles: the trailer\'s type was never left for the agent with the trailer\'s note: the agent\'s pick of vehicle 2\'s type kept the fill from it');
+if (left['Vehicles: trailer 1'] && !filledOn('Vehicles: trailer 1', 'ref:GiveOtherVehicleType')) fail('Vehicles: the trailer\'s type was never filled from the intake\'s Dry Van: the agent\'s pick of vehicle 2\'s type kept the fill from it');
 const ownerCheck = left['Vehicles: owner check'];
 if (ownerCheck && (filledOn('Vehicles: owner check', 'ref:GiveLastName') || ownerCheck.GiveLastName === record.drivers[0].last)) fail(`Vehicles: owner check: the owner's last name was typed with the intake's (${JSON.stringify(ownerCheck.GiveLastName)}): the agent's correction on Business & Owner Info didn't reach the step that asks it again`);
 // Clicks the kit made (untrusted): radios and boxes, GEICO's address suggestion on Business & Owner

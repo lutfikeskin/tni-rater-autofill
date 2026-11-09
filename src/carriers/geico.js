@@ -874,6 +874,15 @@ const interchangeLimit = (r) => (interchangePick(r) ? `$${interchangePick(r).amo
 // Deck and Other are the agent's pick.
 const INTERCHANGE_TYPES = { 'Dry Van': 'Dry Freight Trailer', Flatbed: 'Flatbed Trailer', Reefer: 'Refrigerated Dry Freight Trailer', Lowboy: 'Lowboy Trailer', Tanker: 'Tank Trailer' };
 const interchangeType = (r) => (interchangeRequested(r) ? interchangeTrailerType(r, INTERCHANGE_TYPES) : null);
+// The trailer form's own type ("Which of the following best describes the customer's trailer?"): the
+// intake's trailer type by the same names (the maintainer, 2026-11-09, after a GEICO recording where
+// the AI assistant was asked for it and cited the interchange rule). Enclosed, Step Deck, Other or
+// none stay the agent's pick.
+// Only the map's own keys (review of #536: "constructor" would read an inherited value).
+const trailerType = (r, a) => {
+  const type = trailerOf(r, a)?.type;
+  return typeof type === 'string' && Object.hasOwn(INTERCHANGE_TYPES, type) ? INTERCHANGE_TYPES[type] : null;
+};
 const interchangeTypeNote = (r) => interchangeUnrequested(r) ?? (interchangeType(r) ? null
   : `Trailer interchange: ${interchangeTypeSaid(r, INTERCHANGE_TYPES, { carrier: 'GEICO', what: 'option' })}.`);
 // Marked to confirm with the client (TNI, 2026-10-28), each on its own question: the number, the
@@ -1333,7 +1342,8 @@ export const geico = {
     ...on(VEHICLES, { whenShown: TRAILER_FORM }, [
       { concept: 'trailer.year', field: 'GiveYear', ask: 'Year', path: 'trailers[].year', name: 'Trailer year', kind: 'choice' },
       // 19 kinds of trailer: a gooseneck hitch isn't a Gooseneck Trailer.
-      { concept: 'trailer.type', field: 'GiveOtherVehicleType', q: 'GiveOtherVehicleType.trailer', ask: 'Which of the following best describes the customer\'s trailer?', name: 'Trailer type (the agent\'s pick)', note: typeNote('trailer', trailerOf) },
+      { concept: 'trailer.type', field: 'GiveOtherVehicleType', q: 'GiveOtherVehicleType.trailer', ask: 'Which of the following best describes the customer\'s trailer?', name: 'Trailer type (Dry Van is Dry Freight Trailer, Flatbed Flatbed Trailer, Reefer Refrigerated Dry Freight Trailer, Lowboy Lowboy Trailer, Tanker Tank Trailer; else the agent\'s pick)',
+        kind: 'choice', source: (r, a) => (trailerType(r, a) ? 'derived' : null), value: trailerType, note: (r, a) => (trailerType(r, a) ? null : typeNote('trailer', trailerOf)(r, a)) },
       { concept: 'coverage.comp-coll', field: 'GiveCommercialVehicleCompCollision', q: 'GiveCommercialVehicleCompCollision.trailer', ask: 'Would the customer like to add comprehensive or collision coverage?', tni: 'geico.comp-coll', name: 'Trailer comprehensive or collision wanted (TNI: Yes)',
         kind: 'bool', source: physicalDamageSource, value: () => true, note: physicalDamageNote('whether to add comprehensive or collision on this trailer') },
       { concept: 'trailer.equipment', field: 'GiveTotalCustomizationValue', q: 'GiveTotalCustomizationValue.trailer', path: 'trailerInfo.equipTrailer', tni: 'geico.customizations', name: 'Trailer customization value (the trailer equipment value, else TNI: 0)',
