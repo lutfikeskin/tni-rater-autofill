@@ -12,7 +12,7 @@
 import { buildPlan } from '../../src/plan.js';
 import { overlayFor } from '../../src/agent-defaults/index.js';
 
-/** @import { ActiveUnits, CarrierConfig, ClientRecord, PlanStep } from '../../types.js' */
+/** @import { ActiveUnits, CarrierConfig, ClientRecord, PlanStep, RuleErrorAt } from '../../types.js' */
 
 /**
  * @param {ClientRecord} record
@@ -21,8 +21,15 @@ import { overlayFor } from '../../src/agent-defaults/index.js';
  * @returns {PlanStep[]}
  */
 export function planFor(record, carrier, active = {}) {
-  return buildPlan(record, carrier, active, { overlay: overlayFor(carrier?.id), edited: editedOf(record) });
+  return buildPlan(record, carrier, active, { overlay: overlayFor(carrier?.id), edited: editedOf(record), onRuleError: (error, at) => reportRuleError(error, at) });
 }
+
+// Where a rule that threw is told (buildPlan onRuleError): the panel's core logs it as a
+// client_error (`where: 'plan'`, with the carrier, the rule's concept and question, never a value).
+/** @type {(error: unknown, at: RuleErrorAt) => void} */
+let reportRuleError = () => {};
+/** @param {(error: unknown, at: RuleErrorAt) => void} fn */
+export function onPlanRuleError(fn) { reportRuleError = fn; }
 
 // The record paths the agent set or corrected in the panel for this record (the intake's
 // agentEdited), told by the panel's core: each step reading one is marked `edited` for the log.

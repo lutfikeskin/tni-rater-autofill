@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import crypto from 'node:crypto';
-import { EVENT_FIELDS, COMMON, COMMON_SHAPES, RUN_FIELDS, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT, SCHEMA_VERSION as SERVER_SCHEMA } from '../server/index.mjs';
+import { EVENT_FIELDS, COMMON, COMMON_SHAPES, RUN_FIELDS, fillWaits, FIELD_SOURCES, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT, SCHEMA_VERSION as SERVER_SCHEMA } from '../server/index.mjs';
 import * as SCHEMA from '../src/usage-schema.js';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
@@ -37,7 +37,7 @@ test('every usage event type the extension sends is one the server accepts', () 
 test('fill events carry only fields the server keeps (nothing silently dropped)', () => {
   const frames = [{ fields: 3, rounds: 2, filled: [{ label: 'A', key: 'a', q: '1', path: 'x', controlKind: 'text', shown: 'v', timing: { ms: 1 } }],
     unknown: [{ label: 'B', key: 'b', controlKind: 'radio', options: ['Yes', 'No'] }], failed: [], noData: [], kept: [], leftRequired: [],
-    actions: [{ id: 'act', text: 'Go' }], blockers: ['unfamiliar: B'], advanced: 'Continue', checks: [] }];
+    actions: [{ id: 'act', text: 'Go' }], blockers: ['unfamiliar: B'], advanced: 'Continue', checks: [], waits: { answer: { n: 2, ms: 300, limit: 0, slack: 120 } } }];
   // With the run-identity fields too (Contract 1, audit 2026-10-08): the server must keep them.
   const settings = { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false };
   for (const e of fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 5, redact: (s) => s, run: '4c1e0b7a-run-id', rules: 'abcdef012345', settings, step: 'Vehicles' })) {
@@ -47,6 +47,9 @@ test('fill events carry only fields the server keeps (nothing silently dropped)'
     for (const [k, valid] of Object.entries(RUN_FIELDS)) if (e[k] !== undefined) assert.ok(valid(e[k]), `${e.type}.${k} as the extension sends it would be refused`);
   }
   assert.deepEqual(Object.keys(RUN_FIELDS).sort(), ['defaultsHash', 'rules', 'run', 'settings', 'step']);
+  // A fill's waits as the extension sends them are the shape the server keeps (REC-09).
+  const [run] = fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 5, redact: (s) => s });
+  assert.ok(fillWaits(run.waits), 'fill_run.waits as the extension sends it would be dropped');
   for (const f of ['run', 'rules', 'settings', 'step']) assert.ok(EVENT_FIELDS.fill_run.includes(f), `fill_run keeps ${f}`);
   for (const f of ['run', 'step']) assert.ok(EVENT_FIELDS.fill_field.includes(f), `fill_field keeps ${f}`);
   for (const f of ['run', 'rules', 'settings']) assert.ok(EVENT_FIELDS.fill_error.includes(f), `fill_error keeps ${f} without a fill_run result`);
@@ -98,7 +101,7 @@ const schemaFingerprint = () => crypto.createHash('sha256').update(JSON.stringif
 // Every schema version's fingerprint, one entry a version. A version's entry is never rewritten:
 // a contract that changed is a new version with its own entry, so the fingerprint can't be brought
 // up to date while the version stays (the review of #378).
-const VERSION_FINGERPRINTS = { 1: '4e730dd257f0', 2: 'deb24928858d' };
+const VERSION_FINGERPRINTS = { 1: '4e730dd257f0', 2: 'df6f4ac901ac', 3: '4f30a28c01e0', 4: '8be87434d436', 5: '465ac75cfbcb' };
 test('the event contract is shared, and its version goes up whenever it changes', () => {
   assert.equal(COMMON, SCHEMA.COMMON, 'the server keeps the shared COMMON');
   assert.deepEqual(Object.keys(EVENT_FIELDS), Object.keys(SCHEMA.EVENT_FIELDS), 'the server knows every shared event type, and only those');
@@ -290,8 +293,10 @@ const NOT_TRACKED = {
   'src/content/page-watch.js': "developer-recording.md's proposal, not built",
   'test/fixtures/recording': "developer-recording.md's proposal, not built",
   'summary.json': "a file inside a developer recording's zip",
+  'live.json': "a file in a developer recording's folder in the browser, while it records",
   'recording.json': "a file inside a developer recording's zip",
   '.claude/worktrees': 'local git worktrees agents work in, ignored',
+  'THIRD_PARTY_NOTICES.txt': 'written into each packaged copy by scripts/package.mjs',
 };
 // A document's paths that aren't in the repository: backticked ones under its own folders, backticked
 // file names with no folder (a root file, or a tracked file's own name), and relative links.

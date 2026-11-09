@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Progressive's page adapter: how its Duck Creek ("DCT") rater draws questions, injected before
 // pagekit.js only on Progressive's tabs (the carrier config's `pageAdapter`). Classic script, no
 // imports; it registers itself as globalThis.__raterAdapter, which the kit reads when it needs it.
@@ -12,7 +11,7 @@
 // runs (the recorder in the extension's own, the kit in the page's): plain DOM, no ExtJS. `create`
 // is the kit's alone. What each hook is for, and its behavior with no adapter, is NO_ADAPTER in
 // pagekit.js (PageAdapter in types.js). A widget here is the field's ExtJS component.
-/** @import { PageAdapter, PageAdapterKit, PageAdapterShared } from '../../../types.js' */
+/** @import { FieldStep, PageAdapter, PageAdapterKit, PageAdapterShared, WriteResult } from '../../../types.js' */
 
 (() => {
   // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>. The
@@ -60,7 +59,7 @@
       const caption = id ? document.getElementById?.(`c_${id}`) : null;
       if (!caption) return '';
       return squash([...(caption.childNodes ?? [])]
-        .filter((n) => !n.classList?.contains?.('lowerLabelText')).map((n) => n.textContent).join(' ')).slice(0, 160);
+        .filter((/** @type {ChildNode & { classList?: DOMTokenList }} */ n) => !n.classList?.contains?.('lowerLabelText')).map((n) => n.textContent).join(' ')).slice(0, 160);
     },
     // An ExtJS dropdown: a text input with an arrow trigger, picked from a list. A date picker has a
     // trigger too, but what's in it is typed text.
@@ -126,6 +125,7 @@
 
     // Go through the components so the page's own change/blur handlers run (Duck Creek sends each
     // answer to the server when the field loses focus).
+    /** @param {FieldStep} step @param {any} c @returns {Promise<WriteResult>} */
     async function apply(step, c) {
       const { widget: cmp, el } = c;
       if (c.kind === 'radio') {
@@ -231,9 +231,12 @@
       busy: () => !!ext()?.Ajax?.isLoading?.(),
       // An answer on Rates (CoveragesRates) makes Recalculate and Print due again: the bill plan
       // (payment method) stays chosen, the premium needs recalculating. A cargo, general liability or
-      // trailer interchange answer re-arms its Done with this coverage too.
+      // trailer interchange answer re-arms its Done with this coverage too (the step's `section`, the
+      // carrier's `sections`): any cargo question, a question of GL's or interchange's open section.
       rearm: (page, step) => (page !== 'CoveragesRates' ? []
-        : ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : []), ...(step.interchange === 'section' ? ['doneInterchange'] : [])]),
+        : ['recalculate', 'print', 'printSend', ...(step.section?.id === 'cargo' ? ['doneCargo'] : []),
+          ...(step.section?.id === 'gl' && step.section.part === 'section' ? ['doneGl'] : []),
+          ...(step.section?.id === 'interchange' && step.section.part === 'section' ? ['doneInterchange'] : [])]),
       // The page sends its server each answer: a fill waits for it between answers.
       serverBacked: () => !!ext(),
       onRequest: (fn) => { try { ext()?.Ajax?.on?.('beforerequest', fn); } catch { /* no ExtJS events */ } },

@@ -429,14 +429,14 @@ try {
   // done: nothing is filled or clicked): only the Luna approval holds Continue below.
   verify('missing claims does not become a prior-loss answer', await mock.locator('input[name=anyPriorLoss]:checked').count(), 0);
   verify('missing claims has a visible agent review item', await panel.locator('#report .row.need', { hasText: 'any prior loss' }).count(), 1);
-  const leftBefore = await panel.locator('#finish-summary').innerText();
+  const leftBefore = await panel.locator('#fill-summary').innerText();
   for (const label of ['any prior loss', 'how long with current carrier', 'has additional interest', 'can provide claim free loss run', 'valued loss runs']) {
     if (!await panel.locator('#report .row.need', { hasText: label }).count()) continue;
     const need = await openRow(label);
     await need.locator('.mark-done').click();
     await panel.locator('#report .row.need.resolved', { hasText: label }).waitFor({ timeout: 30000 });
   }
-  verify('Mark done lowers "left for you" without a refill', await panel.locator('#finish-summary').innerText() !== leftBefore, true);
+  verify('Mark done lowers "left for you" without a refill', await panel.locator('#fill-summary').innerText() !== leftBefore, true);
   verify('Mark done keeps the Luna approval card', await approve.isVisible(), true);
   verify('agent-dismissed facts leave Continue held for the Luna approval', await mock.evaluate(() => window.__amwinsMock.saves), 0);
   verify('facts left to the agent never reach Luna', agentFactsSent, 0);
@@ -623,8 +623,19 @@ try {
   await panel.waitForTimeout(1000);
   verify('turning assistance off discards an in-flight Luna response', await panel.locator('#report .row.pending').count(), 0);
   verify('stale provider response never fills the page', await mock.locator('#mockLunaChoice').inputValue(), '');
-  // With assistance off a new intake gets neither check: nothing sent, GL and gender untouched.
+  // Suggest answers off: the driver-name check still runs, on its own switch (AI-15), and the
+  // claims box isn't read.
   phase = 'intake-checks-off';
+  const offClaims = claimsRequests, offNames = namesRequests;
+  await closeAgent();
+  await openMock(); await loadPdf();
+  await panel.waitForTimeout(1000);
+  verify('Suggest answers off: the claims box is not sent', claimsRequests, offClaims);
+  verify('Suggest answers off: the driver-name check runs on its own switch', namesRequests > offNames, true);
+  // Both off, a new intake gets neither check: nothing sent, GL and gender untouched.
+  await openAgent();
+  await panel.locator('#ai-names').uncheck();
+  await waitSetting('lunaNames', false);
   const offBefore = claimsRequests + namesRequests;
   flagIntake = true;
   await closeAgent();

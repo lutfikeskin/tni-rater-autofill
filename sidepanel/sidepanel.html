@@ -25,6 +25,8 @@
     <symbol id="restart" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></symbol>
     <!-- Agents' own defaults: Settings' Your defaults row and the client strip's icon. -->
     <symbol id="sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <!-- The client strip's Quote summary (summary-view.jsx). -->
+    <symbol id="list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></symbol>
     <symbol id="trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
   </svg>
 
@@ -55,14 +57,14 @@
   </header>
 
   <!-- The client: their name (a button to every answer on the intake), the intake PDF, the file tools
-       always in view (no menu to open first), and the three steps as a strip -->
+       always in view (no menu to open first), and the two tabs, Intake and This page -->
   <section id="quote" class="client" hidden>
     <!-- The name, the tools, the file tools' question and the note on the file just loaded: drawn by
          client-view.jsx (mountClient). -->
     <div id="client-root"></div>
-    <!-- The intake, then the page in front: filled, then reviewed. Each page has its own 2 and 3;
-         the header's "Step n of m" is the quote's place. Drawn by steps-view.jsx (mountSteps). -->
-    <nav id="steps" class="steps" aria-label="Steps"></nav>
+    <!-- The intake, then the page in front (its fill and what is left on it). The header's
+         "Stage n of m" is the quote's place. Drawn by steps-view.jsx (mountSteps). -->
+    <nav id="steps" class="steps" aria-label="Intake or this page"></nav>
   </section>
 
   <main id="view" class="view">
@@ -77,6 +79,7 @@
     <section id="home" class="pane">
       <div class="intro">
         <h2>Start a quote</h2>
+        <a class="help-link" href="guide.html#home" target="_blank" rel="noopener" aria-label="Help: starting a quote" title="Help: starting a quote" data-help="home">?</a>
         <p class="muted">Add the client’s quote application.</p>
       </div>
       <section id="load" class="drop" tabindex="0">
@@ -86,6 +89,8 @@
       </section>
       <p class="privacy-line">Stays on this computer. Cleared when Chrome closes.</p>
       <div id="load-error" class="issue bad" role="alert" hidden></div>
+      <!-- What setting up is left, ticked by renderHealth's checks (home-view.jsx); empty when done. -->
+      <div id="setup-root"></div>
     </section>
 
     <!-- Step 1: what looked wrong or missing on the intake (#warnings), then every answer on it
@@ -114,6 +119,10 @@
   <!-- Every answer on the intake, to read or correct, in a drawer from the right over the panel.
        Drawn by details-view.jsx (mountDetails). -->
   <div id="details-view" class="drawer" hidden></div>
+
+  <!-- The quote summary, read only: every page's answers with their sources, overrides, AI decisions
+       and what was marked done, and Save summary. Drawn by summary-view.jsx (mountSummary). -->
+  <div id="summary-view" class="sheet" hidden></div>
 
   <!-- What to do next, always in the same place, and the panel's own links -->
   <footer class="foot">

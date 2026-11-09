@@ -8,6 +8,7 @@ import { unitFormsOf } from './units.js';
 import { createLocator } from './locator.js';
 import { createAddressDriver } from './drivers/address.js';
 import { createSelect2Drivers } from './drivers/select2.js';
+import { typingElsewhere, focusedControl, activeNow } from './guard.js';
 
 /** @import { PageControl } from './dom.js' */
 /** @import { FailCode, PlanStep, WriteResult } from '../../types.js' */
@@ -95,8 +96,12 @@ export const {
 setAdapterHooks({ matchOption, noMatch, textFor, hasOptions, labelFor });
 
 // `sleep` ends early once the running fill stops (`halted`): a driver checks it before it writes.
+// `halted` also holds the stop of the write running now (apply's `stopped`): an agent's edit while
+// a list waits for its options (a plain one, or select2) stops it before the pick (CodeRabbit on #435).
+let callerStop = () => false;
+const stoppedNow = () => waitsStopped() || callerStop();
 const interrupted = () => ({ ok: /** @type {false} */ (false), code: /** @type {FailCode} */ ('fill.interrupted'), reason: INTERRUPTED });
-const driverKit = { adapter, withAdapter, deepQueryAll, oneLine, squash, sleep: pause, halted: waitsStopped, interrupted, settle, hasValue, unpicked, optionsOf, matchOption, noMatch, selectedText, multiValue };
+const driverKit = { adapter, withAdapter, deepQueryAll, oneLine, squash, sleep: pause, halted: stoppedNow, interrupted, settle, hasValue, unpicked, optionsOf, matchOption, noMatch, selectedText, multiValue };
 const { select2, searchSelect } = createSelect2Drivers(driverKit);
 
 export const drivers = [
@@ -111,11 +116,47 @@ export const drivers = [
  * Applies a plan step value to control c using the matching driver.
  * @param {any} step
  * @param {PageControl} c
+ * @param {() => boolean} [stopped]  the caller's own stop, besides the fill's (waitsStopped): the
+ *   panel's answers stop at the agent's edit of a question on the page (pagekit `answer`)
  * @returns {Promise<WriteResult>}
  */
-export async function apply(step, c) {
+export async function apply(step, c, stopped = () => false) {
+  const halted = () => waitsStopped() || stopped();
   // Stopped (the agent's Stop, or their edit): nothing more is written.
-  if (waitsStopped()) return interrupted();
+  if (halted()) return interrupted();
+  // The agent typing in another field (audit 2026-11-07, ENG-18): the write waits until they pause
+  // (at most TYPING_WAIT_MS), and their field has its focus back after it, which the write's own
+  // focus and blur took. An edit of theirs while it waits stops it there (CodeRabbit on #435).
+  for (const end = Date.now() + TYPING_WAIT_MS; typingElsewhere(c.el) && Date.now() < end && !halted();) await pause(TYPING_POLL_MS);
+  if (halted()) return interrupted();
+  const theirs = focusedControl();
+  const before = callerStop;
+  callerStop = stopped;
+  try {
+    return await write(step, c);
+  } finally {
+    callerStop = before;
+    // Only where the write left the focus (on its field, in its widget, or on nothing): a field the
+    // agent moved to meanwhile keeps it (CodeRabbit on #435).
+    const now = activeNow();
+    const writes = !now || now === c.el || !!c.el.contains?.(now) || !!c.widget?.contains?.(now);
+    if (theirs && theirs !== c.el && theirs.isConnected !== false && now !== theirs && writes) {
+      try { theirs.focus({ preventScroll: true }); } catch { /* gone */ }
+    }
+  }
+}
+
+// How long a write waits for the agent to stop typing in another field, and how often it looks.
+export const TYPING_WAIT_MS = 10000;
+const TYPING_POLL_MS = 250;
+
+/**
+ * Writes a plan step's value into control c with the driver that writes it, or the plain controls' own way.
+ * @param {any} step
+ * @param {PageControl} c
+ * @returns {Promise<WriteResult>}
+ */
+async function write(step, c) {
   const driver = drivers.find((d) => d.writes(step, c));
   if (driver) return driver.write(step, c);
 
@@ -150,12 +191,12 @@ export async function apply(step, c) {
   let options = optionsOf(c);
   let opt = matchOption(options, step);
   const loading = () => new Set(options.map((o) => oneLine(o.text)).filter(Boolean)).size <= 1;
-  for (const start = Date.now(); !opt && c.kind === 'select' && loading() && Date.now() - start < 6000 && !waitsStopped();) {
+  for (const start = Date.now(); !opt && c.kind === 'select' && loading() && Date.now() - start < 6000 && !stoppedNow();) {
     await pause(250);
     options = optionsOf(c);
     opt = matchOption(options, step);
   }
-  if (waitsStopped()) return interrupted();
+  if (stoppedNow()) return interrupted();
   if (!opt) return noMatch(step, options);
   if (c.kind === 'select') setNativeValue(c.el, opt.value);
   else if (!optionOn(opt)) {

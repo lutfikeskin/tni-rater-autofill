@@ -9,11 +9,11 @@ import * as usage from '../usage-log.js';
 import { collectItems, pseudonymizeChoices, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
 import { claimsTruncated, firstNameOf } from '../../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../../src/ai/providers.js';
-import { $, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
+import { $, traced, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
 import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
-import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout } from './coordinator.js';
+import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout, viewOf } from './coordinator.js';
 import { drawRow, fillPage, resumeHeldFill, runKit } from './fill.js';
 import { aiHolder } from './ai-view.jsx';
 import { needId, setHead } from './report-rows.js';
@@ -235,7 +235,8 @@ async function reviewDriverGender({ retry = false } = {}) {
   let again = false;
   try {
     const cfg = await aiSettings();
-    if (!cfg.on || !cfg.ready || state.intake !== intake) return;
+    // Its own switch (Check driver names), not Suggest answers: TNI approved it apart (AI-15).
+    if (!cfg.names || !cfg.ready || state.intake !== intake) return;
     const started = Date.now();
     const read = driverNamesContext(intake.record);
     const origin = usage.currentSession();
@@ -403,7 +404,9 @@ async function runAssist(frames, ctx) {
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length, ...leaveCounts(fresh),
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
         reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
-        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
+        ...(result.promptHash ? { promptHash: result.promptHash } : {}), ...(why ? { error: `Answer discarded: ${why}.` } : {}) },
+        // A discarded answer left nothing to the agent: no ai_leave (CodeRabbit on PR #413).
+        ...(why ? [] : aiLeaveEvents(fresh, ctx, redactor(redactionTerms(record)))));
       if (why) { dropped(`it answered after ${why}, so nothing was applied`); return; }
       fresh.forEach(x => state.aiCache.set(sigOf(x), {
         ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),
@@ -459,12 +462,13 @@ function leaveCounts(suggestions) {
 // are any, the page's Continue is never clicked automatically. Picks made before the agent
 // changed the intake or the driver/vehicle are included: they're still on the page, unapproved,
 // so they keep blocking until the agent approves or rejects them (the card always offers both).
-function pendingAi(tabId, page) {
+// `url`: the tab's address, whose quote a pick must be of (the tab in front's unless given).
+function pendingAi(tabId, page, url = state.tab?.url) {
   const out = [];
   for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
     if (t === String(tabId) && p === page && aiDecisionBlocks(x)
-      && (!x.quoteHash || x.quoteHash === aiFingerprint(state.tab?.url))) out.push(x);
+      && (!x.quoteHash || x.quoteHash === aiFingerprint(url))) out.push(x);
   }
   return out;
 }
@@ -587,7 +591,7 @@ async function applyAi(list, ctx, decision) {
       dispatched = true;
       // The carrier's stop steps go along: after a reload no fill has told this document about them.
       const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit?.answer(a, snapshots, t, o),
-        [[a], expected, guardToken, { stopSteps: Object.keys(ctx.carrier.stopSteps ?? {}) }], [frameId]);
+        [[a], expected, guardToken, { stopSteps: Object.keys(ctx.carrier.stopSteps ?? {}), ...(traced(ctx.tabId) ? { trace: true } : {}) }], [frameId]);
       for (const frame of answerFrames) for (const item of frame.result ?? []) {
         if (item && typeof item === 'object') results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
       }
@@ -692,10 +696,22 @@ function lunaTrace(ctx) {
 function aiDecisionEvent(x, ctx, decision) {
   const redact = redactor(redactionTerms(state.intake.record));
   return {
-    type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
+    // Its view (tab, vehicle or driver), as the field changes after it have (CodeRabbit on PR #413).
+    type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, view: viewOf(ctx.tabId, ctx.page, ctx.carrier), q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
     decision, choice: x.controlKind !== 'text' && x.choice ? redact(x.choice) : undefined,
     model: x.model, policy: x.policy, promptHash: x.promptHash ?? undefined, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
+    // Which TNI rules the pick cites, by id (audit 2026-11-07, AI-07).
+    ruleIds: x.ruleIds?.length ? x.ruleIds.slice(0, 12) : undefined,
   };
+}
+
+// One per question Luna left (audit 2026-11-07, AI-07): which question, why, and the intake field it
+// maps to, if any; the questions it keeps leaving are where a deterministic rule would pay off.
+function aiLeaveEvents(list, ctx, redact) {
+  return list.filter((x) => x.leave).map((x) => ({
+    type: 'ai_leave', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label ?? ''), controlKind: x.controlKind,
+    leaveWhy: x.leaveWhy ?? null, intakePath: x.rulePath ?? null,
+  }));
 }
 
 // Each suggestion goes on its question's row (AI suggests …, Use this answer / No thanks; its pick
@@ -870,7 +886,7 @@ function renderAi(holder, suggestions, ctx) {
 }
 
 // What the AI's controls in Settings do (settings-view.jsx asks for them: sidepanel.js passes these
-// in its `act`): the two switches, the key's button, Save, and a key pressed in the key's box.
+// in its `act`): the three switches, the key's button, Save, and a key pressed in the key's box.
 function aiActs() {
   const save = async patch => {
     // Answers to requests made before are discarded, never kept for a later one (runAssist).
@@ -881,7 +897,7 @@ function aiActs() {
     }
     // Keep pending approvals; their cache keys remain bound to the original model and context.
     await usage.saveSettings(patch);
-    logSettings('changed', Object.keys(patch).map((k) => ({ aiOn: 'aiOn', lunaAuto: 'aiAuto', lunaKey: 'aiKey' })[k] ?? k).join(','));
+    logSettings('changed', Object.keys(patch).map((k) => ({ aiOn: 'aiOn', lunaAuto: 'aiAuto', lunaNames: 'aiNames', lunaKey: 'aiKey' })[k] ?? k).join(','));
     await renderAiSettings();
     // Luna just turned on or got a key: read the open intake's claims box and driver names if not done yet.
     reviewIntake({ retry: true });
@@ -897,6 +913,7 @@ function aiActs() {
   return {
     aiOn: (on) => save({ aiOn: on }),
     aiAuto: (on) => save({ lunaAuto: on }),
+    aiNames: (on) => save({ lunaNames: on }),
     keyEdit: () => openKeyForm(!state.keyFormOpen),
     keySave: saveKey,
     // Escape closes the box without saving, and not Settings with it (stopPropagation).
@@ -919,6 +936,7 @@ async function renderAiSettings() {
   state.ai = {
     on: cfg.on,
     auto: cfg.auto,
+    names: cfg.names,
     autoOff: !cfg.on || !provider.automatic,
     autoShown: !!provider.automatic,
     keyStatus: cfg.apiKey ? 'Saved on this computer' : cfg.proxy ? `Not needed: ${lender} provides it` : 'Not added yet',
@@ -927,10 +945,11 @@ async function renderAiSettings() {
     keyEdit: cfg.apiKey ? 'Change' : cfg.proxy ? 'Use my own key' : 'Add key',
     // On without a key: it can't help yet, said on its card and with a dot on the Settings button.
     // Folded otherwise; opened so that warning isn't hidden.
-    warn: cfg.on && !cfg.ready,
-    note: !cfg.on ? 'Off' : !cfg.ready ? 'Needs a key'
-      : cfg.auto ? 'On. Picks answers you approve.' : 'On. Suggests answers.',
-    noteTone: !cfg.on ? 'off' : !cfg.ready ? 'warn' : 'on',
+    // The driver-name check alone on counts as on (its own switch).
+    warn: (cfg.on || cfg.names) && !cfg.ready,
+    note: !cfg.on && !cfg.names ? 'Off' : !cfg.ready ? 'Needs a key'
+      : !cfg.on ? 'On. Checks driver names.' : cfg.auto ? 'On. Picks answers you approve.' : 'On. Suggests answers.',
+    noteTone: !cfg.on && !cfg.names ? 'off' : !cfg.ready ? 'warn' : 'on',
   };
   renderUsage();
 }

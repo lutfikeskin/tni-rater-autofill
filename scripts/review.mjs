@@ -28,6 +28,7 @@ import { loadLayouts, report as coverageReport } from './coverage.mjs';
 import { alerts, receivedAt, uncoveredQuestions, lastReceipts } from './lib/daily.mjs';
 import { questionOf } from './lib/learn.mjs';
 import { readTestList, signals, testSessionsOf } from './lib/signals.mjs';
+import { problemJoin, problemLines, sessionCommand } from './lib/session.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -229,7 +230,10 @@ else {
 
 p('## Problem reports', '');
 if (!problems.length) p('None.', '');
-else p(...problems.map((e) => `- ${e.t?.slice(0, 16).replace('T', ' ')} · ${e.agent ?? '?'} · ${buildOf(e)}${tests.has(e.session) ? ' · test run' : ''} · ${e.page ?? '?'}: ${String(e.text ?? '').trim().replace(/\n+/g, '\n  ')}`), '');
+// Each with the fill it names (its blockers, what failed or was left and why) and its page's
+// layouts around it (REC-08); `npm run session -- <its id>` tells its whole quote.
+else p(...problems.flatMap((e) => [`- ${e.t?.slice(0, 16).replace('T', ' ')} · ${e.agent ?? '?'} · ${buildOf(e)}${tests.has(e.session) ? ' · test run' : ''} · ${e.page ?? '?'}: ${String(e.text ?? '').trim().replace(/\n+/g, '\n  ')}`,
+  ...problemLines(problemJoin(e, all)), ...(sessionCommand(e.id) ? [`  - Its quote: \`${sessionCommand(e.id)}\``] : [])]), '');
 
 // Questions met on live pages that no rule claims (or, for AmWINS, that the mock lacks).
 const { markdown: coverageMd } = coverageReport(loadLayouts(inputs));

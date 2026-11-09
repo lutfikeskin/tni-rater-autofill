@@ -6,21 +6,23 @@
 
 /** @import { FillOptions, FillReport, PlanStep } from '../../types.js' */
 
-import { kitTrace, setTracing } from './trace.js';
-import { adapter, pageBusy, perfNow, stepKey, stopStepOn, settle, getKnownStopSteps } from './adapter.js';
+import { kitTrace, setTracing, isTracing } from './trace.js';
+import { adapter, pageBusy, perfNow, stepKey, stopStepOn, settle, getKnownStopSteps, tallyWaits, waitsTallied } from './adapter.js';
 import { collectControls, fieldKey, describe, invalidControl } from './dom.js';
 import { mark, clear, markKey, reveal, aiBanner } from './marks.js';
 import { listed, unitList, unitListsNow, unitFormsNow } from './units.js';
-import { guardEdits, answerEdits, getAnswerEditSession, STOP_STEP_HALT, EDIT_HALT_ANSWERS } from './guard.js';
+import { guardEdits, answerEdits, getAnswerEditSession, watchTyping, STOP_STEP_HALT, EDIT_HALT_ANSWERS } from './guard.js';
 import { capture, receipt, readBack, present, signature, decisionSnapshot } from './capture.js';
 import { apply, agreesWith } from './apply.js';
-import { fill, progress, stop } from './cursor.js';
+import { fill, progress, stop, stopRun } from './cursor.js';
 
 (() => {
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 95 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 97 && globalThis.__raterKit.build === BUILD) return;
+  // The agent's key presses, from now on in this document: a write waits while they type elsewhere (apply).
+  watchTyping();
 
   /**
    * Puts answers the agent accepted from the AI assistant (or that it was allowed to pick itself)
@@ -28,10 +30,32 @@ import { fill, progress, stop } from './cursor.js';
    * @param {Array<{ key: string, label?: string, value: any, note?: string, expected?: any }>} answers
    * @param {string[]} [expectedSnapshots]
    * @param {string} [guardToken]
-   * @param {{ stopSteps?: string[], by?: 'ai' | 'agent' }} [options]
+   * @param {{ stopSteps?: string[], by?: 'ai' | 'agent', trace?: boolean }} [options]
    * @returns {Promise<any[]>}
    */
-  async function answer(answers, expectedSnapshots, guardToken, { stopSteps = getKnownStopSteps(), by = 'ai' } = {}) {
+  async function answer(answers, expectedSnapshots, guardToken, { stopSteps = getKnownStopSteps(), by = 'ai', trace = false } = {}) {
+    // Asked with `trace` (a developer recording runs on the tab): it says what it does as a fill
+    // does, by whom (`source`), so an AI apply isn't read as a fill (REC-14, 2026-11-07).
+    if (!trace) return answerAll(answers, expectedSnapshots, guardToken, { stopSteps, by });
+    setTracing(true);
+    kitTrace('run', { on: true, steps: answers?.length ?? 0, source: by });
+    try {
+      const results = await answerAll(answers, expectedSnapshots, guardToken, { stopSteps, by });
+      kitTrace('run', { on: false, filled: results.filter((r) => r.ok).length, halted: false, source: by });
+      return results;
+    } finally {
+      setTracing(false);
+    }
+  }
+
+  /**
+   * @param {any[]} answers
+   * @param {string[] | null | undefined} expectedSnapshots
+   * @param {string | undefined} guardToken
+   * @param {{ stopSteps: string[], by: 'ai' | 'agent' }} options
+   * @returns {Promise<any[]>}
+   */
+  async function answerAll(answers, expectedSnapshots, guardToken, { stopSteps, by }) {
     const agent = by === 'agent';
     if (stopStepOn(stopSteps)) return answers.map((a) => ({ key: a.key, label: a.label, ok: false, code: 'page.stop-step', reason: STOP_STEP_HALT }));
     const answerEditSession = getAnswerEditSession();
@@ -76,9 +100,19 @@ import { fill, progress, stop } from './cursor.js';
           ? { id, name, kind: 'bool', value: /^(checked|yes|true)$/i.test(String(a.value)) }
           : { id, name, value: String(a.value) };
         let result;
-        try { result = await apply(step, c); } catch (e) { result = { ok: false, code: 'kit.exception', reason: String(e?.message ?? e) }; }
+        const t0 = Date.now();
+        // An edit of the agent's while this answer waits for them to stop typing elsewhere stops it
+        // before it is written, as one before it would (CodeRabbit on #435).
+        try { result = await apply(step, c, () => editedQuestions.size > 0); } catch (e) { result = { ok: false, code: 'kit.exception', reason: String(e?.message ?? e) }; }
+        const tApplied = Date.now();
+        let settleMs = null;
+        if (!result.ok && result.code === 'fill.interrupted' && editedQuestions.size && !edited(a.key)) {
+          results.push({ key: a.key, label: a.label, ok: false, code: 'fill.interrupted', reason: EDIT_HALT_ANSWERS });
+          continue;
+        }
         if (result.ok) {
-          const settled = await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
+          const settled = await settle(serverBacked ? { why: 'answer' } : { quietMs: 250, maxMs: 3000, why: 'answer' });
+          settleMs = Date.now() - tApplied;
           const fresh = find(a.key, a.label);
           if (edited(a.key)) result = { ok: false, code: 'answer.agent-edited', reason: 'you changed this question yourself while the answer went in; your answer stays' };
           else if (!settled) result = { ok: false, code: 'page.unsettled', reason: 'the page did not settle after the answer' };
@@ -88,6 +122,9 @@ import { fill, progress, stop } from './cursor.js';
         }
         if (!result.ok && !edited(a.key)) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `${agent ? 'Your answer' : 'AI answer'} not accepted: ${result.reason}`); }
         results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, ...(result.ok ? {} : { code: result.code ?? 'kit.uncoded' }), reason: result.reason ?? null });
+        if (isTracing()) kitTrace('answer', { field: { key: a.key, label: c.label ?? '' }, stepKind: step.kind ?? null, ok: !!result.ok, start: t0, applyMs: tApplied - t0, source: by,
+          // The wait after it, as the fill's answers say theirs (the usage log's timing): the report's line.
+          ...(settleMs != null ? { timing: { ms: Date.now() - t0, settleMs } } : {}) });
       }
       for (const r of results) if (edited(r.key)) r.protected = true;
       for (const [key, label] of editedQuestions) {
@@ -118,24 +155,34 @@ import { fill, progress, stop } from './cursor.js';
       else if (hiddenSince != null) { hiddenMs += perfNow() - hiddenSince; hiddenSince = null; }
     };
     document.addEventListener('visibilitychange', seen);
+    tallyWaits();
     try {
       const report = await fill(plan, options);
-      kitTrace('run', { on: false, filled: report?.filled?.length ?? 0, halted: !!report?.halted });
+      // Its waits by what they were for (REC-09): the usage log's fill_run sums them over its frames.
+      const waits = waitsTallied();
+      if (report && waits) report.waits = waits;
+      // How it ended, as counts (REC-01): what failed, was left for the agent, held Continue or was
+      // new to the rules. Which ones, and why, are in the usage log's fill_field events, which a
+      // recording copies in.
+      kitTrace('run', { on: false, filled: report?.filled?.length ?? 0, halted: !!report?.halted,
+        failed: report?.failed?.length ?? 0, leftRequired: report?.leftRequired?.length ?? 0, blockers: report?.blockers?.length ?? 0, unknown: report?.unknown?.length ?? 0 });
       if (hiddenSince != null) hiddenMs += perfNow() - hiddenSince;
       if (report && hiddenMs >= 1) report.hiddenMs = Math.round(hiddenMs);
       return report;
     } finally {
+      waitsTallied();
       document.removeEventListener('visibilitychange', seen);
       setTracing(false);
     }
   }
 
   globalThis.__raterKit = {
-    version: 95,
+    version: 97,
     build: BUILD,
     fill: tracedFill,
     progress,
     stop,
+    stopRun,
     answer,
     answerEdits,
     listed,

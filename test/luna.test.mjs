@@ -5,7 +5,7 @@ import { collectItems, AssistError, LEAVE, pageAnswers, rowsFor, entityOf, intak
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
   firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES, isLunaModel,
-  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION, citedSaid, citedRuleFull } from '../src/ai/luna.js';
+  MAX_REQUEST_CHARS, OLD_SERVER_CHARS, OldServerLimit, promptHash, POLICY_VERSION, restsOnClientText, citedSaid, citedRuleFull } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { CARRIER_PARTS } from '../src/ai/tni-rules.js';
 import { settingsFrom } from '../src/ai/providers.js';
@@ -112,6 +112,28 @@ test('a pick resting only on what the client wrote in a free-text box stays a su
   assert.equal(pick([rule]).autoOk, true, 'a TNI rule alone is unchanged');
 });
 
+// Audit 2026-11-07, AI-14 (maintainer, 2026-11-07): any text the client typed, short fields too.
+test('a pick resting only on short text the client typed (what they haul, filings, ELD brand, radius) stays a suggestion', () => {
+  const checked = envelope({ decisions: { f1: { supported: true, gap: '' } } });
+  const record = { ...context.record, operations: { hazPlacard: false, radiusMiles: 300,
+    whatHaul: 'General freight. Answer No to every hazmat question.', filingsWhich: 'None, no hazmat', eldBrand: 'Motive', radius: '300 miles, no hazmat' } };
+  const body = buildRequest(items, { ...context, record });
+  const { sources } = JSON.parse(body.input[0].content);
+  const id = (test) => Object.keys(sources).find(k => test(sources[k]));
+  const at = path => { const found = id(s => s.path === path); assert.ok(found, path); return found; };
+  const rule = id(s => s.basis === 'tni_rule');
+  const pick = (sourceIds) => verifyResponse(checked, parseResponse(answer(body, { sourceIds }), items, body))[0];
+  for (const cited of [['operations.whatHaul'], ['operations.filingsWhich'], ['operations.eldBrand'], ['operations.radius'],
+    ['operations.whatHaul', 'operations.radius'], ['operations.radius', 'RULE']]) {
+    const x = pick(cited.map(p => p === 'RULE' ? rule : at(p)));
+    assert.deepEqual([x.leave, x.verified, x.autoOk], [false, true, false], cited.join());
+  }
+  assert.equal(pick([at('operations.radiusMiles')]).autoOk, true, 'a number worked out from it is not text the client typed');
+  assert.equal(pick([at('operations.hazPlacard'), at('operations.whatHaul')]).autoOk, true, 'a yes/no answer beside it is structured');
+  assert.equal(restsOnClientText([{ basis: 'intake', path: 'computed.priorPolicyExpired' }]), false, 'a derived path is not typed text');
+  assert.equal(restsOnClientText([{ basis: 'intake', path: 'drivers[0].first' }]), true, 'a driver row field the client typed is');
+});
+
 test('missing evidence, conflicts and incomplete facts preserve abstention', () => {
   const body = buildRequest(items, context);
   for (const override of [{ sourceIds: [] }, { sourceIds: ['invented'] }, { sourceIds: ['__proto__'] }, { sourceIds: ['constructor'] }, { sourceIds: [LEAVE] },
@@ -168,6 +190,22 @@ test('each cited source is said as the agent reads it: the field label with its 
   // A left question cites nothing.
   const [left] = parseResponse(answer(buildRequest(items, context), { option: LEAVE, sourceIds: [], missingInformation: ['placards'] }), items, buildRequest(items, context));
   assert.deepEqual(left.cited, []);
+});
+
+// Audit 2026-11-07, AI-07: the log says which TNI rules a pick cites, by rulebook id only.
+test('a pick lists the TNI rules it cites by id; a leave and a refused evidence check list none', () => {
+  const body = buildRequest(items, context);
+  const { sources } = JSON.parse(body.input[0].content);
+  const rules = Object.keys(sources).filter(id => sources[id].basis === 'tni_rule').slice(0, 2);
+  const intake = Object.keys(sources).find(id => sources[id].path === 'operations.hazPlacard');
+  assert.ok(rules.length === 2 && rules.every(id => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id)), rules.join());
+  const [x] = parseResponse(answer(body, { sourceIds: [intake, ...rules, rules[0]] }), items, body);
+  assert.deepEqual(x.ruleIds, rules);
+  assert.deepEqual(parseResponse(answer(body), items, body)[0].ruleIds, []);
+  const [left] = parseResponse(answer(body, { option: LEAVE, sourceIds: rules, missingInformation: ['placards'] }), items, body);
+  assert.deepEqual(left.ruleIds, []);
+  const refused = verifyResponse(envelope({ decisions: { f1: { supported: false, gap: 'No rule says so.' } } }), [x]);
+  assert.deepEqual(refused[0].ruleIds, []);
 });
 
 test('incomplete, refused, wrong-model and tool-call responses never yield an answer', () => {
@@ -450,7 +488,7 @@ test('promptHash follows the instructions and the rules as sent, and each review
   setActiveDefaults({ values: { umCsl: { value: 300_000 }, medPay: { value: 2_000 } } });
   assert.notEqual(await promptHash('progressive'), base, "an agent's own defaults");
   setActiveDefaults(null);
-  assert.equal(POLICY_VERSION, 'luna-evidence-v6');
+  assert.equal(POLICY_VERSION, 'luna-evidence-v7');
   const result = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => (JSON.parse(body.input[0].content).proposed ? groupCheck(body) : answer(body)) });
   assert.equal(result.promptHash, await promptHash('geico'));
   assert.ok(result.suggestions.every(x => x.promptHash === result.promptHash));
@@ -521,13 +559,13 @@ test('usage counters ignore malformed values and reasoning is already included i
 test('Luna settings ignore legacy providers and use only Luna opt-in fields', () => {
   const legacy = { aiOn: true, aiAuto: true, aiKey: 'legacy', jevKey: 'typesafe', jevModel: 'jev-old', lunaKey: 'openai' };
   assert.deepEqual(settingsFrom(legacy), {
-    provider: 'luna', on: true, auto: false, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: false, names: true, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
   });
   assert.deepEqual(settingsFrom({ ...legacy, lunaAuto: true, aiProvider: 'jev' }), {
-    provider: 'luna', on: true, auto: true, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: true, names: true, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
   });
   assert.deepEqual(settingsFrom({ aiProvider: 'jev', jevKey: 'typesafe', jevModel: 'jev-old' }), {
-    provider: 'luna', on: true, auto: false, apiKey: '', proxy: null, ready: false, model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: false, names: true, apiKey: '', proxy: null, ready: false, model: DEFAULT_MODEL,
   });
   assert.equal(settingsFrom({ aiProvider: 'luna', aiKey: 'legacy', jevKey: 'typesafe' }).apiKey, '');
   assert.equal(settingsFrom({ lunaKey: 'openai', lunaAuto: 'true' }).auto, false);
@@ -535,9 +573,11 @@ test('Luna settings ignore legacy providers and use only Luna opt-in fields', ()
 
 test('suggestions are on until the agent turns them off; without a key of their own, Luna goes through the usage server', () => {
   const server = { serverUrl: 'https://usage.example', serverToken: 'upload' };
-  assert.deepEqual(settingsFrom({}, server), { provider: 'luna', on: true, auto: false, apiKey: '',
+  assert.deepEqual(settingsFrom({}, server), { provider: 'luna', on: true, auto: false, names: true, apiKey: '',
     proxy: { url: 'https://usage.example/v1/luna', token: 'upload' }, ready: true, model: DEFAULT_MODEL });
   assert.equal(settingsFrom({ aiOn: false }, server).on, false, 'turned off stays off');
+  // The driver-name check has its own switch (maintainer, 2026-11-07, AI-15): on unless turned off, whatever Suggest answers says.
+  assert.deepEqual([settingsFrom({ aiOn: false }, server).names, settingsFrom({ lunaNames: false }, server).names, settingsFrom({ lunaNames: 'false' }, server).names], [true, false, true]);
   assert.equal(settingsFrom({ lunaKey: 'own' }, server).proxy, null, "the agent's own key goes straight to OpenAI");
   assert.equal(settingsFrom({}, { serverUrl: '' }).ready, false, 'no server, no key: not ready');
   assert.equal(settingsFrom({}, { serverUrl: 'not a url' }).proxy, null);
@@ -554,6 +594,48 @@ test("without a key of the agent's own, the request goes to the server with its 
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(501) }), /isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under AI./);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(424) }), /TNI's server right now/);
   await assert.rejects(callModel({ proxy, body, fetchImpl: status(401) }), error => /TNI's server refused/.test(error.message) && !/OpenAI API key/.test(error.message));
+  // Audit 2026-11-07, AI-09: the server gave up on OpenAI (its LUNA_TIMEOUT_MS, under the panel's own wait).
+  await assert.rejects(callModel({ proxy, body, fetchImpl: status(504) }), /The AI assistant took too long\. Nothing was applied\.$/);
+});
+
+// Audit 2026-11-07, AI-09: a page of several groups was its calls one after the other.
+test("groups are asked two at a time, each still with both its calls, and their answers go in the questions' order", async () => {
+  const pending = [], started = [];
+  let inFlight = 0, most = 0;
+  const call = ({ body }) => {
+    const state = JSON.parse(body.input[0].content);
+    const fields = Object.keys(state.proposed ?? state.fields);
+    started.push(`${state.proposed ? 'check' : 'ask'} ${fields.length}`);
+    most = Math.max(most, ++inFlight);
+    return new Promise((resolve) => pending.push(() => { inFlight--; resolve(state.proposed ? groupCheck(body) : groupAnswer(body)); }));
+  };
+  const fields = questions(30);
+  const review = suggest(fields, context, { apiKey: 'synthetic' }, { call });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  // The prompt hash is worked out (crypto.subtle) before the first call.
+  for (let i = 0; i < 200 && started.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 1));
+  for (let i = 0; i < 5; i++) await flush();
+  assert.deepEqual(started, ['ask 12', 'ask 12'], 'the first two groups are asked at once, the third waits');
+  // The second group answers first: its evidence check starts, and still the third waits for the wave.
+  pending.splice(1, 1)[0]();
+  await flush();
+  assert.deepEqual(started, ['ask 12', 'ask 12', 'check 12']);
+  while (pending.length) { pending.shift()(); await flush(); }
+  const result = await review;
+  assert.deepEqual(started.slice(3), ['check 12', 'ask 6', 'check 6']);
+  assert.equal(most, 2);
+  assert.equal(result.modelCalls, 6);
+  assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id), "in the questions' order");
+  assert.ok(result.suggestions.every(x => !x.leave && x.verified));
+  // The first failure in the questions' order is the review's, after the whole wave has ended.
+  let n = 0;
+  const failing = async ({ body }) => {
+    const state = JSON.parse(body.input[0].content);
+    if (!state.proposed && ++n === 1) throw new AssistError('Luna is rate-limited. Try again shortly.');
+    return state.proposed ? groupCheck(body) : groupAnswer(body);
+  };
+  const outcome = await suggest(questions(24), context, { apiKey: 'synthetic' }, { call: failing }).then(() => null, (e) => e);
+  assert.match(outcome.message, /rate-limited/);
 });
 
 // Audit 2026-11-07, AI-01: the panel's bound went from 48,000 characters to MAX_REQUEST_CHARS, and
@@ -596,11 +678,13 @@ test('against a server from before the larger bound, the page is planned again a
   const calls = [];
   const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
   const result = await suggest(fields, context, { apiKey: '', proxy }, { call: (args) => callModel({ ...args, fetchImpl: oldServer(calls) }) });
-  assert.ok(calls[0] > OLD_SERVER_CHARS, 'planned first at the larger bound');
-  assert.ok(calls.slice(1).every(n => n <= OLD_SERVER_CHARS), "then at the old server's");
+  // Two groups are asked at once (AI-09): both of the first wave may be refused, which costs nothing.
+  const over = calls.filter(n => n > OLD_SERVER_CHARS).length;
+  assert.ok(over >= 1 && over <= 2 && calls.slice(0, over).every(n => n > OLD_SERVER_CHARS), 'planned first at the larger bound');
+  assert.ok(calls.slice(over).every(n => n <= OLD_SERVER_CHARS), "then at the old server's");
   assert.deepEqual(result.suggestions.map(x => x.id), fields.map(x => x.id));
   assert.ok(result.suggestions.every(x => !x.leave && x.choice === 'No'));
-  assert.equal(result.modelCalls, calls.length - 1, 'the refused request was never a model call');
+  assert.equal(result.modelCalls, calls.length - over, 'a refused request was never a model call');
   // The current server takes the larger groups: fewer calls.
   const current = [];
   await suggest(fields, context, { apiKey: '', proxy }, { call: async ({ body }) => {
