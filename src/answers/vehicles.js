@@ -5,6 +5,13 @@
 
 /** @import { Financing } from '../../types.js' */
 
+// The intake's vehicle value, only when it's a dollar amount. Anything else ("N/A", "about 40k")
+// goes to the agent with the intake's text, rather than being typed and cleared.
+export const vehicleValueNote = (r, a) => {
+  const v = r.vehicles?.[a.vehicles ?? 0]?.value;
+  return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
+};
+
 // "Had the vehicle less than one year": TNI's standard No (2026-10-19), except for a vehicle of this
 // model year or later, likely bought within the year: that one is the agent's to ask the client.
 // The step's vehicle when it is that recent, else null.

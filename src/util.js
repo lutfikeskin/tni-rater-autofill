@@ -311,6 +311,7 @@ export function companyName(name) {
 export function companyStructure(name) {
   const company = companyName(name);
   if (!company) return { structure: 'sole', mid: false };
+  /** @type {string[]} */
   const words = company.toLowerCase().replace(/\./g, '').match(/[a-z0-9]+/g) ?? [];
   const last = words.at(-1);
   if (last === 'llc') return { structure: 'llc', mid: false };

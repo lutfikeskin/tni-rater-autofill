@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Replay regression run: every recorded layout (each state / product) is rebuilt on the replay
 // page (test/replay/) in a real browser, and the real fill engine and Progressive rules fill it
 // with the sample intake, page by page. Compares with the last accepted run so a rule change
@@ -13,8 +14,8 @@
 //
 // Runs locally, in the pull-request checks and in the Windows smoke; see docs/testing.md.
 // Layouts: test/bakeoff/course-*.json, captures/progressive/*.json and the per-state layouts
-// npm run layouts builds (captures/progressive/generated/, git-ignored). Needs internet (the
-// replay page loads ExtJS from cdnjs) and Playwright's Chromium (npx playwright install chromium).
+// npm run layouts builds (captures/progressive/generated/, git-ignored). Needs Playwright's
+// Chromium (npx playwright install chromium); no network (ExtJS is vendored in test/replay/vendor/).
 // Reports go to reviews/e2e-<date>.md; the baseline is test/e2e-baseline.json. In every mode, each
 // page's outcomes (what each question got, by its text and filling rule: a hash) must equal the baseline's, so a
 // rule change that alters an answer with the counts unchanged fails the run until --update.

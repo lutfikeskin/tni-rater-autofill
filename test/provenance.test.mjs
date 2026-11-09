@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Answer provenance (Contract 2, docs/intake-and-rules.md): every carrier rule that computes an
 // answer says where it comes from; facts and attestations the intake doesn't supply are never
 // filled; standards are marked, and become check items for a business class the rules weren't
@@ -118,6 +119,7 @@ const SOURCE = {
 // Not mapped on purpose, with the reason.
 const NOT_MAPPED = {
   progressive: {
+    'coverage.cargoAsWritten': 'the cargo box as written, for the agent to compare: the carriers read the limit and deductible parsed from it (coverage.cargoLimit, coverage.cargoDeductible)',
     'applicant.fein': 'Progressive asks the EIN on the finish flow, which is the agent\'s (AdditionalDetails is ignored)',
     'applicant.yearEstablished': 'Progressive does not ask when the business was established',
     'applicant.yearsInBusiness': 'Progressive does not ask the years in business',
@@ -135,6 +137,7 @@ const NOT_MAPPED = {
     'trailerInfo.hitch': 'not asked by Progressive',
   },
   amwins: {
+    'coverage.cargoAsWritten': 'the cargo box as written, for the agent to compare: the carriers read the limit and deductible parsed from it (coverage.cargoLimit, coverage.cargoDeductible)',
     'applicant.mcDotWithin60Days': 'AmWINS asks for the numbers themselves (has DOT / has MC / no number)',
     'applicant.fein': 'not asked on the Business Auto application',
     'applicant.email': 'the contact email box is the agency\'s / left as the page has it',
@@ -162,6 +165,7 @@ const NOT_MAPPED = {
     'coverage.hasGl': 'AmWINS Business Auto has no other-coverages question',
   },
   geico: {
+    'coverage.cargoAsWritten': 'the cargo box as written, for the agent to compare: the carriers read the limit and deductible parsed from it (coverage.cargoLimit, coverage.cargoDeductible)',
     'applicant.fein': 'not asked before Final Quote Details, which is the agent\'s (stopSteps)',
     'applicant.yearEstablished': 'GEICO asks how many years the business has been operating (applicant.yearsInBusiness)',
     'applicant.yearsExperience': 'not asked on the captured quotes',
@@ -466,6 +470,10 @@ test('no USDOT number and no 60-day answer: "Has a USDOT number" is the agent\'s
   const r = with_({ 'applicant.dot': null, 'applicant.mcDotWithin60Days': null });
   agentsNote(byQ(buildPlan(r, progressive, {}), '1ED'));
   r.applicant.mcDotWithin60Days = false;
+  // With the intake's MC number, the 60-day No is the agent's too, as on GEICO (the maintainer,
+  // 2026-11-07, audit CARR-02); without one it is No.
+  agentsNote(byQ(buildPlan(r, progressive, {}), '1ED'));
+  r.applicant.mc = null;
   assert.match(byQ(buildPlan(r, progressive, {}), '1ED').value, /^No - and/);
   r.applicant.mcDotWithin60Days = true;
   assert.match(byQ(buildPlan(r, progressive, {}), '1ED').value, /^Not Yet/);

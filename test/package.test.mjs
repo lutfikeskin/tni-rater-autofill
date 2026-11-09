@@ -1,7 +1,10 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile, zipName } from '../scripts/lib/package.mjs';
+import { fileURLToPath } from 'node:url';
+import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile, zipName, PACKAGED, mapsZipName, withoutMapUrl, packageOf, noticesPlugin, thirdPartyNotices, RULES_FILE, stampRules, rulesOf, rulesPlugin } from '../scripts/lib/package.mjs';
+import { RULE_FILES, rulesHash } from '../src/usage.js';
 import { kitCode } from '../scripts/lib/kit.mjs';
 
 const read = (f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
@@ -46,7 +49,7 @@ test('the panel build stamps usage-log.js, and fails if the build never read it'
 });
 
 test('the package leaves out the panel files the build bundles, and keeps its sounds and images', () => {
-  for (const f of ['sidepanel/sidepanel.html', 'sidepanel/sidepanel.css', 'sidepanel/usage-log.js', 'sidepanel/panel/core.js', 'sidepanel\\panel\\fill.js']) assert.ok(bundledPanelFile(f), f);
+  for (const f of ['sidepanel/sidepanel.html', 'sidepanel/sidepanel.css', 'sidepanel/usage-log.js', 'sidepanel/panel/core.js', 'sidepanel\\panel\\fill.js', 'sidepanel/panel/report-view.jsx', 'sidepanel/panel/agent-defaults/view.jsx']) assert.ok(bundledPanelFile(f), f);
   for (const f of ['sidepanel/sounds/quote-done.mp3', 'sidepanel/assets/raters/geico.gif', 'sidepanel/logo.png', 'src/content/pagekit.js', 'background.js', 'lib/pdf.min.mjs']) assert.ok(!bundledPanelFile(f), f);
 });
 
@@ -134,4 +137,83 @@ test('a labelled package is named by its version, label and commit; the store zi
   const script = read('scripts/package.mjs');
   assert.match(script, /process\.argv\.indexOf\('--label'\)/);
   assert.match(script, /zipName\(manifest\.version, label == null \? \{\} : \{ label, commit: packagedCommit\(root\) \}\)/);
+});
+
+// Audit 2026-11-07, QA-09: the panel fetched the rule files from its own package as it started to
+// fingerprint them, and a failure was swallowed, leaving fill_run's `rules` out. The build works it
+// out instead, from the same files, and stamps it.
+test('the panel build stamps the rules fingerprint of RULE_FILES, and fails if the build never read coordinator.js', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const expected = await rulesHash(RULE_FILES.map(read));
+  assert.equal(await rulesOf(root), expected, 'the same fingerprint the panel worked out from the packaged files');
+  const plugin = rulesPlugin(root);
+  assert.equal(plugin.enforce, 'pre');
+  const watched = [];
+  const ctx = { addWatchFile: (f) => watched.push(f) };
+  assert.equal(await plugin.transform.call(ctx, 'const x = 1;', 'C:\\repo\\sidepanel\\panel\\core.js'), null, 'other files as they are');
+  const source = read(RULES_FILE);
+  assert.match(source, /^const RULES_VERSION = null;$/m, 'unbuilt, the panel carries none');
+  const out = await plugin.transform.call(ctx, source, 'C:\\repo\\sidepanel\\panel\\coordinator.js');
+  assert.ok(out.code.includes(`const RULES_VERSION = '${expected}';`), 'Windows paths too');
+  assert.equal(watched.length, RULE_FILES.length, 'a watch build stamps it again when a rule file changes');
+  plugin.buildEnd();
+  assert.throws(() => rulesPlugin(root).buildEnd(), /coordinator\.js/);
+  assert.doesNotThrow(() => rulesPlugin(root).buildEnd(new Error('build failed')));
+  assert.throws(() => stampRules('no placeholder', expected));
+  assert.throws(() => stampRules(source, "x'; alert(1); '"));
+  // The panel no longer fetches its own files for it; every build has the plugin, the dev server none.
+  assert.doesNotMatch(source, /RULE_FILES\.map|fetch\(chrome\.runtime\.getURL\(f\)\)/);
+  const { default: config } = await import('../vite.config.js');
+  const has = (env) => config(env).plugins.flat().some((p) => p?.name === 'tni-rules');
+  assert.ok(has({ command: 'build', mode: 'store' }) && has({ command: 'build', mode: 'unpacked' }));
+  assert.ok(!has({ command: 'serve', mode: 'development' }));
+});
+
+// Audit 2026-11-07, QA-09: the store zip carried the source maps (3.7 MB for the panel's alone) and
+// lib/, which the panel's build had already taken in, and the licences of the code it bundled only
+// in lib/fflate.mjs.
+test('the store zip leaves out lib/ and the source maps, and carries the bundled code\'s licences', async () => {
+  assert.ok(!PACKAGED.includes('lib'), 'lib/ is bundled into the panel');
+  // Only the panel imports lib/, and the panel is bundled: nothing run as it is names it.
+  const content = fs.readdirSync(new URL('../src/content/', import.meta.url), { recursive: true }).filter((f) => /\.m?js$/.test(f)).map((f) => `src/content/${f.replaceAll('\\', '/')}`);
+  for (const f of ['background.js', ...content]) assert.doesNotMatch(read(f), /lib\/(pdf|fflate)/, `${f} loads lib/ itself`);
+  assert.equal(mapsZipName('dist/tni-rater-autofill-0.9.32.zip'), 'dist/tni-rater-autofill-0.9.32-sourcemaps.zip');
+  // The fill engine's store copy doesn't name a map it lacks; the panel's store build doesn't either.
+  const kit = await kitCode();
+  assert.match(kit, /\/\/# sourceMappingURL=/);
+  const stripped = withoutMapUrl(kit);
+  assert.doesNotMatch(stripped, /sourceMappingURL/);
+  assert.ok(stripped.startsWith(kit.slice(0, kit.lastIndexOf('//# sourceMappingURL'))), 'only the last line goes');
+  assert.throws(() => withoutMapUrl('const a = 1;\n'), /sourceMappingURL/);
+  const { default: config } = await import('../vite.config.js');
+  assert.equal(config({ command: 'build', mode: 'store' }).build.sourcemap, 'hidden');
+  assert.equal(config({ command: 'build', mode: 'unpacked' }).build.sourcemap, true, 'the unpacked copy keeps its maps');
+  // The script moves the store copy's maps into their own zip before zipping it.
+  const script = read('scripts/package.mjs');
+  assert.match(script, /moveMaps\(stage, stageMaps\);\nfs\.writeFileSync\(out, zipDirectory\(stage\)\);/);
+  assert.match(script, /channel === 'store' \? withoutMapUrl\(kit\.code\) : kit\.code/);
+
+  // Which package a bundled module comes from: node_modules, scoped or not, and the vendored files.
+  assert.equal(packageOf('C:\\repo\\node_modules\\react-dom\\cjs\\react-dom.production.js'), 'react-dom');
+  assert.equal(packageOf('/repo/node_modules/.pnpm/x/node_modules/@scope/pkg/index.js?commonjs-exports'), '@scope/pkg');
+  assert.equal(packageOf('\0/repo/node_modules/zustand/esm/index.mjs'), 'zustand');
+  assert.equal(packageOf('/repo/lib/fflate.mjs'), 'fflate');
+  assert.equal(packageOf('lib/pdf.worker.min.mjs'), 'pdfjs-dist');
+  assert.equal(packageOf('/repo/src/usage.js'), null);
+  const found = new Set();
+  noticesPlugin(found).generateBundle({}, {
+    'bundle/sidepanel.js': { type: 'chunk', modules: { '/r/sidepanel/sidepanel.js': {}, '/r/node_modules/react/index.js': {}, '/r/lib/pdf.min.mjs': {} } },
+    'bundle/pdf.worker.min.mjs': { type: 'asset', originalFileNames: ['lib/pdf.worker.min.mjs'] },
+  });
+  assert.deepEqual([...found].sort(), ['pdfjs-dist', 'react']);
+  // Each with its version, licence and licence file, once; a build that reported nothing fails.
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const notices = thirdPartyNotices(root, ['fflate', 'pdfjs-dist', 'fflate']);
+  assert.match(notices, /^fflate \d+\.\d+\.\d+ \(MIT\)$/m);
+  assert.match(notices, /Permission is hereby granted, free of charge/);
+  assert.match(notices, /^pdfjs-dist \d+\.\d+\.\d+ \(Apache-2\.0\)$/m);
+  assert.match(notices, /Apache License/);
+  assert.equal(notices.match(/^fflate /gm).length, 1, 'once each');
+  assert.throws(() => thirdPartyNotices(root, []), /no third-party code/);
+  assert.match(script, /fs\.writeFileSync\(path\.join\(to, NOTICES_FILE\), thirdPartyNotices\(root, \[\.\.\.found\]\)\)/);
 });

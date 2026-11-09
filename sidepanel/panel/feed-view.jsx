@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The page view's list of answers in React, around the lists themselves: its title, the menu of pages
 // filled earlier on this tab, the filters with their counts, what the tags and the rater page's marks
 // mean, which earlier page is shown, how old a kept report is, what an empty list says, and Clear the
@@ -12,6 +13,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { HelpLink } from './help-link.jsx';
 
 // The filters: all of the report, what needs the agent, what was filled.
 const FILTERS = [
@@ -51,8 +53,8 @@ function AnswerKey({ open }) {
         {own ? <span><span className="mark own" />Your default</span> : null}
         <span><span className="mark needs" />Needs you</span>
         <span><span className="mark failed" />Couldn’t fill</span>
-        <span><span className="mark ai" />AI answer</span>
-        <span><span className="mark agent" />Your pick</span>
+        <span><span className="mark ai" />AI</span>
+        <span><span className="mark agent" />You</span>
       </div>
     </div>
   );
@@ -92,6 +94,7 @@ function Feed({ act }) {
           </select>
           <button type="button" id="key-btn" className="key-btn" aria-label="What the tags and marks mean" title="What the tags and marks mean"
             aria-expanded={String(!!f.keyOpen)} aria-controls="answer-key" hidden={f.keyOpen == null} onClick={() => act.toggleKey()}>i</button>
+          <HelpLink topic="page" />
         </div>
         <div id="filters" ref={rail} className="filters" data-filter={f.filter} role="group" aria-label="Show answers" hidden={!f.counts}>
           <span className="filters-thumb" aria-hidden="true" />

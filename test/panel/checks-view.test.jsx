@@ -53,6 +53,24 @@ test('a check is drawn as before: red and said at once when it is an alert, its 
   expect(row.getAttribute('aria-expanded')).toBe('true');
 });
 
+// Review of PR #376 (CodeRabbit): "No" typed on a card for an empty USDOT box is saved empty, the
+// same value as before; the edit's `rev` makes it another box, which shows the record's value.
+test('a check card\'s box shows the record\'s value after an edit saved it as it was', () => {
+  const { container } = render(<Checks act={{}} />);
+  const say = (rev) => act(() => { state.checks = { title: 't', sub: 's', cleanup: [], cards: [{ i: 0, title: 'USDOT #', msg: 'm', alert: false, lookRight() {},
+    field: { path: 'applicant.dot', label: 'USDOT #', control: 'input', value: '', rev, maxLength: 200, edit() {} } }] }; });
+  say(0);
+  const box = container.querySelector('#warnings .check-body input');
+  fireEvent.input(box, { target: { value: 'No' } });
+  fireEvent.change(box);
+  say(0);
+  /** @returns {HTMLInputElement} */
+  const shown = () => /** @type {HTMLInputElement} */ (container.querySelector('#warnings .check-body input'));
+  expect(shown().value).toBe('No');
+  say(1);
+  expect(shown().value).toBe('');
+});
+
 test('a check card\'s box shows the intake\'s answer again when it changes, and its dropdown keeps a value off the list', () => {
   const { container } = render(<Checks act={{}} />);
   const field = (value) => ({ path: 'operations.businessClass', label: 'Business class', control: 'select', value,

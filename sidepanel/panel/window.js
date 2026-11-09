@@ -19,8 +19,11 @@ async function popOut() {
   // disabled: said rather than nothing done.
   if (state.filling) { windowProblem('Wait for the answers going in to finish, then try again.'); return; }
   windowProblem(null);
-  const { panelWindow: was = {} } = await chrome.storage.local.get('panelWindow').catch(() => ({}));
+  /** @type {{ panelWindow?: Record<string, number> }} the window's last bounds, as the panel saved them */
+  const saved = await chrome.storage.local.get('panelWindow').catch(() => ({}));
+  const { panelWindow: was = {} } = saved;
   const size = (k, min, fallback) => (Number.isInteger(was[k]) && was[k] >= min ? was[k] : fallback);
+  /** @type {chrome.windows.CreateData} */
   const opts = { url: chrome.runtime.getURL('sidepanel/sidepanel.html?window=popup'), type: 'popup', focused: true, width: size('width', 320, 420), height: size('height', 480, 860) };
   const place = Number.isInteger(was.left) && Number.isInteger(was.top) ? { left: was.left, top: was.top } : null;
   try {

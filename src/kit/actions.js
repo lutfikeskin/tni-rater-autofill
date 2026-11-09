@@ -5,17 +5,16 @@ import { drawnParent, deepQueryAll, buttonText, hostDisabled } from './dom.js';
 import { closestOwn, withAdapter } from './adapter.js';
 import { BANNER_ID } from './marks.js';
 import { kitTrace, isTracing } from './trace.js';
+import { NEVER_ADVANCE, NEVER_CLICK } from '../restricted.js';
 
-export const NEVER_ADVANCE = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out|order)\b/i;
-export const NEVER_CLICK = /\b(continue|next|start quote|finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|order|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out)\b/i;
+// The commit words a button never has when the fill clicks it: one list, src/restricted.js.
+export { NEVER_ADVANCE, NEVER_CLICK };
 export const COVERED = 'something on the page is open over Continue: close it, then fill again';
 export const COVERED_HELPER = 'something on the page is open over it';
 
-export const CLOSED_SECTIONS = {
-  cargoClosed: { tag: 'cargo', words: /motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i },
-  glClosed: { tag: 'gl', anyLimit: true },
-  interchangeClosed: { tag: 'interchange', anyLimit: true },
-};
+// A helper that closes a coverage section (`verify: { closed }`, from the carrier's `sections`:
+// src/plan.js): the section, or null.
+export const closedSection = (a) => (a?.verify && typeof a.verify === 'object' && 'closed' in a.verify ? a.verify : null);
 
 /**
  * Checks whether something modal or floating covers element el at its center.
@@ -87,11 +86,26 @@ export function findAdvanceButton(pattern, { notWithin = null } = {}) {
     if (!el.getClientRects().length || /** @type {HTMLButtonElement} */ (el).disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el) || closestOwn(el, 'stepLinks')) continue;
     if (notWithin && insideOf(el, notWithin)) continue;
     const text = buttonText(el);
-    const committing = NEVER_ADVANCE.test(text.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue'));
+    // Its words ("Save & Continue" read as Continue) and its aria-label and title, as for a helper:
+    // each name on its own, so a label or title repeating "Save & Continue" reads as Continue too.
+    const committing = NEVER_ADVANCE.test(namesOf(el, text, (s) => s.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue')));
     if (text.length > 40 || committing || !re.test(text)) continue;
     if (!best || best.contains(el)) best = el;
   }
   return best;
+}
+
+/**
+ * A button's words and the name an icon button has instead (aria-label, title), checked against the
+ * commit words: a button found by its `token` (id, href, onclick, data-*), or an advance whose words
+ * read as Continue, is held to them too (audit 2026-11-07, CARR-13).
+ * @param {Element} el
+ * @param {string} text its words
+ * @param {(name: string) => string} [normalize] applied to each name on its own
+ * @returns {string}
+ */
+function namesOf(el, text, normalize = (s) => s) {
+  return [text, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).map((s) => normalize(String(s).trim())).join(' ');
 }
 
 /**
@@ -126,7 +140,8 @@ export function findButton(step, { disabledToo = false } = {}) {
     if (step.within && !insideOf(el, step.within)) continue;
     if (!disabledToo && (/** @type {HTMLButtonElement} */ (el).disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el))) continue;
     const text = buttonText(el);
-    if (step.moveOn && step.within ? NEVER_ADVANCE.test(text) : NEVER_CLICK.test(text)) continue;
+    const named = namesOf(el, text);
+    if (step.moveOn && step.within ? NEVER_ADVANCE.test(named) : NEVER_CLICK.test(named)) continue;
     const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
       ...[...el.attributes].filter((a) => a.name.startsWith('data-')).map((a) => a.value)].join(' ');
     const hit = (re && text.length <= 80 && re.test(text)) || (step.token && attrs.includes(step.token));

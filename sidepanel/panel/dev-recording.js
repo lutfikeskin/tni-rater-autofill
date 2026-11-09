@@ -6,9 +6,12 @@ import * as usage from '../usage-log.js';
 import { recordingId, stampEvents, newManifest } from '../../src/recording.js';
 import { RecordingStore } from '../recording.js';
 import { $, state, switchOn } from './core.js';
+import { popped } from './env.js';
 import { rulesFingerprint } from './coordinator.js';
 import { fillDefaultsHash } from './agent-defaults/store.js';
 import { ensureRecorder } from './usage.js';
+import { runKit } from './fill.js';
+import { planFor } from './plan-for.js';
 
 // ---------------------------------------------------------------------------------------------
 // Developer recording (docs/developer-recording.md): unpacked builds only. While it runs, the trace
@@ -28,9 +31,77 @@ function renderDevrec() {
   state.devrec = { ...state.devrec, on: !!rec };
   if (!rec || rec.stopping) return;
   noteFollowed(rec);
+  rec.store.beat();
   const s = Math.floor((Date.now() - rec.started) / 1000);
+  const elapsed = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   const away = rec.away ? ' The panel is on another tab: only the tab the recording began on is recorded, and what the quote does here is not.' : '';
-  devrecSaid(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} · ${rec.store.count} events${rec.store.durable ? '' : '. Kept in memory only: closing the panel loses it'}.${away}`);
+  // A chunk the file system refused (a full disk, a quota) is in memory only: lost if the panel
+  // closes, said rather than claimed durable (REC-15).
+  const memoryOnly = !rec.store.durable ? '. Kept in memory only: closing the panel loses it'
+    : rec.store.writeFailures ? `. ${rec.store.writeFailures} events kept in memory only (the browser refused to write them): closing the panel loses those` : '';
+  devrecSaid(`Recording ${elapsed} · ${rec.store.count} events${memoryOnly}.${away}`);
+  // The footer's pill while it runs, seen from the quote itself (REC-17).
+  state.devrec = { ...state.devrec, pill: `${elapsed} · ${rec.store.count} events${rec.store.writeFailures || !rec.store.durable ? ' · memory only' : ''}` };
+}
+
+// The usage log's events, copied into the timeline as they are logged while the recording runs
+// (REC-01): the fill's runs and each field's result and reason (fill_run, fill_field), the agent's
+// edits, page layouts and the rest, as logged (already redacted, nothing more leaves the browser).
+// Only this quote's (the recording's usage session), and only while the recording runs.
+function copyUsage(rec) {
+  return usage.onLogged((events, { t, session }) => {
+    if (rec.stopping || state.recording !== rec) return;
+    const mine = rec.store.manifest.session;
+    if (mine && session !== mine) return;
+    const at = Date.parse(t);
+    rec.store.add(events.filter((/** @type {any} */ e) => e && typeof e.type === 'string').map((event) => ({ kind: 'usage', t: Number.isFinite(at) ? at : Date.now(), frame: 0, event })));
+  });
+}
+
+// A moment of the timeline whose page matters (REC-05): a fill that ended with an answer failed,
+// a question left for the agent or something holding Continue, and each note. The kit's capture
+// of the recorded tab (as Alt+Shift+C saves it: the form as data, redacted, no typed text) goes
+// into the recording as layouts/<n>.json, and a `moment` event names it. One at a time: one asked
+// while another is being read is left out. It only reads the page, never while something is going
+// in: a moment asked during a fill waits for its end, MOMENT_WAIT_MS at most, then says it couldn't.
+const MOMENT_WAIT_MS = 60_000;
+async function takeMoment(why, extra = {}) {
+  const rec = state.recording;
+  if (!rec || rec.stopping || rec.momentBusy) return;
+  rec.momentBusy = true;
+  const t = Date.now();
+  try {
+    // Never while something is going in: the page is read once the fill (or pick, or AI answer)
+    // has ended, after the layouts already asked for, as the usage log's layouts are (captureLayout).
+    for (const until = t + MOMENT_WAIT_MS; state.filling && Date.now() < until;) await new Promise((r) => setTimeout(r, 200));
+    if (state.filling) throw Object.assign(new Error('still filling'), { name: 'StillFilling' });
+    if (state.recording !== rec || rec.stopping) return;
+    const record = state.intake?.record;
+    const read = (state.layoutChain ?? Promise.resolve()).then(() => runKit(rec.tabId, rec.carrier, (p, r) => globalThis.__raterKit?.capture(p, r) ?? null,
+      [record ? planFor(record, rec.carrier, state.active) : null, record ? redactionTerms(record) : []]));
+    state.layoutChain = read.catch(() => {});
+    const results = await read;
+    const frames = results.map((r) => r.result).filter((f) => f && (f.controls?.length || f.isTopFrame || f.messages?.length || f.openLists?.length));
+    const top = frames.find((f) => f.isTopFrame);
+    if (state.recording !== rec || rec.stopping) return;
+    const layout = { tool: 'tni-rater-autofill', kind: 'page-capture', version: 2, carrier: rec.carrier.id, capturedAt: new Date(t).toISOString(),
+      scenario: rec.store.manifest.id, quote: null, n: rec.store.layouts + 1, note: why, page: top?.page ?? null, step: (rec.carrier.layoutSteps && top?.step) || null, view: null, context: null, frames };
+    const name = await rec.store.addLayout(layout);
+    rec.store.add([{ kind: 'moment', t, frame: 0, why, layout: name, fields: frames.reduce((n, f) => n + (f.controls?.length ?? 0), 0), ...extra }]);
+  } catch (e) {
+    if (state.recording === rec) rec.store.add([{ kind: 'moment', t, frame: 0, why, layout: null, error: String(e?.name || 'Error').slice(0, 40), ...extra }]);
+  } finally {
+    rec.momentBusy = false;
+  }
+}
+
+// The kit's fill ended (its `run` with `on` false): a moment when it left something to look at.
+function momentAfterRun(events) {
+  for (const e of events) {
+    if (e.kind !== 'kit' || e.what !== 'run' || e.on !== false) continue;
+    const said = [['failed', 'failed'], ['leftRequired', 'left for you'], ['blockers', 'holding Continue']].filter(([k]) => e[k] > 0).map(([k, words]) => `${e[k]} ${words}`);
+    if (said.length) takeMoment(`fill ended: ${said.join(', ')}`);
+  }
 }
 
 // The recording follows the one tab it began on (rec.tabId), whatever tab the panel follows (REC-04,
@@ -81,15 +152,19 @@ async function startRecording() {
   const started = new Date();
   // What the run needs to be reproduced (REC-10): the session to join the usage log by, the rules
   // and the agent's defaults it fills with, the filling switches, the platform.
+  // navigator.userAgentData, where Chrome gives it, isn't in TypeScript's DOM types.
+  /** @type {Navigator & { userAgentData?: { platform?: string } }} */
+  const nav = navigator;
   const manifest = newManifest({ id: recordingId(carrier.id, scenario, started), carrier: carrier.id, scenario, started,
     build: usage.build(), intake: usage.currentSession()?.intakeId ?? null, test: !!state.intake.test,
     session: usage.currentSession()?.id ?? null, rules: rulesFingerprint(), defaultsHash: fillDefaultsHash() ?? null,
     settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages'),
       checkBeforeContinue: switchOn('checkBeforeContinue', 'check-continue') },
-    platform: navigator.userAgentData?.platform || navigator.platform || null });
+    platform: nav.userAgentData?.platform || nav.platform || null });
   const store = await RecordingStore.start(manifest);
   // `fills`: when fills ran ({ start, end, what }), noted by state.filling's setter.
-  state.recording = { store, tabId, carrier, redact, fills: state.filling ? [{ start: started.getTime(), end: null, what: state.fillingKind ?? 'fill' }] : [], started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false };
+  state.recording = { store, tabId, carrier, redact, fills: state.filling ? [{ start: started.getTime(), end: null, what: state.fillingKind ?? 'fill' }] : [], started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false, momentBusy: false };
+  state.recording.untap = copyUsage(state.recording);
   // Started during a fill: its start is the recording's, so the timeline counts that fill as one
   // (its end alone would be no fill at all to the report).
   if (state.filling) store.add([{ kind: 'fill', t: started.getTime(), frame: 0, on: true, what: state.fillingKind ?? 'fill' }]);
@@ -113,16 +188,62 @@ function onTraceMessage(msg, sender, sendResponse) {
     versions.recorder = Number.isInteger(msg.recorder) ? msg.recorder : null;
   }
   rec.store.add(events);
+  momentAfterRun(events);
   sendResponse({ ok: true });
 }
 
-// The Note box, as a moment of the timeline ("waiting too long", "this is wrong").
-function noteRecording() {
+// A note as a moment of the timeline ("waiting too long", "this is wrong"), with the page as it is
+// then: Settings' Note box, or the footer pill's own (`text`, REC-17).
+function noteRecording(text = null) {
   const rec = state.recording;
-  const text = rec?.redact($('capture-note').value.trim()).slice(0, 200);
-  if (!rec || !text) return;
-  rec.store.add([{ kind: 'note', t: Date.now(), frame: 0, text }]);
-  $('capture-note').value = '';
+  const box = text == null ? $('capture-note') : null;
+  const said = rec?.redact(String(text ?? box?.value ?? '').trim()).slice(0, 200);
+  if (!rec || !said) return false;
+  rec.store.add([{ kind: 'note', t: Date.now(), frame: 0, text: said }]);
+  if (box) box.value = '';
+  takeMoment('note', { note: said });
+  return true;
+}
+
+// An Alt+Shift+C capture taken while recording: a note naming its file, so the capture and the
+// recording share one timeline (REC-17).
+function noteCaptured(file) {
+  const rec = state.recording;
+  if (!rec || rec.stopping || !file) return;
+  rec.store.add([{ kind: 'note', t: Date.now(), frame: 0, text: `capture ${String(file).slice(0, 160)}`, capture: String(file).slice(0, 160) }]);
+}
+
+// Alt+Shift+R (manifest "commands"): starts a recording, or stops and saves the one running. The
+// shortcut reaches every window's panel: only the focused window's acts, as for Alt+Shift+C.
+// Popped out, the panel is the only copy and acts wherever focus is.
+async function toggleRecording() {
+  if (!popped) {
+    const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
+    if (mine && focused && mine.id !== focused.id) return;
+  }
+  return state.recording ? stopRecording() : startRecording();
+}
+
+// The unfinished recording's Discard: removes its copy from the browser, which can't be undone,
+// once the developer says so (REC-15). Never one another panel is recording (unfinished leaves
+// those out). Asked in the panel, never in a browser dialog (#463): the first Discard says what it
+// deletes, and a second one for the same recording deletes it.
+async function discardUnfinished() {
+  const unfinished = state.devrec?.unfinished;
+  const id = unfinished?.id;
+  if (!id) return;
+  if (!unfinished.discardAsked) {
+    unfinished.discardAsked = true;
+    devrecSaid(`Discard again to delete the unfinished recording ${id} from this browser. It is not saved anywhere else, and this can't be undone.`);
+    return;
+  }
+  try {
+    await (await RecordingStore.reopen(id)).discard();
+    devrecSaid(`Deleted the unfinished recording ${id}.`);
+  } catch (e) {
+    devrecSaid(e?.name === 'NotFoundError' ? 'That recording is no longer in this browser: another panel already saved it.' : `Couldn't delete it: ${e.message}`);
+  }
+  await renderUnfinished();
 }
 
 async function stopRecording(why = '') {
@@ -130,6 +251,8 @@ async function stopRecording(why = '') {
   if (!rec || rec.stopping) return;
   rec.stopping = true;
   clearInterval(rec.timer);
+  rec.untap?.();
+  state.devrec = { ...state.devrec, pill: null };
   devrecSaid('Saving the recording…');
   // The trace sends what it holds, then stops; its last batch is taken before the store closes.
   await chrome.tabs.sendMessage(rec.tabId, { ra: 'trace', cmd: 'stop' }).catch(() => {});
@@ -177,4 +300,4 @@ async function recoverRecording() {
   }
 }
 
-export { noteFollowed, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording };
+export { discardUnfinished, noteCaptured, noteFollowed, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording, takeMoment, toggleRecording };

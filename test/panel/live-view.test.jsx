@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
@@ -49,6 +50,17 @@ test('a TNI standard answer carries its tag; an answer with no label or value sa
   });
   expect(said(container).slice(0, 2)).toEqual([['row', 'Gender', 'Male', 'TNI standard'], ['row fresh', 'Answer', 'filled', null]]);
   expect(container.querySelector('.tag.standard').title).toBe('A TNI standard answer, not a fact from the intake');
+});
+
+// Audit 2026-11-07, LIVE-01: an answer the agent's own default gave is tagged so while the fill
+// runs, from the row's source (the kit's progress rows carry it), as the report tags it.
+test('an answer from the agent\'s own default carries the Your default tag', () => {
+  const { container } = render(<LiveView view={viewAt()} />);
+  act(() => {
+    Object.assign(state, { filling: true, fillingFor: { run: 'r1', tabId: 3, rows: [row('um', 'UM limit', '$300,000', { source: 'agent-default', standard: false }), row('n', 'Name', 'Synthetic LLC', { source: 'intake' })] } });
+  });
+  expect(said(container).slice(0, 2)).toEqual([['row', 'UM limit', '$300,000', 'Your default'], ['row fresh', 'Name', 'Synthetic LLC', null]]);
+  expect(container.querySelector('.tag.own').title).toBe('Your own default in place of TNI\'s standard');
 });
 
 // From the safety test 'an automatic fill lists its answers as they go in, from the first one'

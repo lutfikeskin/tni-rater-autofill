@@ -14,7 +14,7 @@ import {
   getControlReads, keyIndex, controlOf, hiddenKeys,
 } from "./dom.js";
 import {
-  COVERED, COVERED_HELPER, CLOSED_SECTIONS,
+  COVERED, COVERED_HELPER, closedSection,
   findAdvanceButton, findButton, pressButton, coveredBy, agentPress,
 } from "./actions.js";
 import { mark, clear } from "./marks.js";
@@ -46,6 +46,8 @@ stopWaitsWhen(() => !!running && (running.report.halted || running.timeUp()));
 // Fills the agent stopped before they began here (`run`: the panel's id for the fill; Stop can
 // come while the panel still prepares, before fill() starts): such a fill halts as it starts.
 const stoppedRuns = new Set();
+// How long a fill that begins waits for one it stopped in its frame to end (fill).
+const TAKEOVER_MS = 15000;
 // The page a fill left settled as it ended, on a page that waits on its server (Progressive): a
 // helper (Add Vehicle, Cargo Van, View bill plan options) opened the next page and the fill's wait
 // held until that page and its requests were done. The next fill, a moment later, finds the same page,
@@ -74,8 +76,10 @@ export function progress(seen = null) {
   // Each row with its place on the page as the last round read it (`order`), so the panel lists the
   // answers and the items in the page's order.
   const placeOf = running.places ?? (() => null);
+  // `source` too, so the live list tags an answer the agent's own default gave ("Your default"), as
+  // the report does (audit 2026-11-07, LIVE-01).
   const rows = all.slice(since).map((x) => ({ key: x.key ?? null, label: x.label || x.name || '', shown: x.shown ?? '', standard: !!x.standard,
-    stepId: x.stepId ?? null, path: x.path ?? null, otherStep: !!x.otherStep, order: placeOf(x) }));
+    source: x.source ?? null, stepId: x.stepId ?? null, path: x.path ?? null, otherStep: !!x.otherStep, order: placeOf(x) }));
   // The items judged so far (the fill's streamItems: one snapshot a round), only when the panel
   // doesn't have this round's (`seen['items@<frame>']`).
   const items = running.items ?? null;
@@ -85,6 +89,15 @@ export function progress(seen = null) {
 export function stop(run = null) {
   if (run != null && (!running || running.run !== run)) stoppedRuns.add(run);
   if (!running) return false;
+  running.halt(STOP_HALT);
+  return true;
+}
+// One run stopped, as Stop does, and no other (audit 2026-11-07, UX-03): the service worker's, for
+// a fill whose panel went away (src/fill-watch.js). A fill another panel began since is left alone;
+// one with that id that hasn't begun here yet halts as it starts.
+export function stopRun(run) {
+  if (run == null) return false;
+  if (!running || running.run !== run) { stoppedRuns.add(run); return false; }
   running.halt(STOP_HALT);
   return true;
 }
@@ -233,6 +246,22 @@ export function resolveItems(report, plan) {
  * @returns {Promise<FillReport>}
  */
 export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, budgetMs = FILL_BUDGET_MS, deadline = null, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
+  // A fill still running here as this one begins was left by a panel that went away (closed while it
+  // ran, or reloaded): it stops as on Stop, and this one begins only once it has ended, so two fills
+  // never run in one frame: its waits, drivers and cleanup (the hidden selectors, the fill's units)
+  // stay its own, and this one's Stop reaches all that runs (audit 2026-11-07, UX-03; CodeRabbit on
+  // #478). A halted fill ends at its next wake; one still not ended after TAKEOVER_MS is said. The
+  // fill running is read again after each wait: another fill waiting too may have begun first, and
+  // it is stopped and waited for in turn (nothing awaits between here and `running = thisFill`), so
+  // the newest fill is the one that runs.
+  for (const end = Date.now() + TAKEOVER_MS; running;) {
+    const previous = running;
+    previous.halt(STOP_HALT);
+    while (running === previous) {
+      if (Date.now() >= end) throw new Error('An earlier fill on this page is still ending. Fill again in a moment.');
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
   /** @type {RunState} */
   const state = /** @type {any} */ ({});
   // The plan as given (helpers included, which the fill sets apart below), for a fill begun again.
@@ -500,9 +529,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     halt(EDIT_HALT);
   });
   phase('reading');
-  const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
+  // The page's own calls (pageBusy: Progressive's Ext.Ajax.isLoading) can throw in the fresh-page
+  // check as in the wait: either way the fill lets go as it throws (CodeRabbit on #478).
   let settled;
-  try { settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' }); } catch (e) { releaseEditGuard(); clearTimeout(budget); throw e; }
+  try {
+    const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
+    settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' });
+  } catch (e) { releaseEditGuard(); clearTimeout(budget); if (running === thisFill) running = null; throw e; }
   phase(null);
   // Stopped while the page settled: nothing was done.
   if (!settled || state.report.halted) {
@@ -588,7 +621,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   const unitGroups = makePager(plan, pager, startPage);
   // The rules of coverage sections the page closes (offPage), and the failed choices given once more
   // against options the page redrew (retryRedrawn), by step id.
-  const closable = new Set(plan.filter((s) => Object.values(CLOSED_SECTIONS).some(({ tag }) => s[tag] === 'section')).map((s) => s.id));
+  const closable = new Set(plan.filter((s) => s.section?.part === 'section').map((s) => s.id));
   const redrawRetried = new Set();
 
   for (let round = 0; round < maxRounds; round++) {
@@ -1104,7 +1137,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
               ...(settled && !fresh ? { vanished: true } : {}) };
           }
         }
-        if (isTracing()) kitTrace('answer', { field: { key: item.key, label: c.label ?? '' }, stepKind: step.kind ?? null, ok: !!result.ok, start: t0, applyMs: tApplied - t0, ...(item.timing ? { timing: item.timing } : {}) });
+        if (isTracing()) kitTrace('answer', { field: { key: item.key, label: c.label ?? '' }, stepKind: step.kind ?? null, ok: !!result.ok, start: t0, applyMs: tApplied - t0, ...(item.timing ? { timing: item.timing } : {}),
+          // Why it didn't take, as the fill report's fixed code (FailCode), never its English reason (REC-01).
+          ...(result.ok ? {} : { code: result.code }) });
         if (result.ok) {
           // The helpers an answer here makes due again (the adapter's `rearm`: on Progressive's
           // Rates, Recalculate and Print, and the Done of the coverage answered).
@@ -1414,9 +1449,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
     // screen but disabled is not gone.
     if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
-    // A coverage section's Done (cargo's, general liability's, trailer interchange's): its questions are gone and the
-    // row keeps the limit (sectionClosedOn).
-    if (CLOSED_SECTIONS[a.verify]) accepted = sectionClosedOn(collectControls(), CLOSED_SECTIONS[a.verify]);
+    // A coverage section's Done (`verify: { closed }`: Progressive's cargo, general liability, trailer
+    // interchange): its questions are gone and the row keeps the limit (sectionClosedOn).
+    if (closedSection(a)) accepted = sectionClosedOn(collectControls(), closedSection(a));
     // `revealed`: the click showed its result: a question appeared, or an answer changed, since
     // the snapshot taken as the button was clicked (a lookup's decoded values, the rows an
     // import redraws, the registered names a USDOT check offers). A redraw of the same
@@ -1711,25 +1746,26 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       && actionHere(a) && !settledItem(a);
   }
 
-  // A coverage section added and closed (CLOSED_SECTIONS): none of its questions on screen (found
-  // by the rules tagged for it), and its row keeps the limit.
+  // A coverage section added and closed (`verify: { closed }`, the carrier's `sections`): none of its
+  // questions on screen (found by the rules tagged for it, `section.part` 'section'), and its row keeps the limit.
   // Checking the fill's own Done: the intake's limit (with `anyLimit`, any limit when the intake
   // has none), or the row's `words` showing the intake's amounts.
   // `found` (a section the fill finds closed, by the agent or an earlier fill): the intake's limit
   // or one the agent set themselves, not one this fill put in (a limit chosen in the row adds the
   // coverage, whose section Progressive hasn't drawn yet), and never by the row's words.
   function sectionClosedOn(controls, section, { found = false } = {}) {
-    const { tag } = section;
-    if (assign(controls, plan).some(({ step }) => step[tag] === 'section')) return false;
+    const tag = section.closed;
+    const partOf = (s) => (s.section?.id === tag ? s.section.part : null);
+    if (assign(controls, plan).some(({ step }) => partOf(step) === 'section')) return false;
     // The row's limit steps, assigned among themselves (cargo's row and section read the same).
-    const limitSteps = plan.filter((s) => s[tag] === 'limit' && (s.value != null || (section.anyLimit && !found)));
+    const limitSteps = plan.filter((s) => partOf(s) === 'limit' && (s.value != null || (section.anyLimit && !found)));
     const kept = ({ step, control }) => (found
       ? !state.report.filled.some((x) => x.key === fieldKey(control))
         && (agreesWith(step, control) || (skippedField(control) && hasValue(control)))
       : (!section.anyLimit || hasValue(control)) && (step.value == null || agreesWith(step, control)));
     if (assign(controls, limitSteps).some(kept)) return true;
     if (found || !section.words) return false;
-    const amounts = moneyTokens((document.body.innerText ?? '').match(section.words)?.[0] ?? '');
+    const amounts = moneyTokens((document.body.innerText ?? '').match(new RegExp(section.words, 'i'))?.[0] ?? '');
     return limitSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
   }
 
@@ -1797,7 +1833,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // against the page as the fill ends.
   // `offPage`: an item whose field isn't on screen now but is still this page's question, as the
   // kit knows: read while another group of units was shown ('group': `pager`), or in a coverage
-  // section the page closes ('section': CLOSED_SECTIONS, Progressive's cargo, GL and trailer
+  // section the page closes ('section': a carrier's `sections`, Progressive's cargo, GL and trailer
   // interchange behind their Done); or an item about the fill's own answer, whose field the page
   // took away on it ('answer': a summary in its place, `vanished`), which the agent still checks.
   // And one whose field is in the page but not shown or open now ('hidden': a collapsed card such as
@@ -1953,8 +1989,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       // the maintainer, 2026-10-28, after an FL run where the agent closed cargo and GL was never
       // added). Only as this fill found the page (after a click of its own, a "+", a section still
       // being drawn isn't closed), and with no Done with this coverage showing (a section is open).
-      if (CLOSED_SECTIONS[a.verify] && !state.report.actions.some((x) => !x.alreadyShown) && !findButton(a)
-        && sectionClosedOn(controls, CLOSED_SECTIONS[a.verify], { found: true })) {
+      if (closedSection(a) && !state.report.actions.some((x) => !x.alreadyShown) && !findButton(a)
+        && sectionClosedOn(controls, closedSection(a), { found: true })) {
         state.clicked.add(a.action);
         state.report.actions.push({ id: a.action, text: 'closed on the page', alreadyShown: true });
         continue;

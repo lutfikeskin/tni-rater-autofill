@@ -268,12 +268,45 @@ export function parseAddress(raw) {
   return out;
 }
 
-// "$100K/$1K Ded" -> { limit: 100000, deductible: 1000 }
+// "$100K/$1K Ded" -> { limit: 100000, deductible: 1000 }. The box takes typed text too, so an amount
+// is the deductible by its label ("ded", "deductible"), wherever it is: "$1,000 ded / $100k" and
+// "100K w/ 1K ded" are a $100,000 limit and a $1,000 deductible, and "$250K - $2,500 ded" too. Amounts
+// without a label are the limit, then the deductible, in their order. Nothing is swapped: a
+// deductible not below the limit is said by a check (cargoChecks). A comma right before a "$" parts two
+// amounts ("$100,000,$1,000 deductible"); one between digits is the amount's own.
+const DED_LABEL = /\bded(?:uctible)?\b\.?/gi;
 export function parseLimitDeductible(v) {
   const s = clean(v);
   if (s == null) return { limit: null, deductible: null };
-  const [a, b] = s.split('/');
-  return { limit: toMoney(a?.replace(/ded.*/i, '')), deductible: b ? toMoney(b.replace(/ded.*/i, '')) : null };
+  const parts = s.replace(/\bw\/\s*/gi, ' with ').split(/\s*(?:\/|\bwith\b|\s[-–]\s|,\s+|,(?=\$)|;|&|\band\b)\s*/i);
+  let deductible = null;
+  const plain = [];
+  for (const part of parts) {
+    const labelled = /\bded(?:uctible)?\b/i.test(part);
+    const amount = toMoney(part.replace(DED_LABEL, '').replace(/\b(?:cargo|limit)\b:?/gi, '').trim());
+    if (amount == null) continue;
+    if (labelled) deductible ??= amount;
+    else plain.push(amount);
+  }
+  return { limit: plain[0] ?? null, deductible: deductible ?? plain[1] ?? null };
+}
+
+// The cargo checks, at load and after a panel edit (BOX_CHECKS): no limit (naming what the box says,
+// when it says something), a deductible not below the limit (never swapped: which is which is the
+// agent's), or no deductible.
+const dollars = (n) => `$${Number(n).toLocaleString('en-US')}`;
+/** @param {any} c  the record's coverage @returns {[string, string, string][]} */
+function cargoChecks(c) {
+  const said = c.cargoAsWritten ? `The cargo box says "${c.cargoAsWritten}": ` : '';
+  if (c.cargo && !c.cargoLimit) {
+    return [['cargo-limit.missing', 'coverage.cargoLimit', said ? `${said}no cargo limit read from it. Enter the limit.` : 'Wants cargo coverage but no limit chosen.']];
+  }
+  if (c.cargo && c.cargoDeductible != null && c.cargoDeductible >= c.cargoLimit) {
+    return [['cargo-limit.implausible', 'coverage.cargoLimit', `${said || 'Cargo: '}the deductible (${dollars(c.cargoDeductible)}) isn't below the limit (${dollars(c.cargoLimit)}). Check which is which.`]];
+  }
+  // No deductible: the carriers leave the cargo limit to the agent (TNI, 2026-10-27).
+  if (c.cargo && c.cargoDeductible == null) return [['cargo-deductible.missing', 'coverage.cargoDeductible', 'No cargo deductible: usually $1,000 or $2,500.']];
+  return [];
 }
 
 // License numbers are entered plain: letters (rare) and digits only, never dashes or spaces.
@@ -448,6 +481,11 @@ export const ntlDotFilingsHold = (record) => (ntlWithPrimary(record)
   : ntlUndecided(record)
     ? 'The claims box or notes mention non-trucking liability (NTL), not answered yet: set it to Yes or No on the Intake step first, then fill this page again (TNI adds no USDOT number and no filings on an NTL quote).'
     : null);
+// A carrier's USDOT or filings rule while `ntlDotFilingsHold` holds it: its source is `fact` (the
+// agent's, nothing filled) and its note says why; otherwise the rule's own source and note. Shared by
+// every carrier, so the hold reads the same everywhere (audit 2026-11-07, CARR-02).
+export const ntlHeld = (source) => (r, a) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r, a) : source);
+export const ntlHoldOr = (note) => (r, a) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r, a) : note ?? null);
 // The intake's info item when an NTL intake asks for filings or gives a USDOT number (coverage.ntl-filings).
 export const ntlFilingsMessage = (record) => `NTL quote: TNI adds no USDOT and no filings. ${record?.operations?.filingsRequired === true
   ? `Filings are answered No${record?.applicant?.dot ? ' and the USDOT number is left out' : ''}.`
@@ -600,7 +638,10 @@ const RANGE_PHRASES = [
   new RegExp(`(?<![\\w.,])${RANGE}\\s+in\\s+${BIZ}`, 'i'),
   new RegExp(`\\bin\\s+${BIZ}\\s+(?:for\\s+)?${RANGE}`, 'i'),
 ];
-const BIZ_START = new RegExp(`\\b(?:established|founded|in\\s+${BIZ}\\s+since)\\s+(?:in\\s+)?(\\d{4})\\b`, 'i');
+// A start year: also "Est. 2015", "Started business in 2018", "Business started 2019" and "Opened in
+// 2020" (the maintainer, 2026-11-08: audit DATA-15), each a year established like "established 2019".
+const STARTED = '(?:started|opened)';
+const BIZ_START = new RegExp(`(?<![\\w-])(?:established|founded|est\\.?|in\\s+${BIZ}\\s+since|${STARTED}(?:\\s+(?:the\\s+)?(?:${BIZ}|company\\b))?|(?:${BIZ}|company\\b)\\s+${STARTED})\\s+(?:in\\s+)?(\\d{4})\\b`, 'i');
 // A clause about something else than the business (driving, a CDL, insurance …), or negated.
 const OTHER_SUBJECT = /\b(?:driv\w*|cdl|licen[cs]\w*|experienced?|authority|mc|dot|usdot|insur\w*|polic(?:y|ies)|pop|coverage|carriers?|claims?|accidents?|tickets?|violations?)\b/i;
 const NEGATED = /\b(?:not|never|no)\b|n't\b/i;
@@ -609,7 +650,20 @@ const NEGATED = /\b(?:not|never|no)\b|n't\b/i;
 // a time in the same clause ("a few years", "almost 3 years", "since last year", "a long time",
 // 2019). One the reader doesn't take is the agent's, like a range; notes with none are the blank
 // standard.
-const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded)\\b|\\bold\\s+${AGE_OF_BUSINESS}`, 'i');
+// Also the business started or opened ("started the business a few years ago"), and
+// "operating": "Operating for 4 years" may mean the trucks, not the business, so it is a statement
+// the reader doesn't take, the agent's with the line quoted (the maintainer, 2026-11-08: audit DATA-15).
+// "Operating" and "Est." say the business's time only with a duration or "since" right after them:
+// "Operating long haul" or "Operating 3 trucks, 2020 Freightliner" is not years in business. The
+// duration may be in words or with a decimal ("for four years", "1.5 years", "one and a half years"):
+// it is only recognised here, never read into a figure (the statement is the agent's).
+const DURATION = `(?:(?:a\\s+few|a|an|and|half|several|many|some|over|about|almost|nearly|${WORD_NUMBER}|\\d+(?:\\.\\d+)?\\+?)[\\s-]+)*(?:years?|yrs?|months?|mos?|decades?)\\b`;
+// "Operating for N years" (or "Est." with a duration) is never read into a figure, so it is the
+// agent's even beside a figure the clause does read ("3 years in business and operating for four
+// years": the maintainer's DATA-15 answer, with round 7's statement beside a figure read).
+const OPERATING_TIME = `\\b(?:operating(?:\\s+for)?|est\\b\\.?)\\s+(?:since\\b|${DURATION})`;
+const OPERATING_SAID = new RegExp(OPERATING_TIME, 'i');
+const BIZ_MENTION = new RegExp(`\\b(?:in(?:to)?\\s+(?:business|biz)|established|founded|${STARTED}\\s+(?:(?:the|a|my|our|his|her|their)\\s+)?(?:business|biz|company)|(?:business|biz|company)\\s+${STARTED})\\b|${OPERATING_TIME}|\\bold\\s+${AGE_OF_BUSINESS}`, 'i');
 const BIZ_TIME = /\b(?:years?|yrs?|months?|mos?|decades?|since|ago|long|while|(?:19|20)\d{2})\b/i;
 const statesBusinessTime = (clause) => BIZ_MENTION.test(clause) && BIZ_TIME.test(clause);
 // A qualifier just before the match that the match itself doesn't hold (",less than 3 years").
@@ -686,6 +740,7 @@ export function yearsInBusinessFromNotes(boxes, year) {
         const start = quote.match(BIZ_START);
         if (start) found.push({ years: year - Number(start[1]), established: Number(start[1]), quote, field, reading: null });
         if (found.length === before) unread();
+        else if (OPERATING_SAID.test(quote)) found.push({ unread: true, years: null, established: null, quote, field, reading: null });
       }
     }
   }
@@ -818,6 +873,136 @@ const KNOWN_FIELDS = new Set([
   ]),
 ]);
 
+// --- Readings normalizeIntake and rederive share -----------------------------------------------
+// Each reads the record as it stands, the intake's or as the agent corrected it, so an answer
+// derived from another one and the checks that come with it are the same at load and after an edit.
+
+// "No" in the USDOT or MC box, and "None" or "N/A" (any case, with or without a dot or slash: n/a,
+// NA, N.A.), read as written: the client has none (TNI, 2026-10-26: answer to PR question, R14).
+const NO_NUMBER = /^(?:no|none|n\s*[./]?\s*a)\.?$/i;
+const numberBoxAsWritten = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
+const numberBoxSaysNo = (v) => NO_NUMBER.test(numberBoxAsWritten(v));
+/** The info note for a USDOT (`dot`) or MC (`mc`) box saying the client has none. */
+function noNumberNotes(which, box) {
+  if (!numberBoxSaysNo(box)) return [];
+  const [path, label, name] = which === 'dot' ? ['applicant.dot', 'USDOT #', 'USDOT'] : ['applicant.mc', 'MC #', 'MC'];
+  return [{ code: `${which}.none`, path, level: 'info', msg: `${label} "${numberBoxAsWritten(box)}": the client has no ${name} number.` }];
+}
+
+/** The claims box's first line as the claims question's answer (Yes; No, None, No claim(s) or a
+ * clean record: CLAIMS_CLEAN; else unset), and its other lines as notes. */
+function claimsAnswer(text) {
+  if (!text) return { hasClaims: null, notes: null };
+  const lines = text.split('\n');
+  const hasClaims = /^(no|none|no claims?)\.?$/i.test(lines[0]) || CLAIMS_CLEAN.test(lines[0]) ? false
+    : /^yes\b/i.test(lines[0]) ? true : null;
+  const notes = (hasClaims == null ? lines : lines.slice(1)).filter(Boolean);
+  return { hasClaims, notes: notes.length ? notes.join('\n') : null };
+}
+
+/** The ownership the claims box's other answers and the Additional Notes box give a blank ownership
+ * box, when unambiguous (ownershipFromNotes), and the box it was read from; else the check quoting
+ * the lines. Null when the notes say nothing about ownership. */
+function ownershipReading(record) {
+  const own = ownershipFromNotes(otherNotes(record));
+  if (!own) return null;
+  const word = new RegExp(OWNERSHIP_WORDS.source, 'i');
+  const fields = own.value ? [['claims_details', record.claims?.notes], ['additional_notes', record.notes?.text]]
+    .filter(([, text]) => word.test(text ?? '')).map(([field]) => field) : [];
+  return { value: own.value, fields, warnings: own.value ? [] : [{ code: 'ownership.notes', path: 'operations.vehicleOwnership', level: 'check', msg: `Notes mention ownership ("${own.lines}"). Set it yourself.` }] };
+}
+// No ownership, and no other item about it: the check for a blank box.
+const ownershipMissing = (record, warnings) => (record.vehicles?.length && !record.operations?.vehicleOwnership
+  && !warnings.some((w) => w.path === 'operations.vehicleOwnership')
+  ? [{ code: 'ownership.missing', path: 'operations.vehicleOwnership', level: 'check', msg: 'Not selected.' }] : []);
+
+/** The radius box's miles (parseRadius) and the check for a radius that gives none. */
+function radiusReading(radius) {
+  const { miles, kind } = parseRadius(radius);
+  const warning = {
+    missing: ['radius.missing', 'operations.radius', 'No radius of operations.'],
+    range: ['radius.range', 'operations.radiusMiles', `"${radius}" is a range. Enter the farthest one-way miles.`],
+    unit: ['radius.unit', 'operations.radiusMiles', `"${radius}" isn't in miles. Enter the miles.`],
+    text: ['radius.not-miles', 'operations.radius', `"${radius}" isn't miles. Enter miles or a band (e.g. 500+).`],
+  }[kind];
+  return { miles, warnings: warning ? [{ code: warning[0], path: warning[1], level: 'check', msg: warning[2] }] : [] };
+}
+
+/**
+ * Years in business the notes state, when the year established gives none, and its check; else the
+ * blank standard's check. The record's applicant (its years in business from the year established,
+ * and the years under own authority) is read, not changed.
+ * @returns {{ values: Record<string, unknown>, readFrom: Record<string, string[]>, warnings: object[] }}
+ */
+function yearsInBusinessReading(a, claimsText, notesText, year) {
+  const values = {};
+  const readFrom = {};
+  const warnings = [];
+  const check = (code, path, msg) => warnings.push({ code, path, level: 'check', msg });
+  // No year established on the form: the years in business the claims box or Additional Notes state,
+  // with a check quoting them (TNI, 2026-10-26, W44-09). They win over years under own authority
+  // for years in business (TNI, 2026-10-26: answer to PR question); the authority years are another
+  // fact and stay as the form gives them, for their own questions. Never read from a business phrase.
+  const stated = a.yearsInBusiness == null
+    ? yearsInBusinessFromNotes([['claims_details', claimsText], ['additional_notes', notesText]], year) : null;
+  if (stated) {
+    readFrom['applicant.yearsInBusiness'] = stated.fields;
+    const boxName = (field) => (field === 'additional_notes' ? 'Additional Notes box' : 'claims box');
+    const box = boxName(stated.fields[0]);
+    const short = (q) => (q.length > 80 ? `${q.slice(0, 79).trimEnd()}…` : q);
+    const quote = short(stated.quote);
+    const authority = a.yearsExperience == null ? '' : ` The years under own authority (${a.yearsExperience}) stay apart.`;
+    if (stated.range) {
+      // A range whose ends differ (TNI, 2026-10-27: answer to PR question V7): the agent's on every
+      // carrier, neither the blank standard nor the authority years; the check names the line.
+      values.yearsInBusinessRange = true;
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${box} says "${quote}", a range ("${stated.reading}"), so years in business is left to you.${authority}`);
+    } else if (stated.unread) {
+      // A statement it doesn't read, or figures that disagree (TNI, 2026-10-27: round-6 answer 4):
+      // the agent's like a range, neither the blank standard nor the authority years.
+      values.yearsInBusinessUnread = true;
+      const boxes = stated.fields.map(boxName).join(' and the ');
+      const said = (stated.quotes ?? [stated.quote]).map((q) => `"${short(q)}"`).join(' and ');
+      const why = { disagree: 'figures that disagree', mixed: 'not all read as a number of years' }[stated.kind ?? ''] ?? 'not read as a number of years';
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${boxes} ${stated.fields.length > 1 ? 'say' : 'says'} ${said}: ${why}, so years in business is left to you.${authority}`);
+    } else {
+      values.yearsInBusiness = stated.years;
+      if (stated.established != null) { values.yearEstablished = stated.established; readFrom['applicant.yearEstablished'] = stated.fields; }
+      // How a figure that isn't plain years was read: "over 3 years" as 3, "18 months" as 1 (R11).
+      const reading = stated.reading ? ` ("${stated.reading}" read as ${stated.years})` : '';
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${box} says "${quote}": years in business is ${stated.years}${reading}${stated.established != null ? `, established ${stated.established}` : ''}. Confirm.${authority}`);
+    }
+  }
+  // TNI's standard for a blank (2026-10-09): 0 years, established this year (AmWINS' rules fill
+  // it, GEICO's leave it to the agent; the record stays blank, so a later answer here replaces it).
+  // Not for a range in the notes (V7) or a statement of years in business they don't settle
+  // (round-6 answer 4), which are the agent's: only for notes that say nothing of the business's time.
+  if ((values.yearsInBusiness ?? a.yearsInBusiness) == null && a.yearsExperience == null && !values.yearsInBusinessRange && !values.yearsInBusinessUnread) {
+    check('years-in-business.default', 'applicant.yearsInBusiness', `Blank. AmWINS gets 0 years (New Venture), established ${year}; GEICO's question is yours.`);
+  }
+  return { values, readFrom, warnings };
+}
+
+/** The time with the current insurer a line of the notes gives, beyond the 1-3 years standard. */
+function tenureChecks(record) {
+  // A time with the current insurer beyond the 1-3 years standard (AmWINS' 1 TO 2 YEARS): the
+  // carriers' how-long questions take its band, the line shown here, where it was read (TNI,
+  // 2026-10-26: answer to PR question, W44-29). From 2 years: AmWINS' 1 TO 2 and 2 TO 3 YEARS share
+  // 2, and a time on a band edge takes the upper band (TNI, 2026-10-26: answer to PR question, round 2, R5).
+  // An expired policy: both carriers leave the question to the agent (TNI, 2026-10-26: answer to PR
+  // question, round 3, T6), so the check says that instead of a band. So does a General Liability,
+  // Cargo or Other policy (TNI, 2026-10-27: answer to PR question, round 5, V8).
+  const tenure = insurerTenure(record);
+  if (!tenure || tenure.years < 2) return [];
+  const inNotes = String(record.notes?.text ?? '').split('\n').map((s) => s.trim()).includes(tenure.line);
+  const then = priorPolicyExpired(record)
+    ? 'The policy has expired, so time with the insurer is yours (TNI).'
+    : priorPolicyNotAuto(record.priorInsurance?.[0])
+      ? 'The policy isn\'t auto, so time with the insurer is yours (TNI).'
+      : 'Its band is filled, at least 1-3 years (TNI); between two bands, yours.';
+  return [{ code: 'prior.tenure', path: inNotes ? 'notes.text' : 'claims.text', level: 'check', msg: `Time with insurer: "${tenure.line.slice(0, 160)}". ${then}` }];
+}
+
 /**
  * @param {Record<string, string|boolean>} raw  field name -> value, from readIntakeFields()
  * @param {{ today?: Date }} [opts]
@@ -845,8 +1030,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // N.A.) are an explicit No too, exactly like "no" (TNI, 2026-10-26: answer to PR question, R14).
   // `txt` reads "N/A", "NA" and "None" as blank, so the box is read as written. A cut-off "N/" is
   // not one of them (W44-08, not decided): it stays a malformed number, as before.
-  const asWritten = (k) => (typeof raw[k] === 'string' ? raw[k].replace(/\s+/g, ' ').trim() : '');
-  const saysNoNumber = (k) => /^(?:no|none|n\s*[./]?\s*a)\.?$/i.test(asWritten(k));
+  const saysNoNumber = (k) => numberBoxSaysNo(raw[k]);
   // Numbers that should be digits only: note when stray characters were dropped.
   const idNumber = (k, path, label, pattern) => {
     const s = txt(k);
@@ -926,6 +1110,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       cargo: yesNo(raw.cargo_cov),
       cargoLimit: null,
       cargoDeductible: null,
+      // The cargo box as written (a dropdown that takes typed text), beside the two amounts read from it.
+      cargoAsWritten: null,
       gl: yesNo(raw.gen_liability),
       glLimit: txt('gen_liab_limit'),
       reeferBreakdown: yesNo(raw.reefer_breakdown),
@@ -971,51 +1157,14 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (!a.dot && !a.mc && a.mcDotWithin60Days === true) {
     info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
   }
-  if (a.noDot) info('dot.none', 'applicant.dot', `USDOT # "${asWritten('dot_number')}": the client has no USDOT number.`);
-  if (a.noMc) info('mc.none', 'applicant.mc', `MC # "${asWritten('mc_number')}": the client has no MC number.`);
+  warnings.push(...noNumberNotes('dot', raw.dot_number), ...noNumberNotes('mc', raw.mc_number));
   if (NEW_AUTHORITY.test(txt('years_experience') ?? '')) info('years-experience.new', 'applicant.yearsExperience', `Years under own authority "${txt('years_experience')}": 0 years, a new authority.`);
   else if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `"${txt('years_experience')}" isn't a number.`);
-  // No year established on the form: the years in business the claims box or Additional Notes state,
-  // with a check quoting them (TNI, 2026-10-26, W44-09). They win over years under own authority
-  // for years in business (TNI, 2026-10-26: answer to PR question); the authority years are another
-  // fact and stay as the form gives them, for their own questions. Never read from a business phrase.
-  const stated = a.yearsInBusiness == null
-    ? yearsInBusinessFromNotes([['claims_details', record.claims.text], ['additional_notes', record.notes.text]], year) : null;
-  if (stated) {
-    readFrom['applicant.yearsInBusiness'] = stated.fields;
-    const boxName = (field) => (field === 'additional_notes' ? 'Additional Notes box' : 'claims box');
-    const box = boxName(stated.fields[0]);
-    const short = (q) => (q.length > 80 ? `${q.slice(0, 79).trimEnd()}…` : q);
-    const quote = short(stated.quote);
-    const authority = a.yearsExperience == null ? '' : ` The years under own authority (${a.yearsExperience}) stay apart.`;
-        if (stated.range) {
-      // A range whose ends differ (TNI, 2026-10-27: answer to PR question V7): the agent's on every
-      // carrier, neither the blank standard nor the authority years; the check names the line.
-      a.yearsInBusinessRange = true;
-      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${box} says "${quote}", a range ("${stated.reading}"), so years in business is left to you.${authority}`);
-    } else if (stated.unread) {
-      // A statement it doesn't read, or figures that disagree (TNI, 2026-10-27: round-6 answer 4):
-      // the agent's like a range, neither the blank standard nor the authority years.
-      a.yearsInBusinessUnread = true;
-      const boxes = stated.fields.map(boxName).join(' and the ');
-      const said = (stated.quotes ?? [stated.quote]).map((q) => `"${short(q)}"`).join(' and ');
-      const why = { disagree: 'figures that disagree', mixed: 'not all read as a number of years' }[stated.kind ?? ''] ?? 'not read as a number of years';
-      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${boxes} ${stated.fields.length > 1 ? 'say' : 'says'} ${said}: ${why}, so years in business is left to you.${authority}`);
-    } else {
-      a.yearsInBusiness = stated.years;
-      if (stated.established != null) { a.yearEstablished = stated.established; readFrom['applicant.yearEstablished'] = stated.fields; }
-      // How a figure that isn't plain years was read: "over 3 years" as 3, "18 months" as 1 (R11).
-      const reading = stated.reading ? ` ("${stated.reading}" read as ${stated.years})` : '';
-      check('years-in-business.notes', 'applicant.yearsInBusiness', `The ${box} says "${quote}": years in business is ${stated.years}${reading}${stated.established != null ? `, established ${stated.established}` : ''}. Confirm.${authority}`);
-    }
-  }
-  // TNI's standard for a blank (2026-10-09): 0 years, established this year (AmWINS' rules fill
-  // it, GEICO's leave it to the agent; the record stays blank, so a later answer here replaces it).
-  // Not for a range in the notes (V7) or a statement of years in business they don't settle
-  // (round-6 answer 4), which are the agent's: only for notes that say nothing of the business's time.
-  if (a.yearsInBusiness == null && a.yearsExperience == null && !a.yearsInBusinessRange && !a.yearsInBusinessUnread) {
-    check('years-in-business.default', 'applicant.yearsInBusiness', `Blank. AmWINS gets 0 years (New Venture), established ${year}; GEICO's question is yours.`);
-  }
+  // No year established on the form: the years in business the notes state (yearsInBusinessReading).
+  const years = yearsInBusinessReading(a, record.claims.text, record.notes.text, year);
+  Object.assign(a, years.values);
+  Object.assign(readFrom, years.readFrom);
+  warnings.push(...years.warnings);
 
   // --- Garaging address -----------------------------------------------------------------------
   const addr = parseAddress(raw.garaging_address);
@@ -1196,12 +1345,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
 
   // --- Operations -----------------------------------------------------------------------------
   // "Unlimited", long haul, OTR, 48 states: no mileage; the carrier rules pick their widest band.
-  const radius = parseRadius(ops.radius);
+  const radius = radiusReading(ops.radius);
   ops.radiusMiles = radius.miles;
-  if (radius.kind === 'missing') check('radius.missing', 'operations.radius', 'No radius of operations.');
-  else if (radius.kind === 'range') check('radius.range', 'operations.radiusMiles', `"${ops.radius}" is a range. Enter the farthest one-way miles.`);
-  else if (radius.kind === 'unit') check('radius.unit', 'operations.radiusMiles', `"${ops.radius}" isn't in miles. Enter the miles.`);
-  else if (radius.kind === 'text') check('radius.not-miles', 'operations.radius', `"${ops.radius}" isn't miles. Enter miles or a band (e.g. 500+).`);
+  warnings.push(...radius.warnings);
   if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.');
   // (TNI, 2026-10-26: answer to PR question) Neither check on an NTL quote, which gets no filings:
   // the `coverage.ntl-filings` info item below says why the carriers answer No instead.
@@ -1236,38 +1382,18 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     // since an intake isn't tied to one carrier; in red (`alert`), and a warning only (question 19):
     // filling goes on. The panel shows it only on that carrier's site (checkShown; TNI, 2026-10-27),
     // and the carrier's pages say it again (W44-27).
-    const quoted = quotedCarriersOf(prior);
-    if (quoted.length) {
-      warnings.push({ code: 'prior.carrier-is-quoted', path: 'priorInsurance[0].carrier', level: 'check', alert: true,
-        msg: `Current insurance is with ${quoted.join(' and ')}: a ${quoted.join(' or ')} quote may be declined or routed. Check with the client first.` });
-    }
-    if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
-    // TNI (2026-10-26, W44-29): any box filled is proof of prior insurance, 1-3 years (util.js
-    // priorInsuranceAssumed), and the agent is told at the start which boxes are blank.
-    const missing = [
-      ['policy type', prior.type], ['carrier', prior.carrier], ['limit', prior.limit], ['expiration date', prior.expiration],
-    ].filter(([, value]) => !value).map(([name]) => name);
-    const named = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
-    if (missing.length && priorInsuranceAssumed(record, prior)) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Proof of prior insurance (1-3 years) is assumed (TNI); get the rest from the client.`);
-    else if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance: missing the ${named}. Confirm before quoting.`);
-    // Expired by today's date or the application date: the carriers' rules read it the same way
-    // (priorPolicyExpired; the maintainer, 2026-11-07, audit DATA-02), so the check names the date.
-    const { byToday, byApplication } = priorPolicyExpiredBy(record, prior);
-    if (byToday || byApplication) {
-      const applied = record.applicant.applicationDate;
-      const before = byApplication ? (byToday ? 'before the application date and today' : 'before the application date')
-        : applied ? `before today, though after the application date ${applied}` : 'before today';
-      check('prior-expiration.expired', 'priorInsurance[0].expiration', `Expired ${prior.expiration}, ${before}: an expired policy is not current insurance. Review it.`);
-    }
+    warnings.push(...priorQuotedChecks(prior));
+    warnings.push(...priorPersonalAutoNotes(prior));
+    warnings.push(...priorIncompleteChecks(record, prior));
+    warnings.push(...priorExpiredChecks(record, prior));
   }
 
   // --- Coverage -------------------------------------------------------------------------------
   const cargo = parseLimitDeductible(raw.cargo_limit_ded);
   record.coverage.cargoLimit = cargo.limit;
   record.coverage.cargoDeductible = cargo.deductible;
-  if (record.coverage.cargo && !cargo.limit) check('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.');
-  // No deductible: the carriers leave the cargo limit to the agent (TNI, 2026-10-27).
-  else if (record.coverage.cargo && cargo.deductible == null) check('cargo-deductible.missing', 'coverage.cargoDeductible', 'No cargo deductible: usually $1,000 or $2,500.');
+  record.coverage.cargoAsWritten = txt('cargo_limit_ded');
+  for (const [code, path, msg] of cargoChecks(record.coverage)) check(code, path, msg);
   // Non-Trucking asks for a limit too: the carrier's NTL limit (the review of PR #176).
   if ((record.coverage.autoLiability === 'Yes' || nonTruckingAnswer(record.coverage.autoLiability)) && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
   if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'No GL limit. TNI default is $1M/$2M: confirm with the client.');
@@ -1276,24 +1402,13 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // Clients use this box for answers to other questions too. A leading yes/no answers the claims
   // question ("CLEAN" is a No: CLAIMS_CLEAN); everything else is kept as notes (no warning) for
   // the agent and the AI assistant.
-  const claims = record.claims.text;
-  if (claims) {
-    const lines = claims.split('\n');
-    if (/^(no|none|no claims?)\.?$/i.test(lines[0]) || CLAIMS_CLEAN.test(lines[0])) record.claims.hasClaims = false;
-    else if (/^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
-    const notes = (record.claims.hasClaims == null ? lines : lines.slice(1)).filter(Boolean);
-    record.claims.notes = notes.length ? notes.join('\n') : null;
-  } else check('claims.blank', 'claims.text', 'Claims question left blank.');
-  // The claims box's other answers and the Additional Notes box are read alike.
-  const notes = otherNotes(record);
-  if (notes) {
-    // A blank ownership answer that turns up in the notes ("Financed") is the ownership answer,
-    // when the note is unambiguous (ownershipFromNotes); otherwise the agent reads it. The box
-    // itself always wins over the notes.
-    const own = ops.vehicleOwnership ? null : ownershipFromNotes(notes);
-    if (own?.value) ops.vehicleOwnership = own.value;
-    else if (own) check('ownership.notes', 'operations.vehicleOwnership', `Notes mention ownership ("${own.lines}"). Set it yourself.`);
-  }
+  Object.assign(record.claims, claimsAnswer(record.claims.text));
+  if (!record.claims.text) check('claims.blank', 'claims.text', 'Claims question left blank.');
+  // The claims box's other answers and the Additional Notes box are read alike: a blank ownership
+  // answer that turns up there is read from them (ownershipReading). The box itself always wins.
+  const ownership = ops.vehicleOwnership ? null : ownershipReading(record);
+  if (ownership?.value) { ops.vehicleOwnership = ownership.value; readFrom['operations.vehicleOwnership'] = ownership.fields; }
+  if (ownership) warnings.push(...ownership.warnings);
   // A time with the current insurer beyond the 1-3 years standard (AmWINS' 1 TO 2 YEARS): the
   // carriers' how-long questions take its band, the line shown here, where it was read (TNI,
   // 2026-10-26: answer to PR question, W44-29). From 2 years: AmWINS' 1 TO 2 and 2 TO 3 YEARS share
@@ -1301,16 +1416,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // An expired policy: both carriers leave the question to the agent (TNI, 2026-10-26: answer to PR
   // question, round 3, T6), so the check says that instead of a band. So does a General Liability,
   // Cargo or Other policy (TNI, 2026-10-27: answer to PR question, round 5, V8).
-  const tenure = insurerTenure(record);
-  if (tenure && tenure.years >= 2) {
-    const inNotes = String(record.notes?.text ?? '').split('\n').map((s) => s.trim()).includes(tenure.line);
-    const then = priorPolicyExpired(record)
-      ? 'The policy has expired, so time with the insurer is yours (TNI).'
-      : priorPolicyNotAuto(record.priorInsurance?.[0])
-        ? 'The policy isn\'t auto, so time with the insurer is yours (TNI).'
-        : 'Its band is filled, at least 1-3 years (TNI); between two bands, yours.';
-    check('prior.tenure', inNotes ? 'notes.text' : 'claims.text', `Time with insurer: "${tenure.line.slice(0, 160)}". ${then}`);
-  }
+  warnings.push(...tenureChecks(record));
   // Non-trucking liability (NTL) is named only in the notes: "NTL", "non-trucking" (also written
   // "non tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the
   // agent decides, and nothing is added until they set it to Yes.
@@ -1327,15 +1433,35 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (ntlNoDotFilings(record) && (ops.filingsRequired === true || record.applicant.dot)) {
     info('coverage.ntl-filings', ops.filingsRequired === true ? 'operations.filingsRequired' : 'applicant.dot', ntlFilingsMessage(record));
   }
-  if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
-    check('ownership.missing', 'operations.vehicleOwnership', 'Not selected.');
-  }
+  warnings.push(...ownershipMissing(record, warnings));
 
   const unknown = Object.keys(raw).filter((k) => !KNOWN_FIELDS.has(k) && clean(raw[k]) != null && raw[k] !== false);
   if (unknown.length) info('form.unknown-fields', '', `Fields not read yet: ${unknown.join(', ')}.`);
 
   const filled = Object.values(raw).filter((v) => v === true || (typeof v === 'string' && clean(v) != null)).length;
   return { record, warnings, stats: { fields: Object.keys(raw).length, filled }, rows, readFrom };
+}
+
+// "No", "None" or "N/A" the agent typed into the USDOT or MC box (any case, with or without a dot
+// or slash, as on the form: R14) is no number, saved as the intake's own No is (the maintainer,
+// 2026-11-07, answer 1 on PR #367): the box empty and `noDot` (`noMc`) true, with the intake's note
+// saying so, so the carriers' has-a-USDOT-number questions answer No instead of reading "No" as a
+// number. Before, the box kept "No", and Progressive answered that the customer has a USDOT number.
+// True when the edit was one. A number typed later clears the No and retires the note (rederive's
+// USDOT and MC derivation); an emptied box keeps them.
+export function noNumberEdit(intake, path) {
+  const box = { 'applicant.dot': ['noDot', 'dot.none', 'USDOT'], 'applicant.mc': ['noMc', 'mc.none', 'MC'] }[path];
+  const typed = intake.record.applicant?.[path.slice('applicant.'.length)];
+  if (!box || typeof typed !== 'string' || !numberBoxSaysNo(typed)) return false;
+  const [flag, code, name] = box;
+  set(intake.record, path, null);
+  intake.record.applicant[flag] = true;
+  // The note in its place, said again (one retired by an earlier number), else added.
+  const note = { code, path, level: 'info', msg: `${name} # "${typed.trim()}": the client has no ${name} number.` };
+  const i = intake.warnings.findIndex((w) => w.code === code);
+  if (i < 0) intake.warnings.push(note);
+  else intake.warnings[i] = note;
+  return true;
 }
 
 // Parses a value typed into the review panel, according to the field's kind. A state is saved as
@@ -1354,32 +1480,359 @@ export function parseEdit(kind, text) {
   }
 }
 
-// The scalars normalizeIntake derives from another field, recomputed after the agent corrects
-// the source in the panel (set first, then rederive). Only the source triggers it: an edit to
-// the derived field itself ("Radius (miles)") is the agent's value and is left as typed, also
-// when the source is edited afterwards (the panel passes the paths the agent edited as `keep`).
-const DERIVED = {
-  // Non-Trucking on auto liability is an NTL request; another answer leaves NTL to the agent.
-  'coverage.autoLiability': ['coverage.ntl', (record) => (nonTruckingAnswer(record.coverage?.autoLiability) ? true : null)],
-  'operations.radius': ['operations.radiusMiles', (record) => parseRadius(record.operations?.radius).miles],
-  'applicant.yearEstablished': ['applicant.yearsInBusiness', (record, year) => {
-    const est = record.applicant?.yearEstablished;
-    return Number.isInteger(est) && est >= 1900 && est <= year ? year - est : null;
-  }],
+// What normalizeIntake derives from another answer, recomputed from the record as the agent
+// corrected it in the panel (set first, then rederive), with the checks that come with it (audit
+// 2026-11-07, DATA-04). The agent's own values always win: an answer the agent set ("Radius
+// (miles)", "Any claims / violations") is never recomputed, also when its source is edited
+// afterwards (the panel passes the paths the agent edited as `keep`). Each derivation names the
+// answers it reads (`from`) and gives, for the record as it stands, the `values` it derives by path,
+// where an answer was read when not from its own box (`readFrom`, null for its own box), and the
+// `checks` it makes, in place of the ones of its `codes`; null leaves everything as it is.
+/** @type {{ from: string[], codes?: string[], run: (record: any, ctx: { mine: (path: string) => boolean, readFrom: Record<string, string[]> | null, year: number }) => null | { values: Record<string, unknown>, readFrom?: Record<string, string[] | null>, checks?: object[] } }[]} */
+const DERIVATIONS = [
+  // The claims box's first line answers the claims question; its other lines are its notes.
+  { from: ['claims.text'], run: (r) => {
+    if (!r.claims) return null;
+    const { hasClaims, notes } = claimsAnswer(cleanMultiline(r.claims.text));
+    return { values: { 'claims.hasClaims': hasClaims, 'claims.notes': notes } };
+  } },
+  // The ownership the notes give an ownership box the form left blank (also one read from them
+  // before); a box the form filled wins over the notes.
+  { from: ['claims.notes', 'notes.text'], codes: ['ownership.notes', 'ownership.missing'], run: (r, { mine, readFrom }) => {
+    const ops = r.operations;
+    if (!ops || mine('operations.vehicleOwnership')) return null;
+    if (ops.vehicleOwnership != null && !readFrom?.['operations.vehicleOwnership']) return null;
+    const own = ownershipReading(r);
+    const value = own?.value ?? null;
+    const checks = own?.warnings ?? [];
+    return { values: { 'operations.vehicleOwnership': value }, readFrom: { 'operations.vehicleOwnership': value ? own.fields : null },
+      checks: [...checks, ...ownershipMissing({ ...r, operations: { ...ops, vehicleOwnership: value } }, checks)] };
+  } },
+  // Years in business: from the year established the form or the agent gave, else what the notes
+  // state (yearsInBusinessReading), else the blank standard's check. A year established read from
+  // the notes follows them.
+  { from: ['applicant.yearEstablished', 'applicant.yearsExperience', 'claims.text', 'notes.text'], codes: ['years-in-business.notes', 'years-in-business.default'], run: (r, { mine, readFrom, year }) => {
+    const a = r.applicant;
+    if (!a || mine('applicant.yearsInBusiness')) return null;
+    const estRead = !mine('applicant.yearEstablished') && (a.yearEstablished == null || !!readFrom?.['applicant.yearEstablished']);
+    const est = estRead ? null : a.yearEstablished;
+    const fromYear = Number.isInteger(est) && est >= 1900 && est <= year ? year - est : null;
+    const years = yearsInBusinessReading({ yearsInBusiness: fromYear, yearsExperience: a.yearsExperience }, r.claims?.text, r.notes?.text, year);
+    // A range or a statement not read as years: said again, never kept from the old notes.
+    delete a.yearsInBusinessRange;
+    delete a.yearsInBusinessUnread;
+    if (years.values.yearsInBusinessRange) a.yearsInBusinessRange = true;
+    if (years.values.yearsInBusinessUnread) a.yearsInBusinessUnread = true;
+    const established = estRead ? { 'applicant.yearEstablished': years.values.yearEstablished ?? null } : {};
+    return {
+      values: { 'applicant.yearsInBusiness': years.values.yearsInBusiness ?? fromYear, ...established },
+      readFrom: { 'applicant.yearsInBusiness': years.readFrom['applicant.yearsInBusiness'] ?? null,
+        ...(estRead ? { 'applicant.yearEstablished': years.readFrom['applicant.yearEstablished'] ?? null } : {}) },
+      checks: years.warnings,
+    };
+  } },
+  // The time with the current insurer a line of the notes gives: its check (the carriers read the
+  // notes as they fill). It also reads the current policy (its carrier, in a line; expired or not
+  // auto, the agent's: T6, V8) and the application date (the time from a start date).
+  { from: ['claims.text', 'notes.text', 'priorInsurance[0].expiration', 'priorInsurance[0].type', 'priorInsurance[0].carrier', 'applicant.applicationDate'],
+    codes: ['prior.tenure'], run: (r) => ({ values: {}, checks: tenureChecks(r) }) },
+  // "No", "None" or "N/A" in the USDOT or MC box: the client has none, which a number doesn't say.
+  // An emptied box says nothing new: its No, if any, stays (an agent's typed No is saved as an empty
+  // box with the No).
+  { from: ['applicant.dot'], codes: ['dot.none'], run: (r) => (r.applicant?.dot != null
+    ? { values: { 'applicant.noDot': numberBoxSaysNo(r.applicant.dot) || null }, checks: noNumberNotes('dot', r.applicant.dot) } : null) },
+  { from: ['applicant.mc'], codes: ['mc.none'], run: (r) => (r.applicant?.mc != null
+    ? { values: { 'applicant.noMc': numberBoxSaysNo(r.applicant.mc) || null }, checks: noNumberNotes('mc', r.applicant.mc) } : null) },
+  // The radius box's miles, and its check when it gives none.
+  { from: ['operations.radius'], codes: ['radius.missing', 'radius.range', 'radius.unit', 'radius.not-miles'], run: (r, { mine }) => {
+    if (!r.operations || mine('operations.radiusMiles')) return null;
+    const radius = radiusReading(r.operations.radius);
+    return { values: { 'operations.radiusMiles': radius.miles }, checks: radius.warnings };
+  } },
+  // The cargo box as written gives the cargo limit and deductible (parseLimitDeductible), each unless
+  // the agent set it themselves, and the cargo checks follow.
+  { from: ['coverage.cargoAsWritten'], codes: ['cargo-limit.missing', 'cargo-limit.implausible', 'cargo-deductible.missing'], run: (r, { mine }) => {
+    const c = r.coverage;
+    if (!c || (mine('coverage.cargoLimit') && mine('coverage.cargoDeductible'))) return null;
+    const read = parseLimitDeductible(c.cargoAsWritten);
+    const limit = mine('coverage.cargoLimit') ? c.cargoLimit : read.limit;
+    const deductible = mine('coverage.cargoDeductible') ? c.cargoDeductible : read.deductible;
+    const values = { 'coverage.cargoLimit': limit, 'coverage.cargoDeductible': deductible };
+    const after = { ...c, cargoLimit: limit, cargoDeductible: deductible };
+    return { values, checks: cargoChecks(after).map(([code, path, msg]) => ({ code, path, level: 'check', msg })) };
+  } },
+  // Non-Trucking on auto liability is an NTL request; another answer leaves NTL to the agent (its
+  // items follow in the panel: ntlAnswerEdited).
+  { from: ['coverage.autoLiability'], run: (r, { mine }) => (mine('coverage.ntl') ? null
+    : { values: { 'coverage.ntl': nonTruckingAnswer(r.coverage?.autoLiability) ? true : null } }) },
+];
+
+// A box's own checks, run again on the value the agent corrected it to (the maintainer,
+// 2026-11-07, answer 2 on PR #367): a value now valid retires the check, one still invalid keeps it
+// (in its new words). Each entry: the edited paths it is for (`match`, its groups passed on), the
+// checks it owns (`codes`, on the paths `at` gives), and the checks for the record as corrected.
+// Not for an answer derived from another one (ownership, years in business, the miles): an agent's
+// value there keeps its checks as they are (answer 3), as for a later edit of its source. The
+// garaging address's checks are about how the whole address was split, not one box's value, and
+// stay the agent's to confirm. They restate normalizeIntake's checks: a test runs the same values
+// through both and holds them to the same checks in the same words (test/normalize.test.mjs).
+const unitWho = (list, i, rows) => {
+  const u = rows?.[list]?.[i] ?? i + 1;
+  return { list, i, n: u, p: (k) => `${list}[${i}].${k}` };
 };
+const driverName = (d, n) => [d.first, d.last].filter(Boolean).join(' ') || `Driver ${n}`;
+const unitName = (u, label, n) => [u.year, u.make, u.model].filter((x) => x != null && x !== '').join(' ') || `${label} ${n}`;
+const chk = (code, path, msg) => ({ code, path, level: 'check', msg });
+/** @type {{ match: RegExp, codes: string[], at?: (m: RegExpMatchArray) => string, run: (record: any, m: RegExpMatchArray, ctx: { year: number, rows?: object }) => object[] }[]} */
+const BOX_CHECKS = [
+  { match: /^claims\.text$/, codes: ['claims.blank'], run: (r) => (r.claims?.text ? [] : [chk('claims.blank', 'claims.text', 'Claims question left blank.')]) },
+  { match: /^applicant\.fein$/, codes: ['fein.invalid', 'fein.none'], run: (r) => {
+    const v = r.applicant?.fein;
+    if (v == null || String(v).replace(/\D/g, '').length === 9) return [];
+    if (/^no\.?$/i.test(String(v).trim())) return [{ code: 'fein.none', path: 'applicant.fein', level: 'info', msg: `FEIN "${v}": no FEIN.` }];
+    return [chk('fein.invalid', 'applicant.fein', `"${v}" should be 9 digits.`)];
+  } },
+  { match: /^applicant\.yearEstablished$/, codes: ['year-established.invalid'], run: (r, m, { year }) => {
+    const v = r.applicant?.yearEstablished;
+    return v == null || (Number.isInteger(v) && v >= 1900 && v <= year) ? [] : [chk('year-established.invalid', 'applicant.yearEstablished', `"${v}" isn't a valid year.`)];
+  } },
+  { match: /^applicant\.phone$/, codes: ['phone.invalid'], run: (r) => {
+    const v = r.applicant?.phone;
+    return v == null || toPhone(v) ? [] : [chk('phone.invalid', 'applicant.phone', `"${v}" isn't a 10-digit US number.`)];
+  } },
+  { match: /^applicant\.email$/, codes: ['email.invalid'], run: (r) => {
+    const v = r.applicant?.email;
+    return v == null || /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(String(v)) ? [] : [chk('email.invalid', 'applicant.email', `"${v}" looks malformed.`)];
+  } },
+  // The USDOT or MC number: digits (after a USDOT, DOT, MC or MX before them), 1 to 8 of them.
+  { match: /^applicant\.(dot|mc)$/, codes: ['id.invalid'], at: (m) => `applicant.${m[1]}`, run: (r, m) => {
+    const v = r.applicant?.[m[1]];
+    if (v == null || numberBoxSaysNo(v)) return [];
+    const digits = String(v).replace(/^(us\s*dot|dot|mc|mx)\b/i, '').replace(/\D/g, '');
+    return /^\d{1,8}$/.test(digits) ? [] : [chk('id.invalid', `applicant.${m[1]}`, `"${v}" isn't a valid number.`)];
+  } },
+  // (The form's "NEW" read as 0 years is the intake's: its note is retired by the agent's years.)
+  { match: /^applicant\.yearsExperience$/, codes: ['years-experience.invalid', 'years-experience.new'], run: (r) => {
+    const v = r.applicant?.yearsExperience;
+    return v == null || Number.isInteger(v) ? [] : [chk('years-experience.invalid', 'applicant.yearsExperience', `"${v}" isn't a number.`)];
+  } },
+  { match: /^drivers\[(\d+)\]\.dob$/, codes: ['dob.invalid', 'dob.missing', 'dob.unusual-age'], at: (m) => `drivers[${m[1]}].dob`, run: (r, m, { year, rows }) => {
+    const { i, n, p } = unitWho('drivers', Number(m[1]), rows);
+    const d = r.drivers?.[i];
+    if (!d) return [];
+    const who = driverName(d, n);
+    if (d.dob == null) return [chk('dob.missing', p('dob'), `${who}: no date of birth.`)];
+    const dob = toDate(d.dob);
+    if (!dob) return [chk('dob.invalid', p('dob'), `${who}: "${d.dob}" isn't a valid date.`)];
+    const age = year - Number(dob.slice(6));
+    return age < 18 || age > 90 ? [chk('dob.unusual-age', p('dob'), `${who}: age ~${age}. Typo?`)] : [];
+  } },
+  { match: /^drivers\[(\d+)\]\.licenseNumber$/, codes: ['license.missing'], at: (m) => `drivers[${m[1]}].licenseNumber`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho('drivers', Number(m[1]), rows);
+    const d = r.drivers?.[i];
+    return d && d.licenseNumber == null ? [chk('license.missing', p('licenseNumber'), `${driverName(d, n)}: no driver's license number.`)] : [];
+  } },
+  { match: /^drivers\[(\d+)\]\.licenseState$/, codes: ['license-state.missing'], at: (m) => `drivers[${m[1]}].licenseState`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho('drivers', Number(m[1]), rows);
+    const d = r.drivers?.[i];
+    return d && !d.licenseState ? [chk('license-state.missing', p('licenseState'), `${driverName(d, n)}: no license state.`)] : [];
+  } },
+  // The name boxes together: a missing part is on the blank one.
+  { match: /^drivers\[(\d+)\]\.(first|last)$/, codes: ['name.missing-part', 'name.multi-word-first'], at: (m) => `drivers[${m[1]}].`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho('drivers', Number(m[1]), rows);
+    const d = r.drivers?.[i];
+    if (!d) return [];
+    const who = driverName(d, n);
+    const checks = [];
+    if (d.first && /\s/.test(d.first)) checks.push(chk('name.multi-word-first', p('first'), `${who}: "${d.first}" has two words. Check the license for the middle name.`));
+    if (!d.first || !d.last) checks.push(chk('name.missing-part', p(d.first ? 'last' : 'first'), `${who}: missing ${d.first ? 'last' : 'first'} name.`));
+    return checks;
+  } },
+  // The CDL and its year together.
+  { match: /^drivers\[(\d+)\]\.(cdl|cdlYear)$/, codes: ['cdl-year.missing', 'cdl-year.without-cdl', 'cdl.blank-with-year'], at: (m) => `drivers[${m[1]}].`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho('drivers', Number(m[1]), rows);
+    const d = r.drivers?.[i];
+    if (!d) return [];
+    const who = driverName(d, n);
+    if (d.cdl && !d.cdlYear) return [chk('cdl-year.missing', p('cdlYear'), `${who}: has a CDL but no year it was issued.`)];
+    if (d.cdl === false && d.cdlYear) return [chk('cdl-year.without-cdl', p('cdlYear'), `${who}: no CDL, but a CDL year is given.`)];
+    if (d.cdl == null && d.cdlYear) return [chk('cdl.blank-with-year', p('cdl'), `${who}: CDL blank, but a CDL year is given. Answer it.`)];
+    return [];
+  } },
+  { match: /^(vehicles|trailers)\[(\d+)\]\.year$/, codes: ['vehicle-year.invalid'], at: (m) => `${m[1]}[${m[2]}].year`, run: (r, m, { year, rows }) => {
+    const { i, n, p } = unitWho(m[1], Number(m[2]), rows);
+    const u = r[m[1]]?.[i];
+    if (!u || u.year == null || (Number.isInteger(u.year) && u.year >= 1950 && u.year <= year + 1)) return [];
+    return [chk('vehicle-year.invalid', p('year'), `${unitName(u, m[1] === 'vehicles' ? 'Vehicle' : 'Trailer', n)}: year "${u.year}" doesn't look right.`)];
+  } },
+  { match: /^(vehicles|trailers)\[(\d+)\]\.value$/, codes: ['vehicle-value.invalid'], at: (m) => `${m[1]}[${m[2]}].value`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho(m[1], Number(m[2]), rows);
+    const u = r[m[1]]?.[i];
+    if (!u || u.value == null || typeof u.value === 'number') return [];
+    return [chk('vehicle-value.invalid', p('value'), `${unitName(u, m[1] === 'vehicles' ? 'Vehicle' : 'Trailer', n)}: value "${u.value}" isn't a dollar amount.`)];
+  } },
+  { match: /^(vehicles|trailers)\[(\d+)\]\.vin$/, codes: ['vin.invalid', 'vin.missing'], at: (m) => `${m[1]}[${m[2]}].vin`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho(m[1], Number(m[2]), rows);
+    const u = r[m[1]]?.[i];
+    if (!u) return [];
+    const what = unitName(u, m[1] === 'vehicles' ? 'Vehicle' : 'Trailer', n);
+    if (u.vin == null) return [chk('vin.missing', p('vin'), `${what}: no VIN.`)];
+    const vin = String(u.vin).replace(/[\s-]/g, '').toUpperCase();
+    const problem = vinProblem(vin);
+    return problem ? [chk('vin.invalid', p('vin'), `${what}: VIN ${vin} ${problem}.`)] : [];
+  } },
+  { match: /^(vehicles|trailers)\[(\d+)\]\.type$/, codes: ['vehicle-type.missing'], at: (m) => `${m[1]}[${m[2]}].type`, run: (r, m, { rows }) => {
+    const { i, n, p } = unitWho(m[1], Number(m[2]), rows);
+    const u = r[m[1]]?.[i];
+    const label = m[1] === 'vehicles' ? 'Vehicle' : 'Trailer';
+    return u && !u.type ? [chk('vehicle-type.missing', p('type'), `${unitName(u, label, n)}: ${label.toLowerCase()} type not selected.`)] : [];
+  } },
+  { match: /^operations\.(usesEld|eldBrand)$/, codes: ['eld-brand.missing'], run: (r) => (r.operations?.usesEld && !r.operations.eldBrand
+    ? [chk('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.')] : []) },
+  { match: /^operations\.(filingsRequired|filingsWhich)$/, codes: ['filings-which.missing'], run: (r) => (r.operations?.filingsRequired && !r.operations.filingsWhich && !ntlNoDotFilings(r)
+    ? [chk('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.')] : []) },
+  { match: /^coverage\.(cargo|cargoLimit|cargoDeductible)$/, codes: ['cargo-limit.missing', 'cargo-limit.implausible', 'cargo-deductible.missing'],
+    // The agent's own amounts: the box as written no longer says them, so it isn't quoted.
+    run: (r) => cargoChecks({ ...r.coverage, cargoAsWritten: null }).map(([code, path, msg]) => chk(code, path, msg)) },
+  { match: /^coverage\.(autoLiability|autoLiabLimit)$/, codes: ['auto-limit.missing'], run: (r) => ((r.coverage?.autoLiability === 'Yes' || nonTruckingAnswer(r.coverage?.autoLiability)) && !r.coverage.autoLiabLimit
+    ? [chk('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.')] : []) },
+  { match: /^coverage\.(gl|glLimit)$/, codes: ['gl-limit.missing'], run: (r) => (r.coverage?.gl && !r.coverage.glLimit
+    ? [chk('gl-limit.missing', 'coverage.glLimit', 'No GL limit. TNI default is $1M/$2M: confirm with the client.')] : []) },
+  // The current policy's expiration: a date, and whether it has expired (priorExpiredChecks).
+  { match: /^priorInsurance\[0\]\.expiration$/, codes: ['prior-expiration.invalid', 'prior-expiration.expired'], run: (r) => {
+    const prior = r.priorInsurance?.[0];
+    if (!prior || prior.expiration == null) return [];
+    if (!toDate(prior.expiration)) return [chk('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`)];
+    return noPriorInsurance(prior) ? [] : priorExpiredChecks(r, prior);
+  } },
+  // The current policy's boxes together (and the application date, which says whether it has
+  // expired): the boxes left blank, and whether proof of prior insurance is still assumed (review
+  // of PR #367, CodeRabbit). A policy no box of which is filled any more, or "no prior", has none.
+  { match: /^priorInsurance\[0\]\.(type|carrier|limit|expiration)$|^applicant\.applicationDate$/, codes: ['prior.incomplete'], at: () => 'priorInsurance[0]', run: (r) => {
+    const prior = r.priorInsurance?.[0];
+    if (!prior || noPriorInsurance(prior) || !(prior.type || prior.carrier || prior.limit || prior.expiration)) return [];
+    return priorIncompleteChecks(r, prior);
+  } },
+  // With a carrier the panel quotes: a current commercial auto policy (quotedCarrierPolicy reads the
+  // carrier, the type and whether it has expired).
+  { match: /^priorInsurance\[0\]\.(type|carrier|limit|expiration)$|^applicant\.applicationDate$/, codes: ['prior.carrier-is-quoted'], run: (r) => (r.priorInsurance?.[0] && !noPriorInsurance(r.priorInsurance[0]) ? priorQuotedChecks(r.priorInsurance[0]) : []) },
+  { match: /^priorInsurance\[0\]\.type$/, codes: ['prior.personal-auto'], run: (r) => (r.priorInsurance?.[0] && !noPriorInsurance(r.priorInsurance[0]) ? priorPersonalAutoNotes(r.priorInsurance[0]) : []) },
+  // The application date: a current policy expired before it is expired too (priorExpiredChecks),
+  // and the check names the date (review of PR #367, CodeRabbit).
+  { match: /^applicant\.applicationDate$/, codes: ['prior-expiration.expired'], at: () => 'priorInsurance[0].expiration', run: (r) => {
+    const prior = r.priorInsurance?.[0];
+    return !prior || !toDate(prior.expiration) || noPriorInsurance(prior) ? [] : priorExpiredChecks(r, prior);
+  } },
+];
+
+/** The check for a current policy with a carrier the panel quotes. */
+function priorQuotedChecks(prior) {
+  // The current commercial auto policy is with a carrier the panel quotes (TNI, 2026-10-26: answer
+  // to PR question 9: said on the intake check screen, so the agent doesn't fill that carrier's
+  // pages for nothing; question 18: commercial auto only, util.js quotedCarrierPolicy). Named,
+  // since an intake isn't tied to one carrier; in red (`alert`), and a warning only (question 19):
+  // filling goes on. The panel shows it only on that carrier's site (checkShown; TNI, 2026-10-27),
+  // and the carrier's pages say it again (W44-27).
+  const quoted = quotedCarriersOf(prior);
+  return quoted.length ? [{ code: 'prior.carrier-is-quoted', path: 'priorInsurance[0].carrier', level: 'check', alert: true,
+    msg: `Current insurance is with ${quoted.join(' and ')}: a ${quoted.join(' or ')} quote may be declined or routed. Check with the client first.` }] : [];
+}
+const priorPersonalAutoNotes = (prior) => (prior.type === 'Personal Auto'
+  ? [{ code: 'prior.personal-auto', path: 'priorInsurance[0].type', level: 'info', msg: 'Current insurance is a personal auto policy — no prior commercial coverage.' }] : []);
+
+/** The check for a current policy with boxes left blank. */
+function priorIncompleteChecks(record, prior) {
+  // TNI (2026-10-26, W44-29): any box filled is proof of prior insurance, 1-3 years (util.js
+  // priorInsuranceAssumed), and the agent is told at the start which boxes are blank.
+  const missing = [
+    ['policy type', prior.type], ['carrier', prior.carrier], ['limit', prior.limit], ['expiration date', prior.expiration],
+  ].filter(([, value]) => !value).map(([name]) => name);
+  if (!missing.length) return [];
+  const named = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
+  return [chk('prior.incomplete', 'priorInsurance[0]', priorInsuranceAssumed(record, prior)
+    ? `Current insurance: missing the ${named}. Proof of prior insurance (1-3 years) is assumed (TNI); get the rest from the client.`
+    : `Current insurance: missing the ${named}. Confirm before quoting.`)];
+}
+
+/** The check for a current policy expired by today's date or the application date. */
+function priorExpiredChecks(record, prior) {
+  // Expired by today's date or the application date: the carriers' rules read it the same way
+  // (priorPolicyExpired; the maintainer, 2026-11-07, audit DATA-02), so the check names the date.
+  const { byToday, byApplication } = priorPolicyExpiredBy(record, prior);
+  if (!byToday && !byApplication) return [];
+  const applied = record.applicant?.applicationDate;
+  const before = byApplication ? (byToday ? 'before the application date and today' : 'before the application date')
+    : applied ? `before today, though after the application date ${applied}` : 'before today';
+  return [chk('prior-expiration.expired', 'priorInsurance[0].expiration', `Expired ${prior.expiration}, ${before}: an expired policy is not current insurance. Review it.`)];
+}
+
+// Checks for the record as corrected, in place of the ones `owns` picks among the intake's (a
+// derivation's, or the edited box's own). Kept by position, as the panel marks checks done by
+// position: one said again in the same words keeps its mark; in other words, it takes the old one's
+// place, unchecked; a new one is added at the end; one that no longer holds is retired to a note
+// saying so.
+const RETIRED = 'No longer applies after your edit: ';
+function recheck(intake, owns, checks) {
+  const { warnings } = intake;
+  const before = warnings.flatMap((w, i) => (owns(w) ? [i] : []));
+  const said = new Set();
+  for (const w of checks) {
+    const i = before.find((j) => !said.has(j) && warnings[j].code === w.code);
+    if (i == null) { warnings.push(w); continue; }
+    said.add(i);
+    const was = warnings[i];
+    if (was.level === w.level && was.path === w.path && was.msg === w.msg) continue;
+    warnings[i] = w;
+    intake.done = (intake.done ?? []).filter((d) => d !== i);
+  }
+  for (const i of before) {
+    if (said.has(i) || warnings[i].msg.startsWith(RETIRED)) continue;
+    const { code, path, msg } = warnings[i];
+    warnings[i] = { code, path, level: 'info', msg: `${RETIRED}${msg}` };
+  }
+}
 
 /**
  * @param {object} record  the client record, already holding the edit at `path`
  * @param {string} path  the edited field
- * @param {{ today?: Date, keep?: Set<string> }} [options]  keep: derived paths the agent set
- *   directly, never recomputed
+ * @param {{ today?: Date, keep?: Set<string>, intake?: { warnings: object[], done?: number[], readFrom?: Record<string, string[]>, rows?: object } }} [options]
+ *   keep: the paths the agent set directly, never recomputed; intake: the loaded intake holding
+ *   `record`, whose checks (with their done marks) and `readFrom` follow
  * @returns {string[]} the derived paths that were recomputed
  */
-export function rederive(record, path, { today = new Date(), keep } = {}) {
-  const derived = DERIVED[path];
-  if (!derived) return [];
-  const [target, compute] = derived;
-  if (keep?.has(target)) return [];
-  set(record, target, compute(record, today.getFullYear()));
-  return [target];
+export function rederive(record, path, { today = new Date(), keep, intake } = {}) {
+  const year = today.getFullYear();
+  const mine = (p) => p === path || !!keep?.has(p);
+  const readFrom = intake ? (intake.readFrom ??= {}) : null;
+  // The edited answer is the agent's, read from no other box.
+  if (readFrom) delete readFrom[path];
+  // What the edit changed, derived answers included (the claims box's notes, read for ownership).
+  const changed = new Set([path]);
+  const recomputed = [];
+  for (const d of DERIVATIONS) {
+    if (!d.from.some((p) => changed.has(p))) continue;
+    const out = d.run(record, { mine, readFrom, year });
+    if (!out) continue;
+    for (const [p, value] of Object.entries(out.values)) {
+      if (mine(p)) continue;
+      set(record, p, value);
+      changed.add(p);
+      recomputed.push(p);
+    }
+    for (const [p, fields] of Object.entries(out.readFrom ?? {})) {
+      if (!readFrom || mine(p)) continue;
+      if (fields?.length) readFrom[p] = fields;
+      else delete readFrom[p];
+    }
+    if (intake && d.codes && out.checks) recheck(intake, (w) => d.codes.includes(w.code), out.checks);
+  }
+  // The edited box's own checks, on the value it holds now.
+  for (const box of intake ? BOX_CHECKS : []) {
+    const m = path.match(box.match);
+    if (!m) continue;
+    const at = box.at?.(m);
+    const owns = (w) => box.codes.includes(w.code) && (!at || (at.endsWith('.') ? w.path?.startsWith(at) : w.path === at));
+    recheck(intake, owns, box.run(record, m, { year, rows: intake.rows }));
+  }
+  return recomputed;
 }

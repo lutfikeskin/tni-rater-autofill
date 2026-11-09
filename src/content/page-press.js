@@ -14,7 +14,7 @@
 // Injected by the side panel for carriers with `pressInPage` (GEICO), in every frame, before each
 // fill; a copy injected again (another build after an update) replaces the one before.
 (() => {
-  window.__raterPress?.off?.();
+  globalThis.__raterPress?.off?.();
   const LATE_MS = 1000;
   const onPress = (e) => {
     const el = e.composedPath?.()[0] ?? e.target;
@@ -37,5 +37,5 @@
     setTimeout(() => press(true), LATE_MS);
   };
   document.addEventListener('rater-press', onPress, true);
-  window.__raterPress = { off: () => document.removeEventListener('rater-press', onPress, true) };
+  globalThis.__raterPress = { off: () => document.removeEventListener('rater-press', onPress, true) };
 })();

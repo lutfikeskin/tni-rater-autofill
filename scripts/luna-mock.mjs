@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Packaged extension, real fixture controls, intercepted OpenAI responses. No live API calls.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -362,7 +363,7 @@ try {
   await loadPdf();
   phase = 'missing-key';
   await clickFill();
-  await panel.getByText(/GPT-6 Luna needs an OpenAI API key/).waitFor();
+  await panel.getByText(/The AI assistant needs an OpenAI API key/).waitFor();
   verify('Luna never reuses legacy or TypeSafe keys', requests + claimsRequests + namesRequests, 0);
   await panel.locator('#report').getByRole('button', { name: 'Add the key', exact: true }).click();
   await panel.locator('#ai-openai-key').waitFor({ state: 'visible' });
@@ -601,7 +602,7 @@ try {
   await panel.getByText('Conflicting intake facts require clarification.', { exact: false }).waitFor();
   verify('conflicting evidence leaves the field unanswered', await mock.locator('#mockLunaChoice').inputValue(), '');
   verify('conflicting evidence offers no approval button', await approve.isVisible(), false);
-  verify('a field Luna left shows its recommendation', await panel.getByText('Luna recommends: Confirm placard use with the client.', { exact: false }).count() > 0, true);
+  verify('a field Luna left shows its recommendation', await panel.getByText('The AI assistant recommends: Confirm placard use with the client.', { exact: false }).count() > 0, true);
   // The page's other answers went along, bounded, without typed values or private questions.
   const typed = await mock.evaluate(() => [...document.querySelectorAll('input[type=text], input:not([type]), textarea')].map((el) => el.value.trim()).filter(Boolean));
   const sentAnswers = pageAnswersSent.flat();
@@ -622,8 +623,19 @@ try {
   await panel.waitForTimeout(1000);
   verify('turning assistance off discards an in-flight Luna response', await panel.locator('#report .row.pending').count(), 0);
   verify('stale provider response never fills the page', await mock.locator('#mockLunaChoice').inputValue(), '');
-  // With assistance off a new intake gets neither check: nothing sent, GL and gender untouched.
+  // Suggest answers off: the driver-name check still runs, on its own switch (AI-15), and the
+  // claims box isn't read.
   phase = 'intake-checks-off';
+  const offClaims = claimsRequests, offNames = namesRequests;
+  await closeAgent();
+  await openMock(); await loadPdf();
+  await panel.waitForTimeout(1000);
+  verify('Suggest answers off: the claims box is not sent', claimsRequests, offClaims);
+  verify('Suggest answers off: the driver-name check runs on its own switch', namesRequests > offNames, true);
+  // Both off, a new intake gets neither check: nothing sent, GL and gender untouched.
+  await openAgent();
+  await panel.locator('#ai-names').uncheck();
+  await waitSetting('lunaNames', false);
   const offBefore = claimsRequests + namesRequests;
   flagIntake = true;
   await closeAgent();

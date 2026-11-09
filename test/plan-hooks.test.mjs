@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The generic hooks a feature can plug into without core code knowing it (docs/agent-defaults-spec.md):
 // buildPlan's step overlay, the panel's one planFor, and rulebookFor's rewrite. With nothing plugged in
 // each does nothing, so every plan and rulebook is the rules' own.
@@ -99,4 +100,35 @@ test('rulebookFor\'s rewrite: none leaves the entries as written; one gives the 
     assert.equal(marked.length, plain.length);
   }
   assert.deepEqual(rulebookFor('unknown', { rewrite: () => { throw new Error('not called'); } }), []);
+});
+
+// Audit 2026-11-07, CARR-05: a coverage section is the carrier's (`sections`), not the kit's: the
+// plan gives a section's Done how its row is read, and a Done closing a section the carrier doesn't
+// declare is a configuration error, never a click with nothing checked.
+test('a coverage section the carrier declares: the plan gives its Done the section, an undeclared one throws', async () => {
+  const { buildPlan } = await import('../src/plan.js');
+  const fs = await import('node:fs');
+  const carrier = (sections) => ({ id: 'x', hosts: [], useGenericRules: false, sections,
+    rules: [{ name: 'Reefer question', selector: '#q', source: 'derived', value: () => 'Yes', section: { id: 'reefer', part: 'section' } }],
+    actions: [{ id: 'doneReefer', text: '^done$', verify: { closed: 'reefer' } }] });
+  const plan = buildPlan({}, carrier({ reefer: { words: 'reefer[^\\n]*', anyLimit: true } }), {});
+  assert.deepEqual(plan.find((s) => s.action === 'doneReefer').verify, { closed: 'reefer', words: 'reefer[^\\n]*', anyLimit: true });
+  assert.deepEqual(plan.find((s) => s.name === 'Reefer question').section, { id: 'reefer', part: 'section' });
+  assert.throws(() => buildPlan({}, carrier({}), {}), /doneReefer: verify closes "reefer", which its sections don't declare/);
+  // The kit names no carrier's coverage.
+  for (const file of fs.readdirSync(new URL('../src/kit/', import.meta.url)).filter((f) => f.endsWith('.js'))) {
+    assert.doesNotMatch(fs.readFileSync(new URL(`../src/kit/${file}`, import.meta.url), 'utf8'), /motor truck cargo/i, file);
+  }
+});
+
+// Audit 2026-11-07, CARR-09: the generic label rules (src/rules.js) misfired on Progressive's and
+// GEICO's pages, so a carrier gets them only by opting in (`useGenericRules: true`), as AmWINS and
+// the local test page do; a new carrier without the key gets its own rules alone.
+test('the generic label rules are opt-in: a carrier without useGenericRules gets none', async () => {
+  const { CARRIERS } = await import('../src/carriers.js');
+  const generic = (carrier) => buildPlan({ applicant: { name: 'Synthetic LLC', phone: '(555) 010-0100' } }, carrier, {}).filter((s) => s.kind !== 'action').length;
+  assert.equal(generic({ id: 'new', hosts: [], rules: [] }), 0, 'no key: no generic rules');
+  assert.equal(generic({ id: 'new', hosts: [], rules: [], useGenericRules: false }), 0);
+  assert.ok(generic({ id: 'new', hosts: [], rules: [], useGenericRules: true }) > 0, 'opted in');
+  assert.deepEqual(Object.fromEntries(CARRIERS.map((c) => [c.id, c.useGenericRules])), { progressive: false, geico: false, amwins: true, test: true }, 'every carrier says it');
 });

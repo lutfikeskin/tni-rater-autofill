@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Settings → Your defaults (docs/agent-defaults-spec.md, "TNI defaults (basic)" and "Advanced"): the
 // agent's own amounts in place of TNI's standards, kept in a profile the agent picks, never under their
 // initials alone. One folded row, as AI's, that says the profile and how many amounts it changes; Per
@@ -12,6 +13,7 @@ import { panelStore } from '../state-store.js';
 import { REGISTRY, RELEASED_TO_AGENTS, amountSaid, defaultsForLog, effectiveDefaults } from '../../../src/agent-defaults/index.js';
 import { STANDARD_IDS } from '../../../src/standards.js';
 import { DEFAULTS_CARRIERS } from './store.js';
+import { useAskFocus } from '../ask-focus.js';
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -101,6 +103,10 @@ export function TniDefaults({ act }) {
   const initials = useStore(panelStore, (s) => s.defaultsInitials);
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
+  // The profile Delete profile asks about, until Delete or Cancel: asked here, as the client's file
+  // tools ask (client-view.jsx), never with a browser dialog, which holds the panel and a fill's Stop.
+  const [deleting, setDeleting] = useState(null);
+  const askFocus = useAskFocus(!!deleting && deleting === stored?.active);
   if (!on) return null;
   const profiles = Object.entries(stored?.profiles ?? {});
   const active = stored?.active ? stored.profiles[stored.active] : null;
@@ -114,12 +120,20 @@ export function TniDefaults({ act }) {
             <>
               <label className="opt" htmlFor="defaults-profile">
                 <span className="opt-text"><b>Profile</b></span>
-                <select id="defaults-profile" value={stored?.active ?? ''} onChange={(e) => act.pick(e.target.value || null)}>
+                <select id="defaults-profile" ref={askFocus.fallback} value={stored?.active ?? ''} onChange={(e) => act.pick(e.target.value || null)}>
                   <option value="">{"None: TNI's everywhere"}</option>
                   {profiles.map(([id, p]) => <option key={id} value={id}>{p.name}</option>)}
                 </select>
               </label>
-              {naming ? (
+              {active && deleting === stored.active ? (
+                <div id="defaults-confirm" ref={askFocus.group} className="file-confirm" role="group" aria-labelledby="defaults-confirm-text">
+                  <p id="defaults-confirm-text" className="small">{`Delete ${active.name}'s defaults?`}</p>
+                  <div className="actions">
+                    <button type="button" id="defaults-confirm-yes" className="ghost danger" onClick={() => { setDeleting(null); act.remove(stored.active); }}>Delete</button>
+                    <button type="button" id="defaults-confirm-no" ref={askFocus.cancel} className="ghost" onClick={() => setDeleting(null)}>Cancel</button>
+                  </div>
+                </div>
+              ) : naming ? (
                 <div className="defaults-actions">
                   <input id="defaults-new-name" type="text" maxLength={40} autoComplete="off" placeholder="Your name, e.g. Jordan K." value={name}
                     onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} />
@@ -129,7 +143,7 @@ export function TniDefaults({ act }) {
               ) : (
                 <div className="defaults-actions">
                   <button type="button" id="defaults-new" className="ghost small-btn" onClick={() => setNaming(true)}>New profile</button>
-                  {active ? <button type="button" id="defaults-delete" className="ghost small-btn danger" onClick={() => { if (confirm(`Delete ${active.name}'s defaults?`)) act.remove(stored.active); }}>Delete profile</button> : null}
+                  {active ? <button type="button" id="defaults-delete" ref={askFocus.opener} className="ghost small-btn danger" onClick={() => setDeleting(stored.active)}>Delete profile</button> : null}
                 </div>
               )}
               {active ? REGISTRY.filter((e) => !e.locked).map((entry) => (

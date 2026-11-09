@@ -1,3 +1,4 @@
+// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -336,7 +337,7 @@ test('Progressive coverage and helper ordering are conservative', () => {
     }
   }
   const doneGl = glActions.find((s) => s.action === 'doneGl');
-  assert.deepEqual([doneGl.afterActions, doneGl.after, doneGl.verify, doneGl.waitRequired], [['openGl'], ['progressive.q21D1'], 'glClosed', true]);
+  assert.deepEqual([doneGl.afterActions, doneGl.after, doneGl.verify, doneGl.waitRequired], [['openGl'], ['progressive.q21D1'], { closed: 'gl', words: null, anyLimit: true }, true]);
   assert.ok(new RegExp(doneGl.text, 'i').test('Done with this coverage'));
   // With GL too: Recalculate once cargo and GL are done, then the bill plan, then Print.
   for (const id of ['recalculate', 'billPlan']) assert.deepEqual(glActions.find((s) => s.action === id).afterActions, ['doneCargo', 'doneGl'], id);
@@ -351,12 +352,12 @@ test('Progressive coverage and helper ordering are conservative', () => {
   for (const [ref, value] of [['GeneralLiabilityInput.GeneralLiabilityTruckIncome', true], ['GeneralLiabilityInput.GeneralLiabilityTruckOtherPremises', false],
     ['GeneralLiabilityInput.GeneralLiabilityTruckSetup', false], ['GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas', false], ['GeneralLiabilityInput.GeneralLiabilityTruckOtherBusiness', false]]) {
     const step = glField(glPlan, ref);
-    assert.deepEqual([step.value, step.standard, step.gl, step.manualOnly], [value, true, 'section', false], ref);
+    assert.deepEqual([step.value, step.standard, step.section, step.manualOnly], [value, true, { id: 'gl', part: 'section' }, false], ref);
   }
   assert.deepEqual(glActions.find((s) => s.action === 'doneCargo').unlessActions, ['openGl'], "GL's Done is never taken for cargo's");
   // No limit on the intake: TNI's default $1M/$2M, filled and marked to confirm.
   const limit = glField(glPlan, 'LineInput.GeneralLiabilityLimit');
-  assert.deepEqual([limit.path, limit.value, limit.standard, limit.gl], ['progressive.q21D1', '$1,000,000/ $2,000,000 Aggregate', true, 'limit']);
+  assert.deepEqual([limit.path, limit.value, limit.standard, limit.section], ['progressive.q21D1', '$1,000,000/ $2,000,000 Aggregate', true, { id: 'gl', part: 'limit' }]);
   assert.match(limit.warn, /TNI's default limit, \$1M\/\$2M .*confirm it with the client/);
   // The intake's $1M/$2M: derived, no warning; one Progressive doesn't offer: the agent's.
   gl.coverage.glLimit = '$1M/$2M';
@@ -493,7 +494,7 @@ test('search-style business type: General Freight Trucking, else For Hire Trucki
   assert.deepEqual([la.value, la.source, la.manualOnly, la.search], [null, 'fact', true, null]);
   const popup = byQ(plan, '36');
   assert.deepEqual([popup.value, popup.source, popup.manualOnly, popup.choiceAliases, popup.unofferedNote], [null, 'derived', false, [], null]);
-  assert.match(popup.note, /Business type for a Flat Bed\/Step Deck hauling Rebar and steel pipe: no exact match\. Luna suggests/);
+  assert.match(popup.note, /Business type for a Flat Bed\/Step Deck hauling Rebar and steel pipe: no exact match\. The AI assistant suggests/);
   assert.equal(plan.find((s) => s.q === '1D' && s.selector).ignore, false, 'Trucking typed for every class');
   assert.ok(plan.find((s) => s.action === 'businessTypePopupSearch'), 'and searched');
   assert.equal(plan.find((s) => s.action === 'businessTypePopupContinue'), undefined, 'the popup\'s Continue follows the agent\'s approval of Luna\'s pick');
@@ -2251,8 +2252,8 @@ test('trailer interchange: the intake\'s request is added and answered, the numb
     assert.deepEqual([step.value, step.source, step.manualOnly, step.note], [value, source, false, null], ref);
     assert.ok(shape(ref).opts.includes(value === true ? 'Yes' : value), `${ref}: the page offers ${value}`);
   }
-  assert.deepEqual(['21BE', '21BF', '21C0'].map((q) => byQ(plan, q).interchange), ['section', 'section', 'section']);
-  assert.equal(field('TrailerInterchangeInput.Limit').interchange, 'limit');
+  assert.deepEqual(['21BE', '21BF', '21C0'].map((q) => byQ(plan, q).section?.id + ':' + byQ(plan, q).section?.part), ['interchange:section', 'interchange:section', 'interchange:section']);
+  assert.deepEqual(field('TrailerInterchangeInput.Limit').section, { id: 'interchange', part: 'limit' });
   // The number and the tile are marked to confirm, on the number and on the limit (it stays in the row).
   for (const ref of ['TrailerInterchangeInput.NoOfNonOwnedTrailers', 'TrailerInterchangeInput.Limit']) {
     assert.match(field(ref).warn, /TNI's default of 1 non-owned trailer, and the Dry Freight Trailer tile for the intake's Dry Van trailer\. Confirm them with the client/, ref);
@@ -2267,7 +2268,7 @@ test('trailer interchange: the intake\'s request is added and answered, the numb
   assert.deepEqual([tile.afterActions, tile.afterAny, tile.unless, tile.unique], [['openInterchange'], ['progressive.q21C0', 'progressive.qNP21EB'], ['progressive.q21DD', 'progressive.q21E5'], true]);
   assert.ok(layout.open.tiles.every((t) => new RegExp(tile.text, 'i').test(t)));
   const done = act('doneInterchange');
-  assert.deepEqual([done.afterActions, done.after, done.verify, done.waitRequired], [['openInterchange'], ['progressive.q21DD', 'progressive.q21E5'], 'interchangeClosed', true]);
+  assert.deepEqual([done.afterActions, done.after, done.verify, done.waitRequired], [['openInterchange'], ['progressive.q21DD', 'progressive.q21E5'], { closed: 'interchange', words: null, anyLimit: true }, true]);
   for (const id of ['recalculate', 'billPlan']) assert.deepEqual(act(id).afterActions, ['doneCargo', 'doneInterchange'], id);
   // With GL too: after GL's Done.
   const gl = interchangeRecord();
