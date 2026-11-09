@@ -14,7 +14,7 @@ import {
   getControlReads, keyIndex, controlOf, hiddenKeys,
 } from "./dom.js";
 import {
-  COVERED, COVERED_HELPER, CLOSED_SECTIONS,
+  COVERED, COVERED_HELPER, closedSection,
   findAdvanceButton, findButton, pressButton, coveredBy, agentPress,
 } from "./actions.js";
 import { mark, clear } from "./marks.js";
@@ -621,7 +621,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   const unitGroups = makePager(plan, pager, startPage);
   // The rules of coverage sections the page closes (offPage), and the failed choices given once more
   // against options the page redrew (retryRedrawn), by step id.
-  const closable = new Set(plan.filter((s) => Object.values(CLOSED_SECTIONS).some(({ tag }) => s[tag] === 'section')).map((s) => s.id));
+  const closable = new Set(plan.filter((s) => s.section?.part === 'section').map((s) => s.id));
   const redrawRetried = new Set();
 
   for (let round = 0; round < maxRounds; round++) {
@@ -1449,9 +1449,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
     // screen but disabled is not gone.
     if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
-    // A coverage section's Done (cargo's, general liability's, trailer interchange's): its questions are gone and the
-    // row keeps the limit (sectionClosedOn).
-    if (CLOSED_SECTIONS[a.verify]) accepted = sectionClosedOn(collectControls(), CLOSED_SECTIONS[a.verify]);
+    // A coverage section's Done (`verify: { closed }`: Progressive's cargo, general liability, trailer
+    // interchange): its questions are gone and the row keeps the limit (sectionClosedOn).
+    if (closedSection(a)) accepted = sectionClosedOn(collectControls(), closedSection(a));
     // `revealed`: the click showed its result: a question appeared, or an answer changed, since
     // the snapshot taken as the button was clicked (a lookup's decoded values, the rows an
     // import redraws, the registered names a USDOT check offers). A redraw of the same
@@ -1746,25 +1746,26 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       && actionHere(a) && !settledItem(a);
   }
 
-  // A coverage section added and closed (CLOSED_SECTIONS): none of its questions on screen (found
-  // by the rules tagged for it), and its row keeps the limit.
+  // A coverage section added and closed (`verify: { closed }`, the carrier's `sections`): none of its
+  // questions on screen (found by the rules tagged for it, `section.part` 'section'), and its row keeps the limit.
   // Checking the fill's own Done: the intake's limit (with `anyLimit`, any limit when the intake
   // has none), or the row's `words` showing the intake's amounts.
   // `found` (a section the fill finds closed, by the agent or an earlier fill): the intake's limit
   // or one the agent set themselves, not one this fill put in (a limit chosen in the row adds the
   // coverage, whose section Progressive hasn't drawn yet), and never by the row's words.
   function sectionClosedOn(controls, section, { found = false } = {}) {
-    const { tag } = section;
-    if (assign(controls, plan).some(({ step }) => step[tag] === 'section')) return false;
+    const tag = section.closed;
+    const partOf = (s) => (s.section?.id === tag ? s.section.part : null);
+    if (assign(controls, plan).some(({ step }) => partOf(step) === 'section')) return false;
     // The row's limit steps, assigned among themselves (cargo's row and section read the same).
-    const limitSteps = plan.filter((s) => s[tag] === 'limit' && (s.value != null || (section.anyLimit && !found)));
+    const limitSteps = plan.filter((s) => partOf(s) === 'limit' && (s.value != null || (section.anyLimit && !found)));
     const kept = ({ step, control }) => (found
       ? !state.report.filled.some((x) => x.key === fieldKey(control))
         && (agreesWith(step, control) || (skippedField(control) && hasValue(control)))
       : (!section.anyLimit || hasValue(control)) && (step.value == null || agreesWith(step, control)));
     if (assign(controls, limitSteps).some(kept)) return true;
     if (found || !section.words) return false;
-    const amounts = moneyTokens((document.body.innerText ?? '').match(section.words)?.[0] ?? '');
+    const amounts = moneyTokens((document.body.innerText ?? '').match(new RegExp(section.words, 'i'))?.[0] ?? '');
     return limitSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
   }
 
@@ -1832,7 +1833,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // against the page as the fill ends.
   // `offPage`: an item whose field isn't on screen now but is still this page's question, as the
   // kit knows: read while another group of units was shown ('group': `pager`), or in a coverage
-  // section the page closes ('section': CLOSED_SECTIONS, Progressive's cargo, GL and trailer
+  // section the page closes ('section': a carrier's `sections`, Progressive's cargo, GL and trailer
   // interchange behind their Done); or an item about the fill's own answer, whose field the page
   // took away on it ('answer': a summary in its place, `vanished`), which the agent still checks.
   // And one whose field is in the page but not shown or open now ('hidden': a collapsed card such as
@@ -1988,8 +1989,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       // the maintainer, 2026-10-28, after an FL run where the agent closed cargo and GL was never
       // added). Only as this fill found the page (after a click of its own, a "+", a section still
       // being drawn isn't closed), and with no Done with this coverage showing (a section is open).
-      if (CLOSED_SECTIONS[a.verify] && !state.report.actions.some((x) => !x.alreadyShown) && !findButton(a)
-        && sectionClosedOn(controls, CLOSED_SECTIONS[a.verify], { found: true })) {
+      if (closedSection(a) && !state.report.actions.some((x) => !x.alreadyShown) && !findButton(a)
+        && sectionClosedOn(controls, closedSection(a), { found: true })) {
         state.clicked.add(a.action);
         state.report.actions.push({ id: a.action, text: 'closed on the page', alreadyShown: true });
         continue;

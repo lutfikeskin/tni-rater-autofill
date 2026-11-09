@@ -189,9 +189,7 @@
  * @property {ClientValue<string | null>} [unofferedNote]  a list without the answer, which no helper shows later (GEICO's Medical Payments without $5,000): the agent's alone at once, with this note, instead of a failure
  * @property {string[]} [needs]  the rules (their `q`) whose answer on the same unit the page needs before it offers this one (GEICO's collision, rental and road service behind comprehensive): while one of them is being given again this waits, and when one doesn't take, the unit gets one needs-you item naming them all instead of a failure each
  * @property {boolean} [checkNumber]
- * @property {'section' | 'limit' | true} [cargo]
- * @property {'section' | 'limit'} [gl]
- * @property {'section' | 'limit'} [interchange]  Progressive's trailer interchange: a question of its open section, or its limit (in the section and in the row once Done); its Done checks them (`interchangeClosed`)
+ * @property {{ id: string, part: 'section' | 'limit' | 'question' }} [section]  a question of a coverage section the carrier declares (`sections`): of its open section, its limit (in the section and in the row once Done), which the section's Done (`verify: { closed }`) checks, or another question of that coverage (`question`: Progressive's reefer breakdown, which re-arms cargo's Done but isn't checked)
  * @property {string} [group]
  * @property {ClientValue<string | null>} [summaryAfter]
  * @property {ClientValue<string[]>} [choiceAliases]  other words for the answer, in order, as an option reads; a yes/no answer
@@ -268,7 +266,8 @@
  * How a click is known to have worked (pagekit fill): its result shows the premium, reveals more,
  * starts a download, the button goes, a coverage closes, `appears` matches more than before, or the
  * page is now `page` (a click that opens another page; with `loads`, waited for).
- * @typedef {'premium' | 'revealed' | 'download' | 'gone' | 'cargoClosed' | 'glClosed' | 'interchangeClosed' | { appears: string } | { page: string }} ActionVerify
+ * `{ closed }`: a coverage section of the carrier's `sections` closed (in a plan step, with its `words` and `anyLimit`).
+ * @typedef {'premium' | 'revealed' | 'download' | 'gone' | { closed: string, words?: string | null, anyLimit?: boolean } | { appears: string } | { page: string }} ActionVerify
  */
 
 /**
@@ -355,6 +354,10 @@
  * @property {boolean} useGenericRules  whether the generic label rules (src/rules.js) fill this carrier's pages
  *   too: only when true (AmWINS, the local test page), so a new carrier opts in after checking them (audit
  *   2026-11-07, CARR-09)
+ * @property {{ [id: string]: { words?: string, anyLimit?: boolean } }} [sections]  coverage sections a page adds and closes (Progressive's cargo,
+ *   general liability, trailer interchange): rules tagged `section: { id, part }` are its questions; a helper with `verify: { closed: id }`
+ *   is its Done, accepted once none of its questions show and its row keeps the limit (`words`: a regular expression, case-insensitive, for
+ *   the row's text whose amounts show the intake's; `anyLimit`: any limit counts when the intake gives none)
  * @property {string[]} [rowSections]
  * @property {SupportedClass[]} [supportedClasses]
  * @property {boolean} [replaceChoices]
@@ -425,9 +428,7 @@
  * @property {boolean} each
  * @property {boolean} optional
  * @property {boolean} registeredName
- * @property {'section' | 'limit' | true | null} cargo
- * @property {'section' | 'limit' | null} gl
- * @property {'section' | 'limit' | null} interchange
+ * @property {{ id: string, part: 'section' | 'limit' | 'question' } | null} section
  * @property {string | null} selector
  * @property {string | null} re  the rule's `label` pattern
  * @property {string | null} ex  the rule's `not` pattern

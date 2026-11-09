@@ -576,6 +576,15 @@ export const progressive = {
   // Live Progressive questions are mapped explicitly below. Generic label fallbacks can
   // turn an unvalidated field (especially optional contact or GL fields) into an assertion.
   useGenericRules: false,
+  // The coverage sections Rates adds and closes with "Done with this coverage" (rules tagged
+  // `section`, Done helpers `verify: { closed }`): closed, none of the section's questions show and
+  // its row keeps the limit; `words`, cargo's row text whose amounts show the intake's limit and
+  // deductible; `anyLimit`, any limit counts when the intake gives none.
+  sections: {
+    cargo: { words: 'motor truck cargo[^\\n]*(?:\\n[^\\n]*){0,2}' },
+    gl: { anyLimit: true },
+    interchange: { anyLimit: true },
+  },
   // The business classes these rules were written and checked for (live for-hire expediter and
   // general freight hauler quotes). Any other class fills in review mode (plan.js supportedClass).
   supportedClasses: [EXPEDITER, FREIGHT_HAULER],
@@ -676,29 +685,29 @@ export const progressive = {
     { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], unlessSelector: COMMODITY_ROW, when: (r) => r.coverage.cargo === true && notNtl(r) },
     // OK (2026-10-07): the commodity was chosen but Done didn't show until the agent chose it again
     // (the category's reload still under way): with no Done, the commodity is chosen again, once.
-    { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', nudge: 'progressive.q216B', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', unlessActions: ['openGl'], when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', nudge: 'progressive.q216B', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: { closed: 'cargo' }, unlessActions: ['openGl'], when: (r) => r.coverage.cargo === true && notNtl(r) },
     // General liability on the intake (TNI, 2026-10-20): once cargo is done (one "Done with this
     // coverage" on the page at a time), the "+" in its row opens its section, whose questions and
     // limit fill (glQuestion, glLimit), then its Done closes it. Done waits for the limit and for
     // every required question in the section: one no rule knows stays the agent's. Done only once
-    // the section's questions are gone and the row keeps the limit (glClosed). Once GL is open,
+    // the section's questions are gone and the row keeps the limit (`verify: { closed: 'gl' }`). Once GL is open,
     // cargo's Done (the same text) is never clicked again (doneCargo's unlessActions). Cargo closed
     // on the page, by the agent or an earlier fill, counts as doneCargo (the maintainer, 2026-10-28;
-    // the kit's sectionClosedOn, for `verify: 'cargoClosed'` as for 'glClosed').
+    // the kit's sectionClosedOn, for `verify: { closed: 'cargo' }` as for GL's).
     // Its text is a regular expression in a string: '^\\+$', as cargo's. Written '^\+$' it read
     // /^+$/, which doesn't compile: every fill on Rates with GL asked for stopped where it looked
     // for this "+" (FL live run, 2026-10-28: the agent added GL and closed cargo by hand).
     { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'general liability', unless: ['progressive.q21D1'], afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
-    { id: 'doneGl', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openGl'], after: ['progressive.q21D1'], verify: 'glClosed', when: (r) => glRequested(r) && notNtl(r) },
+    { id: 'doneGl', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openGl'], after: ['progressive.q21D1'], verify: { closed: 'gl' }, when: (r) => glRequested(r) && notNtl(r) },
     // Trailer interchange on the intake (TNI, 2026-10-28): once cargo and GL are done, the "+" in its
     // row, its questions, the trailer type tile once the number of non-owned trailers is in (a limit
     // on screen means a tile was picked), then its Done once the limit and Non-Owned Trailer
     // Physical Damage are in: verified once its section's questions are gone and the row keeps the
-    // limit (interchangeClosed). No tile for the intake's trailers: the agent's pick, said on the
+    // limit (`verify: { closed: 'interchange' }`). No tile for the intake's trailers: the agent's pick, said on the
     // number of non-owned trailers (interchangeConfirm).
     { id: 'openInterchange', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'trailer interchange', unless: [INTERCHANGE_LIMIT, 'progressive.q21BE'], afterActions: (r) => (r.coverage.ntl === true ? ['doneNtl'] : [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])]), label: 'Trailer interchange', missing: 'The intake asks for trailer interchange: add it with "+" in the Trailer Interchange row, then fill this page again.', when: interchangeOurs },
     { id: 'interchangeTile', page: 'CoveragesRates', heldBy: NTL_HOLD, text: interchangeTile, unique: true, afterActions: ['openInterchange'], afterAny: ['progressive.q21C0', NON_OWNED_COUNT], unless: [INTERCHANGE_LIMIT, 'progressive.q21E5'], when: (r) => interchangeOurs(r) && !!interchangeTile(r) },
-    { id: 'doneInterchange', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openInterchange'], after: [INTERCHANGE_LIMIT, 'progressive.q21E5'], verify: 'interchangeClosed', when: interchangeOurs },
+    { id: 'doneInterchange', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openInterchange'], after: [INTERCHANGE_LIMIT, 'progressive.q21E5'], verify: { closed: 'interchange' }, when: interchangeOurs },
     // Rates, as TNI agents work it (the maintainer, 2026-10-23): once cargo and GL are added,
     // Recalculate and wait for the new premium, open the bill plan options and pick automatic
     // payments there, come back (Continue), then Print, Email, Fax. On an NTL quote with cargo or GL
@@ -1195,18 +1204,18 @@ export const progressive = {
       // $5,000 wherever Progressive offers it (TNI, 2026-10-26, W44-26).
       { concept: 'coverage.medpay', q: '1FE4', tni: 'progressive.medpay', source: 'standard', field: 'MedicalPaymentInput.Limit', name: `Medical payments per person (standard: ${usd(STANDARDS.medPay)})`, kind: 'choice', value: () => MED_PAY, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0,
         std: { id: 'medPay', write: medPay, name: (a) => `Medical payments per person (standard: ${usd(a)})` } },
-      { concept: 'coverage.cargo', q: '2158', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
-      { concept: 'coverage.cargo', q: '215A', tni: 'progressive.cargo', source: 'standard', cargo: 'section', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },
+      { concept: 'coverage.cargo', q: '2158', tni: 'progressive.cargo', source: 'standard', section: { id: 'cargo', part: 'section' }, ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
+      { concept: 'coverage.cargo', q: '215A', tni: 'progressive.cargo', source: 'standard', section: { id: 'cargo', part: 'section' }, ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },
       // TNI: an unselected Reefer option on the intake means this coverage is not requested.
-      { concept: 'coverage.reefer-breakdown', q: '215C', source: 'derived', cargo: true, ask: 'Does the customer require Refrigeration Breakdown coverage?', path: 'coverage.reeferBreakdown', kind: 'bool', value: (r) => r.coverage.reeferBreakdown === true,
+      { concept: 'coverage.reefer-breakdown', q: '215C', source: 'derived', section: { id: 'cargo', part: 'question' }, ask: 'Does the customer require Refrigeration Breakdown coverage?', path: 'coverage.reeferBreakdown', kind: 'bool', value: (r) => r.coverage.reeferBreakdown === true,
         // Its Yes reads "Yes, match Motor Truck Cargo limits" (a yes/no answer takes Yes, No or its aliases only).
         choiceAliases: (r) => (r.coverage.reeferBreakdown === true ? ['Yes, match Motor Truck Cargo limits'] : []) },
-      { concept: 'cargo.commodity', q: '216A', source: 'derived', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null, note: carPartsMixedNote },
-      { concept: 'cargo.commodity', q: '216B', source: 'derived', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargoListOfCommodities', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
+      { concept: 'cargo.commodity', q: '216A', source: 'derived', section: { id: 'cargo', part: 'section' }, field: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null, note: carPartsMixedNote },
+      { concept: 'cargo.commodity', q: '216B', source: 'derived', section: { id: 'cargo', part: 'section' }, field: 'MTCargoCommodityCategories.MTCargoListOfCommodities', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
       // The cargo row's limit (its data-model name), then the cargo section's, which reads the same:
       // with the row's taken, "Motor Trucking Cargo" is left with one field, the section's.
-      { concept: 'coverage.cargo', q: '2150', source: cargoSource, cargo: 'limit', field: 'LineInput.MotorTruckingCargoLimit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo summary', kind: 'choice', value: cargo, note: cargoNote },
-      { concept: 'coverage.cargo', q: '216F', source: cargoSource, cargo: 'limit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo', kind: 'choice', value: cargo, note: cargoNote },
+      { concept: 'coverage.cargo', q: '2150', source: cargoSource, section: { id: 'cargo', part: 'limit' }, field: 'LineInput.MotorTruckingCargoLimit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo summary', kind: 'choice', value: cargo, note: cargoNote },
+      { concept: 'coverage.cargo', q: '216F', source: cargoSource, section: { id: 'cargo', part: 'limit' }, ask: 'Motor Trucking Cargo', name: 'Motor truck cargo', kind: 'choice', value: cargo, note: cargoNote },
       // General liability's section (AR live run, 2026-10-20: each question shows once the one
       // before is answered, the limit last). TNI's answers are every carrier's (util.js glAnswer,
       // general.gl): all income from trucking, no premises customers visit, no set-up or
@@ -1218,9 +1227,9 @@ export const progressive = {
         ['21ED', 'GeneralLiabilityTruckOtherPremises', 'Warehouse or premises customers visit (standard: No)', false, 'gl.premises'],
         ['21EF', 'GeneralLiabilityTruckSetup', 'Set-up or installation (standard: No)', false, 'gl.setup-installation'],
         ['21F3', 'GeneralLiabilityTruckOtherBusiness', 'Other businesses than for-hire trucking (standard: No)', false, 'gl.other-business']]
-        .map(/** @param {any[]} row @returns {CarrierRule} */ ([q, ref, name, answer, concept]) => ({ concept, q, ...glAnswer(answer), gl: 'section', field: `GeneralLiabilityInput.${ref}`, name, kind: 'bool' })),
-      { concept: 'gl.oil-gas', q: '21F1', ...GL_OIL_GAS, gl: 'section', field: 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas', name: 'Oil and gas fields (standard: No unless the intake mentions them)', kind: 'bool' },
-      { concept: 'coverage.gl', q: '21D1', tni: 'progressive.gl', source: glLimitSource, gl: 'limit', field: 'LineInput.GeneralLiabilityLimit', name: 'General liability limit (the intake\'s; none: TNI\'s default $1M/$2M)', kind: 'choice', value: glLimit, note: glLimitNote, warn: glLimitWarn },
+        .map(/** @param {any[]} row @returns {CarrierRule} */ ([q, ref, name, answer, concept]) => ({ concept, q, ...glAnswer(answer), section: { id: 'gl', part: 'section' }, field: `GeneralLiabilityInput.${ref}`, name, kind: 'bool' })),
+      { concept: 'gl.oil-gas', q: '21F1', ...GL_OIL_GAS, section: { id: 'gl', part: 'section' }, field: 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas', name: 'Oil and gas fields (standard: No unless the intake mentions them)', kind: 'bool' },
+      { concept: 'coverage.gl', q: '21D1', tni: 'progressive.gl', source: glLimitSource, section: { id: 'gl', part: 'limit' }, field: 'LineInput.GeneralLiabilityLimit', name: 'General liability limit (the intake\'s; none: TNI\'s default $1M/$2M)', kind: 'choice', value: glLimit, note: glLimitNote, warn: glLimitWarn },
       // Any other General Liability question on Rates stays the agent's (never the AI's), instead
       // of letting generic label matching make an assertion.
       { concept: 'coverage.gl', source: 'fact', name: 'General Liability (manual review)', label: '^general liability', note: glNote },
@@ -1228,10 +1237,10 @@ export const progressive = {
       // before is answered, the trailer type tiles after the number, the limit after a tile, Non-Owned
       // Trailer Physical Damage after the limit). TNI's rules (2026-10-28): see interchangeRequested.
       // Without the request every one is the agent's (a fact, never Luna's).
-      { concept: 'interchange.agreement', q: '21BE', source: (r) => (interchangeRequested(r) ? 'derived' : 'fact'), interchange: 'section', field: 'TrailerInterchangeInput.InterchangeAgreement', ask: 'Does the customer have an interchange agreement requiring trailer interchange coverage?', name: 'Interchange agreement requiring trailer interchange coverage (the intake\'s Yes)', kind: 'bool', value: () => true, note: interchangeUnrequested },
-      { concept: 'interchange.agreement-on-request', q: '21BF', tni: 'general.trailer-interchange', source: (r) => (interchangeRequested(r) ? 'standard' : 'fact'), interchange: 'section', field: 'TrailerInterchangeInput.FurnishAgreement', name: 'Furnish a copy of the interchange agreement on request (standard: Yes)', kind: 'bool', value: () => true, note: interchangeUnrequested },
-      { concept: 'interchange.trailer-count', q: '21C0', tni: 'general.trailer-interchange', source: (r) => (interchangeRequested(r) ? 'standard' : 'fact'), interchange: 'section', field: 'TrailerInterchangeInput.NoOfNonOwnedTrailers', ask: 'Number of Non-Owned Trailers', name: 'Number of non-owned trailers (TNI\'s default 1, to confirm)', kind: 'choice', value: () => INTERCHANGE_TRAILERS, note: interchangeUnrequested, warn: interchangeConfirm },
-      { concept: 'interchange.limit', q: '21DD', tni: 'general.trailer-interchange', source: interchangeLimitSource, interchange: 'limit', field: 'TrailerInterchangeInput.Limit', ask: 'Trailer Interchange coverage limit', name: 'Trailer interchange limit (the intake\'s, or the next one up, with a $1,000 deductible)', kind: 'choice', value: interchangeLimit, note: interchangeLimitNote, warn: interchangeLimitWarn },
+      { concept: 'interchange.agreement', q: '21BE', source: (r) => (interchangeRequested(r) ? 'derived' : 'fact'), section: { id: 'interchange', part: 'section' }, field: 'TrailerInterchangeInput.InterchangeAgreement', ask: 'Does the customer have an interchange agreement requiring trailer interchange coverage?', name: 'Interchange agreement requiring trailer interchange coverage (the intake\'s Yes)', kind: 'bool', value: () => true, note: interchangeUnrequested },
+      { concept: 'interchange.agreement-on-request', q: '21BF', tni: 'general.trailer-interchange', source: (r) => (interchangeRequested(r) ? 'standard' : 'fact'), section: { id: 'interchange', part: 'section' }, field: 'TrailerInterchangeInput.FurnishAgreement', name: 'Furnish a copy of the interchange agreement on request (standard: Yes)', kind: 'bool', value: () => true, note: interchangeUnrequested },
+      { concept: 'interchange.trailer-count', q: '21C0', tni: 'general.trailer-interchange', source: (r) => (interchangeRequested(r) ? 'standard' : 'fact'), section: { id: 'interchange', part: 'section' }, field: 'TrailerInterchangeInput.NoOfNonOwnedTrailers', ask: 'Number of Non-Owned Trailers', name: 'Number of non-owned trailers (TNI\'s default 1, to confirm)', kind: 'choice', value: () => INTERCHANGE_TRAILERS, note: interchangeUnrequested, warn: interchangeConfirm },
+      { concept: 'interchange.limit', q: '21DD', tni: 'general.trailer-interchange', source: interchangeLimitSource, section: { id: 'interchange', part: 'limit' }, field: 'TrailerInterchangeInput.Limit', ask: 'Trailer Interchange coverage limit', name: 'Trailer interchange limit (the intake\'s, or the next one up, with a $1,000 deductible)', kind: 'choice', value: interchangeLimit, note: interchangeLimitNote, warn: interchangeLimitWarn },
       { concept: 'interchange.non-owned-trailer-pd', q: '21E5', tni: 'progressive.trailer-interchange', source: (r) => (interchangeRequested(r) ? 'standard' : 'fact'), field: 'NonOwnedTrailerPhysicalDamageInput.Limit', ask: 'Non-Owned Trailer Physical Damage coverage limit', name: 'Non-owned trailer physical damage (standard: Matching Trailer Interchange Limits)', kind: 'choice', value: () => 'Matching Trailer Interchange Limits', choiceAliases: nonOwnedPdAliases, note: interchangeUnrequested },
       // Non-Owned Trailer Physical Damage's own number of non-owned trailers (FL, 2026-10-28: shown
       // when that coverage was added by its own "+", a different data-model name): as interchange's.

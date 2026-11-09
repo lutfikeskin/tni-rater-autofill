@@ -7,7 +7,7 @@ import path from 'node:path';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import { canRecord, recordingId, stampEvents, newManifest, recordingFiles } from '../src/recording.js';
 import { RecordingStore, fileSystem } from '../sidepanel/recording.js';
-import { cliArgs, readRecording, recordingReport } from '../scripts/lib/recording.mjs';
+import { cliArgs, compareReport, readRecording, recordingReport, recordingSummary } from '../scripts/lib/recording.mjs';
 
 // The developer recording's plain parts, the panel's store on a stand-in for the browser's origin
 // private file system, and the report (docs/developer-recording.md).
@@ -22,6 +22,12 @@ test('npm run recording takes the recording as the first argument, with or witho
   assert.deepEqual(cliArgs(['a.zip', '--out', 'r.md']), { source: 'a.zip', out: 'r.md' });
   assert.deepEqual(cliArgs(['--out', 'r.md', 'a.zip']), { source: 'a.zip', out: 'r.md' });
   assert.deepEqual(cliArgs([]), { source: null, out: null });
+  // Two recordings side by side (REC-12).
+  assert.deepEqual(cliArgs(['--compare', 'a.zip', 'b.zip']), { source: null, out: null, compare: ['a.zip', 'b.zip'] });
+  assert.deepEqual(cliArgs(['--compare', 'a.zip', '--out', 'c.md', 'b.zip']), { source: null, out: 'c.md', compare: ['a.zip', 'b.zip'] });
+  // A typo or a missing file is said, never run as something else (review of PR #481).
+  assert.deepEqual([cliArgs(['a.zip', '--out']), cliArgs(['--out', '--compare', 'a', 'b']), cliArgs(['--compre', 'a', 'b'])].map((x) => x.error),
+    ['--out needs a file name', '--out needs a file name', 'unknown option --compre']);
 });
 
 test('only builds that aren\'t the store\'s may record', () => {
@@ -513,6 +519,18 @@ test('a wait\'s slack counts what the wait saw itself, and says when the trace s
   assert.match(report({}), /the page did nothing during it\n/);
 });
 
+// Review of PR #481: a request is said once it ends, so one still running as a wait ended read as slack.
+test('a wait that ended while a page request in its frame was still running has no slack', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const page = { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true };
+  const wait = { kind: 'kit', t: t0 + 3000, seq: 2, frame: 0, what: 'wait', why: 'continue', quietMs: 500, maxMs: 6000, requests: false, start: t0 + 1000, ms: 2000, ended: 'quiet' };
+  const request = (frame) => ({ kind: 'request', t: t0 + 1500, seq: 3, frame, path: '/api/rate', end: t0 + 3500, ms: 2000, via: 'fetch', status: 200 });
+  const report = (more) => recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:04.000Z' }, events: [page, { ...wait }, ...more] });
+  assert.match(report([request(0)]), /the extension waited 2\.0 s before pressing Continue \(quiet 500 ms\): the page was quiet; a page request was still running as it ended: no slack\n/);
+  assert.match(report([request(1)]), /the page did nothing during it\n/, 'another frame\'s request didn\'t hold it');
+  assert.match(report([]), /the page did nothing during it\n/);
+});
+
 // REC-03 (audit 2026-11-07): a page's load time was invisible, charged to the step before it.
 test('a page loaded with the trace in it says how long it took, in the Flow and its own lines', () => {
   const t0 = Date.parse('2026-10-23T14:12:00.000Z');
@@ -556,6 +574,61 @@ test('the report says when the panel followed another tab, and for how long, and
   assert.match(report, /THE RECORDED TAB WAS CLOSED/);
   assert.match(report, /The recorded tab was closed, which ended the recording\./);
   assert.ok(!/followed another tab/.test(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) })));
+});
+
+// REC-12 (audit 2026-11-07), parts 3 and 4: a review added the numbers up by hand, and compared a
+// recording before a change with one after by reading the two reports.
+test('the summary holds the report\'s numbers as data: steps, waits by kind, answers and presses', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const at = (ms) => t0 + ms;
+  const events = [
+    { kind: 'page', t: at(0), seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: at(1000), frame: 0, on: true },
+    { kind: 'kit', t: at(1700), seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Year', label: 'Vehicle year' }, ok: true, start: at(1100), applyMs: 400 },
+    { kind: 'kit', t: at(1900), seq: 3, frame: 0, what: 'answer', field: { key: 'ref:Zip', label: 'ZIP' }, ok: false, code: 'answer.not-kept', start: at(1750), applyMs: 50 },
+    { kind: 'kit', t: at(4000), seq: 4, frame: 0, what: 'wait', why: 'continue', quietMs: 500, maxMs: 6000, requests: false, start: at(2000), ms: 2000, ended: 'quiet' },
+    { kind: 'kit', t: at(4100), seq: 5, frame: 0, what: 'press', button: { text: 'Continue' }, how: 'page' },
+    { kind: 'fill', t: at(4200), frame: 0, on: false },
+    { kind: 'step', t: at(5000), seq: 6, frame: 0, step: 'Drivers', from: 'Vehicles' },
+  ];
+  const s = recordingSummary({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:06.000Z' }, events });
+  assert.deepEqual([s.summary, s.id, s.carrier, s.events], [1, 'geico-fl-van-20261023-1412-ab12', 'geico', 8]);
+  assert.deepEqual(s.steps.map((x) => [x.n, x.page, x.step, x.arrivedMs, x.onScreenMs, x.fillingMs, x.answers, x.waitingMs, x.slackMs, x.leftBy]),
+    [[1, '/quote', 'Vehicles', 0, 5000, 3200, 2, 2000, 2000, { button: 'Continue', by: 'extension' }], [2, '/quote', 'Drivers', 5000, 1000, 0, 0, 0, 0, null]]);
+  assert.deepEqual([s.all.onScreenMs, s.all.answers], [6000, 2]);
+  assert.deepEqual(s.waits, [{ why: 'continue', n: 1, medianMs: 2000, maxMs: 2000, quiet: 1, limit: 0, stopped: 0, medianSlackMs: 2000 }]);
+  assert.deepEqual(s.answers, [{ key: 'ref:Year', label: 'Vehicle year', ok: true, step: 1, atMs: 1100 }, { key: 'ref:Zip', label: 'ZIP', ok: false, code: 'answer.not-kept', step: 1, atMs: 1750 }]);
+  assert.deepEqual(s.presses, [{ button: 'Continue', step: 1, atMs: 4100 }]);
+});
+
+test('--compare flags what A answered and kept that B didn\'t, and sets the buttons, waits and times side by side', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const answer = (t, key, label, ok = true, more = {}) => ({ kind: 'kit', t: t0 + t + 100, frame: 0, what: 'answer', field: { key, label }, ok, start: t0 + t, applyMs: 50, ...more });
+  const wait = (t, ms) => ({ kind: 'kit', t: t0 + t + ms, frame: 0, what: 'wait', why: 'continue', quietMs: 500, maxMs: 6000, start: t0 + t, ms, ended: 'quiet' });
+  const press = (t, text) => ({ kind: 'kit', t: t0 + t, frame: 0, what: 'press', button: { text } });
+  const page = { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true };
+  const a = recordingSummary({ manifest: manifestFor('a-1'), events: [page, answer(100, 'ref:Year', 'Year'), answer(200, 'ref:Zip', 'ZIP'), answer(300, 'ref:Use', 'Use'), answer(350, 'ref:Old', 'Old', false), wait(400, 2000), press(2500, 'Continue')] });
+  const b = recordingSummary({ manifest: manifestFor('b-1'), events: [page, answer(100, 'ref:Year', 'Year'), answer(200, 'ref:Zip', 'ZIP', false, { code: 'page.unsettled' }), answer(250, 'ref:New', 'New'), answer(350, 'ref:Old', 'Old'), wait(400, 800), press(1300, 'Continue')] });
+  const report = compareReport(a, b);
+  assert.match(report, /^# Recordings compared: A a-1 · B b-1\n/);
+  assert.match(report, /- \*\*NOT ANSWERED IN B\*\*: "Use" \(step 1 in A\)\n- \*\*NOT KEPT IN B\*\*: "ZIP" \(`page\.unsettled`\), kept in A\n- answered in B only: "New" \(step 1 in B\)\n- kept in B, not in A: "Old"\n/);
+  assert.match(report, /The same, in the same order: "Continue"\./);
+  assert.match(report, /\| before pressing Continue \| 1 \| 2\.0 s \| 1 \| 0\.8 s \| −1\.2 s \|/);
+  assert.match(report, /\| Answers \| 4 \| 4 \|/);
+  // One key kept for two vehicles in A, for one in B (review of PR #481): flagged, not hidden.
+  const two = recordingSummary({ manifest: manifestFor('a-2'), events: [page, answer(100, 'ref:Year', 'Year'), answer(500, 'ref:Year', 'Year')] });
+  const one = recordingSummary({ manifest: manifestFor('b-2'), events: [page, answer(100, 'ref:Year', 'Year')] });
+  assert.match(compareReport(two, one), /- \*\*KEPT FEWER TIMES IN B\*\*: "Year", 2 times in A, 1 in B/);
+  // Kept twice in A, then a refill that failed: still kept twice, so B's one is flagged and B isn't
+  // said to have kept what A didn't (review of PR #481).
+  const twoThenFailed = recordingSummary({ manifest: manifestFor('a-3'), events: [page, answer(100, 'ref:Year', 'Year'), answer(500, 'ref:Year', 'Year'), answer(900, 'ref:Year', 'Year', false)] });
+  const refilled = compareReport(twoThenFailed, one);
+  assert.match(refilled, /- \*\*KEPT FEWER TIMES IN B\*\*: "Year", 2 times in A, 1 in B/);
+  assert.doesNotMatch(refilled, /kept in B, not in A/);
+  // The same answers both times: said so, nothing flagged.
+  const same = compareReport(a, a);
+  assert.match(same, /Every answer A's fill gave and the page kept, B's gave and the page kept too\./);
+  assert.doesNotMatch(same, /NOT (ANSWERED|KEPT) IN B/);
 });
 
 // REC-01 (audit 2026-11-07): a recording told where the time went, never which field failed or was
