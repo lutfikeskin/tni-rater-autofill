@@ -12159,3 +12159,17 @@ test('a check on a field follows the agent\'s edit of it: fixed, it is checked; 
   assert.deepEqual([...intake.done], [], 'the VIN emptied: missing again');
   assert.match(extractFunction('agentEdit'), /if \(followChecks\(state\.intake, path, after\)\) renderWarnings\(\);/);
 });
+
+// The header's carrier logo shared .rater-logo with the Open a rater card's buttons, whose padding
+// squeezed the 15px image to a few pixels (the maintainer, 2026-11-09). Its class is its own: one
+// rule sizes it, with no padding, at a readable height.
+test('the header carrier logo has its own class, sized by one rule without padding', () => {
+  const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  const cls = html.match(/<img id="site-logo" class="([\w-]+)"/)?.[1];
+  assert.equal(cls, 'carrier-logo');
+  const rules = [...css.matchAll(new RegExp(String.raw`(^|[\s,}])\.${cls}(?![\w-])[^{]*\{([^}]*)\}`, 'g'))].map((m) => m[2]);
+  assert.equal(rules.length, 1, 'one rule styles the header logo');
+  assert.doesNotMatch(rules[0], /padding/);
+  assert.ok(Number(rules[0].match(/(?:^|;)\s*height:\s*(\d+)px/)?.[1]) >= 20, rules[0]);
+});
