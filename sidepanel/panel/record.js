@@ -72,7 +72,10 @@ function openSettings(focusId = null) {
   state.settingsOpen = true;
   showScreen();
   if (!focusId) { $('view').scrollTop = 0; return; }
+  // The fold that holds the box is opened first (Home's setup checklist asks for ai-on, in the AI
+  // fold, which the agent may have closed).
   if ($('advanced').contains($(focusId))) $('advanced').open = true;
+  if ($('assistant').contains($(focusId))) $('assistant').open = true;
   if (focusId === 'ai-openai-key') openKeyForm(true);
   else $(focusId).focus();
   $(focusId).scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -196,9 +199,16 @@ function openFlags(prefix) {
 // empty fields" (state.showEmpty): the sample intake has 96 fields, a third of them blank, and the
 // drawer was too long to scroll (the maintainer, 2026-10-23). A section says how many it hides.
 // `keep`: rows shown now that stay shown though blank (a derived value emptied by an edit: agentEdit).
+// Audit 2026-11-07, UX-07: the box at the top finds fields by their label or their section's, empty
+// ones too (state.detailsQuery); "Your corrections" lists only the fields the agent changed
+// (state.detailsEditedOnly). Either opens the sections it lists, folded or not.
 function renderSections({ keep = [] } = {}) {
   const { record } = state.intake;
   const shown = new Set((state.details?.sections ?? []).flatMap((s) => s.rows).filter((r) => r.path && !r.empty).map((r) => r.path));
+  const query = (state.detailsQuery ?? '').trim().toLowerCase();
+  const editedOnly = !!state.detailsEditedOnly;
+  const filtering = !!query || editedOnly;
+  const editedCount = (state.intake.agentEdited ?? []).length;
   let hidden = 0;
   const sections = [];
   for (const section of SECTIONS) {
@@ -221,14 +231,30 @@ function renderSections({ keep = [] } = {}) {
     });
     hidden += empty;
     const allEmpty = empty === fields;
+    if (filtering) {
+      // A row the filter keeps shows though the intake leaves it blank; an item's title stays with its rows.
+      const titleHit = section.title.toLowerCase().includes(query);
+      const kept = rows.filter((row) => !row.path || ((!editedOnly || row.edited) && (!query || titleHit || row.label.toLowerCase().includes(query))))
+        .map((row) => (row.path ? { ...row, empty: false } : row))
+        .filter((row, n, all) => row.path || (all[n + 1] && all[n + 1].path));
+      if (kept.some((row) => row.path)) sections.push({ id: section.id, title: section.title, open: true, allEmpty: false, flags: flags.length, hiddenSaid: null, rows: kept });
+      continue;
+    }
     sections.push({ id: section.id, title: section.title, open: !state.detailsClosed.has(section.id), allEmpty, flags: flags.length,
       hiddenSaid: empty && !state.showEmpty ? (allEmpty ? 'not on form' : `${empty} empty`) : null, rows });
   }
   state.details = {
     sections,
     showEmpty: state.showEmpty,
-    toggle: !hidden && !state.showEmpty ? null : state.showEmpty ? 'Hide empty fields' : `Show ${hidden} empty field${hidden === 1 ? '' : 's'}`,
-    fold: (id, open) => { if (open) state.detailsClosed.delete(id); else state.detailsClosed.add(id); },
+    toggle: filtering || (!hidden && !state.showEmpty) ? null : state.showEmpty ? 'Hide empty fields' : `Show ${hidden} empty field${hidden === 1 ? '' : 's'}`,
+    fold: (id, open) => { if (filtering) return; if (open) state.detailsClosed.delete(id); else state.detailsClosed.add(id); },
+    query: state.detailsQuery ?? '',
+    editedOnly,
+    // Your corrections (n): shown once the agent has changed a field, and while it is on.
+    edited: editedCount || editedOnly ? `Your corrections (${editedCount})` : null,
+    nothing: filtering && !sections.length ? (editedOnly && !editedCount ? 'You haven\'t corrected any field.' : 'No field matches.') : null,
+    search: (text) => { state.detailsQuery = text; flushSync(renderSections); },
+    editedToggle: () => { state.detailsEditedOnly = !editedOnly; flushSync(renderSections); },
   };
 }
 
@@ -261,17 +287,49 @@ function fieldSaid(path, kind) {
 
 // A field's row in client details, as data: its box (fieldSaid), whether a check flags it, and
 // whether it is `empty` (blank on the intake and not the agent's own; `shown` keeps it out), hidden
-// unless the empty fields are shown. Its edit is the agent's (agentEdit).
+// unless the empty fields are shown. Its edit is the agent's (agentEdit). A field the agent changed
+// is `edited` (the report's "Your edit" tag), with what the intake said (`original`, from the
+// record as read: state.intake.intakeRecord) and `restore`, which puts that back (UX-07).
 function fieldRow(path, label, kind, flagged, shown = false) {
   const said = fieldSaid(path, kind);
-  const empty = said.blank && !state.intake.agentEdited?.includes(path) && !shown;
-  return { ...said, path, label, flagged, empty, rev: state.fieldRevs?.get(path) ?? 0, edit: (value) => agentEdit(path, parseEdit(kind, value), kind) };
+  const edited = !!state.intake.agentEdited?.includes(path);
+  const empty = said.blank && !edited && !shown;
+  const row = { ...said, path, label, flagged, empty, edited, rev: state.fieldRevs?.get(path) ?? 0, edit: (value) => agentEdit(path, parseEdit(kind, value), kind) };
+  const read = state.intake.intakeRecord;
+  if (!edited || !read) return row;
+  const was = get(read, path) ?? null;
+  const original = was == null ? 'blank on the form' : kind === 'bool' ? (was ? 'Yes' : 'No') : String(was);
+  return { ...row, original, restore: () => restoreField(path, was, kind) };
+}
+
+// The USDOT or MC box restored (restoreField): its "no number" flag as the intake read it, and the
+// note that says it there, or none.
+function restoreNoNumber(intake, path) {
+  const box = { 'applicant.dot': ['noDot', 'dot.none', 'USDOT'], 'applicant.mc': ['noMc', 'mc.none', 'MC'] }[path];
+  const read = intake.intakeRecord?.applicant;
+  if (!box || !read || !intake.record.applicant) return;
+  const [flag, code, name] = box;
+  intake.record.applicant[flag] = read[flag] ?? null;
+  const i = intake.warnings.findIndex((w) => w.code === code);
+  if (read[flag] && i < 0) intake.warnings.push({ code, path, level: 'info', msg: `${name} #: the client has no ${name} number, as the intake says.` });
+  if (!read[flag] && i >= 0) {
+    // `done` holds checks by their place: those after it move up one.
+    intake.warnings.splice(i, 1);
+    intake.done = (intake.done ?? []).filter((d) => d !== i).map((d) => (d > i ? d - 1 : d));
+  }
+}
+
+// Restore: the intake's own value back in the field, no longer the agent's, and its derived values
+// following it again (agentEdit with `restore`). Logged as a correction undone, without the value.
+async function restoreField(path, was, kind) {
+  await agentEdit(path, was, kind, { restore: true });
+  flushSync(renderSections);
 }
 
 // The agent's edit of one intake field, from All client details or a check card's button: set
 // (synchronously, before anything awaits), marked agentEdited, derived values follow, logged
 // without the value, saved, and what Luna read is read again when it changed.
-async function agentEdit(path, after, kind) {
+async function agentEdit(path, after, kind, { restore = false } = {}) {
   const before = get(state.intake.record, path);
   set(state.intake.record, path, after);
   // "No" typed into the USDOT or MC box: no number, the box empty with the intake's note (noNumberEdit).
@@ -282,10 +340,12 @@ async function agentEdit(path, after, kind) {
     renderWarnings();
   }
   const edited = new Set(state.intake.agentEdited ?? []).add(path);
+  if (restore) edited.delete(path);
   state.intake.agentEdited = [...edited];
   // The agent's own Owner drives answers "Does the owner drive?" (W46-02: answers/owner.js ownerNoPending), and
   // its check is done (answers/owner.js ownerDrivesAnswered).
-  if (path === 'applicant.ownerDrives') { ownerDrivesAnswered(state.intake, { edit: path }); renderWarnings(); }
+  // Restored, it is the intake's again and the check is open (ownerDrivesAnswered `restore`).
+  if (path === 'applicant.ownerDrives') { ownerDrivesAnswered(state.intake, restore ? { restore: path } : { edit: path }); renderWarnings(); }
   // Whether it was flagged, for the log: before the checks follow the edit.
   const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
   // A value derived from this one (radius → miles, claims box → any claims, notes → ownership and
@@ -295,11 +355,14 @@ async function agentEdit(path, after, kind) {
   // drawer is said again without it (it would go under the agent's eyes as they typed).
   const checks = [...state.intake.warnings];
   const derived = [...rederive(state.intake.record, path, { keep: edited, intake: state.intake })];
+  // Restored, the USDOT or MC box's "no number" is the intake's again too (`noDot`, `noMc`, and its
+  // note): an empty box alone says nothing about it (CodeRabbit on #474).
+  if (restore) restoreNoNumber(state.intake, path);
   if (derived.length) renderSections({ keep: derived });
   if (state.intake.warnings.length !== checks.length || state.intake.warnings.some((w, i) => w !== checks[i])) renderWarnings();
   intakeEdited();
   // Log that the agent corrected the intake here (and whether it was flagged), not the value.
-  usage.log({ type: 'intake_edit', path, kind, change: before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
+  usage.log({ type: 'intake_edit', path, kind, change: restore ? 'restored' : before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
   profileLater();
   await save();
   // Luna read the claims box against the form's coverages (NTL and GL are its own questions):

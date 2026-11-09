@@ -79,17 +79,23 @@ export function ownerDrivesSaid(r) {
 // - `edit`: the agent's edit of a field. Owner drives (Yes or No) answers it: the owner's answer is
 //   theirs, and the check is marked done (the review of PR #292: its card said "Until you answer"
 //   under the agent's answer).
+// - `restore`: the agent's Restore in client details (UX-07) put the intake's own Owner drives back:
+//   it is the intake's again, not the agent's answer, so the check is open again for them (CodeRabbit
+//   on #474: a restored No would otherwise exclude the owner unconfirmed).
 // - `check`: Looks right (`done` true) or Undo (false) on the warning at index `i`. Looks right on
 //   `drivers.owner-excluded` confirms the intake's No (and puts it back in a box the agent cleared);
 //   Undo takes it back, unless the agent set Owner drives (Yes or No) themselves.
 // Changes `intake` in place; true when the owner's answer changed (a quote's plans follow it).
-/** @param {any} intake @param {{ edit?: string, check?: { i: number, done: boolean } }} what @returns {boolean} */
-export function ownerDrivesAnswered(intake, { edit, check }) {
+/** @param {any} intake @param {{ edit?: string, restore?: string, check?: { i: number, done: boolean } }} what @returns {boolean} */
+export function ownerDrivesAnswered(intake, { edit, restore, check }) {
   const applicant = intake?.record?.applicant;
   if (!applicant) return false;
   const item = (intake.warnings ?? []).findIndex((w) => w.code === 'drivers.owner-excluded');
   const before = applicant.ownerDrivesAnswered === true;
-  if (edit === 'applicant.ownerDrives' && typeof applicant.ownerDrives === 'boolean') {
+  if (restore === 'applicant.ownerDrives') {
+    applicant.ownerDrivesAnswered = false;
+    if (item >= 0) intake.done = (intake.done ?? []).filter((i) => i !== item);
+  } else if (edit === 'applicant.ownerDrives' && typeof applicant.ownerDrives === 'boolean') {
     applicant.ownerDrivesAnswered = true;
     if (item >= 0 && !(intake.done ?? []).includes(item)) intake.done = [...(intake.done ?? []), item];
   } else if (edit === 'applicant.ownerDrives') {

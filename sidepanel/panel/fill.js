@@ -5,7 +5,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { fieldInfo } from '../../src/schema.js';
 import { redactionTerms } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
-import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem } from '../../src/units.js';
+import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, unitExtraRowsItem } from '../../src/units.js';
 import { get } from '../../src/util.js';
 import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
@@ -85,6 +85,25 @@ function resumeHeldFill() {
   fillPage({ auto: 'page' });
 }
 
+// A fill dropped because the panel moved to another tab before the kit was asked: its page's report
+// says so, rather than keeping what it said before, as if this fill had run there (CodeRabbit on
+// #410). An automatic one too: going back to the tab doesn't start it again (the recorder there
+// announces no page), so the agent fills it. An earlier fill's error on that report stays, since it
+// already says to fill again and a notice would hide it. A report made only for the notice is
+// `unfilled`: the page is still one no fill has answered, so the next fill there is its opening fill,
+// with its report, never a follow-up (`filledReport`; CodeRabbit on #410).
+/** @param {any} ctx */
+function noteTabLeft(ctx) {
+  const key = reportKey(ctx.tabId, ctx.page, ctx.carrier, ctx.active ?? state.active);
+  const before = state.reports.get(key);
+  if (before?.error) return;
+  fillProblem(ctx, ctx.auto
+    ? 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.'
+    : 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.', 'notice');
+  const made = state.reports.get(key);
+  if (!before && made) made.unfilled = true;
+}
+
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
 // `retried`: the second click of a Continue whose page stayed unchanged (watchNextStep): the step it is
@@ -144,7 +163,15 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   if (retried) ctx.retried = retried;
   await pickListItem(carrier, page, ctx);
   // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
-  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); resumeHeldFill(); return; }
+  // A fill the tab switch dropped says so on its page (noteTabLeft), as one dropped later does.
+  if (staleFill(ctx) || state.tab?.id !== tabId) {
+    state.filling = false;
+    renderSite();
+    if (!staleFill(ctx)) noteTabLeft(ctx);
+    runPendingPage(ctx);
+    resumeHeldFill();
+    return;
+  }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
@@ -163,7 +190,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     await tellRecorder('pause', tabId);
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (!fillCurrent(ctx)) return;
+    if (!fillCurrent(ctx)) { noteTabLeft(ctx); return; }
     // The agent's edits on this page as the fill's tab holds them (retiring AI picks may just
     // have released some), never the tab in front.
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
@@ -186,7 +213,11 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     // by the agent's Fill this page too, as by an automatic fill (fillOptions' `takenBack`): what
     // the extension didn't write may be the agent's (the maintainer, 2026-11-07, in place of giving
     // it again, 2026-10-21). Replace existing answers still gives it again.
-    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    // The intake changed or was corrected during that wait (`pageMoved`), or the panel moved to
+    // another tab: nothing is filled, and each is said as what it is.
+    if (staleFill(ctx)) { noteStaleFill(ctx); return; }
+    if (!fillCurrent(ctx)) { noteTabLeft(ctx); return; }
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed, ctx);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -324,6 +355,7 @@ async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   ctx.unitsListed = false;
   ctx.unitMissing = null;
+  ctx.listGaps = null;
   if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   const record = ctx.intake.record ?? {};
   const specs = unitListSpecs(carrier, record);
@@ -345,6 +377,12 @@ async function pickUnitToAdd(carrier, ctx) {
   ctx.unitsListed = !!next.complete;
   const read = next.read;
   ctx.listNote = !next.complete && read && read.rows >= read.units ? `list: ${read.rows} rows for ${read.units} units, ${read.shown} shown, ${read.saved} saved by a fill` : null;
+  // And told to the agent (GAP-02): each intake unit the list can be read for that isn't on it, and
+  // the rows no intake unit is known to be (noteMissingUnit).
+  if (next.missing?.length || next.extra) {
+    const spec = carrier.unitLists.find((s) => s.steps.includes(knownStep(carrier, seen.step)));
+    ctx.listGaps = { missing: next.missing ?? [], extra: next.extra ?? 0, lists: spec?.lists ?? [] };
+  }
   if (next.marks.some((id) => !state.doneActions.has(id))) {
     next.marks.forEach((id) => state.doneActions.add(id));
     persistDoneActions(ctx.tabId, state.doneActions);
@@ -367,13 +405,20 @@ async function pickUnitToAdd(carrier, ctx) {
 // The unit pickUnitToAdd found missing from the list on screen with nothing to add it (ctx.unitMissing),
 // as an item the top frame's report leaves for the agent, which holds its Continue: the list's Looks
 // Good is the agent's (W44-01).
+// A list whose rows look full but aren't the intake's (ctx.listGaps, GAP-02): each intake unit not on
+// it and the rows the intake doesn't have, the same way.
 function noteMissingUnit(results, ctx) {
-  if (!ctx.unitMissing) return;
+  if (!ctx.unitMissing && !ctx.listGaps) return;
   const top = results.find((r) => r.frameId === 0)?.result;
   if (!top || top.halted) return;
-  const item = unitMissingItem(ctx.carrier, ctx.intake?.record ?? {}, ctx.unitMissing);
-  top.noData = [...(top.noData ?? []), item];
-  top.blockers = [...(top.blockers ?? []), `needs you: ${item.label}`];
+  const record = ctx.intake?.record ?? {};
+  const items = [
+    ...(ctx.unitMissing ? [unitMissingItem(ctx.carrier, record, ctx.unitMissing)] : []),
+    ...(ctx.listGaps?.missing ?? []).map((u) => unitMissingItem(ctx.carrier, record, u)),
+    ...(ctx.listGaps?.extra ? [unitExtraRowsItem(ctx.carrier, ctx.listGaps.lists, ctx.listGaps.extra)] : []),
+  ];
+  top.noData = [...(top.noData ?? []), ...items];
+  top.blockers = [...(top.blockers ?? []), ...items.map((item) => `needs you: ${item.label}`)];
 }
 
 // On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each

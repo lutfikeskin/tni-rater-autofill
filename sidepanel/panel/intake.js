@@ -90,7 +90,8 @@ async function loadFile(file, { reset = false } = {}) {
     // among them (radius miles, years in business) stays theirs after the panel reopens.
     // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
     // intakeId: whose quote a tab is (quote-owner.js), from the moment this intake is the panel's.
-    state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test, intakeId: summary.intakeId };
+    // intakeRecord: the record as read from the PDF, before any correction (client details' Restore).
+    state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test, intakeId: summary.intakeId, intakeRecord: JSON.parse(JSON.stringify(result.record)) };
     // A New quote that failed holds this intake's fills until one for it finishes (its own load,
     // `reset`): not lifted by the same PDF loaded again, after a Clear or another intake too, whose
     // quote on screen lost its records (fillsHeld; CodeRabbit on PR #395).

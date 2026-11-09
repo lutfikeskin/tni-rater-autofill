@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The side panel: the developer recording (docs/developer-recording.md).
 // One part of the panel; sidepanel.js wires the parts together.
 import { redactionTerms } from '../../src/plan.js';
@@ -82,12 +81,15 @@ async function startRecording() {
   const started = new Date();
   // What the run needs to be reproduced (REC-10): the session to join the usage log by, the rules
   // and the agent's defaults it fills with, the filling switches, the platform.
+  // navigator.userAgentData, where Chrome gives it, isn't in TypeScript's DOM types.
+  /** @type {Navigator & { userAgentData?: { platform?: string } }} */
+  const nav = navigator;
   const manifest = newManifest({ id: recordingId(carrier.id, scenario, started), carrier: carrier.id, scenario, started,
     build: usage.build(), intake: usage.currentSession()?.intakeId ?? null, test: !!state.intake.test,
     session: usage.currentSession()?.id ?? null, rules: rulesFingerprint(), defaultsHash: fillDefaultsHash() ?? null,
     settings: { autoAdvance: switchOn('autoAdvance', 'auto-advance'), autoFollowUps: switchOn('autoFollowUps', 'auto-followups'), autoPages: switchOn('autoPages', 'auto-pages'),
       checkBeforeContinue: switchOn('checkBeforeContinue', 'check-continue') },
-    platform: navigator.userAgentData?.platform || navigator.platform || null });
+    platform: nav.userAgentData?.platform || nav.platform || null });
   const store = await RecordingStore.start(manifest);
   // `fills`: when fills ran ({ start, end, what }), noted by state.filling's setter.
   state.recording = { store, tabId, carrier, redact, fills: state.filling ? [{ start: started.getTime(), end: null, what: state.fillingKind ?? 'fill' }] : [], started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false };

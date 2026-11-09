@@ -479,6 +479,9 @@ const state = storeState({
   // always are), and the sections the agent folded (by id).
   showEmpty: false,
   detailsClosed: new Set(),
+  // Client details' filter box and its Your corrections switch (UX-07).
+  detailsQuery: '',
+  detailsEditedOnly: false,
   // Client details: how many times an edit saved a field otherwise than typed (path -> count; "No"
   // in the USDOT box is saved empty), so its box shows the record's value again (details-view.jsx).
   fieldRevs: new Map(),

@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Luna resolves bounded choices; code gates automatic picks and the agent approves them.
 import { AssistError, RequestTooLarge, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake, rowsFor, entityOf, intakeValue, rulesSent } from './common.js';
 import { sha256Hex } from '../usage.js';
@@ -15,7 +14,7 @@ export const API_URL = 'https://api.openai.com/v1/responses';
 // The safety contract's version, set by hand: the schema's shape, what may be picked automatically and
 // what counts as evidence. Changing it retires every pending approval hold (restoreAiPending). The
 // prompt itself (instructions and rules as sent) is told apart by promptHash, automatically.
-export const POLICY_VERSION = 'luna-evidence-v6';
+export const POLICY_VERSION = 'luna-evidence-v7';
 const KINDS = new Set(['radio', 'select', 'checkbox']);
 const BATCH_SIZE = 12;
 // A request's state and schema, in characters. TNI's server allows more (LUNA_MAX_CHARS in
@@ -210,7 +209,9 @@ export function parseResponse(json, items, body) {
     const clarification = [...x.missingInformation, ...x.conflicts].join(' · ');
     return { ...item, choice: leave ? null : state.fields[item.id].options[x.option], leave,
       basis: evidence?.basis ?? 'none', intakePath: evidenceSources.length === 1 && evidence?.basis === 'intake' ? evidence.path : null,
-      evidence, evidenceSources: leave ? [] : evidenceSources, cited: leave ? [] : evidenceSources.map(citedSaid), citedRules: leave ? [] : evidenceSources.map(citedRuleFull).filter(Boolean), model: json.model, provider: 'luna', policy: POLICY_VERSION,
+      evidence, evidenceSources: leave ? [] : evidenceSources, cited: leave ? [] : evidenceSources.map(citedSaid), citedRules: leave ? [] : evidenceSources.map(citedRuleFull).filter(Boolean),
+      // The TNI rules it cites, by rulebook id (for the log: ids only, no rule text or client data).
+      ruleIds: leave ? [] : [...new Set(x.sourceIds)].filter(id => state.sources[id]?.basis === 'tni_rule'), model: json.model, provider: 'luna', policy: POLICY_VERSION,
       probability: null, confidence: null, margin: null, evidenceProbability: null, support: null, autoOk: false,
       checks: leave ? [] : ['The choice is one of this field’s visible options.', 'Every cited source exists in the supplied context.'],
       leaveWhy, nextStep: leave ? blankFieldStep(state.fields[item.id]) ?? (x.nextStep.trim() || null) : null,
@@ -318,18 +319,25 @@ export function verifyResponse(json, suggestions) {
   }
   return suggestions.map(x => x.leave ? x : data.decisions[x.id].supported
     ? { ...x, verified: true, autoOk: automaticChoiceAllowed(x) }
-    : { ...x, choice: null, leave: true, autoOk: false, verified: false, evidence: null, evidenceSources: [], cited: [], citedRules: [], basis: 'none', intakePath: null, leaveWhy: 'unverified',
+    : { ...x, choice: null, leave: true, autoOk: false, verified: false, evidence: null, evidenceSources: [], cited: [], citedRules: [], ruleIds: [], basis: 'none', intakePath: null, leaveWhy: 'unverified',
       tip: data.decisions[x.id].gap.trim() ? `The AI assistant could not verify an answer: ${data.decisions[x.id].gap.trim()}` : 'The AI assistant could not verify this answer against the supplied facts. Review it on the page.' });
 }
 
-// A pick resting on intake text only as the client wrote it: every intake source it cites is a free-text
-// box (the claims box, its other notes, the additional notes: kind 'textarea' in the schema). TNI rules
-// cited beside it don't count, as rules can defer to what the notes say. That text is the client's, and
-// a line in it could steer both calls, so such a pick stays a suggestion the agent approves on its row
-// (audit 2026-11-07, AI-14).
+// A pick resting on intake text only as the client wrote it: every intake source it cites is text the
+// client typed, a free-text box (the claims box, its other notes, the additional notes: kind 'textarea'
+// in the schema) or a short text field (what they haul, which filings, the ELD brand, the radius as
+// written: kind 'text'). Choices, yes/no answers, numbers, dates and states the intake form records
+// aren't, nor a path the schema doesn't list (worked out by code, as computed.*). TNI rules cited
+// beside it don't count, as rules can defer to what the notes say. That text is the client's, and a
+// line in it could steer both calls, so such a pick stays a suggestion the agent approves on its row
+// (audit 2026-11-07, AI-14; short fields included by the maintainer, 2026-11-07).
+const CLIENT_TEXT = new Set(['text', 'textarea']);
 export function restsOnClientText(sources) {
   const intake = (sources ?? []).filter(s => s?.basis === 'intake');
-  return intake.length > 0 && intake.every(s => fieldInfo(String(s.path ?? '')).kind === 'textarea');
+  return intake.length > 0 && intake.every(s => {
+    const info = fieldInfo(String(s.path ?? ''));
+    return 'section' in info && typeof info.kind === 'string' && CLIENT_TEXT.has(info.kind);
+  });
 }
 
 // The second model judgment checks support, not measured accuracy. Every automatic
@@ -489,9 +497,13 @@ async function reviewGroups(items, context, config, { call, fresh, usage, counte
     const wave = groups.slice(i, i + GROUPS_AT_ONCE);
     const ended = await Promise.allSettled(wave.map(review));
     let k = 0;
-    for (; k < ended.length && ended[k].status === 'fulfilled'; k++) ended[k].value.forEach((x, j) => { suggestions[wave[k].at[j]] = x; });
+    for (; k < ended.length; k++) {
+      const done = ended[k];
+      if (done.status !== 'fulfilled') break;
+      done.value.forEach((x, j) => { suggestions[wave[k].at[j]] = x; });
+    }
     if (k === ended.length) { i += wave.length; continue; }
-    const error = ended[k].reason, { at } = wave[k];
+    const failed = ended[k], error = failed.status === 'rejected' ? failed.reason : undefined, { at } = wave[k];
     // TNI's server from before 2026-11-07: the questions not yet reviewed are planned again at its
     // bound, before any further paid call, and this group is asked again in the new plan (a group
     // after it in the same wave too: its answer, if any, is not used).
@@ -642,6 +654,7 @@ export function notesWarnings(results, { quotedFragments = [], ntlSet = false, i
   return out;
 }
 
+/** @param {any} record @param {{ apiKey: string, proxy?: any }} config @param {{ call?: typeof callModel, redact?: (s: string) => string, today?: Date }} [options] */
 export async function reviewNotes(record, config, { call = callModel, redact, today } = {}) {
   const review = buildNotesReview(record, { redact, today });
   if (!review) return { warnings: [], lines: 0, flagged: 0, tokensIn: 0, tokensOut: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, modelCalls: 0 };
