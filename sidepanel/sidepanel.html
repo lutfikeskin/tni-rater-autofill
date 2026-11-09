@@ -131,6 +131,13 @@
     <!-- The dock (#dock), drawn by steps-view.jsx (mountDock). -->
     <div id="dock-root" class="dock-root"></div>
     <div id="problem-form" class="problem" hidden>
+      <select id="problem-kind" aria-label="What kind of problem">
+        <option value="wrong-answer">A wrong answer</option>
+        <option value="stuck">The page got stuck</option>
+        <option value="missing-question">A question wasn't filled</option>
+        <option value="slow">It was slow</option>
+        <option value="other" selected>Something else</option>
+      </select>
       <textarea id="problem-text" rows="3" placeholder="What went wrong? No client names, numbers or addresses." aria-label="What went wrong"></textarea>
       <div class="problem-actions">
         <button type="button" id="cancel-problem" class="ghost small-btn">Cancel</button>

@@ -6077,7 +6077,7 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   const at = new Date(2026, 10, 7, 15, 42);
   const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const said = {};
-  vm.runInNewContext(extractFunction('problemSaid'), said);
+  vm.runInNewContext(extractFunction('problemSaid') + extractFunction('problemFate'), said);
   assert.equal(said.problemSaid('sent', { state: 'ok' }, true, at), `Report saved and sent to TNI at ${time}, with this page's last fill.`);
   assert.equal(said.problemSaid('sent', { state: 'ok' }, false, at), `Report saved and sent to TNI at ${time}.`);
   assert.equal(said.problemSaid('refused', { state: 'ok', sent: 0 }, false, at), "Report saved on this computer, but the usage server didn't take it: it stays here, and goes with Export.");
@@ -6090,16 +6090,17 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   const make = ({ saved = true, fate = 'sent', logGate = null } = {}) => {
     const handlers = {};
     const el = (id) => ({ id, value: '', hidden: true, disabled: false, textContent: '', attrs: {}, focus() {}, setAttribute(k, v) { this.attrs[k] = v; }, addEventListener: (type, fn) => { handlers[id] = fn; } });
-    const els = Object.fromEntries(['report-problem', 'problem-form', 'problem-text', 'cancel-problem', 'send-problem', 'problem-said'].map((id) => [id, el(id)]));
+    const els = Object.fromEntries(['report-problem', 'problem-form', 'problem-text', 'problem-kind', 'cancel-problem', 'send-problem', 'problem-said'].map((id) => [id, el(id)]));
     let release;
     const logged = [];
     const context = { state: { intake: null, tab: null }, $: (id) => els[id], document: { addEventListener() {} }, setInterval() {}, setTimeout: () => 1, clearTimeout() {},
       unlockAudio() {}, renderUsage() {}, announce() {}, redactor: () => (x) => x, redactionTerms: () => [], pageOf: (u) => u, problemContext: () => ({}),
       crypto: { randomUUID: () => `id-${logged.length}` }, problemSaidTimer: null, PROBLEM_SAID_MS: 10_000, problemRun: 0,
+      PROBLEM_KINDS: ['wrong-answer', 'stuck', 'missing-question', 'slow', 'other'], problemRef: () => 'REF',
       uploadNow: () => new Promise((r) => { release = r; }),
       usage: { log: async (e) => { logged.push(e); await logGate; }, lastSave: () => (saved ? { state: 'ok' } : { state: 'error', message: 'quota' }), lastUpload: () => ({ state: 'ok', sent: 0 }),
         eventFate: async () => { if (fate instanceof Error) throw fate; return fate; } } };
-    vm.runInNewContext(['problemSaid', 'sayProblem', 'wireUsage'].map(extractFunction).join('\n'), context);
+    vm.runInNewContext(['problemSaid', 'problemFate', 'sayProblem', 'wireUsage'].map(extractFunction).join('\n'), context);
     context.wireUsage();
     return { els, handlers, logged, release: () => release?.(), context };
   };
@@ -6136,7 +6137,9 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   await new Promise((r) => setImmediate(r));
   unread.release();
   await reading;
-  assert.equal(unread.els['problem-said'].textContent, "Report saved. Whether it reached TNI couldn't be confirmed.");
+  assert.equal(unread.els['problem-said'].textContent, "Report saved. Whether it reached TNI couldn't be confirmed. Reference: REF.");
+  // LEARN-14: the report is logged with the kind picked in its box; one not in the list is `other`.
+  assert.equal(unread.logged.at(-1).kind, 'other');
   // The box opened again while the report was still being saved: what the agent types there stays.
   let saveDone;
   const slow = make({ logGate: new Promise((r) => { saveDone = r; }) });
@@ -7767,7 +7770,7 @@ test('a problem report names the fill it is about: view, run, step and what held
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), { view: 't1' });
   state.intake = null;
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
-  assert.match(extractFunction('wireUsage'), /const context = problemContext\(state\.tab, page\);[\s\S]{0,300}await usage\.log\(\{ id, type: 'problem_report'[^\n]*\.\.\.context \}\);/);
+  assert.match(extractFunction('wireUsage'), /const context = problemContext\(state\.tab, page\);[\s\S]{0,600}await usage\.log\(\{ id, type: 'problem_report'[^\n]*\.\.\.context \}\);/);
 });
 
 // CodeRabbit on PR #403: the recorder tells its exception again until the panel says it logged
@@ -12061,4 +12064,17 @@ test('the dock measures a fill by the questions judged, only while it answers', 
   assert.ok(extractFunction('fillingSaid').includes('progress: share ?? true'));
   const view = fs.readFileSync(new URL('../sidepanel/panel/steps-view.jsx', import.meta.url), 'utf8');
   assert.ok(view.includes('role="progressbar"') && view.includes('aria-valuenow={Math.round(d.progress * 100)}'));
+});
+
+// Audit 2026-11-07, LEARN-14: a report has a kind from the box's list and a reference the agent can
+// quote, the first eight characters of its event id.
+test('a problem report is logged with its kind, and the footer says its reference', () => {
+  const said = {};
+  vm.runInNewContext(extractFunction('problemSaid') + extractFunction('problemFate'), said);
+  const at = new Date(2026, 10, 9, 14, 5);
+  assert.match(said.problemSaid('queued', { state: 'ok' }, false, at, '1A2B3C4D'), /It goes to TNI with the next upload. Reference: 1A2B3C4D.$/);
+  assert.ok(SIDEPANEL.includes("const problemRef = (id) => String(id).replace(/-/g, '').slice(0, 8).toUpperCase();"));
+  assert.ok(SIDEPANEL.includes("type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, kind,"));
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  for (const kind of ['wrong-answer', 'stuck', 'missing-question', 'slow', 'other']) assert.ok(html.includes(`<option value="${kind}"`), kind);
 });

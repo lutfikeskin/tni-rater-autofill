@@ -169,7 +169,12 @@ function settingsActs() {
 // upload right after it (`fate`: usage.eventFate, `sent` only once the server confirmed it), with
 // the upload's status for why it waits (`off`: no server), and whether the page's last fill goes with
 // it (`withFill`: problemContext found one). `at`: the time to say.
-function problemSaid(fate, status, withFill, at = new Date()) {
+// `ref`: the report's reference, the first characters of its event id (audit 2026-11-07, LEARN-14), for
+// the agent to quote when they ask about it; TNI finds the report by it.
+function problemSaid(fate, status, withFill, at = new Date(), ref = null) {
+  return problemFate(fate, status, withFill, at) + (ref ? ` Reference: ${ref}.` : '');
+}
+function problemFate(fate, status, withFill, at) {
   const fill = withFill ? ", with this page's last fill" : '';
   if (fate === 'sent') return `Report saved and sent to TNI at ${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${fill}.`;
   if (fate === 'refused') return `Report saved on this computer${fill}, but the usage server didn't take it: it stays here, and goes with Export.`;
@@ -177,9 +182,14 @@ function problemSaid(fate, status, withFill, at = new Date()) {
   if (status?.state === 'off') return `Report saved on this computer${fill}. No usage server is set, so it isn't sent.`;
   return `Report saved on this computer${fill}. It goes to TNI with the next upload.`;
 }
+// A problem report's kinds (the box's list; the server keeps only these), and its reference: the
+// first eight characters of its event id, in capitals (LEARN-14).
+const PROBLEM_KINDS = ['wrong-answer', 'stuck', 'missing-question', 'slow', 'other'];
+const problemRef = (id) => String(id).replace(/-/g, '').slice(0, 8).toUpperCase();
 // The footer's line about the report just saved, for a while (PROBLEM_SAID_MS), and gone when the box
 // opens again.
-const PROBLEM_SAID_MS = 10_000;
+// Long enough to note the reference.
+const PROBLEM_SAID_MS = 30_000;
 let problemSaidTimer = null;
 // Counts the box opened and the reports saved: a report's upload that ends after either says nothing.
 let problemRun = 0;
@@ -203,7 +213,7 @@ function wireUsage() {
     problemOpen($('problem-form').hidden);
     if (!$('problem-form').hidden) $('problem-text').focus();
   });
-  $('cancel-problem').addEventListener('click', () => { $('problem-text').value = ''; problemOpen(false); $('report-problem').focus(); });
+  $('cancel-problem').addEventListener('click', () => { $('problem-text').value = ''; $('problem-kind').value = 'other'; problemOpen(false); $('report-problem').focus(); });
   $('send-problem').addEventListener('click', async () => {
     const text = $('problem-text').value.trim();
     if (!text) return;
@@ -213,8 +223,11 @@ function wireUsage() {
     const run = ++problemRun;
     // Its own id, to say where it is once uploaded (usage.eventFate).
     const id = crypto.randomUUID();
+    // What kind of problem, from the box's list (LEARN-14): one of PROBLEM_KINDS, else other.
+    const kind = PROBLEM_KINDS.includes($('problem-kind').value) ? $('problem-kind').value : 'other';
+    const ref = problemRef(id);
     $('send-problem').disabled = true;
-    await usage.log({ id, type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, text: redact(text).slice(0, 1000), ...context });
+    await usage.log({ id, type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, kind, text: redact(text).slice(0, 1000), ...context });
     $('send-problem').disabled = false;
     // The box opened again meanwhile: what the agent types there is theirs, and this report goes
     // without a word.
@@ -223,6 +236,7 @@ function wireUsage() {
     if (usage.lastSave().state === 'error') { if (current()) sayProblem("The report couldn't be saved on this computer. Copy it, then try again."); return; }
     if (current()) {
       $('problem-text').value = '';
+      $('problem-kind').value = 'other';
       problemOpen(false);
       announce('Thanks — saved with the usage log.');
       state.usageNote = 'Thanks — saved with the usage log.';
@@ -237,7 +251,7 @@ function wireUsage() {
     // role=status), unless the box opened again or another report was saved meanwhile. Where it is
     // can't be read: not known.
     const fate = await usage.eventFate(id).catch(() => 'unknown');
-    if (current()) sayProblem(problemSaid(fate, usage.lastUpload(), !!context.run));
+    if (current()) sayProblem(problemSaid(fate, usage.lastUpload(), !!context.run, new Date(), ref));
   });
   setInterval(renderUsage, 5000);
 }
