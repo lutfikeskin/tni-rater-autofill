@@ -2,7 +2,7 @@
 // Control matching, value application orchestration, driver registry, and agreement checks.
 
 import { oneLine, squash, humanize, loose, multiValue, isPlaceholderOption, STATE_NAMES } from './text.js';
-import { adapter, withAdapter, stepKey, stepIs, currentPage, settle, setAdapterHooks, pause, waitsStopped, INTERRUPTED } from './adapter.js';
+import { adapter, withAdapter, stepKey, stepIs, currentPage, settle, setAdapterHooks, pause, waitsStopped, INTERRUPTED, noteOwnAction } from './adapter.js';
 import { deepQueryAll, optionsOf, selectedText, hasValue, optionOn, setNativeValue, textFor, safeMatches, shownControl, hasOptions, labelFor } from './dom.js';
 import { unitFormsOf } from './units.js';
 import { createLocator } from './locator.js';
@@ -132,9 +132,12 @@ export async function apply(step, c, stopped = () => false) {
   const theirs = focusedControl();
   const before = callerStop;
   callerStop = stopped;
+  // A wait after it counts its quiet from the write's end at the earliest (settle's `since`).
+  noteOwnAction();
   try {
     return await write(step, c);
   } finally {
+    noteOwnAction();
     callerStop = before;
     // Only where the write left the focus (on its field, in its widget, or on nothing): a field the
     // agent moved to meanwhile keeps it (CodeRabbit on #435).
