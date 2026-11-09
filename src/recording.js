@@ -86,17 +86,20 @@ export function newManifest({ id, carrier, scenario, started, build, intake = nu
 
 /**
  * The files of a saved recording: its manifest and its timeline, the events in the order they
- * happened (by time, then each frame's counter).
+ * happened (by time, then each frame's counter), and the page layouts its moments took
+ * (`layouts/0001.json`, REC-05), each named by the `moment` event that took it.
  * @param {RecordingManifest} manifest
  * @param {TraceEvent[]} events
+ * @param {{ [name: string]: string }} [layouts]
  * @returns {{ [name: string]: string }}
  */
-export function recordingFiles(manifest, events) {
+export function recordingFiles(manifest, events, layouts = {}) {
   const ordered = [...events].sort((a, b) => a.t - b.t || (a.frame ?? 0) - (b.frame ?? 0) || (a.seq ?? 0) - (b.seq ?? 0));
   const dropped = ordered.filter((e) => e.kind === 'gap').reduce((n, e) => n + (e.dropped ?? 0), 0);
   const final = { ...manifest, events: ordered.length, dropped };
   return {
     'recording.json': `${JSON.stringify(final, null, 2)}\n`,
     'events.jsonl': ordered.map((e) => JSON.stringify(e)).join('\n') + (ordered.length ? '\n' : ''),
+    ...Object.fromEntries(Object.entries(layouts).filter(([name]) => /^layouts\/\d{4}\.json$/.test(name))),
   };
 }

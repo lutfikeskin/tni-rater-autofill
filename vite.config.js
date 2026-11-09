@@ -1,5 +1,6 @@
 // The side panel's build: sidepanel/sidepanel.html and everything it imports (the panel, src/, the
-// vendored PDF.js) bundled into one page for the extension. The fill engine injected into carrier
+// vendored PDF.js) bundled into one page for the extension, with the agent's guide (guide.html, a
+// static page the panel's '?' links open). The fill engine injected into carrier
 // pages is built too, from src/kit/ (scripts/lib/kit.mjs); the manifest, background.js and the other
 // scripts injected into carrier pages are packaged as they are.
 //
@@ -17,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { packagedCommit, provenancePlugin } from './scripts/lib/package.mjs';
+import { packagedCommit, provenancePlugin, rulesPlugin } from './scripts/lib/package.mjs';
 import { buildKit, KIT_OUTPUT } from './scripts/lib/kit.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -67,7 +68,7 @@ const previewShim = {
 
 // Every build stamps the panel's usage-log.js with its copy and commit: `store` for the store zip
 // (npm run package builds in that mode), otherwise `unpacked` (the Load unpacked copy, also when
-// npm run panel rebuilds it).
+// npm run panel rebuilds it); and coordinator.js with the rule files' fingerprint.
 export default defineConfig(({ command, mode }) => ({
   // The dev server serves the repository, as the extension does, so the panel's src/ imports, the
   // page scripts it injects and the practice carrier pages (test/fixtures/) share one origin.
@@ -75,7 +76,7 @@ export default defineConfig(({ command, mode }) => ({
   base: './',
   // The sounds, logos and rater badges the panel names at run time are copied by package.mjs.
   publicDir: false,
-  plugins: [react(), previewShim, ...(command === 'build' ? [provenancePlugin({ channel: mode === 'store' ? 'store' : 'unpacked', commit: packagedCommit(here) })] : [])],
+  plugins: [react(), previewShim, ...(command === 'build' ? [provenancePlugin({ channel: mode === 'store' ? 'store' : 'unpacked', commit: packagedCommit(here) }), rulesPlugin(here)] : [])],
   server: {
     host: '127.0.0.1',
     port: 5180,
@@ -86,16 +87,18 @@ export default defineConfig(({ command, mode }) => ({
   build: {
     outDir: path.join(here, 'dist/tni-rater-autofill/sidepanel'),
     emptyOutDir: false,
-    // Not minified, with source maps: the bundle reads like the source in DevTools.
+    // Not minified, with source maps: the bundle reads like the source in DevTools. The store build's
+    // don't go in its zip (scripts/package.mjs keeps them beside it), so its bundle doesn't name them.
     minify: false,
-    sourcemap: true,
+    sourcemap: mode === 'store' ? 'hidden' : true,
     target: 'chrome120',
     assetsDir: 'bundle',
     assetsInlineLimit: 0,
     modulePreload: { polyfill: false },
     rollupOptions: {
-      // The page the manifest names (side_panel.default_path), not Vite's index.html.
-      input: path.join(here, 'sidepanel/sidepanel.html'),
+      // The page the manifest names (side_panel.default_path), not Vite's index.html, and the
+      // agent's guide that each view's '?' opens (guide.html, no script).
+      input: { sidepanel: path.join(here, 'sidepanel/sidepanel.html'), guide: path.join(here, 'sidepanel/guide.html') },
       output: {
         entryFileNames: 'bundle/[name].js',
         chunkFileNames: 'bundle/[name].js',

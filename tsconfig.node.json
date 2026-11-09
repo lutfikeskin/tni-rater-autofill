@@ -3,5 +3,6 @@
   "compilerOptions": {
     "types": ["node", "chrome"]
   },
-  "include": ["types.js", "vite.config.js", "vitest.config.js", "server", "scripts", "test", ".claude/skills"]
+  "include": ["types.js", "vite.config.js", "vitest.config.js", "server", "scripts", "test", ".claude/skills"],
+  "exclude": ["test/replay/vendor"]
 }

@@ -12,9 +12,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
-import progressiveLogo from '../assets/raters/progressive.svg';
-import geicoLogo from '../assets/raters/geico.gif';
-import amwinsLogo from '../assets/raters/amwins.svg';
+import { RATERS } from '../../src/carriers.js';
 
 // A card: its tone ('' red, 'warn', 'info', 'quiet'), title, what it says, its notes, what it
 // compares side by side, and its buttons. The panel's other cards are drawn with it too (notes-view.jsx).
@@ -47,6 +45,8 @@ const NOTES = [
   { name: 'state', id: 'state-note' },
   // The tab's quote wasn't started with this intake (coordinator.js showOwnerNote, quote-owner.js).
   { name: 'owner', id: 'owner-note' },
+  // Answers filled before the agent corrected the intake (coordinator.js showStaleNote, GAP-01).
+  { name: 'stale', id: 'stale-note' },
   // agent defaults: whose defaults this quote fills with (sidepanel/panel/agent-defaults/store.js).
   { name: 'defaults', id: 'defaults-note' },
   { name: 'stop', id: 'stop-note' },
@@ -54,17 +54,20 @@ const NOTES = [
   { name: 'fill', id: 'fill-error' },
 ];
 
-// `cards.waiting`: why there is nothing to fill here (no rater in front), or null.
-function Cards() {
+// `cards.waiting`: why there is nothing to fill here (no rater in front), or null. Under it, each
+// rater's logo (its `display`, carriers.js) is a button that opens its agent site in a new tab
+// (`act.portal`, with the URL): a page the agent asked for, where nothing is filled by itself.
+function Cards({ act = {} }) {
   const cards = useStore(panelStore, (s) => s.cards) ?? {};
   return (
     <>
       <div id="fill-waiting" className="pane waiting" hidden={cards.waiting == null}>
         <p id="fill-waiting-text" className="muted">{cards.waiting ?? ''}</p>
         <div className="rater-logos">
-          <img src={progressiveLogo} alt="Progressive" />
-          <img src={geicoLogo} alt="GEICO" />
-          <img src={amwinsLogo} alt="AmWINS" />
+          {RATERS.map(({ id, name, display }) => (
+            <button key={id} type="button" className="rater-logo" data-carrier={id} title={`Open ${name} in a new tab`}
+              onClick={() => act.portal?.(display.portalUrl)}><img src={display.logo} alt={name} /></button>
+          ))}
         </div>
       </div>
       <div id="issues" className="issues">
@@ -77,9 +80,9 @@ function Cards() {
 }
 
 // Draws the cards into their place at the top of the page view (#cards-root), before it returns.
-function mountCards(host) {
+function mountCards(host, act = {}) {
   const root = createRoot(host);
-  flushSync(() => root.render(<Cards />));
+  flushSync(() => root.render(<Cards act={act} />));
 }
 
 export { Cards, IssueCard, mountCards };

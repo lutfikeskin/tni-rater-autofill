@@ -175,6 +175,69 @@ test('Clear deletes the events set aside too, and the count includes them', asyn
   assert.equal(await usage.count(), 0);
 });
 
+// Audit 2026-11-07, UX-17 (review of #463): Clear log's yes deletes only the events its question
+// counted. The count is checked under the log's lock as it deletes, so an event logged after the
+// question (by this panel or another window's) is kept and asked about.
+test('Clear with what was asked about deletes nothing once more events are logged', async () => {
+  await usage.clearLog();
+  await usage.log({ type: 'page_view', page: 'A' }, { type: 'page_view', page: 'B' });
+  const asked = await usage.logMark();
+  assert.equal(asked.n, 2);
+  await usage.log({ type: 'page_view', page: 'C' });
+  assert.equal(await usage.clearLog({ expected: asked }), false);
+  assert.equal(await usage.count(), 3, 'nothing deleted');
+  assert.equal(await usage.clearLog({ expected: await usage.logMark() }), true);
+  assert.equal(await usage.count(), 0);
+});
+
+// A full queue keeps its count when an event is logged (the oldest go for it, MAX_EVENTS): the
+// event's number still tells Clear that something was logged since the question.
+test('Clear with what was asked about deletes nothing after an event logged into a full queue', async () => {
+  const { MAX_EVENTS } = await import('../src/usage.js');
+  await usage.clearLog();
+  await usage.log(...Array.from({ length: MAX_EVENTS }, (_, i) => ({ type: 'page_view', page: `P${i}` })));
+  const asked = await usage.logMark();
+  await usage.log({ type: 'page_view', page: 'late' });
+  assert.equal(await usage.count(), asked.n, 'the count alone did not change');
+  assert.equal(await usage.clearLog({ expected: asked }), false);
+  assert.equal(await usage.count(), asked.n, 'nothing deleted');
+  await usage.clearLog();
+});
+
+// Two panels share the stored log under one Web Lock: the question's mark is read under it, so it
+// waits for a write the other panel has under way (its number saved, its queue not yet), and counts it.
+test('Clear log\'s question waits for another panel\'s write under way', { skip: !globalThis.navigator?.locks && 'no Web Locks in this Node' }, async () => {
+  const saved = globalThis.chrome;
+  const data = {};
+  let pause = null;
+  globalThis.chrome = {
+    storage: { local: {
+      get: async (key) => ({ [key]: structuredClone(data[key]) }),
+      set: async (items) => { if ('usageLog' in items && pause) await pause.promise; Object.assign(data, structuredClone(items)); },
+    } },
+    runtime: { getManifest: () => ({ version: 'test' }) },
+  };
+  try {
+    const writer = await import('../sidepanel/usage-log.js?panel=writer');
+    const asker = await import('../sidepanel/usage-log.js?panel=asker');
+    await writer.log({ type: 'page_view', page: 'A' });
+    pause = Promise.withResolvers();
+    const writing = writer.log({ type: 'page_view', page: 'B' });
+    for (let i = 0; i < 50 && data.usageSeq !== 2; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(data.usageSeq, 2, 'the writer saved its number and waits to save its queue');
+    let mark = null;
+    const marking = asker.logMark().then((m) => { mark = m; });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(mark, null, 'the question waits for the write');
+    pause.resolve();
+    await writing;
+    await marking;
+    assert.deepEqual(mark, { n: 2, seq: 2 });
+  } finally {
+    globalThis.chrome = saved;
+  }
+});
+
 test('a reply that does not account for every event sent keeps them in the queue', async () => {
   let requests = fakeServer(() => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('an HTML page'); } }));
   await usage.saveSettings({ serverUrl: 'http://usage.test' });

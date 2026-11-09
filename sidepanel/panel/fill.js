@@ -5,21 +5,21 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { fieldInfo } from '../../src/schema.js';
 import { redactionTerms } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
-import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem } from '../../src/units.js';
+import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, unitExtraRowsItem } from '../../src/units.js';
 import { get } from '../../src/util.js';
 import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { isStandard } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
-import { $, aiSnapshotFieldMatches, keepJournal, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
+import { $, traced, aiSnapshotFieldMatches, keepJournal, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
-import { announce, dropReports, fillContext, fillOptions, fillProblem, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showOwnerNote, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
+import { announce, dropReports, fillContext, fillOptions, fillProblem, fillTimeline, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showOwnerNote, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
 import { aiDecisionEvent, remarkAi, runAssist, syncAiBanner } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep } from './scope.js';
-import { fillCurrent, fillErrorMessage, staleFill } from './fill-checks.js';
+import { fillCurrent, fillErrorMessage, fillErrorText, staleFill } from './fill-checks.js';
 import { liveOf } from './live.js';
 import { agentPickable, answerSources, choiceSaid, choicesOf, currentReportKey, finishLeftOk, groupRows, itemsLeft, looseText, reportKey, stopNoteFor } from './report-model.js';
 import { answerRecord, needId, needRecord, reopenRow, setHead, settleRow, showLive } from './report-rows.js';
@@ -27,7 +27,8 @@ import { mountRows } from './report-view.jsx';
 import { mountReportHead } from './notes-view.jsx';
 import { flushSync } from 'react-dom';
 import { defaultsHold, isOwnDefault } from './agent-defaults/store.js';
-import { bindQuoteTab, quoteOwnerIssue } from './quote-owner.js';
+import { bindQuoteTab, portalHold, quoteOwnerIssue, releasePortal } from './quote-owner.js';
+import { REPORT, SOURCE } from './messages.js';
 /** @import { CarrierConfig, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -37,20 +38,38 @@ import { bindQuoteTab, quoteOwnerIssue } from './quote-owner.js';
 /** @param {CarrierConfig | null} carrier @returns {'MAIN' | 'ISOLATED'} */
 const worldFor = (carrier) => (carrier?.world === 'MAIN' ? 'MAIN' : 'ISOLATED');
 
-/** @param {number} tabId @param {CarrierConfig} carrier */
-async function injectKit(tabId, carrier) {
+/**
+ * Puts the kit into the frames named.
+ * @param {number} tabId @param {CarrierConfig} carrier @param {number[]} frameIds
+ * @returns {Promise<chrome.scripting.InjectionResult<any>[]>} the engine's own injection, by frame
+ */
+async function injectKit(tabId, carrier, frameIds) {
+  const target = { tabId, frameIds };
   // The buttons the kit presses, clicked from the page's own world (`pressInPage`: GEICO, W43-44).
-  if (carrier?.pressInPage) await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: 'MAIN', files: ['src/content/page-press.js'] });
+  if (carrier?.pressInPage) await chrome.scripting.executeScript({ target, world: 'MAIN', files: ['src/content/page-press.js'] });
   // The carrier's page adapter (its own widgets: src/content/carriers/) goes in before the engine,
   // which the package builds from src/kit/ into src/content/pagekit.js (scripts/lib/kit.mjs).
   const adapter = carrier?.pageAdapter ? [carrier.pageAdapter] : [];
-  await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), files: ['src/content/field-key.js', ...adapter, 'src/content/pagekit.js'] });
+  return chrome.scripting.executeScript({ target, world: worldFor(carrier), files: ['src/content/field-key.js', ...adapter, 'src/content/pagekit.js'] });
 }
 
+// The kit a frame holds (`version:build`), or null where it has none (a new document). It runs in
+// the page on its own, so it uses nothing from here.
+const kitIn = () => (globalThis.__raterKit ? `${globalThis.__raterKit?.version}:${globalThis.__raterKit?.build}` : null);
+// This extension's kit as a frame reports it once put in (kitIn), learned from the panel's first
+// injection: a frame holding another (an earlier build's, left by an extension reload or update)
+// gets this one.
+const kitBuild = { now: /** @type {string | null} */ (null) };
+
 /**
+ * Runs `func` in the tab's frames (or those named), the kit put in first only where a frame lacks
+ * this build of it (audit 2026-11-07, FLOW-10, LIVE-03: the 211 KB kit went into every frame before
+ * every call, every 150 ms while a Continue's next step drew). A frame whose document was replaced
+ * between that check and the call (its result null, the kit not in it) gets the kit, and the call
+ * once more there.
  * @param {number} tabId
  * @param {CarrierConfig} carrier
- * @param {(...args: any[]) => any} func  run in each frame, after the kit is injected
+ * @param {(...args: any[]) => any} func  run in each frame, once the kit is in it
  * @param {any[]} [args]
  * @param {number[]} [frameIds]
  */
@@ -60,8 +79,22 @@ async function injectKit(tabId, carrier) {
 // QA-03; sidepanel-safety holds every call to it). A fill whose top frame had no kit is a page that
 // moved on (fillPage, autoFill).
 async function runKit(tabId, carrier, func, args = [], frameIds) {
-  await injectKit(tabId, carrier);
-  return chrome.scripting.executeScript({ target: { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) }, world: worldFor(carrier), func, args });
+  const world = worldFor(carrier);
+  const target = { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) };
+  const held = await chrome.scripting.executeScript({ target, world, func: kitIn });
+  const missing = held.filter((r) => kitBuild.now == null || r.result !== kitBuild.now).map((r) => r.frameId);
+  // The documents known to hold this kit, by the id Chrome gives each.
+  const ready = new Set(held.filter((r) => !missing.includes(r.frameId)).map((r) => r.documentId));
+  if (missing.length) {
+    for (const r of await injectKit(tabId, carrier, missing)) ready.add(r.documentId);
+    if (kitBuild.now == null) kitBuild.now = (await chrome.scripting.executeScript({ target: { tabId, frameIds: missing }, world, func: kitIn })).find((r) => r.result)?.result ?? null;
+  }
+  const results = await chrome.scripting.executeScript({ target, world, func, args });
+  const again = results.filter((r) => r.documentId && !ready.has(r.documentId) && r.result == null).map((r) => r.frameId);
+  if (!again.length) return results;
+  await injectKit(tabId, carrier, again);
+  const retried = await chrome.scripting.executeScript({ target: { tabId, frameIds: again }, world, func, args });
+  return results.map((r) => retried.find((x) => x.frameId === r.frameId) ?? r);
 }
 
 // The page whose opening fill a hold kept back (fillPage): the quote's defaults question (agent
@@ -83,6 +116,25 @@ function resumeHeldFill() {
   heldFill = null;
   if (held.intake !== state.intake || held.key !== currentReportKey() || state.reports.has(held.key)) return;
   fillPage({ auto: 'page' });
+}
+
+// A fill dropped because the panel moved to another tab before the kit was asked: its page's report
+// says so, rather than keeping what it said before, as if this fill had run there (CodeRabbit on
+// #410). An automatic one too: going back to the tab doesn't start it again (the recorder there
+// announces no page), so the agent fills it. An earlier fill's error on that report stays, since it
+// already says to fill again and a notice would hide it. A report made only for the notice is
+// `unfilled`: the page is still one no fill has answered, so the next fill there is its opening fill,
+// with its report, never a follow-up (`filledReport`; CodeRabbit on #410).
+/** @param {any} ctx */
+function noteTabLeft(ctx) {
+  const key = reportKey(ctx.tabId, ctx.page, ctx.carrier, ctx.active ?? state.active);
+  const before = state.reports.get(key);
+  if (before?.error) return;
+  fillProblem(ctx, ctx.auto
+    ? 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.'
+    : 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.', 'notice');
+  const made = state.reports.get(key);
+  if (!before && made) made.unfilled = true;
 }
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
@@ -110,6 +162,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   // The tab's quote wasn't started with this intake (quote-owner.js): maybe the last client's quote,
   // left open. Nothing fills there by itself; the agent's own Fill this page fills it for this client.
   if (auto && state.intake && quoteOwnerIssue()) { showOwnerNote(); renderSteps(); return; }
+  // A tab a rater's logo opened (quote-owner.js openPortal): nothing fills there by itself.
+  if (auto && portalHold()) { renderSteps(); return; }
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
   // Kept with its tab: the fill running may be on another one (audit 2026-11-07, FLOW-07).
@@ -125,6 +179,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     return;
   }
   if (!auto && state.autoPaused) { state.autoPaused = false; keepJournal(state.tab.id, { dropped: ['autoPaused'] }); }
+  // The agent's own fill on a tab a rater's logo opened: theirs to fill from then on (quote-owner.js).
+  if (!auto) releasePortal(state.tab.id);
   state.fillingKind = 'fill';
   state.filling = true;
   clearTimeout(state.autoTimer);
@@ -138,16 +194,46 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
   if (retried) ctx.retried = retried;
-  await pickListItem(carrier, page, ctx);
-  // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
-  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); runPendingPage(ctx); resumeHeldFill(); return; }
-  // The list page may have picked the next vehicle or driver: the plan is for that one.
-  ctx.active = { ...state.active };
-  // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
-  let plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
+  let plan;
+  // Preparing the fill (the list's pick saved, the plan for it) can fail too (a storage write
+  // refused): filling then ends here, rather than staying on with the dock's Fill disabled until the
+  // panel is reloaded (audit 2026-11-07, FLOW-04).
+  try {
+    await pickListItem(carrier, page, ctx);
+    // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
+    // A fill the tab switch dropped says so on its page (noteTabLeft), as one dropped later does.
+    if (staleFill(ctx) || state.tab?.id !== tabId) {
+      state.filling = false;
+      renderSite();
+      if (!staleFill(ctx)) noteTabLeft(ctx);
+      runPendingPage(ctx);
+      resumeHeldFill();
+      return;
+    }
+    // The list page may have picked the next vehicle or driver: the plan is for that one.
+    ctx.active = { ...state.active };
+    // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
+    plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
+  } catch (e) {
+    state.filling = false;
+    renderSite();
+    if (staleFill(ctx)) { noteStaleFill(ctx); runPendingPage(ctx); resumeHeldFill(); return; }
+    // The list page may have moved the tab to another unit before the failure (pickUnitForm): the
+    // problem is said under the one its tab has selected now.
+    ctx.active = { ...tabMaps(tabId).active };
+    tabMaps(tabId).autoPaused = true;
+    logFillError(ctx, e);
+    const detail = fillErrorText(ctx, e);
+    fillProblem(ctx, `Filling couldn’t start: fill again, or reload the panel if it happens again.${detail ? ` (${detail})` : ''}`);
+    runPendingPage(ctx);
+    resumeHeldFill();
+    return;
+  }
   // The page view lists the answers as they go in and the dock has Stop; the new report replaces
   // the last one when it comes (kept until then, in case this fill stops before it gets anywhere).
-  state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false };
+  state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false,
+    // How it was asked and its page, for the developer recording's fill marker (core.js, REC-01).
+    how: auto ? String(auto) : confirmed ? 'looks-right' : continuing ? 'continue' : 'agent', page };
   const unwatch = watchFill(ctx);
   renderSteps();
   const started = Date.now();
@@ -159,7 +245,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     await tellRecorder('pause', tabId);
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (!fillCurrent(ctx)) return;
+    if (!fillCurrent(ctx)) { noteTabLeft(ctx); return; }
     // The agent's edits on this page as the fill's tab holds them (retiring AI picks may just
     // have released some), never the tab in front.
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
@@ -182,7 +268,11 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     // by the agent's Fill this page too, as by an automatic fill (fillOptions' `takenBack`): what
     // the extension didn't write may be the agent's (the maintainer, 2026-11-07, in place of giving
     // it again, 2026-10-21). Replace existing answers still gives it again.
-    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    // The intake changed or was corrected during that wait (`pageMoved`), or the panel moved to
+    // another tab: nothing is filled, and each is said as what it is.
+    if (staleFill(ctx)) { noteStaleFill(ctx); return; }
+    if (!fillCurrent(ctx)) { noteTabLeft(ctx); return; }
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed, ctx);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -210,8 +300,10 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
     // The message may quote the page, so it's redacted with the origin intake.
-    logFillError(ctx, e);
     fillProblem(ctx, fillErrorMessage(ctx, e));
+    // Its timeline read before `finally` resumes the recorder or starts the next fill, which empties
+    // the kit's ring (traceReset); a second at most (CodeRabbit on #431).
+    logFillError(ctx, e, await fillTimeline(ctx));
   } finally {
     unwatch();
     await tellRecorder('resume', tabId);
@@ -320,6 +412,7 @@ async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   ctx.unitsListed = false;
   ctx.unitMissing = null;
+  ctx.listGaps = null;
   if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   const record = ctx.intake.record ?? {};
   const specs = unitListSpecs(carrier, record);
@@ -341,6 +434,12 @@ async function pickUnitToAdd(carrier, ctx) {
   ctx.unitsListed = !!next.complete;
   const read = next.read;
   ctx.listNote = !next.complete && read && read.rows >= read.units ? `list: ${read.rows} rows for ${read.units} units, ${read.shown} shown, ${read.saved} saved by a fill` : null;
+  // And told to the agent (GAP-02): each intake unit the list can be read for that isn't on it, and
+  // the rows no intake unit is known to be (noteMissingUnit).
+  if (next.missing?.length || next.extra) {
+    const spec = carrier.unitLists.find((s) => s.steps.includes(knownStep(carrier, seen.step)));
+    ctx.listGaps = { missing: next.missing ?? [], extra: next.extra ?? 0, lists: spec?.lists ?? [] };
+  }
   if (next.marks.some((id) => !state.doneActions.has(id))) {
     next.marks.forEach((id) => state.doneActions.add(id));
     persistDoneActions(ctx.tabId, state.doneActions);
@@ -363,13 +462,20 @@ async function pickUnitToAdd(carrier, ctx) {
 // The unit pickUnitToAdd found missing from the list on screen with nothing to add it (ctx.unitMissing),
 // as an item the top frame's report leaves for the agent, which holds its Continue: the list's Looks
 // Good is the agent's (W44-01).
+// A list whose rows look full but aren't the intake's (ctx.listGaps, GAP-02): each intake unit not on
+// it and the rows the intake doesn't have, the same way.
 function noteMissingUnit(results, ctx) {
-  if (!ctx.unitMissing) return;
+  if (!ctx.unitMissing && !ctx.listGaps) return;
   const top = results.find((r) => r.frameId === 0)?.result;
   if (!top || top.halted) return;
-  const item = unitMissingItem(ctx.carrier, ctx.intake?.record ?? {}, ctx.unitMissing);
-  top.noData = [...(top.noData ?? []), item];
-  top.blockers = [...(top.blockers ?? []), `needs you: ${item.label}`];
+  const record = ctx.intake?.record ?? {};
+  const items = [
+    ...(ctx.unitMissing ? [unitMissingItem(ctx.carrier, record, ctx.unitMissing)] : []),
+    ...(ctx.listGaps?.missing ?? []).map((u) => unitMissingItem(ctx.carrier, record, u)),
+    ...(ctx.listGaps?.extra ? [unitExtraRowsItem(ctx.carrier, ctx.listGaps.lists, ctx.listGaps.extra)] : []),
+  ];
+  top.noData = [...(top.noData ?? []), ...items];
+  top.blockers = [...(top.blockers ?? []), ...items.map((item) => `needs you: ${item.label}`)];
 }
 
 // On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each
@@ -539,7 +645,8 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     try {
       // While the page saves / reloads (its loading overlay) the step isn't ready yet. A frame without
       // the kit (its document replaced after the kit went in) reads as nothing, as the snapshot reads do.
-      const results = await runKit(tabId, carrier, () => { const kit = globalThis.__raterKit; return !kit || kit.busy() ? null : kit.signature(); });
+      // The top frame's only: the step is read there.
+      const results = await runKit(tabId, carrier, () => { const kit = globalThis.__raterKit; return !kit || kit.busy() ? null : kit.signature(); }, [], [0]);
       now = results.find((r) => r.frameId === 0)?.result ?? null;
     } catch { return; }
     if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page) return;
@@ -632,7 +739,7 @@ async function showOnPage(rec, x, tabId, page, carrier) {
   if (!x.key || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   let found = false;
   try {
-    const frames = await runKit(tabId, carrier, (key, label) => globalThis.__raterKit?.reveal?.(key, label) === true, [x.key, x.label ?? null]);
+    const frames = await runKit(tabId, carrier, (key, label) => (globalThis.__raterKit ? globalThis.__raterKit?.reveal?.(key, label) === true : null), [x.key, x.label ?? null]);
     found = frames.some((f) => f.result === true);
   } catch { /* the page is navigating */ }
   clearTimeout(whereTimers.get(rec));
@@ -846,7 +953,7 @@ async function checkAnswers(list, tabId, page, carrier, plan = []) {
   const steps = (plan ?? []).filter((s) => ids.has(String(s.id)));
   let frames;
   try {
-    frames = await runKit(tabId, carrier, (asked, filledBy) => globalThis.__raterKit?.readBack?.(asked, filledBy) ?? [], [items, steps]);
+    frames = await runKit(tabId, carrier, (asked, filledBy) => globalThis.__raterKit?.readBack?.(asked, filledBy) ?? null, [items, steps]);
   } catch { return; /* the page is navigating */ }
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   const now = new Map(frames.flatMap((f) => Array.isArray(f.result) ? f.result : []).map((x) => [`${x.key}|${x.label ?? ''}`, x]));
@@ -912,9 +1019,9 @@ function renderReport(frames, ctx = {}) {
     const judged = frames.some((f) => f.held || f.advanced || f.advanceDue);
     putReport({ key, tabId, page, at: ctx.restoredAt ?? Date.now(), ...(ctx.restoredAt ? { restored: true } : {}), ...(halted
       // A panel opened again doesn't keep the pause: a report made again doesn't say it.
-      ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
-      : frames.some((f) => f.notDrawn) && !judged ? { notice: 'No questions found on this page.' }
-        : { notice: 'Nothing to fill on this page.', empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null, unlisted: frames.some((f) => f.unlisted),
+      ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : REPORT.paused}${halted.reason ?? REPORT.reviewFirst}` }
+      : frames.some((f) => f.notDrawn) && !judged ? { notice: REPORT.noQuestions }
+        : { notice: REPORT.nothingToFill, empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null, unlisted: frames.some((f) => f.unlisted),
           held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
     renderSteps();
     return;
@@ -961,11 +1068,7 @@ function renderReport(frames, ctx = {}) {
   // The carrier probably changed this page (pagekit: a known field renamed, or most questions
   // unfamiliar). The rest still filled; Continue waits for the agent.
   const renamedNames = all('renamed').map((x) => '"' + x.name + '"').join(', ');
-  const pageChanged = frames.some((f) => f.pageChanged)
-    ? (carrier?.name ?? 'The carrier') + ' seems to have changed this page: ' + all('unknown').length + " question(s) aren't known"
-      + (renamedNames ? ', and ' + renamedNames + " moved to a field the extension doesn't know" : '')
-      + ". They're left for you and Continue waits. Please report it (a Capture page layout helps)."
-    : null;
+  const pageChanged = frames.some((f) => f.pageChanged) ? REPORT.pageChanged(carrier?.name, all('unknown').length, renamedNames) : null;
   // Held for the agent's check (Let me look before Continue): the top frame's word.
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
@@ -996,13 +1099,12 @@ function renderReport(frames, ctx = {}) {
     ...filled.filter((x) => x.said).map((x) => ({ line: 'said', text: x.said })),
     // Not clicked through what is open over them (Continue, a helper), which the agent closes.
     !advanced && covered.length
-      ? { card: issueSaid({ tone: 'warn', title: `${covered.length > 1 ? `${covered.slice(0, -1).join(', ')} and ${covered.at(-1)} weren’t` : `${covered[0]} wasn’t`} clicked`,
-        text: `Close what is open over ${covered.length > 1 ? 'them' : 'it'}, then fill again.` }) } : null,
+      ? { card: issueSaid({ tone: 'warn', ...REPORT.covered(covered) }) } : null,
     halted ? { card: stopped
-      ? issueSaid({ tone: 'quiet', title: 'You stopped the fill', text: 'Nothing more was filled or clicked. What went in stays.' })
-      : issueSaid({ title: 'Filling stopped', text: `${halted.reason ?? ''} Check the page, then fill again.`.trim(), role: 'alert' }) } : null,
-    pageChanged ? { card: issueSaid({ title: 'This page seems to have changed', text: pageChanged, role: 'alert' }) } : null,
-    advanced ? { done: `${count} answer${count === 1 ? '' : 's'} in. Clicked “${advanced}” for you.` } : null,
+      ? issueSaid({ tone: 'quiet', ...REPORT.youStopped })
+      : issueSaid({ ...REPORT.fillStopped(halted.reason), role: 'alert' }) } : null,
+    pageChanged ? { card: issueSaid({ ...pageChanged, role: 'alert' }) } : null,
+    advanced ? { done: REPORT.continued(count, advanced) } : null,
   ].filter(Boolean);
   const nodes = [
     head.length ? headHost(entry, head) : null,
@@ -1017,7 +1119,7 @@ function renderReport(frames, ctx = {}) {
   putReport(entry, nodes);
   renderSteps();
   if (state.reportFor !== entry || ctx.restoredAt) return;
-  announce(`Filled ${count} answer${count === 1 ? '' : 's'}. ${needs.length ? `${needs.length} left for you.` : held ? 'Check the answers, then click Looks right.' : 'Nothing is left for you.'}`);
+  announce(REPORT.announce(count, needs.length, held));
   if (held) refreshAnswers();
 }
 
@@ -1042,32 +1144,33 @@ function answerSource(rec) {
   const pdfHere = pdfAvailable();
   const paths = [].concat(rec.from ?? rec.path ?? []);
   const place = ['intake', 'derived', 'edited'].includes(kind) && pdfHere && state.intake && paths.length ? sourcePlace(paths, state.intake) : null;
+  // The words are SOURCE's (messages.js); the tag's kind (its color) is decided here.
+  const { tag: words, open } = SOURCE;
   const tag = {
-    intake: { kind: 'intake', text: `Intake${place ? pdfPageSaid(place.page, ' p.') : ''}`, title: 'From the intake' },
-    derived: { kind: 'derived', text: 'Worked out', title: 'Worked out from intake answers' },
-    standard: { kind: 'standard', text: 'TNI standard', title: 'A TNI standard answer, not a fact from the intake' },
-    own: { kind: 'own', text: 'Your default', title: 'Your own default in place of TNI\'s standard (Settings → Your defaults)' },
-    edited: { kind: 'you', text: 'Your edit', title: 'From your correction in the panel' },
-    page: rec.standard ? { kind: 'standard', text: 'TNI standard', title: 'The page already had the TNI standard answer' } : { kind: 'page', text: 'On the page', title: 'The page already had it' },
-    clicked: { kind: 'clicked', text: 'Clicked', title: 'Clicked for you' },
-    yours: { kind: 'you', text: 'You', title: 'Your answer: no fill changes it' },
-    changed: { kind: 'page', text: 'Changed on the page', title: 'Not the fill’s answer: the page shows this now' },
+    intake: { kind: 'intake', ...words.intake(place ? pdfPageSaid(place.page, ' p.') : null) },
+    derived: { kind: 'derived', ...words.derived },
+    standard: { kind: 'standard', ...words.standard },
+    own: { kind: 'own', ...words.own },
+    edited: { kind: 'you', ...words.edited },
+    page: rec.standard ? { kind: 'standard', ...words.pageStandard } : { kind: 'page', ...words.page },
+    clicked: { kind: 'clicked', ...words.clicked },
+    yours: { kind: 'you', ...words.yours },
+    changed: { kind: 'page', ...words.changed },
   }[kind];
-  const fmt = (v) => (v === true ? 'Yes' : v === false ? 'No' : v == null || v === '' ? 'not on the intake' : String(v));
-  const said = (path) => `${fieldInfo(path).label}: ${fmt(get(state.intake?.record ?? {}, path))}`;
+  const said = (path) => `${fieldInfo(path).label}: ${SOURCE.value(get(state.intake?.record ?? {}, path))}`;
   const [title, quote] = {
-    intake: [`Intake${place ? pdfPageSaid(place.page, ', page ') : ''}`, rec.path ? said(rec.path) : `Answer: ${rec.value}`],
-    derived: ['Worked out from the intake', (rec.from ?? []).map(said).join(' · ')],
-    standard: ['TNI standard answer', `Answer: ${rec.value}`],
-    own: ['Your own default', `Answer: ${rec.value}. In place of TNI's standard, from Settings → Your defaults.`],
-    edited: ['Your correction in the panel', rec.path ? said(rec.path) : `Answer: ${rec.value}`],
-    page: ['Already on the page', 'The fill left it as the page had it.'],
-    clicked: ['Clicked for you', `“${rec.value}”`],
-    yours: ['Your answer', 'You changed it on the page, so no fill puts it back.'],
-    changed: ['Changed on the page', 'The page shows this now, not the answer the fill put in. Check it.'],
+    intake: [open.intake(place ? pdfPageSaid(place.page, ', page ') : null), rec.path ? said(rec.path) : SOURCE.answer(rec.value)],
+    derived: [open.derived, (rec.from ?? []).map(said).join(' · ')],
+    standard: [open.standard, SOURCE.answer(rec.value)],
+    own: [open.own, open.ownQuote(rec.value)],
+    edited: [open.edited, rec.path ? said(rec.path) : SOURCE.answer(rec.value)],
+    page: open.page,
+    clicked: [open.clicked, `“${rec.value}”`],
+    yours: open.yours,
+    changed: open.changed,
   }[kind];
   return { tag: kind === 'intake' ? null : tag, quiet: kind === 'intake' ? tag.title : null, title, quote, place,
-    seeTitle: kind === 'edited' ? 'Show what the intake said before your edit' : kind === 'derived' ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake' };
+    seeTitle: kind === 'edited' ? SOURCE.see.edited : kind === 'derived' ? SOURCE.see.derived : SOURCE.see.other };
 }
 
 // The report's list of answers and items (renderReport), drawn by React from the report's records
@@ -1230,7 +1333,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
     }
     const answered = await runKit(tabId, carrier, (a, t, o) => globalThis.__raterKit?.answer(a, null, t, o),
       [[{ key: field.key, label: field.label, value: choice, expected: { kind: field.kind, section: field.section, options, current: field.current } }],
-        token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent' }], [frame.frameId]);
+        token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent', ...(traced(tabId) ? { trace: true } : {}) }], [frame.frameId]);
     result = answered.flatMap((f) => f.result ?? []).find((r) => r?.key === field.key) ?? null;
   } catch {
     result = null;
@@ -1356,7 +1459,7 @@ async function captureFromShortcut() {
     const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
     if (mine && focused && mine.id !== focused.id) return;
   }
-  capturePage();
+  return capturePage();
 }
 
 // What a capture did, under its button in Settings (never over a fill report): state.captureStatus,
@@ -1416,11 +1519,14 @@ async function capturePage() {
       scenario, quote, n, note, page: top?.page ?? page, step: (carrier.layoutSteps && top?.step) || null, view: view ?? null, context, frames };
     const slug = (s, max) => String(s ?? '').replace(/^https?:\/\/[^/]+/, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, max) || 'page';
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    Object.assign(document.createElement('a'), { href: url, download: `capture-${carrier.id}-${slug(scenario, 30)}${quote ? `-${quote.slice(0, 4)}` : ''}-${String(n).padStart(3, '0')}-${slug(data.page, 30)}.json` }).click();
+    const file = `capture-${carrier.id}-${slug(scenario, 30)}${quote ? `-${quote.slice(0, 4)}` : ''}-${String(n).padStart(3, '0')}-${slug(data.page, 30)}.json`;
+    Object.assign(document.createElement('a'), { href: url, download: file }).click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
     // Only the note this capture took: one being typed for the next step stays.
     if (/** @type {*} */ ($('capture-note'))?.value === typedNote) /** @type {*} */ ($('capture-note')).value = '';
     captureSaid(`Saved capture ${n} of "${scenario}" (${frames.reduce((k, f) => k + f.controls.length, 0)} fields${top?.openLists?.length ? ', an open list' : ''}) to Downloads. Client details are [client]. Move it to layouts/ and skim it before sharing.`);
+    // The file's name, for a developer recording running meanwhile (sidepanel.js: its note).
+    return file;
   } catch (e) {
     captureSaid(`Couldn't capture this page: ${e.message}`);
   }

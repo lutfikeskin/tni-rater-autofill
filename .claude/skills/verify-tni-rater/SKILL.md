@@ -53,7 +53,7 @@ Prefer the repo scripts. They already click the real panel controls and fail on 
 | Packaged panel on AmWINS, intake load, agent hold, pop out, no Submit | `npm run e2e:extension -- <evidence-dir>` | package, replay on 8792 |
 | AmWINS rules without the panel | `npm run mock:amwins` | Playwright |
 | GEICO quote mock | `npm run mock:geico` | Playwright |
-| Progressive committed layouts | `npm run e2e -- --fixtures` | Playwright, internet for ExtJS |
+| Progressive committed layouts | `npm run e2e -- --fixtures` | Playwright (ExtJS is vendored) |
 
 Pass a new directory under `reviews/verify-tni-rater/` as `<evidence-dir>` so screenshots land there. `reviews/` is gitignored.
 

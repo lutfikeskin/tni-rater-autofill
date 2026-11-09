@@ -51,16 +51,26 @@ export function reviewWarn(record, carrier) {
  * @param {PlanOptions} [options]  overlay: a hook given each field step with its rule, before the
  *   step's resolution is decided; the step it returns is the plan's. None (the default) leaves every
  *   step as the rules give it. plan.js knows nothing of what plugs in (docs/agent-defaults-spec.md).
+ *   onRuleError: told of each rule that threw (RuleError); its step is the agent's, the plan still built.
  * @returns {PlanStep[]}
  */
-export function buildPlan(record, carrier, active = {}, { overlay = null } = {}) {
+export function buildPlan(record, carrier, active = {}, { overlay = null, onRuleError = null } = {}) {
   // A carrier's `rowSections`: repeating sections its own rules answer row by row, where a generic
   // label rule never answers (a row the intake doesn't describe stays the agent's).
-  const generic = carrier?.useGenericRules === false ? [] : carrier?.rowSections?.length
+  const generic = carrier?.useGenericRules !== true ? [] : carrier?.rowSections?.length
     ? GENERIC_RULES.map((rule) => ({ ...rule, notWithin: carrier.rowSections })) : GENERIC_RULES;
   const rules = [...(carrier?.rules ?? []), ...generic];
-  return [...fieldSteps(rules, record, carrier, active, overlay), ...actionSteps(carrier, record, active)];
+  return [...fieldSteps(rules, record, carrier, active, overlay, onRuleError), ...actionSteps(carrier, record, active)];
 }
+
+// A helper's `verify: { closed: id }`: the coverage section the carrier declares in `sections`, with
+// how its row is read (`words`, `anyLimit`), for the kit, which knows no carrier's sections.
+const closedVerify = (carrier, verify, id) => {
+  if (!verify || typeof verify !== 'object' || !('closed' in verify)) return verify;
+  const section = carrier?.sections?.[verify.closed];
+  if (!section) throw new Error(`${carrier?.id ?? 'carrier'} action ${id}: verify closes "${verify.closed}", which its sections don't declare`);
+  return { closed: verify.closed, words: section.words ?? null, anyLimit: !!section.anyLimit };
+};
 
 const withIndex = (path, active) => {
   const list = listOf(path);
@@ -162,7 +172,8 @@ function actionSteps(carrier, record, active) {
       afterValue: resolve(a.afterValue) ?? null,
       needsPremium: !!resolve(a.needsPremium),
       needsRecalculation: !!resolve(a.needsRecalculation),
-      verify: resolve(a.verify) ?? null,
+      // `{ closed }`: the section the carrier's `sections` declares, with how its row is read.
+      verify: closedVerify(carrier, resolve(a.verify) ?? null, a.id),
       // With `verify: 'premium'`: rated only once this selector is drawn too (GEICO's pay plans).
       ratedBy: resolve(a.ratedBy) ?? null,
       // `shownBy`: the questions that show the helper's result (`all` of them, or `any`; with
@@ -217,10 +228,25 @@ function unreadable(kind, value) {
  * @param {StepOverlay | null} overlay
  * @returns {FieldStep[]}
  */
-function fieldSteps(rules, record, carrier, active, overlay) {
+function fieldSteps(rules, record, carrier, active, overlay, onRuleError = null) {
   const review = !supportedClass(record, carrier);
   const reviewNote = review ? reviewWarn(record, carrier) : null;
+  // A rule that throws (a record shape it didn't expect, an agent's edit that left text in a number
+  // field) never stops the plan, and never passes for an intake that is silent: its step is the
+  // agent's, marked `ruleError`, and the error is told (onRuleError; the panel logs a client_error
+  // naming the carrier, the concept and the question, never a value).
+  const failed = (rule, error) => {
+    try { onRuleError?.(error, { carrier: carrier?.id ?? null, concept: rule.concept ?? null, q: rule.q ?? null, name: rule.name ?? rule.path ?? null }); } catch { /* telling never breaks the plan */ }
+  };
   const expanded = rules.flatMap((rule) => {
+    try {
+      return expand(rule);
+    } catch (error) {
+      failed(rule, error);
+      return [{ rule, active, expansionFailed: true }];
+    }
+  });
+  function expand(rule) {
     if (rule.repeat) return (record[rule.repeat] ?? []).map((_, index) => ({ rule, active: { ...active, [rule.repeat]: index } }));
     // A per-vehicle question with several vehicles (or a vehicle and a trailer): a step for each
     // vehicle, which finds its own row. On a page showing one vehicle at a time, only the active
@@ -240,8 +266,29 @@ function fieldSteps(rules, record, carrier, active, overlay) {
       return (record.trailers ?? []).map((_, index) => ({ rule, active: { ...active, trailers: index }, activeVehicle: index === (active.trailers ?? 0) }));
     }
     return [{ rule, active }];
+  }
+  return expanded.map(/** @returns {FieldStep} */ ({ rule, active, activeVehicle = null, unit = null, expansionFailed = false }, id) => {
+    // A flag, not the thrown value: a rule may throw null or 0.
+    if (expansionFailed) return ruleErrorStep(rule, active, id);
+    try {
+      return stepOf(rule, active, activeVehicle, unit, id);
+    } catch (thrown) {
+      failed(rule, thrown);
+      return ruleErrorStep(rule, active, id);
+    }
   });
-  return expanded.map(/** @returns {FieldStep} */ ({ rule, active, activeVehicle = null, unit = null }, id) => {
+  // The step of a rule that threw: built from the rule's fixed fields only (each function left out),
+  // so the page kit still finds its question, with no answer, the agent's, and no overlay.
+  function ruleErrorStep(rule, active, id) {
+    const fixed = Object.fromEntries(Object.entries(rule).filter(([, v]) => typeof v !== 'function'));
+    let base;
+    try { base = stepOf(fixed, active, null, null, id, false); } catch { base = stepOf({ path: rule.path, name: rule.name, q: rule.q }, active, null, null, id, false); }
+    /** @type {Omit<FieldStep, 'resolution'>} */
+    const step = { ...base, source: typeof rule.source === 'string' ? rule.source : null, standard: false, reviewRequired: false, manualOnly: true,
+      value: null, from: null, warn: null, ignore: false, verifyOnly: false, note: "This answer's rule failed: answer it yourself.", ruleError: true };
+    return { ...step, resolution: stepResolution(step) };
+  }
+  function stepOf(rule, active, activeVehicle, unit, id, shape = true) {
     const list = rule.path ? listOf(rule.path) : null;
     const path = rule.path
       ? (list ? rule.path.replace('[]', `[${active[list] ?? 0}]`) : rule.path)
@@ -259,14 +306,7 @@ function fieldSteps(rules, record, carrier, active, overlay) {
     const note = agents ? ruleNote ?? `${name} isn't on the intake: answer it yourself.` : ruleNote;
     const standard = source === 'standard';
     const ruleWarn = typeof rule.warn === 'function' ? rule.warn(record, active) : rule.warn ?? null;
-    let value = null;
-    if (!note) {
-      try {
-        value = rule.value ? rule.value(record, active) : get(record, path);
-      } catch {
-        value = null;
-      }
-    }
+    let value = note ? null : rule.value ? rule.value(record, active) : get(record, path);
     const ignore = typeof rule.ignore === 'function' ? !!rule.ignore(record, active) : !!rule.ignore;
     const verifyOnly = typeof rule.verifyOnly === 'function' ? !!rule.verifyOnly(record, active) : !!rule.verifyOnly;
     // An intake value its field can't hold (UNREADABLE above) is the agent's, never filled. A step
@@ -335,12 +375,9 @@ function fieldSteps(rules, record, carrier, active, overlay) {
       optional: !!rule.optional,
       // The registered business names a USDOT lookup offers (checked against the intake).
       registeredName: !!rule.registeredName,
-      // Progressive's cargo questions: 'section' (the commodity section), 'limit', or true.
-      cargo: rule.cargo ?? null,
-      // Its general liability questions the same way: 'section' or 'limit'.
-      gl: rule.gl ?? null,
-      // And its trailer interchange questions (Progressive, 2026-10-28): 'section' or 'limit'.
-      interchange: rule.interchange ?? null,
+      // A question of a coverage section the carrier declares (`sections`: Progressive's cargo, general
+      // liability and trailer interchange): of its open section, or its limit (`part`).
+      section: rule.section ? { id: rule.section.id, part: rule.section.part } : null,
       selector: rule.repeatSelector ? rule.repeatSelector(record, active) : rule.selector ?? null,
       re: rule.label ?? null,
       ex: rule.not ?? null,
@@ -425,10 +462,10 @@ function fieldSteps(rules, record, carrier, active, overlay) {
       witness: rule.witness ? { selector: rule.witness.selector, path: withIndex(rule.witness.path, active), value: get(record, withIndex(rule.witness.path, active)) ?? null } : null,
     };
     // A plugged-in overlay may change the step; its resolution then follows the step it returns.
-    const shaped = overlay ? overlay(step, rule, { record, carrier, active }) : step;
+    const shaped = overlay && shape ? overlay(step, rule, { record, carrier, active }) : step;
     // The answer, how it was decided, why, and what it needs, from the fields above (resolution.js).
     return { ...shaped, resolution: stepResolution(shaped) };
-  });
+  }
 }
 
 // The record paths a rule's value function reads (`drivers[0].dob`, `applicant.dot`): it runs once

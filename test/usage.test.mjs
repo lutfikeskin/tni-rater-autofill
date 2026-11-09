@@ -133,6 +133,26 @@ test('a fill run says it ran in the background and how long its page was hidden,
   assert.deepEqual(['background' in front, 'hiddenMs' in front], [false, false]);
 });
 
+// Audit 2026-11-07 (ENG-07): a fill that halted or failed an answer logs its timeline on fill_run,
+// its questions and buttons redacted and its keys salted as a fill_field's.
+test('a fill_run carries the timeline of a fill that halted, redacted as its fields are', () => {
+  const timeline = [
+    { what: 'wait', at: 0, why: 'answer', ms: 150, ended: 'quiet' },
+    { what: 'answer', at: 160, key: 'owner_Jordan', label: "Jordan's Role", kind: 'choice', ok: false, ms: 20 },
+    { what: 'press', at: 300, button: 'Edit Jordan', how: 'kit' },
+    { what: 'wait', at: 310, why: 'continue', ms: 15000, ended: 'limit', held: ['busy'] },
+  ];
+  const [run] = fillEvents([{ halted: true, timeline }, { timeline: [{ what: 'run', at: 0, on: true }] }], { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact, keySalt: 'salt-1' });
+  assert.equal(run.timeline.length, 4, 'one frame\'s, the first that has one');
+  assert.deepEqual(run.timeline[0], timeline[0]);
+  assert.deepEqual(run.timeline[3], timeline[3]);
+  assert.match(run.timeline[1].key, /^owner_\[client\]#[0-9a-f]{8}$/);
+  assert.deepEqual([run.timeline[1].label, run.timeline[2].button], ["[client]'s Role", 'Edit [client]']);
+  assertNoClientData(run.timeline);
+  const [plain] = fillEvents([{ filled: [] }], { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact });
+  assert.equal('timeline' in plain, false, 'none without one');
+});
+
 // Audit 2026-11-07, FLOW-11: the second click of a Continue that didn't take is said on its fill_run,
 // so the weekly review can judge whether the retry is still needed.
 test('a fill run that clicked a lost Continue again says so, and no other does', () => {
@@ -406,10 +426,10 @@ test('a panel crash is logged redacted, with frames from the extension only', ()
 test('the agent\'s settings event has every setting, defaults included, and never the AI key', () => {
   const central = 'https://central.example';
   assert.deepEqual(agentSettingsEvent({}, { reason: 'intake', centralServer: central }), { type: 'agent_settings', reason: 'intake', values: {
-    autoFollowUps: true, autoAdvance: true, autoPages: true, overwrite: false, aiOn: true, aiAuto: false, aiKey: false, uploads: 'central' } });
-  const e = agentSettingsEvent({ autoAdvance: false, autoPages: true, aiOn: true, lunaAuto: true, lunaKey: 'sk-secret', serverUrl: 'http://localhost:8787' },
+    autoFollowUps: true, autoAdvance: true, autoPages: true, overwrite: false, aiOn: true, aiAuto: false, aiNames: true, aiKey: false, uploads: 'central' } });
+  const e = agentSettingsEvent({ autoAdvance: false, autoPages: true, aiOn: true, lunaAuto: true, lunaNames: false, lunaKey: 'sk-secret', serverUrl: 'http://localhost:8787' },
     { overwrite: true, reason: 'changed', changed: 'aiKey', centralServer: central });
-  assert.deepEqual(e.values, { autoFollowUps: true, autoAdvance: false, autoPages: true, overwrite: true, aiOn: true, aiAuto: true, aiKey: true, uploads: 'other' });
+  assert.deepEqual(e.values, { autoFollowUps: true, autoAdvance: false, autoPages: true, overwrite: true, aiOn: true, aiAuto: true, aiNames: false, aiKey: true, uploads: 'other' });
   assert.equal(e.changed, 'aiKey');
   assert.ok(!JSON.stringify(e).includes('sk-secret'), 'never the key');
   assert.equal(agentSettingsEvent({ serverUrl: '' }, { reason: 'opened', centralServer: central }).values.uploads, 'off');
@@ -546,4 +566,17 @@ test('profile: punctuated identifiers and the intake\'s spaced VINs go; ID boxes
   assert.equal(p.drivers[0].age, null, 'no age from an impossible date of birth');
   assert.deepEqual([p.coverage.autoLiabLimit, p.coverage.glLimit], ['$1000000 CSL', '1000000']);
   assert.deepEqual(p.priorInsurance.map((x) => [x.limit, x.expires]), [['25/50/25', null], ['100/300/100', '2026-11'], [null, null]], 'no month 13; an SSN is no limit');
+});
+
+// REC-09 (audit 2026-11-07): a fill_run's waits are its frames' summed, by what they were for;
+// anything that isn't a wait kind with whole counts is left out.
+test('a fill run sums its frames\' waits by kind, counts and ms only', () => {
+  const frames = [
+    { waits: { answer: { n: 3, ms: 900, limit: 0, slack: 300 }, continue: { n: 1, ms: 800, limit: 0, slack: 500 } } },
+    { waits: { answer: { n: 1, ms: 200, limit: 1, slack: 0 }, 'Sam Smith': { n: 1, ms: 5, limit: 0, slack: 0 }, round: { n: 1.5, ms: 1, limit: 0, slack: 0 } } },
+    {},
+  ];
+  const [run] = fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 1, redact: (s) => s });
+  assert.deepEqual(run.waits, { answer: { n: 4, ms: 1100, limit: 1, slack: 300 }, continue: { n: 1, ms: 800, limit: 0, slack: 500 } });
+  assert.equal('waits' in fillEvents([{}], { carrier: 'amwins', page: 'P', overwrite: false, ms: 1, redact: (s) => s })[0], false, 'a fill that waited for nothing says nothing');
 });
