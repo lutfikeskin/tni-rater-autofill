@@ -1453,6 +1453,7 @@
  * @property {string | null} [defaultsInitials] the agent's initials the profiles need.
  * @property {any} [defaultsChip] what the client strip's defaults pill says for this quote (agent-defaults/store.js).
  * @property {number} [rowsDrawn] bumped when a report row's record changes, so report-view.jsx draws it again.
+ * @property {number} [rowsAll] bumped when a row no kept report holds changes: every report list draws again (drawList, LIVE-09).
  */
 
 /**
