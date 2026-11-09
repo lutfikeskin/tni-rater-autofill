@@ -346,6 +346,19 @@ test('a fill run keeps whether it ran in the background and how long its page wa
     [[true, 4200, []], [null, null, ['background', 'hiddenMs']], [null, null, ['hiddenMs']]]);
 });
 
+// Audit 2026-11-07, REC-09: a fill run's waits by what they were for (counts and ms only) are kept;
+// any other shape there is dropped and named.
+test('a fill run keeps its waits by what they were for, in their shape only', async () => {
+  const dataDir = tmp();
+  const waits = { answer: { n: 12, ms: 3400, limit: 0, slack: 900 }, continue: { n: 1, ms: 800, limit: 0, slack: 550 }, rated: { n: 1, ms: 6000, limit: 1, slack: 0 } };
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [ev({ waits }), ev({ waits: { answer: { n: 1, ms: 10, limit: 0, slack: 20 } } }), ev({ waits: { 'Sam Smith': { n: 1, ms: 10, limit: 0, slack: 0 } } }),
+      ev({ waits: { answer: { n: 1, ms: 10, limit: 0, slack: 0, label: 'Sam' } } }), ev({ waits: [] })] });
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((e) => [e.waits ?? null, (e.dropped ?? []).includes('waits')]), [[waits, false], [null, true], [null, true], [null, true], [null, true]]);
+});
+
 // Audit 2026-11-07, FLOW-11: a fill run or error from a lost Continue's second click keeps `retried`
 // (true only); anything else there is dropped and named.
 test('a Continue retry is kept on its fill_run and fill_error, true only', async () => {

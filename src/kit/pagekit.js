@@ -7,7 +7,7 @@
 /** @import { FillOptions, FillReport, PlanStep } from '../../types.js' */
 
 import { kitTrace, setTracing, isTracing } from './trace.js';
-import { adapter, pageBusy, perfNow, stepKey, stopStepOn, settle, getKnownStopSteps } from './adapter.js';
+import { adapter, pageBusy, perfNow, stepKey, stopStepOn, settle, getKnownStopSteps, tallyWaits, waitsTallied } from './adapter.js';
 import { collectControls, fieldKey, describe, invalidControl } from './dom.js';
 import { mark, clear, markKey, reveal, aiBanner } from './marks.js';
 import { listed, unitList, unitListsNow, unitFormsNow } from './units.js';
@@ -147,8 +147,12 @@ import { fill, progress, stop, stopRun } from './cursor.js';
       else if (hiddenSince != null) { hiddenMs += perfNow() - hiddenSince; hiddenSince = null; }
     };
     document.addEventListener('visibilitychange', seen);
+    tallyWaits();
     try {
       const report = await fill(plan, options);
+      // Its waits by what they were for (REC-09): the usage log's fill_run sums them over its frames.
+      const waits = waitsTallied();
+      if (report && waits) report.waits = waits;
       // How it ended, as counts (REC-01): what failed, was left for the agent, held Continue or was
       // new to the rules. Which ones, and why, are in the usage log's fill_field events, which a
       // recording copies in.
@@ -158,6 +162,7 @@ import { fill, progress, stop, stopRun } from './cursor.js';
       if (report && hiddenMs >= 1) report.hiddenMs = Math.round(hiddenMs);
       return report;
     } finally {
+      waitsTallied();
       document.removeEventListener('visibilitychange', seen);
       setTracing(false);
     }

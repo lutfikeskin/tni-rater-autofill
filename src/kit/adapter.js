@@ -241,6 +241,30 @@ export async function pause(ms) {
   for (const end = Date.now() + ms; Date.now() < end && !waitsStopped();) await sleep(Math.max(1, Math.min(WAKE_MS, end - Date.now())));
 }
 
+// The waits of the fill under way, by what they were for (audit 2026-11-07, REC-09): for each
+// `why`, how many (`n`), their ms (`ms`), how many ran to their limit (`limit`) and their slack
+// (`slack`: the ms after the last change, busy page, undefined component or request each saw; none
+// for a wait at its limit or stopped). Counts and ms only, nothing of the page. null: no fill is
+// tallying (tallyWaits, pagekit's tracedFill).
+/** @type {Record<string, { n: number, ms: number, limit: number, slack: number }> | null} */
+let waitTally = null;
+const WAIT_KINDS = 12;
+
+/** Starts the fill's tally of its waits. */
+export function tallyWaits() {
+  waitTally = {};
+}
+
+/**
+ * Ends the fill's tally: its waits by what they were for, or null when there were none.
+ * @returns {Record<string, { n: number, ms: number, limit: number, slack: number }> | null}
+ */
+export function waitsTallied() {
+  const t = waitTally;
+  waitTally = null;
+  return t && Object.keys(t).length ? t : null;
+}
+
 /**
  * Wait until the page stops changing: not busy, every component it draws defined, and no new
  * nodes for quietMs. A stopped fill (`abort`, waitsStopped unless given) ends the wait at its next
@@ -260,8 +284,22 @@ export async function settle({ quietMs = 250, maxMs = 15000, requests = null, wh
   // last request it waited after; each its start when it saw none. The look starts no component's
   // 3 s, so a recorded fill waits as long as one not recorded.
   let lastHeld = start;
+  // The last wake the wait was quiet for long enough but still held (busy, a component undefined,
+  // a request): its tally's slack starts there, with no look beyond the wait's own.
+  let heldAt = start;
   const told = (ended, more = {}) => {
-    if (isTracing()) kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms: Date.now() - start, ended, lastChange: Math.max(last, start), lastHeld, ...more });
+    const ms = Date.now() - start;
+    if (isTracing()) kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms, ended, lastChange: Math.max(last, start), lastHeld, ...more });
+    if (waitTally) {
+      const kind = typeof why === 'string' && /^[a-z-]{1,20}$/.test(why) ? why : 'other';
+      const t = waitTally[kind] ?? (Object.keys(waitTally).length < WAIT_KINDS ? (waitTally[kind] = { n: 0, ms: 0, limit: 0, slack: 0 }) : null);
+      if (t) {
+        t.n++;
+        t.ms += Math.round(ms);
+        if (ended === 'limit') t.limit++;
+        if (ended === 'quiet') t.slack += Math.max(0, Math.round(start + ms - Math.max(last, start, heldAt, lastHeld)));
+      }
+    }
   };
   const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
   const held = (now) => {
@@ -274,15 +312,19 @@ export async function settle({ quietMs = 250, maxMs = 15000, requests = null, wh
       if (mo.takeRecords?.().length) last = now;
       if (isTracing()) held(now);
       const quietFor = now - last;
-      if (quietFor >= quietMs && !pageBusy() && !partsUndefined() && !requested()) { told('quiet'); return true; }
+      if (quietFor >= quietMs) {
+        if (!pageBusy() && !partsUndefined() && !requested()) { told('quiet'); return true; }
+        heldAt = now;
+      }
       await sleep(Math.max(1, Math.min(quietFor < quietMs ? quietMs - quietFor : WAKE_MS, abort ? WAKE_MS : Infinity, maxMs - (now - start))));
     }
     if (abort?.()) { told('stopped'); return false; }
     const settled = !pageBusy() && Date.now() - last >= quietMs;
+    // At its limit: in the tally whether or not a recording runs; what held it only for a recording.
     if (isTracing()) {
       held(Date.now());
       told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
-    }
+    } else told('limit');
     return settled;
   } finally {
     mo.disconnect();

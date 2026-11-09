@@ -235,6 +235,16 @@ export const SUMMARY_SHAPE = sShaped({
 // review joins events by them. An event with one of these present but malformed is refused, not
 // trimmed: a wrong run id or rules hash would join the wrong events.
 const SETTINGS_KEYS = ['autoAdvance', 'autoFollowUps', 'autoPages', 'overwrite'];
+// A fill's waits by what they were for (FillRunWaits in types.js, src/usage.js waitSummary; audit
+// 2026-11-07, REC-09): at most 12 kinds, each named in lowercase words, with whole, non-negative
+// counts and ms, its limits within its count and its slack within its ms. Anything else is dropped
+// and named.
+const WAIT_COUNTS = ['n', 'ms', 'limit', 'slack'];
+export const fillWaits = (v) => !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length > 0 && Object.keys(v).length <= 12
+  && Object.entries(v).every(([why, w]) => /^[a-z-]{1,20}$/.test(why) && !!w && typeof w === 'object' && !Array.isArray(w)
+    && Object.keys(w).length === WAIT_COUNTS.length && WAIT_COUNTS.every((k) => Number.isSafeInteger(w[k]) && w[k] >= 0 && w[k] <= 86_400_000)
+    && w.n > 0 && w.limit <= w.n && w.slack <= w.ms);
+
 export const RUN_FIELDS = {
   run: (v) => typeof v === 'string' && /^[\w-]{8,64}$/.test(v),
   rules: (v) => typeof v === 'string' && /^[0-9a-f]{6,16}$/.test(v),
@@ -507,6 +517,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (out.type === 'fill_field' && out.code !== undefined && !(typeof out.code === 'string' && /^[a-z]+\.[a-z-]{1,30}$/.test(out.code))) drop('code');
     if (out.background !== undefined && out.background !== true) drop('background');
     if (out.hiddenMs !== undefined && !(Number.isSafeInteger(out.hiddenMs) && out.hiddenMs > 0 && out.hiddenMs <= 86_400_000)) drop('hiddenMs');
+    if (out.waits !== undefined && !fillWaits(out.waits)) drop('waits');
     if (out.retried !== undefined && out.retried !== true) drop('retried');
     if (out.type === 'check_dismissed' && out.mark !== undefined && !(out.mark === null || (typeof out.mark === 'string' && /^[a-z-]{1,20}$/.test(out.mark)))) drop('mark');
     if (out.install !== undefined && !(typeof out.install === 'string' && /^[0-9a-f-]{36}$/.test(out.install))) drop('install');

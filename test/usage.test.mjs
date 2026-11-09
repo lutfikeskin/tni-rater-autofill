@@ -517,3 +517,16 @@ test('profile: punctuated identifiers and the intake\'s spaced VINs go; ID boxes
   assert.deepEqual([p.coverage.autoLiabLimit, p.coverage.glLimit], ['$1000000 CSL', '1000000']);
   assert.deepEqual(p.priorInsurance.map((x) => [x.limit, x.expires]), [['25/50/25', null], ['100/300/100', '2026-11'], [null, null]], 'no month 13; an SSN is no limit');
 });
+
+// REC-09 (audit 2026-11-07): a fill_run's waits are its frames' summed, by what they were for;
+// anything that isn't a wait kind with whole counts is left out.
+test('a fill run sums its frames\' waits by kind, counts and ms only', () => {
+  const frames = [
+    { waits: { answer: { n: 3, ms: 900, limit: 0, slack: 300 }, continue: { n: 1, ms: 800, limit: 0, slack: 500 } } },
+    { waits: { answer: { n: 1, ms: 200, limit: 1, slack: 0 }, 'Sam Smith': { n: 1, ms: 5, limit: 0, slack: 0 }, round: { n: 1.5, ms: 1, limit: 0, slack: 0 } } },
+    {},
+  ];
+  const [run] = fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 1, redact: (s) => s });
+  assert.deepEqual(run.waits, { answer: { n: 4, ms: 1100, limit: 1, slack: 300 }, continue: { n: 1, ms: 800, limit: 0, slack: 500 } });
+  assert.equal('waits' in fillEvents([{}], { carrier: 'amwins', page: 'P', overwrite: false, ms: 1, redact: (s) => s })[0], false, 'a fill that waited for nothing says nothing');
+});

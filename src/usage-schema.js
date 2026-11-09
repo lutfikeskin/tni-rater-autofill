@@ -16,7 +16,7 @@
 // holds every version's fingerprint and fails until SCHEMA_VERSION is raised and the new version's
 // added, so an extension that sends the new fields waits for a server that keeps them.
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 // Event type -> fields kept. Anything else in an event is dropped (and named in `dropped`).
 // install: a random id for one copy of the extension on one computer (with seq: gaps show loss).
@@ -54,7 +54,8 @@ export const EVENT_FIELDS = {
   // retried: the second click of a Continue whose page stayed unchanged (true only), on its fill_run or fill_error.
   // background: the quote tab filled while the agent was on another; hiddenMs: how long its page was
   // hidden meanwhile (Chrome slows a hidden tab's timers).
-  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'retried', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
+  // waits: the fill's waits by what they were for, counts and ms only (FillRunWaits in types.js; REC-09).
+  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'retried', 'waits', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
   // source: where the answer comes from (plan.js; the server's FIELD_SOURCES); standard, manualOnly,
   // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
