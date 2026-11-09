@@ -878,7 +878,11 @@ const interchangeType = (r) => (interchangeRequested(r) ? interchangeTrailerType
 // intake's trailer type by the same names (the maintainer, 2026-11-09, after a GEICO recording where
 // the AI assistant was asked for it and cited the interchange rule). Enclosed, Step Deck, Other or
 // none stay the agent's pick.
-const trailerType = (r, a) => INTERCHANGE_TYPES[trailerOf(r, a)?.type] ?? null;
+// Only the map's own keys (review of #536: "constructor" would read an inherited value).
+const trailerType = (r, a) => {
+  const type = trailerOf(r, a)?.type;
+  return typeof type === 'string' && Object.hasOwn(INTERCHANGE_TYPES, type) ? INTERCHANGE_TYPES[type] : null;
+};
 const interchangeTypeNote = (r) => interchangeUnrequested(r) ?? (interchangeType(r) ? null
   : `Trailer interchange: ${interchangeTypeSaid(r, INTERCHANGE_TYPES, { carrier: 'GEICO', what: 'option' })}.`);
 // Marked to confirm with the client (TNI, 2026-10-28), each on its own question: the number, the

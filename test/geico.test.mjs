@@ -386,7 +386,7 @@ test('trailer type: the intake\'s Dry Van, Flatbed, Reefer, Lowboy or Tanker by 
     const s = typeFor(type);
     assert.deepEqual([s.value, s.source, s.note ?? null], [want, 'derived', null], type);
   }
-  for (const type of ['Enclosed', 'Step Deck', 'Other']) {
+  for (const type of ['Enclosed', 'Step Deck', 'Other', 'constructor', '__proto__', 'toString']) {
     const s = typeFor(type);
     assert.deepEqual([s.value ?? null, s.source ?? null], [null, null], type);
     assert.equal(s.note, `The trailer type is yours to pick: the intake says "${type}".`);
