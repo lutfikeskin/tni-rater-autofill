@@ -138,7 +138,7 @@ version: one to five short lines in the agent's words. The panel shows them once
 v<version>", the first time it opens after the update, with every version's lines since the one it
 last showed (or the version updated from, when it never showed one); a version with no lines shows
 nothing, and a new install isn't told. `test/whats-new.test.mjs` checks the lines' shape.
-Chrome updates installed copies by itself within a few hours of approval.
+Chrome downloads the new version within a few hours of approval. It doesn't swap it under an open panel: the service worker keeps the downloaded version (`onUpdateAvailable`, `updateReady`), and the panel shows **Update ready: v<version>** with **Reload now**, which reloads the extension into it unless a fill is running or the AI assistant is still answering (then the card says to reload once it ends; audit 2026-11-07, GAP-07). A reload closes the panel and clears its session: with a client loaded, the card says so, and that the agent's corrections and checks, kept on this computer for a day, come back when the same PDF is dropped again. An agent who never reloads gets it when Chrome restarts.
 
 When the version bump reaches `main`, [release-tag.yml](../.github/workflows/release-tag.yml)
 tags the commit that set the version `v<version>` and makes a GitHub Release whose notes are the

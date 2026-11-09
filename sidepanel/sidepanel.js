@@ -36,6 +36,7 @@ import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
 import { forgetQuoteTab, noteNewTab, openPortal, restoreQuoteOwners } from './panel/quote-owner.js';
 import { fileReplacer } from './panel/file-drop.js';
 import { showWhatsNew } from './panel/whats-new.js';
+import { showUpdateReady } from './panel/update-ready.js';
 import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
@@ -54,6 +55,7 @@ function wire() {
   mountNote($('notices'), 'usage');
   mountNote($('storage-note'), 'storage');
   mountNote($('whats-new'), 'whatsNew');
+  mountNote($('update-ready'), 'updateReady');
   mountNote($('window-note'), 'window');
   mountLoadError($('load-error'));
   // Home's setup checklist: an item left to do opens Settings at its box.
@@ -275,6 +277,7 @@ async function init() {
   renderAiSettings();
   reviewIntake();
   showWhatsNew();
+  showUpdateReady();
   await refreshTab();
 }
 
