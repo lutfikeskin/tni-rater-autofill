@@ -528,7 +528,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (out.messages !== undefined && !(Array.isArray(out.messages) && out.messages.length <= 40 && out.messages.every((m) => typeof m === 'string' && m.length <= 200))) drop('messages');
     // A crash: where, a bounded message, and frames inside the extension's files only.
     if (out.type === 'client_error') {
-      if (out.where !== undefined && !['panel', 'recorder'].includes(out.where)) drop('where');
+      if (out.where !== undefined && !['panel', 'recorder', 'plan'].includes(out.where)) drop('where');
+      for (const k of ['concept', 'q']) if (out[k] !== undefined && !(typeof out[k] === 'string' && out[k].length <= 80 && /^[\w.:-]+$/.test(out[k]))) drop(k);
       if (out.error !== undefined && !(typeof out.error === 'string' && out.error.length <= 300)) drop('error');
       if (out.stack !== undefined && !(Array.isArray(out.stack) && out.stack.length <= 4 && out.stack.every((x) => typeof x === 'string' && x.length <= 160 && /^[\w./-]+:\d+:\d+$/.test(x)))) drop('stack');
     }
