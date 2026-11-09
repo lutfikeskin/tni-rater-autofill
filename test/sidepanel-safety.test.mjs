@@ -4883,7 +4883,7 @@ test('a Pop out or Dock that didn\'t work, a PDF that couldn\'t be read and a us
   context.showLoadError('No fillable fields.', 'scan.pdf');
   assert.deepEqual(plain(state.loadError), { title: 'Couldn\'t read scan.pdf', text: 'No fillable fields.' });
   // The usage log's notice: assigned anew (the view redraws on an assignment), the window's note kept.
-  assert.match(extractFunction('renderHealth'), /state\.notes = \{ \.\.\.state\.notes, usage: saved\.state === 'error' \? issueSaid\(\{ tone: 'warn', role: 'alert', title: "Usage log can't be saved on this computer",\s+text: `Nothing is recorded now \(\$\{saved\.message\}\)\. Export the log \(Settings, Advanced\) and tell TNI\.` \}\) : null \};/);
+  assert.match(extractFunction('renderHealth'), /state\.notes = \{ \.\.\.state\.notes, usage: saved\.state === 'error' \? issueSaid\(\{ tone: 'warn', role: 'alert', title: "Usage log can't be saved on this computer",\s+text: `Nothing is recorded now \(\$\{saved\.message\}\)\. \$\{locked \?/);
 });
 
 test('with the panel in its own window only the newest copy stays, and one filling stops before it closes', async () => {
@@ -6082,7 +6082,7 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   vm.runInNewContext(extractFunction('problemSaid') + extractFunction('problemFate'), said);
   assert.equal(said.problemSaid('sent', { state: 'ok' }, true, at), `Report saved and sent to TNI at ${time}, with this page's last fill.`);
   assert.equal(said.problemSaid('sent', { state: 'ok' }, false, at), `Report saved and sent to TNI at ${time}.`);
-  assert.equal(said.problemSaid('refused', { state: 'ok', sent: 0 }, false, at), "Report saved on this computer, but the usage server didn't take it: it stays here, and goes with Export.");
+  assert.equal(said.problemSaid('refused', { state: 'ok', sent: 0 }, false, at), "Report saved on this computer, but the usage server didn't take it: it stays here, so tell TNI about the problem yourself.");
   assert.equal(said.problemSaid('queued', { state: 'ok', sent: 0 }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
   assert.equal(said.problemSaid('queued', { state: 'error' }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
   assert.equal(said.problemSaid('queued', { state: 'off' }, true, at), "Report saved on this computer, with this page's last fill. No usage server is set, so it isn't sent.");
@@ -6165,14 +6165,14 @@ test('a saved problem report says in the footer whether it reached TNI', async (
 // on the gear. Home lists what setting up takes, each item ticked by the health check Settings' note
 // already used (setupItems), while anything is left; the note says the same items.
 test('Home\'s setup checklist is ticked by the health checks, and gone once all is done', async () => {
-  const run = async ({ agent = '', ai = { on: false, ready: false, provider: 'openai' }, up = { state: 'idle' } }) => {
+  const run = async ({ agent = '', ai = { on: false, ready: false, provider: 'openai' }, up = { state: 'idle' }, locked = false, save = { state: 'ok' } }) => {
     const els = { 'foot-version': {}, 'settings-dot': {} };
-    const state = { notes: {} };
-    const ctx = { state, inExtension: false, $: (id) => els[id], usage: { settings: async () => ({ agent }), agentInitials: async () => agent || null, lastSave: () => ({ state: 'ok' }) },
+    const state = { notes: {}, usageCard: { locked } };
+    const ctx = { state, inExtension: false, $: (id) => els[id], usage: { settings: async () => ({ agent }), agentInitials: async () => agent || null, lastSave: () => save },
       aiSettings: async () => ai, PROVIDERS: { openai: { keyLabel: 'OpenAI key' } }, issueSaid: (x) => x };
     vm.runInNewContext(['setupItems', 'renderHealth', 'joinAnd'].map(extractFunction).join('\n'), ctx);
     await ctx.renderHealth({ up });
-    return { health: plain(state.health), dot: els['settings-dot'].hidden };
+    return { health: plain(state.health), dot: els['settings-dot'].hidden, notes: state.notes };
   };
   const fresh = await run({ ai: { on: true, ready: false, provider: 'openai' }, up: { state: 'off' } });
   assert.deepEqual(fresh.health.checklist, [
@@ -6182,6 +6182,14 @@ test('Home\'s setup checklist is ticked by the health checks, and gone once all 
   ]);
   assert.equal(fresh.health.setup, 'To finish setup, add your initials, add the OpenAI key and set the usage server (Advanced).');
   assert.equal(fresh.dot, false);
+  // The store copy has no Advanced (PR #534 review): its server item opens no box and says to tell
+  // TNI (open only when a policy set no server), and a log that can't be saved says only to tell TNI.
+  const store = await run({ ai: { on: true, ready: false, provider: 'openai' }, up: { state: 'off' }, locked: true, save: { state: 'error', message: 'quota' } });
+  assert.deepEqual(store.health.checklist.at(-1), { id: 'server', label: "No usage server is set, so TNI doesn't get your runs: tell TNI", done: false, focus: null });
+  assert.equal(store.health.setup, 'To finish setup, add your initials, add the OpenAI key and tell TNI no usage server is set.');
+  assert.deepEqual((await run({ agent: 'JK', up: { state: 'ok' }, locked: true })).health.checklist, null, "TNI's server: nothing to set up");
+  assert.equal(store.notes.usage.text, 'Nothing is recorded now (quota). Tell TNI.');
+  assert.equal((await run({ save: { state: 'error', message: 'quota' } })).notes.usage.text, 'Nothing is recorded now (quota). Export the log (Settings, Advanced) and tell TNI.');
   // Initials typed, the AI off, the server shipped: only the initials' item was open, now all done.
   const half = await run({ up: { state: 'ok' } });
   assert.deepEqual(half.health.checklist.map((x) => [x.id, x.done]), [['initials', false], ['ai', true], ['server', true]]);
@@ -7104,10 +7112,10 @@ test('a filling switch with no value reads as its default: Let me look first on,
 // Managed setup (audit 2026-11-07, UX-12 d): a server the organization's policy set is said so on the
 // usage card whatever the last upload did, and not for the agent's own server.
 test('the usage card says a server the organization set, after an upload as before one', async () => {
-  const card = async (up, managed) => {
+  const card = async (up, managed, locked = false) => {
     const state = {};
     const context = { state, document: { activeElement: null }, $: () => ({ value: '' }), renderHealth() {},
-      usage: { count: async () => 0, settings: async () => ({}), serverConfig: async () => ({ serverUrl: 'https://usage.agency.test', ...(managed ? { managed: true } : {}) }),
+      usage: { count: async () => 0, settings: async () => ({}), serverConfig: async () => ({ serverUrl: 'https://usage.agency.test', ...(managed ? { managed: true } : {}), ...(locked ? { locked: true } : {}) }),
         lastUpload: () => up } };
     vm.runInNewContext(`${extractFunction('renderUsage')}
 var run = renderUsage;`, context);
@@ -7120,6 +7128,8 @@ var run = renderUsage;`, context);
     assert.doesNotMatch(await card(up, false), /organization/, up.state);
   }
   assert.equal(await card({ state: 'off' }, true), 'No server set. Use Export log to hand it in.');
+  // The store copy hides Advanced, Export log with it (PR #534 review): its line doesn't point there.
+  assert.equal(await card({ state: 'off' }, true, true), 'No server set, so the log stays on this computer. Tell TNI.');
 });
 
 // What Settings' switches, boxes and usage buttons ask the panel to do (settingsActs), in a vm with

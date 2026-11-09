@@ -9,7 +9,7 @@ import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 
-/** @typedef {{ id: string, label: string, done: boolean, focus: string }} SetupItem */
+/** @typedef {{ id: string, label: string, done: boolean, focus: string | null }} SetupItem */
 
 // `act.open(focus)`: open Settings at that box (openSettings).
 /** @param {{ act: { open: (focus: string) => void } }} props */
@@ -27,7 +27,7 @@ function SetupCard({ act }) {
           <li key={x.id} className={x.done ? 'done' : undefined} data-item={x.id}>
             <span className="tick" aria-hidden="true">{x.done ? '✓' : ''}</span>
             <span className="setup-label">{x.label}<span className="sr-only">{x.done ? ' (done)' : ' (to do)'}</span></span>
-            {!x.done && <button type="button" className="link small" onClick={() => act.open(x.focus)}>Set up</button>}
+            {!x.done && x.focus && <button type="button" className="link small" onClick={() => act.open(x.focus)}>Set up</button>}
           </li>
         ))}
       </ul>
