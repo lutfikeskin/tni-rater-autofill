@@ -7312,10 +7312,14 @@ test('client details mark the agent\'s corrections, show the intake\'s value wit
   sandbox.renderSections();
   assert.deepEqual([row('operations.radius').edited, row('operations.radius').original, record.operations.radiusMiles], [true, '100', null]);
   assert.equal(row('operations.radiusMiles').edited, false, 'a derived value that followed is not the agent\'s');
+  // CodeRabbit on #480: the miles recomputed from the correction count as the agent's for the log
+  // (agentDerived), until the correction is restored.
+  assert.deepEqual([...sandbox.state.intake.agentDerived], ['operations.radiusMiles']);
   assert.equal(sandbox.state.details.edited, 'Your corrections (1)');
   // Restore: the intake's value back, no longer the agent's, the miles following it again.
   await row('operations.radius').restore();
   assert.deepEqual([record.operations.radius, record.operations.radiusMiles, [...sandbox.state.intake.agentEdited]], ['100', 100, []]);
+  assert.deepEqual([...sandbox.state.intake.agentDerived], [], 'restored: the miles are the intake value again');
   assert.deepEqual([row('operations.radius').edited, row('operations.radius').original], [false, undefined]);
   assert.deepEqual(logged, [['operations.radius', 'changed'], ['operations.radius', 'restored']], 'logged as undone, without the value');
   // A field the intake left blank, corrected: its original is said as blank.

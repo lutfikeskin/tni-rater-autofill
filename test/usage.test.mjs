@@ -114,7 +114,7 @@ test('a fill_field says when its answer read the agent\'s correction, and the pa
   // CodeRabbit on #480: a value recomputed from the correction (claims box → any claims) counts, and
   // a TNI standard never does.
   const recordJs = fs.readFileSync(new URL('../sidepanel/panel/record.js', import.meta.url), 'utf8');
-  assert.ok(recordJs.includes('state.intake.agentDerived = [...new Set([...(state.intake.agentDerived ?? []), ...derived])];'));
+  assert.ok(recordJs.includes('state.intake.agentDerived = [...new Set(Object.values(by).flat())];'));
   const cleared = structuredClone(record);
   cleared.claims = { ...(cleared.claims ?? {}), hasClaims: null };
   const fallback = buildPlan(cleared, progressive, {}, { edited: ['claims.hasClaims'] }).filter((s) => s.standard && s.path === 'claims.hasClaims');

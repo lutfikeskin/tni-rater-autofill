@@ -361,8 +361,13 @@ async function agentEdit(path, after, kind, { restore = false } = {}) {
   if (restore) restoreNoNumber(state.intake, path);
   if (derived.length) renderSections({ keep: derived });
   // Recomputed from the agent's correction (claims box → any claims): an answer reading them reads
-  // the agent's value, for the log's `edited` (CodeRabbit on #480).
-  if (derived.length) state.intake.agentDerived = [...new Set([...(state.intake.agentDerived ?? []), ...derived])];
+  // the agent's value, for the log's `edited` (CodeRabbit on #480). Kept by the edit they came from
+  // (`agentDerivedBy`), so a restore takes back its own and the agent's other edits keep theirs.
+  const by = { ...(state.intake.agentDerivedBy ?? {}) };
+  if (restore || !derived.length) delete by[path];
+  else by[path] = derived;
+  state.intake.agentDerivedBy = by;
+  state.intake.agentDerived = [...new Set(Object.values(by).flat())];
   if (state.intake.warnings.length !== checks.length || state.intake.warnings.some((w, i) => w !== checks[i])) renderWarnings();
   intakeEdited();
   // Pages already filled with the old value are named for the agent (GAP-01).
