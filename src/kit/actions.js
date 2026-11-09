@@ -4,7 +4,7 @@
 import { drawnParent, deepQueryAll, buttonText, hostDisabled } from './dom.js';
 import { closestOwn, withAdapter } from './adapter.js';
 import { BANNER_ID } from './marks.js';
-import { kitTrace, isTracing } from './trace.js';
+import { kitTrace } from './trace.js';
 import { NEVER_ADVANCE, NEVER_CLICK } from '../restricted.js';
 
 // The commit words a button never has when the fill clicks it: one list, src/restricted.js.
@@ -53,7 +53,7 @@ export function pressButton(el, { late = null, kit = false } = {}) {
   if (!kit) {
     try { taken = !el.dispatchEvent(new CustomEvent('rater-press', { bubbles: true, composed: true, cancelable: true })); } catch { /* no CustomEvent */ }
   }
-  if (isTracing()) kitTrace('press', { button: { text: buttonText(el).slice(0, 60) }, how: taken ? 'page' : 'kit' });
+  kitTrace('press', { button: { text: buttonText(el).slice(0, 60) }, how: taken ? 'page' : 'kit' });
   if (!taken) {
     /** @type {HTMLElement} */ (el).click();
     return 'kit';

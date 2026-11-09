@@ -36,7 +36,7 @@ export function waitSummary(frames) {
   return Object.keys(out).length ? out : null;
 }
 
-/** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, FillRunWaits, IntakeProfileEvent, IntakeResult, IntakeSummary, UsageEvent } from '../types.js' */
+/** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, FillRunWaits, IntakeProfileEvent, IntakeResult, IntakeSummary, TimelineEvent, UsageEvent } from '../types.js' */
 
 export const LOG_KEY = 'usageLog';
 export const MAX_EVENTS = 20000;
@@ -316,6 +316,25 @@ function fieldKeyOf(key, redact, salt) {
   return salt ? `${shown}#${digest(`${salt}|${raw}`)}` : null;
 }
 
+// A fill's timeline (FillReport `timeline`, src/kit/trace.js) as logged: value free as the kit
+// keeps it, its questions and button texts redacted like a fill_field's label and its field keys
+// like a fill_field's key (audit 2026-11-07, ENG-07).
+/**
+ * @param {TimelineEvent[] | null | undefined} timeline
+ * @param {(s: string) => string} redact
+ * @param {string} [keySalt]
+ * @returns {TimelineEvent[] | undefined}
+ */
+export function loggedTimeline(timeline, redact, keySalt) {
+  if (!Array.isArray(timeline) || !timeline.length) return undefined;
+  return timeline.slice(-40).map((e) => ({
+    ...e,
+    ...(e.key !== undefined ? { key: fieldKeyOf(e.key, redact, keySalt) } : {}),
+    ...(e.label !== undefined ? { label: redact(String(e.label)).slice(0, 120) } : {}),
+    ...(e.button !== undefined ? { button: redact(String(e.button)).slice(0, 60) } : {}),
+  }));
+}
+
 // FNV-1a (32 bits): tells a quote's keys apart; the salt is what keeps it from identifying anyone.
 function digest(s) {
   let h = 0x811c9dc5;
@@ -450,6 +469,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   const stepField = stepOf(step, redact);
   // The longest a frame's page was hidden during the fill (pagekit tracedFill).
   const hiddenMs = Math.max(0, ...frames.map((f) => (Number.isFinite(f.hiddenMs) ? f.hiddenMs : 0)));
+  const timeline = loggedTimeline(frames.find((f) => f.timeline?.length)?.timeline, redact, keySalt);
   // The fill's waits by what they were for, summed over its frames (pagekit tracedFill's
   // `waits`; REC-09, audit 2026-11-07): counts and ms only.
   const waits = waitSummary(frames);
@@ -487,6 +507,8 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     pageChanged: frames.some((f) => f.pageChanged),
     reworded: all('reworded').length,
     renamed: all('renamed').slice(0, 12).map((x) => ({ name: redact(x.name), field: x.field ?? null, now: x.now ?? null })),
+    // A fill that halted or failed an answer: the waits, presses and answers before it (one frame's).
+    ...(timeline ? { timeline } : {}),
   }];
   /** @type {(result: FillFieldEvent['result'], list?: string) => (x: FillItem) => FillFieldEvent} */
   const item = (result, list = result) => (x) => ({

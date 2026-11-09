@@ -20,7 +20,7 @@ import {
 import { mark, clear } from "./marks.js";
 import { makePager, setFillUnits, getFillUnits, setKnownUnitMarkers, unitFormsNow } from "./units.js";
 import { guardEdits, EDIT_HALT, STOP_HALT, STOP_STEP_HALT, STEP_UNREAD_HALT } from "./guard.js";
-import { kitTrace, isTracing } from "./trace.js";
+import { kitTrace } from "./trace.js";
 import { receipt, signature } from "./capture.js";
 import {
   assign, matchOption, holdingCondition, moneyTokens, businessNameKey, uniqueBusinessNames,
@@ -1137,7 +1137,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
               ...(settled && !fresh ? { vanished: true } : {}) };
           }
         }
-        if (isTracing()) kitTrace('answer', { field: { key: item.key, label: c.label ?? '' }, stepKind: step.kind ?? null, ok: !!result.ok, start: t0, applyMs: tApplied - t0, ...(item.timing ? { timing: item.timing } : {}),
+        kitTrace('answer', { field: { key: item.key, label: c.label ?? '' }, stepKind: step.kind ?? null, ok: !!result.ok, start: t0, applyMs: tApplied - t0, ...(item.timing ? { timing: item.timing } : {}),
           // Why it didn't take, as the fill report's fixed code (FailCode), never its English reason (REC-01).
           ...(result.ok ? {} : { code: result.code }) });
         if (result.ok) {

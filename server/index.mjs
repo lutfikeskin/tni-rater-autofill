@@ -255,6 +255,20 @@ export const RUN_FIELDS = {
   ...AGENT_DEFAULT_RUN_FIELDS,
 };
 
+// A fill's timeline (TimelineEvent in types.js; src/kit/trace.js): the kit's waits, presses and
+// answers, value free, its texts redacted by the panel (audit 2026-11-07, ENG-07).
+const TIMELINE_TEXT = { what: 20, why: 40, ended: 20, button: 60, how: 10, key: 256, label: 120, kind: 30 };
+const TIMELINE_NUMBER = ['at', 'ms'];
+const TIMELINE_FLAG = ['ok', 'on'];
+const TIMELINE_WHAT = ['wait', 'press', 'answer', 'run'];
+export function validTimeline(v) {
+  return Array.isArray(v) && v.length <= 40 && v.every((e) => !!e && typeof e === 'object' && !Array.isArray(e)
+    && TIMELINE_WHAT.includes(e.what) && Number.isFinite(e.at) && Object.entries(e).every(([k, x]) => (Object.hasOwn(TIMELINE_TEXT, k) ? x === null || (typeof x === 'string' && x.length <= TIMELINE_TEXT[k])
+      : TIMELINE_NUMBER.includes(k) ? Number.isFinite(x)
+        : TIMELINE_FLAG.includes(k) ? typeof x === 'boolean'
+          : k === 'held' && Array.isArray(x) && x.length <= 4 && x.every((h) => typeof h === 'string' && h.length <= 20))));
+}
+
 // The common fields' shapes (audit 2026-11-07, SRV-07), as the extension stamps them (log() in
 // sidepanel/usage-log.js, the panel's pageOf): reviews group, join and order events by them, so an
 // event with one out of its shape is refused, like a malformed run id, never stored with it or
@@ -504,6 +518,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       && out.ruleIds.every((id) => typeof id === 'string' && id.length <= 80 && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id)))) drop('ruleIds');
     if (out.type === 'ai_leave' && out.leaveWhy !== undefined && !AI_LEAVE_WHY.includes(out.leaveWhy)) drop('leaveWhy');
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
+    // A fill's timeline (fill_run, fill_error): at most 40 value-free events of the kit's (TimelineEvent).
+    if (out.timeline !== undefined && !validTimeline(out.timeline)) drop('timeline');
     if (out.type === 'agent_click' && out.text !== undefined && !(typeof out.text === 'string' && out.text.length <= 60)) drop('text');
     // A problem report's words, at most the panel's 1,000 characters (audit 2026-11-07, SRV-04).
     if (out.type === 'problem_report' && out.text !== undefined && !(typeof out.text === 'string' && out.text.length <= 1000)) drop('text');
