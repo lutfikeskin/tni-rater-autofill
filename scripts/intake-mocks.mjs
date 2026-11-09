@@ -24,8 +24,11 @@ const pool = path.resolve(arg('pool', path.join(root, 'dist/synthetic-intakes'))
 const out = path.resolve(arg('out', path.join(os.tmpdir(), `intake-mocks-${Date.now()}`)));
 const manifest = JSON.parse(fs.readFileSync(path.join(pool, 'manifest.json')));
 const selected = manifest.cases.filter(c => !arg('cases') || arg('cases').split(',').some(prefix => c.id.startsWith(prefix + '-')));
-const carriers = arg('carrier', 'both') === 'both' ? ['amwins', 'progressive'] : [arg('carrier')];
-if (!selected.length || carriers.some(c => !['amwins', 'progressive'].includes(c))) throw new Error('Select at least one case and a supported carrier: amwins, progressive, or both.');
+// Each carrier the runs drive, and its case: the one list the default, the accepted carriers and the
+// dispatch read (test/new-carrier.test.mjs reads its keys).
+const RUNNERS = { amwins: (page, c, record, lookup) => amwinsCase(page, c, record, lookup), progressive: (page, c, record) => progressiveCase(page, c, record) };
+const carriers = arg('carrier', 'both') === 'both' ? Object.keys(RUNNERS) : [arg('carrier')];
+if (!selected.length || carriers.some(c => !Object.hasOwn(RUNNERS, c))) throw new Error(`Select at least one case and a supported carrier: ${Object.keys(RUNNERS).join(', ')}, or both.`);
 const workers = Math.max(1, Math.min(8, Number(arg('workers', '4'))));
 fs.mkdirSync(out, { recursive: true });
 // The engine with a carrier's page adapter before it, as the side panel injects them (`pageAdapter`).
@@ -290,7 +293,7 @@ async function worker() {
       if (error) throw new Error(error);
       const lookup = JSON.parse(fs.readFileSync(path.join(pool, 'lookups', `${c.id}.json`)));
       result = await (process.argv.includes('--lookup-check') ? lookupCase(page, c, record, lookup)
-        : carrier === 'amwins' ? amwinsCase(page, c, record, lookup) : progressiveCase(page, c, record));
+        : RUNNERS[carrier](page, c, record, lookup));
     } catch (e) { result = { checks: [], error: e.stack }; }
     result = { caseId: c.id, carrier, milliseconds: Date.now() - t0, errors, ...result };
     result.wrong = result.checks.filter(x => !x.ok);
