@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
-import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
+import { fillEvents, loggedTimeline, sha256Hex, knownStep } from '../src/usage.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
@@ -176,7 +176,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'continuedKey']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'continuedKey']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -1279,6 +1279,29 @@ test('a fill error is said in words the agent can act on, with the redacted deta
   assert.match(context.fillErrorMessage({}, new Error('No tab with id: 7')), /^The tab was closed/);
   assert.match(context.fillErrorMessage({}, new Error('Frame with ID 0 was removed')), /^The page changed or reloaded/);
   assert.equal(context.fillErrorMessage({}, new Error('x')), 'Filling failed. Check the page, then fill again. (redacted:x)');
+});
+
+// Audit 2026-11-07 (ENG-07): a fill whose call rejected logs fill_error with the kit's timeline,
+// read from the tab's frames (the first that has one) and redacted as a fill_run's.
+test('a fill error carries the kit\'s timeline, read from the page and redacted', async () => {
+  const logged = [];
+  const timeline = [{ what: 'answer', at: 5, key: 'ref:Role', label: "Jordan's Role", kind: 'choice', ok: false, ms: 9 }];
+  const context = {
+    rulesVersion: null, fillErrorText: () => 'error', redactionTerms: () => ['Jordan'],
+    redactor: (terms) => (s) => terms.reduce((x, t) => x.replaceAll(t, '[client]'), s),
+    loggedTimeline: (t, redact) => t.map((e) => ({ ...e, label: redact(e.label) })),
+    usage: { log: (e) => logged.push(e), currentSession: () => ({ keySalt: 's' }) }, setTimeout,
+    runKit: async (tabId, carrier, func) => { assert.equal(func(), null, 'null where the kit is not'); return [{ result: [] }, { result: timeline }, { result: null }]; },
+  };
+  vm.runInNewContext(['logFillError', 'fillTimeline'].map(extractFunction).join('\n'), context);
+  const ctx = { tabId: 1, carrier: { id: 'geico' }, page: '/quote', run: 'r', intake: { record: {} } };
+  context.logFillError(ctx, new Error('x'), await context.fillTimeline(ctx));
+  assert.deepEqual(logged[0].timeline, [{ ...timeline[0], label: "[client]'s Role" }]);
+  // Nothing read (the page gone, or the call slow): the event without one.
+  context.runKit = async () => { throw new Error('No tab with id: 1'); };
+  context.logFillError(ctx, new Error('x'), await context.fillTimeline(ctx));
+  assert.equal('timeline' in logged[1], false);
+  assert.equal(await context.fillTimeline({ ...ctx, carrier: { id: 'test', practice: true } }), null, 'a practice page: nothing read');
 });
 
 test('warning-only automatic follow-ups render and log unfamiliar fields without pausing', async () => {
@@ -5542,7 +5565,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
     planFor: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
     fillOptions: () => ({}), pendingAi: () => [], ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
     runKit: async (tabId, carrier, func, args) => { seen.options = args[1]; markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
-    fillEvents, isStandard, resolutionOf, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
+    fillEvents, loggedTimeline, isStandard, resolutionOf, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
     renderReport: (frames, ctx) => { seen.rendered++; seen.reportTabs.push(ctx?.tabId); }, renderSite() {}, renderSteps() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
     reportKey: (tabId) => `${tabId}|report`, watchFill: () => () => {}, showFinish() {}, reportShown: () => true,
     fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text, active: ctx.active }); },
@@ -5559,6 +5582,29 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   } }];
   return { state, ui, seen, context, intakeA, started, release, reject, results };
 }
+
+// CodeRabbit on #431: the timeline of a fill whose call rejected was read after `finally` had
+// resumed the recorder and could start the next fill, whose traceReset empties the kit's ring. It is
+// read, and the error logged with it, before the recorder resumes.
+test('a rejected fill logs its timeline before the recorder resumes or another fill starts', async () => {
+  for (const auto of [false, true]) {
+    const t = fillHarness();
+    const order = [];
+    const timeline = [{ what: 'wait', at: 0, why: 'answer', ms: 15000, ended: 'limit' }];
+    let calls = 0;
+    t.context.runKit = async () => {
+      if (calls++ === 0) throw new Error('Frame was removed');
+      // The page answers the timeline read a moment later.
+      await new Promise((resolve) => { setImmediate(resolve); });
+      return [{ frameId: 0, result: timeline }];
+    };
+    t.context.tellRecorder = async (what) => { order.push(what); };
+    t.context.usage.log = (...events) => { for (const e of events) order.push(e.type); t.seen.logged.push(...events); };
+    if (auto) { t.state.autoPages.add('/quote-A'); await t.context.autoFill('/quote-A'); } else await t.context.fillPage();
+    assert.deepEqual(order, ['pause', 'fill_error', 'resume'], auto ? 'a follow-up' : 'a fill the agent asked for');
+    assert.deepEqual(t.seen.logged.find((e) => e.type === 'fill_error').timeline, timeline);
+  }
+});
 
 // Audit 2026-11-07 (FLOW-04): a rejection while the fill was prepared (the list's pick saved to a
 // full session storage) left filling on for good: the dock's Fill stayed disabled until a reload.

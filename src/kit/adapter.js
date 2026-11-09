@@ -289,7 +289,8 @@ export async function settle({ quietMs = 250, maxMs = 15000, requests = null, wh
   let heldAt = start;
   const told = (ended, more = {}) => {
     const ms = Date.now() - start;
-    if (isTracing()) kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms, ended, lastChange: Math.max(last, start), lastHeld, ...more });
+    // Always, for the fill's timeline (ENG-07); what held it as it went, only for a recording.
+    kitTrace('wait', { why, quietMs, maxMs, requests: !!requests, start, ms, ended, ...(isTracing() ? { lastChange: Math.max(last, start), lastHeld } : {}), ...more });
     if (waitTally) {
       const kind = typeof why === 'string' && /^[a-z-]{1,20}$/.test(why) ? why : 'other';
       const t = waitTally[kind] ?? (Object.keys(waitTally).length < WAIT_KINDS ? (waitTally[kind] = { n: 0, ms: 0, limit: 0, slack: 0 }) : null);
@@ -320,11 +321,8 @@ export async function settle({ quietMs = 250, maxMs = 15000, requests = null, wh
     }
     if (abort?.()) { told('stopped'); return false; }
     const settled = !pageBusy() && Date.now() - last >= quietMs;
-    // At its limit: in the tally whether or not a recording runs; what held it only for a recording.
-    if (isTracing()) {
-      held(Date.now());
-      told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
-    } else told('limit');
+    if (isTracing()) held(Date.now());
+    told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
     return settled;
   } finally {
     mo.disconnect();

@@ -131,6 +131,26 @@ test('a fill run says it ran in the background and how long its page was hidden,
   assert.deepEqual(['background' in front, 'hiddenMs' in front], [false, false]);
 });
 
+// Audit 2026-11-07 (ENG-07): a fill that halted or failed an answer logs its timeline on fill_run,
+// its questions and buttons redacted and its keys salted as a fill_field's.
+test('a fill_run carries the timeline of a fill that halted, redacted as its fields are', () => {
+  const timeline = [
+    { what: 'wait', at: 0, why: 'answer', ms: 150, ended: 'quiet' },
+    { what: 'answer', at: 160, key: 'owner_Jordan', label: "Jordan's Role", kind: 'choice', ok: false, ms: 20 },
+    { what: 'press', at: 300, button: 'Edit Jordan', how: 'kit' },
+    { what: 'wait', at: 310, why: 'continue', ms: 15000, ended: 'limit', held: ['busy'] },
+  ];
+  const [run] = fillEvents([{ halted: true, timeline }, { timeline: [{ what: 'run', at: 0, on: true }] }], { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact, keySalt: 'salt-1' });
+  assert.equal(run.timeline.length, 4, 'one frame\'s, the first that has one');
+  assert.deepEqual(run.timeline[0], timeline[0]);
+  assert.deepEqual(run.timeline[3], timeline[3]);
+  assert.match(run.timeline[1].key, /^owner_\[client\]#[0-9a-f]{8}$/);
+  assert.deepEqual([run.timeline[1].label, run.timeline[2].button], ["[client]'s Role", 'Edit [client]']);
+  assertNoClientData(run.timeline);
+  const [plain] = fillEvents([{ filled: [] }], { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact });
+  assert.equal('timeline' in plain, false, 'none without one');
+});
+
 // Audit 2026-11-07, FLOW-11: the second click of a Continue that didn't take is said on its fill_run,
 // so the weekly review can judge whether the retry is still needed.
 test('a fill run that clicked a lost Continue again says so, and no other does', () => {

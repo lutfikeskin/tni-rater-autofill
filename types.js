@@ -577,6 +577,8 @@
  * @property {StepOverlay | null} [overlay]
  * @property {((error: unknown, at: RuleErrorAt) => void) | null} [onRuleError]  told of each rule
  *   that threw while the plan was built; that rule's step is the agent's (`ruleError`)
+ * @property {string[] | null} [edited]  the record paths the agent set or corrected in the panel, and those
+ *   recomputed from them (the intake's agentEdited and agentDerived): a step reading one is `edited`
  */
 
 /**
@@ -587,7 +589,6 @@
  * @property {string | null} concept
  * @property {string | null} q
  * @property {string | null} name
- * @property {string[] | null} [edited]  the record paths the agent set or corrected in the panel
  */
 
 // Agents' own defaults (src/agent-defaults/, docs/agent-defaults-spec.md)
@@ -771,6 +772,26 @@
  */
 
 /**
+ * One event of a fill's timeline (src/kit/trace.js traceTail), value free: the kit's waits, presses
+ * and answers, carried by a fill that halted or failed an answer and logged (redacted, the key
+ * salted) on its fill_run and on a fill_error.
+ * @typedef {object} TimelineEvent
+ * @property {string} what  'wait', 'press', 'answer' or 'run'
+ * @property {number} at  ms after the fill's first event
+ * @property {string | null} [why]  a wait's reason (answer, continue, …)
+ * @property {number} [ms]  a wait's or an answer's time
+ * @property {string} [ended]  how a wait ended: quiet, limit or stopped
+ * @property {string[]} [held]  what held a wait at its limit (busy, changing, requests)
+ * @property {string} [button]  a press's button text
+ * @property {string} [how]  a press's way: page or kit
+ * @property {string | null} [key]  an answer's field key
+ * @property {string} [label]  an answer's question
+ * @property {string | null} [kind]  an answer's step kind
+ * @property {boolean} [ok]  whether the answer held
+ * @property {boolean} [on]  a run's start (true) or end
+ */
+
+/**
  * What the page kit's fill returns, one per frame (the side panel's `frames`).
  * @typedef {object} FillReport
  * @property {string} frame  the frame's origin and path
@@ -824,6 +845,7 @@
  * @property {any} [signatureBefore]
  * @property {RecalcTrace} [recalcTrace]
  * @property {{ ms: number, reads: number, dropped: number, gone: number, retried: number }} [reconcile]  the report made to agree with the page as the fill ended (pagekit reconcile), on a fill that ended on its page: its time in ms, the page reads since the rounds ended (1: the end's own read), the items dropped as gone from the page, the answers whose field is gone, and the failed choices given again against options the page redrew
+ * @property {TimelineEvent[]} [timeline]  the fill's last waits, presses and answers (src/kit/trace.js traceTail), on a fill that halted or failed an answer
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -933,6 +955,7 @@
  * @property {boolean} pageChanged
  * @property {number} reworded
  * @property {{ name: string, field: string | null, now: string | null }[]} renamed
+ * @property {TimelineEvent[]} [timeline]  a fill that halted or failed an answer: its last waits, presses and answers (loggedTimeline)
  */
 
 /**

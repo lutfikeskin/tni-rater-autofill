@@ -2,11 +2,11 @@
 // Injected into rater pages (every frame) by the side panel, as one classic script with no imports:
 // scripts/lib/kit.mjs builds it from this source and the shared modules it imports (the package
 // writes it to src/content/pagekit.js).
-// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, readBack, present, receipt, aiBanner, capture, clear, … }.
+// Exposes globalThis.__raterKit = { fill, timeline, progress, stop, answer, markKey, reveal, readBack, present, receipt, aiBanner, capture, clear, … }.
 
 /** @import { FillOptions, FillReport, PlanStep } from '../../types.js' */
 
-import { kitTrace, setTracing, isTracing } from './trace.js';
+import { kitTrace, setTracing, isTracing, traceReset, traceTail } from './trace.js';
 import { adapter, pageBusy, perfNow, stepKey, stopStepOn, settle, getKnownStopSteps, tallyWaits, waitsTallied } from './adapter.js';
 import { collectControls, fieldKey, describe, invalidControl } from './dom.js';
 import { mark, clear, markKey, reveal, aiBanner } from './marks.js';
@@ -16,11 +16,14 @@ import { capture, receipt, readBack, present, signature, decisionSnapshot } from
 import { apply, agreesWith } from './apply.js';
 import { fill, progress, stop, stopRun } from './cursor.js';
 
+// The events a fill's timeline keeps: the last waits, presses and answers before it halted.
+const TIMELINE_EVENTS = 40;
+
 (() => {
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 97 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 98 && globalThis.__raterKit.build === BUILD) return;
   // The agent's key presses, from now on in this document: a write waits while they type elsewhere (apply).
   watchTyping();
 
@@ -137,13 +140,16 @@ import { fill, progress, stop, stopRun } from './cursor.js';
   }
 
   /**
-   * A fill asked with trace (the developer recording) says what it does while it runs.
+   * A fill asked with trace (the developer recording) says what it does while it runs. Every fill
+   * keeps its waits, presses and answers (trace.js), and one that halted or failed an answer carries
+   * the last of them as its `timeline` (audit 2026-11-07, ENG-07).
    * @param {PlanStep[]} plan
    * @param {FillOptions} [options]
    * @returns {Promise<FillReport>}
    */
   async function tracedFill(plan, options = {}) {
     setTracing(!!options?.trace);
+    traceReset();
     kitTrace('run', { on: true, steps: plan?.length ?? 0 });
     // How long the page was hidden while it filled (`hiddenMs`, only when it was): Chrome slows a
     // hidden tab's timers, which the fill's waits run on (audit 2026-11-07, FLOW-12). Measured, not
@@ -168,6 +174,7 @@ import { fill, progress, stop, stopRun } from './cursor.js';
         failed: report?.failed?.length ?? 0, leftRequired: report?.leftRequired?.length ?? 0, blockers: report?.blockers?.length ?? 0, unknown: report?.unknown?.length ?? 0 });
       if (hiddenSince != null) hiddenMs += perfNow() - hiddenSince;
       if (report && hiddenMs >= 1) report.hiddenMs = Math.round(hiddenMs);
+      if (report && (report.halted || report.failed?.length)) report.timeline = traceTail(TIMELINE_EVENTS);
       return report;
     } finally {
       waitsTallied();
@@ -177,9 +184,11 @@ import { fill, progress, stop, stopRun } from './cursor.js';
   }
 
   globalThis.__raterKit = {
-    version: 97,
+    version: 98,
     build: BUILD,
     fill: tracedFill,
+    // The last fill's timeline, for one whose report never came back (the panel's fill_error).
+    timeline: () => traceTail(TIMELINE_EVENTS),
     progress,
     stop,
     stopRun,

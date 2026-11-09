@@ -16,7 +16,7 @@
 // holds every version's fingerprint and fails until SCHEMA_VERSION is raised and the new version's
 // added, so an extension that sends the new fields waits for a server that keeps them.
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 7;
 
 // Event type -> fields kept. Anything else in an event is dropped (and named in `dropped`).
 // install: a random id for one copy of the extension on one computer (with seq: gaps show loss).
@@ -55,7 +55,7 @@ export const EVENT_FIELDS = {
   // background: the quote tab filled while the agent was on another; hiddenMs: how long its page was
   // hidden meanwhile (Chrome slows a hidden tab's timers).
   // waits: the fill's waits by what they were for, counts and ms only (FillRunWaits in types.js; REC-09).
-  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'retried', 'waits', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
+  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'background', 'hiddenMs', 'retried', 'waits', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed', 'timeline'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
   // source: where the answer comes from (plan.js; the server's FIELD_SOURCES); standard, manualOnly,
   // review: a TNI standard, the agent's only, a review-mode answer the agent confirms.
@@ -65,7 +65,7 @@ export const EVENT_FIELDS = {
   agent_click: ['text', 'step'],
   // The agent dismissed a "needs you" item (×): the question, and why it needed them.
   check_dismissed: ['q', 'key', 'label', 'mark'],
-  fill_error: ['run', 'rules', 'settings', 'auto', 'retried', 'error'],
+  fill_error: ['run', 'rules', 'settings', 'auto', 'retried', 'error', 'timeline'],
   field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
   // many seconds before the report).

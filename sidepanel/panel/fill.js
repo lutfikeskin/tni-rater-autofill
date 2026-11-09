@@ -15,7 +15,7 @@ import { $, traced, aiSnapshotFieldMatches, keepJournal, keepReport, memory, per
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
-import { announce, dropReports, fillContext, fillOptions, fillProblem, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showOwnerNote, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
+import { announce, dropReports, fillContext, fillOptions, fillProblem, fillTimeline, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showOwnerNote, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
 import { aiDecisionEvent, remarkAi, runAssist, syncAiBanner } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep } from './scope.js';
@@ -300,8 +300,10 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
     // The message may quote the page, so it's redacted with the origin intake.
-    logFillError(ctx, e);
     fillProblem(ctx, fillErrorMessage(ctx, e));
+    // Its timeline read before `finally` resumes the recorder or starts the next fill, which empties
+    // the kit's ring (traceReset); a second at most (CodeRabbit on #431).
+    logFillError(ctx, e, await fillTimeline(ctx));
   } finally {
     unwatch();
     await tellRecorder('resume', tabId);
