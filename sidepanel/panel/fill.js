@@ -5,7 +5,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { fieldInfo } from '../../src/schema.js';
 import { redactionTerms } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
-import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem } from '../../src/units.js';
+import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, unitExtraRowsItem } from '../../src/units.js';
 import { get } from '../../src/util.js';
 import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
@@ -356,6 +356,7 @@ async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   ctx.unitsListed = false;
   ctx.unitMissing = null;
+  ctx.listGaps = null;
   if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   const record = ctx.intake.record ?? {};
   const specs = unitListSpecs(carrier, record);
@@ -377,6 +378,12 @@ async function pickUnitToAdd(carrier, ctx) {
   ctx.unitsListed = !!next.complete;
   const read = next.read;
   ctx.listNote = !next.complete && read && read.rows >= read.units ? `list: ${read.rows} rows for ${read.units} units, ${read.shown} shown, ${read.saved} saved by a fill` : null;
+  // And told to the agent (GAP-02): each intake unit the list can be read for that isn't on it, and
+  // the rows no intake unit is known to be (noteMissingUnit).
+  if (next.missing?.length || next.extra) {
+    const spec = carrier.unitLists.find((s) => s.steps.includes(knownStep(carrier, seen.step)));
+    ctx.listGaps = { missing: next.missing ?? [], extra: next.extra ?? 0, lists: spec?.lists ?? [] };
+  }
   if (next.marks.some((id) => !state.doneActions.has(id))) {
     next.marks.forEach((id) => state.doneActions.add(id));
     persistDoneActions(ctx.tabId, state.doneActions);
@@ -399,13 +406,20 @@ async function pickUnitToAdd(carrier, ctx) {
 // The unit pickUnitToAdd found missing from the list on screen with nothing to add it (ctx.unitMissing),
 // as an item the top frame's report leaves for the agent, which holds its Continue: the list's Looks
 // Good is the agent's (W44-01).
+// A list whose rows look full but aren't the intake's (ctx.listGaps, GAP-02): each intake unit not on
+// it and the rows the intake doesn't have, the same way.
 function noteMissingUnit(results, ctx) {
-  if (!ctx.unitMissing) return;
+  if (!ctx.unitMissing && !ctx.listGaps) return;
   const top = results.find((r) => r.frameId === 0)?.result;
   if (!top || top.halted) return;
-  const item = unitMissingItem(ctx.carrier, ctx.intake?.record ?? {}, ctx.unitMissing);
-  top.noData = [...(top.noData ?? []), item];
-  top.blockers = [...(top.blockers ?? []), `needs you: ${item.label}`];
+  const record = ctx.intake?.record ?? {};
+  const items = [
+    ...(ctx.unitMissing ? [unitMissingItem(ctx.carrier, record, ctx.unitMissing)] : []),
+    ...(ctx.listGaps?.missing ?? []).map((u) => unitMissingItem(ctx.carrier, record, u)),
+    ...(ctx.listGaps?.extra ? [unitExtraRowsItem(ctx.carrier, ctx.listGaps.lists, ctx.listGaps.extra)] : []),
+  ];
+  top.noData = [...(top.noData ?? []), ...items];
+  top.blockers = [...(top.blockers ?? []), ...items.map((item) => `needs you: ${item.label}`)];
 }
 
 // On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each

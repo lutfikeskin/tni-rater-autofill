@@ -11,7 +11,7 @@ import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAns
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
-import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
+import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
 import { intakeNotes, rederive } from '../src/normalize.js';
@@ -6471,7 +6471,7 @@ test('while a fill runs the panel asks each frame only for new rows and keeps th
   const asked = [];
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; },
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; },
     setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { asked.push(JSON.parse(JSON.stringify(o.args[0]))); return reply; } } },
   };
@@ -6510,7 +6510,7 @@ test('while a fill runs the panel streams the items judged with the answers, in 
   const asked = [];
   const state = { fillingFor: { run: 'r1', tabId: 3, filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; },
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; },
     setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { asked.push(JSON.parse(JSON.stringify(o.args[0]))); return reply; } } },
   };
@@ -6549,7 +6549,7 @@ test('a fill whose page stops answering is said in the dock, and the word goes w
   let renders = 0;
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, UNANSWERED_MS: 5000,
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; }, UNANSWERED_MS: 5000,
     Date: { now: () => clock }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: () => new Promise((resolve) => { answer = resolve; }) } },
   };
@@ -6587,7 +6587,7 @@ test('the page not answering and Stop are said in a new fillingFor', async () =>
   const stopped = [];
   const button = { disabled: false };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps() {}, UNANSWERED_MS: 5000, $: () => button,
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps() {}, UNANSWERED_MS: 5000, $: () => button,
     Date: { now: () => clock }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { if (o.args[0] === 'r1') stopped.push(o.target.tabId); return new Promise(() => {}); } } },
   };
@@ -9695,7 +9695,7 @@ test('watchFill says a quiet automatic fill as one once it has gone on QUIET_MS,
   const state = { fillingFor: { run: 'r', auto: true, rows: [], started: 1000 } };
   let now = 1000;
   const context = { state, inExtension: true, QUIET_MS: 1500, UNANSWERED_MS: 5000, Date: { now: () => now }, renderSteps: () => { drawn++; },
-    setInterval: (fn) => { ticks.push(fn); return 1; }, clearInterval() {}, worldFor: () => 'ISOLATED',
+    setInterval: (fn) => { ticks.push(fn); return 1; }, clearInterval() {}, worldFor: () => 'ISOLATED', fillRunning() {}, fillEnded() {},
     chrome: { scripting: { executeScript: async () => [] } } };
   vm.runInNewContext(extractFunction('watchFill'), context);
   context.watchFill({ run: 'r', tabId: 7, carrier: {} });
@@ -10571,7 +10571,7 @@ test('the live list and the dock say what the kit waits on (its phase), and a ph
   let reply = [];
   let renders = 0;
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
-  const wctx = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+  const wctx = { inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async () => reply } } };
   vm.runInNewContext(extractFunction('watchFill'), wctx);
   wctx.watchFill({ run: 'r1', tabId: 3, carrier: {} });
@@ -10942,7 +10942,7 @@ test('the live list takes the top frame\'s phase while its fill runs', async () 
   let tick = null;
   let reply = [];
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
-  const context = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => {}, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+  const context = { inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => {}, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async () => reply } } };
   vm.runInNewContext(extractFunction('watchFill'), context);
   context.watchFill({ run: 'r1', tabId: 3, carrier: {} });
@@ -11544,6 +11544,35 @@ test('a unit missing from the list with no helper for it is left for the agent i
   const none = [{ frameId: 0, result: { noData: [], blockers: [] } }];
   context.noteMissingUnit(none, { ...ctx, unitMissing: null });
   assert.equal(none[0].result.noData.length, 0);
+});
+
+// Audit 2026-11-07, GAP-02: a list holding as many rows as the intake or more that isn't the intake's
+// was said only in the usage log. Each intake unit not on it, and the rows the intake doesn't have,
+// are left for the agent in the top frame's report; nothing is added or deleted.
+test('a full unit list that isn\'t the intake\'s leaves its missing units and extra rows for the agent', async () => {
+  const record = { vehicles: [{ vin: '1FTBR3X80MKA12341' }, { vin: '1FTBR3X80MKA12342' }], trailers: [], drivers: [] };
+  const state = { tab: { id: 4 }, intake: { record }, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0 },
+    unitForms: { vehicles: {}, drivers: {}, trailers: {} }, doneActions: new Set() };
+  const pick = { state, knownStep, runKit: async () => [{ result: { step: 'Vehicles', forms: [], lists: [{ rows: 3, shown: [true, false] }, null] } }], fillCurrent: () => true,
+    persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs, unitMissing, planFor: buildPlan };
+  vm.runInNewContext(extractFunction('pickUnitToAdd'), pick);
+  const ctx = { tabId: 4, intake: state.intake, revision: 1, settings: { autoAdvance: true }, carrier: geico };
+  await pick.pickUnitToAdd(geico, ctx);
+  assert.equal(ctx.adding, null, 'nothing added');
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.listGaps)), { missing: [{ list: 'vehicles', index: 1 }], extra: 2, lists: ['vehicles', 'trailers'] });
+  const note = { unitMissingItem, unitExtraRowsItem };
+  vm.createContext(note);
+  vm.runInContext(extractFunction('noteMissingUnit'), note);
+  const results = [{ frameId: 0, result: { noData: [], blockers: [] } }];
+  note.noteMissingUnit(results, ctx);
+  const top = results[0].result;
+  assert.deepEqual(JSON.parse(JSON.stringify(top.blockers)), ['needs you: Add Vehicle', 'needs you: Check the vehicle list']);
+  assert.match(top.noData[0].note, /Vehicle 2 of the intake isn't on GEICO's list/);
+  assert.match(top.noData[1].note, /GEICO's vehicle list has 2 rows the intake doesn't: check them/);
+  // The intake's list exactly: no gaps.
+  pick.runKit = async () => [{ result: { step: 'Vehicles', forms: [], lists: [{ rows: 2, shown: [true, true] }, null] } }];
+  await pick.pickUnitToAdd(geico, ctx);
+  assert.equal(ctx.listGaps, null);
 });
 
 // REC-04 (audit 2026-11-07; W44-23): with the panel on another tab, each new document of the recorded

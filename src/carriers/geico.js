@@ -54,7 +54,7 @@ import { STANDARDS, usd } from '../standards.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler } from '../answers/classes.js';
 import { garagingIs } from '../answers/state.js';
 import { filingsIntent } from '../answers/filings.js';
-import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
+import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { glRequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitNote, interchangeLimitRaised,
   interchangeLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
@@ -279,8 +279,7 @@ const filingsNote = (r) => {
 // number") and the filings questions (filings required, the filing type, the Add Filings boxes) are
 // the agent's, with a note saying why (`ntlDotFilingsHold`). Answered Yes or No, the next fill
 // answers them by the rules above.
-const held = (source) => (r) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r) : source);
-const holdOr = (note) => (r) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r) : note ?? null);
+// `held` / `holdOr`: src/normalize.js ntlHeld / ntlHoldOr, shared by the carriers.
 
 // --- Business owner ----------------------------------------------------------------------------
 

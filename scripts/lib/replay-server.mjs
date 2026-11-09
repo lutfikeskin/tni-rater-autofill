@@ -5,7 +5,9 @@ import { buildKit, KIT_OUTPUT } from './kit.mjs';
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.pdf': 'application/pdf',
-  '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+  '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  // The vendored ExtJS theme's images and fonts (test/replay/vendor/).
+  '.gif': 'image/gif', '.woff': 'font/woff', '.ttf': 'font/ttf', '.eot': 'application/vnd.ms-fontobject' };
 
 export function createReplayServer(root) {
   root = fs.realpathSync(root);
