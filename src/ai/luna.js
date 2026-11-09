@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // Luna resolves bounded choices; code gates automatic picks and the agent approves them.
 import { AssistError, RequestTooLarge, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake, rowsFor, entityOf, intakeValue, rulesSent } from './common.js';
 import { sha256Hex } from '../usage.js';
@@ -651,6 +650,7 @@ export function notesWarnings(results, { quotedFragments = [], ntlSet = false, i
   return out;
 }
 
+/** @param {any} record @param {{ apiKey: string, proxy?: any }} config @param {{ call?: typeof callModel, redact?: (s: string) => string, today?: Date }} [options] */
 export async function reviewNotes(record, config, { call = callModel, redact, today } = {}) {
   const review = buildNotesReview(record, { redact, today });
   if (!review) return { warnings: [], lines: 0, flagged: 0, tokensIn: 0, tokensOut: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, modelCalls: 0 };
