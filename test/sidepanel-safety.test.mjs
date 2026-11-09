@@ -12074,6 +12074,16 @@ test('the your-turn tone: a fill ending on the agent, switch on, once per page, 
   assert.equal(step('check'), true);
   await settle();
   assert.equal(played, 1, 'they look at the quote tab: no tone');
+  // Review of #506: a page whose fill ended in view stays eligible; two checks at once play once.
+  away = true;
+  step('filling');
+  assert.equal(step('needs'), true, 'no tone yet on this page: asked again');
+  step('filling');
+  assert.equal(step('needs'), false, 'a check under way: not asked twice');
+  await settle();
+  assert.equal(played, 2, 'the later fill, ended while they look elsewhere, sounds once');
+  step('filling');
+  assert.equal(step('needs'), false, 'played on this page: once');
   sandbox.state.tab.url = 'https://rater.test/c';
   step('filling');
   assert.equal(step('finished'), false, 'quote done has its own chime');

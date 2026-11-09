@@ -1413,16 +1413,24 @@ function playChime() {
 // (WebAudio), distinct from the quote-done chime: no sound file, no permission. True when it was asked.
 const TURN_SOUND_PHASES = new Set(['needs', 'check', 'ai', 'hold', 'yours', 'stopped-fill', 'error']);
 let turnFrom = null;
+// `turnPages`: the pages a tone was played for; one whose fill ended with the agent looking at it
+// stays eligible. `turnAsking`: the pages being checked now, so two checks never both play.
 const turnPages = new Set();
+const turnAsking = new Set();
 function noteTurn(d) {
   const was = turnFrom;
   turnFrom = d.phase;
   if (was !== 'filling' || !TURN_SOUND_PHASES.has(d.phase) || state.switches?.turnSound !== true) return false;
   const tabId = state.tab?.id;
   const page = `${tabId}|${state.tab?.url ?? ''}`;
-  if (turnPages.has(page)) return false;
-  turnPages.add(page);
-  lookingElsewhere(tabId).then((away) => { if (away) playTurnTone(); });
+  if (turnPages.has(page) || turnAsking.has(page)) return false;
+  turnAsking.add(page);
+  lookingElsewhere(tabId).then((away) => {
+    turnAsking.delete(page);
+    if (!away || turnPages.has(page)) return;
+    turnPages.add(page);
+    playTurnTone();
+  });
   return true;
 }
 // Whether the agent is in another app (no Chrome window focused) or on another tab than the quote's.
