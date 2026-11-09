@@ -3,7 +3,7 @@
 // One part of the panel; sidepanel.js wires the parts together.
 import { pruneKeptWork } from '../../src/kept-work.js';
 import { redactionTerms } from '../../src/plan.js';
-import { planFor } from './plan-for.js';
+import { onPlanRuleError, planFor } from './plan-for.js';
 import { clientErrorEvent, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { migrateStorage } from '../../src/storage-version.js';
@@ -406,7 +406,7 @@ const state = storeState({
   // settings by init, and by the agent; the panel reads each from its box by id); the AI's card
   // (renderAiSettings: `ai`, null until first said; `keyFormOpen` while the key's box is open: the key
   // is only ever in that box); the usage card (renderUsage: `usageCard`; `usageNote`, the line under
-  // it); the version, what is left to set up and the initials' box marked (renderHealth: `health`);
+  // it; `usageAsk`, Clear log's question while it is asked); the version, what is left to set up and the initials' box marked (renderHealth: `health`);
   // the test-run mark (render: `testRun`, null with no intake); Capture page layout off (renderSite:
   // `captureOff`) and what it did (captureSaid: `captureStatus`); and the developer recording's card
   // (dev-recording.js: `devrec`, whether one runs, its line and the unfinished one to save). And the
@@ -416,6 +416,7 @@ const state = storeState({
   keyFormOpen: false,
   usageCard: null,
   usageNote: '',
+  usageAsk: null,
   health: null,
   testRun: null,
   captureOff: false,
@@ -479,6 +480,9 @@ const state = storeState({
   // always are), and the sections the agent folded (by id).
   showEmpty: false,
   detailsClosed: new Set(),
+  // Client details' filter box and its Your corrections switch (UX-07).
+  detailsQuery: '',
+  detailsEditedOnly: false,
   // Client details: how many times an edit saved a field otherwise than typed (path -> count; "No"
   // in the USDOT box is saved empty), so its box shows the record's value again (details-view.jsx).
   fieldRevs: new Map(),
@@ -550,6 +554,10 @@ panelStore.subscribe((stateNow) => {
     fillingPrevious = on;
   }
 });
+// Whether the kit is asked to say what it does (an AI answer or a pick from a row, as a fill is;
+// REC-14): a developer recording runs on this tab.
+/** @param {number | null | undefined} tabId */
+const traced = (tabId) => !!state.recording && !state.recording.stopping && state.recording.tabId === tabId;
 
 /**
  * A filling switch: what Settings says (state.switches), else its box (the test harnesses' vm has
@@ -579,9 +587,10 @@ async function migrateStoredData() {
   if (result.error) logCrash(new Error(`stored data not migrated${result.failedAt ? ` to version ${result.failedAt}` : ''}: ${result.error?.name ?? 'Error'}`));
 }
 
-// `where`: 'panel', or 'recorder' for one the page's recorder caught and told (usage.js
-// onRecorderMessage).
-function logCrash(err, where = 'panel') {
+// `where`: 'panel', 'recorder' for one the page's recorder caught and told (usage.js
+// onRecorderMessage), or 'plan' for a carrier rule that threw while a plan was built (planFor),
+// with `at` naming the rule: its carrier, concept and question.
+function logCrash(err, where = 'panel', at = null) {
   try {
     if (state.tab?.carrier?.practice) return;
     // An intake without a record (the very crash this log exists for) has no terms to redact. If
@@ -589,12 +598,14 @@ function logCrash(err, where = 'panel') {
     let redact;
     try { redact = state.intake?.record ? redactor(redactionTerms(state.intake.record)) : (x) => x; } catch { redact = () => ''; }
     const event = clientErrorEvent(err, { where, redact });
-    const once = `${where}|${event.error}`;
+    const rule = at ? { ...(at.concept ? { concept: at.concept } : {}), ...(at.q ? { q: at.q } : {}) } : {};
+    const once = `${where}|${event.error}|${at?.carrier ?? ''}|${at?.concept ?? ''}|${at?.q ?? ''}`;
     if (loggedCrashes.has(once) || loggedCrashes.size >= 20) return;
     loggedCrashes.add(once);
-    usage.log({ ...event, carrier: state.tab?.carrier?.id ?? null, page: state.tab?.url ? pageOf(state.tab.url) : null });
+    usage.log({ ...event, ...rule, carrier: at?.carrier ?? state.tab?.carrier?.id ?? null, page: state.tab?.url ? pageOf(state.tab.url) : null });
   } catch { /* logging a crash must never crash */ }
 }
+onPlanRuleError((error, at) => logCrash(error, 'plan', at));
 globalThis.addEventListener?.('error', (e) => logCrash(e.error ?? e.message));
 globalThis.addEventListener?.('unhandledrejection', (e) => logCrash(e.reason));
 
@@ -1186,4 +1197,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, logCrash, storageSaid, FILLS_HELD_NOTE, fillsHeld, holdFills, releaseFills, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes, clearKeptWork, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals, keepJournal, restoreJournal };
+export { $, logCrash, traced, storageSaid, FILLS_HELD_NOTE, fillsHeld, holdFills, releaseFills, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes, clearKeptWork, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals, keepJournal, restoreJournal };

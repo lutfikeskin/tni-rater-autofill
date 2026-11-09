@@ -29,6 +29,7 @@ import { mountSummary } from './panel/summary-view.jsx';
 import { closeSummary, openSummary, saveSummary } from './panel/quote-summary.js';
 import { mountLoadError, mountNote } from './panel/notes-view.jsx';
 import { mountSiteTrack } from './panel/site-view.jsx';
+import { mountSetup } from './panel/home-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaultsShown } from './panel/agent-defaults/store.js';
 import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
@@ -55,6 +56,8 @@ function wire() {
   mountNote($('whats-new'), 'whatsNew');
   mountNote($('window-note'), 'window');
   mountLoadError($('load-error'));
+  // Home's setup checklist: an item left to do opens Settings at its box.
+  mountSetup($('setup-root'), { open: (focus) => openSettings(focus) });
   // Settings: Done, the switches and boxes (settingsActs), the AI's (aiActs), the test-run mark,
   // Capture page layout, and the developer recording's buttons, offered in unpacked builds only
   // (canRecord), never in the store's. Then the footer's Recording usage line.

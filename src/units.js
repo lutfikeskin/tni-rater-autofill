@@ -44,7 +44,11 @@ const MARKER = { vehicles: 'vehicleEntered', trailers: 'trailerEntered', drivers
 // form a fill answered for it (`unitForms`: W43-40, GEICO FL 2026-10-21 and 2026-10-22, Looks Good
 // never clicked on a list that needed a VIN or name read, 0 of 8, while the captured lists and the
 // mock read right): the list may be left (advanceFor). `read`: the counts behind it, for the usage
-// log. Null off the carrier's unit-list steps.
+// log. With the list holding as many rows as the intake units or more but not complete (a row the
+// intake doesn't have: added by hand, by a carrier lookup, or left from another intake), `missing`
+// names each intake unit the list can be read for that isn't on it (never added: the rows look full),
+// and `extra` how many rows no intake unit is known to be (audit 2026-11-07, GAP-02): the panel lists
+// both for the agent. Null off the carrier's unit-list steps.
 export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = new Set() } = {}) {
   const specs = unitListSpecs(carrier, record);
   const at = specs.findIndex((s) => s.steps.includes(step));
@@ -76,7 +80,12 @@ export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = 
   const entered = (u) => isListed(u) || bound(u.list, u.i) || done.has(mark(u)) || marks.includes(mark(u));
   const complete = !!shown && shown.rows === units.length && units.every((u) => u.shown || isListed(u) || !readable(u.item) || bound(u.list, u.i));
   const read = shown ? { rows: shown.rows, units: units.length, shown: units.filter((u) => u.shown).length, saved: units.filter((u) => bound(u.list, u.i)).length } : null;
-  if (shown && shown.rows >= units.length) return { marks, adding: null, move: false, complete, read, onList: true };
+  if (shown && shown.rows >= units.length) {
+    const missing = complete ? [] : units.filter((u) => readable(u.item) && !u.shown && !bound(u.list, u.i) && !isListed(u)).map((u) => ({ list: u.list, index: u.i }));
+    const accounted = units.filter((u) => u.shown || bound(u.list, u.i) || isListed(u) || !readable(u.item)).length;
+    const extra = complete ? 0 : Math.max(0, shown.rows - accounted);
+    return { marks, adding: null, move: false, complete, read, onList: true, missing, extra };
+  }
   const next = units.find((u) => !entered(u));
   return { marks, adding: next ? { list: next.list, index: next.i } : null, move: Array.isArray(seen.forms) && !seen.forms.length, complete: false, read, onList: !!shown };
 }
@@ -101,6 +110,16 @@ export function unitMissingItem(carrier, record, { list, index }) {
   const note = spec?.missing?.(record, list, index)
     ?? `${unit} ${index + 1} of the intake isn't on ${carrier?.name ?? 'the carrier'}'s list: add it yourself.`;
   const item = { label: `Add ${unit}`, name: `${unit} ${index + 1} of the intake`, path: `${list}[${index}]`, key: null, q: null, controlKind: null, note };
+  return { ...item, resolution: itemResolution(item, 'noData', null) };
+}
+
+// What the panel lists for rows on the list no intake unit is known to be (unitToAdd `extra`): an
+// item left for the agent, with the list's lists (vehicles and trailers, or drivers) named.
+export function unitExtraRowsItem(carrier, lists, extra) {
+  const what = lists.includes('drivers') ? 'driver' : 'vehicle';
+  const rows = extra === 1 ? 'a row' : `${extra} rows`;
+  const note = `${carrier?.name ?? 'The carrier'}'s ${what} list has ${rows} the intake doesn't: check ${extra === 1 ? 'it' : 'them'} before you go on.`;
+  const item = { label: `Check the ${what} list`, name: `${what[0].toUpperCase()}${what.slice(1)} rows not on the intake`, path: lists[0], key: null, q: null, controlKind: null, note };
   return { ...item, resolution: itemResolution(item, 'noData', null) };
 }
 

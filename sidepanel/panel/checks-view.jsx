@@ -8,6 +8,7 @@ import { flushSync } from 'react-dom';
 import { useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { HelpLink } from './help-link.jsx';
 
 // A check card's field (fieldSaid in record.js), named by the card above it. Its edit is made as the
 // box's own change event says it, as in client details: a text box's when the agent leaves it or
@@ -88,6 +89,7 @@ function Checks({ act }) {
     <>
       <div className="pane-head">
         <h2 id="check-title">{checks?.title ?? ''}</h2>
+        <HelpLink topic="intake" />
         <p id="check-sub" className="pane-sub">{checks?.sub ?? ''}</p>
       </div>
       <div id="warnings" className="checks">

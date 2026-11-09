@@ -225,6 +225,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .view { position: relative; flex: 1; min-height: 96px; overflow: auto; scrollbar-gutter: stable; display: grid; align-content: start; grid-auto-rows: max-content; }
 .pane { padding: 8px 12px 12px; display: grid; gap: 8px; align-content: start; }
 .pane-head { display: grid; gap: 2px; }
+.pane-head, .intro { position: relative; }
+.pane-head > .help-link, .intro > .help-link { position: absolute; top: 0; right: 0; }
+.pane-head h2, .intro h2 { padding-right: 26px; }
 .pane-head h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); }
 .pane-sub { font-size: 12.5px; color: var(--ink-secondary); text-wrap: pretty; }
 .notices { padding: 8px 12px 0; display: grid; gap: 8px; }
@@ -241,6 +244,16 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .drop-hint { font-size: 12px; color: var(--ink-secondary); }
 #choose { min-height: 36px; padding: 0 20px; font-size: 13.5px; }
 .privacy-line { margin-top: -4px; color: var(--ink-muted); font-size: 12px; text-align: center; }
+/* Home's setup checklist (home-view.jsx); #setup-root takes no room once all is done. */
+#setup-root:empty { display: none; }
+.setup-card { padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); display: grid; gap: 6px; }
+.setup-card h3 { font-size: 14px; font-weight: 600; color: var(--ink-strong); letter-spacing: -0.015em; }
+.setup-list { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 6px; }
+.setup-list li { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--ink); }
+.setup-list li.done .setup-label { color: var(--ink-secondary); }
+.setup-list .setup-label { flex: 1 1 auto; text-wrap: pretty; }
+.setup-list .tick { flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 10px; border: 1px solid var(--border-strong); font-size: 11px; font-weight: 700; }
+.setup-list li.done .tick { border-color: transparent; background: var(--success-soft); color: var(--success); }
 
 /* One issue pattern: what's wrong, both sources side by side, one action */
 .issue { background: var(--surface); border: 1px solid var(--signal-line); border-radius: var(--radius-md); padding: 8px 12px; display: grid; gap: 8px; }
@@ -312,6 +325,13 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .field-stack { display: grid; gap: 2px; font-size: 11.5px; color: var(--ink-secondary); }
 .field-stack :is(input, select, textarea) { min-height: 30px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-sm); padding: 2px 8px; width: 100%; font-size: 12.5px; }
 .field textarea { resize: vertical; min-height: 56px; }
+/* A field the agent corrected: the report's Your edit tag, and what the intake said with Restore (UX-07). */
+.field label .tag { margin-left: 6px; padding: 1px 6px; }
+.field-was { grid-column: 2; display: flex; align-items: baseline; gap: 8px; margin: -2px 0 4px; font-size: 11.5px; color: var(--ink-muted); overflow-wrap: anywhere; }
+.field-was span { flex: 1; min-width: 0; }
+#details-view .drawer-panel { grid-template-rows: auto auto minmax(0, 1fr); }
+.details-tools { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border-soft); }
+.details-tools input { flex: 1; min-width: 0; min-height: 30px; padding: 2px 8px; font-size: 12.5px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-sm); }
 /* Fields the intake leaves blank are hidden unless flagged (showEmpty): the drawer's "Show N empty". */
 .drawer-panel[data-empty="hidden"] .field.empty:not(.flagged) { display: none; }
 .drawer-panel[data-empty="hidden"] .section.all-empty .section-body { display: none; }
@@ -337,6 +357,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .page-menu { flex: 0 1 auto; min-width: 0; max-width: 100%; height: 24px; padding: 0 2px 0 4px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--ink-strong); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .page-menu:hover { background: var(--surface-hover); }
 .key-btn { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border: 1px solid var(--border-strong); border-radius: 50%; background: transparent; color: var(--ink-secondary); font: italic 600 11px/1 Georgia, 'Times New Roman', serif; }
+/* The '?' on each view, opening the agent's guide at its section (help-link.jsx). */
+.help-link { flex: 0 0 auto; width: 20px; height: 20px; display: inline-grid; place-items: center; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--ink-secondary); font-size: 11.5px; font-weight: 600; line-height: 1; text-decoration: none; }
+.help-link:hover { background: var(--surface-hover); color: var(--ink-strong); }
 .key-btn:hover { background: var(--surface-hover); }
 .key-btn[aria-expanded="true"] { background: var(--ink-strong); border-color: var(--ink-strong); color: var(--surface); }
 .past-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 8px 12px 0; }

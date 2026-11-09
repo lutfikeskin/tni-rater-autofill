@@ -120,3 +120,15 @@ test('a coverage section the carrier declares: the plan gives its Done the secti
     assert.doesNotMatch(fs.readFileSync(new URL(`../src/kit/${file}`, import.meta.url), 'utf8'), /motor truck cargo/i, file);
   }
 });
+
+// Audit 2026-11-07, CARR-09: the generic label rules (src/rules.js) misfired on Progressive's and
+// GEICO's pages, so a carrier gets them only by opting in (`useGenericRules: true`), as AmWINS and
+// the local test page do; a new carrier without the key gets its own rules alone.
+test('the generic label rules are opt-in: a carrier without useGenericRules gets none', async () => {
+  const { CARRIERS } = await import('../src/carriers.js');
+  const generic = (carrier) => buildPlan({ applicant: { name: 'Synthetic LLC', phone: '(555) 010-0100' } }, carrier, {}).filter((s) => s.kind !== 'action').length;
+  assert.equal(generic({ id: 'new', hosts: [], rules: [] }), 0, 'no key: no generic rules');
+  assert.equal(generic({ id: 'new', hosts: [], rules: [], useGenericRules: false }), 0);
+  assert.ok(generic({ id: 'new', hosts: [], rules: [], useGenericRules: true }) > 0, 'opted in');
+  assert.deepEqual(Object.fromEntries(CARRIERS.map((c) => [c.id, c.useGenericRules])), { progressive: false, geico: false, amwins: true, test: true }, 'every carrier says it');
+});
