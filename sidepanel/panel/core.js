@@ -3,7 +3,7 @@
 // One part of the panel; sidepanel.js wires the parts together.
 import { pruneKeptWork } from '../../src/kept-work.js';
 import { redactionTerms } from '../../src/plan.js';
-import { planFor } from './plan-for.js';
+import { onPlanRuleError, planFor } from './plan-for.js';
 import { clientErrorEvent, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { migrateStorage } from '../../src/storage-version.js';
@@ -549,7 +549,13 @@ panelStore.subscribe((stateNow) => {
       const t = Date.now();
       if (on) rec.fills.push({ start: t, end: null, what: fillingWhat });
       else if (rec.fills.at(-1)) rec.fills.at(-1).end = t;
-      rec.store.add([{ kind: 'fill', t, frame: 0, on, what: fillingWhat }]);
+      // A fill's end also says which run it was (the usage log's fill_run and fill_field carry the
+      // same `run`), how it was asked (`how`: 'agent' for Fill this page, 'page' as a page opened,
+      // 'follow-up', 'looks-right', 'continue') and its page (REC-01): its start can't, as the run is
+      // named after state.filling is set.
+      const f = !on ? stateNow.fillingFor ?? state.fillingFor : null;
+      const which = f?.run ? { run: f.run, how: f.how ?? null, page: f.page ?? null } : {};
+      rec.store.add([{ kind: 'fill', t, frame: 0, on, what: fillingWhat, ...which }]);
     }
     fillingPrevious = on;
   }
@@ -587,9 +593,10 @@ async function migrateStoredData() {
   if (result.error) logCrash(new Error(`stored data not migrated${result.failedAt ? ` to version ${result.failedAt}` : ''}: ${result.error?.name ?? 'Error'}`));
 }
 
-// `where`: 'panel', or 'recorder' for one the page's recorder caught and told (usage.js
-// onRecorderMessage).
-function logCrash(err, where = 'panel') {
+// `where`: 'panel', 'recorder' for one the page's recorder caught and told (usage.js
+// onRecorderMessage), or 'plan' for a carrier rule that threw while a plan was built (planFor),
+// with `at` naming the rule: its carrier, concept and question.
+function logCrash(err, where = 'panel', at = null) {
   try {
     if (state.tab?.carrier?.practice) return;
     // An intake without a record (the very crash this log exists for) has no terms to redact. If
@@ -597,12 +604,14 @@ function logCrash(err, where = 'panel') {
     let redact;
     try { redact = state.intake?.record ? redactor(redactionTerms(state.intake.record)) : (x) => x; } catch { redact = () => ''; }
     const event = clientErrorEvent(err, { where, redact });
-    const once = `${where}|${event.error}`;
+    const rule = at ? { ...(at.concept ? { concept: at.concept } : {}), ...(at.q ? { q: at.q } : {}) } : {};
+    const once = `${where}|${event.error}|${at?.carrier ?? ''}|${at?.concept ?? ''}|${at?.q ?? ''}`;
     if (loggedCrashes.has(once) || loggedCrashes.size >= 20) return;
     loggedCrashes.add(once);
-    usage.log({ ...event, carrier: state.tab?.carrier?.id ?? null, page: state.tab?.url ? pageOf(state.tab.url) : null });
+    usage.log({ ...event, ...rule, carrier: at?.carrier ?? state.tab?.carrier?.id ?? null, page: state.tab?.url ? pageOf(state.tab.url) : null });
   } catch { /* logging a crash must never crash */ }
 }
+onPlanRuleError((error, at) => logCrash(error, 'plan', at));
 globalThis.addEventListener?.('error', (e) => logCrash(e.error ?? e.message));
 globalThis.addEventListener?.('unhandledrejection', (e) => logCrash(e.reason));
 

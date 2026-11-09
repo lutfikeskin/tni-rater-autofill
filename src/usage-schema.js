@@ -16,7 +16,7 @@
 // holds every version's fingerprint and fails until SCHEMA_VERSION is raised and the new version's
 // added, so an extension that sends the new fields waits for a server that keeps them.
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 // Event type -> fields kept. Anything else in an event is dropped (and named in `dropped`).
 // install: a random id for one copy of the extension on one computer (with seq: gaps show loss).
@@ -69,8 +69,9 @@ export const EVENT_FIELDS = {
   // many seconds before the report).
   problem_report: ['text', 'run', 'step', 'blockerList', 'since'],
   // An error nothing in the panel or the page's recorder caught: where (panel, recorder), its message (redacted, 300 characters)
-  // and up to four frames inside the extension's own files.
-  client_error: ['where', 'error', 'stack'],
+  // and up to four frames inside the extension's own files. where 'plan': a carrier rule that threw
+  // while a plan was built, named by its concept and q.
+  client_error: ['where', 'error', 'stack', 'concept', 'q'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
   // setting) acted on. Choices are option texts; typed text suggestions are never logged.
   // leave*: why questions were left, as counts (missing information, a conflict, Luna's own leave,

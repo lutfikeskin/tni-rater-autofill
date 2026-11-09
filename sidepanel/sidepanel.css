@@ -225,6 +225,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .view { position: relative; flex: 1; min-height: 96px; overflow: auto; scrollbar-gutter: stable; display: grid; align-content: start; grid-auto-rows: max-content; }
 .pane { padding: 8px 12px 12px; display: grid; gap: 8px; align-content: start; }
 .pane-head { display: grid; gap: 2px; }
+.pane-head, .intro { position: relative; }
+.pane-head > .help-link, .intro > .help-link { position: absolute; top: 0; right: 0; }
+.pane-head h2, .intro h2 { padding-right: 26px; }
 .pane-head h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); }
 .pane-sub { font-size: 12.5px; color: var(--ink-secondary); text-wrap: pretty; }
 .notices { padding: 8px 12px 0; display: grid; gap: 8px; }
@@ -354,6 +357,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .page-menu { flex: 0 1 auto; min-width: 0; max-width: 100%; height: 24px; padding: 0 2px 0 4px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--ink-strong); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .page-menu:hover { background: var(--surface-hover); }
 .key-btn { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border: 1px solid var(--border-strong); border-radius: 50%; background: transparent; color: var(--ink-secondary); font: italic 600 11px/1 Georgia, 'Times New Roman', serif; }
+/* The '?' on each view, opening the agent's guide at its section (help-link.jsx). */
+.help-link { flex: 0 0 auto; width: 20px; height: 20px; display: inline-grid; place-items: center; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--ink-secondary); font-size: 11.5px; font-weight: 600; line-height: 1; text-decoration: none; }
+.help-link:hover { background: var(--surface-hover); color: var(--ink-strong); }
 .key-btn:hover { background: var(--surface-hover); }
 .key-btn[aria-expanded="true"] { background: var(--ink-strong); border-color: var(--ink-strong); color: var(--surface); }
 .past-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 8px 12px 0; }
@@ -675,6 +681,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 /* The host React draws #recording into (settings-view.jsx): no box of its own, so the footer row lays it out as before. */
 .recording-root { display: contents; }
 .rec-dot { color: var(--signal); }
+/* The developer recording's pill (settings-view.jsx DevRecordingPill): unpacked builds only, while one runs. */
+.devrec-pill { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font: 500 11px/1.2 var(--font-sans); color: var(--ink-secondary); }
+.devrec-pill input { min-width: 0; width: 12em; font-size: 11.5px; padding: 2px 4px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-sm); }
 
 @keyframes rise { from { transform: translateY(16px); opacity: 0.6; } to { transform: translateY(0); opacity: 1; } }
 @media (max-width: 340px) {
