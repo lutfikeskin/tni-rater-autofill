@@ -284,6 +284,35 @@ test('split trailer ownership notes never become vehicle ownership on either car
   assert.ok(!answered.warnings.some((w) => w.code === 'ownership.notes'));
 });
 
+// Audit 2026-11-07, DATA-16: the cargo box takes typed text, so its amounts are read by their label,
+// never by position alone; what it says is kept; a deductible not below the limit is said, not swapped.
+test('the cargo box: amounts read by their label, kept as written, and a deductible not below the limit said', () => {
+  for (const [box, limit, deductible] of [['$100K/$1K Ded', 100000, 1000], ['$100K/$2.5K Ded', 100000, 2500], ['$100K', 100000, null],
+    ['$1,000 ded / $100k', 100000, 1000], ['100K w/ 1K ded', 100000, 1000], ['$250K - $2,500 ded', 250000, 2500], ['$100,000,$1,000 deductible', 100000, 1000],
+    ['$100,000 limit, $1,000 deductible', 100000, 1000], ['Other', null, null]]) {
+    assert.deepEqual(parseLimitDeductible(box), { limit, deductible }, box);
+  }
+  const today = { today: new Date('2026-09-30') };
+  const read = (box) => normalizeIntake({ ...raw, cargo_cov: 'Yes', cargo_limit_ded: box }, today);
+  const typed = read('100K w/ 1K ded');
+  assert.deepEqual([typed.record.coverage.cargoLimit, typed.record.coverage.cargoDeductible, typed.record.coverage.cargoAsWritten], [100000, 1000, '100K w/ 1K ded']);
+  assert.ok(!typed.warnings.some((w) => /^cargo-/.test(w.code)));
+  // Two amounts without a label, the smaller first: never swapped, the agent says which is which.
+  const odd = read('1000/100000');
+  assert.deepEqual([odd.record.coverage.cargoLimit, odd.record.coverage.cargoDeductible], [1000, 100000]);
+  assert.match(odd.warnings.find((w) => w.code === 'cargo-limit.implausible')?.msg ?? '', /^The cargo box says "1000\/100000": the deductible \(\$100,000\) isn't below the limit \(\$1,000\)\. Check which is which\.$/);
+  // Nothing read: the check names what the box says.
+  assert.match(read('ask client').warnings.find((w) => w.code === 'cargo-limit.missing').msg, /^The cargo box says "ask client": no cargo limit read from it\. Enter the limit\.$/);
+  assert.equal(read('').warnings.find((w) => w.code === 'cargo-limit.missing').msg, 'Wants cargo coverage but no limit chosen.');
+  // The agent corrects the box as written in client details: the amounts and checks follow.
+  const r = odd.record;
+  r.coverage.cargoAsWritten = '$100K/$1K Ded';
+  const intake = { record: r, warnings: odd.warnings, done: [], readFrom: odd.readFrom };
+  assert.deepEqual(rederive(r, 'coverage.cargoAsWritten', { ...today, intake }).sort(), ['coverage.cargoDeductible', 'coverage.cargoLimit']);
+  assert.deepEqual([r.coverage.cargoLimit, r.coverage.cargoDeductible], [100000, 1000]);
+  assert.ok(!intake.warnings.some((w) => w.code === 'cargo-limit.implausible' && w.level === 'check'), 'the check no longer holds');
+});
+
 // Audit 2026-10-08: a panel edit set one field and left what was derived from it stale.
 test('rederive recomputes a derived value from its edited source, never the other way round', () => {
   const today = { today: new Date('2026-09-30') };

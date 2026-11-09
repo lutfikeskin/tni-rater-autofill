@@ -119,6 +119,7 @@ const SOURCE = {
 // Not mapped on purpose, with the reason.
 const NOT_MAPPED = {
   progressive: {
+    'coverage.cargoAsWritten': 'the cargo box as written, for the agent to compare: the carriers read the limit and deductible parsed from it (coverage.cargoLimit, coverage.cargoDeductible)',
     'applicant.fein': 'Progressive asks the EIN on the finish flow, which is the agent\'s (AdditionalDetails is ignored)',
     'applicant.yearEstablished': 'Progressive does not ask when the business was established',
     'applicant.yearsInBusiness': 'Progressive does not ask the years in business',
@@ -136,6 +137,7 @@ const NOT_MAPPED = {
     'trailerInfo.hitch': 'not asked by Progressive',
   },
   amwins: {
+    'coverage.cargoAsWritten': 'the cargo box as written, for the agent to compare: the carriers read the limit and deductible parsed from it (coverage.cargoLimit, coverage.cargoDeductible)',
     'applicant.mcDotWithin60Days': 'AmWINS asks for the numbers themselves (has DOT / has MC / no number)',
     'applicant.fein': 'not asked on the Business Auto application',
     'applicant.email': 'the contact email box is the agency\'s / left as the page has it',
@@ -163,6 +165,7 @@ const NOT_MAPPED = {
     'coverage.hasGl': 'AmWINS Business Auto has no other-coverages question',
   },
   geico: {
+    'coverage.cargoAsWritten': 'the cargo box as written, for the agent to compare: the carriers read the limit and deductible parsed from it (coverage.cargoLimit, coverage.cargoDeductible)',
     'applicant.fein': 'not asked before Final Quote Details, which is the agent\'s (stopSteps)',
     'applicant.yearEstablished': 'GEICO asks how many years the business has been operating (applicant.yearsInBusiness)',
     'applicant.yearsExperience': 'not asked on the captured quotes',
