@@ -16,7 +16,7 @@
 // holds every version's fingerprint and fails until SCHEMA_VERSION is raised and the new version's
 // added, so an extension that sends the new fields waits for a server that keeps them.
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 // Event type -> fields kept. Anything else in an event is dropped (and named in `dropped`).
 // install: a random id for one copy of the extension on one computer (with seq: gaps show loss).
@@ -70,7 +70,8 @@ export const EVENT_FIELDS = {
   field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
   // many seconds before the report).
-  problem_report: ['text', 'run', 'step', 'blockerList', 'since'],
+  // kind: what kind of problem the agent picked (wrong-answer, stuck, missing-question, slow, other).
+  problem_report: ['kind', 'text', 'run', 'step', 'blockerList', 'since'],
   // An error nothing in the panel or the page's recorder caught: where (panel, recorder), its message (redacted, 300 characters)
   // and up to four frames inside the extension's own files. where 'plan': a carrier rule that threw
   // while a plan was built, named by its concept and q.

@@ -668,7 +668,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 #fill:disabled { opacity: 1; color: var(--ink-muted); background: var(--surface-hover); border-color: var(--border); }
 .dock-alt { justify-self: center; }
 .problem { padding: 8px 12px 0; display: grid; gap: 6px; border-top: 1px solid var(--border-faint); }
-.problem textarea { color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-sm); padding: 6px 8px; resize: vertical; font-size: 12.5px; }
+.problem textarea, .problem select { color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-sm); padding: 6px 8px; resize: vertical; font-size: 12.5px; }
 .problem-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .problem-said { margin: 0; padding: 6px 12px 0; font-size: 12px; color: var(--ink-secondary); }
 .foot-row { padding: 4px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--border-faint); }

@@ -230,6 +230,8 @@ export const SUMMARY_SHAPE = sShaped({
   open: sCount,
   answers: sCount,
 });
+// A problem report's kinds, as the panel's list offers them (usage-panel.js PROBLEM_KINDS; LEARN-14).
+const PROBLEM_KINDS = ['wrong-answer', 'stuck', 'missing-question', 'slow', 'other'];
 
 // The run-identity fields (audit 2026-10-08, finding 7; Contract 1): their exact shapes, since a
 // review joins events by them. An event with one of these present but malformed is refused, not
@@ -526,6 +528,8 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (out.type === 'problem_report') {
       if (out.blockerList !== undefined && !(Array.isArray(out.blockerList) && out.blockerList.length <= 12 && out.blockerList.every((b) => typeof b === 'string' && b.length <= 120))) drop('blockerList');
       if (out.since !== undefined && !(Number.isSafeInteger(out.since) && out.since >= 0)) drop('since');
+      // What kind of problem, from the panel's list (audit 2026-11-07, LEARN-14).
+      if (out.kind !== undefined && !PROBLEM_KINDS.includes(out.kind)) drop('kind');
     }
     if (out.source !== undefined && !FIELD_SOURCES.includes(out.source)) drop('source');
     for (const k of ['standard', 'manualOnly', 'review', 'edited']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);

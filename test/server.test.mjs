@@ -848,6 +848,20 @@ test('a problem report keeps the fill it is about, in its shapes', async () => {
   for (const e of [tooLong, notText]) assert.deepEqual([e.text, e.dropped], [undefined, ['text']]);
 });
 
+// Audit 2026-11-07, LEARN-14: a problem report's kind is one of the panel's list, else dropped.
+test('a problem report keeps its kind from the panel list only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'problem_report', filled: undefined, text: 'a', kind: 'stuck' }),
+      ev({ type: 'problem_report', filled: undefined, text: 'b', kind: 'Jane Doe' }),
+    ] });
+  });
+  const [ok, bad] = stored(dataDir);
+  assert.equal(ok.kind, 'stuck');
+  assert.deepEqual([bad.kind, bad.dropped], [undefined, ['kind']]);
+});
+
 test('keeps a button the agent clicked: its text, bounded', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {
