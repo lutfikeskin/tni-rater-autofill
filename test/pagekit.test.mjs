@@ -10168,6 +10168,36 @@ test('an agent edit while an answer waits on their typing stops that answer', as
   assert.equal(radius.value, 'l', 'the agent\'s pick stays');
 });
 
+// CodeRabbit on #435: the agent edits a question while a list (a plain one, or select2) waits for its
+// options. The wait sees that edit too: nothing is picked, and the answer reports the interruption.
+test('an agent edit while an answer list waits for its options (plain, select2) stops it before the pick', async () => {
+  for (const select2 of [false, true]) {
+  const h = harness();
+  const select = new SelectNode([{ text: 'Select one', value: '' }], { id: 'classCodeAndDescription', ariaLabel: 'Classification' });
+  const container = new FakeNode('span', { className: 'select2 select2-container' });
+  container.append(new FakeNode('span', { className: 'select2-selection' }));
+  if (select2) select.className = 'select2-hidden-accessible';
+  const radius = new SelectNode([{ text: 'Select one', value: '' }, { text: 'Local', value: 'l' }, { text: 'Long haul', value: 'lh' }], { id: 'radius', ariaLabel: 'Radius' });
+  h.document.body.append(select, container, radius);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const key = report.unknown.find((x) => x.label === 'Classification')?.key;
+  assert.ok(key, JSON.stringify(report.unknown.map((x) => x.label)));
+  // Its options come 2 s later; the agent picks the radius themselves half a second in.
+  setTimeout(() => { select.options = [...select.options, { text: 'Trucking', value: 't' }]; }, 2000);
+  setTimeout(() => {
+    radius.dispatchEvent({ type: 'pointerdown', target: radius, isTrusted: true });
+    radius.value = 'l';
+    radius.dispatchEvent({ type: 'change', target: radius, isTrusted: true });
+  }, 500);
+  const t0 = clock.Date.now();
+  const results = await h.kit.answer([{ key, label: 'Classification', value: 'Trucking' }]);
+  assert.ok(clock.Date.now() - t0 < 1500, `ended ${clock.Date.now() - t0} ms in`);
+  assert.equal(select.value, '', 'nothing picked after the edit');
+  assert.deepEqual([results[0].ok, results[0].code], [false, 'fill.interrupted']);
+  assert.equal(radius.value, 'l', "the agent's pick stays");
+  }
+});
+
 // CodeRabbit on #435: the agent moves to another field while a write is under way. That field keeps
 // the focus: it is given back only where the write left it.
 test('a field the agent moved to during a write keeps the focus', async () => {
