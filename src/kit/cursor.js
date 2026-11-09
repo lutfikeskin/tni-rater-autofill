@@ -76,8 +76,10 @@ export function progress(seen = null) {
   // Each row with its place on the page as the last round read it (`order`), so the panel lists the
   // answers and the items in the page's order.
   const placeOf = running.places ?? (() => null);
+  // `source` too, so the live list tags an answer the agent's own default gave ("Your default"), as
+  // the report does (audit 2026-11-07, LIVE-01).
   const rows = all.slice(since).map((x) => ({ key: x.key ?? null, label: x.label || x.name || '', shown: x.shown ?? '', standard: !!x.standard,
-    stepId: x.stepId ?? null, path: x.path ?? null, otherStep: !!x.otherStep, order: placeOf(x) }));
+    source: x.source ?? null, stepId: x.stepId ?? null, path: x.path ?? null, otherStep: !!x.otherStep, order: placeOf(x) }));
   // The items judged so far (the fill's streamItems: one snapshot a round), only when the panel
   // doesn't have this round's (`seen['items@<frame>']`).
   const items = running.items ?? null;
