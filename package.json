@@ -6,7 +6,7 @@
   "engines": {
     "node": ">=22"
   },
-  "description": "Chrome extension that fills Progressive and GEICO rater pages from a TNI quote application PDF",
+  "description": "Chrome extension that fills Progressive, AmWINS and GEICO rater pages from a TNI quote application PDF",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
     "test": "node --test \"test/*.test.mjs\" && vitest run --passWithNoTests",

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile, zipName, PACKAGED, mapsZipName, withoutMapUrl, packageOf, noticesPlugin, thirdPartyNotices, RULES_FILE, stampRules, rulesOf, rulesPlugin } from '../scripts/lib/package.mjs';
+import { STAMPED, storeManifest, withoutLocalPages, LOCAL_PAGES_FILE, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile, zipName, PACKAGED, mapsZipName, withoutMapUrl, packageOf, noticesPlugin, thirdPartyNotices, RULES_FILE, stampRules, rulesOf, rulesPlugin } from '../scripts/lib/package.mjs';
 import { RULE_FILES, rulesHash } from '../src/usage.js';
 import { kitCode } from '../scripts/lib/kit.mjs';
 
@@ -216,4 +216,25 @@ test('the store zip leaves out lib/ and the source maps, and carries the bundled
   assert.equal(notices.match(/^fflate /gm).length, 1, 'once each');
   assert.throws(() => thirdPartyNotices(root, []), /no third-party code/);
   assert.match(script, /fs\.writeFileSync\(path\.join\(to, NOTICES_FILE\), thirdPartyNotices\(root, \[\.\.\.found\]\)\)/);
+});
+
+// Audit 2026-11-07, QA-11 step 2, SRV-16, CARR-18: the store zip reaches no host on this computer,
+// and its carriers take no local page for a carrier; the unpacked copy keeps both for mocks.
+test('the store build has no localhost: not in its manifest, not among its carriers', async () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+  const store = storeManifest(manifest);
+  assert.ok(manifest.host_permissions.some((h) => h.includes('localhost')), 'the repository manifest keeps it for the unpacked copy');
+  assert.deepEqual(store.host_permissions.filter((h) => /localhost|127\.0\.0\.1/.test(h)), []);
+  assert.deepEqual(store.host_permissions, manifest.host_permissions.filter((h) => !/localhost|127\.0\.0\.1/.test(h)), 'the carriers and the servers kept');
+  const source = fs.readFileSync(new URL(`../${LOCAL_PAGES_FILE}`, import.meta.url), 'utf8');
+  const stored = withoutLocalPages(source);
+  assert.ok(stored.includes('const LOCAL_PAGES = false;') && !stored.includes('const LOCAL_PAGES = true;'));
+  assert.throws(() => withoutLocalPages('no flag here'));
+  const plugin = provenancePlugin({ channel: 'store', commit: null });
+  assert.ok(plugin.transform(source, 'C:\\repo\\src\\carriers.js').code.includes('const LOCAL_PAGES = false;'), 'the store build stamps it');
+  assert.equal(provenancePlugin({ channel: 'unpacked', commit: null }).transform(source, `/repo/${LOCAL_PAGES_FILE}`), null, 'the unpacked copy keeps local pages');
+  // As the store bundle reads it: no test carrier, and a practice page is no carrier.
+  const mod = await import(`data:text/javascript,${encodeURIComponent(stored.replace(/^import .*$/gm, '').replace(/^\/\*\* @import.*$/gm, '').replace(/^\s*progressive,\n\s*geico,\n\s*amwins,\n/m, ''))}`);
+  assert.equal(mod.CARRIERS.some((c) => c.id === 'test'), false);
+  assert.equal(mod.carrierForUrl('http://localhost:8080/test/fixtures/amwins/page.html'), null);
 });
