@@ -10380,7 +10380,7 @@ test('a quote-wide helper the agent clicks themselves is done, as if the fill ha
 
 // A cargo-only quote has one Done with this coverage in its plan (general liability's isn't asked
 // for): the agent's click of another coverage's Done, or one Progressive refused, isn't cargo closed.
-// The fill's own click counts only once its check (`verify: cargoClosed`) passes.
+// The fill's own click counts only once its check (`verify: { closed: 'cargo' }`) passes.
 test('a helper the fill checks after its click is not done by the agent clicking its words', () => {
   // (Nor an NTL quote's Done, doneNtl: not in a cargo quote's plan.)
   const plan = progressive.actions.filter((a) => !['openGl', 'doneGl', 'doneNtl'].includes(a.id)).map((a) => ({ kind: 'action', action: a.id, baseAction: a.id,

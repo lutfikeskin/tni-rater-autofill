@@ -2133,8 +2133,8 @@ test('bill plans wait for recalculate and a fresh visible premium', async () => 
 
 function cargoPlan() {
   return [
-    { id: 'cargo-value', q: '216F', field: fieldOf('216F'), path: 'progressive.q216F', kind: 'text', value: '$100000/$1000', cargo: 'limit' },
-    { id: 'done', kind: 'action', action: 'doneCargo', text: '^done with this coverage$', pages: ['CoveragesRates'], after: [], afterAny: ['progressive.q216F'], afterActions: [], afterPages: [], unless: [], verify: 'cargoClosed' },
+    { id: 'cargo-value', q: '216F', field: fieldOf('216F'), path: 'progressive.q216F', kind: 'text', value: '$100000/$1000', section: { id: 'cargo', part: 'limit' } },
+    { id: 'done', kind: 'action', action: 'doneCargo', text: '^done with this coverage$', pages: ['CoveragesRates'], after: [], afterAny: ['progressive.q216F'], afterActions: [], afterPages: [], unless: [], verify: { closed: 'cargo', words: 'motor truck cargo[^\n]*(?:\n[^\n]*){0,2}', anyLimit: false } },
   ];
 }
 
@@ -2155,7 +2155,7 @@ test('cargo Done verifies a collapsed retained result and rejects expanded or ch
   expandedButton.onclick = () => { expandedButton._clicked = true; };
   const expandedReport = await expanded.kit.fill([
     ...cargoPlan(),
-    { id: 'commodity', q: '216A', field: fieldOf('216A'), path: 'progressive.q216A', kind: 'text', value: null, ignore: true, cargo: 'section' },
+    { id: 'commodity', q: '216A', field: fieldOf('216A'), path: 'progressive.q216A', kind: 'text', value: null, ignore: true, section: { id: 'cargo', part: 'section' } },
   ], { maxRounds: 5 });
   assert.equal(expandedButton._clicked, true);
   assert.equal(expandedReport.halted, false);
@@ -2177,9 +2177,9 @@ test('cargo Done verifies a collapsed retained result and rejects expanded or ch
 // the row keeps the limit; a question still open leaves Done to be tried again.
 function glPlan() {
   return [
-    { id: 'gl-limit', q: '21D1', field: 'LineInput.GeneralLiabilityLimit', path: 'progressive.q21D1', kind: 'text', value: '$1,000,000/ $2,000,000 Aggregate', gl: 'limit' },
-    { id: 'gl-other', q: '21F3', field: 'GeneralLiabilityInput.GeneralLiabilityTruckOtherBusiness', path: 'progressive.q21F3', kind: 'text', value: null, ignore: true, gl: 'section' },
-    { id: 'done', kind: 'action', action: 'doneGl', text: '^done with this coverage$', pages: ['CoveragesRates'], after: ['progressive.q21D1'], afterAny: [], afterActions: [], afterPages: [], unless: [], verify: 'glClosed' },
+    { id: 'gl-limit', q: '21D1', field: 'LineInput.GeneralLiabilityLimit', path: 'progressive.q21D1', kind: 'text', value: '$1,000,000/ $2,000,000 Aggregate', section: { id: 'gl', part: 'limit' } },
+    { id: 'gl-other', q: '21F3', field: 'GeneralLiabilityInput.GeneralLiabilityTruckOtherBusiness', path: 'progressive.q21F3', kind: 'text', value: null, ignore: true, section: { id: 'gl', part: 'section' } },
+    { id: 'done', kind: 'action', action: 'doneGl', text: '^done with this coverage$', pages: ['CoveragesRates'], after: ['progressive.q21D1'], afterAny: [], afterActions: [], afterPages: [], unless: [], verify: { closed: 'gl', words: null, anyLimit: true } },
   ];
 }
 
@@ -2214,6 +2214,25 @@ test('general liability Done verifies a closed section that keeps the limit', as
   assert.ok(emptyReport.blocked.some((b) => b.id === 'doneGl'));
 });
 
+// Audit 2026-11-07, CARR-05: the kit knows no carrier's sections. Any section a carrier declares
+// (here one named "reefer") is checked the same way: its Done counts once its questions are gone.
+test('a coverage section by any name: its Done counts only with its questions gone', async () => {
+  const reeferPlan = () => glPlan().map((s) => (s.kind === 'action' ? { ...s, verify: { closed: 'reefer', words: null, anyLimit: true } }
+    : { ...s, section: { id: 'reefer', part: s.section.part } }));
+  const closed = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  addExtText(closed, 'U', '2211', { caption: 'General Liability', ref: 'LineInput.GeneralLiabilityLimit', value: '$1,000,000/ $2,000,000 Aggregate' });
+  addButton(closed, 'Done with this coverage');
+  const closedReport = await closed.kit.fill(reeferPlan(), { maxRounds: 5 });
+  assert.equal(Array.from(closedReport.actions, (x) => x.id).join(','), 'doneGl');
+  const open = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  addExtText(open, 'U', '225C', { caption: 'General Liability', ref: 'LineInput.GeneralLiabilityLimit', value: '$1,000,000/ $2,000,000 Aggregate' });
+  addExtText(open, 'P', '2233', { caption: 'Does the customer operate businesses other than the for hire trucking operations?', ref: 'GeneralLiabilityInput.GeneralLiabilityTruckOtherBusiness', value: 'No' });
+  addButton(open, 'Done with this coverage');
+  const openReport = await open.kit.fill(reeferPlan(), { maxRounds: 5 });
+  assert.ok(Array.from(openReport.invalidatedActions).includes('doneGl'), 'its questions still showing: not done');
+  assert.equal(Array.from(openReport.actions).length, 0);
+});
+
 // Trailer interchange (TNI 2026-10-28): the steps Progressive's plan gives an intake asking for it
 // ($50,000, one Dry Van trailer), as the helpers after "+" see them (openInterchange done). Its Done
 // is verified as general liability's: the section's questions gone and the row keeping the limit.
@@ -2223,7 +2242,7 @@ function interchangePlan(info = {}) {
     trailers: [{ type: 'Dry Van' }], trailerInfo: { interchange: true, interchangeLimit: '$50,000', ...info }, priorInsurance: [], coverage: { cargo: false, gl: false }, claims: {},
   };
   return buildPlan(record, progressive, {})
-    .filter((s) => s.interchange || s.field?.startsWith('NonOwnedTrailerPhysicalDamageInput.') || ['interchangeTile', 'doneInterchange'].includes(s.action))
+    .filter((s) => s.section?.id === 'interchange' || s.field?.startsWith('NonOwnedTrailerPhysicalDamageInput.') || ['interchangeTile', 'doneInterchange'].includes(s.action))
     .map((s) => (s.kind === 'action' ? { ...s, afterActions: [] } : s));
 }
 const INTERCHANGE_LIMIT_SAID = '$50k with a $1,000 Deductible';
@@ -2292,7 +2311,7 @@ test('trailer interchange: the tile once the number is in, and Done verified as 
 // question ids (21EB, 2207): its own number of non-owned trailers, the intake's trailer tile, and a
 // limit list in full dollars with no "Matching Trailer Interchange Limits": the interchange limit
 // with the $1,000 deductible, in that wording.
-// The shared closed-section check (CLOSED_SECTIONS, PR #213): trailer interchange already added and
+// The shared closed-section check (a carrier's `sections`, PR #213): trailer interchange already added and
 // closed on the page (by the agent or an earlier fill), no Done showing: its Done counts as done.
 test('trailer interchange closed on the page: doneInterchange is done unclicked', async () => {
   const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
@@ -4736,7 +4755,7 @@ test('a button that shows only once the page took an answer: the answer is picke
   let picks = 0;
   commodity.addEventListener('change', () => { picks++; if (picks === 1) { const done = addButton(h, 'Done with this coverage'); done.onclick = () => { done._clicked = true; h.done = done; }; } });
   const plan = [
-    { id: 'commodity', q: '216B', field: 'MTCargoCommodityCategories.MTCargoListOfCommodities', path: 'progressive.q216B', kind: 'choice', value: 'Other Consumer Goods', cargo: 'section' },
+    { id: 'commodity', q: '216B', field: 'MTCargoCommodityCategories.MTCargoListOfCommodities', path: 'progressive.q216B', kind: 'choice', value: 'Other Consumer Goods', section: { id: 'cargo', part: 'section' } },
     { id: 'done', kind: 'action', action: 'doneCargo', text: '^done with this coverage$', pages: ['CoveragesRates'], after: ['progressive.q216B'], afterAny: [], afterActions: [], afterPages: [], unless: [], nudge: 'progressive.q216B' },
   ];
   await h.kit.fill(plan, { maxRounds: 6 });
@@ -10297,6 +10316,29 @@ test('a detached list pick that fires no input or change event still stops the f
   assert.equal(report.halted, true);
   assert.deepEqual([...report.protectedKeys], ['ref:Test.combo']);
   assert.equal(combo.input.value, 'Agent choice');
+});
+
+// Review of #475: an answer on Rates re-arms its coverage's Done by the step's `section` (any cargo
+// question, reefer breakdown included; a question of GL's or interchange's open section).
+test('Progressive: an answer on Rates re-arms the Done of its coverage section', async () => {
+  const { buildPlan } = await import('../src/plan.js');
+  const { progressive } = await import('../src/carriers/progressive.js');
+  const { context } = harness({ ext: true });
+  const made = context.__raterAdapter.create({});
+  const rearm = (step) => Array.from(made.rearm('CoveragesRates', step)).filter((id) => id.startsWith('done'));
+  const record = { applicant: { name: 'Synthetic LLC' }, garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [],
+    trailers: [{ type: 'Dry Van' }], trailerInfo: { interchange: true, interchangeLimit: '$50,000' }, priorInsurance: [],
+    coverage: { cargo: true, cargoLimit: 100000, cargoDeductible: 1000, reeferBreakdown: true, gl: true }, claims: {} };
+  const plan = buildPlan(record, progressive, {});
+  const byQ = (q) => plan.find((s) => s.q === q);
+  assert.deepEqual(rearm(byQ('216A')), ['doneCargo'], 'a cargo section question');
+  assert.deepEqual(rearm(byQ('216F')), ['doneCargo'], 'the cargo limit');
+  assert.deepEqual(rearm(byQ('215C')), ['doneCargo'], 'reefer breakdown');
+  assert.deepEqual(rearm(byQ('21D1')), [], "GL's limit: not its section");
+  assert.deepEqual(rearm(plan.find((s) => s.section?.id === 'gl' && s.section.part === 'section')), ['doneGl']);
+  assert.deepEqual(rearm(byQ('21BE')), ['doneInterchange']);
+  assert.deepEqual(rearm(byQ('21DD')), [], "interchange's limit: not its section");
+  assert.deepEqual(Array.from(made.rearm('Drivers', byQ('216A'))), []);
 });
 
 // Audit 2026-11-07, ENG-16: every assign compiled each rule's patterns again (and an option rule's

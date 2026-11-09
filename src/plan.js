@@ -63,6 +63,15 @@ export function buildPlan(record, carrier, active = {}, { overlay = null, onRule
   return [...fieldSteps(rules, record, carrier, active, overlay, onRuleError), ...actionSteps(carrier, record, active)];
 }
 
+// A helper's `verify: { closed: id }`: the coverage section the carrier declares in `sections`, with
+// how its row is read (`words`, `anyLimit`), for the kit, which knows no carrier's sections.
+const closedVerify = (carrier, verify, id) => {
+  if (!verify || typeof verify !== 'object' || !('closed' in verify)) return verify;
+  const section = carrier?.sections?.[verify.closed];
+  if (!section) throw new Error(`${carrier?.id ?? 'carrier'} action ${id}: verify closes "${verify.closed}", which its sections don't declare`);
+  return { closed: verify.closed, words: section.words ?? null, anyLimit: !!section.anyLimit };
+};
+
 const withIndex = (path, active) => {
   const list = listOf(path);
   return list ? path.replace('[]', `[${active[list] ?? 0}]`) : path;
@@ -163,7 +172,8 @@ function actionSteps(carrier, record, active) {
       afterValue: resolve(a.afterValue) ?? null,
       needsPremium: !!resolve(a.needsPremium),
       needsRecalculation: !!resolve(a.needsRecalculation),
-      verify: resolve(a.verify) ?? null,
+      // `{ closed }`: the section the carrier's `sections` declares, with how its row is read.
+      verify: closedVerify(carrier, resolve(a.verify) ?? null, a.id),
       // With `verify: 'premium'`: rated only once this selector is drawn too (GEICO's pay plans).
       ratedBy: resolve(a.ratedBy) ?? null,
       // `shownBy`: the questions that show the helper's result (`all` of them, or `any`; with
@@ -361,12 +371,9 @@ function fieldSteps(rules, record, carrier, active, overlay, onRuleError = null)
       optional: !!rule.optional,
       // The registered business names a USDOT lookup offers (checked against the intake).
       registeredName: !!rule.registeredName,
-      // Progressive's cargo questions: 'section' (the commodity section), 'limit', or true.
-      cargo: rule.cargo ?? null,
-      // Its general liability questions the same way: 'section' or 'limit'.
-      gl: rule.gl ?? null,
-      // And its trailer interchange questions (Progressive, 2026-10-28): 'section' or 'limit'.
-      interchange: rule.interchange ?? null,
+      // A question of a coverage section the carrier declares (`sections`: Progressive's cargo, general
+      // liability and trailer interchange): of its open section, or its limit (`part`).
+      section: rule.section ? { id: rule.section.id, part: rule.section.part } : null,
       selector: rule.repeatSelector ? rule.repeatSelector(record, active) : rule.selector ?? null,
       re: rule.label ?? null,
       ex: rule.not ?? null,
