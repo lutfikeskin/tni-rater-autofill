@@ -336,7 +336,7 @@ export function restsOnClientText(sources) {
   const intake = (sources ?? []).filter(s => s?.basis === 'intake');
   return intake.length > 0 && intake.every(s => {
     const info = fieldInfo(String(s.path ?? ''));
-    return 'section' in info && CLIENT_TEXT.has(info.kind);
+    return 'section' in info && typeof info.kind === 'string' && CLIENT_TEXT.has(info.kind);
   });
 }
 
@@ -497,9 +497,13 @@ async function reviewGroups(items, context, config, { call, fresh, usage, counte
     const wave = groups.slice(i, i + GROUPS_AT_ONCE);
     const ended = await Promise.allSettled(wave.map(review));
     let k = 0;
-    for (; k < ended.length && ended[k].status === 'fulfilled'; k++) ended[k].value.forEach((x, j) => { suggestions[wave[k].at[j]] = x; });
+    for (; k < ended.length; k++) {
+      const done = ended[k];
+      if (done.status !== 'fulfilled') break;
+      done.value.forEach((x, j) => { suggestions[wave[k].at[j]] = x; });
+    }
     if (k === ended.length) { i += wave.length; continue; }
-    const error = ended[k].reason, { at } = wave[k];
+    const failed = ended[k], error = failed.status === 'rejected' ? failed.reason : undefined, { at } = wave[k];
     // TNI's server from before 2026-11-07: the questions not yet reviewed are planned again at its
     // bound, before any further paid call, and this group is asked again in the new plan (a group
     // after it in the same wave too: its answer, if any, is not used).
