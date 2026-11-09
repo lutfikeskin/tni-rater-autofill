@@ -1068,7 +1068,7 @@
  * @property {number} [quietMs]  kit wait: the quiet it waited for
  * @property {number} [maxMs]  kit wait: its limit
  * @property {boolean} [requests]  kit wait: whether it waited for the page's requests too
- * @property {'quiet' | 'limit'} [ended]  kit wait: the page was quiet, or the limit came first
+ * @property {'quiet' | 'limit' | 'stopped'} [ended]  kit wait: the page was quiet, the limit came first, or the agent stopped the fill while it waited
  * @property {boolean} [settled]  kit wait at its limit: the page itself was settled (only components undefined held it)
  * @property {{ busy: boolean, changing: boolean, requests: boolean }} [held]  kit wait at its limit: what still held it
  * @property {string | null} [stepKind]  kit answer: the plan step's kind
