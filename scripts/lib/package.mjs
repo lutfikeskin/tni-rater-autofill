@@ -135,7 +135,9 @@ export function provenancePlugin(stamp) {
       if (this.meta.watchMode && stamp.commit && !stamp.commit.endsWith('+dirty')) stamp = { ...stamp, commit: `${stamp.commit}+dirty` };
     },
     transform(code, id) {
-      if (!id.replaceAll('\\', '/').endsWith(`/${PROVENANCE_FILE}`)) return null;
+      const file = id.replaceAll('\\', '/');
+      if (file.endsWith(`/${LOCAL_PAGES_FILE}`)) return stamp.channel === 'store' ? { code: withoutLocalPages(code), map: null } : null;
+      if (!file.endsWith(`/${PROVENANCE_FILE}`)) return null;
       stamped = true;
       return { code: stampProvenance(code, stamp), map: null };
     },
@@ -210,8 +212,19 @@ export const devManifest = (manifest) => ({ ...manifest, key: DEV_KEY });
 // Shortcuts only a developer copy acts on (the developer recording's Alt+Shift+R, REC-17): never in
 // the store zip, where the panel has no recording and the key would be taken from agents' pages.
 export const DEV_COMMANDS = ['record-toggle'];
+// The store build's carriers have no pages on this computer (src/carriers.js LOCAL_PAGES), and its
+// manifest no hosts on it, which only the unpacked copy reaches: mocks, replays, a local server
+// (audit 2026-11-07, QA-11, SRV-16).
+export const LOCAL_PAGES_FILE = 'src/carriers.js';
+const LOCAL_PAGES = 'const LOCAL_PAGES = true;';
+export function withoutLocalPages(text) {
+  if (text.split(LOCAL_PAGES).length !== 2) throw new Error(`expected one ${LOCAL_PAGES}`);
+  return text.replace(LOCAL_PAGES, 'const LOCAL_PAGES = false;');
+}
+export const LOCAL_HOST = /^https?:\/\/(localhost|127\.0\.0\.1)[:/]/;
 export const storeManifest = (manifest) => ({
   ...manifest,
+  host_permissions: (manifest.host_permissions ?? []).filter((h) => !LOCAL_HOST.test(h)),
   commands: Object.fromEntries(Object.entries(manifest.commands ?? {}).filter(([name]) => !DEV_COMMANDS.includes(name))),
 });
 

@@ -1201,14 +1201,23 @@ function appendRows(rows, ctx) {
   const entry = state.reportFor;
   const recs = rows.map((row) => answerOf({ ...row, fresh: true }));
   entry.list = [...(entry.list ?? []), ...recs];
-  if (entry.unmountRows) state.rowsDrawn = (state.rowsDrawn ?? 0) + 1;
+  if (entry.unmountRows) drawList(entry);
   else $('report').append(rowsHost(entry, ctx));
   return recs;
 }
 
-// A row's record changed: the report's list draws it again (report-view.jsx), that row only.
+// A row's record changed: the report's list draws it again (report-view.jsx), that row only. Only
+// the report that holds the row is drawn again (`drawn`), not every report the panel keeps (audit
+// 2026-11-07, LIVE-09); `rowsDrawn` tells the lists to look. A row no kept report holds: every
+// list is (`rowsAll`), as before.
 function drawRow(rec) {
   rec.v = (rec.v ?? 0) + 1;
+  const entry = state.reportFor?.list?.includes(rec) ? state.reportFor : [...(state.reports?.values() ?? [])].find((e) => e.list?.includes(rec));
+  drawList(entry);
+}
+function drawList(entry) {
+  if (entry) entry.drawn = (entry.drawn ?? 0) + 1;
+  else state.rowsAll = (state.rowsAll ?? 0) + 1;
   state.rowsDrawn = (state.rowsDrawn ?? 0) + 1;
 }
 // drawRow, drawn before it returns: for the focus or scrolling that follows.

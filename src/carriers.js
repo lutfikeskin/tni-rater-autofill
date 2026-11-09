@@ -48,19 +48,25 @@ import { geico } from './carriers/geico.js';
 
 /** @import { CarrierConfig } from '../types.js' */
 
+// Pages on this computer (localhost, 127.0.0.1): the local test page and the practice copies of
+// carrier pages. The store build has none (false there: provenancePlugin, scripts/lib/package.mjs;
+// its manifest has no localhost access either: storeManifest), so an agent's own local page is
+// never taken for a carrier (audit 2026-11-07, QA-11, SRV-16).
+const LOCAL_PAGES = true;
+
 /** @type {CarrierConfig[]} */
 export const CARRIERS = [
   progressive,
   geico,
   amwins,
-  {
+  ...(LOCAL_PAGES ? [{
     id: 'test',
     name: 'Local test page',
     hosts: [/^(localhost|127\.0\.0\.1)$/],
     rules: [],
     // The local test page is filled by the generic label rules alone.
     useGenericRules: true,
-  },
+  }] : []),
 ];
 
 // Practice copies of carrier pages served from this repo (test/replay, test/mock-progressive,
@@ -84,7 +90,7 @@ export function ratersSaid(raters = RATERS) {
 export function carrierForUrl(url) {
   let u;
   try { u = new URL(url); } catch { return null; }
-  if (/^(localhost|127\.0\.0\.1)$/.test(u.hostname)) {
+  if (LOCAL_PAGES && /^(localhost|127\.0\.0\.1)$/.test(u.hostname)) {
     const practice = PRACTICE.find((p) => p.path.test(u.pathname));
     const real = practice && CARRIERS.find((c) => c.id === practice.carrier);
     if (real) return { ...real, name: `${real.name} (practice)`, practice: true, autoFillUrl: null, layoutUrl: null };
