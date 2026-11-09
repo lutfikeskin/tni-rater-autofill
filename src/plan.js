@@ -51,7 +51,8 @@ export function reviewWarn(record, carrier) {
  * @param {PlanOptions} [options]  overlay: a hook given each field step with its rule, before the
  *   step's resolution is decided; the step it returns is the plan's. None (the default) leaves every
  *   step as the rules give it. plan.js knows nothing of what plugs in (docs/agent-defaults-spec.md).
- *   edited: the record paths the agent set or corrected in the panel (the intake's agentEdited).
+   *   edited: the record paths the agent set or corrected in the panel, and those recomputed from
+ *   them (the intake's agentEdited and agentDerived).
  * @returns {PlanStep[]}
  */
 export function buildPlan(record, carrier, active = {}, { overlay = null, edited = null } = {}) {
@@ -419,7 +420,8 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null) {
       from: from?.length ? from : null,
       // Its answer reads a record path the agent set or corrected in the panel (its own path, or one
       // a derived answer was worked out from): the agent's value, not the parser's, for the log.
-      ...(agentSet.size && [path, ...(from ?? [])].some((p) => agentSet.has(p)) ? { edited: true } : {}),
+      // A TNI standard (a fallback where the agent cleared the value, say) is never theirs (CodeRabbit on #480).
+      ...(!standard && agentSet.size && [path, ...(from ?? [])].some((p) => agentSet.has(p)) ? { edited: true } : {}),
       // Which row of a repeated question is this unit's: the one holding a control matching
       // `selector` that reads as the unit's `value` (AmWINS' vehicle rows by their VIN). The path
       // is resolved for the unit so the page kit can name it ("vehicle 2"); never its position.

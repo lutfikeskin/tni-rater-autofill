@@ -245,7 +245,9 @@ async function restoreKeptWork(intake, after = -Infinity) {
     edited.add(path);
   }
   intake.agentEdited = [...edited];
-  for (const path of edited) rederive(intake.record, path, { keep: edited });
+  const derived = new Set(intake.agentDerived ?? []);
+  for (const path of edited) for (const p of rederive(intake.record, path, { keep: edited })) derived.add(p);
+  intake.agentDerived = [...derived];
   // The checks a correction raises (NTL with cargo, say) are raised again before the kept checks are
   // found, so a Looks right on one has it to land on.
   for (const path of edited) editChecks(intake, path);
@@ -283,7 +285,7 @@ async function keepKeptWork(intake) {
 }
 
 function keepWork(intake, was) {
-  Object.assign(intake, { record: was.record ?? intake.record, warnings: was.warnings ?? intake.warnings, readFrom: was.readFrom ?? intake.readFrom, done: [...(was.done ?? [])], agentEdited: [...(was.agentEdited ?? [])],
+  Object.assign(intake, { record: was.record ?? intake.record, warnings: was.warnings ?? intake.warnings, readFrom: was.readFrom ?? intake.readFrom, done: [...(was.done ?? [])], agentEdited: [...(was.agentEdited ?? [])], agentDerived: [...(was.agentDerived ?? [])],
     notesReview: was.notesReview ?? null, namesReview: was.namesReview ?? null, ntlAdded: !!was.ntlAdded });
 }
 

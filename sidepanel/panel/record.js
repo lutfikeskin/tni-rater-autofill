@@ -295,6 +295,9 @@ async function agentEdit(path, after, kind) {
   const checks = [...state.intake.warnings];
   const derived = [...rederive(state.intake.record, path, { keep: edited, intake: state.intake })];
   if (derived.length) renderSections({ keep: derived });
+  // Recomputed from the agent's correction (claims box → any claims): an answer reading them reads
+  // the agent's value, for the log's `edited` (CodeRabbit on #480).
+  if (derived.length) state.intake.agentDerived = [...new Set([...(state.intake.agentDerived ?? []), ...derived])];
   if (state.intake.warnings.length !== checks.length || state.intake.warnings.some((w, i) => w !== checks[i])) renderWarnings();
   intakeEdited();
   // Log that the agent corrected the intake here (and whether it was flagged), not the value.

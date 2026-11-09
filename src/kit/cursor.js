@@ -846,8 +846,6 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // Where its answer comes from (plan.js `source`) and whether review mode asks the agent to
           // confirm it, for the usage log (a TNI standard or an intake fact; a check item or not).
           source: step.source ?? null, review: !!step.reviewRequired,
-          // Its answer read a value the agent corrected in the panel (plan.js `edited`).
-          ...(step.edited ? { edited: true } : {}),
           // A field another step of a one-address application holds (AmWINS keeps every step's
           // section in the page, hidden): filled again here, but not this step's question.
           ...(step.hidden && otherStep(c.el) ? { otherStep: true } : {}) });
@@ -1129,7 +1127,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // An option matched only by a fallback (it begins with the answer's words, or has them,
           // none reading exactly so) is written and checked by the agent (the maintainer, 2026-11-07).
           const loose = looseMatch(step, judged);
-          state.report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}), ...(loose ? { matched: loose.matched } : {}) });
+          // Its answer read a value the agent corrected in the panel (plan.js `edited`): only an answer
+          // the fill wrote, never a carrier's choice it kept (CodeRabbit on #480).
+          state.report.filled.push({ ...item, ...(step.edited ? { edited: true } : {}), shown: result.shown, ...(instead ? { said: instead } : {}), ...(loose ? { matched: loose.matched } : {}) });
           state.quietDue = true;
           state.unoffered.delete(step.id);
           state.keepWait.delete(step.id);

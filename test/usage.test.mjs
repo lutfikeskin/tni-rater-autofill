@@ -110,7 +110,15 @@ test('a fill_field says when its answer read the agent\'s correction, and the pa
   const planFor = fs.readFileSync(new URL('../sidepanel/panel/plan-for.js', import.meta.url), 'utf8');
   const core = fs.readFileSync(new URL('../sidepanel/panel/core.js', import.meta.url), 'utf8');
   assert.match(planFor, /edited: editedOf\(record\)/);
-  assert.match(core, /onPlanEdits\(\(record\) => \(state\.intake\?\.record === record \? state\.intake\.agentEdited \?\? \[\] : \[\]\)\)/);
+  assert.ok(core.includes('onPlanEdits((record) => (state.intake?.record === record ? [...(state.intake.agentEdited ?? []), ...(state.intake.agentDerived ?? [])] : []));'));
+  // CodeRabbit on #480: a value recomputed from the correction (claims box → any claims) counts, and
+  // a TNI standard never does.
+  const recordJs = fs.readFileSync(new URL('../sidepanel/panel/record.js', import.meta.url), 'utf8');
+  assert.ok(recordJs.includes('state.intake.agentDerived = [...new Set([...(state.intake.agentDerived ?? []), ...derived])];'));
+  const cleared = structuredClone(record);
+  cleared.claims = { ...(cleared.claims ?? {}), hasClaims: null };
+  const fallback = buildPlan(cleared, progressive, {}, { edited: ['claims.hasClaims'] }).filter((s) => s.standard && s.path === 'claims.hasClaims');
+  assert.ok(fallback.length && fallback.every((s) => !s.edited), 'a standard is never marked edited');
 });
 
 // Audit 2026-11-07, FLOW-12: a fill of the quote tab while the agent was on another, and how long its

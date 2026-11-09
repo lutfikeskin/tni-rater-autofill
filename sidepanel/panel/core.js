@@ -592,7 +592,7 @@ function logCrash(err, where = 'panel') {
   } catch { /* logging a crash must never crash */ }
 }
 // A plan for the intake on screen marks the answers that read the agent's corrections (planFor).
-onPlanEdits((record) => (state.intake?.record === record ? state.intake.agentEdited ?? [] : []));
+onPlanEdits((record) => (state.intake?.record === record ? [...(state.intake.agentEdited ?? []), ...(state.intake.agentDerived ?? [])] : []));
 globalThis.addEventListener?.('error', (e) => logCrash(e.error ?? e.message));
 globalThis.addEventListener?.('unhandledrejection', (e) => logCrash(e.reason));
 

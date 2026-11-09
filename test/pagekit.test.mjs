@@ -5288,6 +5288,16 @@ test('a filled answer that read the agent\'s correction is marked edited; the ot
   const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
   const qOf = (x) => plan.find((s) => s.id === x.stepId)?.q;
   assert.deepEqual([...new Set(report.filled.map((x) => `${qOf(x)} ${!!x.edited}`))].sort(), ['28F5 true', '299D false']);
+  // CodeRabbit on #480: a carrier choice the fill keeps (it differs, and choices aren't replaced) isn't
+  // the agent's correction, so it isn't marked edited.
+  const k = harness({ progressive: true, search: '?pageName=AddDriver' });
+  const group = yesNo('DriverInput.AnyAccidentsViolationsPastExpYears', 'Has this driver had any accidents, claims or violations in the past 3 years?');
+  k.document.body.append(group);
+  const yes = [...k.document.querySelectorAll('input[type=radio]')].find((r) => r.value === 'Yes');
+  yes.checked = true;
+  const kept = await k.kit.fill(plan.filter((s) => s.q === '28F5'), { maxRounds: 4 });
+  assert.ok(kept.kept.length, JSON.stringify({ filled: kept.filled.length, failed: kept.failed }));
+  assert.ok([...kept.kept, ...kept.filled].every((x) => !x.edited), 'the kept choice is not marked edited');
 });
 
 // Answer provenance (plan.js `source`): a standard answer is reported as such, so the panel can tag
