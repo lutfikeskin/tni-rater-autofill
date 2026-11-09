@@ -231,9 +231,12 @@
       busy: () => !!ext()?.Ajax?.isLoading?.(),
       // An answer on Rates (CoveragesRates) makes Recalculate and Print due again: the bill plan
       // (payment method) stays chosen, the premium needs recalculating. A cargo, general liability or
-      // trailer interchange answer re-arms its Done with this coverage too.
+      // trailer interchange answer re-arms its Done with this coverage too (the step's `section`, the
+      // carrier's `sections`): any cargo question, a question of GL's or interchange's open section.
       rearm: (page, step) => (page !== 'CoveragesRates' ? []
-        : ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : []), ...(step.interchange === 'section' ? ['doneInterchange'] : [])]),
+        : ['recalculate', 'print', 'printSend', ...(step.section?.id === 'cargo' ? ['doneCargo'] : []),
+          ...(step.section?.id === 'gl' && step.section.part === 'section' ? ['doneGl'] : []),
+          ...(step.section?.id === 'interchange' && step.section.part === 'section' ? ['doneInterchange'] : [])]),
       // The page sends its server each answer: a fill waits for it between answers.
       serverBacked: () => !!ext(),
       onRequest: (fn) => { try { ext()?.Ajax?.on?.('beforerequest', fn); } catch { /* no ExtJS events */ } },

@@ -257,11 +257,9 @@ test('a test fingerprint shorter than 8 hex characters, or not hex, is refused r
   }
 });
 
-test('RESTRICTED covers every word of pagekit NEVER_ADVANCE, and Save & Continue is not one', () => {
-  const src = fs.readFileSync(new URL('../src/kit/actions.js', import.meta.url), 'utf8');
-  const words = src.match(/const NEVER_ADVANCE = \/\\b\(([^)]+)\)\\b\/i/)[1].split('|');
-  assert.ok(words.length >= 10);
-  for (const w of words) assert.ok(RESTRICTED.test(w), `RESTRICTED misses "${w}"`);
+test('RESTRICTED is the fill engine\'s own NEVER_ADVANCE, and Save & Continue is not one', async () => {
+  const { NEVER_ADVANCE } = await import('../src/restricted.js');
+  assert.equal(RESTRICTED, NEVER_ADVANCE, 'one list (audit 2026-11-07, CARR-13)');
   assert.ok(isRestricted('advance "Save"'));
   assert.ok(isRestricted('advance "Sign Out"'));
   assert.ok(!isRestricted('advance "Save & Continue"'));
