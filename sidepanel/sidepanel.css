@@ -650,6 +650,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .foot { flex: 0 1 auto; min-height: 0; overflow-y: auto; background: var(--surface); border-top: 1px solid var(--border); }
 .progress { height: 3px; background: var(--surface-selected); overflow: hidden; }
 .progress span { display: block; width: 32%; height: 3px; background: var(--brand); animation: slide 1.3s ease-in-out infinite; }
+.progress.measured span { animation: none; transition: width 0.3s ease; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(320%); } }
 .dock-body { padding: 8px 12px; display: grid; gap: 8px; }
 .dock-text { display: grid; gap: 1px; }

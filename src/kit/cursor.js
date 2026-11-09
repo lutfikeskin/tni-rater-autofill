@@ -84,7 +84,9 @@ export function progress(seen = null) {
   // doesn't have this round's (`seen['items@<frame>']`).
   const items = running.items ?? null;
   const fresh = !!items && Number(seen?.[`items@${FRAME}`]) !== items.at;
-  return { frame: FRAME, list, filled: all.length, since, rows, phase: running.phase ?? null, itemsAt: items?.at ?? 0, ...(fresh ? { items: items.list } : {}) };
+  // How far it has got on the page (audit 2026-11-07, LIVE-08): the questions judged and the fields
+  // read so far. Answers can draw more, so the panel says it as "about".
+  return { frame: FRAME, list, filled: all.length, since, rows, phase: running.phase ?? null, itemsAt: items?.at ?? 0, ...(fresh ? { items: items.list } : {}), judged: running.handled?.size ?? 0, seen: running.report.fields ?? 0 };
 }
 export function stop(run = null) {
   if (run != null && (!running || running.run !== run)) stoppedRuns.add(run);
@@ -501,7 +503,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // page after an answer, a 'helper' it clicked (`what`: the button), the 'premium' it rates, or
   // 'continue'. Said so a fill waiting on GEICO's Recalculate doesn't read as stuck (2026-10-23).
   // Set below with the fill's deadline: whether its time is spent, halting it if so.
-  const thisFill = { report: state.report, halt, run, phase: null, timeUp: () => false };
+  const thisFill = { report: state.report, handled: state.handled, halt, run, phase: null, timeUp: () => false };
   const phase = (name, what = null) => { thisFill.phase = name ? { name, what } : null; };
   running = thisFill;
   // Its time in all (`budgetMs`): once it is spent, the fill stops as on Stop, its waits with it, and

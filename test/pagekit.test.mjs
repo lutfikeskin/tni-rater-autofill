@@ -3775,6 +3775,23 @@ test('progress rows carry each answer\'s source', async () => {
   assert.deepEqual(await run('intake'), [['a', 'intake']]);
 });
 
+// Audit 2026-11-07, LIVE-08: progress says how far the fill has got on the page, the questions
+// judged and the fields read, so the panel's bar can say "about 1 of 2".
+test('progress says how many questions the fill has judged of the fields it read', async () => {
+  const h = harness();
+  const a = makeInput({ id: 'a', ariaLabel: 'First' });
+  const b = makeInput({ id: 'b', ariaLabel: 'Second' });
+  h.document.body.append(a, b);
+  let during = null;
+  a.addEventListener('change', () => { during = h.kit.progress(); });
+  await h.kit.fill([
+    { id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'one' },
+    { id: 'b', selector: '#b', path: 'x.b', kind: 'text', value: 'two' },
+  ], { maxRounds: 2 });
+  assert.equal(during.seen, 2);
+  assert.ok(during.judged >= 0 && during.judged < 2, JSON.stringify(during));
+});
+
 
 // Live review 2026-10-09: a long fill had no way to stop it. The panel's Stop halts it the way an
 // agent edit does: what is in stays, nothing more is filled, and Continue isn't clicked.
