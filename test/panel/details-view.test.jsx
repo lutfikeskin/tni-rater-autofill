@@ -123,6 +123,37 @@ test('a dropdown shows the record\'s value, one off the list kept; a long answer
   expect([notes.tagName, notes.rows, notes.value]).toEqual(['TEXTAREA', 4, 'Hauls produce.']);
 });
 
+// Audit 2026-11-07, UX-07: an edited row is marked like the report's Your edit, says what the
+// intake had and offers Restore; the box at the top finds fields, and Your corrections lists the
+// agent's (what each does to the record: the safety tests, renderSections and restoreField).
+test('a corrected field shows Your edit, the intake\'s value and Restore; the find box and Your corrections ask the panel', () => {
+  const calls = [];
+  const { container } = render(<Details act={{}} />);
+  act(() => {
+    state.details = { showEmpty: false, toggle: null, fold() {}, query: '', editedOnly: false, edited: 'Your corrections (1)', nothing: null,
+      search: (text) => calls.push(['search', text]), editedToggle: () => calls.push(['edited']),
+      sections: [{ id: 'operations', title: 'Operations', open: true, allEmpty: false, flags: 0, hiddenSaid: null, rows: [
+        field('operations.radius', 'Unlimited', { label: 'Radius (as written)', edited: true, original: '100', restore: () => calls.push(['restore']) }),
+        field('operations.radiusMiles', '')] }] };
+  });
+  const [radius, miles] = container.querySelectorAll('.field');
+  expect([radius.className, radius.querySelector('label .tag.you')?.textContent, radius.querySelector('.field-was span').textContent]).toEqual(['field edited', 'Your edit', 'On the intake: 100']);
+  expect([miles.className, miles.querySelector('.tag'), miles.querySelector('.field-was')]).toEqual(['field', null, null]);
+  const restore = radius.querySelector('.field-was button');
+  expect(restore.getAttribute('aria-label')).toBe('Restore Radius (as written) to the intake\'s value');
+  fireEvent.click(restore);
+  const find = $(container, '#details-find');
+  fireEvent.change(find, { target: { value: 'rad' } });
+  const edited = $(container, '#details-edited');
+  expect([edited.hidden, edited.textContent, edited.getAttribute('aria-pressed')]).toEqual([false, 'Your corrections (1)', 'false']);
+  fireEvent.click(edited);
+  expect(calls).toEqual([['restore'], ['search', 'rad'], ['edited']]);
+  act(() => { state.details = { ...state.details, query: 'zzz', sections: [], nothing: 'No field matches.' }; });
+  expect([find.value, $(container, '#sections .feed-empty').textContent]).toEqual(['zzz', 'No field matches.']);
+  act(() => { state.details = { ...state.details, edited: null }; });
+  expect(edited.hidden, 'nothing corrected: no switch').toBe(true);
+});
+
 test('mountDetails draws before it returns', () => {
   const host = document.body.appendChild(document.createElement('div'));
   act(() => {

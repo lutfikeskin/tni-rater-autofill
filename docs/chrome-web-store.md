@@ -12,13 +12,20 @@ npm test
 npm run package          # -> dist/tni-rater-autofill-<version>.zip
 ```
 
+A version tagged on `main` gets this zip, built from its tagged commit, on its GitHub Release
+([updates](#5-updates)); upload that one when the release workflow attached it.
+
 A build made to try out rather than upload (a test build for the correction loop) is named by the
 script: `npm run package -- --label test-build` writes
 `dist/tni-rater-autofill-<version>-test-build-<commit>.zip` (`-dirty` when the packaged files had
 changes the commit doesn't hold). A label is lowercase words and hyphens.
 
-The zip holds only what the extension runs: `manifest.json`, `background.js`, `icons/`, `lib/`,
-`sidepanel/`, `src/`. Raise `version` in `manifest.json` (and `package.json`) for every upload:
+The zip holds only what the extension runs: `manifest.json`, `background.js`, `icons/`,
+`sidepanel/` (the panel as built, PDF.js and fflate bundled in), `src/`, and `THIRD_PARTY_NOTICES.txt`,
+the licences of the third-party code it carries (the npm packages the panel's build and the fill
+engine took in, with the vendored PDF.js and fflate). It has no source maps: those go in
+`dist/tni-rater-autofill-<version>-sourcemaps.zip` beside it, made with the same code, to read an
+agent's stack trace against; keep that zip with the upload. The unpacked copy keeps its maps. Raise `version` in `manifest.json` (and `package.json`) for every upload:
 the store refuses a version it already has.
 
 ## 2. One-time setup
@@ -56,7 +63,7 @@ the store refuses a version it already has.
      names (for the gender TNI assumes), when the agent saved an OpenAI key of their own.
      usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, a
      profile of each client's business without names, numbers or addresses, and what an agent types
-     into a problem report), which also passes those Luna requests to OpenAI with TNI's key when
+     into a problem report; a quote summary the agent saves, with the client's answers), which also passes those Luna requests to OpenAI with TNI's key when
      the agent has none, storing nothing.
      localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
@@ -67,7 +74,10 @@ the store refuses a version it already has.
      request: declare "Personally identifiable information" (name). The usage server gets a
      profile of each client's business (the privacy policy lists it): drivers' ages, marital
      status and gender as the agent set it are personal information too, and the garaging state
-     is a region ("Location"). The store also asks to certify that data isn't used for purposes
+     is a region ("Location"). A quote summary the agent saves (Save summary) goes to the usage
+     server whole, with the client's business name and the answers filled (owner's and drivers'
+     names, dates of birth, addresses among them): declare "Personally identifiable information"
+     for it too. The store also asks to certify that data isn't used for purposes
      unrelated to the extension's single purpose; analysing TNI's own quoting from the usage log is
      a purpose beyond filling quotes. TNI's compliance owner should confirm these answers, and
      that certification, before a version that sends the profile is uploaded.
@@ -87,9 +97,21 @@ pin the extension → click it to open the side panel. Then, once each:
 
 ## 5. Updates
 
-Raise the version, `npm run package` from a clean, committed tree (the usage events name the
-commit they were packaged from, `+dirty` otherwise), upload the new zip on the item's **Package**
-tab, submit.
+Raise the version and merge it to `main`, then wait for that push's **Release tag** run to finish
+all its jobs: the release is made before its zip is built and attached. When the run passed and its
+attach job uploaded `tni-rater-autofill-<version>.zip` (its log has no "already has
+tni-rater-autofill-<version>.zip: left as it is" line), that zip is the tagged commit's: upload it
+on the item's **Package** tab, and submit. Otherwise build it yourself:
+
+1. If the run failed because `v<version>` already names another commit, stop: resolve the tag by
+   hand first, so that it names the commit that set the version in `manifest.json`.
+2. Check out that commit (`git checkout v<version>`, or for an untagged version the commit that set
+   it), then run `npm ci`, so `node_modules` matches its lockfile.
+3. Run `npm run package` there from a clean tree (the usage events name the commit they were
+   packaged from, `+dirty` otherwise), and upload that zip.
+
+A zip the release already had before the run (uploaded by hand) is unchecked: build it yourself as
+above rather than upload it.
 In the version's PR, add what agents will see differently to `src/whats-new.js` under the new
 version: one to five short lines in the agent's words. The panel shows them once, as "What's new in
 v<version>", the first time it opens after the update, with every version's lines since the one it
@@ -104,8 +126,16 @@ here without changing anything: `node scripts/release-notes.mjs --version 0.9.32
 that brings the version bump tags it: a version already on `main` before that push is never
 tagged, and there is no manual run, so versions released before the workflow stay untagged. A tag
 that already names the same commit is left as it is; one that names another commit fails the run,
-to be checked by hand. The tag says which commit a store version came from, and the notes what changed; it
-uploads nothing to the store.
+to be checked by hand. A second job then checks out the tagged commit and runs `npm run package`. It can only read, since
+packaging runs the project's dependencies. A third job, which runs nothing of the project, attaches
+`tni-rater-autofill-<version>.zip` to the release, with the source maps' zip beside it when the
+package makes one. A missing store zip fails the run, and an asset the release already has is left
+as it is, unchecked: the workflow vouches only for a zip it attached itself, and its attach job's
+log says when it left one ("already has …: left as it is"), not for one uploaded to the release by
+hand. The tag says which
+commit a store version came from, the notes what changed, and the release's zip, when that run
+attached it, is the one built from that commit and the one to upload; the workflow uploads nothing
+to the store.
 
 Agents' own defaults ([spec](agent-defaults-spec.md)) ship hidden in the store build until TNI's
 managers approve them: that release's PR sets `RELEASED_TO_AGENTS` to `true` in

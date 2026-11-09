@@ -57,7 +57,7 @@ export function reviewWarn(record, carrier) {
 export function buildPlan(record, carrier, active = {}, { overlay = null, onRuleError = null } = {}) {
   // A carrier's `rowSections`: repeating sections its own rules answer row by row, where a generic
   // label rule never answers (a row the intake doesn't describe stays the agent's).
-  const generic = carrier?.useGenericRules === false ? [] : carrier?.rowSections?.length
+  const generic = carrier?.useGenericRules !== true ? [] : carrier?.rowSections?.length
     ? GENERIC_RULES.map((rule) => ({ ...rule, notWithin: carrier.rowSections })) : GENERIC_RULES;
   const rules = [...(carrier?.rules ?? []), ...generic];
   return [...fieldSteps(rules, record, carrier, active, overlay, onRuleError), ...actionSteps(carrier, record, active)];

@@ -64,6 +64,8 @@ const MAX_EVENTS_PER_REQUEST = 2000;
 const MAX_EVENT_BYTES = 32 * 1024;
 // A page's layout lists every question and its choices (up to 250 per question).
 const MAX_LAYOUT_BYTES = 128 * 1024;
+// A quote summary lists every answer of a quote (quote_summary): several carriers' pages.
+const MAX_SUMMARY_BYTES = 512 * 1024;
 // How long one dashboard page serves every request for its period: building it reads and sums 31
 // days of events on the process that takes uploads, and each open tab reloads it every minute.
 const DASHBOARD_CACHE_MS = 30_000;
@@ -145,7 +147,9 @@ const LUNA_FIELDS = new Set(['model', 'store', 'reasoning', 'max_output_tokens',
 // passes; 48,000 until 2026-11-07 (audit AI-01). Raise it here, and deploy, before the panel's.
 export const LUNA_MAX_CHARS = 160_000;
 const LUNA_MAX_OUTPUT = 4096;
-const LUNA_TIMEOUT_MS = 60_000;
+// Shorter than the panel's own wait (TIMEOUT_MS, 55 s, src/ai/luna.js), so the panel gets this
+// server's 504 instead of giving up first while the call goes on (audit 2026-11-07, AI-09).
+export const LUNA_TIMEOUT_MS = 45_000;
 export const LUNA_DAILY_LIMIT = 5000;
 
 // RATER_LUNA_DAILY_LIMIT: unset or blank is LUNA_DAILY_LIMIT; a whole number is the limit, 0
@@ -198,7 +202,34 @@ export function startupError({ host, token }) {
 export { COMMON, SCHEMA_VERSION };
 /** @type {Record<string, string[]>} */
 export const EVENT_FIELDS = Object.fromEntries(Object.entries(SHARED_FIELDS).map(([type, fields]) => [type, [...fields]]));
+// Why Luna left a question (src/ai/luna.js leaveWhy).
+const AI_LEAVE_WHY = ['restricted', 'missing', 'conflict', 'chose', 'noSource', 'unverified', 'tooLarge'];
 for (const [type, fields] of Object.entries(AGENT_DEFAULT_FIELDS)) EVENT_FIELDS[type].push(...fields);
+
+// A quote summary's shape (quote_summary, src/usage-schema.js): its own keys only, text and lists
+// bounded, so nothing else rides in it. One out of its shape is refused whole, not trimmed: a
+// summary with rows taken out would say the quote held less than it did.
+const sText = (max) => (v) => typeof v === 'string' && v.length <= max;
+const sTextOrNull = (max) => (v) => v === null || sText(max)(v);
+const sCount = (v) => Number.isSafeInteger(v) && v >= 0 && v <= 100_000;
+const sListOf = (max, item) => (v) => Array.isArray(v) && v.length <= max && v.every(item);
+const sShaped = (fields) => (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+  && Object.keys(v).every((k) => Object.hasOwn(fields, k)) && Object.entries(fields).every(([k, ok]) => (v[k] === undefined && ok.optional) || ok(v[k]));
+const sOptional = (ok) => Object.assign((v) => ok(v), { optional: true });
+const SUMMARY_ROW = sShaped({ label: sText(300), value: sText(500), source: sText(20), sourceSaid: sText(80), note: sTextOrNull(500), carrier: sOptional(sText(80)), page: sOptional(sText(200)) });
+export const SUMMARY_SHAPE = sShaped({
+  client: sShaped({ name: sText(200), fileName: sTextOrNull(200), state: sTextOrNull(40) }),
+  at: sText(40),
+  version: sText(20),
+  carriers: sListOf(20, sShaped({ id: sText(20), name: sText(80), practice: (v) => typeof v === 'boolean',
+    pages: sListOf(200, sShaped({ title: sText(200), at: sText(40), said: sTextOrNull(500),
+      counts: sListOf(20, sShaped({ source: sText(20), sourceSaid: sText(80), n: sCount })), rows: sListOf(500, SUMMARY_ROW) })) })),
+  overrides: sListOf(2000, sShaped({ kind: sText(20), carrier: sTextOrNull(80), page: sTextOrNull(200), label: sText(300), value: sText(500), said: sText(200) })),
+  ai: sListOf(2000, SUMMARY_ROW),
+  marked: sListOf(2000, SUMMARY_ROW),
+  open: sCount,
+  answers: sCount,
+});
 
 // The run-identity fields (audit 2026-10-08, finding 7; Contract 1): their exact shapes, since a
 // review joins events by them. An event with one of these present but malformed is refused, not
@@ -334,7 +365,7 @@ const freeSpaceOf = (dir) => () => {
 };
 
 export function createServer({ dataDir, token = '', adminToken = '', openaiKey = '', openaiUrl = 'https://api.openai.com/v1/responses',
-  lunaDailyLimit = LUNA_DAILY_LIMIT, lunaDailyTokens = LUNA_DAILY_TOKENS, fetchImpl = globalThis.fetch, dashboardToken = '', testIntakes = [], dashboardCacheMs = DASHBOARD_CACHE_MS, clock = Date.now,
+  lunaDailyLimit = LUNA_DAILY_LIMIT, lunaDailyTokens = LUNA_DAILY_TOKENS, lunaTimeoutMs = LUNA_TIMEOUT_MS, fetchImpl = globalThis.fetch, dashboardToken = '', testIntakes = [], dashboardCacheMs = DASHBOARD_CACHE_MS, clock = Date.now,
   uploadLimits = UPLOAD_LIMITS, clientIpHeader = '', minFreeBytes = MIN_FREE_MB * MB, freeSpace = freeSpaceOf(dataDir) } = {}) {
   const eventsDir = path.join(dataDir, 'events');
   fs.mkdirSync(eventsDir, { recursive: true });
@@ -430,7 +461,10 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     if (typeof e.t !== 'string' || Number.isNaN(Date.parse(e.t))) return { error: 'event time missing or invalid' };
     if (!COMMON_SHAPES.t(e.t)) return { error: 'event time is not an ISO time in UTC from 2025 to 30 days ahead' };
     for (const [k, said] of Object.entries(COMMON_SAID)) if (e[k] !== undefined && !COMMON_SHAPES[k](e[k])) return { error: `${k} is not a valid ${said}` };
-    if (JSON.stringify(e).length > (e.type === 'page_layout' ? MAX_LAYOUT_BYTES : MAX_EVENT_BYTES)) return { error: 'event too large' };
+    if (JSON.stringify(e).length > (e.type === 'page_layout' ? MAX_LAYOUT_BYTES : MAX_EVENT_BYTES) && e.type !== 'quote_summary') return { error: 'event too large' };
+    // A quote summary's limit is the bytes it is stored as (UTF-8): its text is the client's, in any script.
+    if (e.type === 'quote_summary' && Buffer.byteLength(JSON.stringify(e), 'utf8') > MAX_SUMMARY_BYTES) return { error: 'event too large' };
+    if (e.type === 'quote_summary' && !SUMMARY_SHAPE(e.summary)) return { error: 'quote_summary needs a summary in its shape' };
     const out = {};
     const allowed = new Set([...COMMON, ...keep]);
     for (const k of allowed) if (e[k] !== undefined) out[k] = e[k];
@@ -456,6 +490,9 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       if (out[k] !== undefined && !(out[k] === null || (typeof out[k] === 'number' && Number.isFinite(out[k]) && out[k] >= 0 && out[k] <= 1)
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
     }
+    if (out.type === 'ai_decision' && out.ruleIds !== undefined && !(Array.isArray(out.ruleIds) && out.ruleIds.length <= 12
+      && out.ruleIds.every((id) => typeof id === 'string' && id.length <= 80 && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id)))) drop('ruleIds');
+    if (out.type === 'ai_leave' && out.leaveWhy !== undefined && !AI_LEAVE_WHY.includes(out.leaveWhy)) drop('leaveWhy');
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
     if (out.type === 'agent_click' && out.text !== undefined && !(typeof out.text === 'string' && out.text.length <= 60)) drop('text');
     // A problem report's words, at most the panel's 1,000 characters (audit 2026-11-07, SRV-04).
@@ -620,9 +657,13 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     day.requests++;
     saveLuna();
     let upstream;
+    // One wait for the whole answer, its body included: headers in time and a body still coming
+    // when it ends is a 504 too (CodeRabbit on #416), not an unreadable answer or OpenAI's status.
+    const signal = AbortSignal.timeout(lunaTimeoutMs);
+    const gaveUp = () => done(504, { error: 'OpenAI did not answer' }, { luna: 'no answer', error: signal.reason?.name ?? 'error' });
     try {
       upstream = await fetchImpl(openaiUrl, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${openaiKey}` },
-        body: JSON.stringify(body), signal: AbortSignal.timeout(LUNA_TIMEOUT_MS) });
+        body: JSON.stringify(body), signal });
     } catch (e) {
       return done(504, { error: 'OpenAI did not answer' }, { luna: 'no answer', error: e?.name ?? 'error' });
     }
@@ -632,14 +673,17 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     // 424, so the panel tells the agent to tell TNI, not to check a key they don't have or retry.
     if (!upstream.ok) {
       let code = '';
-      try { const e = (await upstream.json())?.error?.code; if (typeof e === 'string' && /^[a-z0-9_]{1,40}$/.test(e)) code = e; } catch { /* no JSON */ }
+      try { const e = (await upstream.json())?.error?.code; if (typeof e === 'string' && /^[a-z0-9_]{1,40}$/.test(e)) code = e; } catch {
+        if (signal.aborted) return gaveUp();
+        /* no JSON */
+      }
       const status = [401, 403, 404].includes(upstream.status) || code === 'insufficient_quota' ? 424 : upstream.status;
       const retry = upstream.headers.get('retry-after');
       if (retry && status !== 424) res.setHeader('retry-after', retry);
       return done(status, { error: `OpenAI returned HTTP ${upstream.status}` }, { luna: 'upstream', upstream: upstream.status, ...(code ? { code } : {}) });
     }
     let json;
-    try { json = await upstream.json(); } catch { return done(502, { error: 'OpenAI sent an unreadable answer' }, { luna: 'unreadable' }); }
+    try { json = await upstream.json(); } catch { return signal.aborted ? gaveUp() : done(502, { error: 'OpenAI sent an unreadable answer' }, { luna: 'unreadable' }); }
     // What it cost: OpenAI's usage counts (never the answer). An answer without them is counted at
     // the most it could have cost: a token is at least one byte of the request as sent (a token per
     // 4 characters undercounted other scripts and punctuation: CodeRabbit on #375), plus the
