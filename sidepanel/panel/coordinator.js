@@ -146,6 +146,11 @@ function givenEarlier(tabId) {
 // rulesPlugin). Null where the panel runs unbuilt (the tests, the preview); then the run carries none.
 const RULES_VERSION = null;
 const rulesVersion = RULES_VERSION;
+// Each carrier's own fingerprint, { carrier id: fingerprint } (src/usage.js carrierRuleFiles;
+// audit 2026-11-07, CARR-14), stamped the same way; on fill_run and fill_error as `carrierRules`.
+const CARRIER_RULES = null;
+/** @param {string | undefined} id */
+const carrierRulesOf = (id) => (/** @type {Record<string, string> | null} */ (CARRIER_RULES))?.[id ?? ''] ?? undefined;
 // The same fingerprint, for a developer recording's manifest.
 const rulesFingerprint = () => rulesVersion;
 
@@ -336,7 +341,7 @@ function logFill(ctx, frames, results, started, plan = null) {
   usage.log(...fillEvents(ctx.listNote ? [...frames, { blockers: [ctx.listNote] }] : frames, {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
-    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background, retried: !!ctx.retried,
+    run: ctx.run, rules: rulesVersion ?? undefined, carrierRules: carrierRulesOf(ctx.carrier.id), settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background, retried: !!ctx.retried,
     keptLogged: state.keptLogged.seen, plan,
   }));
 }
@@ -346,7 +351,7 @@ function logFillError(ctx, error, timeline = null) {
   if (ctx.carrier.practice) return;
   const logged = timeline ? loggedTimeline(timeline, redactor(redactionTerms(ctx.intake?.record ?? {})), usage.currentSession()?.keySalt) : undefined;
   usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run,
-    rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, ...(ctx.retried ? { retried: true } : {}), error: fillErrorText(ctx, error),
+    rules: rulesVersion ?? undefined, ...(carrierRulesOf(ctx.carrier.id) ? { carrierRules: carrierRulesOf(ctx.carrier.id) } : {}), settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, ...(ctx.retried ? { retried: true } : {}), error: fillErrorText(ctx, error),
     ...(logged ? { timeline: logged } : {}), ...ctx.ids });
 }
 // The timeline of a fill whose report never came back (its call rejected): read from the kit in

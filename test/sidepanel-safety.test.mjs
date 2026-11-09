@@ -179,6 +179,8 @@ function extractFunction(name) {
         for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawList', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'fillShare', 'continuedKey']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
+        // A carrier's own rules fingerprint is the build's (CARR-14): none here, unless the harness gives one.
+        if (source.includes('carrierRulesOf(') && !source.includes('const carrierRulesOf =')) source += '\nvar carrierRulesOf = globalThis.carrierRulesOf ?? (() => undefined);';
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
         // the harness gives one.
         if (name !== 'stateIssue' && /\bstateIssue\(/.test(source) && !/function stateIssue\(/.test(source)) source += '\nvar stateIssue = globalThis.stateIssue ?? (() => null);';
@@ -1287,7 +1289,7 @@ test('a fill error carries the kit\'s timeline, read from the page and redacted'
   const logged = [];
   const timeline = [{ what: 'answer', at: 5, key: 'ref:Role', label: "Jordan's Role", kind: 'choice', ok: false, ms: 9 }];
   const context = {
-    rulesVersion: null, fillErrorText: () => 'error', redactionTerms: () => ['Jordan'],
+    rulesVersion: null, carrierRulesOf: () => undefined, fillErrorText: () => 'error', redactionTerms: () => ['Jordan'],
     redactor: (terms) => (s) => terms.reduce((x, t) => x.replaceAll(t, '[client]'), s),
     loggedTimeline: (t, redact) => t.map((e) => ({ ...e, label: redact(e.label) })),
     usage: { log: (e) => logged.push(e), currentSession: () => ({ keySalt: 's' }) }, setTimeout,
@@ -1309,7 +1311,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   const logged = [], rendered = [], layouts = [], assisted = [];
   const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
   const context = { watchFill: () => () => {},
-    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
+    state, Date, crypto, rulesVersion: null, carrierRulesOf: () => undefined, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }], knownStep,
@@ -1348,7 +1350,7 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
   // for them, the report having none.
   const hosts = [];
   const context = { watchFill: () => () => {},
-    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {} }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
+    state, Date, crypto, rulesVersion: null, carrierRulesOf: () => undefined, $: () => ({ checked: false, append() {} }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: () => {}, renderSteps: () => {}, announce: () => {}, rowsHost: (entry) => { hosts.push(entry); return {}; },
     fillEvents: () => [], isStandard, knownStep, fillSkip: () => [], fillSkipBy: () => null, tabMaps: () => ({ agentKeys: new Map() }), showFinish: () => {},
@@ -3596,7 +3598,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), layoutReadyTabs: new Set(),
       autoPaused: false, filling: false, assistPage: 'Rates' };
     const context = { watchFill: () => () => {},
-      state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options,
+      state, Date, crypto, rulesVersion: null, carrierRulesOf: () => undefined, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options,
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
       recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {},
@@ -4570,7 +4572,7 @@ test('an automatic fill readies its tab for layouts only when it went through', 
   const run = async (runKit) => {
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
     const context = { watchFill: () => () => {},
-      state, Date, crypto, rulesVersion: null, pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options,
+      state, Date, crypto, rulesVersion: null, carrierRulesOf: () => undefined, pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options,
       runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
       redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: () => {}, pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
@@ -5269,7 +5271,7 @@ test('a fill of the quote tab while the agent is on another tab is logged as in 
   const state = { tab: { id: 7, background: true }, intake: { record: {} }, intakeRevision: 0, active: { vehicles: 0, drivers: 0, trailers: 0 } };
   const context = { state, crypto: { randomUUID: () => 'run-1' }, usage: { currentSession: () => ({ id: 's', intakeId: 'i' }), log: (...e) => logged.push(...e) },
     viewOf: () => 't1', editScope: () => 'p', tabStep: () => null, switchOn: () => true, fillDefaultsHash: () => undefined,
-    redactor: () => (t) => t, redactionTerms: () => [], stepOfResults: () => null, rulesVersion: null, fillEvents };
+    redactor: () => (t) => t, redactionTerms: () => [], stepOfResults: () => null, rulesVersion: null, carrierRulesOf: () => undefined, fillEvents };
   vm.runInNewContext(['fillContext', 'logFill'].map((name) => extractFunction(name).split('\nfunction ')[0]).join('\n'), context);
   const carrier = { id: 'geico', practice: false };
   const fill = (tabId) => { const ctx = context.fillContext({ tabId, carrier, page: 'Vehicles', tabUrl: 'x' }); context.logFill(ctx, [{ fields: 1, hiddenMs: 800 }], [], Date.now()); };
@@ -9820,7 +9822,7 @@ test('a unit list not read as complete is said in counts in the usage log', asyn
   assert.deepEqual(await run([{ rows: 1, shown: [true, false] }, null]), [false, null], 'a unit still to add: no word');
   // Logged with the fill's own blockers, nothing else added.
   const logged = [];
-  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => null }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, fillEvents, knownStep };
+  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => null }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, carrierRulesOf: () => undefined, fillEvents, knownStep };
   vm.runInNewContext(extractFunction('logFill'), context);
   context.logFill({ carrier: { id: 'geico' }, intake: { record: {} }, page: '/quote', view: 't1', run: 'r', settings: {}, listNote: 'list: 2 rows for 2 units, 1 shown, 0 saved by a fill' },
     [{ fields: 0, filled: [], blockers: [], advanceDue: 'none' }], [{ frameId: 0, result: { stepKey: 'Vehicles' } }], Date.now());
@@ -9835,7 +9837,7 @@ test('a unit list not read as complete is said in counts in the usage log', asyn
 test('a fill logs its kept answers once per quote, and again for a new quote', () => {
   const logged = [];
   let session = { id: 's1' };
-  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => session }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, fillEvents, knownStep };
+  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => session }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, carrierRulesOf: () => undefined, fillEvents, knownStep };
   vm.runInNewContext(extractFunction('logFill'), context);
   const fill = () => context.logFill({ carrier: { id: 'geico' }, intake: { record: {} }, page: '/quote', view: 't1', run: 'r', settings: {} },
     [{ fields: 1, filled: [], blockers: [], kept: [{ label: 'Garaging ZIP', key: 'ref:GiveZip', controlKind: 'text', now: '20001' }] }], [{ frameId: 0, result: { stepKey: 'Vehicles' } }], Date.now());

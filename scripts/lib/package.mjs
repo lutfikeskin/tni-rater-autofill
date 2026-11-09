@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { RULE_FILES, rulesHash } from '../../src/usage.js';
+import { RULE_CARRIERS, RULE_FILES, carrierRuleFiles, rulesHash } from '../../src/usage.js';
 import { execFileSync } from 'node:child_process';
 
 // The scripts injected into the carrier page's own JavaScript world stay there across an extension
@@ -161,6 +161,18 @@ export function stampRules(text, hash) {
   return text.replace(RULES_PLACEHOLDER, `const RULES_VERSION = '${hash}';`);
 }
 export const rulesOf = (root) => rulesHash(RULE_FILES.map((f) => fs.readFileSync(path.join(root, f), 'utf8')));
+// Each carrier's own fingerprint (src/usage.js carrierRuleFiles; audit 2026-11-07, CARR-14), stamped
+// beside RULES_VERSION as { carrier id: fingerprint }.
+const CARRIER_RULES_PLACEHOLDER = 'const CARRIER_RULES = null;';
+export function stampCarrierRules(text, hashes) {
+  if (text.split(CARRIER_RULES_PLACEHOLDER).length !== 2) throw new Error(`expected one ${CARRIER_RULES_PLACEHOLDER}`);
+  for (const [id, hash] of Object.entries(hashes)) {
+    if (!/^[a-z]+$/.test(id) || !/^[0-9a-f]{12}$/.test(hash)) throw new Error(`not a carrier fingerprint: ${id} ${hash}`);
+  }
+  return text.replace(CARRIER_RULES_PLACEHOLDER, `const CARRIER_RULES = ${JSON.stringify(hashes)};`);
+}
+export const carrierRulesOf = async (root) => Object.fromEntries(await Promise.all(RULE_CARRIERS.map(async (id) =>
+  [id, await rulesHash(carrierRuleFiles(id).map((f) => fs.readFileSync(path.join(root, f), 'utf8')))])));
 export function rulesPlugin(root) {
   let stamped = false;
   return {
@@ -170,8 +182,8 @@ export function rulesPlugin(root) {
       if (!id.replaceAll('\\', '/').endsWith(`/${RULES_FILE}`)) return null;
       stamped = true;
       // A watch build stamps it again when a rule file changes.
-      for (const f of RULE_FILES) this.addWatchFile?.(path.join(root, f));
-      return { code: stampRules(code, await rulesOf(root)), map: null };
+      for (const f of new Set(RULE_CARRIERS.flatMap(carrierRuleFiles))) this.addWatchFile?.(path.join(root, f));
+      return { code: stampCarrierRules(stampRules(code, await rulesOf(root)), await carrierRulesOf(root)), map: null };
     },
     buildEnd(error) {
       if (!error && !stamped) throw new Error(`the panel's build didn't include ${RULES_FILE}`);
