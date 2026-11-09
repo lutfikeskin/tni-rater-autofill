@@ -66,6 +66,7 @@ export const FILLING = {
   phase: (said) => `${said}…`,
   justFilled: (label) => `Just filled: ${label || 'an answer'}`,
   reading: 'Reading the page…',
+  about: (judged, seen) => `About ${Math.min(judged, seen)} of ${seen} on this page`,
   sub: 'Keep this tab open.',
 };
 
