@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "properties": {
+    "serverUrl": {
+      "title": "Usage server",
+      "description": "The collection server's address (https://host). Empty: no server, export only. It must be at a host the extension's manifest allows (host_permissions). An agent's own setting under Settings, Advanced still wins.",
+      "type": "string"
+    },
+    "serverToken": {
+      "title": "Upload token",
+      "description": "The upload token for that server (or for TNI's central server when no server is set). Never shown in the panel.",
+      "type": "string"
+    },
+    "aiOn": {
+      "title": "Suggest answers",
+      "description": "Default for Settings, AI, Suggest answers. The agent can change it.",
+      "type": "boolean"
+    },
+    "lunaAuto": {
+      "title": "Put checked picks in",
+      "description": "Default for Settings, AI, Put checked picks in. The agent can change it.",
+      "type": "boolean"
+    },
+    "agent": {
+      "title": "Initials",
+      "description": "The agent's initials (1 to 6 letters or digits), for a computer one agent uses. The agent's own initials in Settings still win.",
+      "type": "string"
+    }
+  }
+}

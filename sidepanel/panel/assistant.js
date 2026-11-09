@@ -25,7 +25,8 @@ import { agentEdited, editScope, tabStep } from './scope.js';
 // Verified choices can be applied automatically, but Continue waits for explicit agent review.
 
 async function aiSettings() {
-  return settingsFrom(await usage.settings(), await usage.serverConfig());
+  // The AI's defaults may be the organization's (usage.settingsWithPolicy).
+  return settingsFrom(await usage.settingsWithPolicy(), await usage.serverConfig());
 }
 
 // Luna reads the claims box once per intake (reviewNotes in src/ai/luna.js): lines that may name

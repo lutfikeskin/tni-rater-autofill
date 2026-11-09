@@ -21,7 +21,7 @@ import { markSwitch } from './tab-mark.js';
 async function renderUsage() {
   const n = await usage.count();
   const { agent = '', serverToken = '' } = await usage.settings();
-  const { serverUrl } = await usage.serverConfig();
+  const { serverUrl, managed } = await usage.serverConfig();
   const up = usage.lastUpload();
   const when = up.at ? new Date(up.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
   state.usageCard = {
@@ -29,12 +29,13 @@ async function renderUsage() {
       ? `${n.toLocaleString()} event${n === 1 ? '' : 's'} waiting on this computer.`
       : 'Nothing waiting on this computer.')
       + (state.layoutErrors ? ` ${state.layoutErrors} page layout${state.layoutErrors === 1 ? '' : 's'} couldn't be read (logged).` : ''),
-    upload: {
+    // A server the organization's policy set is said so in every state (usage.serverConfig `managed`).
+    upload: ({
       ok: `Uploaded to the server at ${when}.`,
       error: `Upload failed at ${when}: ${up.message}. Saved here and retried every minute.`,
       off: 'No server set. Use Export log to hand it in.',
       idle: serverUrl ? `Uploads to ${serverUrl} every minute.` : '',
-    }[up.state] ?? '',
+    }[up.state] ?? '') + (managed && up.state !== 'off' ? ' Your organization set this server.' : ''),
     uploadTone: up.state === 'ok' ? 'ok' : up.state === 'error' || up.state === 'off' ? 'warn' : '',
   };
   // The boxes are the agent's: what is saved is put in them by id, unless they are typing there (the
@@ -67,7 +68,7 @@ function setupItems({ agent, ai, upState }) {
 async function renderHealth({ up }) {
   const version = inExtension ? chrome.runtime.getManifest().version : 'dev';
   $('foot-version').textContent = `v${version}`;
-  const { agent = '' } = await usage.settings();
+  const agent = (await usage.agentInitials()) ?? '';
   const ai = await aiSettings();
   const items = setupItems({ agent, ai, upState: up.state });
   const setup = items.filter((x) => !x.done).map((x) => x.todo);

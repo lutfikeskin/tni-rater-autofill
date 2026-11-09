@@ -11,12 +11,15 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(consol
 // chrome.storage.local once its access level is trusted contexts only. Chrome honours this for
 // local storage from 140, the manifest's minimum (audit 2026-10-08); the recorder never reads
 // storage, so nothing changes for it. The guard only keeps a failed call from stopping the
-// worker.
-try {
-  Promise.resolve(chrome.storage.local.setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' }))
-    .catch((e) => console.warn('storage access level not set:', e?.message ?? e));
-} catch (e) {
-  console.warn('storage access level not set:', e?.message ?? e);
+// worker. The same goes for what an organization's policy deployed (chrome.storage.managed: its
+// upload token among them, usage-log.js managedSettings).
+for (const area of ['local', 'managed']) {
+  try {
+    Promise.resolve(chrome.storage[area]?.setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' }))
+      .catch((e) => console.warn(`${area} storage access level not set:`, e?.message ?? e));
+  } catch (e) {
+    console.warn(`${area} storage access level not set:`, e?.message ?? e);
+  }
 }
 
 // The quote's tab marked in the tab strip (a titled group, with the tabGroups permission the agent

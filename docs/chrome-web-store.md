@@ -95,6 +95,27 @@ pin the extension → click it to open the side panel. Then, once each:
   (`OPENAI_API_KEY`, [hosting](hosting.md)). Leave *Put checked picks in* off for the first
   weeks of the pilot.
 
+### Managed setup (an agency's Google Admin console)
+
+An organization that installs the extension by policy can also set it up there: **Devices → Chrome →
+Apps & extensions → the extension → Policy for extensions**, a JSON object with the keys
+`src/managed-schema.json` declares (Chrome reads them into `chrome.storage.managed`):
+
+```json
+{ "serverUrl": "https://usage-server-production.up.railway.app", "serverToken": "…", "aiOn": true, "lunaAuto": false, "agent": "JK" }
+```
+
+- `serverUrl` and `serverToken` take the place of the built-in central server and its token. The
+  server must be at a host the manifest's `host_permissions` allow. A policy token alone goes to the
+  central server; the built-in token never goes to another server.
+- `aiOn` (**Suggest answers**) and `lunaAuto` (**Put checked picks in**) are the defaults the agent
+  starts with.
+- `agent` is the agent's initials (1 to 6 letters or digits), for a computer one agent uses: until
+  they enter their own under **You**, their quotes count under these, and setup counts them done.
+- What the agent sets in Settings still wins (Advanced is for setup, such as a local test server).
+  Settings says when uploads go to a server the organization set. A value out of its type is
+  ignored. The schema adds no permission and no install warning.
+
 ## 5. Updates
 
 Raise the version and merge it to `main`, then wait for that push's **Release tag** run to finish

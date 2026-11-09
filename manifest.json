@@ -33,6 +33,9 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "storage": {
+    "managed_schema": "src/managed-schema.json"
+  },
   "side_panel": {
     "default_path": "sidepanel/sidepanel.html"
   },

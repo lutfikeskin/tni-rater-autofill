@@ -6163,7 +6163,7 @@ test('Home\'s setup checklist is ticked by the health checks, and gone once all 
   const run = async ({ agent = '', ai = { on: false, ready: false, provider: 'openai' }, up = { state: 'idle' } }) => {
     const els = { 'foot-version': {}, 'settings-dot': {} };
     const state = { notes: {} };
-    const ctx = { state, inExtension: false, $: (id) => els[id], usage: { settings: async () => ({ agent }), lastSave: () => ({ state: 'ok' }) },
+    const ctx = { state, inExtension: false, $: (id) => els[id], usage: { settings: async () => ({ agent }), agentInitials: async () => agent || null, lastSave: () => ({ state: 'ok' }) },
       aiSettings: async () => ai, PROVIDERS: { openai: { keyLabel: 'OpenAI key' } }, issueSaid: (x) => x };
     vm.runInNewContext(['setupItems', 'renderHealth', 'joinAnd'].map(extractFunction).join('\n'), ctx);
     await ctx.renderHealth({ up });
@@ -7096,6 +7096,27 @@ test('a filling switch with no value reads as its default: Let me look first on,
   assert.doesNotMatch(SIDEPANEL, /switchOn\('\w+', '[\w-]+', /, 'no call site picks its own default');
 });
 
+// Managed setup (audit 2026-11-07, UX-12 d): a server the organization's policy set is said so on the
+// usage card whatever the last upload did, and not for the agent's own server.
+test('the usage card says a server the organization set, after an upload as before one', async () => {
+  const card = async (up, managed) => {
+    const state = {};
+    const context = { state, document: { activeElement: null }, $: () => ({ value: '' }), renderHealth() {},
+      usage: { count: async () => 0, settings: async () => ({}), serverConfig: async () => ({ serverUrl: 'https://usage.agency.test', ...(managed ? { managed: true } : {}) }),
+        lastUpload: () => up } };
+    vm.runInNewContext(`${extractFunction('renderUsage')}
+var run = renderUsage;`, context);
+    await context.run();
+    return state.usageCard.upload;
+  };
+  const at = new Date(0).toISOString();
+  for (const up of [{ state: 'idle' }, { state: 'ok', at }, { state: 'error', at, message: 'HTTP 500' }]) {
+    assert.match(await card(up, true), /Your organization set this server\.$/, up.state);
+    assert.doesNotMatch(await card(up, false), /organization/, up.state);
+  }
+  assert.equal(await card({ state: 'off' }, true), 'No server set. Use Export log to hand it in.');
+});
+
 // What Settings' switches, boxes and usage buttons ask the panel to do (settingsActs), in a vm with
 // the calls recorded.
 function settingsActsHarness() {
@@ -7791,7 +7812,7 @@ test('a settings change is logged only with an intake and session open, and a fa
   let failing = false;
   const sandbox = {
     state: { intake: null }, $: () => null,
-    usage: { currentSession: () => session, settings: async () => { if (failing) throw new Error('storage'); return {}; }, log: (e) => logged.push(e), DEFAULT_SERVER: 'https://example.test' },
+    usage: { currentSession: () => session, settingsWithPolicy: async () => { if (failing) throw new Error('storage'); return {}; }, log: (e) => logged.push(e), DEFAULT_SERVER: 'https://example.test' },
     agentSettingsEvent: (saved, opts) => ({ type: 'agent_settings', reason: opts.reason, changed: opts.changed }),
   };
   vm.createContext(sandbox);
