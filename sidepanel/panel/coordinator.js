@@ -925,7 +925,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   // correction made after it is traced to it (noteStaleFills).
   for (const f of frames) for (const x of f.filled ?? []) maps.filled.set(x.key, { path: x.path, shown: x.shown, standard: isStandard(x, 'filled'), own: isOwnDefault(x, 'filled'),
     page: page ?? null, step: knownStep(carrier, f.stepKey) ?? null, label: x.label || x.name || null, carrier: carrier?.name ?? null });
-  retireStaleFills(tabId, page, frames.flatMap((f) => (f.filled ?? []).map((x) => x.path)));
+  retireStaleFills(tabId, page, frames.flatMap((f) => (f.filled ?? []).map((x) => ({ path: x.path, step: knownStep(carrier, f.stepKey) ?? null }))));
   // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
   const quoteKey = carrier?.quoteState?.key;
   const pickedState = quoteKey && frames.flatMap((f) => f.filled).find((x) => x.key === quoteKey);
@@ -1299,7 +1299,8 @@ function noteStaleFills(paths) {
   if (!changed.size) return;
   const here = state.tab?.id;
   const tabs = [...[...state.tabSessions].filter(([id]) => id !== here), ...(Number.isInteger(here) ? [[here, state]] : [])];
-  const staleKey = (s) => `${s.tabId}|${s.page}|${s.path}|${s.label}`;
+  // By step too: one address can hold the same label on two steps (GEICO's /quote; review of PR #499).
+  const staleKey = (s) => `${s.tabId}|${s.page}|${s.step}|${s.path}|${s.label}`;
   const said = new Map((state.staleFills ?? []).map((s) => [staleKey(s), s]));
   for (const [tabId, maps] of tabs) {
     for (const entry of maps.filled?.values?.() ?? []) {
@@ -1312,11 +1313,14 @@ function noteStaleFills(paths) {
   showStaleNote();
 }
 
-// A fill of the page put these paths' answers in again: no longer from before the correction.
+// A fill of the page put these paths' answers in again: no longer from before the correction. Each
+// as `path` or { path, step }: on a one-address application many steps share the page, so a fill on
+// one step lifts that step's notices only (review of PR #499); a notice or fill without a step, by page.
 function retireStaleFills(tabId, page, paths) {
   if (!state.staleFills?.length) return;
-  const filled = new Set(paths);
-  const left = state.staleFills.filter((s) => !(s.tabId === tabId && s.page === page && filled.has(s.path)));
+  const filled = paths.map((p) => (typeof p === 'string' ? { path: p, step: null } : p));
+  const left = state.staleFills.filter((s) => !(s.tabId === tabId && s.page === page
+    && filled.some((f) => f.path === s.path && (f.step == null || s.step == null || f.step === s.step))));
   if (left.length === state.staleFills.length) return;
   state.staleFills = left;
   showStaleNote();

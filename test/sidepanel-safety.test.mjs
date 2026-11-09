@@ -410,6 +410,18 @@ test('an intake correction after a fill names each page and tab that holds the o
   state.cards.stale.actions[0].onClick();
   assert.deepEqual([state.staleFills.length, state.cards.stale], [0, null], 'Got it');
 
+  // One address, two steps, the same label (GEICO's /quote; review of PR #499): two notices, and a
+  // fill on one step lifts that step's only.
+  state.tabSessions = new Map([[3, { filled: new Map([
+    ['zipA', { path: 'garaging.zip', page: '/quote', step: 'Customer Information', label: 'ZIP code', carrier: 'GEICO' }],
+    ['zipB', { path: 'garaging.zip', page: '/quote', step: 'Vehicles', label: 'ZIP code', carrier: 'GEICO' }]]) }]]);
+  state.tab = { id: 9 };
+  state.filled = new Map();
+  context.noteStaleFills(['garaging.zip']);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.staleFills.map((x) => x.step))), ['Customer Information', 'Vehicles']);
+  context.retireStaleFills(3, '/quote', [{ path: 'garaging.zip', step: 'Vehicles' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.staleFills.map((x) => x.step))), ['Customer Information']);
+
   // agentEdit says it after the rederive, with the edited and the derived paths.
   assert.match(extractFunction('agentEdit'), /intakeEdited\(\);\n(?:\s*\/\/[^\n]*\n)*\s*noteStaleFills\(\[path, \.\.\.derived\]\);/);
 });
@@ -7239,7 +7251,7 @@ test('client details mark the agent\'s corrections, show the intake\'s value wit
   const sandbox = {
     state: { intake: { record, intakeRecord: read, warnings: [], done: [], agentEdited: [] }, detailsClosed: new Set(['operations']), showEmpty: false, details: null, detailsQuery: '', detailsEditedOnly: false },
     get, set, parseEdit, rederive, fieldInfo, SECTIONS, STATES, flushSync: (fn) => fn(), noNumberEdit: () => false, renderWarnings() {},
-    intakeEdited() {}, usage: { log: (e) => logged.push([e.path, e.change]) }, save: async () => {},
+    intakeEdited() {}, noteStaleFills() {}, usage: { log: (e) => logged.push([e.path, e.change]) }, save: async () => {},
     claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {}, profileLater() {},
   };
   vm.createContext(sandbox);
@@ -11796,6 +11808,7 @@ test('the recording follows its own tab whatever tab the panel follows, says whe
   assert.deepEqual(added, [], 'on the recorded tab: nothing to say');
   // The panel follows another tab: said once in the timeline, and on the panel's line while it lasts.
   state.tab = { id: 9 };
+  state.filled = new Map();
   context.renderDevrec();
   context.renderDevrec();
   assert.deepEqual(JSON.parse(JSON.stringify(added)).map((e) => [e.kind, e.away, e.followed, e.recorded]), [['panel', true, 9, 4]]);
@@ -11825,6 +11838,7 @@ test('the recording follows its own tab whatever tab the panel follows, says whe
   const marks = added.length;
   state.recording.stopping = false;
   state.tab = { id: 9 };
+  state.filled = new Map();
   context.noteFollowed();
   state.tab = { id: 4 };
   context.noteFollowed();
