@@ -43,6 +43,14 @@ chrome.runtime.onInstalled.addListener(({ reason, previousVersion }) => {
     .catch((e) => console.warn("what's new start not saved:", e?.message ?? e));
 });
 
+// A new version Chrome has downloaded (audit 2026-11-07, GAP-07): with this listener Chrome waits for
+// the extension to reload instead of swapping it under an open panel; the panel says it's ready, with
+// Reload now (sidepanel/panel/update-ready.js). Dropped once a version is installed.
+chrome.runtime.onUpdateAvailable.addListener(({ version }) => {
+  chrome.storage.local.set({ updateReady: version }).catch((e) => console.warn('update ready not saved:', e?.message ?? e));
+});
+chrome.runtime.onInstalled.addListener(() => { chrome.storage.local.remove('updateReady').catch(() => {}); });
+
 // The agent's corrections and checks kept past their day (src/kept-work.js) are deleted as Chrome
 // starts, whether or not the panel is opened.
 chrome.runtime.onStartup.addListener(() => { pruneKeptWork(chrome.storage.local).catch((e) => console.warn('kept work not pruned:', e?.message ?? e)); });
