@@ -60,7 +60,25 @@ test('an answer from the agent\'s own default carries the Your default tag', () 
     Object.assign(state, { filling: true, fillingFor: { run: 'r1', tabId: 3, rows: [row('um', 'UM limit', '$300,000', { source: 'agent-default', standard: false }), row('n', 'Name', 'Synthetic LLC', { source: 'intake' })] } });
   });
   expect(said(container).slice(0, 2)).toEqual([['row', 'UM limit', '$300,000', 'Your default'], ['row fresh', 'Name', 'Synthetic LLC', null]]);
-  expect(container.querySelector('.tag.own').title).toBe('Your own default in place of TNI\'s standard');
+  expect(container.querySelector('.tag.own').title).toBe('Your own default in place of TNI\'s standard (Settings → Your defaults)');
+});
+
+// Audit 2026-11-07, LIVE-02: the live list tags an answer's source with the report's words (SOURCE,
+// messages.js) and in its order: the agent's edit (a field they corrected, or one worked out from
+// it) over a worked-out answer; none for one straight from the intake, as in the report.
+test('live answers say where they came from in the report\'s words', () => {
+  const { container } = render(<LiveView view={viewAt()} />);
+  act(() => {
+    Object.assign(state, { intake: { agentEdited: ['company.name'], agentDerived: ['vehicles.0.class'] }, filling: true, fillingFor: { run: 'r1', tabId: 3, rows: [
+      row('y', 'Years in business', '6', { source: 'derived', path: 'company.years' }),
+      row('n', 'Name', 'Synthetic LLC', { source: 'intake', path: 'company.name' }),
+      row('c', 'Class', 'Light', { source: 'derived', path: 'vehicles.0.class' }),
+      row('z', 'Zip', '07001', { source: 'intake', path: 'company.zip' }),
+    ] } });
+  });
+  expect(said(container).slice(0, 4).map((x) => x[3])).toEqual(['Worked out', 'Your edit', 'Your edit', null]);
+  expect(container.querySelector('.tag.derived').title).toBe('Worked out from intake answers');
+  expect(container.querySelector('.tag.you').title).toBe('From your correction in the panel');
 });
 
 // From the safety test 'an automatic fill lists its answers as they go in, from the first one'

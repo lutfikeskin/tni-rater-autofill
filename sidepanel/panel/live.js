@@ -47,4 +47,18 @@ function liveOf(live, key, label) {
   return live.find((y) => y.key === key && (y.label || null) === (label || null)) ?? null;
 }
 
-export { DOCK_PHASES, QUIET_MS, fillShown, liveEntries, liveOf, phaseSaid };
+// An answer's source on the live list, in the report's order (answerSource, fill.js): the agent's
+// edit (a field they set or corrected, or one worked out from it), their own default, a TNI
+// standard, worked out from intake answers; none for one straight from the intake, the usual source,
+// which the report doesn't tag either (audit 2026-11-07, LIVE-02). `own`: the row is the agent's
+// default (isOwnDefault); `edited`: the record paths the agent set or corrected, and those
+// recomputed from them.
+function liveSource(x, own, edited = []) {
+  if (!x.standard && x.path && edited.includes(x.path)) return 'edited';
+  if (own) return 'own';
+  if (x.standard) return 'standard';
+  if (x.source === 'derived') return 'derived';
+  return null;
+}
+
+export { DOCK_PHASES, QUIET_MS, fillShown, liveEntries, liveOf, liveSource, phaseSaid };

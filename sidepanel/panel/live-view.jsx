@@ -9,22 +9,28 @@ import { memo, useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
-import { fillShown, liveEntries, phaseSaid } from './live.js';
+import { fillShown, liveEntries, liveSource, phaseSaid } from './live.js';
+// The report's words for an answer's source, so the live list and the report say it alike.
+import { SOURCE } from './messages.js';
 // agent defaults: an answer the agent's own default gave.
 import { isOwnDefault } from './agent-defaults/store.js';
+
+// A source's tag class: the report's colors (answerSource, fill.js).
+const TAG_CLASS = { edited: 'you', own: 'own', standard: 'standard', derived: 'derived' };
 
 // What a need row says, by the item's kind; any other kind needs the agent's answer.
 const NEED_SAID = { failed: 'Couldn’t fill' };
 
-// An answer in. Drawn again only when what it shows changes, or it stops being the fresh one.
-const AnswerRow = memo(function AnswerRow({ label, shown, standard, own, fresh }) {
+// An answer in, tagged with where it came from in the report's words (liveSource). Drawn again only
+// when what it shows changes, or it stops being the fresh one.
+const AnswerRow = memo(function AnswerRow({ label, shown, source, fresh }) {
+  const tag = source ? SOURCE.tag[source] : null;
   return (
     <div className={`row${fresh ? ' fresh' : ''}`}>
       <div className="row-head">
         <span className="row-icon" aria-hidden="true">✓</span>
         <span className="row-text"><span className="row-label">{label || 'Answer'}</span><span className="row-value">{shown || 'filled'}</span></span>
-        {standard ? <span className="tag standard" title="A TNI standard answer, not a fact from the intake">TNI standard</span> : null}
-        {own ? <span className="tag own" title="Your own default in place of TNI's standard">Your default</span> : null}
+        {tag ? <span className={`tag ${TAG_CLASS[source]}`} title={tag.title}>{tag.text}</span> : null}
       </div>
     </div>
   );
@@ -75,6 +81,10 @@ function LiveView({ view }) {
   const f = useStore(panelStore, (s) => s.fillingFor);
   const filling = useStore(panelStore, (s) => s.filling);
   const tabId = useStore(panelStore, (s) => s.tab?.id);
+  // The fields the agent set or corrected, and those worked out from them: their answers say Your edit.
+  const agentEdited = useStore(panelStore, (s) => s.intake?.agentEdited);
+  const agentDerived = useStore(panelStore, (s) => s.intake?.agentDerived);
+  const edited = [...(agentEdited ?? []), ...(agentDerived ?? [])];
   const list = useRef(null);
   // The answers the list last drew, and whether it was shown: a list just shown follows its end,
   // answers or not (review of #244: a phase before the first answer pulled an agent who had
@@ -100,7 +110,7 @@ function LiveView({ view }) {
     <div id="live" className="rows live" ref={list}>
       {entries.map(({ row: x, item }, i) => (item
         ? <NeedRow key={keys[i]} label={item.label} kind={item.kind} />
-        : <AnswerRow key={keys[i]} label={x.label} shown={x.shown} standard={!!x.standard} own={isOwnDefault(x, 'filled')} fresh={x === fresh} />))}
+        : <AnswerRow key={keys[i]} label={x.label} shown={x.shown} source={liveSource(x, isOwnDefault(x, 'filled'), edited)} fresh={x === fresh} />))}
       {f.stopping ? null : <TypingRow label={label} value={value} />}
     </div>
   );
