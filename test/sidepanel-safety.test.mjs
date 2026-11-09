@@ -14,7 +14,7 @@ import { fillEvents, loggedTimeline, sha256Hex, knownStep } from '../src/usage.j
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
-import { intakeNotes, rederive } from '../src/normalize.js';
+import { checkHolds, intakeNotes, rederive } from '../src/normalize.js';
 import { KEPT_WORK_MS, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, pruneKeptWork } from '../src/kept-work.js';
 import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
@@ -3802,7 +3802,7 @@ test('the claims box is reviewed again after the agent edits what Luna read', as
   assert.equal(t.requests.length, 2, 'the edited box is read again');
   assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-superseded', 'info'], ['ai.ntl', 'check']],
     'the old item is replaced in place (checked marks are by position), the new one added');
-  assert.deepEqual(intake.done, [1]);
+  assert.deepEqual([...intake.done], [1]);
 });
 
 // PR #95: the Additional Notes box is part of what Luna read. Editing it retires Luna's items and
@@ -3839,7 +3839,7 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
     claimsTextEdited: () => calls.push('claimsTextEdited'), reviewClaimsBox: () => calls.push('reviewClaimsBox'), reviewDriverGender: () => {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(['agentEdit', 'changedFromRead'].map(extractFunction).join('\n'), sandbox);
+  vm.runInContext(['agentEdit', 'changedFromRead', 'followChecks'].map(extractFunction).join('\n'), sandbox);
   await sandbox.agentEdit('notes.text', 'Needs hired auto', 'textarea');
   assert.deepEqual(calls.splice(0), ['claimsTextEdited', 'reviewClaimsBox']);
   await sandbox.agentEdit('claims.text', 'Yes', 'textarea');
@@ -3867,7 +3867,7 @@ test('a panel edit of the claims box recomputes what derives from it and says th
     claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(['agentEdit', 'changedFromRead'].map(extractFunction).join('\n'), sandbox);
+  vm.runInContext(['agentEdit', 'changedFromRead', 'followChecks'].map(extractFunction).join('\n'), sandbox);
   await sandbox.agentEdit('claims.text', 'Yes - 1 accident 2024\nFinanced', 'textarea');
   assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes, intake.record.operations.vehicleOwnership], [true, 'Financed', 'Financed']);
   assert.deepEqual(intake.readFrom, { 'operations.vehicleOwnership': ['claims_details'] });
@@ -3932,7 +3932,7 @@ test('claims-box edits keep the NTL, long-box and failed-review items current', 
   intake.record.claims.text = 'No\nNeeds bobtail off dispatch';
   context.claimsTextEdited(intake);
   assert.equal(intake.warnings[0].msg, 'NTL: Needs bobtail off dispatch', 'the quoted line follows the edit');
-  assert.deepEqual(intake.done, [], 'all three are asked again for the new text');
+  assert.deepEqual([...intake.done], [], 'all three are asked again for the new text');
   intake.done = [0];
   intake.record.claims.text = 'No\nFinanced';
   context.claimsTextEdited(intake);
@@ -7262,7 +7262,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   };
   let stored = null;
   vm.createContext(sandbox);
-  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'agentEdit', 'changedFromRead'].map(extractFunction).join('\n'), sandbox);
+  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'agentEdit', 'changedFromRead', 'followChecks'].map(extractFunction).join('\n'), sandbox);
   sandbox.renderSections();
   // A row as the drawer says it now, and the agent's edit of it (the box's change).
   const row = (path) => sandbox.state.details.sections.flatMap((s) => s.rows).find((r) => r.path === path);
@@ -7325,7 +7325,7 @@ test('client details mark the agent\'s corrections, show the intake\'s value wit
     claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {}, profileLater() {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'restoreField', 'restoreNoNumber', 'agentEdit', 'changedFromRead'].map(extractFunction).join('\n'), sandbox);
+  vm.runInContext(['checkShown', 'openFlags', 'renderSections', 'fieldRow', 'restoreField', 'restoreNoNumber', 'agentEdit', 'changedFromRead', 'followChecks'].map(extractFunction).join('\n'), sandbox);
   sandbox.renderSections();
   const rows = () => JSON.parse(JSON.stringify(sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path)));
   const live = () => sandbox.state.details.sections.flatMap((s) => s.rows).filter((r) => r.path);
@@ -7999,7 +7999,7 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   ] };
   const calls = [];
   const sandbox = {
-    noNumberEdit: () => false,
+    noNumberEdit: () => false, checkHolds,
     state: { intake, view: 'check' }, $, get, set, rederive, ownerDrivesAnswered, fieldInfo: (p) => ({ label: p }), sourcePlace: () => null, pdfPageSaid: () => '',
     document: { getElementById: () => null, querySelector: () => null },
     renderSteps() {}, renderSections: () => calls.push(['renderSections', get(record, 'drivers[0].gender') ?? null]), jumpTo() {}, openPdf() {},
@@ -8008,7 +8008,7 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
     profileLater() {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(['checkShown', 'renderWarnings', 'toggleDone', 'agentEdit', 'applyCheckChoice'].map(extractFunction).join('\n') + `\nconst CHOICE_FIELDS = ${SIDEPANEL.match(/const CHOICE_FIELDS = (.*);/)[1]};`, sandbox);
+  vm.runInContext(['checkShown', 'renderWarnings', 'toggleDone', 'agentEdit', 'followChecks', 'applyCheckChoice'].map(extractFunction).join('\n') + `\nconst CHOICE_FIELDS = ${SIDEPANEL.match(/const CHOICE_FIELDS = (.*);/)[1]};`, sandbox);
   sandbox.renderWarnings();
   assert.equal(sandbox.state.checks.title, '4 to check on the intake');
   // The open items' cards (a checked one is a row with Undo), and their buttons in order, as
@@ -10933,7 +10933,7 @@ test('a panel edit of "No" into the USDOT box saves no number, and says the row 
     claimsTextEdited() {}, reviewClaimsBox() {}, reviewDriverGender() {},
   };
   vm.createContext(sandbox);
-  vm.runInContext(['agentEdit', 'changedFromRead'].map(extractFunction).join('\n'), sandbox);
+  vm.runInContext(['agentEdit', 'changedFromRead', 'followChecks'].map(extractFunction).join('\n'), sandbox);
   await sandbox.agentEdit('applicant.dot', 'No', 'text');
   assert.deepEqual([intake.record.applicant.dot, intake.record.applicant.noDot, [...intake.agentEdited]], [null, true, ['applicant.dot']]);
   assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['dot.none', 'info']]);
@@ -12124,4 +12124,26 @@ test('a problem report is logged with its kind, and the footer says its referenc
   assert.ok(SIDEPANEL.includes("type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, kind,"));
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
   for (const kind of ['wrong-answer', 'stuck', 'missing-question', 'slow', 'other']) assert.ok(html.includes(`<option value="${kind}"`), kind);
+});
+
+// Audit 2026-11-07, DATA-05: the agent fixing a flagged value checks its card off, breaking it
+// again reopens it; a check the value alone doesn't settle, and an info note, stay as they were.
+test('a check on a field follows the agent\'s edit of it: fixed, it is checked; broken again, open', () => {
+  const sandbox = { checkHolds };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('followChecks'), sandbox);
+  const intake = { done: [2], warnings: [
+    { code: 'dob.invalid', level: 'check', path: 'drivers[0].dob' },
+    { code: 'dob.unusual-age', level: 'check', path: 'drivers[0].dob' },
+    { code: 'vin.missing', level: 'check', path: 'vehicles[0].vin' },
+    { code: 'dob.invalid', level: 'info', path: 'drivers[0].dob' },
+  ] };
+  assert.equal(sandbox.followChecks(intake, 'drivers[0].dob', '04/12/1980', 2026), true);
+  assert.deepEqual([...intake.done], [2, 0], 'a valid date: checked; the age check and the note as they were');
+  assert.equal(sandbox.followChecks(intake, 'drivers[0].dob', '04/12/1980', 2026), false, 'nothing new');
+  assert.equal(sandbox.followChecks(intake, 'drivers[0].dob', '13/45/1980', 2026), true);
+  assert.deepEqual([...intake.done], [2], 'broken again: open');
+  assert.equal(sandbox.followChecks(intake, 'vehicles[0].vin', '', 2026), true);
+  assert.deepEqual([...intake.done], [], 'the VIN emptied: missing again');
+  assert.match(extractFunction('agentEdit'), /if \(followChecks\(state\.intake, path, after\)\) renderWarnings\(\);/);
 });
