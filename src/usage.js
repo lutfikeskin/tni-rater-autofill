@@ -445,7 +445,8 @@ function fieldWhy(x, list) {
     ...(r.method ? { source: r.method } : {}), ...(isStandard(x, list) ? { standard: true } : {}),
     ...(r.status === 'agent' ? { manualOnly: true } : {}), ...(x.review ? { review: true } : {}),
     // From a value the agent set or corrected in the panel, not the parser's reading (plan.js `edited`).
-    ...(x.edited ? { edited: true } : {}),
+    // A filled answer only: one the carrier changed or refused isn't the agent's (CodeRabbit on #480).
+    ...(x.edited && list === 'filled' ? { edited: true } : {}),
   };
 }
 

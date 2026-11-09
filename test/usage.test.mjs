@@ -102,6 +102,10 @@ test('a fill_field says when its answer read the agent\'s correction, and the pa
   ] }], { carrier: 'progressive', page: 'AddDriver', view: 't1', overwrite: false, ms: 1, redact });
   assert.deepEqual([edited.source, edited.edited], ['intake', true]);
   assert.equal(plain.edited, undefined);
+  // CodeRabbit on #480: a failed answer isn't the agent's, even when its step read their correction.
+  const [, failedEv] = fillEvents([{ failed: [{ key: 'k1', label: 'Date of birth', controlKind: 'text', source: 'intake', path: 'drivers[0].dob', edited: true, code: 'answer.not-kept', reason: 'x' }] }],
+    { carrier: 'progressive', page: 'AddDriver', view: 't1', overwrite: false, ms: 1, redact });
+  assert.deepEqual([failedEv.result, failedEv.edited], ['failed', undefined]);
   const { buildPlan } = await import('../src/plan.js');
   const { progressive } = await import('../src/carriers/progressive.js');
   const steps = buildPlan(record, progressive, {}, { edited: ['drivers[0].dob'] }).filter((s) => s.path === 'drivers[0].dob');

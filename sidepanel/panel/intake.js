@@ -11,7 +11,7 @@ import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals } from './core.js';
-import { firstView, render } from './record.js';
+import { changedFromRead, firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
 import { stopRecording } from './dev-recording.js';
@@ -251,7 +251,7 @@ async function restoreKeptWork(intake, after = -Infinity) {
   intake.agentEdited = [...edited];
   const by = { ...(intake.agentDerivedBy ?? {}) };
   for (const path of edited) {
-    const derived = rederive(intake.record, path, { keep: edited });
+    const derived = rederive(intake.record, path, { keep: edited }).filter((p) => changedFromRead(intake, p));
     if (derived.length) by[path] = derived;
   }
   intake.agentDerivedBy = by;
