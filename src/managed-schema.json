@@ -20,6 +20,11 @@
       "title": "Put checked picks in",
       "description": "Default for Settings, AI, Put checked picks in. The agent can change it.",
       "type": "boolean"
+    },
+    "agent": {
+      "title": "Initials",
+      "description": "The agent's initials (1 to 6 letters or digits), for a computer one agent uses. The agent's own initials in Settings still win.",
+      "type": "string"
     }
   }
 }

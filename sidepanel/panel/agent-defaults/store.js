@@ -120,12 +120,12 @@ export async function loadDefaults() {
   // The developer's switch, read apart: a read Chrome refuses is logged and taken as not hidden, never
   // stopping the panel's start (the store build ignores it anyway).
   const hiddenRead = hiddenStore.get().catch((error) => { logCrash(error); return undefined; });
-  const [stored, saved, kept, hidden] = await Promise.all([local.get(), usage.settings(), session.get(), hiddenRead]);
+  const [stored, own, kept, hidden] = await Promise.all([local.get(), usage.agentInitials(), session.get(), hiddenRead]);
   channel = usage.build().channel;
   // The developer's switch: in every copy but the store build.
   state.defaultsDev = channel !== 'store';
   show(defaultsShownFor(channel, hidden === true));
-  initials = saved?.agent ?? null;
+  initials = own ?? null;
   state.defaultsInitials = initials;
   quote = kept && typeof kept === 'object' ? kept : null;
   state.agentDefaults = cleanStored(stored, initials);

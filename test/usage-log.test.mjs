@@ -110,9 +110,22 @@ test('a server, token and AI defaults set by policy are used until the agent set
     assert.deepEqual(await usage.serverConfig(), { serverUrl: 'http://localhost:8787', serverToken: '' });
     assert.equal((await usage.settingsWithPolicy()).aiOn, true);
 
+    // Initials set by policy (2026-11-08, GAP-04's gate counts them): until the agent enters their own,
+    // or after they clear theirs.
+    policy = { agent: 'jk' };
+    await usage.saveSettings({ agent: undefined });
+    assert.equal(await usage.agentInitials(), 'JK');
+    await usage.saveSettings({ agent: null });
+    assert.equal(await usage.agentInitials(), 'JK', 'cleared initials: the policy initials');
+    await usage.saveSettings({ agent: 'AA' });
+    assert.equal(await usage.agentInitials(), 'AA', 'their own win');
+    await usage.saveSettings({ agent: undefined });
+    policy = { agent: 'TOOLONGX' };
+    assert.equal(await usage.agentInitials(), null, 'out of shape: none');
+
     // Values out of their shape are ignored, and a managed area that can't be read is no policy.
     await usage.saveSettings({ serverUrl: undefined, aiOn: undefined });
-    policy = { serverUrl: 'ftp://x', serverToken: 7, aiOn: 'no', lunaAuto: 1 };
+    policy = { serverUrl: 'ftp://x', serverToken: 7, aiOn: 'no', lunaAuto: 1, agent: 'J K' };
     assert.deepEqual(await usage.managedSettings(), {});
     globalThis.chrome = { storage: { managed: { get: async () => { throw new Error('no managed storage'); } } } };
     assert.deepEqual(await usage.serverConfig(), { serverUrl: usage.DEFAULT_SERVER, serverToken: usage.DEFAULT_TOKEN });

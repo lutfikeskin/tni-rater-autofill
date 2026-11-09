@@ -68,7 +68,7 @@ function setupItems({ agent, ai, upState }) {
 async function renderHealth({ up }) {
   const version = inExtension ? chrome.runtime.getManifest().version : 'dev';
   $('foot-version').textContent = `v${version}`;
-  const { agent = '' } = await usage.settings();
+  const agent = (await usage.agentInitials()) ?? '';
   const ai = await aiSettings();
   const items = setupItems({ agent, ai, upState: up.state });
   const setup = items.filter((x) => !x.done).map((x) => x.todo);

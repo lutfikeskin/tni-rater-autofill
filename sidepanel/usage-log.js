@@ -44,7 +44,8 @@ export async function saveSettings(patch) {
 
 // What an organization deployed by policy (chrome.storage.managed, its keys in
 // src/managed-schema.json; audit 2026-11-07, UX-12 d): the usage server and its upload token, and
-// the AI's defaults (aiOn: Suggest answers, lunaAuto: Put checked picks in). Each takes the place of
+// the AI's defaults (aiOn: Suggest answers, lunaAuto: Put checked picks in), and the agent's
+// initials (agent) for a computer whose agent hasn't entered their own (agentInitials). Each takes the place of
 // the extension's own default; what the agent set in Settings still wins (Advanced is for setup,
 // such as a local test server). A value out of its shape is ignored; no policy, or a managed area
 // that can't be read, is none.
@@ -53,6 +54,7 @@ const MANAGED_SHAPES = {
   serverToken: (v) => typeof v === 'string' && v.length <= 200,
   aiOn: (v) => typeof v === 'boolean',
   lunaAuto: (v) => typeof v === 'boolean',
+  agent: (v) => typeof v === 'string' && /^[A-Za-z0-9]{1,6}$/.test(v),
 };
 // The policy's keys, as src/managed-schema.json declares them (test/usage-log.test.mjs keeps them in step).
 export const MANAGED_KEYS = Object.keys(MANAGED_SHAPES);
@@ -69,8 +71,16 @@ export async function managedSettings() {
 export async function settingsWithPolicy() {
   const [saved, { serverToken: _token, ...policy }] = await Promise.all([settings(), managedSettings()]);
   const out = { ...policy };
-  for (const [k, v] of Object.entries(saved)) if (v !== undefined) out[k] = v;
+  if (out.agent) out.agent = out.agent.toUpperCase();
+  // Initials the agent cleared are none of theirs: the policy's stand.
+  for (const [k, v] of Object.entries(saved)) if (v !== undefined && !(k === 'agent' && !v)) out[k] = v;
   return out;
+}
+
+// The agent's initials: their own from Settings, else the ones the policy set (null: none). Events,
+// the exported log and the agent's defaults go by them; setup counts them done.
+export async function agentInitials() {
+  return (await settingsWithPolicy()).agent || null;
 }
 
 const SEQ_KEY = 'usageSeq';
@@ -112,7 +122,7 @@ export function log(...events) {
   // The developer recording's copy (onLogged), as logged: already redacted, nothing more leaves.
   for (const fn of taps) { try { fn(events, { t, session: sessionId }); } catch { /* the log goes on */ } }
   queue = queue.then(() => exclusive(async () => {
-    const { agent = null } = await settings();
+    const agent = await agentInitials();
     const install = await installId();
     let list = (await local.get(LOG_KEY)) ?? [];
     let seq = (await local.get(SEQ_KEY)) ?? 0;
@@ -164,7 +174,7 @@ export async function logMark() {
 export async function exportLog() {
   await queue;
   const events = [...((await local.get(REJECTED_KEY)) ?? []), ...((await local.get(LOG_KEY)) ?? [])];
-  const { agent } = await settings();
+  const agent = await agentInitials();
   const data = { tool: 'tni-rater-autofill', kind: 'usage-log', version, exportedAt: new Date().toISOString(), agent: agent ?? null, events };
   const day = new Date().toISOString().slice(0, 10);
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));

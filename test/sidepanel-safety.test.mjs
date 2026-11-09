@@ -6117,7 +6117,7 @@ test('Home\'s setup checklist is ticked by the health checks, and gone once all 
   const run = async ({ agent = '', ai = { on: false, ready: false, provider: 'openai' }, up = { state: 'idle' } }) => {
     const els = { 'foot-version': {}, 'settings-dot': {} };
     const state = { notes: {} };
-    const ctx = { state, inExtension: false, $: (id) => els[id], usage: { settings: async () => ({ agent }), lastSave: () => ({ state: 'ok' }) },
+    const ctx = { state, inExtension: false, $: (id) => els[id], usage: { settings: async () => ({ agent }), agentInitials: async () => agent || null, lastSave: () => ({ state: 'ok' }) },
       aiSettings: async () => ai, PROVIDERS: { openai: { keyLabel: 'OpenAI key' } }, issueSaid: (x) => x };
     vm.runInNewContext(['setupItems', 'renderHealth', 'joinAnd'].map(extractFunction).join('\n'), ctx);
     await ctx.renderHealth({ up });

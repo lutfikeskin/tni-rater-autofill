@@ -102,7 +102,7 @@ Apps & extensions → the extension → Policy for extensions**, a JSON object w
 `src/managed-schema.json` declares (Chrome reads them into `chrome.storage.managed`):
 
 ```json
-{ "serverUrl": "https://usage-server-production.up.railway.app", "serverToken": "…", "aiOn": true, "lunaAuto": false }
+{ "serverUrl": "https://usage-server-production.up.railway.app", "serverToken": "…", "aiOn": true, "lunaAuto": false, "agent": "JK" }
 ```
 
 - `serverUrl` and `serverToken` take the place of the built-in central server and its token. The
@@ -110,6 +110,8 @@ Apps & extensions → the extension → Policy for extensions**, a JSON object w
   central server; the built-in token never goes to another server.
 - `aiOn` (**Suggest answers**) and `lunaAuto` (**Put checked picks in**) are the defaults the agent
   starts with.
+- `agent` is the agent's initials (1 to 6 letters or digits), for a computer one agent uses: until
+  they enter their own under **You**, their quotes count under these, and setup counts them done.
 - What the agent sets in Settings still wins (Advanced is for setup, such as a local test server).
   Settings says when uploads go to a server the organization set. A value out of its type is
   ignored. The schema adds no permission and no install warning.
