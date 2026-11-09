@@ -9,7 +9,7 @@
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
   '0.9.36': [
-    "Usage and AI requests go to TNI's server, or the one your organization set; the Server box in Settings is read-only.",
+    "Store copy: usage, and AI requests without your own OpenAI key, go to TNI's server or your organization's; its Server box is read-only.",
   ],
   '0.9.35': [
     'Fixing a flagged value on its Intake card checks the card off for you.',
