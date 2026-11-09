@@ -414,7 +414,7 @@ const state = storeState({
   // `captureOff`) and what it did (captureSaid: `captureStatus`); and the developer recording's card
   // (dev-recording.js: `devrec`, whether one runs, its line and the unfinished one to save). And the
   // footer's Recording usage (render, renderSite, renderUsage: `recordingLine`).
-  switches: { autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true },
+  switches: { autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true, turnSound: false },
   ai: null,
   keyFormOpen: false,
   usageCard: null,

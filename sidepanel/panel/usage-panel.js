@@ -107,6 +107,8 @@ function settingsActs() {
     checkBeforeContinue: (on) => { usage.saveSettings({ checkBeforeContinue: on }); renderSteps(); },
     // Saved, never logged, like the one above. The chime needs a click in the panel first (unlockAudio).
     finishSound: (on) => { usage.saveSettings({ finishSound: on }); },
+    // Saved, never logged, off unless the agent turns it on (coordinator.js noteTurn).
+    turnSound: (on) => { usage.saveSettings({ turnSound: on }); },
     // Not saved: on while the extension has the optional tabGroups permission, which Chrome asks the
     // agent for here (tab-mark.js). Never logged.
     markTab: (on) => markSwitch(on),

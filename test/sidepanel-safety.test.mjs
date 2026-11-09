@@ -9727,7 +9727,7 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   const state = { settingsOpen: false, filling: false, reportFor: { at: 1700 } };
   const word = { phase: 'ready-continue', title: 'Ready for Continue', button: 'fill', label: 'Continue', go: 'continue', alt: 'fill-again' };
   const marked = [];
-  const context = { state, dockFor: () => word, markTab: (d) => marked.push(d), pausedSaid: () => '' };
+  const context = { state, dockFor: () => word, markTab: (d) => marked.push(d), noteTurn: () => false, pausedSaid: () => '' };
   vm.runInNewContext(extractFunction('renderDock'), context);
   context.renderDock();
   assert.deepEqual({ ...state.dock }, { ...word, hidden: false, report: '1700', busy: false, paused: '' });
@@ -11354,13 +11354,13 @@ test('Sound when the quote is done is a Filling switch, on by default, kept on t
   // the saved settings say otherwise.
   const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
   assert.match(view, /<SwitchRow id="finish-sound" name="Sound when the quote is done" checked=\{switches\.finishSound !== false\} said=\{switches\} onChange=\{flip\('finishSound'\)\} \/>/);
-  assert.match(SIDEPANEL, /switches: \{ autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true \},/, 'on by default');
+  assert.match(SIDEPANEL, /switches: \{ autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true, turnSound: false \},/, 'on by default');
   const t = settingsActsHarness();
   await t.acts.switch('finishSound', false);
   assert.deepEqual(t.calls, [['save', { finishSound: false }]], 'saved, not in the usage log');
   assert.equal(t.state.switches.finishSound, false);
   assert.match(extractFunction('wireUsage'), /document\.addEventListener\('pointerdown', unlockAudio, \{ once: true, capture: true \}\);/, 'the audio is unlocked by the agent\'s first click in the panel');
-  assert.match(extractFunction('init'), /flushSync\(\(\) => \{\s+state\.switches = \{ \.\.\.state\.switches, [^\n]*\n\s+checkBeforeContinue: saved\.checkBeforeContinue \?\? true, finishSound: saved\.finishSound \?\? true \};/);
+  assert.match(extractFunction('init'), /flushSync\(\(\) => \{\s+state\.switches = \{ \.\.\.state\.switches, [^\n]*\n\s+checkBeforeContinue: saved\.checkBeforeContinue \?\? true, finishSound: saved\.finishSound \?\? true, turnSound: saved\.turnSound === true \};/);
 });
 
 // Review of PR #171 (Claude, Cursor): the chime kept a record of its own (`chimed`, by tab and the
@@ -12049,6 +12049,53 @@ test('Discard deletes an unfinished recording only once the developer confirms i
   assert.match(said[0], /^Discard again to delete the unfinished recording geico-x .*can't be undone.$/);
   await context.discardUnfinished();
   assert.deepEqual([discarded, said.slice(1)], [['geico-x'], ['Deleted the unfinished recording geico-x.']]);
+});
+
+// Audit 2026-11-07, LIVE-14: a fill that ends needing the agent while they look elsewhere sounds a
+// short tone, once per page, only with its own switch on (off by default).
+test('the your-turn tone: a fill ending on the agent, switch on, once per page, only when they look elsewhere', async () => {
+  let played = 0;
+  let away = true;
+  const sandbox = { state: { switches: { turnSound: true }, tab: { id: 7, url: 'https://rater.test/a' } }, Set, Promise,
+    lookingElsewhere: async () => away, playTurnTone: () => { played++; } };
+  vm.createContext(sandbox);
+  const src = PANEL_SOURCE;
+  const start = src.indexOf('const TURN_SOUND_PHASES');
+  vm.runInContext(src.slice(start, src.indexOf('\n}\n', src.indexOf('function noteTurn', start)) + 2).replace(/^let /gm, 'var ').replace(/^const /gm, 'var '), sandbox);
+  const settle = () => new Promise((resolve) => { setImmediate(resolve); });
+  const step = (phase) => sandbox.noteTurn({ phase });
+  assert.equal(step('ready'), false);
+  assert.equal(step('filling'), false);
+  assert.equal(step('needs'), true, 'filling → needs: the agent\'s turn');
+  await settle();
+  assert.equal(played, 1);
+  step('filling');
+  assert.equal(step('needs'), false, 'the same page: once');
+  sandbox.state.tab.url = 'https://rater.test/b';
+  step('filling');
+  away = false;
+  assert.equal(step('check'), true);
+  await settle();
+  assert.equal(played, 1, 'they look at the quote tab: no tone');
+  // Review of #506: a page whose fill ended in view stays eligible; two checks at once play once.
+  away = true;
+  step('filling');
+  assert.equal(step('needs'), true, 'no tone yet on this page: asked again');
+  step('filling');
+  assert.equal(step('needs'), false, 'a check under way: not asked twice');
+  await settle();
+  assert.equal(played, 2, 'the later fill, ended while they look elsewhere, sounds once');
+  step('filling');
+  assert.equal(step('needs'), false, 'played on this page: once');
+  sandbox.state.tab.url = 'https://rater.test/c';
+  step('filling');
+  assert.equal(step('finished'), false, 'quote done has its own chime');
+  sandbox.state.switches.turnSound = false;
+  sandbox.state.tab.url = 'https://rater.test/d';
+  step('filling');
+  assert.equal(step('needs'), false, 'switch off');
+  const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
+  assert.ok(view.includes('id="turn-sound"') && view.includes('checked={switches.turnSound === true}'));
 });
 
 // Audit 2026-11-07, LIVE-08: the dock's bar is measured while the fill answers (the share of the
