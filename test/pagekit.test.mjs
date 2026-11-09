@@ -439,8 +439,8 @@ function extCmp(id, input, { caption = 'Synthetic question', required = false, v
 }
 
 // `adapter`: the carrier whose page adapter is loaded, as on its tabs (`progressive`, always with
-// `ext`, is Progressive's).
-function harness({ ext = false, progressive = ext, adapter = progressive ? 'progressive' : null, pathname = '/rater', search = '' } = {}) {
+// `ext`, is Progressive's). `globals`: more of the page's globals, or ones in place of the defaults.
+function harness({ ext = false, progressive = ext, adapter = progressive ? 'progressive' : null, pathname = '/rater', search = '', globals = {} } = {}) {
   const document = new FakeDocument();
   const location = { origin: 'https://synthetic.example', pathname, search };
   const context = {
@@ -463,6 +463,7 @@ function harness({ ext = false, progressive = ext, adapter = progressive ? 'prog
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
     Date: clock.Date,
+    ...globals,
   };
   context.window = context;
   context.top = context;
@@ -10241,4 +10242,19 @@ test('a detached list pick that fires no input or change event still stops the f
   assert.equal(report.halted, true);
   assert.deepEqual([...report.protectedKeys], ['ref:Test.combo']);
   assert.equal(combo.input.value, 'Agent choice');
+});
+
+// Audit 2026-11-07, ENG-16: every assign compiled each rule's patterns again (and an option rule's
+// on every option), several times a round. Each pattern is compiled once for the kit's life.
+test('a rule\'s text pattern is compiled once, however often the fill assigns it', async () => {
+  let made = 0;
+  const Counted = new Proxy(RegExp, { construct(target, args) { if (args[0] === 'years in business') made++; return Reflect.construct(target, args); } });
+  const h = harness({ globals: { RegExp: Counted } });
+  const years = new SelectNode([{ text: '', value: '' }, { text: '3', value: '3' }], { id: 'yrs', ariaLabel: 'Years in business' });
+  h.document.body.append(years);
+  const plan = [{ id: 'years', path: 'applicant.yearsInBusiness', re: 'years in business', kind: 'choice', value: '3', name: 'Years in business' }];
+  await h.kit.fill(plan, { maxRounds: 3 });
+  assert.equal(years.value, '3', 'the rule found its question by its text');
+  await h.kit.fill(plan, { maxRounds: 3 });
+  assert.equal(made, 1, `compiled ${made} times over two fills`);
 });
