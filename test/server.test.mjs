@@ -217,7 +217,12 @@ test('the preflight is only for the extension ids set, when set', async () => {
   const dev = 'cbpjccegchfackokbiogplhdekblkccj';
   assert.deepEqual(extensionIdsFrom(` ${store}, ${dev.toUpperCase()} ,nope`), [store, dev]);
   assert.equal(extensionIdsFrom(''), null);
-  assert.equal(extensionIdsFrom('nope, also-not'), null, 'no id in it: any extension, never none');
+  // Review of #514: a list with no id in it allows none, never every extension.
+  assert.deepEqual(extensionIdsFrom('nope, also-not'), []);
+  await withServer({ dataDir: tmp(), extensionIds: [] }, async ({ base }) => {
+    const r = await fetch(`${base}/v1/events`, { method: 'OPTIONS', headers: { origin: `chrome-extension://${store}`, 'access-control-request-method': 'POST' } });
+    assert.equal(r.status, 403);
+  });
   await withServer({ dataDir: tmp(), extensionIds: [store, dev] }, async ({ base }) => {
     const ask = (origin) => fetch(`${base}/v1/events`, { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST' } });
     assert.equal((await ask(`chrome-extension://${store}`)).status, 204);

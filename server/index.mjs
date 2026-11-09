@@ -134,11 +134,13 @@ export function minFreeBytesFrom(raw) {
 }
 // RATER_EXTENSION_IDS: the extension ids (32 letters a-p, comma-separated) whose pages may call the
 // server from a browser: the store item's and the unpacked copy's (DEV_EXTENSION_ID). Unset or
-// blank: any extension, as before (audit 2026-11-07, SRV-16). Anything not an id is left out, so a
-// list with no id in it is any extension too, never none.
+// blank: any extension, as before (audit 2026-11-07, SRV-16). Anything not an id is left out, and a
+// list with no id in it allows none (said at startup): a mistyped list never opens the server to
+// every extension (review of #514). TNI's own extension doesn't need the preflight: its host
+// permission for the server lets its requests through without one.
 export function extensionIdsFrom(raw) {
-  const ids = String(raw ?? '').split(',').map((s) => s.trim().toLowerCase()).filter((s) => /^[a-p]{32}$/.test(s));
-  return ids.length ? ids : null;
+  if (raw == null || String(raw).trim() === '') return null;
+  return String(raw).split(',').map((s) => s.trim().toLowerCase()).filter((s) => /^[a-p]{32}$/.test(s));
 }
 // Names of dropped fields kept on an event: field-like names only, at most this many.
 const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
@@ -977,10 +979,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const lunaDailyTokens = lunaDailyTokensFrom(process.env.RATER_LUNA_DAILY_TOKENS);
   const dashboardToken = process.env.RATER_DASHBOARD_TOKEN || '';
   if (dashboardToken && dashboardToken.length < MIN_DASHBOARD_TOKEN) logLine({ msg: `RATER_DASHBOARD_TOKEN is shorter than ${MIN_DASHBOARD_TOKEN} characters: the dashboard stays off.` }, 'error');
+  const extensionIds = extensionIdsFrom(process.env.RATER_EXTENSION_IDS);
+  if (extensionIds && !extensionIds.length) logLine({ msg: 'RATER_EXTENSION_IDS has no extension id (32 letters a-p): no extension gets the browser preflight.' }, 'error');
   const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '', openaiKey: process.env.OPENAI_API_KEY || '', lunaDailyLimit, lunaDailyTokens,
     dashboardToken, testIntakes: testIntakesFrom(process.env.RATER_TEST_INTAKES),
     clientIpHeader: process.env.RATER_CLIENT_IP_HEADER || '', minFreeBytes: minFreeBytesFrom(process.env.RATER_MIN_FREE_MB),
-    extensionIds: extensionIdsFrom(process.env.RATER_EXTENSION_IDS) });
+    extensionIds });
   server.listen(port, host, () => {
     logLine({ msg: `rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit} requests and ${lunaDailyTokens} tokens a day)` : ''}${dashboardToken.length >= MIN_DASHBOARD_TOKEN ? '  (dashboard on: /dashboard)' : ''}`, port: server.address().port });
   });
