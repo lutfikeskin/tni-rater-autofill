@@ -7,7 +7,15 @@
 // each under WHATS_NEW_LINE_MAX characters.
 
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
-const WHATS_NEW = {};
+const WHATS_NEW = {
+  '0.9.33': [
+    'The panel has two tabs, Intake and This page, and the header says which stage of the quote you are on.',
+    'Client details mark your corrections, show what the intake said, and let you Restore it.',
+    'Save summary keeps a read-only copy of every answer in the quote, with where each came from.',
+    'Filling waits while you type in another field, then gives your cursor back.',
+    'A ? on each view opens a short guide, and Home lists any setup still to do.',
+  ],
+};
 
 const WHATS_NEW_LINE_MAX = 160;
 
