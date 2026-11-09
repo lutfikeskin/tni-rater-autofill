@@ -10352,6 +10352,124 @@ test('a detached list pick that fires no input or change event still stops the f
   assert.equal(combo.input.value, 'Agent choice');
 });
 
+// Audit 2026-11-07 (ENG-18): a write focuses its field and blurs it, so an automatic fill that
+// wrote while the agent typed in another field took their next keystrokes. The write waits until
+// they pause, and their field has its focus back after it.
+test('a write waits while the agent types in another field, and gives that field its focus back', async () => {
+  const h = harness();
+  const notes = makeInput({ id: 'notes', ariaLabel: 'Notes' });
+  const years = new SelectNode([{ text: '', value: '' }, { text: '3', value: '3' }], { id: 'yrsInBusiness', ariaLabel: 'Years in Business' });
+  h.document.body.append(years, notes);
+  for (const el of [notes, years]) {
+    el.focus = () => { h.document.activeElement = el; };
+    el.blur = () => { if (h.document.activeElement === el) h.document.activeElement = h.document.body; };
+  }
+  let wroteAt = null;
+  years.addEventListener('change', () => { wroteAt ??= clock.Date.now(); });
+  // The agent is in Notes, typing: a key now and another a second later.
+  notes.focus();
+  const key = () => notes.dispatchEvent({ type: 'keydown', key: 'a', target: notes, isTrusted: true });
+  key();
+  const started = clock.Date.now();
+  setTimeout(key, 1000);
+  const report = await h.kit.fill([{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: '3', name: 'Years in business' }], { maxRounds: 3 });
+  assert.equal(years.value, '3', JSON.stringify(report.failed));
+  assert.ok(wroteAt - started >= 2500, `written ${wroteAt - started} ms in, while the agent typed`);
+  assert.equal(h.document.activeElement, notes, 'their field has its focus back');
+  // Nobody typing: written at once, and focus where the write leaves it.
+  const quiet = harness();
+  const box = new SelectNode([{ text: '', value: '' }, { text: '3', value: '3' }], { id: 'yrsInBusiness', ariaLabel: 'Years in Business' });
+  quiet.document.body.append(box);
+  let at = null;
+  box.addEventListener('change', () => { at ??= clock.Date.now(); });
+  const t0 = clock.Date.now();
+  await quiet.kit.fill([{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: '3', name: 'Years in business' }], { maxRounds: 3 });
+  assert.equal(box.value, '3');
+  assert.notEqual(at, null, 'the quiet write dispatched change');
+  assert.ok(at - t0 < 1000, `${at - t0} ms`);
+});
+
+// CodeRabbit on #435: the agent edits a question while an AI answer waits for them to stop typing
+// elsewhere. The answer isn't written after the wait: the edit stops it, as one before it would.
+test('an agent edit while an answer waits on their typing stops that answer', async () => {
+  const h = harness();
+  const pick = (id, label, options) => new SelectNode([{ text: 'Select one', value: '' }, ...options], { id, ariaLabel: label });
+  const commodity = pick('commodity', 'Commodity category', [{ text: 'Consumer Goods', value: 'cg' }, { text: 'Building Materials', value: 'bm' }]);
+  const radius = pick('radius', 'Radius', [{ text: 'Local', value: 'l' }, { text: 'Long haul', value: 'lh' }]);
+  const notes = makeInput({ id: 'notes', ariaLabel: 'Notes' });
+  h.document.body.append(commodity, radius, notes);
+  for (const el of [notes, commodity, radius]) {
+    el.focus = () => { h.document.activeElement = el; };
+    el.blur = () => { if (h.document.activeElement === el) h.document.activeElement = h.document.body; };
+  }
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const key = (label) => report.unknown.find((x) => x.label === label).key;
+  // The agent types in Notes, then picks the radius themselves half a second later.
+  notes.focus();
+  notes.dispatchEvent({ type: 'keydown', key: 'a', target: notes, isTrusted: true });
+  setTimeout(() => {
+    radius.dispatchEvent({ type: 'pointerdown', target: radius, isTrusted: true });
+    radius.value = 'l';
+    radius.dispatchEvent({ type: 'change', target: radius, isTrusted: true });
+  }, 500);
+  const results = await h.kit.answer([{ key: key('Commodity category'), label: 'Commodity category', value: 'Consumer Goods' }]);
+  assert.equal(commodity.value, '', 'nothing written after the edit');
+  assert.deepEqual([results[0].ok, results[0].code], [false, 'fill.interrupted']);
+  assert.match(results[0].reason, /agent edit interrupted/);
+  assert.notEqual(commodity.getAttribute('data-rater-autofill'), 'failed', 'not marked as failed');
+  assert.equal(radius.value, 'l', 'the agent\'s pick stays');
+});
+
+// CodeRabbit on #435: the agent edits a question while a list (a plain one, or select2) waits for its
+// options. The wait sees that edit too: nothing is picked, and the answer reports the interruption.
+test('an agent edit while an answer list waits for its options (plain, select2) stops it before the pick', async () => {
+  for (const select2 of [false, true]) {
+  const h = harness();
+  const select = new SelectNode([{ text: 'Select one', value: '' }], { id: 'classCodeAndDescription', ariaLabel: 'Classification' });
+  const container = new FakeNode('span', { className: 'select2 select2-container' });
+  container.append(new FakeNode('span', { className: 'select2-selection' }));
+  if (select2) select.className = 'select2-hidden-accessible';
+  const radius = new SelectNode([{ text: 'Select one', value: '' }, { text: 'Local', value: 'l' }, { text: 'Long haul', value: 'lh' }], { id: 'radius', ariaLabel: 'Radius' });
+  h.document.body.append(select, container, radius);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const key = report.unknown.find((x) => x.label === 'Classification')?.key;
+  assert.ok(key, JSON.stringify(report.unknown.map((x) => x.label)));
+  // Its options come 2 s later; the agent picks the radius themselves half a second in.
+  setTimeout(() => { select.options = [...select.options, { text: 'Trucking', value: 't' }]; }, 2000);
+  setTimeout(() => {
+    radius.dispatchEvent({ type: 'pointerdown', target: radius, isTrusted: true });
+    radius.value = 'l';
+    radius.dispatchEvent({ type: 'change', target: radius, isTrusted: true });
+  }, 500);
+  const t0 = clock.Date.now();
+  const results = await h.kit.answer([{ key, label: 'Classification', value: 'Trucking' }]);
+  assert.ok(clock.Date.now() - t0 < 1500, `ended ${clock.Date.now() - t0} ms in`);
+  assert.equal(select.value, '', 'nothing picked after the edit');
+  assert.deepEqual([results[0].ok, results[0].code], [false, 'fill.interrupted']);
+  assert.equal(radius.value, 'l', "the agent's pick stays");
+  }
+});
+
+// CodeRabbit on #435: the agent moves to another field while a write is under way. That field keeps
+// the focus: it is given back only where the write left it.
+test('a field the agent moved to during a write keeps the focus', async () => {
+  const h = harness();
+  const notes = makeInput({ id: 'notes', ariaLabel: 'Notes' });
+  const other = makeInput({ id: 'other', ariaLabel: 'Other' });
+  const years = new SelectNode([{ text: '', value: '' }, { text: '3', value: '3' }], { id: 'yrsInBusiness', ariaLabel: 'Years in Business' });
+  h.document.body.append(years, notes, other);
+  for (const el of [notes, other, years]) {
+    el.focus = () => { h.document.activeElement = el; };
+    el.blur = () => { if (h.document.activeElement === el) h.document.activeElement = h.document.body; };
+  }
+  notes.focus();
+  // As the answer goes in, the agent clicks into Other.
+  years.addEventListener('change', () => { other.focus(); });
+  await h.kit.fill([{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: '3', name: 'Years in business' }], { maxRounds: 3 });
+  assert.equal(years.value, '3');
+  assert.equal(h.document.activeElement, other, 'the field they moved to keeps it');
+});
+
 // Review of #475: an answer on Rates re-arms its coverage's Done by the step's `section` (any cargo
 // question, reefer breakdown included; a question of GL's or interchange's open section).
 test('Progressive: an answer on Rates re-arms the Done of its coverage section', async () => {
