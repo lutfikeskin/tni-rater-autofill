@@ -6946,7 +6946,12 @@ function settingsActsHarness() {
   const state = { switches: { autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true }, usageNote: '' };
   const record = (name) => (...args) => { calls.push([name, ...args]); };
   const context = { state, calls, confirm: () => true,
-    usage: { saveSettings: async (patch) => { calls.push(['save', { ...patch }]); }, settings: async () => ({}), count: async () => 3, exportLog: async () => 3, clearLog: async () => { calls.push(['clearLog']); } },
+    usage: { saveSettings: async (patch) => { calls.push(['save', { ...patch }]); }, settings: async () => ({}), count: async () => 3, exportLog: async () => 3, 
+      // As usage-log.js: the question's mark (the count, and `seq`, the last event's number), and with
+      // `expected`, deleted only while the mark is still that.
+      seq: 7,
+      logMark: async function () { return { n: await this.count(), seq: this.seq }; },
+      clearLog: async function ({ expected } = {}) { if (expected !== undefined && (expected.n !== await this.count() || expected.seq !== this.seq)) return false; calls.push(['clearLog']); return true; } },
     logSettings: record('logSettings'), renderSite: record('renderSite'), renderSteps: record('renderSteps'), uploadNow: record('uploadNow'), renderAiSettings: record('renderAiSettings'), renderUsage: record('renderUsage') };
   vm.runInNewContext(`${extractFunction('settingsActs')}\nvar acts = settingsActs();`, context);
   return { acts: context.acts, calls, state, context };
@@ -6967,14 +6972,40 @@ test('Settings\' usage boxes and buttons: a server that isn\'t a URL is refused,
   assert.deepEqual(t.calls, [['save', { serverToken: 'tok' }], ['uploadNow'], ['renderAiSettings'], ['save', { agent: 'JKABCD' }], ['renderUsage']]);
   await t.acts.exportLog();
   assert.equal(t.state.usageNote, 'Exported 3 events to your Downloads.');
-  let asked = null;
-  t.context.confirm = (msg) => { asked = msg; return false; };
+  // Clear log asks in the panel (state.usageAsk), never with a browser dialog (audit 2026-11-07, UX-17).
+  t.context.confirm = () => { throw new Error('no browser dialog'); };
   await t.acts.clearLog();
-  assert.equal(asked, '3 events aren\'t uploaded or exported. Delete them anyway?');
+  assert.deepEqual({ ...t.state.usageAsk }, { n: 3, seq: 7, text: '3 events aren\'t uploaded or exported. Delete them anyway?', yes: 'Delete them' });
   assert.ok(!t.calls.some(([c]) => c === 'clearLog'), 'not cleared without a yes');
-  t.context.confirm = () => true;
+  t.acts.clearLogNo();
+  assert.equal(t.state.usageAsk, null, 'Cancel takes the question down');
+  await t.acts.clearLogYes();
+  assert.ok(!t.calls.some(([c]) => c === 'clearLog'), 'a yes with nothing asked deletes nothing');
   await t.acts.clearLog();
-  assert.deepEqual([t.calls.at(-2), t.calls.at(-1), t.state.usageNote], [['clearLog'], ['renderUsage'], 'Usage log cleared.']);
+  await t.acts.clearLogYes();
+  assert.deepEqual([t.calls.at(-2), t.calls.at(-1), t.state.usageNote, t.state.usageAsk], [['clearLog'], ['renderUsage'], 'Usage log cleared.', null]);
+  t.context.usage.settings = async () => ({ lastExportCount: 3 });
+  await t.acts.clearLog();
+  assert.deepEqual({ ...t.state.usageAsk }, { n: 3, seq: 7, text: 'Delete the 3 exported events from this computer?', yes: 'Delete' });
+  // Events logged after the question: the yes asks again with the new count, and deletes nothing yet.
+  t.context.usage.count = async () => 5;
+  const cleared = t.calls.filter(([c]) => c === 'clearLog').length;
+  await t.acts.clearLogYes();
+  assert.deepEqual([{ ...t.state.usageAsk }, t.calls.filter(([c]) => c === 'clearLog').length],
+    [{ n: 5, seq: 7, text: '5 events aren\'t uploaded or exported. Delete them anyway?', yes: 'Delete them' }, cleared]);
+  // An event logged into a full queue keeps the count, but not the last event's number: asked again too.
+  t.context.usage.seq = 8;
+  await t.acts.clearLogYes();
+  assert.deepEqual([t.state.usageAsk?.seq, t.calls.filter(([c]) => c === 'clearLog').length], [8, cleared]);
+  await t.acts.clearLogYes();
+  assert.deepEqual([t.state.usageAsk, t.calls.filter(([c]) => c === 'clearLog').length], [null, cleared + 1]);
+});
+
+test('the panel opens no browser dialog: its questions are asked in the panel', () => {
+  const files = [...fs.readdirSync('sidepanel/panel').filter((n) => /\.jsx?$/.test(n)).map((n) => `sidepanel/panel/${n}`),
+    ...fs.readdirSync('sidepanel/panel/agent-defaults').map((n) => `sidepanel/panel/agent-defaults/${n}`), 'sidepanel/sidepanel.js'];
+  const dialogs = files.filter((f) => /(^|[^.\w])(confirm|alert|prompt)\s*\(/m.test(fs.readFileSync(f, 'utf8').replace(/\/\/.*$/gm, '')));
+  assert.deepEqual(dialogs, []);
 });
 
 test('Looks right sends the top frame\'s receipt with a fill, only for the page in front', async () => {
