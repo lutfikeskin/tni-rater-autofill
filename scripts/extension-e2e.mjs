@@ -33,7 +33,12 @@
 // does: no Your defaults section or its developer switch while RELEASED_TO_AGENTS is false, no
 // developer recording card, and every usage event stamped channel 'store'. Without them it loads
 // dist/tni-rater-autofill, the unpacked copy, and checks the same of channel 'unpacked': the
-// recording card and the defaults switch shown.
+// recording card and the defaults switch shown. The store build opens the mock under AmWINS' own
+// host (MOCK_HOST, audit 2026-11-07, QA-11): the browser serves that address from the replay
+// server, so nothing leaves the machine, and the store build fills it as AmWINS by its real host
+// pattern: the run needs no localhost permission or practice mapping. It starts on AmWINS' Commercial
+// Lines (PORTAL_PATH), so the quote is the loaded intake's, and its fill events are logged as a
+// real quote's.
 
 import { chromium } from 'playwright';
 import path from 'node:path';
@@ -55,11 +60,18 @@ const ctx = await chromium.launchPersistentContext(userDir, { channel: 'chromium
 // Only this machine: a request to any other host is refused and fails the run (the production
 // usage server named apart). The extension's own pages, data: and blob: URLs aren't requests out.
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
-const leavesMachine = (url) => /^(https?|wss?):$/.test(url.protocol) && !LOCAL_HOSTS.has(url.hostname);
+// The store build's mock address: under AmWINS' host, answered by the replay server (below).
+const MOCK_HOST = CHANNEL === 'store' ? 'e2e-mock.amwinsadmittedplacement.com' : null;
+const leavesMachine = (url) => /^(https?|wss?):$/.test(url.protocol) && !LOCAL_HOSTS.has(url.hostname) && url.hostname !== MOCK_HOST;
 // What the mock page's own HTML loads (the captured page's Bootstrap from a CDN, its Intercom frame
 // not saved with it): refused or missing, so the run never needs the network, and no request or
 // error of the extension's.
-const MOCK_URL = 'http://localhost:8792/test/fixtures/amwins/application.html';
+const MOCK_PATH = '/test/fixtures/amwins/application.html';
+// Under AmWINS' host the mock sits below the application's own path (amwins.js autoFillUrl), so the
+// panel takes it for a quote page, not the portal; the route takes the prefix off again.
+const MOCK_PREFIX = '/application/businessauto';
+const PORTAL_PATH = '/commerciallines';
+const MOCK_URL = MOCK_HOST ? `https://${MOCK_HOST}${MOCK_PREFIX}${MOCK_PATH}` : `http://localhost:8792${MOCK_PATH}`;
 // Agents' own defaults (above): '' (none), 'mine' or 'tni'.
 const DEFAULTS = process.env.E2E_DEFAULTS ?? '';
 if (DEFAULTS && !['mine', 'tni', 'advanced'].includes(DEFAULTS)) throw new Error(`E2E_DEFAULTS must be mine, tni or advanced, not ${DEFAULTS}`);
@@ -75,6 +87,17 @@ const MOCK_ASSETS = new Set([...MOCK_HTML.matchAll(/<(?:link|script|iframe|img)\
 const outside = [];
 ctx.on('request', (r) => { if (leavesMachine(new URL(r.url())) && !MOCK_ASSETS.has(r.url())) outside.push(`${r.method()} ${r.url()}`); });
 await ctx.route(leavesMachine, (route) => route.abort());
+// The store build's mock host, answered from the replay server at the same path.
+if (MOCK_HOST) {
+  await ctx.route((url) => url.hostname === MOCK_HOST, async (route) => {
+    const { pathname, search } = new URL(route.request().url());
+    // AmWINS' Commercial Lines, where an agent opens the application: a page of the carrier's
+    // outside a quote, so the quote opened from it is the loaded intake's (quote-owner.js).
+    if (pathname === PORTAL_PATH) return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Commercial Lines (mock)</title><p>Commercial Lines</p>' });
+    const local = pathname.startsWith(`${MOCK_PREFIX}/`) ? pathname.slice(MOCK_PREFIX.length) : pathname;
+    route.fulfill({ response: await route.fetch({ url: `http://localhost:8792${local}${search}` }) });
+  });
+}
 // Errors anywhere fail the run, as they are logged: the panel's (as a page, popped out), the mock
 // tab's and the service worker's console errors, and uncaught exceptions in a page. BENIGN: errors
 // the run causes on purpose or the browser logs for a reason outside the extension, each with why.
@@ -109,7 +132,10 @@ await sw.evaluate(async ({ serverUrl, profile }) => {
 }, { serverUrl: usageUrl, profile: DEFAULTS ? PROFILE : null });
 console.log('usage server', usageUrl);
 const mock = await ctx.newPage();
-await mock.goto(MOCK_URL);
+// The store build starts on AmWINS' Commercial Lines and opens the application once the intake is
+// loaded, as an agent does: a real carrier's quote is the intake's only when entered from there
+// (quote-owner.js); a practice page is all quote.
+await mock.goto(MOCK_HOST ? `https://${MOCK_HOST}${PORTAL_PATH}` : MOCK_URL);
 const panel = await ctx.newPage();
 // The panel's document never scrolls: its middle (.view) and dock do. A fill's scrollIntoView once
 // scrolled the document, and at AmWINS' declaration, the last step, the header and client strip
@@ -120,6 +146,18 @@ await panel.addInitScript(() => {
   const note = () => { window.__docScrolled = Math.max(window.__docScrolled, document.scrollingElement?.scrollTop ?? 0); };
   document.addEventListener('scroll', note, { capture: true, passive: true });
   setInterval(note, 100);
+  // How often the panel puts the kit into the page (an executeScript of its files, pagekit.js), and
+  // all its executeScript calls: printed per Save & Continue at the end (audit FLOW-10, LIVE-03).
+  window.__scripts = { kit: 0, calls: 0 };
+  const scripting = globalThis.chrome?.scripting;
+  if (scripting?.executeScript) {
+    const executeScript = scripting.executeScript.bind(scripting);
+    scripting.executeScript = (options, ...rest) => {
+      window.__scripts.calls++;
+      if (options?.files?.some((f) => f.endsWith('pagekit.js'))) window.__scripts.kit++;
+      return executeScript(options, ...rest);
+    };
+  }
 });
 await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
 await mock.bringToFront();
@@ -129,6 +167,11 @@ await onAmwins(panel);
 await panel.setInputFiles('#file', 'test/fixtures/sample-intake.pdf');
 await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake, null, { timeout: 15000, polling: 100 });
 await panel.locator('#details-row').waitFor({ state: 'visible', timeout: 10000 });
+if (MOCK_HOST) {
+  await mock.goto(MOCK_URL);
+  await mock.bringToFront();
+  await panel.waitForFunction(() => !/portal/i.test(document.querySelector('#dock-sub')?.textContent ?? ''), null, { timeout: 10000 });
+}
 console.log('site:', await panel.textContent('#site'));
 // What the build's channel shows in Settings (drawn while it is closed): the developer recording card
 // and the defaults' developer switch in the unpacked copy only, and Your defaults there (the switch
@@ -444,6 +487,9 @@ for (let round = 0; round < 20; round++) {
   }
 }
 for (const [, , selector] of AGENT_ANSWERS) if (!agentAnswered.has(selector)) manualFailures.push(`Manual hold wasn't exercised: ${selector}`);
+const scripts = await panel.evaluate(() => window.__scripts);
+const savesSoFar = await mock.evaluate(() => window.__amwinsMock.saves);
+console.log(`Kit put into the page: ${scripts.kit} times, ${scripts.calls} executeScript calls in all, over ${savesSoFar} Save & Continue (${(scripts.kit / Math.max(1, savesSoFar)).toFixed(1)} and ${(scripts.calls / Math.max(1, savesSoFar)).toFixed(1)} per Continue)`);
 const docScrolled = await panel.evaluate(() => window.__docScrolled);
 console.log('Panel document scrolled at most:', docScrolled);
 if (docScrolled) console.log('SCROLLED: the panel\'s document scrolled, so its header and client strip went out of view.');
@@ -596,6 +642,10 @@ try {
   // its page menu before it fills anything.
   const restoredOk = await within(5000, async () => (await popup.locator('#page-menu option').allTextContents()).includes('Insured Info'));
   console.log('Restored pages:', (await popup.locator('#page-menu option').allTextContents()).join(', '));
+  // Its dock shows the step's restored report (Continued, Fill this page again) a moment after the
+  // page menu lists it: a click before then finds the Fill this page it shows meanwhile, hidden as
+  // the report comes.
+  await popup.waitForFunction(() => !!document.getElementById('dock')?.dataset.report, null, { timeout: 5000 });
   const before = await popup.locator('#dock').getAttribute('data-report');
   await popup.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first().click({ timeout: 10000 });
   await popup.waitForFunction((old) => {

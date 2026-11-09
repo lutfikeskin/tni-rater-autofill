@@ -58,6 +58,7 @@ const FIELDS = {
   'coverage.cargo': ['cargo_cov'],
   'coverage.cargoLimit': ['cargo_limit_ded'],
   'coverage.cargoDeductible': ['cargo_limit_ded'],
+  'coverage.cargoAsWritten': ['cargo_limit_ded'],
   'coverage.gl': ['gen_liability'],
   'coverage.glLimit': ['gen_liab_limit'],
   'coverage.reeferBreakdown': ['reefer_breakdown'],

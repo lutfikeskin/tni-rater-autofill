@@ -294,6 +294,12 @@ test('what the extension\'s fill says is kept by its own time; anything else on 
   assert.deepEqual(kit.map((e) => [e.what, e.t]), [['wait', ORIGIN + 3000.5], ['press', ORIGIN + 3200]]);
   assert.deepEqual([kit[0].ms, kit[0].why, kit[0].kind, kit[0].seq !== 99, 'frame' in kit[0], 'filling' in kit[0]], [120, 'answer', 'kit', true, false, false]);
   assert.deepEqual(kit[1].button, { text: 'Continue' });
+  // REC-14: whose an answer and a run were, as one of their words only.
+  say(JSON.stringify({ what: 'run', t: ORIGIN + 3600, on: true, steps: 1, source: 'ai' }));
+  say(JSON.stringify({ what: 'answer', t: ORIGIN + 3700, start: ORIGIN + 3650, field: { key: 'ref:X', label: 'X' }, ok: true, source: 'Sam Smith' }));
+  await h.advance(400);
+  const [run, answered] = h.events().filter((e) => e.kind === 'kit').slice(-2);
+  assert.deepEqual([run.source, 'source' in answered], ['ai', false]);
   // REC-02: what the wait saw itself, as numbers only.
   say(JSON.stringify({ what: 'wait', t: ORIGIN + 4000, start: ORIGIN + 3800, ms: 200, ended: 'quiet', lastChange: ORIGIN + 3950, lastHeld: 'Sam Smith' }));
   await h.advance(400);
@@ -347,6 +353,21 @@ test('a fill\'s answer not taken keeps why as the kit\'s code, and its end its c
   assert.deepEqual([kept.code, 'code' in other], ['answer.not-kept', false]);
   assert.deepEqual([run.failed, run.leftRequired, run.blockers, run.unknown, 'extra' in run], [1, 2, 1, 0, false]);
   assert.ok(!JSON.stringify(h.events()).includes('Sam Smith'));
+});
+
+// Review of PR #439: a wait the agent stopped (the kit's `ended: 'stopped'`) was left out by the
+// trace, so the report's Stopped count stayed zero.
+test('a wait the agent stopped is kept, and the report counts it as stopped', async () => {
+  const { recordingReport } = await import('../scripts/lib/recording.mjs');
+  const h = harness();
+  const say = (detail) => h.emit('rater-trace', h.context.document, { detail: JSON.stringify(detail) });
+  say({ what: 'wait', t: ORIGIN + 2000, why: 'continue', start: ORIGIN + 1000, ms: 1000, quietMs: 800, ended: 'stopped' });
+  await h.advance(400);
+  const events = h.events();
+  assert.deepEqual(events.filter((e) => e.kind === 'kit').map((e) => [e.what, e.ended]), [['wait', 'stopped']]);
+  const report = recordingReport({ manifest: { id: 'x', carrier: 'geico', scenario: 'x', started: new Date(ORIGIN).toISOString(), ended: new Date(ORIGIN + 3000).toISOString(), build: {} }, events });
+  assert.match(report, /\| before pressing Continue \| 1 \| 1\.0 s \| 1\.0 s \| 0 \| 0 \| 1 \|/);
+  assert.match(report, /the fill stopped/);
 });
 
 test('stop sends a burst still open and a request the browser hadn\'t handed over yet, then watches the page no more', async () => {
