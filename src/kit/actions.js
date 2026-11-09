@@ -2,7 +2,7 @@
 // Advance button and carrier helper discovery, safety restrictions, and cross-world press event dispatching.
 
 import { drawnParent, deepQueryAll, buttonText, hostDisabled } from './dom.js';
-import { closestOwn, withAdapter } from './adapter.js';
+import { closestOwn, noteOwnAction, withAdapter } from './adapter.js';
 import { BANNER_ID } from './marks.js';
 import { kitTrace } from './trace.js';
 import { NEVER_ADVANCE, NEVER_CLICK } from '../restricted.js';
@@ -49,6 +49,8 @@ export function coveredBy(el) {
  * @returns {'page' | 'kit'}
  */
 export function pressButton(el, { late = null, kit = false } = {}) {
+  // A wait after it counts its quiet from the press at the earliest (settle's `since`).
+  noteOwnAction();
   let taken = false;
   if (!kit) {
     try { taken = !el.dispatchEvent(new CustomEvent('rater-press', { bubbles: true, composed: true, cancelable: true })); } catch { /* no CustomEvent */ }

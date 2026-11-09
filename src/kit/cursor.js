@@ -536,7 +536,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   let settled;
   try {
     const fresh = !!left && serverBacked && Date.now() - left.at < SETTLED_FRESH_MS && !pageBusy() && currentPage() === left.page && signature() === left.sig;
-    settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start' });
+    settled = await settle({ quietMs: fresh ? START_SETTLED_QUIET_MS : 400, maxMs: 15000, why: 'start', since: true });
   } catch (e) { releaseEditGuard(); clearTimeout(budget); if (running === thisFill) running = null; throw e; }
   phase(null);
   // Stopped while the page settled: nothing was done.
@@ -1309,7 +1309,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         const before = signature();
         const due = actions.find((x) => x.action === state.loadDue);
         phase('waiting');
-        if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !state.report.halted : null, why: 'before-load' })) { stalled(LOAD_HALT); break; }
+        if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !state.report.halted : null, why: 'before-load', since: true })) { stalled(LOAD_HALT); break; }
         state.quiet = !state.agentPressed && signature() === before ? { action: state.loadDue, sig: before } : null;
         continue;
       }
@@ -1323,7 +1323,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       if (!state.lastLook && state.waitShown && state.report.filled.length && window === window.top) {
         state.lastLook = true;
         phase('waiting');
-        await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS, why: 'drawn' });
+        await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS, why: 'drawn', since: true });
         continue;
       }
       // GEICO draws some questions a moment after the answer that asks them, once that answer's
@@ -1341,7 +1341,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         state.quietDue = false;
         state.progressed = true;
         phase('waiting');
-        await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'quiet-end' });
+        await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'quiet-end', since: true });
         state.quietSig = signature();
         continue;
       }
@@ -2332,7 +2332,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       // 17 of two recordings (Progressive, 2026-11-04): 250 ms is enough to see a late redraw.
       phase(hold && confirmed == null ? 'waiting' : 'continue');
       if (serverBacked) await settle({ quietMs: 250, maxMs: 6000, why: 'continue' });
-      else if (advance.quietMs && state.quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'continue' });
+      else if (advance.quietMs && state.quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'continue', since: true });
       // The report as the page is after that wait, from one read (reconcile), halted or not.
       const now = collectControls();
       const nowPairs = assign(now, plan);

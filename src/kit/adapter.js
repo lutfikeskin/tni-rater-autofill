@@ -265,18 +265,45 @@ export function waitsTallied() {
   return t && Object.keys(t).length ? t : null;
 }
 
+// The page's quiet across waits (speed review, 2026-11-09): a wait's observer goes on watching
+// after it ends, until the next wait takes over from it, so a wait asked with `since` counts its
+// quiet from the page's last change, the kit's own last write or press (noteOwnAction), or the end
+// of the page's last request, whichever was latest, not from its own start. A wait right after one
+// that ended quiet then doesn't pay its whole window again for a page that has done nothing since.
+// The windows themselves are unchanged. Without a watch over this document's body (the first wait,
+// or a body the page replaced), it counts from its start, as every wait did before.
+/** @type {{ mo: MutationObserver, body: HTMLElement, at: () => number } | null} */
+let watching = null;
+let ownActionAt = 0;
+/** The kit wrote an answer or pressed a button: a wait asked with `since` counts from now at the earliest. */
+export function noteOwnAction() {
+  ownActionAt = Date.now();
+}
+function quietFrom(now) {
+  const prior = watching;
+  if (!prior || prior.body !== document.body) return now;
+  if (prior.mo.takeRecords?.().length) return now;
+  const requestEnd = Number.isFinite(lastRequestEnd()) ? now - (perfNow() - lastRequestEnd()) : 0;
+  return Math.min(now, Math.max(prior.at(), ownActionAt, requestEnd));
+}
+
 /**
  * Wait until the page stops changing: not busy, every component it draws defined, and no new
  * nodes for quietMs. A stopped fill (`abort`, waitsStopped unless given) ends the wait at its next
  * wake, unsettled; `abort: null` only where the wait holds a request the page is still answering.
- * @param {{ quietMs?: number, maxMs?: number, requests?: (() => boolean) | null, why?: string | null, abort?: (() => boolean) | null }} [options]
+ * `since`: its quiet counts from the page's last change seen before it began (quietFrom), for a
+ * wait with nothing pressed or written since the wait before it but what noteOwnAction stamps.
+ * @param {{ quietMs?: number, maxMs?: number, requests?: (() => boolean) | null, why?: string | null, abort?: (() => boolean) | null, since?: boolean }} [options]
  * @returns {Promise<boolean>}
  */
-export async function settle({ quietMs = 250, maxMs = 15000, requests = null, why = null, abort = waitsStopped } = {}) {
-  let last = Date.now();
-  const mo = new MutationObserver(() => { last = Date.now(); });
-  mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', ...adapter().changeAttributes] });
+export async function settle({ quietMs = 250, maxMs = 15000, requests = null, why = null, abort = waitsStopped, since = false } = {}) {
   const start = Date.now();
+  let last = since ? quietFrom(start) : start;
+  watching?.mo.disconnect();
+  watching = null;
+  const mo = new MutationObserver(() => { last = Date.now(); });
+  const body = document.body;
+  mo.observe(body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', ...adapter().changeAttributes] });
   // While a recording runs, the wait says what it saw itself (REC-02, 2026-11-07): the trace sees
   // only the page's child lists, not the attributes this one watches (a radio's `checked`, GEICO's
   // `active-index`) nor a busy page or an undefined component. `lastChange`: its last change seen;
@@ -325,7 +352,9 @@ export async function settle({ quietMs = 250, maxMs = 15000, requests = null, wh
     told('limit', { settled, held: { busy: pageBusy(), changing: Date.now() - last < quietMs, requests: requested() } });
     return settled;
   } finally {
-    mo.disconnect();
+    // Still watching, for the next wait (quietFrom); a wait begun meanwhile took over and stopped it.
+    if (watching === null) watching = { mo, body, at: () => last };
+    else mo.disconnect();
   }
 }
 
