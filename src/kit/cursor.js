@@ -1080,7 +1080,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           cursor();
           state.keepSettled.add(step.id);
           phase('waiting');
-          await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000, requests: () => !state.report.halted });
+          await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000, requests: () => !state.report.halted, why: 'keep' });
           thisRound.retry = true;
           break;
         }
@@ -1088,7 +1088,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           cursor();
           state.resetWaited = true;
           phase('waiting');
-          await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000 });
+          await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000, why: 'reset' });
           thisRound.retry = true;
           break;
         }
@@ -1288,10 +1288,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       phase('helper', turn.text);
       pressButton(turn.el);
       state.progressed = true;
-      if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { stalled('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
+      if (!await settle(serverBacked ? { why: 'pager' } : { quietMs: 250, maxMs: 3000, why: 'pager' })) { stalled('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
       // Its rows drawn: the pressed group shown (where the page says which is), 10 s at most.
       for (const until = Date.now() + 10000; !unitGroups.shows(turn.text) && Date.now() < until && !state.report.halted;) await pause(200);
-      if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { stalled('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
+      if (!await settle(serverBacked ? { why: 'pager' } : { quietMs: 250, maxMs: 3000, why: 'pager' })) { stalled('The page did not settle after showing another group of vehicles. Review before retrying.'); break; }
       if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
       continue;
     }
@@ -1341,7 +1341,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         state.quietDue = false;
         state.progressed = true;
         phase('waiting');
-        await settle({ quietMs: advance.quietMs, maxMs: 6000 });
+        await settle({ quietMs: advance.quietMs, maxMs: 6000, why: 'quiet-end' });
         state.quietSig = signature();
         continue;
       }
@@ -1642,7 +1642,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // quiet again. A request still running can't be seen, and a value the page then draws back
     // by itself isn't a change (W43-41, FL, 2026-10-22: four answers marked as changed and put
     // back, which the agent saw right the whole time).
-    await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !state.report.halted });
+    await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'kept' });
     if (state.report.halted) return false;
     const now = new Map(answerPlaces(collectControls()));
     traceRead(a, now);
@@ -1662,7 +1662,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       try { result = await apply(step, c); } catch (e) { result = { ok: false }; }
       if (result.ok) { given.add(k.at); a.trace?.putBack.push(k.at); }
     }
-    if (given.size) await settle({ quietMs: 250, maxMs: LOAD_MS });
+    if (given.size) await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'put-back' });
     const after = new Map(answerPlaces(collectControls()));
     for (const { k, c: before } of changed) {
       const c = after.get(k.at) ?? before;
@@ -1701,7 +1701,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       const now = new Map(answerPlaces(collectControls()));
       traceRead(a, now);
       if (!keptChanged(a, now).length) continue;
-      await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !state.report.halted });
+      await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'kept' });
       await answersKept(a);
       return;
     }

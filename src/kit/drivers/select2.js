@@ -88,7 +88,7 @@ export function createSelect2Drivers(kit) {
       return { ok: false, code: 'option.ambiguous', reason: hits.length ? `${hits.length} results match "${step.value}"; pick the right one` : `no confident match for "${step.value}"; pick it yourself` };
     }
     press(hits[0]);
-    await settle({ quietMs: 250, maxMs: 4000 });
+    await settle({ quietMs: 250, maxMs: 4000, why: 'list' });
     return searchAgrees(step, c) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, code: 'answer.not-kept', reason: 'the page did not keep the choice; pick it yourself' };
   }
 
@@ -118,7 +118,7 @@ export function createSelect2Drivers(kit) {
       return { ok: false, code: 'option.ambiguous', reason: hits.length ? `the list showed "${text}" ${hits.length} times; pick it yourself` : `the list didn't show "${text}" when it was typed; pick it yourself` };
     }
     press(hits[0]);
-    await settle({ quietMs: 250, maxMs: 4000 });
+    await settle({ quietMs: 250, maxMs: 4000, why: 'list' });
     return { ok: true };
   }
 
@@ -130,7 +130,7 @@ export function createSelect2Drivers(kit) {
     const remove = chip?.querySelectorAll?.('.select2-selection__choice__remove')?.[0] ?? null;
     if (!remove) return { ok: false, code: 'widget.unavailable', reason: `"${text}" is picked but has no × to take it off; take it off yourself` };
     press(remove);
-    await settle({ quietMs: 250, maxMs: 4000 });
+    await settle({ quietMs: 250, maxMs: 4000, why: 'list' });
     return { ok: true };
   }
 

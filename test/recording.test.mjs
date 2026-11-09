@@ -684,3 +684,28 @@ test('the report tells each Luna call in the timeline, and what it was asked, ci
   assert.match(report, /- "Hazmat placards\?": "No" on operations\.hazPlacard = false → supported/);
   assert.doesNotMatch(recordingReport({ manifest: manifestFor(), events: events.slice(0, 1) }), /## Luna/);
 });
+
+test('every wait in the fill engine says what it is for, the trace keeps the word, and the report has words for it', () => {
+  const dir = path.join(import.meta.dirname, '..', 'src', 'kit');
+  const files = [...fs.readdirSync(dir).filter((f) => f.endsWith('.js')).map((f) => path.join(dir, f)),
+    ...fs.readdirSync(path.join(dir, 'drivers')).filter((f) => f.endsWith('.js')).map((f) => path.join(dir, 'drivers', f))];
+  const whys = new Set();
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8');
+    for (const call of source.matchAll(/await settle\(([^;]*?)\)\)? *[;{)]/g)) {
+      const named = [...call[1].matchAll(/why: '([a-z-]+)'/g)].map((m) => m[1]);
+      assert.ok(named.length, `${path.basename(file)}: a wait with no why: settle(${call[1]})`);
+      for (const why of named) whys.add(why);
+    }
+  }
+  const trace = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'content', 'trace.js'), 'utf8');
+  const kept = new Set(JSON.parse(trace.match(/const WAITS_FOR = new Set\((\[[^\]]*\])\)/)[1].replaceAll("'", '"')));
+  const report = recordingReport({ manifest: { id: 'r', carrier: 'geico', started: '2026-11-09T00:00:00.000Z', ended: '2026-11-09T00:01:00.000Z' },
+    events: [...whys].map((why, i) => ({ kind: 'kit', t: 1000 + i * 10, seq: i, frame: 0, what: 'wait', why, quietMs: 250, maxMs: 1000, requests: false, start: 1000 + i * 10, ms: 5, ended: 'quiet' })) });
+  for (const why of whys) {
+    assert.ok(kept.has(why), `the trace drops the wait "${why}"`);
+  }
+  // A wait the report has no words for is said as one "for the page".
+  assert.doesNotMatch(report, /waited [^\n]* for the page \(quiet/);
+  assert.ok(whys.size >= 18);
+});
