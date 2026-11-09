@@ -1329,6 +1329,7 @@
  * @property {boolean} [keyFormOpen]
  * @property {any} [usageCard]
  * @property {string} [usageNote]
+ * @property {{ n: number, seq: number, text: string, yes: string } | null} [usageAsk]
  * @property {any} [health]
  * @property {boolean | null} [testRun]
  * @property {boolean} [captureOff]

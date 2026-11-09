@@ -19,6 +19,7 @@ import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { HelpLink } from './help-link.jsx';
 import { DefaultsDevSwitch, TniDefaults } from './agent-defaults/view.jsx';
+import { useAskFocus } from './ask-focus.js';
 
 // A checkbox the panel reads by id. It shows `checked` whenever that changes, or whenever `said`
 // (what it was said in) is said again, and the agent's click is passed on as the box's own change
@@ -120,7 +121,7 @@ function DevRecording({ act }) {
 }
 
 // `act`: done; the Filling switches (switch(name, on)); agent, serverUrl, serverToken (a box's new
-// value); upload, exportLog, clearLog, capture; testRun(on); the AI's aiOn(on), aiAuto(on), aiNames(on), keyEdit,
+// value); upload, exportLog, clearLog (it asks first) with clearLogYes and clearLogNo, capture; testRun(on); the AI's aiOn(on), aiAuto(on), aiNames(on), keyEdit,
 // keySave and keyKey (a key pressed in the key's box); and the developer recording's (devrec: start,
 // note, stop, recover), or null where it isn't offered.
 function Settings({ act }) {
@@ -130,6 +131,8 @@ function Settings({ act }) {
   const health = useStore(panelStore, (s) => s.health);
   const card = useStore(panelStore, (s) => s.usageCard);
   const note = useStore(panelStore, (s) => s.usageNote);
+  const usageAsk = useStore(panelStore, (s) => s.usageAsk);
+  const askFocus = useAskFocus(!!usageAsk);
   const testRun = useStore(panelStore, (s) => s.testRun);
   const captureOff = useStore(panelStore, (s) => !!s.captureOff);
   const captureStatus = useStore(panelStore, (s) => s.captureStatus);
@@ -197,7 +200,15 @@ function Settings({ act }) {
             <button type="button" id="capture" className="ghost small-btn" title="Alt+Shift+C while the panel is open" disabled={captureOff} onClick={() => act.capture()}>Capture page layout</button>
             <button type="button" id="upload-usage" className="ghost small-btn" onClick={() => act.upload()}>Upload now</button>
             <button type="button" id="export-usage" className="ghost small-btn" onClick={() => act.exportLog()}>Export log</button>
-            <button type="button" id="clear-usage" className="ghost small-btn danger" onClick={() => act.clearLog()}>Clear log</button>
+            <button type="button" id="clear-usage" ref={askFocus.opener} className="ghost small-btn danger" aria-expanded={!!usageAsk} aria-controls="usage-confirm" onClick={() => act.clearLog()}>Clear log</button>
+          </div>
+          {/* Asked before the usage log is deleted (settingsActs clearLog), as the file tools ask. */}
+          <div id="usage-confirm" ref={askFocus.group} className="file-confirm" role="group" aria-labelledby="usage-confirm-text" hidden={!usageAsk}>
+            <p id="usage-confirm-text" className="small">{usageAsk?.text ?? ''}</p>
+            <div className="actions">
+              <button type="button" id="usage-confirm-yes" className="ghost danger" onClick={() => act.clearLogYes()}>{usageAsk?.yes ?? ''}</button>
+              <button type="button" id="usage-confirm-no" ref={askFocus.cancel} className="ghost" onClick={() => act.clearLogNo()}>Cancel</button>
+            </div>
           </div>
           <p id="capture-status" className="fine" role="status" hidden={!captureStatus}>{captureStatus ?? ''}</p>
           <DevRecording act={act.devrec} />
