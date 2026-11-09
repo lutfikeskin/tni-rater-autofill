@@ -14,8 +14,8 @@
 //
 // Runs locally, in the pull-request checks and in the Windows smoke; see docs/testing.md.
 // Layouts: test/bakeoff/course-*.json, captures/progressive/*.json and the per-state layouts
-// npm run layouts builds (captures/progressive/generated/, git-ignored). Needs internet (the
-// replay page loads ExtJS from cdnjs) and Playwright's Chromium (npx playwright install chromium).
+// npm run layouts builds (captures/progressive/generated/, git-ignored). Needs Playwright's
+// Chromium (npx playwright install chromium); no network (ExtJS is vendored in test/replay/vendor/).
 // Reports go to reviews/e2e-<date>.md; the baseline is test/e2e-baseline.json. In every mode, each
 // page's outcomes (what each question got, by its text and filling rule: a hash) must equal the baseline's, so a
 // rule change that alters an answer with the counts unchanged fails the run until --update.
