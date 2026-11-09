@@ -98,7 +98,7 @@ export function fieldStatus(f, carrier, page = null, fields = null) {
 // fieldStatus with the claiming rule itself (`def`), for evaluating it on an intake (npm run benchmark),
 // and whether a rule before it might have claimed the field through a selector (`passedUnsure`).
 export function claimingRule(f, carrier, page = null, fields = null) {
-  const all = [...(carrier.rules ?? []), ...(carrier.useGenericRules === false ? [] : GENERIC_RULES)];
+  const all = [...(carrier.rules ?? []), ...(carrier.useGenericRules !== true ? [] : GENERIC_RULES)];
   // Known questions (a name, a text on its page, an option or a selector) before label rules, as
   // the fill engine pairs them.
   const known = (r) => !!(r.field || ((r.ask || r.label) && r.page) || r.selector || r.withOption);

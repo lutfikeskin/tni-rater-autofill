@@ -334,6 +334,21 @@ test('an event the page dispatches as the fill\'s keeps only the documented fiel
   assert.deepEqual([run.on, run.filled, 'halted' in run, 'who' in run], [false, 3, false, false]);
 });
 
+// Review of PR #439: a wait the agent stopped (the kit's `ended: 'stopped'`) was left out by the
+// trace, so the report's Stopped count stayed zero.
+test('a wait the agent stopped is kept, and the report counts it as stopped', async () => {
+  const { recordingReport } = await import('../scripts/lib/recording.mjs');
+  const h = harness();
+  const say = (detail) => h.emit('rater-trace', h.context.document, { detail: JSON.stringify(detail) });
+  say({ what: 'wait', t: ORIGIN + 2000, why: 'continue', start: ORIGIN + 1000, ms: 1000, quietMs: 800, ended: 'stopped' });
+  await h.advance(400);
+  const events = h.events();
+  assert.deepEqual(events.filter((e) => e.kind === 'kit').map((e) => [e.what, e.ended]), [['wait', 'stopped']]);
+  const report = recordingReport({ manifest: { id: 'x', carrier: 'geico', scenario: 'x', started: new Date(ORIGIN).toISOString(), ended: new Date(ORIGIN + 3000).toISOString(), build: {} }, events });
+  assert.match(report, /\| before pressing Continue \| 1 \| 1\.0 s \| 1\.0 s \| 0 \| 0 \| 1 \|/);
+  assert.match(report, /the fill stopped/);
+});
+
 test('stop sends a burst still open and a request the browser hadn\'t handed over yet, then watches the page no more', async () => {
   const h = harness();
   h.mutate([{ addedNodes: [node([])], removedNodes: [] }]);

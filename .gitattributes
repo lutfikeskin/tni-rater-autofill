@@ -4,3 +4,5 @@
 *.png binary
 *.jpg binary
 *.zip binary
+# Vendored as served, byte for byte: the replay page pins its ExtJS files by sha384.
+test/replay/vendor/** -text
