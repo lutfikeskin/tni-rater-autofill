@@ -7528,11 +7528,16 @@ test('GEICO\'s City: one the list doesn\'t have leaves GEICO\'s, with a check na
     return { city: city.value, report, checks: mine(report.checks), failed: mine(report.failed), kept: mine(report.kept), filled: mine(report.filled) };
   };
   for (const step of ['Business & Owner Info', 'Vehicles']) {
-    const r = await run(step, ['', 'CONYERS', 'OTHER'], 'CONYERS');
+    const r = await run(step, ['', 'CONYERS', 'COVINGTON', 'OTHER'], 'CONYERS');
     assert.equal(r.city, 'CONYERS', step);
     assert.deepEqual([r.failed, r.filled, r.kept.length], [[], [], 1], step);
     assert.equal(r.checks.length, 1, step);
     assert.match(r.checks[0].note, /no "Testville".*"CONYERS" is left as it is\. Check it\./, step);
+    // The maintainer, 2026-11-09 (a GEICO recording held every vehicle on "check: City", ORLANDO
+    // the only city and selected): the ZIP's one city (but OTHER) is kept with nothing to check.
+    const only = await run(step, ['', 'CONYERS', 'OTHER'], 'CONYERS');
+    assert.deepEqual([only.city, only.failed, only.filled, only.kept.length, only.checks], ['CONYERS', [], [], 1, []], step);
+    assert.ok(!only.report.checks.length && !only.report.noData.some((x) => x.key === 'ref:GiveCity'), step);
   }
   // The intake's city listed: picked over GEICO's.
   let r = await run('Business & Owner Info', ['', 'CONYERS', 'TESTVILLE', 'OTHER'], 'CONYERS');
