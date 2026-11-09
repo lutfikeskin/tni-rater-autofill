@@ -250,6 +250,8 @@ export const fillWaits = (v) => !!v && typeof v === 'object' && !Array.isArray(v
 export const RUN_FIELDS = {
   run: (v) => typeof v === 'string' && /^[\w-]{8,64}$/.test(v),
   rules: (v) => typeof v === 'string' && /^[0-9a-f]{6,16}$/.test(v),
+  // One carrier's own fingerprint (src/usage.js carrierRuleFiles; audit 2026-11-07, CARR-14).
+  carrierRules: (v) => typeof v === 'string' && /^[0-9a-f]{6,16}$/.test(v),
   settings: (v) => !!v && typeof v === 'object' && !Array.isArray(v)
     && Object.keys(v).length === SETTINGS_KEYS.length && SETTINGS_KEYS.every((k) => typeof v[k] === 'boolean'),
   step: (v) => typeof v === 'string' && v.length <= 120,

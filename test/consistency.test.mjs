@@ -40,19 +40,19 @@ test('fill events carry only fields the server keeps (nothing silently dropped)'
     actions: [{ id: 'act', text: 'Go' }], blockers: ['unfamiliar: B'], advanced: 'Continue', checks: [], waits: { answer: { n: 2, ms: 300, limit: 0, slack: 120 } } }];
   // With the run-identity fields too (Contract 1, audit 2026-10-08): the server must keep them.
   const settings = { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false };
-  for (const e of fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 5, redact: (s) => s, run: '4c1e0b7a-run-id', rules: 'abcdef012345', settings, step: 'Vehicles' })) {
+  for (const e of fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 5, redact: (s) => s, run: '4c1e0b7a-run-id', rules: 'abcdef012345', carrierRules: '0123456789ab', settings, step: 'Vehicles' })) {
     const keep = new Set([...COMMON, ...(EVENT_FIELDS[e.type] ?? [])]);
     const dropped = Object.keys(e).filter((k) => !keep.has(k) && e[k] !== undefined);
     assert.deepEqual(dropped, [], `${e.type}: the server drops ${dropped.join(', ')}`);
     for (const [k, valid] of Object.entries(RUN_FIELDS)) if (e[k] !== undefined) assert.ok(valid(e[k]), `${e.type}.${k} as the extension sends it would be refused`);
   }
-  assert.deepEqual(Object.keys(RUN_FIELDS).sort(), ['defaultsHash', 'rules', 'run', 'settings', 'step']);
+  assert.deepEqual(Object.keys(RUN_FIELDS).sort(), ['carrierRules', 'defaultsHash', 'rules', 'run', 'settings', 'step']);
   // A fill's waits as the extension sends them are the shape the server keeps (REC-09).
   const [run] = fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 5, redact: (s) => s });
   assert.ok(fillWaits(run.waits), 'fill_run.waits as the extension sends it would be dropped');
-  for (const f of ['run', 'rules', 'settings', 'step']) assert.ok(EVENT_FIELDS.fill_run.includes(f), `fill_run keeps ${f}`);
+  for (const f of ['run', 'rules', 'carrierRules', 'settings', 'step']) assert.ok(EVENT_FIELDS.fill_run.includes(f), `fill_run keeps ${f}`);
   for (const f of ['run', 'step']) assert.ok(EVENT_FIELDS.fill_field.includes(f), `fill_field keeps ${f}`);
-  for (const f of ['run', 'rules', 'settings']) assert.ok(EVENT_FIELDS.fill_error.includes(f), `fill_error keeps ${f} without a fill_run result`);
+  for (const f of ['run', 'rules', 'carrierRules', 'settings']) assert.ok(EVENT_FIELDS.fill_error.includes(f), `fill_error keeps ${f} without a fill_run result`);
   assert.ok(EVENT_FIELDS.field_change.includes('step'));
 });
 
@@ -101,7 +101,7 @@ const schemaFingerprint = () => crypto.createHash('sha256').update(JSON.stringif
 // Every schema version's fingerprint, one entry a version. A version's entry is never rewritten:
 // a contract that changed is a new version with its own entry, so the fingerprint can't be brought
 // up to date while the version stays (the review of #378).
-const VERSION_FINGERPRINTS = { 1: '4e730dd257f0', 2: 'df6f4ac901ac', 3: '4f30a28c01e0', 4: '8be87434d436', 5: '465ac75cfbcb', 6: '0b16ecd05c80', 7: '24d8eedf6a7f', 8: 'cd7220a05fa8', 9: '4377e4852f03' };
+const VERSION_FINGERPRINTS = { 1: '4e730dd257f0', 2: 'df6f4ac901ac', 3: '4f30a28c01e0', 4: '8be87434d436', 5: '465ac75cfbcb', 6: '0b16ecd05c80', 7: '24d8eedf6a7f', 8: 'cd7220a05fa8', 9: '4377e4852f03', 10: '7e75c0349093' };
 test('the event contract is shared, and its version goes up whenever it changes', () => {
   assert.equal(COMMON, SCHEMA.COMMON, 'the server keeps the shared COMMON');
   assert.deepEqual(Object.keys(EVENT_FIELDS), Object.keys(SCHEMA.EVENT_FIELDS), 'the server knows every shared event type, and only those');

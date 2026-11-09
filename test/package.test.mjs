@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile, zipName, PACKAGED, mapsZipName, withoutMapUrl, packageOf, noticesPlugin, thirdPartyNotices, RULES_FILE, stampRules, rulesOf, rulesPlugin } from '../scripts/lib/package.mjs';
-import { RULE_FILES, rulesHash } from '../src/usage.js';
+import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile, zipName, PACKAGED, mapsZipName, withoutMapUrl, packageOf, noticesPlugin, thirdPartyNotices, RULES_FILE, stampRules, rulesOf, rulesPlugin, carrierRulesOf, stampCarrierRules } from '../scripts/lib/package.mjs';
+import { RULE_CARRIERS, RULE_FILES, carrierRuleFiles, rulesHash } from '../src/usage.js';
 import { kitCode } from '../scripts/lib/kit.mjs';
 
 const read = (f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
@@ -155,7 +155,17 @@ test('the panel build stamps the rules fingerprint of RULE_FILES, and fails if t
   assert.match(source, /^const RULES_VERSION = null;$/m, 'unbuilt, the panel carries none');
   const out = await plugin.transform.call(ctx, source, 'C:\\repo\\sidepanel\\panel\\coordinator.js');
   assert.ok(out.code.includes(`const RULES_VERSION = '${expected}';`), 'Windows paths too');
-  assert.equal(watched.length, RULE_FILES.length, 'a watch build stamps it again when a rule file changes');
+  assert.equal(watched.length, new Set(RULE_CARRIERS.flatMap(carrierRuleFiles)).size, 'a watch build stamps it again when a rule file or a page adapter changes');
+  // Audit 2026-11-07, CARR-14: each carrier's own fingerprint, beside the global one: its module and
+  // its page adapter with the shared files, so one carrier's change leaves the others' as they were.
+  const carriers = await carrierRulesOf(root);
+  assert.deepEqual(Object.keys(carriers).sort(), ['amwins', 'geico', 'progressive']);
+  assert.ok(out.code.includes(`const CARRIER_RULES = ${JSON.stringify(carriers)};`));
+  assert.equal(carriers.geico, await rulesHash(carrierRuleFiles('geico').map(read)));
+  assert.ok(carrierRuleFiles('geico').includes('src/content/carriers/geico.js') && !carrierRuleFiles('geico').includes('src/carriers/progressive.js'));
+  assert.equal(new Set(Object.values(carriers)).size, 3, 'one fingerprint each');
+  assert.throws(() => stampCarrierRules('no placeholder', carriers));
+  assert.throws(() => stampCarrierRules(source, { geico: "x'; alert(1); '" }));
   plugin.buildEnd();
   assert.throws(() => rulesPlugin(root).buildEnd(), /coordinator\.js/);
   assert.doesNotThrow(() => rulesPlugin(root).buildEnd(new Error('build failed')));
