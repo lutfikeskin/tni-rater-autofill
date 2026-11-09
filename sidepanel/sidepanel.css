@@ -241,6 +241,16 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .drop-hint { font-size: 12px; color: var(--ink-secondary); }
 #choose { min-height: 36px; padding: 0 20px; font-size: 13.5px; }
 .privacy-line { margin-top: -4px; color: var(--ink-muted); font-size: 12px; text-align: center; }
+/* Home's setup checklist (home-view.jsx); #setup-root takes no room once all is done. */
+#setup-root:empty { display: none; }
+.setup-card { padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); display: grid; gap: 6px; }
+.setup-card h3 { font-size: 14px; font-weight: 600; color: var(--ink-strong); letter-spacing: -0.015em; }
+.setup-list { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 6px; }
+.setup-list li { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--ink); }
+.setup-list li.done .setup-label { color: var(--ink-secondary); }
+.setup-list .setup-label { flex: 1 1 auto; text-wrap: pretty; }
+.setup-list .tick { flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 10px; border: 1px solid var(--border-strong); font-size: 11px; font-weight: 700; }
+.setup-list li.done .tick { border-color: transparent; background: var(--success-soft); color: var(--success); }
 
 /* One issue pattern: what's wrong, both sources side by side, one action */
 .issue { background: var(--surface); border: 1px solid var(--signal-line); border-radius: var(--radius-md); padding: 8px 12px; display: grid; gap: 8px; }
@@ -312,6 +322,13 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .field-stack { display: grid; gap: 2px; font-size: 11.5px; color: var(--ink-secondary); }
 .field-stack :is(input, select, textarea) { min-height: 30px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-sm); padding: 2px 8px; width: 100%; font-size: 12.5px; }
 .field textarea { resize: vertical; min-height: 56px; }
+/* A field the agent corrected: the report's Your edit tag, and what the intake said with Restore (UX-07). */
+.field label .tag { margin-left: 6px; padding: 1px 6px; }
+.field-was { grid-column: 2; display: flex; align-items: baseline; gap: 8px; margin: -2px 0 4px; font-size: 11.5px; color: var(--ink-muted); overflow-wrap: anywhere; }
+.field-was span { flex: 1; min-width: 0; }
+#details-view .drawer-panel { grid-template-rows: auto auto minmax(0, 1fr); }
+.details-tools { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border-soft); }
+.details-tools input { flex: 1; min-width: 0; min-height: 30px; padding: 2px 8px; font-size: 12.5px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-sm); }
 /* Fields the intake leaves blank are hidden unless flagged (showEmpty): the drawer's "Show N empty". */
 .drawer-panel[data-empty="hidden"] .field.empty:not(.flagged) { display: none; }
 .drawer-panel[data-empty="hidden"] .section.all-empty .section-body { display: none; }
@@ -321,7 +338,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 /* Steps 2 and 3: the raters to open, the unit pickers, the answers */
 .waiting { padding: 14px 12px; }
 .rater-logos { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
-.rater-logos img { height: 14px; width: auto; }
+.rater-logo { display: inline-flex; align-items: center; padding: 6px 8px; margin: -6px -8px; background: none; border: 0; border-radius: var(--radius-sm); cursor: pointer; }
+.rater-logo:hover { background: var(--surface-sunken); }
+.rater-logos img { height: 14px; width: auto; display: block; }
 .pickers { padding: 8px 12px 0; display: grid; gap: 6px; }
 .pickers:empty { display: none; }
 .picker { display: flex; align-items: center; gap: 8px; }
@@ -683,3 +702,23 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .opt-btn[aria-pressed="true"] { border-color: var(--brand); background: var(--surface-selected); }
 .change-slot:empty { display: none; }
 .note-line.agent-page { color: var(--ink-strong); }
+
+/* The quote summary, read only: a sheet over the panel (summary-view.jsx) */
+.summary-panel .sheet-sub { white-space: normal; }
+.summary-panel > .summary-body { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--canvas); }
+.summary-h { font-size: 13px; font-weight: 600; color: var(--ink-strong); margin: 6px 0 2px; }
+.summary-list ul { margin: 0; padding-left: 16px; display: grid; gap: 3px; font-size: 12.5px; }
+.summary-carrier { display: grid; gap: 6px; }
+.summary-page { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 10px; padding: 6px 10px; }
+.summary-page > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--ink-strong); }
+.summary-counts { font-weight: 400; }
+.summary-said { color: var(--ink-secondary); margin: 4px 0; }
+.summary-rows { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.summary-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 1px; font-size: 12.5px; padding: 4px 0; border-top: 1px solid var(--border-soft); }
+.summary-q { color: var(--ink-secondary); overflow-wrap: anywhere; }
+.summary-a { grid-column: 1; color: var(--ink-strong); font-weight: 500; overflow-wrap: anywhere; }
+.summary-tag { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.summary-tag.edited, .summary-tag.changed { color: var(--success-ink); background: var(--success-soft); }
+.summary-tag.open, .summary-tag.pending, .summary-tag.marked { color: var(--ink-strong); background: var(--surface-hover); }
+.summary-note { grid-column: 1 / -1; }
+.summary-saved { padding: 6px 14px 0; color: var(--ink-secondary); }

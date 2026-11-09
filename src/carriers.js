@@ -58,15 +58,10 @@ export const CARRIERS = [
     name: 'Local test page',
     hosts: [/^(localhost|127\.0\.0\.1)$/],
     rules: [],
+    // The local test page is filled by the generic label rules alone.
+    useGenericRules: true,
   },
 ];
-
-// The raters the panel fills, by name, for its "Open the client's quote on a rater" line:
-// "Progressive, GEICO or AmWINS" (every carrier with rules of its own; the local test page has none).
-export const raterNames = () => {
-  const names = CARRIERS.filter((c) => c.rules.length).map((c) => c.name);
-  return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0] ?? '';
-};
 
 // Practice copies of carrier pages served from this repo (test/replay, test/mock-progressive,
 // test/fixtures/amwins, test/fixtures/geico).
@@ -76,6 +71,15 @@ const PRACTICE = [
   { path: /^\/test\/fixtures\/amwins\//, carrier: 'amwins' },
   { path: /^\/test\/fixtures\/geico\//, carrier: 'geico' },
 ];
+
+// The raters the panel offers (each carrier with a `display`), in CARRIERS' order: the "open a
+// rater" card's logos and the dock's list (ratersSaid).
+export const RATERS = CARRIERS.filter((c) => c.display);
+// "Progressive, GEICO or AmWINS."
+export function ratersSaid(raters = RATERS) {
+  const names = raters.map((c) => c.name);
+  return `${names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0] ?? 'A rater'}.`;
+}
 
 export function carrierForUrl(url) {
   let u;

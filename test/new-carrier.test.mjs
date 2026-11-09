@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { CARRIERS } from '../src/carriers.js';
+import { CARRIERS, RATERS, ratersSaid } from '../src/carriers.js';
 
 // Audit 2026-11-07, ORG-16: adding a carrier touches about a dozen places, listed only in
 // docs/new-carrier.md's prose. The new-carrier issue template lists each as a box; this keeps the
@@ -72,7 +72,6 @@ test('every registry names each carrier with rules, or says here why not', async
   const { RULE_FILES } = await import('../src/usage.js');
   const { CARRIER_PARTS } = await import('../src/ai/tni-rules.js');
   const { REGISTRY } = await import('../src/agent-defaults/registry.js');
-  const { raterNames } = await import('../src/carriers.js');
   const dashboard = /const CARRIERS = (\{[^}]*\})/.exec(read('server/dashboard.mjs'))?.[1] ?? '';
   const nameKeys = [.../const CARRIER_NAMES = \{([\s\S]*?)\n\};/.exec(read('src/util.js'))?.[1].matchAll(/^ {2}(\w+): \{/gm) ?? []].map((m) => m[1]);
   // The runner's carriers: its RUNNERS, which its default, the carriers it accepts and its dispatch
@@ -90,12 +89,11 @@ test('every registry names each carrier with rules, or says here why not', async
   const carriers = CARRIERS.filter((c) => c.rules?.length);
   assert.ok(carriers.length >= 3);
   for (const c of carriers) {
-    assert.ok(c.logo && fs.existsSync(new URL(`../sidepanel/${c.logo}`, import.meta.url)), `${c.id}: a logo under sidepanel/`);
     assert.ok(RULE_FILES.includes(`src/carriers/${c.id}.js`), `${c.id}: in RULE_FILES (src/usage.js)`);
     assert.ok(CARRIER_PARTS[c.id], `${c.id}: a rulebook part`);
-    assert.ok(new RegExp(`\\b${c.id}: '${c.name}'`).test(dashboard), `${c.id}: the dashboard's name for it is "${c.name}" (server/dashboard.mjs)`);
+    assert.ok(dashboard.includes(`${c.id}: '${c.name}'`), `${c.id}: the dashboard's name for it is "${c.name}" (server/dashboard.mjs)`);
     for (const entry of REGISTRY) assert.ok(entry.choices?.[c.id], `${c.id}: agents' defaults ${entry.id} lists its choices`);
-    assert.ok(raterNames().includes(c.name), `${c.id}: named on the panel's "Open the client's quote" line`);
+    assert.ok(ratersSaid().includes(c.name), `${c.id}: named on the panel's "Open the client's quote" line`);
     has('names', c.id, nameKeys.includes(c.id));
     has('intakeMocks', c.id, intakeMocks.includes(c.id));
     has('mock', c.id, !!scripts[`mock:${c.id}`]);
@@ -109,7 +107,27 @@ test('every registry names each carrier with rules, or says here why not', async
       assert.ok(!present[where](id), `${where}: ${id} is there now, so LEFT_OUT's reason is stale`);
     }
   }
-  // "A, B or C": every carrier with rules, in CARRIERS' order.
-  const names = carriers.map((c) => c.name);
-  assert.equal(raterNames(), names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0]);
+});
+
+// Audit 2026-11-07, UX-14: the panel's logos, the dock's list of raters, the caption and review
+// mode's wording were written into the panel's code, in four places a new carrier would miss. Each
+// carrier with rules says them in its own `display`; a logo opens its agent site, on its own hosts.
+test('every carrier with rules says how the panel shows it: a logo on disk, its agent site on its hosts, its product and classes', () => {
+  const real = CARRIERS.filter((c) => c.rules?.length);
+  assert.deepEqual(RATERS.map((c) => c.id), real.map((c) => c.id));
+  for (const { id, hosts, display } of real) {
+    assert.ok(display, `${id} has a display`);
+    assert.ok(fs.existsSync(new URL(`../sidepanel/${display.logo}`, import.meta.url)), `${id}'s logo ${display.logo} exists`);
+    const url = new URL(display.portalUrl);
+    assert.equal(url.protocol, 'https:', `${id}'s agent site is https`);
+    assert.ok(hosts.some((h) => h.test(url.hostname)), `${id}'s agent site ${url.hostname} is one of its hosts`);
+    assert.ok(display.product && display.classesSaid, `${id} names its product and classes`);
+  }
+  assert.equal(ratersSaid(), 'Progressive, GEICO or AmWINS.');
+  assert.equal(ratersSaid(RATERS.slice(0, 1)), 'Progressive.');
+});
+
+test('docs/new-carrier.md and the template name the carrier\'s display', () => {
+  assert.match(read('docs/new-carrier.md'), /`display`/);
+  assert.match(template, /`display`/);
 });

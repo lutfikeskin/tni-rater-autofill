@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The developer recording's trace (docs/developer-recording.md): injected by the side panel next to
 // the recorder, in its isolated world and every frame, only while a recording runs (unpacked
 // builds). It watches and never acts: it clicks nothing, sets no value and dispatches no event.
@@ -120,7 +119,7 @@
     if (button) return { button: { text: read.buttonText(button).slice(0, 60), rect: box(button) } };
     return { other: { tag: String(el?.tagName ?? '').toLowerCase() || null } };
   }
-  const about = ({ field, button, other }) => (field ? { field } : button ? { button } : { other });
+  const about = (/** @type {{ field?: object, button?: object, other?: object }} */ { field, button, other }) => (field ? { field } : button ? { button } : { other });
 
   // The last trusted gesture on each control: a value event long after it (or with none) is the
   // page's or the extension's (the recorder's rule; the report judges, from `trusted` and this).
@@ -459,10 +458,13 @@
     const nums = (from, keys) => Object.fromEntries(keys.filter((k) => isNum(from[k])).map((k) => [k, from[k]]));
     const yesNo = (from, keys) => Object.fromEntries(keys.filter((k) => typeof from[k] === 'boolean').map((k) => [k, from[k]]));
     const has = (x) => !!x && typeof x === 'object';
-    if (said.what === 'run') return { what: 'run', ...yesNo(said, ['on', 'halted']), ...nums(said, ['steps', 'filled']) };
+    // `source`: an AI apply's or the agent's panel answer's (the kit's `answer`), none for a fill.
+    const source = said.source === 'ai' || said.source === 'agent' ? { source: said.source } : {};
+    if (said.what === 'run') return { what: 'run', ...yesNo(said, ['on', 'halted']), ...nums(said, ['steps', 'filled']), ...source };
     if (said.what === 'press') return { what: 'press', button: { text: words(said.button?.text, 60) ?? '' }, ...(said.how === 'page' || said.how === 'kit' ? { how: said.how } : {}) };
     if (said.what === 'wait') {
-      if (!isNum(said.start) || !isNum(said.ms) || (said.ended !== 'quiet' && said.ended !== 'limit')) return null;
+      // `stopped`: the agent stopped the fill while it waited (adapter.js settle's `abort`).
+      if (!isNum(said.start) || !isNum(said.ms) || !['quiet', 'limit', 'stopped'].includes(said.ended)) return null;
       const held = has(said.held) ? { held: { busy: said.held.busy === true, changing: said.held.changing === true, requests: said.held.requests === true } } : {};
       return { what: 'wait', why: WAITS_FOR.has(said.why) ? said.why : null, start: said.start, ms: said.ms, ended: said.ended,
         ...nums(said, ['quietMs', 'maxMs', 'lastChange', 'lastHeld']), ...yesNo(said, ['requests', 'settled']), ...held };
@@ -472,7 +474,7 @@
       const timing = has(said.timing) ? { timing: { ...nums(said.timing, TIMING), ...yesNo(said.timing, ['batch']) } } : {};
       return { what: 'answer', field: { key: words(said.field.key, 200), label: words(said.field.label, 200) ?? '' },
         stepKind: STEP_KINDS.has(said.stepKind) ? said.stepKind : null, start: said.start,
-        ...yesNo(said, ['ok']), ...nums(said, ['applyMs']), ...timing };
+        ...yesNo(said, ['ok']), ...nums(said, ['applyMs']), ...timing, ...source };
     }
     return null;
   }

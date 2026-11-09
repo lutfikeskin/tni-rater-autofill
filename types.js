@@ -164,18 +164,18 @@
  * @property {ClientValue<string | null>} [warn]  filled, and marked for the agent to confirm
  * @property {ClientValue<string | null>} [emptyNote]
  * @property {ClientValue<boolean>} [ignore]
- * @property {boolean} [every]
+ * @property {boolean} [every]  with `ignore`: the rule claims every control its locator finds, not only the first (GEICO's gateway product boxes, one rule for all)
  * @property {ClientValue<boolean>} [verifyOnly]  checked against the intake, never typed
  * @property {boolean} [clientFact]  the agent's when the intake leaves it without an answer
  * @property {boolean} [optional]
- * @property {boolean} [each]
- * @property {boolean} [hidden]
+ * @property {boolean} [each]  several free controls match: the first answers it, where otherwise none would (src/kit/locator.js; Progressive's two Business Type boxes)
+ * @property {boolean} [hidden]  its control (by `selector`) is filled while the page hides it
  * @property {ClientValue<boolean>} [replace]  our answer replaces a differing one already on the page (a
  *   lookup's, or a bulk helper's such as AmWINS' "Default all answers to No"); a function: only for these clients
- * @property {boolean} [trustPage]
+ * @property {boolean} [trustPage]  an answer already on the page that differs from the rule's is kept, with no item saying it differs
  * @property {boolean} [keepChoice]
  * @property {boolean} [keepPreset]  a choice the carrier already made (a pre-selection, such as Progressive's anti-theft device from its VIN lookup) is kept as it is, without a check, also with Replace existing answers: only an empty one is answered
- * @property {boolean} [keepUnlisted]
+ * @property {boolean} [keepUnlisted]  a list without the answer that already holds the page's own (not Other): kept, with a check naming the answer (GEICO's cities for the ZIP, W43-35)
  * @property {string} [firstNot]  with `kind: 'first-option'`: a first option matching this pattern is not picked; the question is the agent's, with `unofferedNote` (Progressive's Primary Business Address listing "Enter a different address" first)
  * @property {boolean} [whenOffered]
  * @property {{ count: string, one?: string, after: string, name: string }} [orMost]
@@ -242,8 +242,8 @@
  * @property {ClientValue<string[]>} [doneWhen]
  * @property {ClientValue<string[]>} [heldBy]
  * @property {string} [resolvedBy]
- * @property {ClientValue<string[]>} [settledByPages]
- * @property {string} [nudge]
+ * @property {ClientValue<string[]>} [settledByPages]  a needs-you helper item (`missing`) is settled once the agent has been to one of these pages; no carrier uses it since Progressive's general liability became automatic (2026-10-20)
+ * @property {string} [nudge]  the path of an answer given again, once, when this button shows only after the page took that answer and hasn't shown (Progressive's Done with this coverage after the cargo commodity)
  * @property {{ all?: string[], any?: string[], answered?: boolean }} [shownBy]
  * @property {ClientValue<boolean>} [needsPremium]
  * @property {ClientValue<boolean>} [needsRecalculation]
@@ -321,12 +321,26 @@
  */
 
 /**
+ * How the side panel presents a carrier (audit 2026-11-07, UX-14: these were written into the panel's
+ * code): its logo in the header and on the "open a rater" card, the agent portal that card's logo
+ * opens in a new tab (a navigation the agent asks for; nothing is filled there), the product named
+ * under the carrier on a page outside the quote's steps, and the business classes its rules were
+ * written for, as review mode says them (they describe `supportedClasses`, which decides).
+ * @typedef {object} CarrierDisplay
+ * @property {string} logo  the image's path from sidepanel/ (`assets/raters/<carrier>.<ext>`)
+ * @property {string} portalUrl  the carrier's agent home page, on one of its `hosts`
+ * @property {string} product  "Commercial auto"
+ * @property {string} classesSaid  "expediters and general freight", after "<carrier>'s rules cover"
+ */
+
+/**
  * A carrier's settings and mappings (src/carriers.js describes each). `practice` is set by
  * carrierForUrl on the repository's practice pages, never by a carrier file.
  * @typedef {object} CarrierConfig
  * @property {string} id
  * @property {string} name
  * @property {RegExp[]} hosts  also needs a manifest.json host permission
+ * @property {CarrierDisplay} [display]  how the panel shows it; every carrier with rules has one (test/carriers.test.mjs)
  * @property {CarrierRule[]} rules
  * @property {CarrierAction[]} [actions]
  * @property {CarrierAdvance} [advance]
@@ -338,8 +352,9 @@
  * @property {RegExp} [fillOnDraw]
  * @property {string[]} [layoutSteps]
  * @property {QuoteStep[]} [quoteSteps]
- * @property {string} [logo]  the panel's header logo for this carrier, a path under sidepanel/ (assets/raters/)
- * @property {boolean} [useGenericRules]
+ * @property {boolean} useGenericRules  whether the generic label rules (src/rules.js) fill this carrier's pages
+ *   too: only when true (AmWINS, the local test page), so a new carrier opts in after checking them (audit
+ *   2026-11-07, CARR-09)
  * @property {string[]} [rowSections]
  * @property {SupportedClass[]} [supportedClasses]
  * @property {boolean} [replaceChoices]
@@ -370,7 +385,7 @@
  * @property {string} [finishedSaid]  the dock's title then, in place of "The quote proposal is printed" (Progressive: "Print, Email, Fax was clicked")
  * @property {string[]} [newQuestionsOnlySteps]
  * @property {string[]} [keepTakenBack]
- * @property {boolean} [continueRetry]
+ * @property {boolean} [continueRetry]  false: a Continue whose page didn't move is never clicked a second time (GEICO, FL live run 4); otherwise it is, once (sidepanel/panel/fill.js)
  * @property {boolean} [practice]
  */
 
@@ -966,6 +981,18 @@
  */
 
 /**
+ * @typedef {object} AiLeaveEvent  sidepanel.js runAssist: one question Luna left (audit 2026-11-07, AI-07)
+ * @property {'ai_leave'} type
+ * @property {string} carrier
+ * @property {string} [page]
+ * @property {string | null} q  the question's code, when it has one
+ * @property {string} label  redacted
+ * @property {string} [controlKind]
+ * @property {'restricted' | 'missing' | 'conflict' | 'chose' | 'noSource' | 'unverified' | 'tooLarge' | null} leaveWhy
+ * @property {string | null} intakePath  the intake field the question maps to, if any
+ */
+
+/**
  * The events src/usage.js builds. The panel logs others of its own (sidepanel.js).
  * @typedef {IntakeProfileEvent | CheckDismissedEvent | AgentSettingsEvent | ClientErrorEvent | FieldChangeEvent | FillRunEvent | FillFieldEvent | RecalcLayoutEvent} UsageEvent
  */
@@ -1037,13 +1064,15 @@
  *   settle (`quietMs`, `maxMs`, `requests`, `start`, `ms`, `ended` quiet or limit, at the limit `settled` and what `held` it); answer: one answer
  *   (`field`, `stepKind`, `ok`, `start`, `applyMs`, the usage log's `timing`); press: a button it pressed (`button`, `how`: from the page's world or the kit's)
  * @property {number} [steps]  kit run, as it starts: the plan's steps
+ * @property {'fill' | 'ai' | 'agent'} [source]  fill (the panel's marker): whose the work is; kit run and answer: 'ai' or 'agent'
+ *   for the kit's `answer` (an AI apply, the agent's own answer from the panel), none for a fill
  * @property {number} [filled]  kit run, as it ends: how many answers it filled
  * @property {boolean} [halted]  kit run, as it ends: whether it halted
  * @property {number} [start]  kit wait, answer: wall-clock ms when it began (`t` is when it was said, at its end)
  * @property {number} [quietMs]  kit wait: the quiet it waited for
  * @property {number} [maxMs]  kit wait: its limit
  * @property {boolean} [requests]  kit wait: whether it waited for the page's requests too
- * @property {'quiet' | 'limit'} [ended]  kit wait: the page was quiet, or the limit came first
+ * @property {'quiet' | 'limit' | 'stopped'} [ended]  kit wait: the page was quiet, the limit came first, or the agent stopped the fill while it waited
  * @property {boolean} [settled]  kit wait at its limit: the page itself was settled (only components undefined held it)
  * @property {{ busy: boolean, changing: boolean, requests: boolean }} [held]  kit wait at its limit: what still held it
  * @property {string | null} [stepKind]  kit answer: the plan step's kind
@@ -1210,6 +1239,37 @@
  */
 
 /**
+ * One answer or item of the quote summary (sidepanel/panel/quote-summary.js): the question, what went
+ * in (or what happened to it), where it came from (`source`: intake, derived, standard, own,
+ * edited, ai, you, page, clicked, changed, marked, pending, open) as the summary says it, and a note
+ * (why it was left for the agent, what the page shows now).
+ * @typedef {object} QuoteSummaryRow
+ * @property {string} label
+ * @property {string} value
+ * @property {string} source
+ * @property {string} sourceSaid
+ * @property {string | null} note
+ * @property {string} [carrier]  the carrier tab it is on, in the summary's lists
+ * @property {string} [page]  its page's title, in the summary's lists
+ */
+
+/**
+ * The quote summary (quote-summary.js quoteSummary): every page of the quote per carrier tab with
+ * its answers and their sources, then the agent's overrides, the AI's decisions and the items marked
+ * done without an answer. Shown read-only in the panel, saved as HTML to Downloads.
+ * @typedef {object} QuoteSummary
+ * @property {{ name: string, fileName: string | null, state: string | null }} client
+ * @property {string} at  when it was made, ISO
+ * @property {string} version  the extension's version
+ * @property {{ id: string, name: string, tabId: number, practice: boolean, pages: { title: string, at: string, said: string | null, counts: { source: string, sourceSaid: string, n: number }[], rows: QuoteSummaryRow[] }[] }[]} carriers
+ * @property {{ kind: string, carrier: string | null, page: string | null, label: string, value: string, said: string }[]} overrides
+ * @property {QuoteSummaryRow[]} ai
+ * @property {QuoteSummaryRow[]} marked
+ * @property {number} open  items still left for the agent
+ * @property {number} answers  answers in (not counting items open, marked or waiting for approval)
+ */
+
+/**
  * The side panel state shape managed by panelStore in state-store.js.
  * @typedef {object} PanelState
  * @property {any} [intake]
@@ -1251,6 +1311,7 @@
  * @property {Set<number>} [layoutReadyTabs]
  * @property {Set<number>} [layoutNewTabs]
  * @property {Map<number, number>} [viewTabs]
+ * @property {Map<number, string>} [portalTabs]  tabs a rater's logo opened (quote-owner.js openPortal) -> the page opened: nothing fills there by itself
  * @property {any} [layoutLatest]
  * @property {number} [layoutErrors]
  * @property {Set<string>} [layoutErrorsLogged]
@@ -1270,6 +1331,7 @@
  * @property {boolean} [keyFormOpen]
  * @property {any} [usageCard]
  * @property {string} [usageNote]
+ * @property {{ n: number, seq: number, text: string, yes: string } | null} [usageAsk]
  * @property {any} [health]
  * @property {boolean | null} [testRun]
  * @property {boolean} [captureOff]
@@ -1296,6 +1358,8 @@
  * @property {any} [audio]
  * @property {boolean} [showEmpty]
  * @property {Set<string>} [detailsClosed]
+ * @property {string} [detailsQuery] client details' filter box: fields whose label or section has it
+ * @property {boolean} [detailsEditedOnly] client details' Your corrections: only the fields the agent changed
  * @property {Uint8Array | null} [pdfBytes]
  * @property {any} [pdfDoc]
  * @property {number} [pdfDraw]
@@ -1314,6 +1378,8 @@
  * @property {any} [pdfReturn]
  * @property {boolean} [detailsOpen]
  * @property {any} [detailsReturn]
+ * @property {{ summary: QuoteSummary, saved: string | null } | null} [summary]  the quote summary open over the panel, and what Save summary said
+ * @property {any} [summaryReturn]
  * @property {any} [browserWindow]
  * @property {boolean} [closing]
  * @property {boolean} [defaultsOn] agent defaults: whether this copy of the panel shows the feature
@@ -1329,5 +1395,12 @@
 /**
  * Zustand vanilla store for the side panel state.
  * @typedef {import('zustand/vanilla').StoreApi<PanelState>} PanelStore
+ */
+
+/**
+ * A fill the panel says is running, over its 'fill-watch' port to the service worker
+ * (sidepanel/panel/fill-watch.js to src/fill-watch.js): the worker stops that run (the kit's
+ * stopRun) if the port goes while it runs. The panel says `{ tabId: null }` once the fill ended.
+ * @typedef {{ tabId: number, run: string, world: 'MAIN' | 'ISOLATED' }} WatchedRun
  */
 

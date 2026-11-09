@@ -109,6 +109,7 @@ export const SECTIONS = [
     ['coverage.cargo', 'Cargo', 'bool'],
     ['coverage.cargoLimit', 'Cargo limit', 'money'],
     ['coverage.cargoDeductible', 'Cargo deductible', 'money'],
+    ['coverage.cargoAsWritten', 'Cargo limit / deductible (as written)'],
     ['coverage.gl', 'General liability', 'bool'],
     ['coverage.hasGl', 'Already has general liability (claims box)', 'bool'],
     ['coverage.glLimit', 'GL limit', 'choice', ['$1M/$2M', '$500K/$1M', '$300K/$600K', 'Other']],

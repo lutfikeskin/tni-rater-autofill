@@ -372,6 +372,7 @@ const state = storeState({
   // automatic fills wait on a quote page whose quote wasn't started with the intake loaded.
   quoteOwners: new Map(),
   quoteEntries: new Set(), // tabs whose next quote starts with the intake loaded when they reach it
+  portalTabs: new Map(), // tabs a rater's logo opened -> the page it opened (quote-owner.js portalHold)
   viewTabs: new Map(), // tab id -> its order in this quote, for events' `view` (viewOf)
   layoutLatest: null, // the capture asked for last (waiting or queued), which later changes feed
   layoutErrors: 0,
@@ -405,7 +406,7 @@ const state = storeState({
   // settings by init, and by the agent; the panel reads each from its box by id); the AI's card
   // (renderAiSettings: `ai`, null until first said; `keyFormOpen` while the key's box is open: the key
   // is only ever in that box); the usage card (renderUsage: `usageCard`; `usageNote`, the line under
-  // it); the version, what is left to set up and the initials' box marked (renderHealth: `health`);
+  // it; `usageAsk`, Clear log's question while it is asked); the version, what is left to set up and the initials' box marked (renderHealth: `health`);
   // the test-run mark (render: `testRun`, null with no intake); Capture page layout off (renderSite:
   // `captureOff`) and what it did (captureSaid: `captureStatus`); and the developer recording's card
   // (dev-recording.js: `devrec`, whether one runs, its line and the unfinished one to save). And the
@@ -415,6 +416,7 @@ const state = storeState({
   keyFormOpen: false,
   usageCard: null,
   usageNote: '',
+  usageAsk: null,
   health: null,
   testRun: null,
   captureOff: false,
@@ -478,6 +480,9 @@ const state = storeState({
   // always are), and the sections the agent folded (by id).
   showEmpty: false,
   detailsClosed: new Set(),
+  // Client details' filter box and its Your corrections switch (UX-07).
+  detailsQuery: '',
+  detailsEditedOnly: false,
   // Client details: how many times an edit saved a field otherwise than typed (path -> count; "No"
   // in the USDOT box is saved empty), so its box shows the record's value again (details-view.jsx).
   fieldRevs: new Map(),
@@ -520,6 +525,9 @@ const state = storeState({
   // All client details, in a drawer over the panel, and where focus was when it opened.
   detailsOpen: false,
   detailsReturn: null,
+  // The quote summary over the panel (quote-summary.js openSummary), and where focus was when it opened.
+  summary: null,
+  summaryReturn: null,
   // The browser window of the tab in view, for Dock (popped out), and whether this copy of the
   // panel is giving way to a newer one (giveWay).
   browserWindow: null,
@@ -546,6 +554,10 @@ panelStore.subscribe((stateNow) => {
     fillingPrevious = on;
   }
 });
+// Whether the kit is asked to say what it does (an AI answer or a pick from a row, as a fill is;
+// REC-14): a developer recording runs on this tab.
+/** @param {number | null | undefined} tabId */
+const traced = (tabId) => !!state.recording && !state.recording.stopping && state.recording.tabId === tabId;
 
 /**
  * A filling switch: what Settings says (state.switches), else its box (the test harnesses' vm has
@@ -1182,4 +1194,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, logCrash, storageSaid, FILLS_HELD_NOTE, fillsHeld, holdFills, releaseFills, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes, clearKeptWork, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals, keepJournal, restoreJournal };
+export { $, logCrash, traced, storageSaid, FILLS_HELD_NOTE, fillsHeld, holdFills, releaseFills, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes, clearKeptWork, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals, keepJournal, restoreJournal };

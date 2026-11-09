@@ -103,6 +103,23 @@ export function testSessionsOf(all, testIntakes = []) {
   return out;
 }
 
+// The test runs the learner's reports leave out (learn-rules, rule-proposals). A capped export or a
+// slice of days can lack a quote's intake_loaded, which testSessionsOf reads, while its other
+// events still carry the intake's fingerprint (learn() counts support by it): a listed fingerprint
+// is matched on those too, unless the agent's latest mark in the panel says the quote is no test
+// (CodeRabbit on PR #369).
+export function learnerTestRuns(events, testIntakes = []) {
+  const tests = testSessionsOf(events, testIntakes);
+  const listed = [...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+  const marks = new Map();
+  for (const e of events) if (e.type === 'intake_marked' && e.session) marks.set(e.session, e.test === true);
+  for (const e of events) {
+    if (!e.session || !e.intakeId || marks.get(e.session) === false) continue;
+    if (listed.some((id) => String(e.intakeId).toLowerCase().startsWith(id))) tests.add(e.session);
+  }
+  return tests;
+}
+
 /**
  * How each quote ended on each carrier it went to: done (its final page or final click, after this
  * quote's own fill there), declined (the carrier stopped it), or stopped at its last page; with its
@@ -298,6 +315,14 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     ai.set(build(e), a);
   }
 
+  // The questions Luna left most (ai_leave: carrier, page, question code or label, why), and the TNI
+  // rules its decisions cited, by what the agent did with them (audit 2026-11-07, AI-07). The page
+  // keeps one label's questions on two pages apart (CodeRabbit on PR #413); ai_leave carries no step.
+  const aiLeft = new Map();
+  for (const e of events.filter((x) => x.type === 'ai_leave')) tally(aiLeft, `${e.carrier ?? '?'} · ${e.page ?? '?'} · ${e.q ?? mask(e.label ?? '?')} · ${e.leaveWhy ?? '?'}`);
+  const aiRules = new Map();
+  for (const e of events.filter((x) => x.type === 'ai_decision' && Array.isArray(x.ruleIds))) for (const id of e.ruleIds) tally(aiRules, `${id} · ${e.decision ?? '?'}`);
+
   // Problem reports with their build and the fill around them (5 minutes either side, same quote).
   const near = (r, e) => e.session === r.session && Math.abs(Date.parse(e.t) - Date.parse(r.t)) <= 5 * 60 * 1000;
   const problems = periodAll.filter((e) => e.type === 'problem_report').map((r) => {
@@ -340,6 +365,33 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   const reformatted = new Set(agentChanges.filter((e) => e.vsAutofill === 'format').map(answerOnce)).size;
   const asks = events.filter((e) => e.type === 'ai_suggest');
   const per = (x, q) => (q ? Math.round((x / q) * 10) / 10 : null);
+  const percent = (x, q) => (q ? Math.round((x / q) * 100) : null);
+  // Luna's answers and what became of them (audit 2026-11-07, AI-07): counts and ids only.
+  const answered = asks.filter((a) => !a.error);
+  const asked = answered.reduce((n, a) => n + (Number(a.items) || 0), 0);
+  const suggested = answered.reduce((n, a) => n + (Number(a.suggested) || 0), 0);
+  const aiDecisions = events.filter((e) => e.type === 'ai_decision');
+  const decided = aiDecisions.filter((e) => ['accepted', 'approved', 'dismissed', 'rejected'].includes(e.decision));
+  // An answer Luna put in (the agent's Use, or an automatic pick) that the agent changed afterwards
+  // on the same quote, page, view (tab, and vehicle or driver) and question: a signal for review,
+  // not a count of wrong answers, since a wrong answer the agent left in place isn't counted and a
+  // client may have changed their mind. Each answer once. A decision from a build that logged no
+  // view (before 2026-11-07) matches a change in any view of its page (CodeRabbit on PR #413).
+  // A question without a code (AmWINS, GEICO) by its label, masked as the report masks it: both
+  // events log it redacted the same way, and neither logs the control's key (CodeRabbit on PR #413).
+  const questionOf = (e) => (e.q ? `q:${e.q}` : e.label ? `label:${mask(e.label)}` : null);
+  const aiOnce = (e, view = e.view ?? '') => `${e.session}|${e.page}|${view}|${questionOf(e)}`;
+  const putIn = new Map();
+  for (const e of aiDecisions.filter((x) => (x.decision === 'accepted' || x.decision === 'auto') && questionOf(x))) {
+    const k = aiOnce(e, e.view ?? '*');
+    if (!putIn.has(k)) putIn.set(k, e.t);
+  }
+  const changedAfter = new Set();
+  for (const e of events) {
+    if (e.type !== 'field_change' || e.by !== 'agent' || !questionOf(e)) continue;
+    const k = [aiOnce(e), aiOnce(e, '*')].find((x) => putIn.has(x));
+    if (k && e.t > putIn.get(k)) changedAfter.add(k);
+  }
   const allDone = Object.values(outcomes).reduce((a, o) => a + o.done, 0);
   const carrierQuotes = Object.values(outcomes).reduce((a, o) => a + o.quotes, 0);
   const kpis = {
@@ -358,6 +410,10 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     problemReportsInTestRuns: periodAll.filter((e) => e.type === 'problem_report' && testSessions.has(e.session)).length,
     aiRequests: asks.length,
     aiErrorPercent: asks.length ? Math.round((asks.filter((a) => a.error).length / asks.length) * 100) : null,
+    aiSuggestedPercent: percent(suggested, asked),
+    aiAcceptedPercent: percent(decided.filter((e) => e.decision === 'accepted' || e.decision === 'approved').length, decided.length),
+    aiPutIn: putIn.size,
+    aiChangedLater: changedAfter.size,
     restrictedActions: [...actions].filter(([a]) => clickedAction(a)).reduce((x, [, c]) => x + c, 0),
     // Not the period's: today's rules on the keyed quotes, whenever they were recorded.
     // All keyed answers, and those the reviewer decided (not confirmed as proposed) apart.
@@ -443,6 +499,8 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     layoutErrors: top(layoutErrors, n),
     dropped: { fields: top(dropped, n), last: droppedLast },
     ai: [...ai].sort((a, b) => byVersion(b[0], a[0])).map(([b, a]) => ({ build: b, requests: a.requests, errors: top(a.errors, 5), decisions: Object.fromEntries(a.decisions) })),
+    aiLeft: top(aiLeft, n),
+    aiRules: top(aiRules, n),
     problems,
     crashes: top(crashes, n),
     settings: { quotes: lastSettings.size, on: top(settingsOn, 30) },
@@ -485,6 +543,8 @@ export function markdown(s, { noTestList = false } = {}) {
     `| Left to the agent per quote: ${Object.keys(k.leftPerQuote).join(' / ') || '—'} | ${Object.values(k.leftPerQuote).join(' / ') || '—'} |`,
     `| Problem reports per 10 quotes (plus ${k.problemReportsInTestRuns} in test runs) | ${k.problemReportsPer10Quotes ?? '—'} |`,
     `| AI requests · error rate | ${k.aiRequests} · ${k.aiErrorPercent ?? '—'}% |`,
+    `| AI: questions suggested · decisions accepted or approved | ${k.aiSuggestedPercent ?? '—'}% · ${k.aiAcceptedPercent ?? '—'}% |`,
+    `| AI answers put in that the agent changed later | ${k.aiChangedLater} of ${k.aiPutIn} |`,
     `| Restricted actions by the extension (must be 0) | ${k.restrictedActions} |`,
     ...(k.answerKey ? [keyLine(k.answerKey)] : []), '');
   L.push('## Builds', '', 'Which version and copy logged the period (store: Web Store zip, unpacked: the development package, source: repository files). A problem seen only on older builds may already be fixed.', '');
@@ -519,6 +579,8 @@ export function markdown(s, { noTestList = false } = {}) {
   L.push('## AI assistant by build', '');
   if (!s.ai.length) L.push('No AI activity.', '');
   for (const a of s.ai) L.push(`- ${a.build}: ${a.requests} requests, ${a.errors.reduce((n, [, c]) => n + c, 0)} errors${a.errors.length ? ` (${a.errors.map(([m, c]) => `${c}× ${m}`).join('; ')})` : ''}; decisions ${Object.entries(a.decisions).map(([d, c]) => `${d} ${c}`).join(', ') || 'none'}`);
+  L.push('', '## Questions Luna left most', '', 'By carrier, question and why (missing, conflict, chose, noSource, unverified, tooLarge, restricted): where a rule or an intake mapping would pay off.', '', ...list(s.aiLeft));
+  L.push('', '## TNI rules Luna cited', '', 'By rule id and what the agent did with the pick (accepted, auto, approved, dismissed, rejected).', '', ...list(s.aiRules));
   L.push('', '## Problem reports', '', 'With the build that logged each and the fill around it (same quote, 5 minutes either side). Check the build against the fixes made since before treating one as open.', '');
   if (!s.problems.length) L.push('None.');
   s.problems.forEach((p, i) => {
