@@ -88,8 +88,9 @@ export function findAdvanceButton(pattern, { notWithin = null } = {}) {
     if (!el.getClientRects().length || /** @type {HTMLButtonElement} */ (el).disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el) || closestOwn(el, 'stepLinks')) continue;
     if (notWithin && insideOf(el, notWithin)) continue;
     const text = buttonText(el);
-    // Its words ("Save & Continue" read as Continue) and its aria-label and title, as for a helper.
-    const committing = NEVER_ADVANCE.test(namesOf(el, text.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue')));
+    // Its words ("Save & Continue" read as Continue) and its aria-label and title, as for a helper:
+    // each name on its own, so a label or title repeating "Save & Continue" reads as Continue too.
+    const committing = NEVER_ADVANCE.test(namesOf(el, text, (s) => s.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue')));
     if (text.length > 40 || committing || !re.test(text)) continue;
     if (!best || best.contains(el)) best = el;
   }
@@ -102,10 +103,11 @@ export function findAdvanceButton(pattern, { notWithin = null } = {}) {
  * read as Continue, is held to them too (audit 2026-11-07, CARR-13).
  * @param {Element} el
  * @param {string} text its words
+ * @param {(name: string) => string} [normalize] applied to each name on its own
  * @returns {string}
  */
-function namesOf(el, text) {
-  return [text, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ');
+function namesOf(el, text, normalize = (s) => s) {
+  return [text, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).map((s) => normalize(String(s).trim())).join(' ');
 }
 
 /**

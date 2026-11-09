@@ -3667,6 +3667,15 @@ test('Save & Continue counts as Continue; Save & Exit and Submit never do', asyn
     await h.kit.fill([], { maxRounds: 1, advance: { text: '^(save\\s*(&|and)\\s*continue|save & exit|submit)$' } });
     assert.equal(!!button._clicked, expected, text);
   }
+  // Its aria-label or title saying "Save & Continue" again is Continue too: each name is read on
+  // its own, so the words don't make "Save" a commit word (CodeRabbit on #491).
+  const h = harness({ pathname: '/application/businessauto' });
+  const button = addButton(h, 'Save & Continue');
+  button.setAttribute('aria-label', 'Save & Continue');
+  button.setAttribute('title', 'Save and continue');
+  button.onclick = () => { button._clicked = true; };
+  await h.kit.fill([], { maxRounds: 1, advance: { text: '^(save\\s*(&|and)\\s*continue)$' } });
+  assert.equal(!!button._clicked, true, 'a repeated Save & Continue name');
 });
 
 test('a field the page fills itself (emptyNote) is flagged only when it stays empty', async () => {
