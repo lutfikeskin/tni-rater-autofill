@@ -1489,10 +1489,11 @@ export function parseEdit(kind, text) {
 const MISSING_CHECKS = new Set(['dob.missing', 'license.missing', 'license-state.missing', 'vin.missing', 'vehicle-type.missing', 'cdl-year.missing',
   'eld-brand.missing', 'filings-which.missing', 'auto-limit.missing', 'gl-limit.missing']);
 export function checkHolds(code, value, year) {
-  const blank = value == null || String(value).trim() === '';
+  // Blank as normalizeIntake reads it: a placeholder (N/A, none, unknown) is no value (clean).
+  const s = clean(typeof value === 'string' ? value : value == null ? null : String(value));
+  const blank = s == null;
   if (MISSING_CHECKS.has(code)) return blank;
   if (blank) return undefined;
-  const s = String(value);
   const n = toInt(s);
   switch (code) {
     case 'dob.invalid': return !toDate(s);

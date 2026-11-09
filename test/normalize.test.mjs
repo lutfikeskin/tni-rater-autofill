@@ -2618,6 +2618,9 @@ test('checkHolds: a check about a field\'s value follows the value the agent put
   assert.equal(checkHolds('vin.invalid', '1FTFW1E50KFA1234', year), true);
   assert.equal(checkHolds('vin.missing', '', year), true);
   assert.equal(checkHolds('vin.missing', 'ABC', year), false);
+  // Review of #509: a placeholder is no value, as normalizeIntake reads it.
+  assert.equal(checkHolds('vin.missing', 'N/A', year), true);
+  assert.equal(checkHolds('dob.invalid', 'unknown', year), undefined);
   assert.equal(checkHolds('phone.invalid', '555-0100', year), true);
   assert.equal(checkHolds('phone.invalid', '(201) 555-0100', year), false);
   assert.equal(checkHolds('fein.invalid', '12-3456789', year), false);
