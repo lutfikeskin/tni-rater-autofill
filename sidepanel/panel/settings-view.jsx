@@ -190,7 +190,10 @@ function Settings({ act }) {
         </div>
       </div>
 
-      <details id="advanced" className="advanced">
+      {/* Not shown in the store copy (`locked`, the store channel: usage-panel.js): agents have no use
+          for setup tools (the maintainer, 2026-11-09). It stays in the document, hidden, for the boxes
+          the panel reads by id. */}
+      <details id="advanced" className="advanced" hidden={!!card?.locked}>
         <summary className="eyebrow">{recording ? 'Advanced, for setup only · Recording' : 'Advanced, for setup only'}</summary>
         <div className="advanced-body">
           {/* For the maintainer's practice quotes; agents don't see it unless they open Advanced. Marking a test run needs an intake to mark. */}

@@ -31,9 +31,9 @@
 // ZIP extracted, which has no key, so another extension ID, read from its service worker as here) and
 // E2E_CHANNEL=store says it is the store build. The run then also checks what only the store build
 // does: no Your defaults section or its developer switch while RELEASED_TO_AGENTS is false, no
-// developer recording card, and every usage event stamped channel 'store'. Without them it loads
+// developer recording card, no Advanced section in Settings, and every usage event stamped channel 'store'. Without them it loads
 // dist/tni-rater-autofill, the unpacked copy, and checks the same of channel 'unpacked': the
-// recording card and the defaults switch shown. The store build opens the mock under AmWINS' own
+// recording card, the defaults switch and Advanced shown. The store build opens the mock under AmWINS' own
 // host (MOCK_HOST, audit 2026-11-07, QA-11): the browser serves that address from the replay
 // server, so nothing leaves the machine, and the store build fills it as AmWINS by its real host
 // pattern: the run needs no localhost permission or practice mapping. It starts on AmWINS' Commercial
@@ -185,13 +185,15 @@ if (MOCK_HOST) {
 console.log('site:', await panel.textContent('#site'));
 // What the build's channel shows in Settings (drawn while it is closed): the developer recording card
 // and the defaults' developer switch in the unpacked copy only, and Your defaults there (the switch
-// on, as it starts) but not in the store build while RELEASED_TO_AGENTS is false.
+// on, as it starts) but not in the store build while RELEASED_TO_AGENTS is false; Advanced, for setup
+// only, in the unpacked copy only (the maintainer, 2026-11-09).
 const channelUi = await panel.evaluate(() => ({
   recording: !!document.querySelector('#devrec:not([hidden])'),
   defaults: !!document.querySelector('#tni-defaults'),
   defaultsSwitch: !!document.querySelector('#defaults-dev-row'),
+  advanced: !!document.querySelector('#advanced:not([hidden])'),
 }));
-const wantUi = CHANNEL === 'store' ? { recording: false, defaults: false, defaultsSwitch: false } : { recording: true, defaults: true, defaultsSwitch: true };
+const wantUi = CHANNEL === 'store' ? { recording: false, defaults: false, defaultsSwitch: false, advanced: false } : { recording: true, defaults: true, defaultsSwitch: true, advanced: true };
 const channelUiOk = Object.entries(wantUi).every(([k, v]) => channelUi[k] === v);
 console.log(`Channel ${CHANNEL}:`, JSON.stringify(channelUi));
 if (!channelUiOk) console.log(`CHANNEL: Settings does not show what the ${CHANNEL} build shows (want ${JSON.stringify(wantUi)}).`);

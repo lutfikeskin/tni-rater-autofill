@@ -298,12 +298,14 @@ test('the driver-name check has its own switch, on while Suggest answers is off'
 
 // Audit 2026-11-07, SRV-16: in the store copy the server is TNI's or the organization's, so its box
 // is read-only, the token box is hidden, and a line says so; the unpacked copy keeps both boxes.
-test('the store copy shows its server read-only, with no token box', () => {
+// The store copy doesn't show Advanced at all (the maintainer, 2026-11-09).
+test('the store copy hides Advanced, its server read-only with no token box', () => {
   const { container } = render(<Settings act={acts([])} />);
+  const advanced = container.querySelector('#advanced');
   const url = container.querySelector('#server-url');
   const token = container.querySelector('#server-token');
-  expect([url.readOnly, token.closest('label').hidden, !!container.querySelector('#server-locked')]).toEqual([false, false, false]);
+  expect([advanced.hidden, url.readOnly, token.closest('label').hidden, !!container.querySelector('#server-locked')]).toEqual([false, false, false, false]);
   act(() => { state.usageCard = { count: '', upload: '', uploadTone: '', locked: true }; });
-  expect([url.readOnly, token.closest('label').hidden]).toEqual([true, true]);
+  expect([advanced.hidden, url.readOnly, token.closest('label').hidden]).toEqual([true, true, true]);
   expect(container.querySelector('#server-locked').textContent).toBe('This copy sends to TNI\'s server, or the one your organization set.');
 });
