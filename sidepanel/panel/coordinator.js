@@ -1402,6 +1402,57 @@ function playChime() {
   } catch { return false; }
 }
 
+// A short "your turn" tone (audit 2026-11-07, LIVE-14): a fill ended with something left for the
+// agent (questions, checks, AI picks, a hold, a stop or an error) while they look elsewhere, in another
+// app or on another tab (lookingElsewhere), so they know to come back. Once per page of a tab, and
+// only with Settings → Filling → Sound when it's your turn on (`turnSound`, saved on this computer,
+// never logged; off unless the agent turns it on, until TNI agrees). Two short notes made in the panel
+// (WebAudio), distinct from the quote-done chime: no sound file, no permission. True when it was asked.
+const TURN_SOUND_PHASES = new Set(['needs', 'check', 'ai', 'hold', 'yours', 'stopped-fill', 'error']);
+let turnFrom = null;
+const turnPages = new Set();
+function noteTurn(d) {
+  const was = turnFrom;
+  turnFrom = d.phase;
+  if (was !== 'filling' || !TURN_SOUND_PHASES.has(d.phase) || state.switches?.turnSound !== true) return false;
+  const tabId = state.tab?.id;
+  const page = `${tabId}|${state.tab?.url ?? ''}`;
+  if (turnPages.has(page)) return false;
+  turnPages.add(page);
+  lookingElsewhere(tabId).then((away) => { if (away) playTurnTone(); });
+  return true;
+}
+// Whether the agent is in another app (no Chrome window focused) or on another tab than the quote's.
+async function lookingElsewhere(tabId) {
+  try {
+    const win = await chrome.windows.getLastFocused();
+    if (!win?.focused) return true;
+    const [active] = await chrome.tabs.query({ active: true, windowId: win.id });
+    return active?.id !== tabId;
+  } catch { return false; }
+}
+let turnAudio = null;
+function playTurnTone() {
+  try {
+    if (typeof AudioContext !== 'function') return false;
+    turnAudio ??= new AudioContext();
+    turnAudio.resume?.()?.catch?.(() => {});
+    const t = turnAudio.currentTime;
+    [[0, 660], [0.16, 880]].forEach(([at, hz]) => {
+      const o = turnAudio.createOscillator();
+      const g = turnAudio.createGain();
+      o.frequency.value = hz;
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(0.18, t + at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.14);
+      o.connect(g).connect(turnAudio.destination);
+      o.start(t + at);
+      o.stop(t + at + 0.15);
+    });
+    return true;
+  } catch { return false; }
+}
+
 // The dock: the one next thing to do, always in the same place under the panel, and its button.
 // #dock[data-phase] names it, and data-report the fill it is about (the panel harness reads both).
 function dockFor() {
@@ -1522,6 +1573,7 @@ function renderDock() {
   const d = dockFor();
   state.dock = { ...d, hidden: state.settingsOpen && d.button !== 'fill-stop', report: state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '', busy: !!state.filling, paused: pausedSaid(d) };
   markTab(d);
+  noteTurn(d);
 }
 
 // Automatic filling paused on the tab in front (`autoPaused`: a Stop, an agent edit during a fill, a

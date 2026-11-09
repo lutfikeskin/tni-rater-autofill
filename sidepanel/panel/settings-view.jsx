@@ -167,6 +167,7 @@ function Settings({ act }) {
             disabled={switches.autoAdvance === false} said={switches} onChange={flip('checkBeforeContinue')} />
           <SwitchRow id="overwrite" name="Replace prefilled answers" title="Off keeps what the rater filled itself, like a DOT lookup" checked={!!switches.overwrite} said={switches} onChange={flip('overwrite')} />
           <SwitchRow id="finish-sound" name="Sound when the quote is done" checked={switches.finishSound !== false} said={switches} onChange={flip('finishSound')} />
+          <SwitchRow id="turn-sound" name="Sound when it's your turn" title="When a fill needs you while you're in another app or tab" checked={switches.turnSound === true} said={switches} onChange={flip('turnSound')} />
           {/* Needs the optional tabGroups permission, which Chrome asks for on the first switch on (tab-mark.js). */}
           <SwitchRow id="mark-tab" name="Mark the quote's tab" title="Groups the quote's tab, titled with what the panel is doing. Chrome asks to manage your tab groups." checked={!!switches.markTab} said={switches} onChange={flip('markTab')} />
         </div>

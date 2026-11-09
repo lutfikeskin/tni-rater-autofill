@@ -1298,6 +1298,7 @@
  * @property {boolean} checkBeforeContinue  Let me look first
  * @property {boolean} [overwrite]  Replace prefilled answers
  * @property {boolean} finishSound  Sound when the quote is done
+ * @property {boolean} [turnSound]  Sound when it's your turn (off unless the agent turns it on)
  */
 
 /**
