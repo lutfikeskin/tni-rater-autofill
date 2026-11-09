@@ -1227,11 +1227,19 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // A list without the answer that already holds the page's own (`keepUnlisted`: GEICO's
           // cities for the ZIP, TNI, 2026-10-21, W43-35: one city and OTHER in GA, "failed: City"
           // on two steps, and the agent kept GEICO's): kept, with a check naming the answer. Its
-          // OTHER is no answer to keep (review of #141): that still fails.
-          const note = `The page's list has no "${step.value}" (${step.name}): its "${selectedText(c)}" is left as it is. Check it.`;
+          // OTHER is no answer to keep (review of #141): that still fails. A list whose only answer
+          // (but OTHER) is the one it holds has nothing to check: the ZIP has that one city, so it
+          // is kept with no check and Continue isn't held (the maintainer, 2026-11-09: a GEICO
+          // recording held every vehicle on "check: City" with ORLANDO, the only city, selected). A
+          // question the carrier reworded keeps its check, with the wording warning (review of #537).
+          const listed = describe(c).options.filter((o) => !/^other\b/i.test(o));
           state.report.kept.push(item);
-          state.report.checks.push({ ...item, note, ...describe(c) });
-          state.handled.set(step.id, { status: 'needs', note });
+          if (!reworded && listed.length === 1 && oneLine(listed[0]).toLowerCase() === oneLine(selectedText(c) ?? '').toLowerCase()) state.handled.set(step.id, { status: null });
+          else {
+            const note = [reworded ? step.warn : null, `The page's list has no "${step.value}" (${step.name}): its "${selectedText(c)}" is left as it is. Check it.`].filter(Boolean).join(' ');
+            state.report.checks.push({ ...item, note, ...describe(c) });
+            state.handled.set(step.id, { status: 'needs', note });
+          }
         } else {
           state.report.failed.push({ ...item, code: result.code ?? 'kit.uncoded', reason: result.reason, ...describe(c), ...(result.vanished ? { vanished: true } : {}) });
           state.handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });

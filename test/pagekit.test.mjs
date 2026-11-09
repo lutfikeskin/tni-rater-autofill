@@ -7516,23 +7516,34 @@ test('GEICO\'s gateway: a Start New Quote ZIP the page carried over is replaced 
 // picks one. The intake's city not among them failed ("failed: City" on Business & Owner Info and
 // Vehicles), and the agent kept GEICO's: now GEICO's is kept, with a check naming the intake's.
 test('GEICO\'s City: one the list doesn\'t have leaves GEICO\'s, with a check naming the intake\'s; one it has is picked (W43-35)', async () => {
-  const run = async (step, options, value) => {
+  const run = async (step, options, value, label = 'City') => {
     const h = harness({ adapter: 'geico', pathname: '/quote' });
     geicoBar(h, step);
     // On Vehicles, a vehicle's form (its VIN question) holds the parking address.
     if (step === 'Vehicles') h.document.body.append(gdsRadios('YesNoPreQuoteHaveFullVinActivity', 41205, 'Do you have the VIN handy?', [['Yes', 'Yes'], ['No', 'No']]).group);
-    const city = geicoList('GiveCity', 41207, 'City', options, { value });
+    const city = geicoList('GiveCity', 41207, label, options, { value });
     h.document.body.append(city);
     const report = await h.kit.fill(buildPlan(GEICO_ADDRESS, geico), { maxRounds: 4, replaceChoices: !!geico.replaceChoices });
     const mine = (list) => plain(list.filter((x) => x.key === 'ref:GiveCity'));
     return { city: city.value, report, checks: mine(report.checks), failed: mine(report.failed), kept: mine(report.kept), filled: mine(report.filled) };
   };
   for (const step of ['Business & Owner Info', 'Vehicles']) {
-    const r = await run(step, ['', 'CONYERS', 'OTHER'], 'CONYERS');
+    const r = await run(step, ['', 'CONYERS', 'COVINGTON', 'OTHER'], 'CONYERS');
     assert.equal(r.city, 'CONYERS', step);
     assert.deepEqual([r.failed, r.filled, r.kept.length], [[], [], 1], step);
     assert.equal(r.checks.length, 1, step);
     assert.match(r.checks[0].note, /no "Testville".*"CONYERS" is left as it is\. Check it\./, step);
+    // The maintainer, 2026-11-09 (a GEICO recording held every vehicle on "check: City", ORLANDO
+    // the only city and selected): the ZIP's one city (but OTHER) is kept with nothing to check.
+    const only = await run(step, ['', 'CONYERS', 'OTHER'], 'CONYERS');
+    assert.deepEqual([only.city, only.failed, only.filled, only.kept.length, only.checks], ['CONYERS', [], [], 1, []], step);
+    assert.ok(!only.report.checks.length && !only.report.noData.some((x) => x.key === 'ref:GiveCity'), step);
+    // The page's case or spacing doesn't bring the check back.
+    assert.deepEqual((await run(step, ['', ' Conyers ', 'OTHER'], ' Conyers ')).checks, [], step);
+    // Reworded by GEICO, the one city keeps its check, with the wording warning (review of #537).
+    const reworded = await run(step, ['', 'CONYERS', 'OTHER'], 'CONYERS', 'Town where the business is');
+    assert.equal(reworded.checks.length, 1, step);
+    assert.match(reworded.checks[0].note, /wording of this question changed.*"CONYERS" is left as it is\. Check it\./, step);
   }
   // The intake's city listed: picked over GEICO's.
   let r = await run('Business & Owner Info', ['', 'CONYERS', 'TESTVILLE', 'OTHER'], 'CONYERS');
