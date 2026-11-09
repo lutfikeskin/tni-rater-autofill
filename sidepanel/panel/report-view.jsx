@@ -151,10 +151,11 @@ const NeedRow = memo(function NeedRow({ rec, ctx, act }) {
   );
 });
 
-// A report's list (`entry.list`), on the report's tab and page (`ctx`). Drawn again each time a row
-// changes (drawRow bumps rowsDrawn); only the rows whose record changed (`rec.v`) are.
+// A report's list (`entry.list`), on the report's tab and page (`ctx`). Drawn again each time one
+// of its rows changes (drawRow bumps the report's `drawn` and rowsDrawn), not when another report's
+// does (audit 2026-11-07, LIVE-09); only the rows whose record changed (`rec.v`) are.
 function ReportRows({ entry, ctx, act }) {
-  useStore(panelStore, (s) => s.rowsDrawn);
+  useStore(panelStore, (s) => `${entry.drawn ?? 0}|${s.rowsAll ?? 0}`);
   return (entry.list ?? []).map((rec) => (rec.type === 'need'
     ? <NeedRow key={rec.id} rec={rec} v={rec.v ?? 0} ctx={ctx} act={act} />
     : <AnswerRow key={rec.id} rec={rec} v={rec.v ?? 0} ctx={ctx} act={act} />));

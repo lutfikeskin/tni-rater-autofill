@@ -1,4 +1,5 @@
 // @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
+import { Profiler } from 'react';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
@@ -262,4 +263,24 @@ test('mountRows draws a report’s list before it returns, and takes it down', (
   expect(host.querySelector('.row-label').textContent).toBe('Hauls hazardous materials');
   act(() => unmount());
   expect(host.childElementCount).toBe(0);
+});
+
+// Audit 2026-11-07, LIVE-09: a row's change draws again only the list of the report that holds it,
+// not every report the panel keeps; a row no kept report holds draws every list, as before.
+test('a row change draws only the list of its own report', () => {
+  const recA = needRecord(radio, ctx.carrier, ctx.page, true);
+  const recB = needRecord({ ...radio, key: 'k2' }, ctx.carrier, ctx.page, true);
+  const a = { list: [recA] };
+  const b = { list: [recB] };
+  const state = storeState({ rowsDrawn: 0, reports: new Map([['1|A', a], ['1|B', b]]), reportFor: a });
+  const draws = { a: 0, b: 0 };
+  const counted = (id) => { draws[id]++; };
+  const t = acts();
+  render(<><Profiler id="a" onRender={counted}><ReportRows entry={a} ctx={ctx} act={t.act} /></Profiler><Profiler id="b" onRender={counted}><ReportRows entry={b} ctx={ctx} act={t.act} /></Profiler></>);
+  draws.a = 0; draws.b = 0;
+  act(() => drawRow(recB));
+  expect(draws).toEqual({ a: 0, b: 1 });
+  act(() => drawRow(needRecord({ ...radio, key: 'k3' }, ctx.carrier, ctx.page, true)));
+  expect(draws).toEqual({ a: 1, b: 2 });
+  expect(state.rowsAll).toBe(1);
 });
