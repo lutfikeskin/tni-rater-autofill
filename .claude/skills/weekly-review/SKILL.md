@@ -78,7 +78,7 @@ Go through every source; a finding can come from several. Use `references/triage
 7. **AI assistant** (signals by build; review per question). Error rates by build, dismissed or rejected suggestions, questions the AI keeps answering.
 8. **Intake.** Warning codes and the intake fields agents corrected in the panel (review: usage summary).
 9. **Where quotes stopped** (signals: how far quotes got). A page most quotes reach but few leave is a finding; speed only when agents complain about it. Where the time goes inside a quote, and which waits could be shorter, is for a developer recording and the [recording-review](../recording-review/SKILL.md) skill.
-10. **Learner suggestions** (review: rule suggestions). Each is a candidate needing a decision, never a ready rule.
+10. **Learner suggestions** (review: rule suggestions). Each is a candidate needing a decision, never a ready rule. For the questions agents keep being left with and no suggestion answers, `npm run proposals -- --tests <list> --out reviews/rule-proposals-<date>.md` lists them, and with `--live` (needs `OPENAI_API_KEY`, sends no intake values) adds a Luna-drafted proposal for each with its agreement with the agents' answers. A proposal is a candidate too: a standard-candidate is TNI's to decide and record.
 11. **Infrastructure.** Fields the server dropped, a deployed server that isn't this repository's, daily review runs that failed.
 
 ## 5. Triage each finding

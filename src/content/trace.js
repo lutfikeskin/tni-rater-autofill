@@ -461,7 +461,8 @@
     if (said.what === 'run') return { what: 'run', ...yesNo(said, ['on', 'halted']), ...nums(said, ['steps', 'filled']) };
     if (said.what === 'press') return { what: 'press', button: { text: words(said.button?.text, 60) ?? '' }, ...(said.how === 'page' || said.how === 'kit' ? { how: said.how } : {}) };
     if (said.what === 'wait') {
-      if (!isNum(said.start) || !isNum(said.ms) || (said.ended !== 'quiet' && said.ended !== 'limit')) return null;
+      // `stopped`: the agent stopped the fill while it waited (adapter.js settle's `abort`).
+      if (!isNum(said.start) || !isNum(said.ms) || !['quiet', 'limit', 'stopped'].includes(said.ended)) return null;
       const held = has(said.held) ? { held: { busy: said.held.busy === true, changing: said.held.changing === true, requests: said.held.requests === true } } : {};
       return { what: 'wait', why: WAITS_FOR.has(said.why) ? said.why : null, start: said.start, ms: said.ms, ended: said.ended,
         ...nums(said, ['quietMs', 'maxMs', 'lastChange', 'lastHeld']), ...yesNo(said, ['requests', 'settled']), ...held };

@@ -10,7 +10,7 @@ import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAns
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
-import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
+import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
 import { intakeNotes, rederive } from '../src/normalize.js';
@@ -5999,6 +5999,48 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   assert.match(html, /<div id="problem-form"[\s\S]*?<\/div>\n\s+<\/div>\n\s+<!--[^\n]*-->\n\s+<p id="problem-said" class="problem-said" role="status" hidden><\/p>/);
 });
 
+// Audit 2026-11-07, UX-12a: a new agent met a dense panel whose only sign of missing setup was a dot
+// on the gear. Home lists what setting up takes, each item ticked by the health check Settings' note
+// already used (setupItems), while anything is left; the note says the same items.
+test('Home\'s setup checklist is ticked by the health checks, and gone once all is done', async () => {
+  const run = async ({ agent = '', ai = { on: false, ready: false, provider: 'openai' }, up = { state: 'idle' } }) => {
+    const els = { 'foot-version': {}, 'settings-dot': {} };
+    const state = { notes: {} };
+    const ctx = { state, inExtension: false, $: (id) => els[id], usage: { settings: async () => ({ agent }), lastSave: () => ({ state: 'ok' }) },
+      aiSettings: async () => ai, PROVIDERS: { openai: { keyLabel: 'OpenAI key' } }, issueSaid: (x) => x };
+    vm.runInNewContext(['setupItems', 'renderHealth', 'joinAnd'].map(extractFunction).join('\n'), ctx);
+    await ctx.renderHealth({ up });
+    return { health: plain(state.health), dot: els['settings-dot'].hidden };
+  };
+  const fresh = await run({ ai: { on: true, ready: false, provider: 'openai' }, up: { state: 'off' } });
+  assert.deepEqual(fresh.health.checklist, [
+    { id: 'initials', label: 'Add your initials, so your quotes count as yours', done: false, focus: 'agent' },
+    { id: 'ai', label: 'Turn the AI assistant on with its key, or leave it off', done: false, focus: 'ai-on' },
+    { id: 'server', label: 'Set the usage server, so TNI gets your runs', done: false, focus: 'server-url' },
+  ]);
+  assert.equal(fresh.health.setup, 'To finish setup, add your initials, add the OpenAI key and set the usage server (Advanced).');
+  assert.equal(fresh.dot, false);
+  // Initials typed, the AI off, the server shipped: only the initials' item was open, now all done.
+  const half = await run({ up: { state: 'ok' } });
+  assert.deepEqual(half.health.checklist.map((x) => [x.id, x.done]), [['initials', false], ['ai', true], ['server', true]]);
+  assert.equal(half.health.setup, 'To finish setup, add your initials.');
+  const done = await run({ agent: 'JK', ai: { on: true, ready: true, provider: 'openai' }, up: { state: 'ok' } });
+  assert.deepEqual([done.health.checklist, done.health.setup, done.dot], [null, null, true]);
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.match(html, /<section id="home"[\s\S]*?<div id="setup-root"><\/div>\n\s+<\/section>/);
+  assert.match(SIDEPANEL, /mountSetup\(\$\('setup-root'\), \{ open: \(focus\) => openSettings\(focus\) \}\);/);
+  // Set up opens the fold that holds its box (review of #450: the AI fold closed hid ai-on).
+  for (const focus of ['agent', 'ai-on', 'server-url']) {
+    const box = { focused: false, focus() { this.focused = true; }, scrollIntoView() {} };
+    const fold = (holds) => ({ open: false, contains: (el) => el === box && holds });
+    const ui = { view: {}, advanced: fold(focus === 'server-url'), assistant: fold(focus === 'ai-on'), [focus]: box };
+    const opened = { state: {}, $: (id) => ui[id], showScreen: () => {}, openKeyForm: () => {} };
+    vm.runInNewContext(extractFunction('openSettings'), opened);
+    opened.openSettings(focus);
+    assert.deepEqual([box.focused, ui.advanced.open, ui.assistant.open], [true, focus === 'server-url', focus === 'ai-on'], focus);
+  }
+});
+
 // Contract 1 (audit 2026-10-08): a field change on a one-address application names its step.
 test('field changes carry the step the recorder read, only for one-address applications', () => {
   const logged = [];
@@ -6399,7 +6441,7 @@ test('while a fill runs the panel asks each frame only for new rows and keeps th
   const asked = [];
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; },
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; },
     setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { asked.push(JSON.parse(JSON.stringify(o.args[0]))); return reply; } } },
   };
@@ -6438,7 +6480,7 @@ test('while a fill runs the panel streams the items judged with the answers, in 
   const asked = [];
   const state = { fillingFor: { run: 'r1', tabId: 3, filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; },
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; },
     setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { asked.push(JSON.parse(JSON.stringify(o.args[0]))); return reply; } } },
   };
@@ -6477,7 +6519,7 @@ test('a fill whose page stops answering is said in the dock, and the word goes w
   let renders = 0;
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, UNANSWERED_MS: 5000,
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; }, UNANSWERED_MS: 5000,
     Date: { now: () => clock }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: () => new Promise((resolve) => { answer = resolve; }) } },
   };
@@ -6515,7 +6557,7 @@ test('the page not answering and Stop are said in a new fillingFor', async () =>
   const stopped = [];
   const button = { disabled: false };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps() {}, UNANSWERED_MS: 5000, $: () => button,
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps() {}, UNANSWERED_MS: 5000, $: () => button,
     Date: { now: () => clock }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { if (o.args[0] === 'r1') stopped.push(o.target.tabId); return new Promise(() => {}); } } },
   };
@@ -9654,7 +9696,7 @@ test('watchFill says a quiet automatic fill as one once it has gone on QUIET_MS,
   const state = { fillingFor: { run: 'r', auto: true, rows: [], started: 1000 } };
   let now = 1000;
   const context = { state, inExtension: true, QUIET_MS: 1500, UNANSWERED_MS: 5000, Date: { now: () => now }, renderSteps: () => { drawn++; },
-    setInterval: (fn) => { ticks.push(fn); return 1; }, clearInterval() {}, worldFor: () => 'ISOLATED',
+    setInterval: (fn) => { ticks.push(fn); return 1; }, clearInterval() {}, worldFor: () => 'ISOLATED', fillRunning() {}, fillEnded() {},
     chrome: { scripting: { executeScript: async () => [] } } };
   vm.runInNewContext(extractFunction('watchFill'), context);
   context.watchFill({ run: 'r', tabId: 7, carrier: {} });
@@ -10530,7 +10572,7 @@ test('the live list and the dock say what the kit waits on (its phase), and a ph
   let reply = [];
   let renders = 0;
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
-  const wctx = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+  const wctx = { inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async () => reply } } };
   vm.runInNewContext(extractFunction('watchFill'), wctx);
   wctx.watchFill({ run: 'r1', tabId: 3, carrier: {} });
@@ -10901,7 +10943,7 @@ test('the live list takes the top frame\'s phase while its fill runs', async () 
   let tick = null;
   let reply = [];
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
-  const context = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => {}, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+  const context = { inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => {}, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async () => reply } } };
   vm.runInNewContext(extractFunction('watchFill'), context);
   context.watchFill({ run: 'r1', tabId: 3, carrier: {} });
@@ -11503,6 +11545,35 @@ test('a unit missing from the list with no helper for it is left for the agent i
   const none = [{ frameId: 0, result: { noData: [], blockers: [] } }];
   context.noteMissingUnit(none, { ...ctx, unitMissing: null });
   assert.equal(none[0].result.noData.length, 0);
+});
+
+// Audit 2026-11-07, GAP-02: a list holding as many rows as the intake or more that isn't the intake's
+// was said only in the usage log. Each intake unit not on it, and the rows the intake doesn't have,
+// are left for the agent in the top frame's report; nothing is added or deleted.
+test('a full unit list that isn\'t the intake\'s leaves its missing units and extra rows for the agent', async () => {
+  const record = { vehicles: [{ vin: '1FTBR3X80MKA12341' }, { vin: '1FTBR3X80MKA12342' }], trailers: [], drivers: [] };
+  const state = { tab: { id: 4 }, intake: { record }, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0 },
+    unitForms: { vehicles: {}, drivers: {}, trailers: {} }, doneActions: new Set() };
+  const pick = { state, knownStep, runKit: async () => [{ result: { step: 'Vehicles', forms: [], lists: [{ rows: 3, shown: [true, false] }, null] } }], fillCurrent: () => true,
+    persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs, unitMissing, planFor: buildPlan };
+  vm.runInNewContext(extractFunction('pickUnitToAdd'), pick);
+  const ctx = { tabId: 4, intake: state.intake, revision: 1, settings: { autoAdvance: true }, carrier: geico };
+  await pick.pickUnitToAdd(geico, ctx);
+  assert.equal(ctx.adding, null, 'nothing added');
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.listGaps)), { missing: [{ list: 'vehicles', index: 1 }], extra: 2, lists: ['vehicles', 'trailers'] });
+  const note = { unitMissingItem, unitExtraRowsItem };
+  vm.createContext(note);
+  vm.runInContext(extractFunction('noteMissingUnit'), note);
+  const results = [{ frameId: 0, result: { noData: [], blockers: [] } }];
+  note.noteMissingUnit(results, ctx);
+  const top = results[0].result;
+  assert.deepEqual(JSON.parse(JSON.stringify(top.blockers)), ['needs you: Add Vehicle', 'needs you: Check the vehicle list']);
+  assert.match(top.noData[0].note, /Vehicle 2 of the intake isn't on GEICO's list/);
+  assert.match(top.noData[1].note, /GEICO's vehicle list has 2 rows the intake doesn't: check them/);
+  // The intake's list exactly: no gaps.
+  pick.runKit = async () => [{ result: { step: 'Vehicles', forms: [], lists: [{ rows: 2, shown: [true, true] }, null] } }];
+  await pick.pickUnitToAdd(geico, ctx);
+  assert.equal(ctx.listGaps, null);
 });
 
 // REC-04 (audit 2026-11-07; W44-23): with the panel on another tab, each new document of the recorded

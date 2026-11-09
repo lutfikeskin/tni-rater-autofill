@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The side panel: the usage log panel and problem reports.
 // One part of the panel; sidepanel.js wires the parts together.
 import { redactionTerms } from '../../src/plan.js';
@@ -44,25 +43,39 @@ async function renderUsage() {
     if (document.activeElement !== $(id)) $(id).value = v;
   }
   state.recordingLine = !!state.intake && !state.tab?.carrier?.practice;
-  renderHealth({ n, agent, serverUrl, up });
+  renderHealth({ up });
+}
+
+// What setting up the panel takes, each item done when its health check passes: initials (so the
+// agent's quotes count as theirs), the AI assistant ready or turned off, and a usage server. Each
+// item says what it is (`label`), whether it is `done`, what the Settings note asks while it isn't
+// (`todo`) and the Settings box that does it (`focus`, for openSettings). Home draws it as the setup
+// checklist (home-view.jsx), Settings as its setup note (renderHealth).
+function setupItems({ agent, ai, upState }) {
+  return [
+    { id: 'initials', label: 'Add your initials, so your quotes count as yours', done: !!agent, todo: 'add your initials', focus: 'agent' },
+    { id: 'ai', label: 'Turn the AI assistant on with its key, or leave it off', done: !(ai.on && !ai.ready),
+      todo: `add the ${PROVIDERS[ai.provider]?.keyLabel ?? 'AI key'}`, focus: 'ai-on' },
+    { id: 'server', label: 'Set the usage server, so TNI gets your runs', done: upState !== 'off', todo: 'set the usage server (Advanced)', focus: 'server-url' },
+  ];
 }
 
 // The version this browser is running, and setup problems that otherwise go unnoticed until a
 // review shows missing data: no initials, no AI key, no usage server (said in Settings, with a dot
-// on its button), and a usage log that can't be saved (said on the main screen: nothing is recorded).
+// on its button, and on Home as a checklist: setupItems), and a usage log that can't be saved (said
+// on the main screen: nothing is recorded).
 async function renderHealth({ up }) {
   const version = inExtension ? chrome.runtime.getManifest().version : 'dev';
   $('foot-version').textContent = `v${version}`;
   const { agent = '' } = await usage.settings();
   const ai = await aiSettings();
-  const setup = [
-    !agent && 'add your initials',
-    ai.on && !ai.ready && `add the ${PROVIDERS[ai.provider].keyLabel}`,
-    up.state === 'off' && 'set the usage server (Advanced)',
-  ].filter(Boolean);
+  const items = setupItems({ agent, ai, upState: up.state });
+  const setup = items.filter((x) => !x.done).map((x) => x.todo);
   // Said in Settings as data (state.health; settings-view.jsx): the version, the setup note (null:
-  // none) and the initials' box marked while empty.
-  state.health = { version: `Version ${version}`, setup: setup.length ? `To finish setup, ${joinAnd(setup)}.` : null, agentMissing: !agent };
+  // none) and the initials' box marked while empty. On Home (home-view.jsx), the checklist while
+  // anything is left to set up (null: all done).
+  state.health = { version: `Version ${version}`, setup: setup.length ? `To finish setup, ${joinAnd(setup)}.` : null, agentMissing: !agent,
+    checklist: setup.length ? items.map(({ id, label, done, focus }) => ({ id, label, done, focus })) : null };
   $('settings-dot').hidden = !setup.length;
   // Events that can't even be saved here are lost: that is said where the agent works.
   const saved = usage.lastSave();
@@ -225,4 +238,4 @@ function wireUsage() {
   setInterval(renderUsage, 5000);
 }
 
-export { problemSaid, renderUsage, settingsActs, uploadNow, wireUsage };
+export { problemSaid, renderUsage, settingsActs, setupItems, uploadNow, wireUsage };

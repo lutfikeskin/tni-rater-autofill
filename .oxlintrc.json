@@ -2,7 +2,7 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "categories": { "correctness": "error" },
   "env": { "browser": true, "node": true, "webextensions": true, "es2024": true },
-  "ignorePatterns": ["lib/pdf.min.mjs", "lib/pdf.worker.min.mjs", "lib/fflate.mjs", ".agents/**", ".cursor/**", ".claude/worktrees/**", "dist/**", "layouts/**"],
+  "ignorePatterns": ["lib/pdf.min.mjs", "lib/pdf.worker.min.mjs", "lib/fflate.mjs", "test/replay/vendor/**", ".agents/**", ".cursor/**", ".claude/worktrees/**", "dist/**", "layouts/**"],
   "rules": {
     "no-undef": "error",
     "no-unused-vars": ["error", { "args": "none", "caughtErrors": "none", "ignoreRestSiblings": true }],
