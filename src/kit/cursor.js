@@ -1230,12 +1230,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // OTHER is no answer to keep (review of #141): that still fails. A list whose only answer
           // (but OTHER) is the one it holds has nothing to check: the ZIP has that one city, so it
           // is kept with no check and Continue isn't held (the maintainer, 2026-11-09: a GEICO
-          // recording held every vehicle on "check: City" with ORLANDO, the only city, selected).
+          // recording held every vehicle on "check: City" with ORLANDO, the only city, selected). A
+          // question the carrier reworded keeps its check, with the wording warning (review of #537).
           const listed = describe(c).options.filter((o) => !/^other\b/i.test(o));
           state.report.kept.push(item);
-          if (listed.length === 1 && listed[0] === selectedText(c)) state.handled.set(step.id, { status: null });
+          if (!reworded && listed.length === 1 && oneLine(listed[0]).toLowerCase() === oneLine(selectedText(c) ?? '').toLowerCase()) state.handled.set(step.id, { status: null });
           else {
-            const note = `The page's list has no "${step.value}" (${step.name}): its "${selectedText(c)}" is left as it is. Check it.`;
+            const note = [reworded ? step.warn : null, `The page's list has no "${step.value}" (${step.name}): its "${selectedText(c)}" is left as it is. Check it.`].filter(Boolean).join(' ');
             state.report.checks.push({ ...item, note, ...describe(c) });
             state.handled.set(step.id, { status: 'needs', note });
           }
