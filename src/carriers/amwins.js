@@ -49,12 +49,13 @@
 //   2026-10-26, W44-26: Medical Payments $5,000 wherever offered, PIP not selected).
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
-import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold, insurerTenure, tenureBand } from '../normalize.js';
+import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
 import { HAZ_HAUL } from '../util.js';
 import { driverExcluded, ownerRowExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { filingsIntent } from '../answers/filings.js';
+import { vehicleValueNote } from '../answers/vehicles.js';
 import { EXPEDITING_OR_GENERAL_FREIGHT, namesExpeditingOrGeneralFreight } from '../answers/classes.js';
 
 // A UM limit as AmWINS lists it: $100K, and from a million $1M or $1.5M (captured layouts), never $1000K.
@@ -260,8 +261,7 @@ const dotSource = (r) => (ntlNoDotFilings(r) && r.applicant.dot ? 'standard' : '
 // and not answered yet (AmWINS has no NTL question: the claims box, the notes or Luna's flag):
 // Filing required, the DOT box, its number, NONE (without an MC number) and the federal filings
 // are the agent's, with a note saying why (`ntlDotFilingsHold`). An MC number stays the intake's.
-const held = (source) => (r) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r) : source);
-const holdOr = (note) => (r) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r) : note ?? null);
+// `held` / `holdOr`: src/normalize.js ntlHeld / ntlHoldOr, shared by the carriers.
 
 // Transporting hazardous material (TNI, 2026-10-26, W44-32), the maintainer: "Hazmat is always no,
 // if its not specifically selected" (GEICO's W43-34 rule): the intake's Yes or No; blank is No (standard),
@@ -379,11 +379,6 @@ const EXCLUSIONS = [
   ['towingAndLaborReimbursementExclude', 'Towing & Labor', 'towing'],
   ['transportationExpenseReimbursementExclude', 'Rental Reimbursement', 'transportation|rental'],
 ];
-
-const vehicleValueNote = (r, a) => {
-  const v = r.vehicles?.[a.vehicles ?? 0]?.value;
-  return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
-};
 
 // "Is a Federal Filing Required?" (the intake's own Yes or No: `filings`) left blank on the intake:
 // TNI's No when the intake doesn't ask for filings (TNI, 2026-10-26, W44-32: "Your recommendations

@@ -470,6 +470,10 @@ test('no USDOT number and no 60-day answer: "Has a USDOT number" is the agent\'s
   const r = with_({ 'applicant.dot': null, 'applicant.mcDotWithin60Days': null });
   agentsNote(byQ(buildPlan(r, progressive, {}), '1ED'));
   r.applicant.mcDotWithin60Days = false;
+  // With the intake's MC number, the 60-day No is the agent's too, as on GEICO (the maintainer,
+  // 2026-11-07, audit CARR-02); without one it is No.
+  agentsNote(byQ(buildPlan(r, progressive, {}), '1ED'));
+  r.applicant.mc = null;
   assert.match(byQ(buildPlan(r, progressive, {}), '1ED').value, /^No - and/);
   r.applicant.mcDotWithin60Days = true;
   assert.match(byQ(buildPlan(r, progressive, {}), '1ED').value, /^Not Yet/);

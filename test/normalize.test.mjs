@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, noNumberEdit, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
+import { normalizeIntake, noNumberEdit, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, ntlHeld, ntlHoldOr, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance, set } from '../src/util.js';
@@ -616,6 +616,10 @@ test('progressive: standard answers for follow-up questions', () => {
   const noDot = structuredClone(record);
   noDot.applicant.dot = null;
   noDot.applicant.mcDotWithin60Days = false;
+  // With an MC number that No is the agent's, as on GEICO (the maintainer, 2026-11-07, audit CARR-02).
+  noDot.applicant.mc = 'MC-765432';
+  assert.equal(byQ('1ED', noDot).value, null);
+  noDot.applicant.mc = null;
   assert.equal(byQ('1ED', noDot).value, 'No - and the customer will not have a USDOT number');
   assert.equal(byQ('20F', noDot).ignore, true);
   assert.equal(byQ('20F').value, true, 'TNI\'s standard Yes once the lookup found the number (2026-10-20)');
@@ -2140,11 +2144,17 @@ test('"no" in the USDOT box answers GEICO\'s USDOT question No also with an MC n
   assert.equal(progressiveDot(coming), 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days');
   // Counterexamples: a blank USDOT box with an MC number is still the agent's, also with the
   // 60-day No; a real USDOT number is Yes.
+  // Progressive the same (the maintainer, 2026-11-07, audit CARR-02).
   for (const fields of [{ dot_number: '' }, { dot_number: '', mc_dot_60days: 'No' }]) {
     const r = intake(fields);
     assert.equal(geicoStep(r).value, null, JSON.stringify(fields));
     assert.match(geicoStep(r).note, /MC number but no USDOT number/, JSON.stringify(fields));
+    const step = buildPlan(r.record, progressive).find((s) => s.q === '1ED');
+    assert.equal(step.value, null, `Progressive: ${JSON.stringify(fields)}`);
+    assert.match(step.note, /MC number but no USDOT number/, `Progressive: ${JSON.stringify(fields)}`);
   }
+  // Without an MC number the 60-day No is still No on Progressive.
+  assert.equal(progressiveDot(intake({ dot_number: '', mc_number: '', mc_dot_60days: 'No' })), 'No - and the customer will not have a USDOT number');
   assert.equal(geicoStep(intake({ dot_number: '1234567' })).value, 'Yes');
 });
 
@@ -2313,6 +2323,26 @@ test('"no" in the FEIN box is no FEIN (W44-15)', () => {
   }
   assert.equal(normalizeIntake({ ...raw, fein: '12-345' }, W44).warnings.find((w) => w.code === 'fein.invalid')?.level, 'check', 'a short number is still checked');
   assert.equal(normalizeIntake({ ...raw, fein: '12-3456789' }, W44).record.applicant.fein, '12-3456789');
+});
+
+// Audit 2026-11-07, CARR-02: the NTL hold wraps each carrier's USDOT and filings rules the same way,
+// from one definition, so a fourth carrier can't copy a drifted one.
+test('the NTL hold is one shared wrapper: held, the rule is the agent\'s with the hold\'s note; otherwise its own', async () => {
+  const fs = await import('node:fs');
+  const held = { coverage: { ntl: true, autoLiability: 'Yes' } };
+  const free = { coverage: { ntl: false, autoLiability: 'Yes' } };
+  const source = (r, a) => (a?.vehicles === 1 ? 'derived' : 'standard');
+  assert.equal(ntlHeld(source)(held, {}), 'fact');
+  assert.equal(ntlHeld(source)(free, {}), 'standard');
+  assert.equal(ntlHeld(source)(free, { vehicles: 1 }), 'derived', 'the unit reaches the rule');
+  assert.equal(ntlHeld('derived')(free, {}), 'derived');
+  assert.match(ntlHoldOr((r) => 'own note')(held, {}), /primary auto liability/);
+  assert.equal(ntlHoldOr((r) => 'own note')(free, {}), 'own note');
+  assert.equal(ntlHoldOr()(free, {}), null);
+  for (const carrier of ['progressive', 'geico', 'amwins']) {
+    const text = fs.readFileSync(new URL(`../src/carriers/${carrier}.js`, import.meta.url), 'utf8');
+    assert.doesNotMatch(text, /const (held|holdOr|vehicleValueNote) = /, `${carrier} defines its own copy`);
+  }
 });
 
 // Audit 2026-11-07, DATA-04: correcting a source field in Client details left what was derived from

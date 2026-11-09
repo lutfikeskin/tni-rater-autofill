@@ -481,6 +481,11 @@ export const ntlDotFilingsHold = (record) => (ntlWithPrimary(record)
   : ntlUndecided(record)
     ? 'The claims box or notes mention non-trucking liability (NTL), not answered yet: set it to Yes or No on the Intake step first, then fill this page again (TNI adds no USDOT number and no filings on an NTL quote).'
     : null);
+// A carrier's USDOT or filings rule while `ntlDotFilingsHold` holds it: its source is `fact` (the
+// agent's, nothing filled) and its note says why; otherwise the rule's own source and note. Shared by
+// every carrier, so the hold reads the same everywhere (audit 2026-11-07, CARR-02).
+export const ntlHeld = (source) => (r, a) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r, a) : source);
+export const ntlHoldOr = (note) => (r, a) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r, a) : note ?? null);
 // The intake's info item when an NTL intake asks for filings or gives a USDOT number (coverage.ntl-filings).
 export const ntlFilingsMessage = (record) => `NTL quote: TNI adds no USDOT and no filings. ${record?.operations?.filingsRequired === true
   ? `Filings are answered No${record?.applicant?.dot ? ' and the USDOT number is left out' : ''}.`
