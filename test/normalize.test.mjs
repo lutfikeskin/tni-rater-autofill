@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, noNumberEdit, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, ntlHeld, ntlHoldOr, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
+import { checkHolds, normalizeIntake, noNumberEdit, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, ntlHeld, ntlHoldOr, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance, set } from '../src/util.js';
@@ -2606,4 +2606,26 @@ test('the edit-time box checks say what load-time normalization says, for the sa
       assert.deepEqual(said(intake.warnings, owns), atLoad, `${why}: typed in the panel, the same checks in the same words`);
     }
   }
+});
+
+// Audit 2026-11-07, DATA-05: a check about one field's own value follows the agent's edit of it:
+// it no longer holds once the value is fixed, and holds again when it is broken again; a check the
+// value alone doesn't settle, or an invalid value emptied, isn't judged.
+test('checkHolds: a check about a field\'s value follows the value the agent put there', () => {
+  const year = 2026;
+  assert.equal(checkHolds('dob.invalid', '13/45/1980', year), true);
+  assert.equal(checkHolds('dob.invalid', '04/12/1980', year), false);
+  assert.equal(checkHolds('vin.invalid', '1FTFW1E50KFA1234', year), true);
+  assert.equal(checkHolds('vin.missing', '', year), true);
+  assert.equal(checkHolds('vin.missing', 'ABC', year), false);
+  assert.equal(checkHolds('phone.invalid', '555-0100', year), true);
+  assert.equal(checkHolds('phone.invalid', '(201) 555-0100', year), false);
+  assert.equal(checkHolds('fein.invalid', '12-3456789', year), false);
+  assert.equal(checkHolds('vehicle-year.invalid', '2028', year), true);
+  assert.equal(checkHolds('vehicle-year.invalid', '2019', year), false);
+  assert.equal(checkHolds('year-established.invalid', '2015', year), false);
+  assert.equal(checkHolds('email.invalid', 'a@b', year), true);
+  assert.equal(checkHolds('dob.invalid', '', year), undefined, 'emptied: not this check\'s to say');
+  assert.equal(checkHolds('dob.unusual-age', '04/12/1920', year), undefined, 'not settled by the value alone');
+  assert.equal(checkHolds('drivers.owner-name-differs', 'x', year), undefined);
 });

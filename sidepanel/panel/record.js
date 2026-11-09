@@ -2,7 +2,7 @@
 // The side panel: rendering the client record.
 // One part of the panel; sidepanel.js wires the parts together.
 import { sourcePlace } from '../../src/intake-source.js';
-import { noNumberEdit, parseEdit, rederive } from '../../src/normalize.js';
+import { checkHolds, noNumberEdit, parseEdit, rederive } from '../../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../../src/schema.js';
 import { get, set, STATES, quotedCarrierPolicy } from '../../src/util.js';
 import { ownerDrivesAnswered } from '../../src/answers/owner.js';
@@ -337,6 +337,23 @@ export function changedFromRead(intake, path) {
   return JSON.stringify(get(intake.record, path) ?? null) !== JSON.stringify(get(intake.intakeRecord, path) ?? null);
 }
 
+// The checks on `path` that its new value `value` settles (checkHolds, normalize.js): checked
+// (`done`) once one no longer holds, open again once it does; any other check on it is left as it
+// was. True when one changed (audit 2026-11-07, DATA-05).
+export function followChecks(intake, path, value, year = new Date().getFullYear()) {
+  const done = new Set(intake.done ?? []);
+  let changed = false;
+  (intake.warnings ?? []).forEach((w, i) => {
+    if (w.path !== path || w.level !== 'check') return;
+    const holds = checkHolds(w.code, value, year);
+    if (holds === undefined || holds !== done.has(i)) return;
+    if (holds) done.delete(i); else done.add(i);
+    changed = true;
+  });
+  if (changed) intake.done = [...done];
+  return changed;
+}
+
 async function agentEdit(path, after, kind, { restore = false } = {}) {
   const before = get(state.intake.record, path);
   set(state.intake.record, path, after);
@@ -356,6 +373,10 @@ async function agentEdit(path, after, kind, { restore = false } = {}) {
   if (path === 'applicant.ownerDrives') { ownerDrivesAnswered(state.intake, restore ? { restore: path } : { edit: path }); renderWarnings(); }
   // Whether it was flagged, for the log: before the checks follow the edit.
   const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
+  // A check on this field that its value alone settles follows the edit (checkHolds: a valid date
+  // now, a VIN typed in): checked once it no longer holds, open again once it does (audit
+  // 2026-11-07, DATA-05), so the agent isn't asked to say Looks right about a fixed value.
+  if (followChecks(state.intake, path, after)) renderWarnings();
   // A value derived from this one (radius → miles, claims box → any claims, notes → ownership and
   // years in business, USDOT box → no USDOT) follows the edit, unless the agent set it here
   // themselves, and so do the checks that came with it (normalize.js rederive); its row in the

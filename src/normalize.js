@@ -1480,6 +1480,33 @@ export function parseEdit(kind, text) {
   }
 }
 
+// Whether an intake check about one field's own value still holds for the value the agent put
+// there (audit 2026-11-07, DATA-05): a date of birth that is a date now, a VIN typed in. The same
+// tests as normalizeIntake's. undefined for a check its field's value alone doesn't settle (an
+// unusual age, a name that differs, a note), and for an invalid value the agent emptied: those
+// stay as the agent left them. `year`: this year.
+const MISSING_CHECKS = new Set(['dob.missing', 'license.missing', 'license-state.missing', 'vin.missing', 'vehicle-type.missing', 'cdl-year.missing',
+  'eld-brand.missing', 'filings-which.missing', 'auto-limit.missing', 'gl-limit.missing', 'address.missing', 'address.no-city', 'address.no-zip']);
+export function checkHolds(code, value, year) {
+  const blank = value == null || String(value).trim() === '';
+  if (MISSING_CHECKS.has(code)) return blank;
+  if (blank) return undefined;
+  const s = String(value);
+  const n = toInt(s);
+  switch (code) {
+    case 'dob.invalid': return !toDate(s);
+    case 'vehicle-year.invalid': return !n || n < 1950 || n > year + 1;
+    case 'vehicle-value.invalid': return toMoney(s) == null;
+    case 'vin.invalid': return !!vinProblem(s);
+    case 'fein.invalid': return s.replace(/\D/g, '').length !== 9;
+    case 'year-established.invalid': return n == null || n < 1900 || n > year;
+    case 'phone.invalid': return !toPhone(s);
+    case 'email.invalid': return !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(s);
+    case 'years-experience.invalid': return n == null;
+    default: return undefined;
+  }
+}
+
 // What normalizeIntake derives from another answer, recomputed from the record as the agent
 // corrected it in the panel (set first, then rederive), with the checks that come with it (audit
 // 2026-11-07, DATA-04). The agent's own values always win: an answer the agent set ("Radius
