@@ -64,8 +64,8 @@ the store refuses a version it already has.
      usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, a
      profile of each client's business without names, numbers or addresses, and what an agent types
      into a problem report; a quote summary the agent saves, with the client's answers), which also passes those Luna requests to OpenAI with TNI's key when
-     the agent has none, storing nothing.
-     localhost: a local test server."
+     the agent has none, storing nothing."
+     The store zip asks for no localhost or 127.0.0.1 access, and its panel takes no page on this computer for a carrier (no local test page, no practice copies): `storeManifest` and `withoutLocalPages` in scripts/lib/package.mjs (audit 2026-11-07, QA-11, SRV-16). The unpacked copy keeps both for the mocks and replays.
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
      page, sent to OpenAI when the AI assistant is on, as it is unless the agent turns it off, with
      client names and numbers redacted: directly with the agent's own key, or through TNI's usage
