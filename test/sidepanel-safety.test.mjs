@@ -6082,7 +6082,7 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   vm.runInNewContext(extractFunction('problemSaid') + extractFunction('problemFate'), said);
   assert.equal(said.problemSaid('sent', { state: 'ok' }, true, at), `Report saved and sent to TNI at ${time}, with this page's last fill.`);
   assert.equal(said.problemSaid('sent', { state: 'ok' }, false, at), `Report saved and sent to TNI at ${time}.`);
-  assert.equal(said.problemSaid('refused', { state: 'ok', sent: 0 }, false, at), "Report saved on this computer, but the usage server didn't take it: it stays here. Tell TNI its reference.");
+  assert.equal(said.problemSaid('refused', { state: 'ok', sent: 0 }, false, at), "Report saved on this computer, but the usage server didn't take it: it stays here, so tell TNI about the problem yourself.");
   assert.equal(said.problemSaid('queued', { state: 'ok', sent: 0 }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
   assert.equal(said.problemSaid('queued', { state: 'error' }, false, at), 'Report saved on this computer. It goes to TNI with the next upload.');
   assert.equal(said.problemSaid('queued', { state: 'off' }, true, at), "Report saved on this computer, with this page's last fill. No usage server is set, so it isn't sent.");
@@ -6182,10 +6182,12 @@ test('Home\'s setup checklist is ticked by the health checks, and gone once all 
   ]);
   assert.equal(fresh.health.setup, 'To finish setup, add your initials, add the OpenAI key and set the usage server (Advanced).');
   assert.equal(fresh.dot, false);
-  // The store copy has no Advanced (PR #534 review): no server item, and a log that can't be saved says only to tell TNI.
+  // The store copy has no Advanced (PR #534 review): its server item opens no box and says to tell
+  // TNI (open only when a policy set no server), and a log that can't be saved says only to tell TNI.
   const store = await run({ ai: { on: true, ready: false, provider: 'openai' }, up: { state: 'off' }, locked: true, save: { state: 'error', message: 'quota' } });
-  assert.deepEqual(store.health.checklist.map((x) => x.id), ['initials', 'ai']);
-  assert.equal(store.health.setup, 'To finish setup, add your initials and add the OpenAI key.');
+  assert.deepEqual(store.health.checklist.at(-1), { id: 'server', label: "No usage server is set, so TNI doesn't get your runs: tell TNI", done: false, focus: null });
+  assert.equal(store.health.setup, 'To finish setup, add your initials, add the OpenAI key and tell TNI no usage server is set.');
+  assert.deepEqual((await run({ agent: 'JK', up: { state: 'ok' }, locked: true })).health.checklist, null, "TNI's server: nothing to set up");
   assert.equal(store.notes.usage.text, 'Nothing is recorded now (quota). Tell TNI.');
   assert.equal((await run({ save: { state: 'error', message: 'quota' } })).notes.usage.text, 'Nothing is recorded now (quota). Export the log (Settings, Advanced) and tell TNI.');
   // Initials typed, the AI off, the server shipped: only the initials' item was open, now all done.

@@ -54,15 +54,19 @@ async function renderUsage() {
 // agent's quotes count as theirs), the AI assistant ready or turned off, and a usage server. Each
 // item says what it is (`label`), whether it is `done`, what the Settings note asks while it isn't
 // (`todo`) and the Settings box that does it (`focus`, for openSettings). Home draws it as the setup
-// checklist (home-view.jsx), Settings as its setup note (renderHealth). The store copy (`locked`) has no
-// server item: its server is TNI's or the policy's, and its Settings has no Advanced (PR #534 review).
+// checklist (home-view.jsx), Settings as its setup note (renderHealth). In the store copy (`locked`) the
+// server is TNI's or the policy's and Settings has no Advanced, so its server item has no box to open
+// (`focus` null) and asks the agent to tell TNI; it is only ever open when a policy set no server
+// (PR #534 review).
 function setupItems({ agent, ai, upState, locked = false }) {
   return [
     { id: 'initials', label: 'Add your initials, so your quotes count as yours', done: !!agent, todo: 'add your initials', focus: 'agent' },
     { id: 'ai', label: 'Turn the AI assistant on with its key, or leave it off', done: !(ai.on && !ai.ready),
       todo: `add the ${PROVIDERS[ai.provider]?.keyLabel ?? 'AI key'}`, focus: 'ai-on' },
-    { id: 'server', label: 'Set the usage server, so TNI gets your runs', done: upState !== 'off', todo: 'set the usage server (Advanced)', focus: 'server-url' },
-  ].filter((x) => !(locked && x.id === 'server'));
+    locked
+      ? { id: 'server', label: "No usage server is set, so TNI doesn't get your runs: tell TNI", done: upState !== 'off', todo: 'tell TNI no usage server is set', focus: null }
+      : { id: 'server', label: 'Set the usage server, so TNI gets your runs', done: upState !== 'off', todo: 'set the usage server (Advanced)', focus: 'server-url' },
+  ];
 }
 
 // The version this browser is running, and setup problems that otherwise go unnoticed until a
@@ -184,7 +188,7 @@ function problemSaid(fate, status, withFill, at = new Date(), ref = null) {
 function problemFate(fate, status, withFill, at) {
   const fill = withFill ? ", with this page's last fill" : '';
   if (fate === 'sent') return `Report saved and sent to TNI at ${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${fill}.`;
-  if (fate === 'refused') return `Report saved on this computer${fill}, but the usage server didn't take it: it stays here. Tell TNI its reference.`;
+  if (fate === 'refused') return `Report saved on this computer${fill}, but the usage server didn't take it: it stays here, so tell TNI about the problem yourself.`;
   if (fate === 'unknown') return `Report saved${fill}. Whether it reached TNI couldn't be confirmed.`;
   if (status?.state === 'off') return `Report saved on this computer${fill}. No usage server is set, so it isn't sent.`;
   return `Report saved on this computer${fill}. It goes to TNI with the next upload.`;
