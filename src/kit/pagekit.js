@@ -23,7 +23,7 @@ const TIMELINE_EVENTS = 40;
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 98 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 99 && globalThis.__raterKit.build === BUILD) return;
   // The agent's key presses, from now on in this document: a write waits while they type elsewhere (apply).
   watchTyping();
 
@@ -184,7 +184,7 @@ const TIMELINE_EVENTS = 40;
   }
 
   globalThis.__raterKit = {
-    version: 98,
+    version: 99,
     build: BUILD,
     fill: tracedFill,
     // The last fill's timeline, for one whose report never came back (the panel's fill_error).

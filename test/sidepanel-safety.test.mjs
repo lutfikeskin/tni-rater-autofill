@@ -50,7 +50,7 @@ test('the panel script parses', () => {
 // decides which is said: those functions keep no sentence of their own. A string of words (two or
 // more, a capital or a space between letters) in one of them is a sentence that belongs there.
 test('the dock, the report head, the checks\' title and the source tags take their words from messages.js', () => {
-  const said = ['dockFor', 'fillingSaid', 'continueSaid', 'renderWarnings', 'answerSource'].flatMap((name) => {
+  const said = ['dockFor', 'fillingSaid', 'fillShare', 'continueSaid', 'renderWarnings', 'answerSource'].flatMap((name) => {
     const body = extractFunction(name).replace(/\/\/.*$/gm, '');
     return [...body.matchAll(/'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g)].map((m) => m[0])
       .filter((s) => /[A-Za-z]{2,} [A-Za-z]/.test(s.replace(/\$\{[^}]*\}/g, ''))).map((s) => `${name}: ${s}`);
@@ -176,7 +176,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'continuedKey']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'fillShare', 'continuedKey']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -12083,4 +12083,19 @@ test('the your-turn tone: a fill ending on the agent, switch on, once per page, 
   assert.equal(step('needs'), false, 'switch off');
   const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
   assert.ok(view.includes('id="turn-sound"') && view.includes('checked={switches.turnSound === true}'));
+});
+
+// Audit 2026-11-07, LIVE-08: the dock's bar is measured while the fill answers (the share of the
+// page's questions judged), and moves without a measure while it reads, waits or continues.
+test('the dock measures a fill by the questions judged, only while it answers', () => {
+  const sandbox = {};
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('fillShare'), sandbox);
+  assert.equal(sandbox.fillShare({ count: { judged: 3, seen: 12 }, phase: null }), 0.25);
+  assert.equal(sandbox.fillShare({ count: { judged: 15, seen: 12 }, phase: null }), 1, 'never past full');
+  assert.equal(sandbox.fillShare({ count: { judged: 3, seen: 12 }, phase: { name: 'waiting' } }), null, 'waiting: unmeasured');
+  assert.equal(sandbox.fillShare({ count: { judged: 0, seen: 0 }, phase: null }), null, 'nothing read yet');
+  assert.ok(extractFunction('fillingSaid').includes('progress: share ?? true'));
+  const view = fs.readFileSync(new URL('../sidepanel/panel/steps-view.jsx', import.meta.url), 'utf8');
+  assert.ok(view.includes('role="progressbar"') && view.includes('aria-valuenow={Math.round(d.progress * 100)}'));
 });
