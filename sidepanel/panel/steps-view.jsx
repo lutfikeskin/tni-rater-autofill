@@ -98,7 +98,9 @@ function Dock({ act }) {
   return (
     <div id="dock" ref={dock} className="dock" hidden={!d || d.hidden} data-phase={d?.phase} data-report={d?.report}
       onFocus={() => { focused.current = true; }} onBlur={(e) => { if (!dock.current?.contains(e.relatedTarget) && !lostBy(e.target)) focused.current = false; }}>
-      <div id="fill-progress" className="progress" hidden={!d?.progress}><span /></div>
+      {typeof d?.progress === 'number'
+        ? <div id="fill-progress" className="progress measured" role="progressbar" aria-label={d.progressSaid} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(d.progress * 100)} title={d.progressSaid}><span style={{ width: `${Math.round(d.progress * 100)}%` }} /></div>
+        : <div id="fill-progress" className="progress" hidden={!d?.progress}><span /></div>}
       <div className="dock-body">
         <div className="dock-text">
           <span id="dock-eyebrow" className="dock-eyebrow" data-tone={d?.tone ?? ''}>{d?.eyebrow ?? ''}</span>

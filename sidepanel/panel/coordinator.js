@@ -265,10 +265,13 @@ function watchFill(ctx) {
     const rows = [...lists.values()].flat().filter((x) => !x.otherStep);
     const itemsKey = [...judged].map(([frame, x]) => `${frame}@${x.at}`).join('|');
     const phaseKey = phase ? `${phase.name}|${phase.what ?? ''}` : '';
-    if (!answered && phaseKey === (f.phaseKey ?? '') && itemsKey === (f.itemsKey ?? '') && rows.length === f.filled && rows.every((x, i) => f.rows[i] === x)) return;
+    // How far the fill has got (LIVE-08): the frames' questions judged and fields read, summed.
+    const count = frames.reduce((n, x) => ({ judged: n.judged + (Number(x.result?.judged) || 0), seen: n.seen + (Number(x.result?.seen) || 0) }), { judged: 0, seen: 0 });
+    const countKey = `${count.judged}/${count.seen}`;
+    if (!answered && phaseKey === (f.phaseKey ?? '') && countKey === (f.countKey ?? '') && itemsKey === (f.itemsKey ?? '') && rows.length === f.filled && rows.every((x, i) => f.rows[i] === x)) return;
     // A new fillingFor, not a change in place: the live list (live-view.jsx) redraws on the assignment.
     state.fillingFor = { ...f, unanswered: false, filled: rows.length, rows, items: [...judged.values()].flatMap((x) => x.list), itemsKey,
-      ...(order.length ? { frames: order } : {}), phase, phaseKey };
+      ...(order.length ? { frames: order } : {}), phase, phaseKey, count, countKey };
     renderSteps();
   }, 500);
   return () => { clearInterval(timer); fillEnded(ctx.run); };
@@ -1494,6 +1497,14 @@ function dockFor() {
   return { phase: 'ready', ...DOCK.ready(progress?.name ?? null), sub: checksSaid ?? hint, ...fill };
 }
 
+// The share of the page's questions a fill has judged (0 to 1), for the dock's bar while it answers;
+// null while it reads the page, waits or continues, or before it has read any field: the bar then
+// moves without a measure (audit 2026-11-07, LIVE-08).
+function fillShare(f) {
+  if (f.phase || !f.count?.seen) return null;
+  return Math.max(0, Math.min(1, f.count.judged / f.count.seen));
+}
+
 // The dock while a fill runs (fillShown), with Stop. On another tab than the one in front (the agent
 // moved on while it ran): named, as that tab's ('elsewhere': the tab in front keeps its mark).
 function fillingSaid(f) {
@@ -1508,7 +1519,8 @@ function fillingSaid(f) {
     return { phase: 'filling', tone: 'warn', progress: true, eyebrow, ...FILLING.unanswered, ...stop };
   }
   const last = f.rows?.at(-1);
-  return { phase: 'filling', tone: 'blue', progress: true, eyebrow,
+  const share = fillShare(f);
+  return { phase: 'filling', tone: 'blue', progress: share ?? true, ...(share != null ? { progressSaid: FILLING.about(f.count.judged, f.count.seen) } : {}), eyebrow,
     title: f.stopping ? FILLING.stoppingTitle : f.phase && DOCK_PHASES.has(f.phase.name) ? FILLING.phase(phaseSaid(f.phase)[0]) : last ? FILLING.justFilled(last.label) : FILLING.reading,
     sub: FILLING.sub, ...stop };
 }
