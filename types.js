@@ -1064,6 +1064,8 @@
  *   settle (`quietMs`, `maxMs`, `requests`, `start`, `ms`, `ended` quiet or limit, at the limit `settled` and what `held` it); answer: one answer
  *   (`field`, `stepKind`, `ok`, `start`, `applyMs`, the usage log's `timing`); press: a button it pressed (`button`, `how`: from the page's world or the kit's)
  * @property {number} [steps]  kit run, as it starts: the plan's steps
+ * @property {'fill' | 'ai' | 'agent'} [source]  fill (the panel's marker): whose the work is; kit run and answer: 'ai' or 'agent'
+ *   for the kit's `answer` (an AI apply, the agent's own answer from the panel), none for a fill
  * @property {number} [filled]  kit run, as it ends: how many answers it filled
  * @property {boolean} [halted]  kit run, as it ends: whether it halted
  * @property {number} [start]  kit wait, answer: wall-clock ms when it began (`t` is when it was said, at its end)

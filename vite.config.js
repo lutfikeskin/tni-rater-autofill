@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { packagedCommit, provenancePlugin } from './scripts/lib/package.mjs';
+import { packagedCommit, provenancePlugin, rulesPlugin } from './scripts/lib/package.mjs';
 import { buildKit, KIT_OUTPUT } from './scripts/lib/kit.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -68,7 +68,7 @@ const previewShim = {
 
 // Every build stamps the panel's usage-log.js with its copy and commit: `store` for the store zip
 // (npm run package builds in that mode), otherwise `unpacked` (the Load unpacked copy, also when
-// npm run panel rebuilds it).
+// npm run panel rebuilds it); and coordinator.js with the rule files' fingerprint.
 export default defineConfig(({ command, mode }) => ({
   // The dev server serves the repository, as the extension does, so the panel's src/ imports, the
   // page scripts it injects and the practice carrier pages (test/fixtures/) share one origin.
@@ -76,7 +76,7 @@ export default defineConfig(({ command, mode }) => ({
   base: './',
   // The sounds, logos and rater badges the panel names at run time are copied by package.mjs.
   publicDir: false,
-  plugins: [react(), previewShim, ...(command === 'build' ? [provenancePlugin({ channel: mode === 'store' ? 'store' : 'unpacked', commit: packagedCommit(here) })] : [])],
+  plugins: [react(), previewShim, ...(command === 'build' ? [provenancePlugin({ channel: mode === 'store' ? 'store' : 'unpacked', commit: packagedCommit(here) }), rulesPlugin(here)] : [])],
   server: {
     host: '127.0.0.1',
     port: 5180,

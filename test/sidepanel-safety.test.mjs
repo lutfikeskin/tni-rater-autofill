@@ -2,8 +2,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import vm from 'node:vm';
+import nodeVm from 'node:vm';
 import { randomUUID } from 'node:crypto';
+import * as MESSAGES from '../sidepanel/panel/messages.js';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
@@ -24,6 +25,13 @@ import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
 
+// What the panel says (sidepanel/panel/messages.js) is in every vm context the tests run a panel
+// function in, as the panel's other imports are given there: the real words, not stubs. A context's
+// own value of a name wins.
+const withMessages = (context = {}) => Object.assign(context, { ...MESSAGES, ...context });
+const vm = { ...nodeVm,
+  createContext: (context, ...rest) => nodeVm.createContext(withMessages(context), ...rest),
+  runInNewContext: (code, context, ...rest) => nodeVm.runInNewContext(code, withMessages(context), ...rest) };
 
 // The panel's parts and its wiring as one text (test/panel-source.mjs): functions are found by name.
 const SIDEPANEL = PANEL_SOURCE;
@@ -35,6 +43,28 @@ const LAYOUT_STUB = '\nfunction scheduleLayout() {}';
 test('the panel script parses', () => {
   const r = spawnSync(process.execPath, ['--check', fileURLToPath(new URL('../sidepanel/sidepanel.js', import.meta.url))], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
+});
+
+// What the dock, a report's head, the intake checks' title and the answers' source tags say is in
+// the panel's messages (sidepanel/panel/messages.js: audit 2026-11-07, UX-17), not in the code that
+// decides which is said: those functions keep no sentence of their own. A string of words (two or
+// more, a capital or a space between letters) in one of them is a sentence that belongs there.
+test('the dock, the report head, the checks\' title and the source tags take their words from messages.js', () => {
+  const said = ['dockFor', 'fillingSaid', 'continueSaid', 'renderWarnings', 'answerSource'].flatMap((name) => {
+    const body = extractFunction(name).replace(/\/\/.*$/gm, '');
+    return [...body.matchAll(/'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g)].map((m) => m[0])
+      .filter((s) => /[A-Za-z]{2,} [A-Za-z]/.test(s.replace(/\$\{[^}]*\}/g, ''))).map((s) => `${name}: ${s}`);
+  });
+  // renderReport's head and announcement (its log and keys keep their own words).
+  const report = extractFunction('renderReport').replace(/\/\/.*$/gm, '');
+  for (const phrase of ['No questions found', 'Nothing to fill on this page', 'You stopped the fill', 'Filling stopped', 'seems to have changed', 'left for you.', 'weren’t', 'Clicked “']) {
+    if (report.includes(phrase)) said.push(`renderReport: ${phrase}`);
+  }
+  assert.deepEqual(said, []);
+  // Every message is used by the code it names (none left behind once a word is changed there).
+  const panel = ['coordinator', 'fill', 'record'].map((f) => fs.readFileSync(`sidepanel/panel/${f}.js`, 'utf8')).join('\n');
+  const unused = Object.entries(MESSAGES).flatMap(([group, words]) => Object.keys(words).filter((id) => !new RegExp(`\\b${group}\\.${id}\\b|\\b(words|open)\\.${id}\\b|\\{[^}]*\\b${id}\\b[^}]*\\} = ${group}\\b`).test(panel)).map((id) => `${group}.${id}`));
+  assert.deepEqual(unused, []);
 });
 
 // $(id) finds the first: an icon named like its button once took the button's clicks.
@@ -117,6 +147,9 @@ function extractFunction(name) {
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
           stopFillFirst: 'async () => {}',
+          // Whether a recording runs on the tab (core.js, REC-14):
+          // elsewhere no recording runs.
+          traced: '() => false',
           // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
           // elsewhere none is running.
           noteFollowed: '() => {}',
@@ -9809,6 +9842,87 @@ test('a profile still waiting when another intake is loaded goes to its own quot
   assert.equal(timers.size, 0, 'no timer outlives the switch');
 });
 
+// Audit 2026-11-07 (FLOW-10, LIVE-03): every kit call put the 211 KB kit into every frame first,
+// every 150 ms while a Continue's next step drew. It goes only into a frame without this build of it.
+test('runKit puts the kit only into frames that lack this build, and calls again where a document was replaced meanwhile', async () => {
+  const kitOf = (build) => (build ? { version: 94, build, value: () => `kit ${build}` } : undefined);
+  // The tab's frames: each a document (id) and the kit's build in it.
+  const frames = new Map([[0, { doc: 'd0', kit: null }], [1, { doc: 'd1', kit: null }]]);
+  const injected = [];
+  let calls = 0;
+  let beforeCall = null;
+  const context = {
+    worldFor: () => 'ISOLATED',
+    chrome: { scripting: { executeScript: async ({ target, files, func, args = [] }) => {
+      calls++;
+      const ids = target.allFrames ? [...frames.keys()] : target.frameIds;
+      if (files) {
+        if (files.some((f) => f.endsWith('pagekit.js'))) injected.push(ids);
+        for (const id of ids) frames.get(id).kit = 'b2';
+        return ids.map((id) => ({ frameId: id, documentId: frames.get(id).doc }));
+      }
+      if (func.name !== 'kitIn' && beforeCall) { beforeCall(); beforeCall = null; }
+      return ids.map((id) => {
+        // The frame's globals, as the panel's functions (here) and the test's read them.
+        context.__raterKit = globalThis.__raterKit = kitOf(frames.get(id).kit);
+        try {
+          return { frameId: id, documentId: frames.get(id).doc, result: func(...args) ?? null };
+        } finally {
+          delete globalThis.__raterKit;
+        }
+      });
+    } } },
+  };
+  vm.createContext(context);
+  const declared = (re) => SIDEPANEL.match(re)?.[0] ?? '';
+  vm.runInContext(`${declared(/const kitIn = .*;/)}\n${declared(/const kitBuild = .*;/)}\n${['injectKit', 'runKit'].map(extractFunction).join('\n')}`, context);
+  const read = () => globalThis.__raterKit?.value() ?? null;
+  const carrier = { id: 'amwins' };
+  // The first call: the kit goes into every frame (its build learned there).
+  assert.deepEqual(plainResults(await context.runKit(1, carrier, read)), ['kit b2', 'kit b2']);
+  assert.deepEqual(JSON.parse(JSON.stringify(injected)), [[0, 1]]);
+  // Then: no frame gets it again, call after call; two calls each, the check and the call.
+  calls = 0;
+  for (let i = 0; i < 5; i++) assert.deepEqual(plainResults(await context.runKit(1, carrier, read)), ['kit b2', 'kit b2']);
+  assert.deepEqual([injected.length, calls], [1, 10]);
+  // A frame's new document, and another's earlier build: only those get the kit.
+  frames.set(1, { doc: 'd1b', kit: null });
+  frames.get(0).kit = 'b1';
+  assert.deepEqual(plainResults(await context.runKit(1, carrier, read)), ['kit b2', 'kit b2']);
+  assert.deepEqual(JSON.parse(JSON.stringify(injected.at(-1))), [0, 1]);
+  frames.set(1, { doc: 'd1c', kit: null });
+  await context.runKit(1, carrier, read);
+  assert.deepEqual(JSON.parse(JSON.stringify(injected.at(-1))), [1]);
+  // The top frame's document replaced between the check and the call: it gets the kit, and the call again.
+  const before = injected.length;
+  beforeCall = () => frames.set(0, { doc: 'd0b', kit: null });
+  assert.deepEqual(plainResults(await context.runKit(1, carrier, read)), ['kit b2', 'kit b2']);
+  assert.deepEqual(JSON.parse(JSON.stringify(injected.slice(before))), [[0]]);
+  // Asked for the top frame only: only it is checked and called.
+  calls = 0;
+  assert.deepEqual(plainResults(await context.runKit(1, carrier, read, [], [0])), ['kit b2']);
+  assert.equal(calls, 2);
+});
+const plainResults = (results) => JSON.parse(JSON.stringify(results.map((r) => r.result)));
+
+// runKit calls again only where a frame's call gave null: a call that answers for a frame without
+// the kit (an empty list, false) would leave a document replaced meanwhile unread. Reading answers
+// back and Show on page give null there (CodeRabbit on #394).
+test('the answer read-back and Show on page give null in a frame without the kit, so runKit calls there again', async () => {
+  const funcs = [];
+  const context = {
+    state: { tab: { id: 1, url: 'Quote' } }, pageOf: (url) => url, announce() {}, drawRow() {}, checkItems() {},
+    whereTimers: new Map(), setTimeout: () => 0, clearTimeout() {}, stepOf: () => null,
+    runKit: async (tabId, carrier, func) => { funcs.push(func); return []; },
+  };
+  vm.runInNewContext(['checkAnswers', 'showOnPage'].map(extractFunction).join('\n'), context);
+  await context.checkAnswers([{ type: 'answer', key: 'limit', field: 'Limit', value: '$1,000,000' }], 1, 'Quote', { id: 'amwins' });
+  await context.showOnPage({}, { key: 'limit', label: 'Limit' }, 1, 'Quote', { id: 'amwins' });
+  assert.equal(funcs.length, 2);
+  delete globalThis.__raterKit;
+  assert.deepEqual(funcs.map((f) => f([], []) ?? null), [null, null]);
+});
+
 // Developer recording (docs/developer-recording.md): the trace goes into the recorded tab only, with
 // the recorder whose readers it uses, and not once the recording is stopping.
 test('the developer recording\'s trace is injected with the recorder, into the recorded tab only', async () => {
@@ -11569,6 +11683,26 @@ test('a unit missing from the list with no helper for it is left for the agent i
   const none = [{ frameId: 0, result: { noData: [], blockers: [] } }];
   context.noteMissingUnit(none, { ...ctx, unitMissing: null });
   assert.equal(none[0].result.noData.length, 0);
+});
+
+// REC-14 (audit 2026-11-07): an AI apply and the agent's own panel answer wrote the same "fill"
+// marker as a fill, and their answers said nothing to the recording.
+test('a recording\'s fill marker says what went in, and AI applies and picks from a row ask the kit to say what they do', () => {
+  // The marker says what went in (`what`, FLOW-15); the kit says its answers by whom too.
+  assert.match(SIDEPANEL, /rec\.store\.add\(\[\{ kind: 'fill', t, frame: 0, on, what: fillingWhat \}\]\);/);
+  const ai = extractFunction('applyAi');
+  assert.match(ai, /state\.fillingKind = 'ai';\s+state\.filling = true;/);
+  assert.match(ai, /\[\[a\], expected, guardToken, \{ stopSteps: Object\.keys\(ctx\.carrier\.stopSteps \?\? \{\}\), \.\.\.\(traced\(ctx\.tabId\) \? \{ trace: true \} : \{\}\) \}\]/);
+  const agent = extractFunction('agentAnswer');
+  assert.match(agent, /state\.fillingKind = 'pick';\s+state\.filling = true;/);
+  assert.match(agent, /by: 'agent', \.\.\.\(traced\(tabId\) \? \{ trace: true \} : \{\}\) \}\]/);
+  // The traced tab: only the recording's own, while it runs.
+  const at = SIDEPANEL.indexOf('const traced = ');
+  const context = { state: { recording: { tabId: 4, stopping: false } } };
+  vm.runInNewContext(SIDEPANEL.slice(at, SIDEPANEL.indexOf(';\n', at) + 1).replace('const traced', 'globalThis.traced'), context);
+  assert.deepEqual([context.traced(4), context.traced(5)], [true, false]);
+  context.state.recording.stopping = true;
+  assert.equal(context.traced(4), false);
 });
 
 // Audit 2026-11-07, GAP-02: a list holding as many rows as the intake or more that isn't the intake's

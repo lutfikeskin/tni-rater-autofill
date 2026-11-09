@@ -8,7 +8,7 @@ import { planFor } from './plan-for.js';
 import { advanceFor } from '../../src/units.js';
 import { quoteProgress, ratersSaid, stopScreen } from '../../src/carriers.js';
 import { quotedCarrierPolicy } from '../../src/util.js';
-import { fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../../src/usage.js';
+import { fillEvents, redactor, sha256Hex, knownStep } from '../../src/usage.js';
 import { stateCode, stateMismatch } from '../../src/quote-state.js';
 import { notePremium, premiumHere } from '../../src/premium.js';
 import { isStandard } from '../../src/resolution.js';
@@ -28,6 +28,7 @@ import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishin
 import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
 import { markTab } from './tab-mark.js';
+import { CONTINUE, DOCK, FILLING } from './messages.js';
 import { fillEnded, fillRunning } from './fill-watch.js';
 import { bindQuoteTab, portalHold, quoteOwnerIssue } from './quote-owner.js';
 /** @import { CarrierConfig, FillOptions, FillReport } from '../../types.js' */
@@ -140,15 +141,12 @@ function givenEarlier(tabId) {
   return kept && kept.scope === usage.currentSession()?.intakeId ? Object.fromEntries(kept.given) : {};
 }
 
-// Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
-// from the extension's own package when the panel starts, on every fill_run. Null outside the
-// extension or until it's read; then the run just carries none.
-let rulesVersion = null;
-if (inExtension) {
-  Promise.all(RULE_FILES.map((f) => fetch(chrome.runtime.getURL(f)).then((r) => r.text()))).then(rulesHash)
-    .then((hash) => { rulesVersion = hash; }).catch(() => {});
-}
-// The same fingerprint, for a developer recording's manifest (null until read).
+// Which rules this copy fills with, on every fill_run: the rule files' fingerprint (src/usage.js
+// rulesHash), stamped here by the panel's build from the files it bundles (scripts/lib/package.mjs
+// rulesPlugin). Null where the panel runs unbuilt (the tests, the preview); then the run carries none.
+const RULES_VERSION = null;
+const rulesVersion = RULES_VERSION;
+// The same fingerprint, for a developer recording's manifest.
 const rulesFingerprint = () => rulesVersion;
 
 // What a fill is about, taken before it waits on anything (audit 2026-10-08, finding 5): its own
@@ -1221,51 +1219,50 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
     && (!!unlisted || (!!advance.pages?.length && !advance.pages.includes(page)) || (!advance.pages?.length && !advance.steps?.length));
   const autoAdvance = !!advance && switchOn('autoAdvance', 'auto-advance') && !exceptPage && !offSteps && !offList;
   const check = autoAdvance && switchOn('checkBeforeContinue', 'check-continue');
-  const looks = { button: 'look-right', label: 'Looks right, continue' };
-  const again = { alt: 'fill-again', altLabel: 'Fill this page again' };
+  // The words are CONTINUE's (messages.js); which are said, and with which button, is decided here.
+  const looks = { button: 'look-right', label: CONTINUE.looksRight };
+  const again = { alt: 'fill-again', altLabel: CONTINUE.fillAgain };
   // Seen again once the agent went back to the page, or in a panel opened again (W43-39): it can be
   // filled again.
-  if (advanced) return { phase: 'done', tone: 'good', eyebrow: 'Continued', title: 'Continue clicked', sub: `Clicked “${advanced}” for you. Nothing is submitted or bound.`, ...again };
+  if (advanced) return { phase: 'done', tone: 'good', ...CONTINUE.continued(advanced), ...again };
   if (holding) {
-    const then = check ? 'Then check the answers and click Looks right. Never Bind or Submit.'
-      : offSteps ? 'Then moving on is yours: nothing on this step is clicked for you.'
-      : offList ? 'Then click Continue yourself: this page isn’t one the extension continues on.'
-      : !autoAdvance ? (carrier?.advance && switchOn('autoAdvance', 'auto-advance')
-        ? 'Then click Continue on this page yourself. Nothing is submitted or bound.'
-        : 'Then click Continue yourself, and Fill this page on the next one.')
-      : switchOn('autoFollowUps', 'auto-followups') ? 'Then the panel continues to the next page. Never Bind or Submit.'
-      : 'Then Fill this page again to continue. Never Bind or Submit.';
+    const then = check ? CONTINUE.next.check
+      : offSteps ? CONTINUE.next.offSteps
+      : offList ? CONTINUE.next.offList
+      : !autoAdvance ? (carrier?.advance && switchOn('autoAdvance', 'auto-advance') ? CONTINUE.next.continueHere : CONTINUE.next.manual)
+      : switchOn('autoFollowUps', 'auto-followups') ? CONTINUE.next.followUps
+      : CONTINUE.next.fillAgain;
     // Buttons waiting on others (Progressive's bill plan before Recalculate): the fill clicks them
     // in turn, and a question one waits on is a row of its own.
     // Something open on the page over the button: never clicked in turn until it is closed.
-    if (!left && covered) return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled`, title: 'Close what is open over the button', sub: 'Then fill again. Never Binds or Submits.', ...again };
+    if (!left && covered) return { phase: 'needs', tone: 'warn', eyebrow: CONTINUE.filled(filled), ...CONTINUE.covered, ...again };
     // Only buttons left: the main button is the fill that clicks them in turn (and the page's
     // Continue after them, where the panel may): nothing clicks them by itself (it read "The fill
     // clicks the rest in turn" with no button for it). With Let me look before Continue on, the fill
     // holds Continue for Looks right after them; a button it can't click isn't a row of the report.
     if (!left) {
       const continues = autoAdvance && !check;
-      return { phase: 'waiting', tone: 'blue', eyebrow: `${filled} filled`, title: 'Buttons left to click',
-        sub: continues ? 'Continue clicks the ones it can in turn, and the page’s Continue once none is left. Never Bind or Submit.' : then,
-        button: 'fill', label: continues ? 'Continue' : 'Click them for me', go: 'continue', ...again };
+      return { phase: 'waiting', tone: 'blue', eyebrow: CONTINUE.filled(filled), title: CONTINUE.buttonsLeft.title,
+        sub: continues ? CONTINUE.buttonsLeft.sub : then,
+        button: 'fill', label: continues ? CONTINUE.buttonsLeft.continue : CONTINUE.buttonsLeft.click, go: 'continue', ...again };
     }
-    return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled · ${left} need${left === 1 ? 's' : ''} you`,
-      title: left === 1 ? 'Answer the last question' : `Answer ${left} questions`, sub: then, button: 'dock-next', label: 'Show the next one', ...again };
+    return { phase: 'needs', tone: 'warn', eyebrow: CONTINUE.needs.eyebrow(filled, left),
+      title: CONTINUE.needs.title(left), sub: then, button: 'dock-next', label: CONTINUE.needs.label, ...again };
   }
-  if (held === 'changed') return { phase: 'check', tone: 'warn', eyebrow: 'The page changed', title: 'Check the answers again', sub: 'The page changed. Check it, then continue.', ...looks };
-  if (held || (check && settled)) return { phase: 'check', tone: 'good', eyebrow: 'All answered', title: 'Look over the answers, then continue', sub: 'Never Binds or Submits.', ...looks };
-  if (offSteps) return { phase: 'yours', tone: 'good', eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing here is clicked for you. Never Binds or Submits.', ...again };
-  if (offList) return { phase: 'yours', tone: 'good', eyebrow: 'All answered', title: 'Click Continue yourself', sub: 'This page isn’t one the extension continues on. Never Binds or Submits.', ...again };
+  if (held === 'changed') return { phase: 'check', tone: 'warn', ...CONTINUE.changed, ...looks };
+  if (held || (check && settled)) return { phase: 'check', tone: 'good', ...CONTINUE.check, ...looks };
+  if (offSteps) return { phase: 'yours', tone: 'good', ...CONTINUE.offSteps, ...again };
+  if (offList) return { phase: 'yours', tone: 'good', ...CONTINUE.offList, ...again };
   if (!autoAdvance) {
-    return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', ...again,
-      sub: carrier?.advance && switchOn('autoAdvance', 'auto-advance') ? 'Click Continue on this page yourself. Never Binds or Submits.' : 'Click Continue, then fill the next page.' };
+    return { phase: 'ready-continue', tone: 'good', eyebrow: CONTINUE.ready.eyebrow, title: CONTINUE.ready.title, ...again,
+      sub: carrier?.advance && switchOn('autoAdvance', 'auto-advance') ? CONTINUE.ready.continueHere : CONTINUE.ready.manual };
   }
   // Nothing left and the page not moved on: the main button continues (a fill, which clicks the
   // page's Continue once nothing is left: W43-40). The same once the agent settled what was left,
   // on the page or here (`settled`): it read "Fill again and continue" then, for the same fill that
   // replaces nothing (the maintainer, 2026-10-23: "I update something manually and the button still
   // says Fill again").
-  return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', sub: 'Never Binds or Submits.', button: 'fill', label: 'Continue', go: 'continue', ...again };
+  return { phase: 'ready-continue', tone: 'good', eyebrow: CONTINUE.ready.eyebrow, title: CONTINUE.ready.title, sub: CONTINUE.ready.sub, button: 'fill', label: CONTINUE.ready.label, go: 'continue', ...again };
 }
 
 // The page changed on the finishing step after the action was clicked (a limit on GEICO's Quote &
@@ -1321,20 +1318,21 @@ function playChime() {
 // The dock: the one next thing to do, always in the same place under the panel, and its button.
 // #dock[data-phase] names it, and data-report the fill it is about (the panel harness reads both).
 function dockFor() {
-  if (!state.intake) return { phase: 'start', eyebrow: 'Step 1 of 3', title: 'Add the client’s intake PDF', sub: 'The panel checks it and fills the rater.' };
+  // The words are DOCK's (messages.js); which are said, and with which button, is decided here.
+  if (!state.intake) return { phase: 'start', ...DOCK.start };
   const { warnings, done } = state.intake;
   const open = warnings.filter((w, i) => checkShown(w) && !done.includes(i)).length;
-  const checksSaid = state.view === 'check' && open ? `${open} intake item${open === 1 ? '' : 's'} not looked at yet. You can still fill.` : null;
+  const checksSaid = state.view === 'check' && open ? DOCK.checksLeft(open) : null;
   const carrier = state.tab?.carrier;
-  if (!inExtension) return { phase: 'off', eyebrow: 'Preview', title: 'Filling works only in the Chrome extension' };
+  if (!inExtension) return { phase: 'off', ...DOCK.preview };
   // A fill running, here or on another tab, is said with its Stop (audit 2026-11-07, FLOW-05: a
   // quiet follow-up, or one on another quote tab, ran with no Stop under buttons that did nothing).
   const f = state.fillingFor;
   if (state.filling && fillShown(f)) return fillingSaid(f);
   if (!carrier) {
     return state.tab && !state.tab.url
-      ? { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.' }
-      : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? ratersSaid() };
+      ? { phase: 'off', ...DOCK.unreadable }
+      : { phase: 'off', ...DOCK.openRater, sub: checksSaid ?? ratersSaid() };
   }
   const page = pageOf(state.tab.url);
   const step = tabStep(carrier);
@@ -1342,96 +1340,90 @@ function dockFor() {
   // referral, W44-04), or the step or screen is the agent's: nothing to press.
   if (stopNoteFor(carrier, page, step)) {
     const screen = step && carrier.stopSteps?.[step] ? null : state.stopScreens?.get(state.tab.id)?.name;
-    if (carrier.stopPages?.[page] || carrier.stopButtons?.[screen]?.stopped) return { phase: 'stopped', tone: 'bad', eyebrow: `Stopped by ${carrier.name}`, title: 'Nothing to fill on this rater', sub: 'Nothing on this page was filled or clicked.' };
-    return { phase: 'yours', eyebrow: 'This step is yours', title: `Finish ${screen ?? step ?? 'this step'} yourself`, sub: `Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.` };
+    if (carrier.stopPages?.[page] || carrier.stopButtons?.[screen]?.stopped) return { phase: 'stopped', tone: 'bad', ...DOCK.stopped(carrier.name) };
+    return { phase: 'yours', ...DOCK.yours(screen ?? step ?? null, !!screen) };
   }
   // The tab's quote is for another state than the intake's: no fill until the agent says which.
   const issue = stateIssue();
   if (issue) {
-    return { phase: 'hold', tone: 'bad', eyebrow: 'Check first', title: 'Sort out the state above', sub: `${issue.intake} answers fail on a ${issue.picked} quote.`,
-      button: 'fill', label: 'Fill this page', disabled: true, alt: 'fill-anyway', altLabel: 'Fill anyway' };
+    return { phase: 'hold', tone: 'bad', ...DOCK.stateHold(issue.intake, issue.picked), button: 'fill', disabled: true, alt: 'fill-anyway' };
   }
   // agent defaults: no fill until the agent says whose defaults this quote takes (the card above
   // the page's answers). Elsewhere (the intake's checks) the card isn't drawn: the dock opens it.
   if (state.intake && defaultsHold()) {
-    const sub = 'Your own defaults, or TNI\'s standards, for this quote.';
-    if (state.view !== 'page') return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Whose defaults does this quote take?', sub, button: 'dock-defaults', label: 'Show the question' };
-    return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Answer the question above', sub, button: 'fill', label: 'Fill this page', disabled: true };
+    if (state.view !== 'page') return { phase: 'hold', tone: 'warn', ...DOCK.defaultsAsk, button: 'dock-defaults' };
+    return { phase: 'hold', tone: 'warn', ...DOCK.defaultsHeld, button: 'fill', disabled: true };
   }
   // The tab's quote wasn't started with this intake (quote-owner.js): nothing fills by itself; the
   // agent's Fill this page fills it for this client (the card above).
   if (quoteOwnerIssue()) {
-    return { phase: 'hold', tone: 'warn', eyebrow: 'Check first', title: 'Another client’s quote?', sub: 'This tab’s quote wasn’t started with this intake. Nothing fills here by itself.', button: 'fill', label: 'Fill this page' };
+    return { phase: 'hold', tone: 'warn', ...DOCK.otherClient, button: 'fill' };
   }
   // The carrier's portal pages outside a quote are never filled (fillPage).
-  if (!onQuotePage()) return { phase: 'portal', eyebrow: 'Next', title: 'Open the client’s quote', sub: 'This is the portal. Filling starts on a quote page.' };
+  if (!onQuotePage()) return { phase: 'portal', ...DOCK.portal };
   const report = showReport();
   // On a one-address application (AmWINS) every step shares the address: "again" only once this
   // step has a report.
   const filledBefore = carrier.layoutSteps ? !!report?.fields : state.autoPages.has(page);
-  const fill = { button: 'fill', label: filledBefore || report?.fields ? 'Fill this page again' : 'Fill this page' };
-  if (report?.error) return { phase: 'error', tone: 'bad', eyebrow: 'Didn’t finish', title: 'Check the page, then fill again', sub: 'Your changes are kept.', ...fill };
+  const fill = { button: 'fill', label: filledBefore || report?.fields ? DOCK.fillAgain : DOCK.fill };
+  if (report?.error) return { phase: 'error', tone: 'bad', ...DOCK.error, ...fill };
   // The quote is done where TNI stops on this rater (quoteFinished): said, in place of "Moving on
   // is yours" or "Ready for Continue" on a page that is the end of the quote, with the quote's
   // summary to open (audit 2026-11-07, UX-05: summary-view.jsx).
   if (report && quoteFinished(carrier, report, page, step) && !pendingAi(state.tab.id, page).length) {
-    return { phase: 'finished', tone: 'good', eyebrow: 'Quote done', title: carrier.finishedAt?.said ?? carrier.finishedSaid ?? 'The quote proposal is printed',
-      sub: carrier.finishedAt?.sub ?? `This is where TNI stops on ${carrier.name}. Nothing is submitted or bound.`, button: 'dock-summary', label: 'Quote summary',
-      alt: 'fill-again', altLabel: 'Fill this page again' };
+    const done = DOCK.finished(carrier.name);
+    return { phase: 'finished', tone: 'good', ...done, title: carrier.finishedAt?.said ?? carrier.finishedSaid ?? done.title,
+      sub: carrier.finishedAt?.sub ?? done.sub, button: 'dock-summary', alt: 'fill-again' };
   }
   // A page the fill had no question for and left nothing on (a unit list with every unit on it):
   // Continue is next (W43-40: the dock offered Fill this page again on finished vehicle lists).
   if (report?.empty) return continueSaid({ ...report, tabId: state.tab.id }, carrier);
   if (report?.fields) {
-    if (report.stopped) return { phase: 'stopped-fill', tone: 'warn', eyebrow: 'Stopped', title: `${report.filled} filled before you stopped`, sub: 'Fill again to finish. Your changes are kept.', button: 'fill', label: 'Fill this page again' };
+    if (report.stopped) return { phase: 'stopped-fill', tone: 'warn', ...DOCK.stoppedFill(report.filled), button: 'fill' };
     // AI picks waiting for approval hold Continue: approved (or confirmed) from here or their rows.
     const aiDock = state.aiDocks.get(`${state.tab.id}|${page}`);
     const ai = aiDock ? pendingAi(state.tab.id, page) : [];
     if (ai.length) {
       const waiting = ai.filter((x) => !x.rejected).length;
       const continues = aiDock.canContinue && (report.left ?? 0) <= ai.length;
-      return { phase: 'ai', tone: 'ai', eyebrow: `AI picked ${ai.length} answer${ai.length === 1 ? '' : 's'}`,
-        title: waiting ? 'Check the purple answers, then approve' : 'Confirm the page answer, or change it',
-        sub: waiting < ai.length ? 'Continue waits until you confirm the page answer or change it.'
-          : aiDock.canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.',
-        button: 'ai-approve', label: waiting ? (continues ? 'Approve and continue' : `Approve ${waiting === 1 ? 'the AI pick' : `${waiting} AI picks`}`)
-          : continues ? 'Confirm and continue' : 'Confirm the page answer' };
+      return { phase: 'ai', tone: 'ai', eyebrow: DOCK.ai.eyebrow(ai.length), title: DOCK.ai.title(waiting),
+        sub: DOCK.ai.sub(waiting < ai.length, !!aiDock.canContinue), button: 'ai-approve', label: DOCK.ai.label(waiting, continues) };
     }
     const said = /** @type {*} */ (continueSaid(report, carrier));
     // A question open now with others after it: the dock moves on past it.
-    if (said.button === 'dock-next' && (report.left ?? 0) > 1 && (state.reportFor?.list ?? []).some((r) => r.type === 'need' && r.open && !r.settled)) said.label = 'Skip to the next one';
+    if (said.button === 'dock-next' && (report.left ?? 0) > 1 && (state.reportFor?.list ?? []).some((r) => r.type === 'need' && r.open && !r.settled)) said.label = DOCK.skipNext;
     return said;
   }
   // Nothing filled on this page yet: what the fill will and won't do here.
-  const hint = state.tab.background ? 'Fills the quote tab in the background. Go back to it to review.'
+  const hint = state.tab.background ? DOCK.hint.background
     // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd), and Next only up to
     // Additional Business Info (advance `steps`).
-    : switchOn('autoAdvance', 'auto-advance') && carrier.advance && carrier.unitLists ? 'Adds missing vehicles, trailers and drivers, and clicks Next up to Quote & Coverages. Never submits or binds.'
+    : switchOn('autoAdvance', 'auto-advance') && carrier.advance && carrier.unitLists ? DOCK.hint.addsUnits
     // A page the carrier's advance doesn't list (audit ENG-01): its Continue is the agent's.
-    : switchOn('autoAdvance', 'auto-advance') && carrier.advance?.pages?.length && !carrier.advance.pages.includes(page) ? 'Fills what it can. This page isn’t one the extension continues on: Continue is yours.'
-    : switchOn('autoAdvance', 'auto-advance') && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
-    : 'Nothing is submitted. Review, then click Next yourself.';
+    : switchOn('autoAdvance', 'auto-advance') && carrier.advance?.pages?.length && !carrier.advance.pages.includes(page) ? DOCK.hint.notContinued
+    : switchOn('autoAdvance', 'auto-advance') && carrier.advance ? DOCK.hint.continues
+    : DOCK.hint.manual;
   const progress = quoteProgress(carrier, page, state.tabSteps.get(state.tab.id));
-  return { phase: 'ready', eyebrow: 'Next', title: progress ? `Fill the ${progress.name} page` : 'Fill this page', sub: checksSaid ?? hint, ...fill };
+  return { phase: 'ready', ...DOCK.ready(progress?.name ?? null), sub: checksSaid ?? hint, ...fill };
 }
 
 // The dock while a fill runs (fillShown), with Stop. On another tab than the one in front (the agent
 // moved on while it ran): named, as that tab's ('elsewhere': the tab in front keeps its mark).
 function fillingSaid(f) {
-  const stop = { button: 'fill-stop', label: f.stopping ? 'Stopping…' : 'Stop', disabled: !!f.stopping };
-  const eyebrow = f.stopping ? 'Stopping' : `Filling · ${f.filled ?? 0} in`;
+  const stop = { button: 'fill-stop', label: f.stopping ? FILLING.stopping : FILLING.stop, disabled: !!f.stopping };
+  const eyebrow = f.stopping ? FILLING.stoppingEyebrow : FILLING.eyebrow(f.filled ?? 0);
   if (f.tabId !== state.tab?.id) {
-    return { phase: 'elsewhere', tone: 'blue', progress: true, eyebrow, title: f.stopping ? 'Stopping after the answer going in now…' : `Filling your other ${f.carrier?.name ?? 'quote'} tab`,
-      sub: 'Its answers show when you go back to it.', ...stop };
+    const there = FILLING.elsewhere(f.carrier?.name);
+    return { phase: 'elsewhere', tone: 'blue', progress: true, eyebrow, title: f.stopping ? FILLING.stoppingTitle : there.title, sub: there.sub, ...stop };
   }
   // The page hasn't answered for a while (watchFill): a message box open on it waits for the agent.
   if (f.unanswered) {
-    return { phase: 'filling', tone: 'warn', progress: true, eyebrow, title: 'The page isn’t answering', sub: 'If it shows a message box, answer it there. The fill goes on after.', ...stop };
+    return { phase: 'filling', tone: 'warn', progress: true, eyebrow, ...FILLING.unanswered, ...stop };
   }
   const last = f.rows?.at(-1);
   return { phase: 'filling', tone: 'blue', progress: true, eyebrow,
-    title: f.stopping ? 'Stopping after the answer going in now…' : f.phase && DOCK_PHASES.has(f.phase.name) ? `${phaseSaid(f.phase)[0]}…` : last ? `Just filled: ${last.label || 'an answer'}` : 'Reading the page…',
-    sub: 'Keep this tab open.', ...stop };
+    title: f.stopping ? FILLING.stoppingTitle : f.phase && DOCK_PHASES.has(f.phase.name) ? FILLING.phase(phaseSaid(f.phase)[0]) : last ? FILLING.justFilled(last.label) : FILLING.reading,
+    sub: FILLING.sub, ...stop };
 }
 
 // What the dock says now (state.dock, drawn by steps-view.jsx): dockFor's word, hidden while Settings
