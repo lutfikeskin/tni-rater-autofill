@@ -244,7 +244,9 @@ function DevRecordingPill({ act }) {
   if (!devrec?.on || !devrec.pill) return null;
   const send = () => { if (act.note(text)) setText(''); setNoting(false); };
   return (
-    <span id="devrec-pill" className="devrec-pill" role="status">
+    // A group, not a live region: its time changes every second, and a screen reader would read it
+    // out each time. The recording's start and stop are said by #devrec-status (review of PR #471).
+    <span id="devrec-pill" className="devrec-pill" role="group" aria-label="Developer recording">
       <span className="rec-dot devrec-dot" aria-hidden="true">●</span>
       <span id="devrec-pill-text">Developer recording {devrec.pill}</span>
       {noting

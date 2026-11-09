@@ -228,6 +228,8 @@ test('while a developer recording runs, the footer shows its pill: its time and 
   expect(container.querySelector('#devrec-pill')).toBe(null);
   act(() => { state.devrec = { on: true, pill: '0:05 · 12 events' }; });
   expect($(container, '#devrec-pill-text').textContent).toBe('Developer recording 0:05 · 12 events');
+  // Its timer ticks every second: the pill is no live region (review of PR #471).
+  expect([$(container, '#devrec-pill').getAttribute('role'), $(container, '#devrec-pill').getAttribute('aria-live')]).toEqual(['group', null]);
   fireEvent.click($(container, '#devrec-pill-noting'));
   const box = $(container, '#devrec-pill-note');
   fireEvent.change(box, { target: { value: 'waited too long' } });

@@ -54,7 +54,7 @@ function copyUsage(rec) {
     const mine = rec.store.manifest.session;
     if (mine && session !== mine) return;
     const at = Date.parse(t);
-    rec.store.add(events.filter((e) => e && typeof e.type === 'string').map((event) => ({ kind: 'usage', t: Number.isFinite(at) ? at : Date.now(), frame: 0, event })));
+    rec.store.add(events.filter((/** @type {any} */ e) => e && typeof e.type === 'string').map((event) => ({ kind: 'usage', t: Number.isFinite(at) ? at : Date.now(), frame: 0, event })));
   });
 }
 
@@ -226,10 +226,17 @@ async function toggleRecording() {
 
 // The unfinished recording's Discard: removes its copy from the browser, which can't be undone,
 // once the developer says so (REC-15). Never one another panel is recording (unfinished leaves
-// those out).
+// those out). Asked in the panel, never in a browser dialog (#463): the first Discard says what it
+// deletes, and a second one for the same recording deletes it.
 async function discardUnfinished() {
-  const id = state.devrec?.unfinished?.id;
-  if (!id || !confirm(`Delete the unfinished recording ${id} from this browser? It is not saved anywhere else, and this can't be undone.`)) return;
+  const unfinished = state.devrec?.unfinished;
+  const id = unfinished?.id;
+  if (!id) return;
+  if (!unfinished.discardAsked) {
+    unfinished.discardAsked = true;
+    devrecSaid(`Discard again to delete the unfinished recording ${id} from this browser. It is not saved anywhere else, and this can't be undone.`);
+    return;
+  }
   try {
     await (await RecordingStore.reopen(id)).discard();
     devrecSaid(`Deleted the unfinished recording ${id}.`);

@@ -11693,7 +11693,7 @@ test('a unit missing from the list with no helper for it is left for the agent i
 // marker as a fill, and their answers said nothing to the recording.
 test('a recording\'s fill marker says what went in, and AI applies and picks from a row ask the kit to say what they do', () => {
   // The marker says what went in (`what`, FLOW-15); the kit says its answers by whom too.
-  assert.match(SIDEPANEL, /rec\.store\.add\(\[\{ kind: 'fill', t, frame: 0, on, what: fillingWhat \}\]\);/);
+  assert.match(SIDEPANEL, /rec\.store\.add\(\[\{ kind: 'fill', t, frame: 0, on, what: fillingWhat, \.\.\.which \}\]\);/);
   const ai = extractFunction('applyAi');
   assert.match(ai, /state\.fillingKind = 'ai';\s+state\.filling = true;/);
   assert.match(ai, /\[\[a\], expected, guardToken, \{ stopSteps: Object\.keys\(ctx\.carrier\.stopSteps \?\? \{\}\), \.\.\.\(traced\(ctx\.tabId\) \? \{ trace: true \} : \{\}\) \}\]/);
@@ -11872,17 +11872,15 @@ test('a fill that ended with something failed, left or holding Continue, and a n
 test('Discard deletes an unfinished recording only once the developer confirms it can\'t be undone', async () => {
   const said = [];
   const discarded = [];
-  let answer = false;
   const state = { devrec: { unfinished: { id: 'geico-x' } } };
-  const asked = [];
+  // Asked in the panel (#463): no browser dialog.
   const context = { state, devrecSaid: (s) => said.push(s), renderUnfinished: async () => {},
-    confirm: (q) => { asked.push(q); return answer; },
+    confirm: () => { throw new Error('no browser dialog'); },
     RecordingStore: { reopen: async (id) => ({ discard: async () => discarded.push(id) }) } };
   vm.runInNewContext(extractFunction('discardUnfinished'), context);
   await context.discardUnfinished();
-  assert.deepEqual(discarded, [], 'not without a yes');
-  assert.match(asked[0], /can't be undone/);
-  answer = true;
+  assert.deepEqual(discarded, [], 'not on the first Discard');
+  assert.match(said[0], /^Discard again to delete the unfinished recording geico-x .*can't be undone.$/);
   await context.discardUnfinished();
-  assert.deepEqual([discarded, said], [['geico-x'], ['Deleted the unfinished recording geico-x.']]);
+  assert.deepEqual([discarded, said.slice(1)], [['geico-x'], ['Deleted the unfinished recording geico-x.']]);
 });
