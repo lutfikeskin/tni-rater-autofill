@@ -13,7 +13,7 @@ const plural = (n, one, many = `${one}s`) => (n === 1 ? one : many);
 
 // The dock: the one next thing to do (steps-view.jsx draws it).
 export const DOCK = {
-  start: { eyebrow: 'Step 1 of 3', title: 'Add the client’s intake PDF', sub: 'The panel checks it and fills the rater.' },
+  start: { eyebrow: 'Start', title: 'Add the client’s intake PDF', sub: 'The panel checks it and fills the rater.' },
   // A page with intake checks not looked at yet, said in place of the dock's own line.
   checksLeft: (open) => `${open} intake ${plural(open, 'item')} not looked at yet. You can still fill.`,
   preview: { eyebrow: 'Preview', title: 'Filling works only in the Chrome extension' },

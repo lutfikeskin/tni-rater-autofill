@@ -1112,12 +1112,12 @@ test('a fill report does not list the buttons waiting on others', () => {
   assert.doesNotMatch(extractFunction('renderReport'), /'Buttons waiting'/);
 });
 
-test('an automatic fill says so in step 2 and brings step 3 into view, unless the agent is working in step 1', () => {
+test('an automatic fill says so on This page and brings it into view, unless the agent is working on the Intake tab', () => {
   const { context, box } = reportHarness({ tab: { id: 1, url: 'Quote' } });
   context.renderReport([{ fields: 2, kept: [], failed: [], noData: [], leftRequired: [], actions: [], filled: [{ label: 'A', key: 'a', shown: 'x' }] }], { auto: 'page' });
   assert.equal(context.state.reportFor.auto, true);
   assert.equal(rowsOf(box).length, 1);
-  assert.match(extractFunction('renderSteps'), /`\$\{report\.filled\} filled\$\{report\.auto \? ' automatically' : ''\}`/);
+  assert.match(extractFunction('pageTabSaid'), /`\$\{report\.filled\} filled\$\{report\.auto \? ' automatically' : ''\}`/);
   let focused = true, scrolled = 0, shown = 0;
   const state = { view: 'check' };
   const ctx = { state, renderSteps() {}, showScreen() { shown++; }, matchMedia: () => ({ matches: true }), document: { activeElement: 'field' },
@@ -4652,7 +4652,7 @@ test('the page\'s list says what it shows: this page\'s report, an earlier one r
   const context = { state, inExtension: true, popped: false, Date, $: (id) => (ui[id] ??= el()), renderDock() {}, renderPickers() {}, checkShown: () => true,
     pageOf: (u) => u, stopNoteFor: () => null, showReport: () => report, earlierReports: () => reports, quoteFinished: () => false, pendingAi: () => [],
     listCounts: (l = []) => ({ all: l.length, needs: l.filter((r) => r.type === 'need' && !r.settled).length, done: l.filter((r) => r.type !== 'need' || r.settled).length }) };
-  vm.runInNewContext(['renderSteps', 'reportTitle'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['renderSteps', 'pageTabSaid', 'reportTitle'].map(extractFunction).join('\n'), context);
   const at = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   context.renderSteps();
   assert.deepEqual({ ...state.feed, pages: [...state.feed.pages], counts: { ...state.feed.counts } }, {
@@ -8342,12 +8342,17 @@ test('on a stop step the panel offers no fill; on the other steps it names the s
   assert.deepEqual([stoppedDock.phase, stoppedDock.button, stoppedDock.alt], ['yours', undefined, undefined]);
   assert.deepEqual([stoppedDock.title, stoppedDock.sub], ['Finish MVR & CLUE yourself', 'Nothing on this step is filled or clicked.']);
   const stopped = siteHarness(geico, 'MVR & CLUE');
-  assert.deepEqual([stopped['site-step'].textContent, stopped['site-count'].textContent], ['MVR & CLUE page', 'Step 8 of 9']);
+  assert.deepEqual([stopped['site-step'].textContent, stopped['site-count'].textContent], ['MVR & CLUE page', 'Stage 8 of 9']);
   const vehiclesDock = dock('Vehicles');
   assert.deepEqual([vehiclesDock.phase, vehiclesDock.button, vehiclesDock.label, vehiclesDock.title], ['ready', 'fill', 'Fill this page', 'Fill the Vehicles page']);
   assert.equal(vehiclesDock.sub, 'Nothing is submitted. Review, then click Next yourself.');
   const vehicles = siteHarness(geico, 'Vehicles');
-  assert.deepEqual([vehicles['site-step'].textContent, vehicles['site-count'].textContent], ['Vehicles page', 'Step 3 of 9']);
+  assert.deepEqual([vehicles['site-step'].textContent, vehicles['site-count'].textContent], ['Vehicles page', 'Stage 3 of 9']);
+  // Audit 2026-11-07, UX-04: "Step n of m" in the header beside the start dock's "Step 1 of 3" (the
+  // panel's own steps): the header says the quote's stage (several pages may share one: review of #454), the start dock no step number.
+  const start = dockHarness({ carrier: geico });
+  start.state.intake = null;
+  assert.deepEqual([start.dock().phase, start.dock().eyebrow], ['start', 'Start']);
   // The strip: the steps before done, the tab's here (filled once its page has a report), the rest to come.
   assert.deepEqual(vehicles.siteTrack.map((s) => s.at), ['done', 'done', 'here', null, null, null, null, null, null]);
   assert.deepEqual(vehicles.siteTrack.map((s) => s.name), geico.quoteSteps.map((s) => s.name));
@@ -10619,9 +10624,9 @@ test('the client strip: the name opens client details, and Change file, New quot
   // New quote is off while answers go in: renderSteps says it, the header draws it.
   assert.match(extractFunction('renderSteps'), /state\.newQuoteOff = !!state\.filling;/);
   assert.match(view, /disabled=\{newQuoteOff\} onClick=\{\(\) => act\.newQuote\(\)\}/);
-  // The three steps under the strip: drawn by steps-view.jsx (their labels and order:
+  // The two tabs under the strip: drawn by steps-view.jsx (their labels and order:
   // test/panel/steps-view.test.jsx).
-  assert.match(html, /<nav id="steps" class="steps" aria-label="Steps"><\/nav>\s+<\/section>/);
+  assert.match(html, /<nav id="steps" class="steps" aria-label="Intake or this page"><\/nav>\s+<\/section>/);
   assert.match(SIDEPANEL, /mountSteps\(\$\('steps'\), \{\s+check: \(\) => setView\('check'\),\s+fill: \(\) => setView\('page'\),\s+confirm: \(\) => \{ setView\('page'\); refreshAnswers\(\); checkItems\(\); \},\s+\}\);/);
 });
 
@@ -10744,7 +10749,8 @@ test('the quote is done where TNI stops on the rater: the finishing action click
   // (quoteFinished reads the done actions of the state it was extracted with: the same Set.)
   done.delete('printProposal');
   assert.equal(d.dock().phase, 'yours', 'not printed: moving on is the agent\'s, as before');
-  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;[\s\S]*note: !filled \? 'After the fill' : finished \? 'Quote done'/);
+  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;/);
+  assert.match(extractFunction('pageTabSaid'), /if \(!filled\) return \{ tone: 'active', note: 'Ready to fill' \};\s*if \(finished\) return \{ tone: 'done', note: 'Quote done' \};/);
   assert.equal(geico.finishedBy, 'printProposal');
   assert.ok(geico.actions.some((a) => a.id === 'printProposal' && a.steps.includes('Quote & Coverages')));
 });
@@ -10974,6 +10980,27 @@ test('Buttons left to click says Looks right comes after with Let me look on, an
   const goes = said({ waiting: 2, filled: 3 });
   assert.deepEqual([goes.button, goes.label, goes.go], ['fill', 'Continue', 'continue']);
   assert.equal(goes.sub, 'Continue clicks the ones it can in turn, and the page’s Continue once none is left. Never Bind or Submit.');
+});
+
+// Review of #454 (CodeRabbit): a fill that read fields and stopped short with nothing left gave This
+// page a done bar and "n filled"; a halted fill is never done there.
+test('This page never says a halted fill is done, nor one still waiting on the agent, and a stop screen comes first', () => {
+  const context = {};
+  vm.runInNewContext(extractFunction('pageTabSaid'), context);
+  const tab = (report, extra = {}) => JSON.parse(JSON.stringify(context.pageTabSaid({ onRater: true, filling: false, error: null, stopped: false, filled: true, finished: false, left: 0, report: { filled: 4, ...report }, ...extra })));
+  assert.deepEqual(tab({}), { tone: 'done', note: '4 filled' });
+  assert.deepEqual(tab({ halted: true }), { tone: 'warn', note: 'Filling stopped' });
+  // Stop pressed during Continue's wait: the report is both advanced and halted (the second review).
+  assert.deepEqual(tab({ advanced: 'Continue', halted: true }), { tone: 'warn', note: 'Continued · filling stopped' });
+  assert.deepEqual(tab({ advanced: 'Continue' }), { tone: 'done', note: 'Continued' });
+  // Still waiting on the agent, as the dock says (CodeRabbit on #454).
+  assert.deepEqual(tab({}, { aiPending: 2 }), { tone: 'active', note: '2 AI picks to approve' });
+  assert.deepEqual(tab({ waiting: 2 }), { tone: 'active', note: 'Buttons left to click' });
+  assert.deepEqual(tab({ held: true }), { tone: 'active', note: 'Check, then Looks right' });
+  // A stop screen on a step an earlier fill reported on (GEICO's USDOT or referral stop).
+  assert.deepEqual(tab({}, { stopped: true }), { tone: 'bad', note: 'Stopped' });
+  assert.deepEqual(tab({}, { left: 1 }), { tone: 'active', note: '1 needs you' });
+  assert.ok(extractFunction('renderSteps').includes('...pageTabSaid({ onRater, filling,'), 'renderSteps takes the tab from pageTabSaid');
 });
 
 // Review of PR #170 (Claude): "Quote done" over a fill that halted (its list says "Filling stopped"),
