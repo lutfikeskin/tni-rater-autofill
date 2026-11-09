@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // GEICO's buttons, pressed from the page's own world (W43-44, FL, 2026-10-22). GEICO's submit
 // buttons (Recalculate, Next, Save and Continue, Print Quote Proposal) set their own part of the
 // request (the button's entry and its processor) after an await, and the page's React (18) applies
@@ -15,7 +14,7 @@
 // Injected by the side panel for carriers with `pressInPage` (GEICO), in every frame, before each
 // fill; a copy injected again (another build after an update) replaces the one before.
 (() => {
-  window.__raterPress?.off?.();
+  globalThis.__raterPress?.off?.();
   const LATE_MS = 1000;
   const onPress = (e) => {
     const el = e.composedPath?.()[0] ?? e.target;
@@ -38,5 +37,5 @@
     setTimeout(() => press(true), LATE_MS);
   };
   document.addEventListener('rater-press', onPress, true);
-  window.__raterPress = { off: () => document.removeEventListener('rater-press', onPress, true) };
+  globalThis.__raterPress = { off: () => document.removeEventListener('rater-press', onPress, true) };
 })();

@@ -16,7 +16,7 @@
 // holds every version's fingerprint and fails until SCHEMA_VERSION is raised and the new version's
 // added, so an extension that sends the new fields waits for a server that keeps them.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 4;
 
 // Event type -> fields kept. Anything else in an event is dropped (and named in `dropped`).
 // install: a random id for one copy of the extension on one computer (with seq: gaps show loss).
@@ -69,8 +69,9 @@ export const EVENT_FIELDS = {
   // many seconds before the report).
   problem_report: ['text', 'run', 'step', 'blockerList', 'since'],
   // An error nothing in the panel or the page's recorder caught: where (panel, recorder), its message (redacted, 300 characters)
-  // and up to four frames inside the extension's own files.
-  client_error: ['where', 'error', 'stack'],
+  // and up to four frames inside the extension's own files. where 'plan': a carrier rule that threw
+  // while a plan was built, named by its concept and q.
+  client_error: ['where', 'error', 'stack', 'concept', 'q'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
   // setting) acted on. Choices are option texts; typed text suggestions are never logged.
   // leave*: why questions were left, as counts (missing information, a conflict, Luna's own leave,
@@ -79,7 +80,15 @@ export const EVENT_FIELDS = {
   ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens', 'promptHash',
     'leaveMissing', 'leaveConflict', 'leaveChose', 'leaveNoSource', 'leaveUnverified', 'leaveTooLarge'],
   // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
-  ai_decision: ['model', 'policy', 'promptHash', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
+  // ruleIds: the TNI rules a pick cites, by rulebook id (at most 12).
+  ai_decision: ['model', 'policy', 'promptHash', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason', 'ruleIds'],
+  // One per question Luna left: its code and label, why (leaveWhy) and the intake field it maps to.
+  ai_leave: ['q', 'label', 'controlKind', 'leaveWhy', 'intakePath'],
+  // The quote summary the agent saved (Save summary: sidepanel/panel/quote-summary.js), whole:
+  // every answer of the quote per carrier and page with its source, the agent's overrides, the AI's
+  // decisions and what was marked done. It holds client data, as the agent saw it in the panel
+  // (the maintainer, 2026-11-07: TNI's own server). The server checks its shape whole (SUMMARY_SHAPE).
+  quote_summary: ['summary'],
 };
 
 // Text in the business profile never holds what could identify the client (ID_LIKE: an @; a date

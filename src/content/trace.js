@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The developer recording's trace (docs/developer-recording.md): injected by the side panel next to
 // the recorder, in its isolated world and every frame, only while a recording runs (unpacked
 // builds). It watches and never acts: it clicks nothing, sets no value and dispatches no event.
@@ -120,7 +119,7 @@
     if (button) return { button: { text: read.buttonText(button).slice(0, 60), rect: box(button) } };
     return { other: { tag: String(el?.tagName ?? '').toLowerCase() || null } };
   }
-  const about = ({ field, button, other }) => (field ? { field } : button ? { button } : { other });
+  const about = (/** @type {{ field?: object, button?: object, other?: object }} */ { field, button, other }) => (field ? { field } : button ? { button } : { other });
 
   // The last trusted gesture on each control: a value event long after it (or with none) is the
   // page's or the extension's (the recorder's rule; the report judges, from `trusted` and this).
@@ -453,16 +452,21 @@
   const STEP_KINDS = new Set(['action', 'address-suggest', 'bool', 'choice', 'date', 'first-option', 'int', 'money', 'phone', 'pick-not', 'radio',
     'search-select', 'selected-option', 'state', 'text']);
   const TIMING = ['ms', 'settleMs', 'ajax', 'revealed', 'removed', 'changed'];
+  // A fill report code (FailCode: `answer.not-kept`, `page.unsettled`…): two lowercase words and a dot.
+  const FAIL_CODE = /^[a-z]+\.[a-z-]{1,30}$/;
   const isNum = (n) => typeof n === 'number' && Number.isFinite(n);
   const words = (s, max) => (typeof s === 'string' ? s.slice(0, max) : null);
   function kitSaid(said) {
     const nums = (from, keys) => Object.fromEntries(keys.filter((k) => isNum(from[k])).map((k) => [k, from[k]]));
     const yesNo = (from, keys) => Object.fromEntries(keys.filter((k) => typeof from[k] === 'boolean').map((k) => [k, from[k]]));
     const has = (x) => !!x && typeof x === 'object';
-    if (said.what === 'run') return { what: 'run', ...yesNo(said, ['on', 'halted']), ...nums(said, ['steps', 'filled']) };
+    // `source`: an AI apply's or the agent's panel answer's (the kit's `answer`), none for a fill.
+    const source = said.source === 'ai' || said.source === 'agent' ? { source: said.source } : {};
+    if (said.what === 'run') return { what: 'run', ...yesNo(said, ['on', 'halted']), ...nums(said, ['steps', 'filled', 'failed', 'leftRequired', 'blockers', 'unknown']), ...source };
     if (said.what === 'press') return { what: 'press', button: { text: words(said.button?.text, 60) ?? '' }, ...(said.how === 'page' || said.how === 'kit' ? { how: said.how } : {}) };
     if (said.what === 'wait') {
-      if (!isNum(said.start) || !isNum(said.ms) || (said.ended !== 'quiet' && said.ended !== 'limit')) return null;
+      // `stopped`: the agent stopped the fill while it waited (adapter.js settle's `abort`).
+      if (!isNum(said.start) || !isNum(said.ms) || !['quiet', 'limit', 'stopped'].includes(said.ended)) return null;
       const held = has(said.held) ? { held: { busy: said.held.busy === true, changing: said.held.changing === true, requests: said.held.requests === true } } : {};
       return { what: 'wait', why: WAITS_FOR.has(said.why) ? said.why : null, start: said.start, ms: said.ms, ended: said.ended,
         ...nums(said, ['quietMs', 'maxMs', 'lastChange', 'lastHeld']), ...yesNo(said, ['requests', 'settled']), ...held };
@@ -472,7 +476,9 @@
       const timing = has(said.timing) ? { timing: { ...nums(said.timing, TIMING), ...yesNo(said.timing, ['batch']) } } : {};
       return { what: 'answer', field: { key: words(said.field.key, 200), label: words(said.field.label, 200) ?? '' },
         stepKind: STEP_KINDS.has(said.stepKind) ? said.stepKind : null, start: said.start,
-        ...yesNo(said, ['ok']), ...nums(said, ['applyMs']), ...timing };
+        ...yesNo(said, ['ok']), ...nums(said, ['applyMs']), ...timing, ...source,
+        // Why it didn't take, only as the fill report's code (FailCode, REC-01): never words of the page.
+        ...(typeof said.code === 'string' && FAIL_CODE.test(said.code) ? { code: said.code } : {}) };
     }
     return null;
   }

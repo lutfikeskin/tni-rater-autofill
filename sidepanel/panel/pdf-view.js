@@ -438,6 +438,7 @@ async function clearClient() {
     state.aiDocks = new Map();
     state.pastKey = null;
     state.detailsOpen = false;
+    state.summary = null;
     dropReports();
     clientNote(null);
     usage.restoreSession(null);

@@ -19,7 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as buildPanel } from 'vite';
 import { zipDirectory } from './lib/zip.mjs';
-import { STAMPED, buildId, stampBuild, devManifest, bundledPanelFile, kitSourceFile, PACKAGED, packagedCommit, zipName, mapsZipName, withoutMapUrl, noticesPlugin, packageOf, thirdPartyNotices, NOTICES_FILE } from './lib/package.mjs';
+import { STAMPED, buildId, stampBuild, devManifest, storeManifest, bundledPanelFile, kitSourceFile, PACKAGED, packagedCommit, zipName, mapsZipName, withoutMapUrl, noticesPlugin, packageOf, thirdPartyNotices, NOTICES_FILE } from './lib/package.mjs';
 import { buildKit, KIT_OUTPUT } from './lib/kit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -81,6 +81,8 @@ fs.rmSync(out, { force: true });
 fs.rmSync(maps, { force: true });
 fs.rmSync(stageMaps, { recursive: true, force: true });
 await copy(stage, 'store');
+// Without the developer copy's shortcuts (storeManifest).
+fs.writeFileSync(path.join(stage, 'manifest.json'), `${JSON.stringify(storeManifest(manifest), null, 2)}\n`);
 moveMaps(stage, stageMaps);
 fs.writeFileSync(out, zipDirectory(stage));
 fs.writeFileSync(maps, zipDirectory(stageMaps));

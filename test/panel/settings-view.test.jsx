@@ -21,7 +21,7 @@ afterEach(cleanup);
 
 const $ = (container, sel) => container.querySelector(sel);
 const acts = (calls, more = {}) => ({
-  ...Object.fromEntries(['done', 'upload', 'exportLog', 'clearLog', 'capture', 'keyEdit', 'keySave'].map((name) => [name, () => calls.push([name])])),
+  ...Object.fromEntries(['done', 'upload', 'exportLog', 'clearLog', 'clearLogYes', 'clearLogNo', 'capture', 'keyEdit', 'keySave'].map((name) => [name, () => calls.push([name])])),
   ...Object.fromEntries(['agent', 'serverUrl', 'serverToken', 'testRun', 'aiOn', 'aiAuto', 'aiNames'].map((name) => [name, (v) => calls.push([name, v])])),
   switch: (name, on) => calls.push(['switch', name, on]),
   keyKey: (e) => calls.push(['keyKey', e.key]),
@@ -168,6 +168,20 @@ test('Advanced: the test-run mark with an intake, the server boxes on their chan
   for (const id of ['capture', 'upload-usage', 'export-usage', 'clear-usage']) fireEvent.click($(container, `#${id}`));
   expect(calls.slice(3)).toEqual([['capture'], ['upload'], ['exportLog'], ['clearLog']]);
   expect($(container, '#clear-usage').className).toBe('ghost small-btn danger');
+  // Clear log's question, in the panel under its button (audit 2026-11-07, UX-17), as the panel says it.
+  const ask = $(container, '#usage-confirm');
+  expect([ask.hidden, $(container, '#clear-usage').getAttribute('aria-expanded')]).toEqual([true, 'false']);
+  act(() => { state.usageAsk = { text: "3 events aren't uploaded or exported. Delete them anyway?", yes: 'Delete them' }; });
+  expect([ask.hidden, ask.getAttribute('role'), $(container, '#usage-confirm-text').textContent, $(container, '#usage-confirm-yes').textContent, $(container, '#clear-usage').getAttribute('aria-expanded')])
+    .toEqual([false, 'group', "3 events aren't uploaded or exported. Delete them anyway?", 'Delete them', 'true']);
+  // The focus goes to Cancel, and back to Clear log once the question closes (a keyboard user's).
+  expect(document.activeElement?.id).toBe('usage-confirm-no');
+  act(() => { state.usageAsk = null; });
+  expect([ask.hidden, document.activeElement?.id]).toEqual([true, 'clear-usage']);
+  act(() => { state.usageAsk = { n: 3, text: 'Delete the 3 exported events from this computer?', yes: 'Delete' }; });
+  fireEvent.click($(container, '#usage-confirm-no'));
+  fireEvent.click($(container, '#usage-confirm-yes'));
+  expect(calls.slice(7)).toEqual([['clearLogNo'], ['clearLogYes']]);
 });
 
 test('the developer recording: only with its buttons, which follow a recording, the unfinished one to save, and its line', () => {
@@ -187,6 +201,42 @@ test('the developer recording: only with its buttons, which follow a recording, 
   expect($(container, '#advanced > summary').textContent, 'seen with Advanced folded').toBe('Advanced, for setup only · Recording');
   for (const id of ['devrec-note', 'devrec-stop', 'devrec-recover']) fireEvent.click($(container, `#${id}`));
   expect(calls).toEqual(['start', 'note', 'stop', 'recover']);
+});
+
+// REC-15 (audit 2026-11-07): an unfinished recording could be saved, never removed.
+test('an unfinished recording can be discarded, by its own button beside Save', () => {
+  const calls = [];
+  const devrec = Object.fromEntries(['start', 'note', 'stop', 'recover', 'discard'].map((name) => [name, () => calls.push(name)]));
+  const { container } = render(<Settings act={acts([], { devrec })} />);
+  expect($(container, '#devrec-discard').hidden).toBe(true);
+  act(() => { state.devrec = { on: false, status: null, unfinished: { id: 'geico-x', label: 'Save the unfinished recording' } }; });
+  expect([$(container, '#devrec-discard').hidden, $(container, '#devrec-discard').className]).toEqual([false, 'ghost small-btn danger']);
+  fireEvent.click($(container, '#devrec-discard'));
+  expect(calls).toEqual(['discard']);
+});
+
+// REC-17 (audit 2026-11-07): Note and Stop were only in Settings, which hides the quote's view.
+test('while a developer recording runs, the footer shows its pill: its time and events, a Note box of its own and Stop', () => {
+  const calls = [];
+  const devrec = { note: (text) => { calls.push(['note', text]); return true; }, stop: () => calls.push(['stop']) };
+  const none = render(<RecordingLine />);
+  act(() => { state.devrec = { on: true, pill: '0:05 · 12 events' }; });
+  expect(none.container.querySelector('#devrec-pill'), 'a store build: no pill').toBe(null);
+  cleanup();
+  act(() => { state.devrec = { on: false, pill: null }; });
+  const { container } = render(<RecordingLine act={devrec} />);
+  expect(container.querySelector('#devrec-pill')).toBe(null);
+  act(() => { state.devrec = { on: true, pill: '0:05 · 12 events' }; });
+  expect($(container, '#devrec-pill-text').textContent).toBe('Developer recording 0:05 · 12 events');
+  // Its timer ticks every second: the pill is no live region (review of PR #471).
+  expect([$(container, '#devrec-pill').getAttribute('role'), $(container, '#devrec-pill').getAttribute('aria-live')]).toEqual(['group', null]);
+  fireEvent.click($(container, '#devrec-pill-noting'));
+  const box = $(container, '#devrec-pill-note');
+  fireEvent.change(box, { target: { value: 'waited too long' } });
+  fireEvent.keyDown(box, { key: 'Enter' });
+  expect(container.querySelector('#devrec-pill-note'), 'the box closes once the note is added').toBe(null);
+  fireEvent.click($(container, '#devrec-pill-stop'));
+  expect(calls).toEqual([['note', 'waited too long'], ['stop']]);
 });
 
 test('the footer\'s Recording usage line: hidden until said', () => {
