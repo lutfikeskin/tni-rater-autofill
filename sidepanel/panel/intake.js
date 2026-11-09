@@ -72,6 +72,8 @@ async function loadFile(file, { reset = false } = {}) {
     state.pagePending = null;
     state.drawPending = null;
     state.tabSessions.clear();
+    state.staleFills = [];
+    state.cards = { ...state.cards, stale: null };
     state.autoPages = new Set();
     state.agentKeys = new Map();
     state.labels = new Map();
