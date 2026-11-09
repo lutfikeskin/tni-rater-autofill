@@ -5510,7 +5510,7 @@ test('a fill whose tab stopped being the panel\'s during its last wait is not se
     assert.equal(t.state.filling, false);
     // The agent's own fill says on its own tab's report that it didn't run (CodeRabbit on #410); a
     // follow-up ends quietly.
-    assert.deepEqual(t.seen.problems, auto ? [] : [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+    assert.deepEqual(t.seen.problems.map(({ tabId, text }) => ({ tabId, text })), auto ? [] : [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
   }
 });
 
@@ -5522,7 +5522,7 @@ test('a dropped fill says why on its page, keeping an earlier error there', asyn
   const opening = fillHarness();
   opening.context.pageMoved = moved(opening);
   await opening.context.fillPage({ auto: 'page' });
-  assert.deepEqual(opening.seen.problems, [{ tabId: 7, text: 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.' }]);
+  assert.deepEqual(opening.seen.problems.map(({ tabId, text }) => ({ tabId, text })), [{ tabId: 7, text: 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.' }]);
   const failed = fillHarness();
   failed.state.reports.set('7|report', { error: 'Automatic filling paused after an error. Check the page, then fill again.' });
   failed.context.pageMoved = moved(failed);
@@ -5539,7 +5539,7 @@ test('a dropped fill says why on its page, keeping an earlier error there', asyn
   const listed = fillHarness();
   listed.context.pickListItem = async () => { listed.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: listed.state.tab.carrier }; };
   await listed.context.fillPage();
-  assert.deepEqual(listed.seen.problems, [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+  assert.deepEqual(listed.seen.problems.map(({ tabId, text }) => ({ tabId, text })), [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
 });
 
 // CodeRabbit on #410: a report made only to say a fill was dropped isn't a filled page's, so the
