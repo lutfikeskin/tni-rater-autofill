@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The side panel: the usage log panel and problem reports.
 // One part of the panel; sidepanel.js wires the parts together.
 import { redactionTerms } from '../../src/plan.js';
@@ -44,7 +43,7 @@ async function renderUsage() {
     if (document.activeElement !== $(id)) $(id).value = v;
   }
   state.recordingLine = !!state.intake && !state.tab?.carrier?.practice;
-  renderHealth({ n, agent, serverUrl, up });
+  renderHealth({ up });
 }
 
 // What setting up the panel takes, each item done when its health check passes: initials (so the

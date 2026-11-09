@@ -10,7 +10,7 @@ import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAns
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
-import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
+import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
 import { intakeNotes, rederive } from '../src/normalize.js';
@@ -11537,6 +11537,35 @@ test('a recording\'s fill marker says what went in, and AI applies and picks fro
   assert.deepEqual([context.traced(4), context.traced(5)], [true, false]);
   context.state.recording.stopping = true;
   assert.equal(context.traced(4), false);
+});
+
+// Audit 2026-11-07, GAP-02: a list holding as many rows as the intake or more that isn't the intake's
+// was said only in the usage log. Each intake unit not on it, and the rows the intake doesn't have,
+// are left for the agent in the top frame's report; nothing is added or deleted.
+test('a full unit list that isn\'t the intake\'s leaves its missing units and extra rows for the agent', async () => {
+  const record = { vehicles: [{ vin: '1FTBR3X80MKA12341' }, { vin: '1FTBR3X80MKA12342' }], trailers: [], drivers: [] };
+  const state = { tab: { id: 4 }, intake: { record }, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0 },
+    unitForms: { vehicles: {}, drivers: {}, trailers: {} }, doneActions: new Set() };
+  const pick = { state, knownStep, runKit: async () => [{ result: { step: 'Vehicles', forms: [], lists: [{ rows: 3, shown: [true, false] }, null] } }], fillCurrent: () => true,
+    persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs, unitMissing, planFor: buildPlan };
+  vm.runInNewContext(extractFunction('pickUnitToAdd'), pick);
+  const ctx = { tabId: 4, intake: state.intake, revision: 1, settings: { autoAdvance: true }, carrier: geico };
+  await pick.pickUnitToAdd(geico, ctx);
+  assert.equal(ctx.adding, null, 'nothing added');
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.listGaps)), { missing: [{ list: 'vehicles', index: 1 }], extra: 2, lists: ['vehicles', 'trailers'] });
+  const note = { unitMissingItem, unitExtraRowsItem };
+  vm.createContext(note);
+  vm.runInContext(extractFunction('noteMissingUnit'), note);
+  const results = [{ frameId: 0, result: { noData: [], blockers: [] } }];
+  note.noteMissingUnit(results, ctx);
+  const top = results[0].result;
+  assert.deepEqual(JSON.parse(JSON.stringify(top.blockers)), ['needs you: Add Vehicle', 'needs you: Check the vehicle list']);
+  assert.match(top.noData[0].note, /Vehicle 2 of the intake isn't on GEICO's list/);
+  assert.match(top.noData[1].note, /GEICO's vehicle list has 2 rows the intake doesn't: check them/);
+  // The intake's list exactly: no gaps.
+  pick.runKit = async () => [{ result: { step: 'Vehicles', forms: [], lists: [{ rows: 2, shown: [true, true] }, null] } }];
+  await pick.pickUnitToAdd(geico, ctx);
+  assert.equal(ctx.listGaps, null);
 });
 
 // REC-04 (audit 2026-11-07; W44-23): with the panel on another tab, each new document of the recorded

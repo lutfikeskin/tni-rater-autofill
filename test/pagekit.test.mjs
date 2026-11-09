@@ -3726,6 +3726,27 @@ test('a default to confirm (warn) is filled, flagged yellow and holds Continue u
   assert.ok(next._clicked, 'dismissed (or changed) by the agent: Continue');
 });
 
+// Audit 2026-11-07, LIVE-01: a live row says where its answer came from (`source`), so the panel
+// tags the agent's own default while the fill runs, as the report does.
+test('progress rows carry each answer\'s source', async () => {
+  const run = async (source) => {
+    const h = harness();
+    const a = makeInput({ id: 'a', ariaLabel: 'First' });
+    const b = makeInput({ id: 'b', ariaLabel: 'Second' });
+    h.document.body.append(a, b);
+    let during = null;
+    b.addEventListener('change', () => { during = h.kit.progress(); });
+    await h.kit.fill([
+      { id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'one', source, standard: false },
+      { id: 'b', selector: '#b', path: 'x.b', kind: 'text', value: 'two', source: 'intake' },
+    ], { maxRounds: 2 });
+    return Array.from(during.rows, (r) => [r.key, r.source]);
+  };
+  assert.deepEqual(await run('agent-default'), [['a', 'agent-default']]);
+  assert.deepEqual(await run('intake'), [['a', 'intake']]);
+});
+
+
 // Live review 2026-10-09: a long fill had no way to stop it. The panel's Stop halts it the way an
 // agent edit does: what is in stays, nothing more is filled, and Continue isn't clicked.
 test('Stop halts a running fill after the answer going in; progress counts what is in', async () => {
