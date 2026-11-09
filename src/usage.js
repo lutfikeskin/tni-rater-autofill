@@ -36,7 +36,7 @@ export function waitSummary(frames) {
   return Object.keys(out).length ? out : null;
 }
 
-/** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, FillRunWaits, IntakeProfileEvent, IntakeResult, IntakeSummary, TimelineEvent, UsageEvent } from '../types.js' */
+/** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, FillRunWaits, IntakeProfileEvent, IntakeResult, IntakeSummary, PlanStep, TimelineEvent, UsageEvent } from '../types.js' */
 
 export const LOG_KEY = 'usageLog';
 export const MAX_EVENTS = 20000;
@@ -461,10 +461,14 @@ function fieldWhy(x, list) {
 // still counts them all (`kept`). Without `keptLogged`, every one is logged.
 /**
  * @param {Partial<FillReport>[]} frames  the page kit's fill reports, one per frame (a stop page's: its blockers only)
- * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean, retried?: boolean, keptLogged?: Set<string> }} ctx
+ * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean, retried?: boolean, keptLogged?: Set<string>, plan?: PlanStep[] | null }} ctx
  * @returns {UsageEvent[]}
  */
-export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false, retried = false, keptLogged }) {
+export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false, retried = false, keptLogged, plan = null }) {
+  // What each answer's rule means, by its plan step (`plan`, the plan the fill was given): its
+  // concept and TNI rulebook entry, the same on every quote, where a step's path may be its place in
+  // the plan (a rule without a path or q). Rule names only, never a value.
+  const meaning = new Map((plan ?? []).flatMap((s) => ('tni' in s ? [[s.id, { ...(s.concept ? { concept: s.concept } : {}), ...(s.tni ? { tni: s.tni } : {}) }]] : [])));
   // Typed for the report list it reads (the body takes any key).
   /** @type {<K extends keyof FillReport>(k: K) => NonNullable<FillReport[K]>} */
   const all = /** @param {any} k @returns {any} */ (k) => frames.flatMap((f) => f[k] ?? []);
@@ -517,6 +521,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   const item = (result, list = result) => (x) => ({
     type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(tidyLabel(x.label)), path: x.path ?? null, controlKind: x.controlKind ?? null,
     how: x.how ?? undefined,
+    ...(x.stepId != null ? meaning.get(x.stepId) : undefined),
     // Why this answer, from its resolution (resolution.js): where it comes from (its method: intake,
     // derived, standard, fact, attestation), a TNI standard, the agent's only (never the AI's); and
     // a review-mode answer the agent confirms, which an item's resolution doesn't say outside the

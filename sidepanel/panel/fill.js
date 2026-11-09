@@ -288,7 +288,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     followUp = afterFill(frames, ctx);
     // AmWINS' next step at the same address: its own first Continue isn't the retry.
     if (ctx.retried && continuedKey(frames, page, carrier, ctx.active) !== ctx.retried) ctx.retried = false;
-    logFill(ctx, frames, results, started);
+    logFill(ctx, frames, results, started, plan);
     // The report is its own tab's: kept for it when the agent has moved to another tab meanwhile.
     // Stopped by the agent before the kit was done (a frame halted): said so, and the dock offers to
     // fill the rest.

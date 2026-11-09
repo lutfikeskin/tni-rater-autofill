@@ -411,6 +411,7 @@
  * @property {true} [edited]  its answer reads a record path the agent set or corrected in the panel
  * @property {string | null} q
  * @property {string | null} tni  the TNI rulebook entry its rule names (CarrierRule `tni`)
+ * @property {string | null} [concept]  its rule's concept (CarrierRule `concept`), stable across quotes and carriers
  * @property {{ id: string, amount?: string, tni?: string, ask?: boolean }} [agentDefault]  the agent's own default
  *   the step took (src/agent-defaults/overlay.js): its standard, the amounts said, or "Ask me"
  * @property {string} [defaultInfo]  why the agent's default didn't apply here (a state's own exception); shown in
@@ -973,6 +974,8 @@
  * @property {string | null} path
  * @property {string | null} controlKind
  * @property {string} [how]
+ * @property {string} [concept]  the plan step's rule concept (`driver.dob`), when it has one
+ * @property {string} [tni]  the TNI rulebook entry the step's rule names
  * @property {string} [source]
  * @property {true} [standard]
  * @property {true} [manualOnly]

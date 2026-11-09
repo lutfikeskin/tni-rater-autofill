@@ -320,7 +320,8 @@ function showFinish({ auto = false } = {}) {
 }
 // The events of a fill, redacted with the intake it filled from.
 /** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {FillReport[]} frames */
-function logFill(ctx, frames, results, started) {
+// `plan`: the plan the fill was given, for each answer's rule concept and TNI entry.
+function logFill(ctx, frames, results, started, plan = null) {
   if (ctx.carrier.practice) return;
   // The kept answers logged in this quote (fillEvents' keptLogged): a new usage session, a new set.
   const session = usage.currentSession()?.id ?? null;
@@ -333,7 +334,7 @@ function logFill(ctx, frames, results, started) {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
     run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background, retried: !!ctx.retried,
-    keptLogged: state.keptLogged.seen,
+    keptLogged: state.keptLogged.seen, plan,
   }));
 }
 // A rejected fill has no fill_run result to carry its rule version and switches. `timeline`: the
@@ -481,7 +482,7 @@ async function autoFill(page) {
     const added = frames.flatMap((f) => f.filled).filter((x) => !x.otherStep);
     const n = added.length + frames.reduce((k, f) => k + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings || frames.some((f) => f.filled.length)) {
-      logFill(ctx, frames, results, started);
+      logFill(ctx, frames, results, started, plan);
       if (n && current && !rendered && reportShown()) {
         // Listed with the page's answers, marked new, and counted in step 2.
         // With their sources and groups as the report has them (answerSources, groupRows).
@@ -494,7 +495,7 @@ async function autoFill(page) {
         announce(`Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically.`);
       }
       if (current) recordLayout(page);
-    } else if (ctx.listNote || frames.some((f) => f.advanceDue || f.held || f.unlisted)) logFill(ctx, frames, results, started);
+    } else if (ctx.listNote || frames.some((f) => f.advanceDue || f.held || f.unlisted)) logFill(ctx, frames, results, started, plan);
   } catch (e) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
