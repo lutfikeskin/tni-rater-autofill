@@ -67,9 +67,13 @@ export async function managedSettings() {
 }
 
 // The agent's settings over what the policy deployed (managedSettings), its token left out: what
-// the AI and the settings log go by. A setting the agent never touched is the policy's.
-export async function settingsWithPolicy() {
-  const [saved, { serverToken: _token, ...policy }] = await Promise.all([settings(), managedSettings()]);
+// the AI and the settings log go by. A setting the agent never touched is the policy's. In the store
+// copy the agent's own server and token are none (serverConfig `locked`), so the settings log says
+// where its usage really goes (review of #523).
+export async function settingsWithPolicy(channel = PROVENANCE.channel) {
+  const [own, { serverToken: _token, ...policy }] = await Promise.all([settings(), managedSettings()]);
+  const { serverUrl: _url, serverToken: _ownToken, ...rest } = own;
+  const saved = channel === 'store' ? rest : own;
   const out = { ...policy };
   if (out.agent) out.agent = out.agent.toUpperCase();
   // Initials the agent cleared are none of theirs: the policy's stand.
@@ -200,13 +204,17 @@ export const DEFAULT_TOKEN = 'f1bc92546c9f329c321dbc6a33611c07';
 // otherwise the one the organization's policy names (managedSettings: `managed`), otherwise the
 // central one. A blank server setting means "no server" (export only). The policy's token goes
 // with the server it is for (the policy's, or the central one when the policy names no server),
-// the built-in token only to the central server.
-export async function serverConfig() {
-  const [{ serverUrl, serverToken = '' }, policy] = await Promise.all([settings(), managedSettings()]);
+// the built-in token only to the central server. The store copy takes no server or token of the
+// agent's own (`locked`): its usage, and Luna requests without the agent's own OpenAI key, go to the
+// policy's server or TNI's, so a copy isn't pointed at another URL (the maintainer, 2026-11-09; audit 2026-11-07, SRV-16).
+export async function serverConfig(channel = PROVENANCE.channel) {
+  const [own, policy] = await Promise.all([settings(), managedSettings()]);
+  const locked = channel === 'store';
+  const { serverUrl, serverToken = '' } = locked ? {} : own;
   const managed = serverUrl === undefined && policy.serverUrl !== undefined;
   const url = serverUrl !== undefined ? serverUrl : policy.serverUrl ?? DEFAULT_SERVER;
   const policyToken = policy.serverToken && url === (policy.serverUrl ?? DEFAULT_SERVER) ? policy.serverToken : '';
-  return { serverUrl: url, serverToken: serverToken || policyToken || (url === DEFAULT_SERVER ? DEFAULT_TOKEN : ''), ...(managed ? { managed: true } : {}) };
+  return { serverUrl: url, serverToken: serverToken || policyToken || (url === DEFAULT_SERVER ? DEFAULT_TOKEN : ''), ...(managed ? { managed: true } : {}), ...(locked ? { locked: true } : {}) };
 }
 const REJECTED_KEY = 'usageRejected';
 const BATCH = 500;

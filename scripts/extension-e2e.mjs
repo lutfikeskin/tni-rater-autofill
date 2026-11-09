@@ -62,7 +62,11 @@ const ctx = await chromium.launchPersistentContext(userDir, { channel: 'chromium
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 // The store build's mock address: under AmWINS' host, answered by the replay server (below).
 const MOCK_HOST = CHANNEL === 'store' ? 'e2e-mock.amwinsadmittedplacement.com' : null;
-const leavesMachine = (url) => /^(https?|wss?):$/.test(url.protocol) && !LOCAL_HOSTS.has(url.hostname) && url.hostname !== MOCK_HOST;
+// The store build sends its usage to TNI's server whatever its Server box says (usage-log.js
+// serverConfig `locked`; SRV-16): there, TNI's host is answered by the local usage server instead,
+// so its events still reach it and nothing leaves the machine.
+const USAGE_HOST = CHANNEL === 'store' ? PRODUCTION_HOST : null;
+const leavesMachine = (url) => /^(https?|wss?):$/.test(url.protocol) && !LOCAL_HOSTS.has(url.hostname) && url.hostname !== MOCK_HOST && url.hostname !== USAGE_HOST;
 // What the mock page's own HTML loads (the captured page's Bootstrap from a CDN, its Intercom frame
 // not saved with it): refused or missing, so the run never needs the network, and no request or
 // error of the extension's.
@@ -96,6 +100,12 @@ if (MOCK_HOST) {
     if (pathname === PORTAL_PATH) return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Commercial Lines (mock)</title><p>Commercial Lines</p>' });
     const local = pathname.startsWith(`${MOCK_PREFIX}/`) ? pathname.slice(MOCK_PREFIX.length) : pathname;
     route.fulfill({ response: await route.fetch({ url: `http://localhost:8792${local}${search}` }) });
+  });
+}
+if (USAGE_HOST) {
+  await ctx.route((url) => url.hostname === USAGE_HOST, async (route) => {
+    const { pathname, search } = new URL(route.request().url());
+    route.fulfill({ response: await route.fetch({ url: `${usageUrl}${pathname}${search}` }) });
   });
 }
 // Errors anywhere fail the run, as they are logged: the panel's (as a page, popped out), the mock

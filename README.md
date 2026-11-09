@@ -98,7 +98,7 @@ What's recorded (`src/usage.js`, `src/content/recorder.js`):
 
 Never recorded (apart from what an agent types into a problem report, the business profile above, and a quote summary the agent saves): client names, numbers, addresses, or anything typed into text boxes; screenshots; keystrokes; other websites. Client names are also redacted from labels and options.
 
-Events wait in `chrome.storage.local` on the agent's computer and are uploaded every minute to the collection server set under **Settings → Advanced, for setup only → Server** (TNI's central server by default). Stored events are removed after acknowledgement and failed uploads retry. The local queue is capped, so a prolonged outage can discard the oldest events. **Export log** works as a fallback. See [learning](docs/learning.md) for the collection and review limits.
+Events wait in `chrome.storage.local` on the agent's computer and are uploaded every minute to the collection server set under **Settings → Advanced, for setup only → Server** (TNI's central server by default). In the store copy that box is read-only: its events, and Luna requests without the agent's own OpenAI key, go to TNI's server, or the one an organization's policy sets, never to one typed there (`serverConfig` `locked` in sidepanel/usage-log.js; audit 2026-11-07, SRV-16). The unpacked copy keeps the box for a local test server. Stored events are removed after acknowledgement and failed uploads retry. The local queue is capped, so a prolonged outage can discard the oldest events. **Export log** works as a fallback. See [learning](docs/learning.md) for the collection and review limits.
 
 ### Collection server
 
