@@ -5458,7 +5458,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
     fillEvents, isStandard, resolutionOf, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
     renderReport: (frames, ctx) => { seen.rendered++; seen.reportTabs.push(ctx?.tabId); }, renderSite() {}, renderSteps() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
     reportKey: (tabId) => `${tabId}|report`, watchFill: () => () => {}, showFinish() {}, reportShown: () => true,
-    fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text }); },
+    fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text, active: ctx.active }); },
     viewOf: () => 't1', usage: { currentSession: () => ({ id: `session-${state.intake.id}`, intakeId: state.intake.id, keySalt: 'salt' }), log: (...events) => seen.logged.push(...events) },
     save: async () => {},
     persistAgentKeys: (tabId, keys) => { seen.persistedKeys.push([tabId, keys]); }, persistDoneActions: (tabId, ids) => { seen.persistedActions.push([tabId, ids]); },
@@ -5473,6 +5473,30 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   return { state, ui, seen, context, intakeA, started, release, reject, results };
 }
 
+// Audit 2026-11-07 (FLOW-04): a rejection while the fill was prepared (the list's pick saved to a
+// full session storage) left filling on for good: the dock's Fill stayed disabled until a reload.
+test('a fill whose preparation fails ends: filling is off, the kit is not asked, and the page says so', async () => {
+  const t = fillHarness();
+  let asked = 0;
+  // The list page moved the tab to its second vehicle (pickUnitForm), then saving the pick failed.
+  t.context.pickListItem = async () => { t.state.active = { ...t.state.active, vehicles: 1 }; throw new Error('Resource::kQuotaBytes quota exceeded'); };
+  t.context.runKit = async () => { asked++; return []; };
+  await t.context.fillPage();
+  assert.equal(t.seen.problems[0].active?.vehicles, 1, 'said under the vehicle selected now (CodeRabbit on #405)');
+  assert.equal(t.state.filling, false);
+  assert.equal(asked, 0);
+  assert.equal(t.state.tabSessions.get(7)?.autoPaused ?? t.state.autoPaused, true, 'automatic filling pauses, as after a failed fill');
+  assert.deepEqual(t.seen.problems.map((p) => p.tabId), [7]);
+  assert.match(t.seen.problems[0].text, /^Filling couldn’t start: fill again, or reload the panel if it happens again\. \(Resource::kQuotaBytes quota exceeded\)$/);
+  assert.deepEqual(t.seen.logged.map((e) => [e.type, e.error]), [['fill_error', 'Resource::kQuotaBytes quota exceeded']]);
+  // And the next Fill goes ahead.
+  t.context.pickListItem = async () => {};
+  t.state.autoPaused = false;
+  await t.context.fillPage();
+  assert.equal(asked, 1);
+  assert.equal(t.state.filling, false);
+});
+
 // Audit 2026-11-07 (FLOW-08): the tab in front changed during the last wait before the kit was asked
 // (Chrome's read of the tab's address): the fill doesn't go ahead with that tab's options.
 test('a fill whose tab stopped being the panel\'s during its last wait is not sent to the kit', async () => {
@@ -5486,7 +5510,7 @@ test('a fill whose tab stopped being the panel\'s during its last wait is not se
     assert.equal(t.state.filling, false);
     // The agent's own fill says on its own tab's report that it didn't run (CodeRabbit on #410); a
     // follow-up ends quietly.
-    assert.deepEqual(t.seen.problems, auto ? [] : [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+    assert.deepEqual(t.seen.problems.map(({ tabId, text }) => ({ tabId, text })), auto ? [] : [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
   }
 });
 
@@ -5498,7 +5522,7 @@ test('a dropped fill says why on its page, keeping an earlier error there', asyn
   const opening = fillHarness();
   opening.context.pageMoved = moved(opening);
   await opening.context.fillPage({ auto: 'page' });
-  assert.deepEqual(opening.seen.problems, [{ tabId: 7, text: 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.' }]);
+  assert.deepEqual(opening.seen.problems.map(({ tabId, text }) => ({ tabId, text })), [{ tabId: 7, text: 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.' }]);
   const failed = fillHarness();
   failed.state.reports.set('7|report', { error: 'Automatic filling paused after an error. Check the page, then fill again.' });
   failed.context.pageMoved = moved(failed);
@@ -5515,7 +5539,7 @@ test('a dropped fill says why on its page, keeping an earlier error there', asyn
   const listed = fillHarness();
   listed.context.pickListItem = async () => { listed.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: listed.state.tab.carrier }; };
   await listed.context.fillPage();
-  assert.deepEqual(listed.seen.problems, [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+  assert.deepEqual(listed.seen.problems.map(({ tabId, text }) => ({ tabId, text })), [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
 });
 
 // CodeRabbit on #410: a report made only to say a fill was dropped isn't a filled page's, so the
