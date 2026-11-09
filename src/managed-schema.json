@@ -3,12 +3,12 @@
   "properties": {
     "serverUrl": {
       "title": "Usage server",
-      "description": "The collection server's address (https://host). Empty: no server, export only. It must be at a host the extension's manifest allows (host_permissions). An agent's own setting under Settings, Advanced still wins.",
+      "description": "The collection server's address (https://host). Empty: no server, export only. It must be at a host the extension's manifest allows (host_permissions). In an unpacked copy an agent's own setting under Settings, Advanced still wins; the store copy uses this server (else TNI's) and takes none of the agent's.",
       "type": "string"
     },
     "serverToken": {
       "title": "Upload token",
-      "description": "The upload token for that server (or for TNI's central server when no server is set). Never shown in the panel.",
+      "description": "The upload token for that server (or for TNI's central server when no server is set). Never shown in the panel. In the store copy the agent can't set a token of their own.",
       "type": "string"
     },
     "aiOn": {

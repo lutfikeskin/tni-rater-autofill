@@ -602,8 +602,14 @@ test('the store copy takes no server or token of the agent\'s own', async () => 
     assert.equal((await usage.serverConfig('store')).serverUrl, usage.DEFAULT_SERVER, 'blank: still TNI\'s in the store copy');
     policy = { serverUrl: 'https://usage.agency.test', serverToken: 'agency-token' };
     assert.deepEqual(await usage.serverConfig('store'), { serverUrl: 'https://usage.agency.test', serverToken: 'agency-token', managed: true, locked: true });
+    // Review of #523: the settings log says the same (no server of the agent's own in the store copy).
+    await usage.saveSettings({ serverUrl: 'https://elsewhere.example', serverToken: 'mine', aiOn: true });
+    assert.deepEqual(await usage.settingsWithPolicy('store'), { serverUrl: 'https://usage.agency.test', aiOn: true });
+    assert.equal((await usage.settingsWithPolicy('unpacked')).serverUrl, 'https://elsewhere.example');
+    policy = {};
+    assert.equal((await usage.settingsWithPolicy('store')).serverUrl, undefined, 'no policy: the central server, as agentSettingsEvent reads an unset one');
   } finally {
     delete globalThis.chrome;
-    await usage.saveSettings({ serverUrl: undefined, serverToken: '' });
+    await usage.saveSettings({ serverUrl: undefined, serverToken: '', aiOn: undefined });
   }
 });
