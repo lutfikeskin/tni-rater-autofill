@@ -1,4 +1,3 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
 // The side panel: the usage log panel and problem reports.
 // One part of the panel; sidepanel.js wires the parts together.
 import { redactionTerms } from '../../src/plan.js';
@@ -44,7 +43,7 @@ async function renderUsage() {
     if (document.activeElement !== $(id)) $(id).value = v;
   }
   state.recordingLine = !!state.intake && !state.tab?.carrier?.practice;
-  renderHealth({ n, agent, serverUrl, up });
+  renderHealth({ up });
 }
 
 // What setting up the panel takes, each item done when its health check passes: initials (so the
@@ -111,6 +110,14 @@ function settingsActs() {
     // agent for here (tab-mark.js). Never logged.
     markTab: (on) => markSwitch(on),
   };
+  // Clear log's question, with what it names (usage.logMark: the count `n` and the last event's `seq`).
+  const askClearLog = async () => {
+    const { lastExportCount = 0 } = await usage.settings();
+    const { n, seq } = await usage.logMark();
+    state.usageAsk = n > lastExportCount
+      ? { n, seq, text: `${n} events aren't uploaded or exported. Delete them anyway?`, yes: 'Delete them' }
+      : { n, seq, text: `Delete the ${n} exported events from this computer?`, yes: 'Delete' };
+  };
   return {
     // A Filling switch: what Settings draws follows it at once (Let me look first is off with
     // Continue when the page is done); the panel reads the switch from its box.
@@ -138,17 +145,21 @@ function settingsActs() {
       state.usageNote = `Exported ${n} events to your Downloads.`;
       renderUsage();
     },
-    clearLog: async () => {
-      const { lastExportCount = 0 } = await usage.settings();
-      const n = await usage.count();
-      const msg = n > lastExportCount
-        ? `${n} events aren't uploaded or exported. Delete them anyway?`
-        : `Delete the ${n} exported events from this computer?`;
-      if (!confirm(msg)) return;
-      await usage.clearLog();
+    // Clear log asks first, in the panel under its button (state.usageAsk, as the client's file tools
+    // ask: askFile), never with a browser dialog, which would hold the panel and a fill's Stop while open.
+    clearLog: () => askClearLog(),
+    // A yes deletes what the question named: the log checks what it asked about (`n`, `seq`) under its
+    // lock as it deletes (usage.clearLog `expected`), and events logged since are asked about again,
+    // with the new count, instead.
+    clearLogYes: async () => {
+      const asked = state.usageAsk;
+      if (!asked) return;
+      if (!await usage.clearLog({ expected: { n: asked.n, seq: asked.seq } })) { await askClearLog(); return; }
+      state.usageAsk = null;
       state.usageNote = 'Usage log cleared.';
       renderUsage();
     },
+    clearLogNo: () => { state.usageAsk = null; },
   };
 }
 

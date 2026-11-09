@@ -18,7 +18,7 @@ Fill Progressive replays committed per-state layouts in a real browser with the 
 Preconditions:
 
 - Playwright Chromium is installed.
-- Internet is available. The replay page loads ExtJS 6.2.0 from cdnjs with a pinned integrity hash.
+- No network is needed. The replay page loads ExtJS 6.2.0 from `test/replay/vendor/extjs-6.2.0/`, vendored with its GPL-3.0 licence and pinned by its integrity hash.
 - Replay on 8792 is not required. This command starts its own server.
 
 - **Committed layouts.** Run `npm run e2e -- --fixtures`. Exit 0.

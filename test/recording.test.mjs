@@ -434,6 +434,29 @@ test('a step is left by the last button pressed on it, the agent\'s or the exten
   assert.match(report, /\| 4 \| \/quote · Summary \|[^\n]*\| — \|/);
 });
 
+// REC-14 (audit 2026-11-07): an AI apply read as "a fill started", its answers as the page's. The
+// span says what went in (`what`, FLOW-15); the kit's answers say whose they were (`source`).
+test('an AI apply and the agent\'s own pick from a row are told apart from a fill, their answers too', () => {
+  const t0 = Date.parse('2026-10-23T14:12:00.000Z');
+  const events = [
+    { kind: 'page', t: t0, seq: 1, frame: 0, page: '/quote', step: 'Vehicles', top: true },
+    { kind: 'fill', t: t0 + 100, frame: 0, on: true, what: 'ai' },
+    { kind: 'kit', t: t0 + 300, seq: 2, frame: 0, what: 'answer', field: { key: 'ref:Use', label: 'Vehicle use' }, ok: true, start: t0 + 200, applyMs: 50, source: 'ai', timing: { ms: 160, settleMs: 110 } },
+    { kind: 'kit', t: t0 + 350, seq: 5, frame: 0, what: 'answer', field: { key: 'ref:Garage', label: 'Garaging' }, ok: false, start: t0 + 320, applyMs: 20, source: 'ai' },
+    { kind: 'fill', t: t0 + 400, frame: 0, on: false, what: 'ai' },
+    { kind: 'fill', t: t0 + 500, frame: 0, on: true, what: 'pick' },
+    { kind: 'kit', t: t0 + 700, seq: 3, frame: 0, what: 'answer', field: { key: 'ref:Radius', label: 'Radius' }, ok: true, start: t0 + 600, applyMs: 50, source: 'agent' },
+    { kind: 'fill', t: t0 + 800, frame: 0, on: false, what: 'pick' },
+    { kind: 'fill', t: t0 + 900, frame: 0, on: true, what: 'fill' },
+    { kind: 'kit', t: t0 + 1100, seq: 4, frame: 0, what: 'answer', field: { key: 'ref:Year', label: 'Year' }, ok: true, start: t0 + 1000, applyMs: 50 },
+    { kind: 'fill', t: t0 + 1200, frame: 0, on: false, what: 'fill' },
+  ];
+  const report = recordingReport({ manifest: { ...manifestFor(), ended: '2026-10-23T14:12:02.000Z' }, events });
+  assert.match(report, /the panel began putting in an AI answer\n.*the AI's answer went into "Vehicle use" in 0\.1 s, then waited 0\.1 s for the page\n.*the panel tried to put the AI's answer into "Garaging" in 0\.0 s \(not kept\)\n.*the AI answer ended/);
+  assert.match(report, /the panel began putting in the agent's pick from a row\n.*your pick from the panel went into "Radius" in 0\.1 s\n.*the pick ended/);
+  assert.match(report, /a fill started\n.*the extension answered "Year" in 0\.1 s\n.*the fill ended/);
+});
+
 // REC-02 (audit 2026-11-07): a wait held by GEICO's `active-index`, a radio's `checked` or a busy page
 // read as "the page did nothing during it", a safe speed-up to the review, from the trace's observer.
 test('a wait\'s slack counts what the wait saw itself, and says when the trace saw less', () => {

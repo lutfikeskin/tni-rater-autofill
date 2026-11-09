@@ -16,7 +16,7 @@
 // holds every version's fingerprint and fails until SCHEMA_VERSION is raised and the new version's
 // added, so an extension that sends the new fields waits for a server that keeps them.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // Event type -> fields kept. Anything else in an event is dropped (and named in `dropped`).
 // install: a random id for one copy of the extension on one computer (with seq: gaps show loss).
@@ -83,6 +83,11 @@ export const EVENT_FIELDS = {
   ai_decision: ['model', 'policy', 'promptHash', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason', 'ruleIds'],
   // One per question Luna left: its code and label, why (leaveWhy) and the intake field it maps to.
   ai_leave: ['q', 'label', 'controlKind', 'leaveWhy', 'intakePath'],
+  // The quote summary the agent saved (Save summary: sidepanel/panel/quote-summary.js), whole:
+  // every answer of the quote per carrier and page with its source, the agent's overrides, the AI's
+  // decisions and what was marked done. It holds client data, as the agent saw it in the panel
+  // (the maintainer, 2026-11-07: TNI's own server). The server checks its shape whole (SUMMARY_SHAPE).
+  quote_summary: ['summary'],
 };
 
 // Text in the business profile never holds what could identify the client (ID_LIKE: an @; a date

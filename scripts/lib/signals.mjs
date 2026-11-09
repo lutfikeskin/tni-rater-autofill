@@ -103,6 +103,23 @@ export function testSessionsOf(all, testIntakes = []) {
   return out;
 }
 
+// The test runs the learner's reports leave out (learn-rules, rule-proposals). A capped export or a
+// slice of days can lack a quote's intake_loaded, which testSessionsOf reads, while its other
+// events still carry the intake's fingerprint (learn() counts support by it): a listed fingerprint
+// is matched on those too, unless the agent's latest mark in the panel says the quote is no test
+// (CodeRabbit on PR #369).
+export function learnerTestRuns(events, testIntakes = []) {
+  const tests = testSessionsOf(events, testIntakes);
+  const listed = [...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+  const marks = new Map();
+  for (const e of events) if (e.type === 'intake_marked' && e.session) marks.set(e.session, e.test === true);
+  for (const e of events) {
+    if (!e.session || !e.intakeId || marks.get(e.session) === false) continue;
+    if (listed.some((id) => String(e.intakeId).toLowerCase().startsWith(id))) tests.add(e.session);
+  }
+  return tests;
+}
+
 /**
  * How each quote ended on each carrier it went to: done (its final page or final click, after this
  * quote's own fill there), declined (the carrier stopped it), or stopped at its last page; with its

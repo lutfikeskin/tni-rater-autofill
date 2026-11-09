@@ -2,15 +2,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import vm from 'node:vm';
+import nodeVm from 'node:vm';
 import { randomUUID } from 'node:crypto';
+import * as MESSAGES from '../sidepanel/panel/messages.js';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
-import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
+import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
 import { intakeNotes, rederive } from '../src/normalize.js';
@@ -24,6 +25,13 @@ import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
 
+// What the panel says (sidepanel/panel/messages.js) is in every vm context the tests run a panel
+// function in, as the panel's other imports are given there: the real words, not stubs. A context's
+// own value of a name wins.
+const withMessages = (context = {}) => Object.assign(context, { ...MESSAGES, ...context });
+const vm = { ...nodeVm,
+  createContext: (context, ...rest) => nodeVm.createContext(withMessages(context), ...rest),
+  runInNewContext: (code, context, ...rest) => nodeVm.runInNewContext(code, withMessages(context), ...rest) };
 
 // The panel's parts and its wiring as one text (test/panel-source.mjs): functions are found by name.
 const SIDEPANEL = PANEL_SOURCE;
@@ -35,6 +43,28 @@ const LAYOUT_STUB = '\nfunction scheduleLayout() {}';
 test('the panel script parses', () => {
   const r = spawnSync(process.execPath, ['--check', fileURLToPath(new URL('../sidepanel/sidepanel.js', import.meta.url))], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
+});
+
+// What the dock, a report's head, the intake checks' title and the answers' source tags say is in
+// the panel's messages (sidepanel/panel/messages.js: audit 2026-11-07, UX-17), not in the code that
+// decides which is said: those functions keep no sentence of their own. A string of words (two or
+// more, a capital or a space between letters) in one of them is a sentence that belongs there.
+test('the dock, the report head, the checks\' title and the source tags take their words from messages.js', () => {
+  const said = ['dockFor', 'fillingSaid', 'continueSaid', 'renderWarnings', 'answerSource'].flatMap((name) => {
+    const body = extractFunction(name).replace(/\/\/.*$/gm, '');
+    return [...body.matchAll(/'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g)].map((m) => m[0])
+      .filter((s) => /[A-Za-z]{2,} [A-Za-z]/.test(s.replace(/\$\{[^}]*\}/g, ''))).map((s) => `${name}: ${s}`);
+  });
+  // renderReport's head and announcement (its log and keys keep their own words).
+  const report = extractFunction('renderReport').replace(/\/\/.*$/gm, '');
+  for (const phrase of ['No questions found', 'Nothing to fill on this page', 'You stopped the fill', 'Filling stopped', 'seems to have changed', 'left for you.', 'weren’t', 'Clicked “']) {
+    if (report.includes(phrase)) said.push(`renderReport: ${phrase}`);
+  }
+  assert.deepEqual(said, []);
+  // Every message is used by the code it names (none left behind once a word is changed there).
+  const panel = ['coordinator', 'fill', 'record'].map((f) => fs.readFileSync(`sidepanel/panel/${f}.js`, 'utf8')).join('\n');
+  const unused = Object.entries(MESSAGES).flatMap(([group, words]) => Object.keys(words).filter((id) => !new RegExp(`\\b${group}\\.${id}\\b|\\b(words|open)\\.${id}\\b|\\{[^}]*\\b${id}\\b[^}]*\\} = ${group}\\b`).test(panel)).map((id) => `${group}.${id}`));
+  assert.deepEqual(unused, []);
 });
 
 // $(id) finds the first: an icon named like its button once took the button's clicks.
@@ -117,6 +147,9 @@ function extractFunction(name) {
           // A fill stopped before the intake is replaced or cleared (stopFillFirst) has its own tests:
           // elsewhere none is running.
           stopFillFirst: 'async () => {}',
+          // Whether a recording runs on the tab (core.js, REC-14):
+          // elsewhere no recording runs.
+          traced: '() => false',
           // A recording's note of the tab the panel follows (dev-recording.js) has its own test:
           // elsewhere none is running.
           noteFollowed: '() => {}',
@@ -5458,7 +5491,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
     fillEvents, isStandard, resolutionOf, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
     renderReport: (frames, ctx) => { seen.rendered++; seen.reportTabs.push(ctx?.tabId); }, renderSite() {}, renderSteps() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
     reportKey: (tabId) => `${tabId}|report`, watchFill: () => () => {}, showFinish() {}, reportShown: () => true,
-    fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text }); },
+    fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text, active: ctx.active }); },
     viewOf: () => 't1', usage: { currentSession: () => ({ id: `session-${state.intake.id}`, intakeId: state.intake.id, keySalt: 'salt' }), log: (...events) => seen.logged.push(...events) },
     save: async () => {},
     persistAgentKeys: (tabId, keys) => { seen.persistedKeys.push([tabId, keys]); }, persistDoneActions: (tabId, ids) => { seen.persistedActions.push([tabId, ids]); },
@@ -5473,6 +5506,30 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   return { state, ui, seen, context, intakeA, started, release, reject, results };
 }
 
+// Audit 2026-11-07 (FLOW-04): a rejection while the fill was prepared (the list's pick saved to a
+// full session storage) left filling on for good: the dock's Fill stayed disabled until a reload.
+test('a fill whose preparation fails ends: filling is off, the kit is not asked, and the page says so', async () => {
+  const t = fillHarness();
+  let asked = 0;
+  // The list page moved the tab to its second vehicle (pickUnitForm), then saving the pick failed.
+  t.context.pickListItem = async () => { t.state.active = { ...t.state.active, vehicles: 1 }; throw new Error('Resource::kQuotaBytes quota exceeded'); };
+  t.context.runKit = async () => { asked++; return []; };
+  await t.context.fillPage();
+  assert.equal(t.seen.problems[0].active?.vehicles, 1, 'said under the vehicle selected now (CodeRabbit on #405)');
+  assert.equal(t.state.filling, false);
+  assert.equal(asked, 0);
+  assert.equal(t.state.tabSessions.get(7)?.autoPaused ?? t.state.autoPaused, true, 'automatic filling pauses, as after a failed fill');
+  assert.deepEqual(t.seen.problems.map((p) => p.tabId), [7]);
+  assert.match(t.seen.problems[0].text, /^Filling couldn’t start: fill again, or reload the panel if it happens again\. \(Resource::kQuotaBytes quota exceeded\)$/);
+  assert.deepEqual(t.seen.logged.map((e) => [e.type, e.error]), [['fill_error', 'Resource::kQuotaBytes quota exceeded']]);
+  // And the next Fill goes ahead.
+  t.context.pickListItem = async () => {};
+  t.state.autoPaused = false;
+  await t.context.fillPage();
+  assert.equal(asked, 1);
+  assert.equal(t.state.filling, false);
+});
+
 // Audit 2026-11-07 (FLOW-08): the tab in front changed during the last wait before the kit was asked
 // (Chrome's read of the tab's address): the fill doesn't go ahead with that tab's options.
 test('a fill whose tab stopped being the panel\'s during its last wait is not sent to the kit', async () => {
@@ -5486,7 +5543,7 @@ test('a fill whose tab stopped being the panel\'s during its last wait is not se
     assert.equal(t.state.filling, false);
     // The agent's own fill says on its own tab's report that it didn't run (CodeRabbit on #410); a
     // follow-up ends quietly.
-    assert.deepEqual(t.seen.problems, auto ? [] : [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+    assert.deepEqual(t.seen.problems.map(({ tabId, text }) => ({ tabId, text })), auto ? [] : [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
   }
 });
 
@@ -5498,7 +5555,7 @@ test('a dropped fill says why on its page, keeping an earlier error there', asyn
   const opening = fillHarness();
   opening.context.pageMoved = moved(opening);
   await opening.context.fillPage({ auto: 'page' });
-  assert.deepEqual(opening.seen.problems, [{ tabId: 7, text: 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.' }]);
+  assert.deepEqual(opening.seen.problems.map(({ tabId, text }) => ({ tabId, text })), [{ tabId: 7, text: 'You moved to another tab before this page’s automatic fill began. Nothing was filled or clicked; fill this page.' }]);
   const failed = fillHarness();
   failed.state.reports.set('7|report', { error: 'Automatic filling paused after an error. Check the page, then fill again.' });
   failed.context.pageMoved = moved(failed);
@@ -5515,7 +5572,7 @@ test('a dropped fill says why on its page, keeping an earlier error there', asyn
   const listed = fillHarness();
   listed.context.pickListItem = async () => { listed.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: listed.state.tab.carrier }; };
   await listed.context.fillPage();
-  assert.deepEqual(listed.seen.problems, [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
+  assert.deepEqual(listed.seen.problems.map(({ tabId, text }) => ({ tabId, text })), [{ tabId: 7, text: 'You moved to another tab before the fill began. Nothing was filled or clicked; fill this page again.' }]);
 });
 
 // CodeRabbit on #410: a report made only to say a fill was dropped isn't a filled page's, so the
@@ -6441,7 +6498,7 @@ test('while a fill runs the panel asks each frame only for new rows and keeps th
   const asked = [];
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; },
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; },
     setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { asked.push(JSON.parse(JSON.stringify(o.args[0]))); return reply; } } },
   };
@@ -6480,7 +6537,7 @@ test('while a fill runs the panel streams the items judged with the answers, in 
   const asked = [];
   const state = { fillingFor: { run: 'r1', tabId: 3, filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; },
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; },
     setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { asked.push(JSON.parse(JSON.stringify(o.args[0]))); return reply; } } },
   };
@@ -6519,7 +6576,7 @@ test('a fill whose page stops answering is said in the dock, and the word goes w
   let renders = 0;
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, UNANSWERED_MS: 5000,
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; }, UNANSWERED_MS: 5000,
     Date: { now: () => clock }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: () => new Promise((resolve) => { answer = resolve; }) } },
   };
@@ -6557,7 +6614,7 @@ test('the page not answering and Stop are said in a new fillingFor', async () =>
   const stopped = [];
   const button = { disabled: false };
   const context = {
-    inExtension: true, state, worldFor: () => 'MAIN', renderSteps() {}, UNANSWERED_MS: 5000, $: () => button,
+    inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps() {}, UNANSWERED_MS: 5000, $: () => button,
     Date: { now: () => clock }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async (o) => { if (o.args[0] === 'r1') stopped.push(o.target.tabId); return new Promise(() => {}); } } },
   };
@@ -6946,7 +7003,12 @@ function settingsActsHarness() {
   const state = { switches: { autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true }, usageNote: '' };
   const record = (name) => (...args) => { calls.push([name, ...args]); };
   const context = { state, calls, confirm: () => true,
-    usage: { saveSettings: async (patch) => { calls.push(['save', { ...patch }]); }, settings: async () => ({}), count: async () => 3, exportLog: async () => 3, clearLog: async () => { calls.push(['clearLog']); } },
+    usage: { saveSettings: async (patch) => { calls.push(['save', { ...patch }]); }, settings: async () => ({}), count: async () => 3, exportLog: async () => 3, 
+      // As usage-log.js: the question's mark (the count, and `seq`, the last event's number), and with
+      // `expected`, deleted only while the mark is still that.
+      seq: 7,
+      logMark: async function () { return { n: await this.count(), seq: this.seq }; },
+      clearLog: async function ({ expected } = {}) { if (expected !== undefined && (expected.n !== await this.count() || expected.seq !== this.seq)) return false; calls.push(['clearLog']); return true; } },
     logSettings: record('logSettings'), renderSite: record('renderSite'), renderSteps: record('renderSteps'), uploadNow: record('uploadNow'), renderAiSettings: record('renderAiSettings'), renderUsage: record('renderUsage') };
   vm.runInNewContext(`${extractFunction('settingsActs')}\nvar acts = settingsActs();`, context);
   return { acts: context.acts, calls, state, context };
@@ -6967,14 +7029,40 @@ test('Settings\' usage boxes and buttons: a server that isn\'t a URL is refused,
   assert.deepEqual(t.calls, [['save', { serverToken: 'tok' }], ['uploadNow'], ['renderAiSettings'], ['save', { agent: 'JKABCD' }], ['renderUsage']]);
   await t.acts.exportLog();
   assert.equal(t.state.usageNote, 'Exported 3 events to your Downloads.');
-  let asked = null;
-  t.context.confirm = (msg) => { asked = msg; return false; };
+  // Clear log asks in the panel (state.usageAsk), never with a browser dialog (audit 2026-11-07, UX-17).
+  t.context.confirm = () => { throw new Error('no browser dialog'); };
   await t.acts.clearLog();
-  assert.equal(asked, '3 events aren\'t uploaded or exported. Delete them anyway?');
+  assert.deepEqual({ ...t.state.usageAsk }, { n: 3, seq: 7, text: '3 events aren\'t uploaded or exported. Delete them anyway?', yes: 'Delete them' });
   assert.ok(!t.calls.some(([c]) => c === 'clearLog'), 'not cleared without a yes');
-  t.context.confirm = () => true;
+  t.acts.clearLogNo();
+  assert.equal(t.state.usageAsk, null, 'Cancel takes the question down');
+  await t.acts.clearLogYes();
+  assert.ok(!t.calls.some(([c]) => c === 'clearLog'), 'a yes with nothing asked deletes nothing');
   await t.acts.clearLog();
-  assert.deepEqual([t.calls.at(-2), t.calls.at(-1), t.state.usageNote], [['clearLog'], ['renderUsage'], 'Usage log cleared.']);
+  await t.acts.clearLogYes();
+  assert.deepEqual([t.calls.at(-2), t.calls.at(-1), t.state.usageNote, t.state.usageAsk], [['clearLog'], ['renderUsage'], 'Usage log cleared.', null]);
+  t.context.usage.settings = async () => ({ lastExportCount: 3 });
+  await t.acts.clearLog();
+  assert.deepEqual({ ...t.state.usageAsk }, { n: 3, seq: 7, text: 'Delete the 3 exported events from this computer?', yes: 'Delete' });
+  // Events logged after the question: the yes asks again with the new count, and deletes nothing yet.
+  t.context.usage.count = async () => 5;
+  const cleared = t.calls.filter(([c]) => c === 'clearLog').length;
+  await t.acts.clearLogYes();
+  assert.deepEqual([{ ...t.state.usageAsk }, t.calls.filter(([c]) => c === 'clearLog').length],
+    [{ n: 5, seq: 7, text: '5 events aren\'t uploaded or exported. Delete them anyway?', yes: 'Delete them' }, cleared]);
+  // An event logged into a full queue keeps the count, but not the last event's number: asked again too.
+  t.context.usage.seq = 8;
+  await t.acts.clearLogYes();
+  assert.deepEqual([t.state.usageAsk?.seq, t.calls.filter(([c]) => c === 'clearLog').length], [8, cleared]);
+  await t.acts.clearLogYes();
+  assert.deepEqual([t.state.usageAsk, t.calls.filter(([c]) => c === 'clearLog').length], [null, cleared + 1]);
+});
+
+test('the panel opens no browser dialog: its questions are asked in the panel', () => {
+  const files = [...fs.readdirSync('sidepanel/panel').filter((n) => /\.jsx?$/.test(n)).map((n) => `sidepanel/panel/${n}`),
+    ...fs.readdirSync('sidepanel/panel/agent-defaults').map((n) => `sidepanel/panel/agent-defaults/${n}`), 'sidepanel/sidepanel.js'];
+  const dialogs = files.filter((f) => /(^|[^.\w])(confirm|alert|prompt)\s*\(/m.test(fs.readFileSync(f, 'utf8').replace(/\/\/.*$/gm, '')));
+  assert.deepEqual(dialogs, []);
 });
 
 test('Looks right sends the top frame\'s receipt with a fill, only for the page in front', async () => {
@@ -9665,7 +9753,7 @@ test('watchFill says a quiet automatic fill as one once it has gone on QUIET_MS,
   const state = { fillingFor: { run: 'r', auto: true, rows: [], started: 1000 } };
   let now = 1000;
   const context = { state, inExtension: true, QUIET_MS: 1500, UNANSWERED_MS: 5000, Date: { now: () => now }, renderSteps: () => { drawn++; },
-    setInterval: (fn) => { ticks.push(fn); return 1; }, clearInterval() {}, worldFor: () => 'ISOLATED',
+    setInterval: (fn) => { ticks.push(fn); return 1; }, clearInterval() {}, worldFor: () => 'ISOLATED', fillRunning() {}, fillEnded() {},
     chrome: { scripting: { executeScript: async () => [] } } };
   vm.runInNewContext(extractFunction('watchFill'), context);
   context.watchFill({ run: 'r', tabId: 7, carrier: {} });
@@ -10541,7 +10629,7 @@ test('the live list and the dock say what the kit waits on (its phase), and a ph
   let reply = [];
   let renders = 0;
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
-  const wctx = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+  const wctx = { inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => { renders++; }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async () => reply } } };
   vm.runInNewContext(extractFunction('watchFill'), wctx);
   wctx.watchFill({ run: 'r1', tabId: 3, carrier: {} });
@@ -10912,7 +11000,7 @@ test('the live list takes the top frame\'s phase while its fill runs', async () 
   let tick = null;
   let reply = [];
   const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
-  const context = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => {}, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+  const context = { inExtension: true, state, worldFor: () => 'MAIN', fillRunning() {}, fillEnded() {}, renderSteps: () => {}, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
     chrome: { scripting: { executeScript: async () => reply } } };
   vm.runInNewContext(extractFunction('watchFill'), context);
   context.watchFill({ run: 'r1', tabId: 3, carrier: {} });
@@ -11514,6 +11602,55 @@ test('a unit missing from the list with no helper for it is left for the agent i
   const none = [{ frameId: 0, result: { noData: [], blockers: [] } }];
   context.noteMissingUnit(none, { ...ctx, unitMissing: null });
   assert.equal(none[0].result.noData.length, 0);
+});
+
+// REC-14 (audit 2026-11-07): an AI apply and the agent's own panel answer wrote the same "fill"
+// marker as a fill, and their answers said nothing to the recording.
+test('a recording\'s fill marker says what went in, and AI applies and picks from a row ask the kit to say what they do', () => {
+  // The marker says what went in (`what`, FLOW-15); the kit says its answers by whom too.
+  assert.match(SIDEPANEL, /rec\.store\.add\(\[\{ kind: 'fill', t, frame: 0, on, what: fillingWhat \}\]\);/);
+  const ai = extractFunction('applyAi');
+  assert.match(ai, /state\.fillingKind = 'ai';\s+state\.filling = true;/);
+  assert.match(ai, /\[\[a\], expected, guardToken, \{ stopSteps: Object\.keys\(ctx\.carrier\.stopSteps \?\? \{\}\), \.\.\.\(traced\(ctx\.tabId\) \? \{ trace: true \} : \{\}\) \}\]/);
+  const agent = extractFunction('agentAnswer');
+  assert.match(agent, /state\.fillingKind = 'pick';\s+state\.filling = true;/);
+  assert.match(agent, /by: 'agent', \.\.\.\(traced\(tabId\) \? \{ trace: true \} : \{\}\) \}\]/);
+  // The traced tab: only the recording's own, while it runs.
+  const at = SIDEPANEL.indexOf('const traced = ');
+  const context = { state: { recording: { tabId: 4, stopping: false } } };
+  vm.runInNewContext(SIDEPANEL.slice(at, SIDEPANEL.indexOf(';\n', at) + 1).replace('const traced', 'globalThis.traced'), context);
+  assert.deepEqual([context.traced(4), context.traced(5)], [true, false]);
+  context.state.recording.stopping = true;
+  assert.equal(context.traced(4), false);
+});
+
+// Audit 2026-11-07, GAP-02: a list holding as many rows as the intake or more that isn't the intake's
+// was said only in the usage log. Each intake unit not on it, and the rows the intake doesn't have,
+// are left for the agent in the top frame's report; nothing is added or deleted.
+test('a full unit list that isn\'t the intake\'s leaves its missing units and extra rows for the agent', async () => {
+  const record = { vehicles: [{ vin: '1FTBR3X80MKA12341' }, { vin: '1FTBR3X80MKA12342' }], trailers: [], drivers: [] };
+  const state = { tab: { id: 4 }, intake: { record }, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0 },
+    unitForms: { vehicles: {}, drivers: {}, trailers: {} }, doneActions: new Set() };
+  const pick = { state, knownStep, runKit: async () => [{ result: { step: 'Vehicles', forms: [], lists: [{ rows: 3, shown: [true, false] }, null] } }], fillCurrent: () => true,
+    persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs, unitMissing, planFor: buildPlan };
+  vm.runInNewContext(extractFunction('pickUnitToAdd'), pick);
+  const ctx = { tabId: 4, intake: state.intake, revision: 1, settings: { autoAdvance: true }, carrier: geico };
+  await pick.pickUnitToAdd(geico, ctx);
+  assert.equal(ctx.adding, null, 'nothing added');
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.listGaps)), { missing: [{ list: 'vehicles', index: 1 }], extra: 2, lists: ['vehicles', 'trailers'] });
+  const note = { unitMissingItem, unitExtraRowsItem };
+  vm.createContext(note);
+  vm.runInContext(extractFunction('noteMissingUnit'), note);
+  const results = [{ frameId: 0, result: { noData: [], blockers: [] } }];
+  note.noteMissingUnit(results, ctx);
+  const top = results[0].result;
+  assert.deepEqual(JSON.parse(JSON.stringify(top.blockers)), ['needs you: Add Vehicle', 'needs you: Check the vehicle list']);
+  assert.match(top.noData[0].note, /Vehicle 2 of the intake isn't on GEICO's list/);
+  assert.match(top.noData[1].note, /GEICO's vehicle list has 2 rows the intake doesn't: check them/);
+  // The intake's list exactly: no gaps.
+  pick.runKit = async () => [{ result: { step: 'Vehicles', forms: [], lists: [{ rows: 2, shown: [true, true] }, null] } }];
+  await pick.pickUnitToAdd(geico, ctx);
+  assert.equal(ctx.listGaps, null);
 });
 
 // REC-04 (audit 2026-11-07; W44-23): with the panel on another tab, each new document of the recorded

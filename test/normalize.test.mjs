@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, noNumberEdit, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
+import { normalizeIntake, noNumberEdit, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings, ntlWithPrimary, ntlUndecided, ntlDotFilingsHold, ntlHeld, ntlHoldOr, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance, set } from '../src/util.js';
@@ -282,6 +282,35 @@ test('split trailer ownership notes never become vehicle ownership on either car
   assert.equal(answered.record.operations.vehicleOwnership, 'Leased', 'the explicit vehicle box wins');
   assert.equal(buildPlan(answered.record, progressive).find((s) => s.q === '2CA7').value, 'Yes - Lease');
   assert.ok(!answered.warnings.some((w) => w.code === 'ownership.notes'));
+});
+
+// Audit 2026-11-07, DATA-16: the cargo box takes typed text, so its amounts are read by their label,
+// never by position alone; what it says is kept; a deductible not below the limit is said, not swapped.
+test('the cargo box: amounts read by their label, kept as written, and a deductible not below the limit said', () => {
+  for (const [box, limit, deductible] of [['$100K/$1K Ded', 100000, 1000], ['$100K/$2.5K Ded', 100000, 2500], ['$100K', 100000, null],
+    ['$1,000 ded / $100k', 100000, 1000], ['100K w/ 1K ded', 100000, 1000], ['$250K - $2,500 ded', 250000, 2500], ['$100,000,$1,000 deductible', 100000, 1000],
+    ['$100,000 limit, $1,000 deductible', 100000, 1000], ['Other', null, null]]) {
+    assert.deepEqual(parseLimitDeductible(box), { limit, deductible }, box);
+  }
+  const today = { today: new Date('2026-09-30') };
+  const read = (box) => normalizeIntake({ ...raw, cargo_cov: 'Yes', cargo_limit_ded: box }, today);
+  const typed = read('100K w/ 1K ded');
+  assert.deepEqual([typed.record.coverage.cargoLimit, typed.record.coverage.cargoDeductible, typed.record.coverage.cargoAsWritten], [100000, 1000, '100K w/ 1K ded']);
+  assert.ok(!typed.warnings.some((w) => /^cargo-/.test(w.code)));
+  // Two amounts without a label, the smaller first: never swapped, the agent says which is which.
+  const odd = read('1000/100000');
+  assert.deepEqual([odd.record.coverage.cargoLimit, odd.record.coverage.cargoDeductible], [1000, 100000]);
+  assert.match(odd.warnings.find((w) => w.code === 'cargo-limit.implausible')?.msg ?? '', /^The cargo box says "1000\/100000": the deductible \(\$100,000\) isn't below the limit \(\$1,000\)\. Check which is which\.$/);
+  // Nothing read: the check names what the box says.
+  assert.match(read('ask client').warnings.find((w) => w.code === 'cargo-limit.missing').msg, /^The cargo box says "ask client": no cargo limit read from it\. Enter the limit\.$/);
+  assert.equal(read('').warnings.find((w) => w.code === 'cargo-limit.missing').msg, 'Wants cargo coverage but no limit chosen.');
+  // The agent corrects the box as written in client details: the amounts and checks follow.
+  const r = odd.record;
+  r.coverage.cargoAsWritten = '$100K/$1K Ded';
+  const intake = { record: r, warnings: odd.warnings, done: [], readFrom: odd.readFrom };
+  assert.deepEqual(rederive(r, 'coverage.cargoAsWritten', { ...today, intake }).sort(), ['coverage.cargoDeductible', 'coverage.cargoLimit']);
+  assert.deepEqual([r.coverage.cargoLimit, r.coverage.cargoDeductible], [100000, 1000]);
+  assert.ok(!intake.warnings.some((w) => w.code === 'cargo-limit.implausible' && w.level === 'check'), 'the check no longer holds');
 });
 
 // Audit 2026-10-08: a panel edit set one field and left what was derived from it stale.
@@ -587,6 +616,10 @@ test('progressive: standard answers for follow-up questions', () => {
   const noDot = structuredClone(record);
   noDot.applicant.dot = null;
   noDot.applicant.mcDotWithin60Days = false;
+  // With an MC number that No is the agent's, as on GEICO (the maintainer, 2026-11-07, audit CARR-02).
+  noDot.applicant.mc = 'MC-765432';
+  assert.equal(byQ('1ED', noDot).value, null);
+  noDot.applicant.mc = null;
   assert.equal(byQ('1ED', noDot).value, 'No - and the customer will not have a USDOT number');
   assert.equal(byQ('20F', noDot).ignore, true);
   assert.equal(byQ('20F').value, true, 'TNI\'s standard Yes once the lookup found the number (2026-10-20)');
@@ -698,7 +731,7 @@ test('"no POP" or "No" as the carrier without an expiration date is no prior, wh
     for (const path of ['priorInsurance[0].limit', 'priorInsurance[0].expiration']) {
       assert.ok(steps.filter((s) => s.path === path).every((s) => s.ignore), `${carrier}: ${path} not filled`);
     }
-    const generic = buildPlan(r.record, { name: 'generic', fields: [] }, {}).filter((s) => s.path?.startsWith('priorInsurance'));
+    const generic = buildPlan(r.record, { name: 'generic', fields: [], useGenericRules: true }, {}).filter((s) => s.path?.startsWith('priorInsurance'));
     assert.ok(generic.length && generic.every((s) => !s.ignore && s.value == null && /no prior insurance/.test(s.note ?? '')), `${carrier}: generic prior questions left to the agent, not filled or skipped`);
   }
   // An expiration date means a policy: kept, as is a named carrier without one.
@@ -1383,6 +1416,40 @@ test('the notes\' wordings of years in business, and of a start year (W44-09)', 
   assert.equal(buildPlan(noYears('Established 2019').record, amwins).find((s) => s.selector === '#yearBusinessEstablished').value, 2019);
   // Two statements that agree are one answer.
   assert.equal(noYears('Established 2019\nIn business for 7 years').record.applicant.yearsInBusiness, 7);
+});
+
+// The maintainer, 2026-11-08 (audit DATA-15): "Est.", "Started", "Opened" and "Business started" with a
+// year fill years in business, with the check to confirm; "Operating for N years" may mean the trucks,
+// so it is the agent's with the line quoted, never the blank standard's New Venture.
+test('a start year said as Est., Started, Opened or Business started; Operating for N years is the agent\'s', () => {
+  for (const [notes, est] of [['Est. 2015', 2015], ['Est 2015', 2015], ['Started business in 2018', 2018], ['Business started 2019', 2019],
+    ['Opened in 2020', 2020], ['Started in 2021', 2021], ['Company opened 2017', 2017]]) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearEstablished, est, notes);
+    assert.equal(r.record.applicant.yearsInBusiness, 2026 - est, notes);
+    const check = r.warnings.find((w) => w.code === 'years-in-business.notes');
+    assert.match(check?.msg ?? '', new RegExp(`"${notes.replace('.', '\\.')}": years in business is ${2026 - est}, established ${est}\\. Confirm\\.`), notes);
+    assert.ok(!r.warnings.some((w) => w.code === 'years-in-business.default'), notes);
+  }
+  for (const notes of ['Operating for 4 years', 'Operating for four years', 'Operating for 1.5 years', 'Operating for one and a half years', 'Operating twenty-two years', 'Operating 6 yrs', 'Operating since 2019 or so', 'Started the business a few years ago', 'Started a business a few years ago',
+    'Est. a few years ago', '3 years in business and operating for four years']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearsInBusiness, null, notes);
+    assert.equal(r.record.applicant.yearsInBusinessUnread, true, notes);
+    assert.match(r.warnings.find((w) => w.code === 'years-in-business.notes')?.msg ?? '', new RegExp(`"${notes}".*left to you`), notes);
+    assert.ok(!r.warnings.some((w) => w.code === 'years-in-business.default'), notes);
+    const years = buildPlan(r.record, amwins).find((s) => s.selector === '#yrsInBusiness');
+    assert.equal(years.value, null, `${notes}: no New Venture`);
+    assert.match(years.note, /answer it yourself/);
+  }
+  // Not the business's start: still the blank standard.
+  for (const notes of ['Started driving in 2015', 'Started hauling in 2018', 'Est. value 2015', 'Operating radius 200 miles', 'Operating long haul, 2 trucks',
+    'Operating 3 trucks, 2020 Freightliner', 'Operating in TX while hauling grain']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearEstablished, null, notes);
+    assert.equal(r.record.applicant.yearsInBusinessUnread ?? null, null, notes);
+    assert.ok(r.warnings.some((w) => w.code === 'years-in-business.default'), notes);
+  }
 });
 
 test('numbers in the notes about something else stay out of years in business (W44-09)', () => {
@@ -2077,11 +2144,17 @@ test('"no" in the USDOT box answers GEICO\'s USDOT question No also with an MC n
   assert.equal(progressiveDot(coming), 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days');
   // Counterexamples: a blank USDOT box with an MC number is still the agent's, also with the
   // 60-day No; a real USDOT number is Yes.
+  // Progressive the same (the maintainer, 2026-11-07, audit CARR-02).
   for (const fields of [{ dot_number: '' }, { dot_number: '', mc_dot_60days: 'No' }]) {
     const r = intake(fields);
     assert.equal(geicoStep(r).value, null, JSON.stringify(fields));
     assert.match(geicoStep(r).note, /MC number but no USDOT number/, JSON.stringify(fields));
+    const step = buildPlan(r.record, progressive).find((s) => s.q === '1ED');
+    assert.equal(step.value, null, `Progressive: ${JSON.stringify(fields)}`);
+    assert.match(step.note, /MC number but no USDOT number/, `Progressive: ${JSON.stringify(fields)}`);
   }
+  // Without an MC number the 60-day No is still No on Progressive.
+  assert.equal(progressiveDot(intake({ dot_number: '', mc_number: '', mc_dot_60days: 'No' })), 'No - and the customer will not have a USDOT number');
   assert.equal(geicoStep(intake({ dot_number: '1234567' })).value, 'Yes');
 });
 
@@ -2250,6 +2323,26 @@ test('"no" in the FEIN box is no FEIN (W44-15)', () => {
   }
   assert.equal(normalizeIntake({ ...raw, fein: '12-345' }, W44).warnings.find((w) => w.code === 'fein.invalid')?.level, 'check', 'a short number is still checked');
   assert.equal(normalizeIntake({ ...raw, fein: '12-3456789' }, W44).record.applicant.fein, '12-3456789');
+});
+
+// Audit 2026-11-07, CARR-02: the NTL hold wraps each carrier's USDOT and filings rules the same way,
+// from one definition, so a fourth carrier can't copy a drifted one.
+test('the NTL hold is one shared wrapper: held, the rule is the agent\'s with the hold\'s note; otherwise its own', async () => {
+  const fs = await import('node:fs');
+  const held = { coverage: { ntl: true, autoLiability: 'Yes' } };
+  const free = { coverage: { ntl: false, autoLiability: 'Yes' } };
+  const source = (r, a) => (a?.vehicles === 1 ? 'derived' : 'standard');
+  assert.equal(ntlHeld(source)(held, {}), 'fact');
+  assert.equal(ntlHeld(source)(free, {}), 'standard');
+  assert.equal(ntlHeld(source)(free, { vehicles: 1 }), 'derived', 'the unit reaches the rule');
+  assert.equal(ntlHeld('derived')(free, {}), 'derived');
+  assert.match(ntlHoldOr((r) => 'own note')(held, {}), /primary auto liability/);
+  assert.equal(ntlHoldOr((r) => 'own note')(free, {}), 'own note');
+  assert.equal(ntlHoldOr()(free, {}), null);
+  for (const carrier of ['progressive', 'geico', 'amwins']) {
+    const text = fs.readFileSync(new URL(`../src/carriers/${carrier}.js`, import.meta.url), 'utf8');
+    assert.doesNotMatch(text, /const (held|holdOr|vehicleValueNote) = /, `${carrier} defines its own copy`);
+  }
 });
 
 // Audit 2026-11-07, DATA-04: correcting a source field in Client details left what was derived from

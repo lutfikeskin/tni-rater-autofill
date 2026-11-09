@@ -5,13 +5,13 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { fieldInfo } from '../../src/schema.js';
 import { redactionTerms } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
-import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem } from '../../src/units.js';
+import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, unitExtraRowsItem } from '../../src/units.js';
 import { get } from '../../src/util.js';
 import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { isStandard } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
-import { $, aiSnapshotFieldMatches, keepJournal, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
+import { $, traced, aiSnapshotFieldMatches, keepJournal, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
@@ -19,7 +19,7 @@ import { announce, dropReports, fillContext, fillOptions, fillProblem, issueSaid
 import { aiDecisionEvent, remarkAi, runAssist, syncAiBanner } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep } from './scope.js';
-import { fillCurrent, fillErrorMessage, staleFill } from './fill-checks.js';
+import { fillCurrent, fillErrorMessage, fillErrorText, staleFill } from './fill-checks.js';
 import { liveOf } from './live.js';
 import { agentPickable, answerSources, choiceSaid, choicesOf, currentReportKey, finishLeftOk, groupRows, itemsLeft, looseText, reportKey, stopNoteFor } from './report-model.js';
 import { answerRecord, needId, needRecord, reopenRow, setHead, settleRow, showLive } from './report-rows.js';
@@ -28,6 +28,7 @@ import { mountReportHead } from './notes-view.jsx';
 import { flushSync } from 'react-dom';
 import { defaultsHold, isOwnDefault } from './agent-defaults/store.js';
 import { bindQuoteTab, portalHold, quoteOwnerIssue, releasePortal } from './quote-owner.js';
+import { REPORT, SOURCE } from './messages.js';
 /** @import { CarrierConfig, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -161,21 +162,41 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
   if (retried) ctx.retried = retried;
-  await pickListItem(carrier, page, ctx);
-  // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
-  // A fill the tab switch dropped says so on its page (noteTabLeft), as one dropped later does.
-  if (staleFill(ctx) || state.tab?.id !== tabId) {
+  let plan;
+  // Preparing the fill (the list's pick saved, the plan for it) can fail too (a storage write
+  // refused): filling then ends here, rather than staying on with the dock's Fill disabled until the
+  // panel is reloaded (audit 2026-11-07, FLOW-04).
+  try {
+    await pickListItem(carrier, page, ctx);
+    // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
+    // A fill the tab switch dropped says so on its page (noteTabLeft), as one dropped later does.
+    if (staleFill(ctx) || state.tab?.id !== tabId) {
+      state.filling = false;
+      renderSite();
+      if (!staleFill(ctx)) noteTabLeft(ctx);
+      runPendingPage(ctx);
+      resumeHeldFill();
+      return;
+    }
+    // The list page may have picked the next vehicle or driver: the plan is for that one.
+    ctx.active = { ...state.active };
+    // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
+    plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
+  } catch (e) {
     state.filling = false;
     renderSite();
-    if (!staleFill(ctx)) noteTabLeft(ctx);
+    if (staleFill(ctx)) { noteStaleFill(ctx); runPendingPage(ctx); resumeHeldFill(); return; }
+    // The list page may have moved the tab to another unit before the failure (pickUnitForm): the
+    // problem is said under the one its tab has selected now.
+    ctx.active = { ...tabMaps(tabId).active };
+    tabMaps(tabId).autoPaused = true;
+    logFillError(ctx, e);
+    const detail = fillErrorText(ctx, e);
+    fillProblem(ctx, `Filling couldn’t start: fill again, or reload the panel if it happens again.${detail ? ` (${detail})` : ''}`);
     runPendingPage(ctx);
     resumeHeldFill();
     return;
   }
-  // The list page may have picked the next vehicle or driver: the plan is for that one.
-  ctx.active = { ...state.active };
-  // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
-  let plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
   // The page view lists the answers as they go in and the dock has Stop; the new report replaces
   // the last one when it comes (kept until then, in case this fill stops before it gets anywhere).
   state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false };
@@ -355,6 +376,7 @@ async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   ctx.unitsListed = false;
   ctx.unitMissing = null;
+  ctx.listGaps = null;
   if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   const record = ctx.intake.record ?? {};
   const specs = unitListSpecs(carrier, record);
@@ -376,6 +398,12 @@ async function pickUnitToAdd(carrier, ctx) {
   ctx.unitsListed = !!next.complete;
   const read = next.read;
   ctx.listNote = !next.complete && read && read.rows >= read.units ? `list: ${read.rows} rows for ${read.units} units, ${read.shown} shown, ${read.saved} saved by a fill` : null;
+  // And told to the agent (GAP-02): each intake unit the list can be read for that isn't on it, and
+  // the rows no intake unit is known to be (noteMissingUnit).
+  if (next.missing?.length || next.extra) {
+    const spec = carrier.unitLists.find((s) => s.steps.includes(knownStep(carrier, seen.step)));
+    ctx.listGaps = { missing: next.missing ?? [], extra: next.extra ?? 0, lists: spec?.lists ?? [] };
+  }
   if (next.marks.some((id) => !state.doneActions.has(id))) {
     next.marks.forEach((id) => state.doneActions.add(id));
     persistDoneActions(ctx.tabId, state.doneActions);
@@ -398,13 +426,20 @@ async function pickUnitToAdd(carrier, ctx) {
 // The unit pickUnitToAdd found missing from the list on screen with nothing to add it (ctx.unitMissing),
 // as an item the top frame's report leaves for the agent, which holds its Continue: the list's Looks
 // Good is the agent's (W44-01).
+// A list whose rows look full but aren't the intake's (ctx.listGaps, GAP-02): each intake unit not on
+// it and the rows the intake doesn't have, the same way.
 function noteMissingUnit(results, ctx) {
-  if (!ctx.unitMissing) return;
+  if (!ctx.unitMissing && !ctx.listGaps) return;
   const top = results.find((r) => r.frameId === 0)?.result;
   if (!top || top.halted) return;
-  const item = unitMissingItem(ctx.carrier, ctx.intake?.record ?? {}, ctx.unitMissing);
-  top.noData = [...(top.noData ?? []), item];
-  top.blockers = [...(top.blockers ?? []), `needs you: ${item.label}`];
+  const record = ctx.intake?.record ?? {};
+  const items = [
+    ...(ctx.unitMissing ? [unitMissingItem(ctx.carrier, record, ctx.unitMissing)] : []),
+    ...(ctx.listGaps?.missing ?? []).map((u) => unitMissingItem(ctx.carrier, record, u)),
+    ...(ctx.listGaps?.extra ? [unitExtraRowsItem(ctx.carrier, ctx.listGaps.lists, ctx.listGaps.extra)] : []),
+  ];
+  top.noData = [...(top.noData ?? []), ...items];
+  top.blockers = [...(top.blockers ?? []), ...items.map((item) => `needs you: ${item.label}`)];
 }
 
 // On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each
@@ -947,9 +982,9 @@ function renderReport(frames, ctx = {}) {
     const judged = frames.some((f) => f.held || f.advanced || f.advanceDue);
     putReport({ key, tabId, page, at: ctx.restoredAt ?? Date.now(), ...(ctx.restoredAt ? { restored: true } : {}), ...(halted
       // A panel opened again doesn't keep the pause: a report made again doesn't say it.
-      ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
-      : frames.some((f) => f.notDrawn) && !judged ? { notice: 'No questions found on this page.' }
-        : { notice: 'Nothing to fill on this page.', empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null, unlisted: frames.some((f) => f.unlisted),
+      ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : REPORT.paused}${halted.reason ?? REPORT.reviewFirst}` }
+      : frames.some((f) => f.notDrawn) && !judged ? { notice: REPORT.noQuestions }
+        : { notice: REPORT.nothingToFill, empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null, unlisted: frames.some((f) => f.unlisted),
           held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
     renderSteps();
     return;
@@ -996,11 +1031,7 @@ function renderReport(frames, ctx = {}) {
   // The carrier probably changed this page (pagekit: a known field renamed, or most questions
   // unfamiliar). The rest still filled; Continue waits for the agent.
   const renamedNames = all('renamed').map((x) => '"' + x.name + '"').join(', ');
-  const pageChanged = frames.some((f) => f.pageChanged)
-    ? (carrier?.name ?? 'The carrier') + ' seems to have changed this page: ' + all('unknown').length + " question(s) aren't known"
-      + (renamedNames ? ', and ' + renamedNames + " moved to a field the extension doesn't know" : '')
-      + ". They're left for you and Continue waits. Please report it (a Capture page layout helps)."
-    : null;
+  const pageChanged = frames.some((f) => f.pageChanged) ? REPORT.pageChanged(carrier?.name, all('unknown').length, renamedNames) : null;
   // Held for the agent's check (Let me look before Continue): the top frame's word.
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
@@ -1031,13 +1062,12 @@ function renderReport(frames, ctx = {}) {
     ...filled.filter((x) => x.said).map((x) => ({ line: 'said', text: x.said })),
     // Not clicked through what is open over them (Continue, a helper), which the agent closes.
     !advanced && covered.length
-      ? { card: issueSaid({ tone: 'warn', title: `${covered.length > 1 ? `${covered.slice(0, -1).join(', ')} and ${covered.at(-1)} weren’t` : `${covered[0]} wasn’t`} clicked`,
-        text: `Close what is open over ${covered.length > 1 ? 'them' : 'it'}, then fill again.` }) } : null,
+      ? { card: issueSaid({ tone: 'warn', ...REPORT.covered(covered) }) } : null,
     halted ? { card: stopped
-      ? issueSaid({ tone: 'quiet', title: 'You stopped the fill', text: 'Nothing more was filled or clicked. What went in stays.' })
-      : issueSaid({ title: 'Filling stopped', text: `${halted.reason ?? ''} Check the page, then fill again.`.trim(), role: 'alert' }) } : null,
-    pageChanged ? { card: issueSaid({ title: 'This page seems to have changed', text: pageChanged, role: 'alert' }) } : null,
-    advanced ? { done: `${count} answer${count === 1 ? '' : 's'} in. Clicked “${advanced}” for you.` } : null,
+      ? issueSaid({ tone: 'quiet', ...REPORT.youStopped })
+      : issueSaid({ ...REPORT.fillStopped(halted.reason), role: 'alert' }) } : null,
+    pageChanged ? { card: issueSaid({ ...pageChanged, role: 'alert' }) } : null,
+    advanced ? { done: REPORT.continued(count, advanced) } : null,
   ].filter(Boolean);
   const nodes = [
     head.length ? headHost(entry, head) : null,
@@ -1052,7 +1082,7 @@ function renderReport(frames, ctx = {}) {
   putReport(entry, nodes);
   renderSteps();
   if (state.reportFor !== entry || ctx.restoredAt) return;
-  announce(`Filled ${count} answer${count === 1 ? '' : 's'}. ${needs.length ? `${needs.length} left for you.` : held ? 'Check the answers, then click Looks right.' : 'Nothing is left for you.'}`);
+  announce(REPORT.announce(count, needs.length, held));
   if (held) refreshAnswers();
 }
 
@@ -1077,32 +1107,33 @@ function answerSource(rec) {
   const pdfHere = pdfAvailable();
   const paths = [].concat(rec.from ?? rec.path ?? []);
   const place = ['intake', 'derived', 'edited'].includes(kind) && pdfHere && state.intake && paths.length ? sourcePlace(paths, state.intake) : null;
+  // The words are SOURCE's (messages.js); the tag's kind (its color) is decided here.
+  const { tag: words, open } = SOURCE;
   const tag = {
-    intake: { kind: 'intake', text: `Intake${place ? pdfPageSaid(place.page, ' p.') : ''}`, title: 'From the intake' },
-    derived: { kind: 'derived', text: 'Worked out', title: 'Worked out from intake answers' },
-    standard: { kind: 'standard', text: 'TNI standard', title: 'A TNI standard answer, not a fact from the intake' },
-    own: { kind: 'own', text: 'Your default', title: 'Your own default in place of TNI\'s standard (Settings → Your defaults)' },
-    edited: { kind: 'you', text: 'Your edit', title: 'From your correction in the panel' },
-    page: rec.standard ? { kind: 'standard', text: 'TNI standard', title: 'The page already had the TNI standard answer' } : { kind: 'page', text: 'On the page', title: 'The page already had it' },
-    clicked: { kind: 'clicked', text: 'Clicked', title: 'Clicked for you' },
-    yours: { kind: 'you', text: 'You', title: 'Your answer: no fill changes it' },
-    changed: { kind: 'page', text: 'Changed on the page', title: 'Not the fill’s answer: the page shows this now' },
+    intake: { kind: 'intake', ...words.intake(place ? pdfPageSaid(place.page, ' p.') : null) },
+    derived: { kind: 'derived', ...words.derived },
+    standard: { kind: 'standard', ...words.standard },
+    own: { kind: 'own', ...words.own },
+    edited: { kind: 'you', ...words.edited },
+    page: rec.standard ? { kind: 'standard', ...words.pageStandard } : { kind: 'page', ...words.page },
+    clicked: { kind: 'clicked', ...words.clicked },
+    yours: { kind: 'you', ...words.yours },
+    changed: { kind: 'page', ...words.changed },
   }[kind];
-  const fmt = (v) => (v === true ? 'Yes' : v === false ? 'No' : v == null || v === '' ? 'not on the intake' : String(v));
-  const said = (path) => `${fieldInfo(path).label}: ${fmt(get(state.intake?.record ?? {}, path))}`;
+  const said = (path) => `${fieldInfo(path).label}: ${SOURCE.value(get(state.intake?.record ?? {}, path))}`;
   const [title, quote] = {
-    intake: [`Intake${place ? pdfPageSaid(place.page, ', page ') : ''}`, rec.path ? said(rec.path) : `Answer: ${rec.value}`],
-    derived: ['Worked out from the intake', (rec.from ?? []).map(said).join(' · ')],
-    standard: ['TNI standard answer', `Answer: ${rec.value}`],
-    own: ['Your own default', `Answer: ${rec.value}. In place of TNI's standard, from Settings → Your defaults.`],
-    edited: ['Your correction in the panel', rec.path ? said(rec.path) : `Answer: ${rec.value}`],
-    page: ['Already on the page', 'The fill left it as the page had it.'],
-    clicked: ['Clicked for you', `“${rec.value}”`],
-    yours: ['Your answer', 'You changed it on the page, so no fill puts it back.'],
-    changed: ['Changed on the page', 'The page shows this now, not the answer the fill put in. Check it.'],
+    intake: [open.intake(place ? pdfPageSaid(place.page, ', page ') : null), rec.path ? said(rec.path) : SOURCE.answer(rec.value)],
+    derived: [open.derived, (rec.from ?? []).map(said).join(' · ')],
+    standard: [open.standard, SOURCE.answer(rec.value)],
+    own: [open.own, open.ownQuote(rec.value)],
+    edited: [open.edited, rec.path ? said(rec.path) : SOURCE.answer(rec.value)],
+    page: open.page,
+    clicked: [open.clicked, `“${rec.value}”`],
+    yours: open.yours,
+    changed: open.changed,
   }[kind];
   return { tag: kind === 'intake' ? null : tag, quiet: kind === 'intake' ? tag.title : null, title, quote, place,
-    seeTitle: kind === 'edited' ? 'Show what the intake said before your edit' : kind === 'derived' ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake' };
+    seeTitle: kind === 'edited' ? SOURCE.see.edited : kind === 'derived' ? SOURCE.see.derived : SOURCE.see.other };
 }
 
 // The report's list of answers and items (renderReport), drawn by React from the report's records
@@ -1265,7 +1296,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
     }
     const answered = await runKit(tabId, carrier, (a, t, o) => globalThis.__raterKit?.answer(a, null, t, o),
       [[{ key: field.key, label: field.label, value: choice, expected: { kind: field.kind, section: field.section, options, current: field.current } }],
-        token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent' }], [frame.frameId]);
+        token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent', ...(traced(tabId) ? { trace: true } : {}) }], [frame.frameId]);
     result = answered.flatMap((f) => f.result ?? []).find((r) => r?.key === field.key) ?? null;
   } catch {
     result = null;
