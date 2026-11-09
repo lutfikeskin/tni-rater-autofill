@@ -352,7 +352,9 @@
  * @property {RegExp} [fillOnDraw]
  * @property {string[]} [layoutSteps]
  * @property {QuoteStep[]} [quoteSteps]
- * @property {boolean} [useGenericRules]
+ * @property {boolean} useGenericRules  whether the generic label rules (src/rules.js) fill this carrier's pages
+ *   too: only when true (AmWINS, the local test page), so a new carrier opts in after checking them (audit
+ *   2026-11-07, CARR-09)
  * @property {string[]} [rowSections]
  * @property {SupportedClass[]} [supportedClasses]
  * @property {boolean} [replaceChoices]

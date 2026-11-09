@@ -698,7 +698,7 @@ test('"no POP" or "No" as the carrier without an expiration date is no prior, wh
     for (const path of ['priorInsurance[0].limit', 'priorInsurance[0].expiration']) {
       assert.ok(steps.filter((s) => s.path === path).every((s) => s.ignore), `${carrier}: ${path} not filled`);
     }
-    const generic = buildPlan(r.record, { name: 'generic', fields: [] }, {}).filter((s) => s.path?.startsWith('priorInsurance'));
+    const generic = buildPlan(r.record, { name: 'generic', fields: [], useGenericRules: true }, {}).filter((s) => s.path?.startsWith('priorInsurance'));
     assert.ok(generic.length && generic.every((s) => !s.ignore && s.value == null && /no prior insurance/.test(s.note ?? '')), `${carrier}: generic prior questions left to the agent, not filled or skipped`);
   }
   // An expiration date means a policy: kept, as is a named carrier without one.
