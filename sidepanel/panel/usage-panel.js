@@ -33,7 +33,8 @@ async function renderUsage() {
     upload: ({
       ok: `Uploaded to the server at ${when}.`,
       error: `Upload failed at ${when}: ${up.message}. Saved here and retried every minute.`,
-      off: 'No server set. Use Export log to hand it in.',
+      // The store copy has no Advanced, so no Export log to point to (PR #534 review).
+      off: locked ? 'No server set, so the log stays on this computer. Tell TNI.' : 'No server set. Use Export log to hand it in.',
       idle: serverUrl ? `Uploads to ${serverUrl} every minute.` : '',
     }[up.state] ?? '') + (managed && up.state !== 'off' ? ' Your organization set this server.' : ''),
     uploadTone: up.state === 'ok' ? 'ok' : up.state === 'error' || up.state === 'off' ? 'warn' : '',

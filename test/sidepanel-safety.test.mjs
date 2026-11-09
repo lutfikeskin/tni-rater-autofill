@@ -7104,10 +7104,10 @@ test('a filling switch with no value reads as its default: Let me look first on,
 // Managed setup (audit 2026-11-07, UX-12 d): a server the organization's policy set is said so on the
 // usage card whatever the last upload did, and not for the agent's own server.
 test('the usage card says a server the organization set, after an upload as before one', async () => {
-  const card = async (up, managed) => {
+  const card = async (up, managed, locked = false) => {
     const state = {};
     const context = { state, document: { activeElement: null }, $: () => ({ value: '' }), renderHealth() {},
-      usage: { count: async () => 0, settings: async () => ({}), serverConfig: async () => ({ serverUrl: 'https://usage.agency.test', ...(managed ? { managed: true } : {}) }),
+      usage: { count: async () => 0, settings: async () => ({}), serverConfig: async () => ({ serverUrl: 'https://usage.agency.test', ...(managed ? { managed: true } : {}), ...(locked ? { locked: true } : {}) }),
         lastUpload: () => up } };
     vm.runInNewContext(`${extractFunction('renderUsage')}
 var run = renderUsage;`, context);
@@ -7120,6 +7120,8 @@ var run = renderUsage;`, context);
     assert.doesNotMatch(await card(up, false), /organization/, up.state);
   }
   assert.equal(await card({ state: 'off' }, true), 'No server set. Use Export log to hand it in.');
+  // The store copy hides Advanced, Export log with it (PR #534 review): its line doesn't point there.
+  assert.equal(await card({ state: 'off' }, true, true), 'No server set, so the log stays on this computer. Tell TNI.');
 });
 
 // What Settings' switches, boxes and usage buttons ask the panel to do (settingsActs), in a vm with
