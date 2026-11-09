@@ -77,9 +77,12 @@ test('every registry names each carrier with rules, or says here why not', async
   // The runner's carriers: its RUNNERS, which its default, the carriers it accepts and its dispatch
   // all read, and nothing else picks a carrier's case.
   const mocksText = read('scripts/intake-mocks.mjs');
-  const runners = /const RUNNERS = \{(.*)\};$/m.exec(mocksText)?.[1] ?? '';
+  // Its entries on one line or several.
+  const runners = /const RUNNERS = \{([\s\S]*?)\};$/m.exec(mocksText)?.[1] ?? '';
   const intakeMocks = [...runners.matchAll(/(?:^|,)\s*(\w+): \(/g)].map((m) => m[1]);
   assert.ok(intakeMocks.length, 'scripts/intake-mocks.mjs: its RUNNERS are found');
+  const several = /const RUNNERS = \{([\s\S]*?)\};$/m.exec('const RUNNERS = {\n  amwins: (o) => a(o),\n  progressive: (o) => p(o),\n};')?.[1] ?? '';
+  assert.deepEqual([...several.matchAll(/(?:^|,)\s*(\w+): \(/g)].map((m) => m[1]), ['amwins', 'progressive'], 'a RUNNERS on several lines is read too');
   assert.match(mocksText, /arg\('carrier', 'both'\) === 'both' \? Object\.keys\(RUNNERS\)/, 'its default is every runner');
   assert.match(mocksText, /carriers\.some\(c => !Object\.hasOwn\(RUNNERS, c\)\)/, 'it accepts only a carrier with a runner');
   assert.match(mocksText, /: RUNNERS\[carrier\]\(/, 'it runs the carrier\'s own case');
