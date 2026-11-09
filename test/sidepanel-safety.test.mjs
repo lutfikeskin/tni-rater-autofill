@@ -2,8 +2,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import vm from 'node:vm';
+import nodeVm from 'node:vm';
 import { randomUUID } from 'node:crypto';
+import * as MESSAGES from '../sidepanel/panel/messages.js';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
@@ -24,6 +25,13 @@ import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
 
+// What the panel says (sidepanel/panel/messages.js) is in every vm context the tests run a panel
+// function in, as the panel's other imports are given there: the real words, not stubs. A context's
+// own value of a name wins.
+const withMessages = (context = {}) => Object.assign(context, { ...MESSAGES, ...context });
+const vm = { ...nodeVm,
+  createContext: (context, ...rest) => nodeVm.createContext(withMessages(context), ...rest),
+  runInNewContext: (code, context, ...rest) => nodeVm.runInNewContext(code, withMessages(context), ...rest) };
 
 // The panel's parts and its wiring as one text (test/panel-source.mjs): functions are found by name.
 const SIDEPANEL = PANEL_SOURCE;
@@ -35,6 +43,28 @@ const LAYOUT_STUB = '\nfunction scheduleLayout() {}';
 test('the panel script parses', () => {
   const r = spawnSync(process.execPath, ['--check', fileURLToPath(new URL('../sidepanel/sidepanel.js', import.meta.url))], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
+});
+
+// What the dock, a report's head, the intake checks' title and the answers' source tags say is in
+// the panel's messages (sidepanel/panel/messages.js: audit 2026-11-07, UX-17), not in the code that
+// decides which is said: those functions keep no sentence of their own. A string of words (two or
+// more, a capital or a space between letters) in one of them is a sentence that belongs there.
+test('the dock, the report head, the checks\' title and the source tags take their words from messages.js', () => {
+  const said = ['dockFor', 'fillingSaid', 'continueSaid', 'renderWarnings', 'answerSource'].flatMap((name) => {
+    const body = extractFunction(name).replace(/\/\/.*$/gm, '');
+    return [...body.matchAll(/'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g)].map((m) => m[0])
+      .filter((s) => /[A-Za-z]{2,} [A-Za-z]/.test(s.replace(/\$\{[^}]*\}/g, ''))).map((s) => `${name}: ${s}`);
+  });
+  // renderReport's head and announcement (its log and keys keep their own words).
+  const report = extractFunction('renderReport').replace(/\/\/.*$/gm, '');
+  for (const phrase of ['No questions found', 'Nothing to fill on this page', 'You stopped the fill', 'Filling stopped', 'seems to have changed', 'left for you.', 'weren’t', 'Clicked “']) {
+    if (report.includes(phrase)) said.push(`renderReport: ${phrase}`);
+  }
+  assert.deepEqual(said, []);
+  // Every message is used by the code it names (none left behind once a word is changed there).
+  const panel = ['coordinator', 'fill', 'record'].map((f) => fs.readFileSync(`sidepanel/panel/${f}.js`, 'utf8')).join('\n');
+  const unused = Object.entries(MESSAGES).flatMap(([group, words]) => Object.keys(words).filter((id) => !new RegExp(`\\b${group}\\.${id}\\b|\\b(words|open)\\.${id}\\b|\\{[^}]*\\b${id}\\b[^}]*\\} = ${group}\\b`).test(panel)).map((id) => `${group}.${id}`));
+  assert.deepEqual(unused, []);
 });
 
 // $(id) finds the first: an icon named like its button once took the button's clicks.

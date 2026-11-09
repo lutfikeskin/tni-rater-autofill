@@ -28,6 +28,7 @@ import { mountReportHead } from './notes-view.jsx';
 import { flushSync } from 'react-dom';
 import { defaultsHold, isOwnDefault } from './agent-defaults/store.js';
 import { bindQuoteTab, portalHold, quoteOwnerIssue, releasePortal } from './quote-owner.js';
+import { REPORT, SOURCE } from './messages.js';
 /** @import { CarrierConfig, FillReport } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
@@ -981,9 +982,9 @@ function renderReport(frames, ctx = {}) {
     const judged = frames.some((f) => f.held || f.advanced || f.advanceDue);
     putReport({ key, tabId, page, at: ctx.restoredAt ?? Date.now(), ...(ctx.restoredAt ? { restored: true } : {}), ...(halted
       // A panel opened again doesn't keep the pause: a report made again doesn't say it.
-      ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
-      : frames.some((f) => f.notDrawn) && !judged ? { notice: 'No questions found on this page.' }
-        : { notice: 'Nothing to fill on this page.', empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null, unlisted: frames.some((f) => f.unlisted),
+      ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : REPORT.paused}${halted.reason ?? REPORT.reviewFirst}` }
+      : frames.some((f) => f.notDrawn) && !judged ? { notice: REPORT.noQuestions }
+        : { notice: REPORT.nothingToFill, empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null, unlisted: frames.some((f) => f.unlisted),
           held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
     renderSteps();
     return;
@@ -1030,11 +1031,7 @@ function renderReport(frames, ctx = {}) {
   // The carrier probably changed this page (pagekit: a known field renamed, or most questions
   // unfamiliar). The rest still filled; Continue waits for the agent.
   const renamedNames = all('renamed').map((x) => '"' + x.name + '"').join(', ');
-  const pageChanged = frames.some((f) => f.pageChanged)
-    ? (carrier?.name ?? 'The carrier') + ' seems to have changed this page: ' + all('unknown').length + " question(s) aren't known"
-      + (renamedNames ? ', and ' + renamedNames + " moved to a field the extension doesn't know" : '')
-      + ". They're left for you and Continue waits. Please report it (a Capture page layout helps)."
-    : null;
+  const pageChanged = frames.some((f) => f.pageChanged) ? REPORT.pageChanged(carrier?.name, all('unknown').length, renamedNames) : null;
   // Held for the agent's check (Let me look before Continue): the top frame's word.
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
@@ -1065,13 +1062,12 @@ function renderReport(frames, ctx = {}) {
     ...filled.filter((x) => x.said).map((x) => ({ line: 'said', text: x.said })),
     // Not clicked through what is open over them (Continue, a helper), which the agent closes.
     !advanced && covered.length
-      ? { card: issueSaid({ tone: 'warn', title: `${covered.length > 1 ? `${covered.slice(0, -1).join(', ')} and ${covered.at(-1)} weren’t` : `${covered[0]} wasn’t`} clicked`,
-        text: `Close what is open over ${covered.length > 1 ? 'them' : 'it'}, then fill again.` }) } : null,
+      ? { card: issueSaid({ tone: 'warn', ...REPORT.covered(covered) }) } : null,
     halted ? { card: stopped
-      ? issueSaid({ tone: 'quiet', title: 'You stopped the fill', text: 'Nothing more was filled or clicked. What went in stays.' })
-      : issueSaid({ title: 'Filling stopped', text: `${halted.reason ?? ''} Check the page, then fill again.`.trim(), role: 'alert' }) } : null,
-    pageChanged ? { card: issueSaid({ title: 'This page seems to have changed', text: pageChanged, role: 'alert' }) } : null,
-    advanced ? { done: `${count} answer${count === 1 ? '' : 's'} in. Clicked “${advanced}” for you.` } : null,
+      ? issueSaid({ tone: 'quiet', ...REPORT.youStopped })
+      : issueSaid({ ...REPORT.fillStopped(halted.reason), role: 'alert' }) } : null,
+    pageChanged ? { card: issueSaid({ ...pageChanged, role: 'alert' }) } : null,
+    advanced ? { done: REPORT.continued(count, advanced) } : null,
   ].filter(Boolean);
   const nodes = [
     head.length ? headHost(entry, head) : null,
@@ -1086,7 +1082,7 @@ function renderReport(frames, ctx = {}) {
   putReport(entry, nodes);
   renderSteps();
   if (state.reportFor !== entry || ctx.restoredAt) return;
-  announce(`Filled ${count} answer${count === 1 ? '' : 's'}. ${needs.length ? `${needs.length} left for you.` : held ? 'Check the answers, then click Looks right.' : 'Nothing is left for you.'}`);
+  announce(REPORT.announce(count, needs.length, held));
   if (held) refreshAnswers();
 }
 
@@ -1111,32 +1107,33 @@ function answerSource(rec) {
   const pdfHere = pdfAvailable();
   const paths = [].concat(rec.from ?? rec.path ?? []);
   const place = ['intake', 'derived', 'edited'].includes(kind) && pdfHere && state.intake && paths.length ? sourcePlace(paths, state.intake) : null;
+  // The words are SOURCE's (messages.js); the tag's kind (its color) is decided here.
+  const { tag: words, open } = SOURCE;
   const tag = {
-    intake: { kind: 'intake', text: `Intake${place ? pdfPageSaid(place.page, ' p.') : ''}`, title: 'From the intake' },
-    derived: { kind: 'derived', text: 'Worked out', title: 'Worked out from intake answers' },
-    standard: { kind: 'standard', text: 'TNI standard', title: 'A TNI standard answer, not a fact from the intake' },
-    own: { kind: 'own', text: 'Your default', title: 'Your own default in place of TNI\'s standard (Settings → Your defaults)' },
-    edited: { kind: 'you', text: 'Your edit', title: 'From your correction in the panel' },
-    page: rec.standard ? { kind: 'standard', text: 'TNI standard', title: 'The page already had the TNI standard answer' } : { kind: 'page', text: 'On the page', title: 'The page already had it' },
-    clicked: { kind: 'clicked', text: 'Clicked', title: 'Clicked for you' },
-    yours: { kind: 'you', text: 'You', title: 'Your answer: no fill changes it' },
-    changed: { kind: 'page', text: 'Changed on the page', title: 'Not the fill’s answer: the page shows this now' },
+    intake: { kind: 'intake', ...words.intake(place ? pdfPageSaid(place.page, ' p.') : null) },
+    derived: { kind: 'derived', ...words.derived },
+    standard: { kind: 'standard', ...words.standard },
+    own: { kind: 'own', ...words.own },
+    edited: { kind: 'you', ...words.edited },
+    page: rec.standard ? { kind: 'standard', ...words.pageStandard } : { kind: 'page', ...words.page },
+    clicked: { kind: 'clicked', ...words.clicked },
+    yours: { kind: 'you', ...words.yours },
+    changed: { kind: 'page', ...words.changed },
   }[kind];
-  const fmt = (v) => (v === true ? 'Yes' : v === false ? 'No' : v == null || v === '' ? 'not on the intake' : String(v));
-  const said = (path) => `${fieldInfo(path).label}: ${fmt(get(state.intake?.record ?? {}, path))}`;
+  const said = (path) => `${fieldInfo(path).label}: ${SOURCE.value(get(state.intake?.record ?? {}, path))}`;
   const [title, quote] = {
-    intake: [`Intake${place ? pdfPageSaid(place.page, ', page ') : ''}`, rec.path ? said(rec.path) : `Answer: ${rec.value}`],
-    derived: ['Worked out from the intake', (rec.from ?? []).map(said).join(' · ')],
-    standard: ['TNI standard answer', `Answer: ${rec.value}`],
-    own: ['Your own default', `Answer: ${rec.value}. In place of TNI's standard, from Settings → Your defaults.`],
-    edited: ['Your correction in the panel', rec.path ? said(rec.path) : `Answer: ${rec.value}`],
-    page: ['Already on the page', 'The fill left it as the page had it.'],
-    clicked: ['Clicked for you', `“${rec.value}”`],
-    yours: ['Your answer', 'You changed it on the page, so no fill puts it back.'],
-    changed: ['Changed on the page', 'The page shows this now, not the answer the fill put in. Check it.'],
+    intake: [open.intake(place ? pdfPageSaid(place.page, ', page ') : null), rec.path ? said(rec.path) : SOURCE.answer(rec.value)],
+    derived: [open.derived, (rec.from ?? []).map(said).join(' · ')],
+    standard: [open.standard, SOURCE.answer(rec.value)],
+    own: [open.own, open.ownQuote(rec.value)],
+    edited: [open.edited, rec.path ? said(rec.path) : SOURCE.answer(rec.value)],
+    page: open.page,
+    clicked: [open.clicked, `“${rec.value}”`],
+    yours: open.yours,
+    changed: open.changed,
   }[kind];
   return { tag: kind === 'intake' ? null : tag, quiet: kind === 'intake' ? tag.title : null, title, quote, place,
-    seeTitle: kind === 'edited' ? 'Show what the intake said before your edit' : kind === 'derived' ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake' };
+    seeTitle: kind === 'edited' ? SOURCE.see.edited : kind === 'derived' ? SOURCE.see.derived : SOURCE.see.other };
 }
 
 // The report's list of answers and items (renderReport), drawn by React from the report's records
