@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, LUNA_TIMEOUT_MS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom, SCHEMA_VERSION } from '../server/index.mjs';
+import { createServer, extensionIdsFrom, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError, LUNA_MAX_CHARS, LUNA_TIMEOUT_MS, UPLOAD_LIMITS, minFreeBytesFrom, LUNA_DAILY_TOKENS, lunaDailyTokensFrom, SCHEMA_VERSION } from '../server/index.mjs';
 import { MAX_EVENTS } from '../src/usage.js';
 import { buildRequest, MAX_REQUEST_CHARS, TIMEOUT_MS } from '../src/ai/luna.js';
 import { collectItems } from '../src/ai/common.js';
@@ -204,6 +204,33 @@ test('answers the browser preflight for extensions only', async () => {
     const web = await fetch(`${base}/v1/events`, { method: 'OPTIONS', headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' } });
     assert.equal(web.status, 403);
     assert.equal(web.headers.get('access-control-allow-origin'), null);
+    // Audit 2026-11-07, SRV-16: private-network access only when the browser asks for it.
+    assert.equal(ext.headers.get('access-control-allow-private-network'), null, 'not asked: not said');
+    const local = await fetch(`${base}/v1/events`, { method: 'OPTIONS', headers: { origin: 'chrome-extension://abcdefghijklmnop', 'access-control-request-method': 'POST', 'access-control-request-private-network': 'true' } });
+    assert.equal(local.headers.get('access-control-allow-private-network'), 'true');
+  });
+});
+
+// Audit 2026-11-07, SRV-16: with RATER_EXTENSION_IDS, only those Chrome extensions get the preflight.
+test('the preflight is only for the extension ids set, when set', async () => {
+  const store = 'a'.repeat(32);
+  const dev = 'cbpjccegchfackokbiogplhdekblkccj';
+  assert.deepEqual(extensionIdsFrom(` ${store}, ${dev.toUpperCase()} ,nope`), [store, dev]);
+  assert.equal(extensionIdsFrom(''), null);
+  // Review of #514: a list with no id in it allows none, never every extension.
+  assert.deepEqual(extensionIdsFrom('nope, also-not'), []);
+  await withServer({ dataDir: tmp(), extensionIds: [] }, async ({ base }) => {
+    const r = await fetch(`${base}/v1/events`, { method: 'OPTIONS', headers: { origin: `chrome-extension://${store}`, 'access-control-request-method': 'POST' } });
+    assert.equal(r.status, 403);
+  });
+  await withServer({ dataDir: tmp(), extensionIds: [store, dev] }, async ({ base }) => {
+    const ask = (origin) => fetch(`${base}/v1/events`, { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST' } });
+    assert.equal((await ask(`chrome-extension://${store}`)).status, 204);
+    assert.equal((await ask(`chrome-extension://${dev}`)).status, 204);
+    const other = await ask(`chrome-extension://${'b'.repeat(32)}`);
+    assert.equal(other.status, 403);
+    assert.equal(other.headers.get('access-control-allow-origin'), null);
+    assert.equal((await ask(`moz-extension://${store}`)).status, 403, 'a Firefox origin with the same id is another extension');
   });
 });
 

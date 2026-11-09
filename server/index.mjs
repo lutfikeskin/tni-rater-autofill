@@ -132,6 +132,16 @@ export function minFreeBytesFrom(raw) {
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n * MB : MIN_FREE_MB * MB;
 }
+// RATER_EXTENSION_IDS: the extension ids (32 letters a-p, comma-separated) whose pages may call the
+// server from a browser: the store item's and the unpacked copy's (DEV_EXTENSION_ID). Unset or
+// blank: any extension, as before (audit 2026-11-07, SRV-16). Anything not an id is left out, and a
+// list with no id in it allows none (said at startup): a mistyped list never opens the server to
+// every extension (review of #514). TNI's own extension doesn't need the preflight: its host
+// permission for the server lets its requests through without one.
+export function extensionIdsFrom(raw) {
+  if (raw == null || String(raw).trim() === '') return null;
+  return String(raw).split(',').map((s) => s.trim().toLowerCase()).filter((s) => /^[a-p]{32}$/.test(s));
+}
 // Names of dropped fields kept on an event: field-like names only, at most this many.
 const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
 const MAX_DROPPED = 20;
@@ -392,7 +402,7 @@ const freeSpaceOf = (dir) => () => {
 
 export function createServer({ dataDir, token = '', adminToken = '', openaiKey = '', openaiUrl = 'https://api.openai.com/v1/responses',
   lunaDailyLimit = LUNA_DAILY_LIMIT, lunaDailyTokens = LUNA_DAILY_TOKENS, lunaTimeoutMs = LUNA_TIMEOUT_MS, fetchImpl = globalThis.fetch, dashboardToken = '', testIntakes = [], dashboardCacheMs = DASHBOARD_CACHE_MS, clock = Date.now,
-  uploadLimits = UPLOAD_LIMITS, clientIpHeader = '', minFreeBytes = MIN_FREE_MB * MB, freeSpace = freeSpaceOf(dataDir) } = {}) {
+  uploadLimits = UPLOAD_LIMITS, clientIpHeader = '', minFreeBytes = MIN_FREE_MB * MB, freeSpace = freeSpaceOf(dataDir), extensionIds = null } = {}) {
   const eventsDir = path.join(dataDir, 'events');
   fs.mkdirSync(eventsDir, { recursive: true });
   const requestLimit = rateLimiter(uploadLimits.requests, clock);
@@ -624,15 +634,21 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
   }
 
   // Browsers may ask permission (CORS preflight) before an extension posts JSON. Only browser
-  // extensions get it; web pages still can't send or read anything.
+  // extensions get it, and with `extensionIds` (RATER_EXTENSION_IDS) only those Chrome extensions;
+  // web pages still can't send or read anything. Access from a page to a server on a private
+  // network is allowed only when the browser asks for it (a server on this computer), so a public
+  // server never says it (audit 2026-11-07, SRV-16).
   const corsHeaders = (req) => {
     const origin = String(req.headers.origin ?? '');
-    if (!/^(chrome|moz)-extension:\/\/[a-z0-9-]+$/i.test(origin)) return {};
+    const m = origin.match(/^(chrome|moz)-extension:\/\/([a-z0-9-]+)$/i);
+    if (!m) return {};
+    if (extensionIds && !(m[1].toLowerCase() === 'chrome' && extensionIds.includes(m[2].toLowerCase()))) return {};
+    const privateNetwork = String(req.headers['access-control-request-private-network'] ?? '').toLowerCase() === 'true';
     return {
       'access-control-allow-origin': origin,
       'access-control-allow-methods': 'POST, GET',
       'access-control-allow-headers': 'content-type, authorization',
-      'access-control-allow-private-network': 'true',
+      ...(privateNetwork ? { 'access-control-allow-private-network': 'true' } : {}),
       'access-control-max-age': '600',
       vary: 'origin',
     };
@@ -963,9 +979,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const lunaDailyTokens = lunaDailyTokensFrom(process.env.RATER_LUNA_DAILY_TOKENS);
   const dashboardToken = process.env.RATER_DASHBOARD_TOKEN || '';
   if (dashboardToken && dashboardToken.length < MIN_DASHBOARD_TOKEN) logLine({ msg: `RATER_DASHBOARD_TOKEN is shorter than ${MIN_DASHBOARD_TOKEN} characters: the dashboard stays off.` }, 'error');
+  const extensionIds = extensionIdsFrom(process.env.RATER_EXTENSION_IDS);
+  if (extensionIds && !extensionIds.length) logLine({ msg: 'RATER_EXTENSION_IDS has no extension id (32 letters a-p): no extension gets the browser preflight.' }, 'error');
   const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '', openaiKey: process.env.OPENAI_API_KEY || '', lunaDailyLimit, lunaDailyTokens,
     dashboardToken, testIntakes: testIntakesFrom(process.env.RATER_TEST_INTAKES),
-    clientIpHeader: process.env.RATER_CLIENT_IP_HEADER || '', minFreeBytes: minFreeBytesFrom(process.env.RATER_MIN_FREE_MB) });
+    clientIpHeader: process.env.RATER_CLIENT_IP_HEADER || '', minFreeBytes: minFreeBytesFrom(process.env.RATER_MIN_FREE_MB),
+    extensionIds });
   server.listen(port, host, () => {
     logLine({ msg: `rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit} requests and ${lunaDailyTokens} tokens a day)` : ''}${dashboardToken.length >= MIN_DASHBOARD_TOKEN ? '  (dashboard on: /dashboard)' : ''}`, port: server.address().port });
   });
