@@ -59,7 +59,7 @@ test('the template has a box for the correction keys, the agent\'s stops and whe
 
 // Audit 2026-11-07, CARR-10: the registries outside a carrier's own file that name each carrier.
 // Each carrier with rules is in every one, or this list says why it isn't; one that fails quietly
-// (no logo, the dashboard showing its raw id, a defaults choice list missing) fails here instead.
+// (the dashboard showing its raw id, a defaults choice list missing) fails here instead.
 const LEFT_OUT = {
   // src/util.js CARRIER_NAMES: the words of a carrier's name, for "currently insured with this carrier".
   names: { amwins: 'AmWINS asks no same-carrier question (src/carriers/amwins.js uses no sameCarrier)' },
