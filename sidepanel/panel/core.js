@@ -3,7 +3,7 @@
 // One part of the panel; sidepanel.js wires the parts together.
 import { pruneKeptWork } from '../../src/kept-work.js';
 import { redactionTerms } from '../../src/plan.js';
-import { onPlanRuleError, planFor } from './plan-for.js';
+import { onPlanEdits, onPlanRuleError, planFor } from './plan-for.js';
 import { clientErrorEvent, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { migrateStorage } from '../../src/storage-version.js';
@@ -615,6 +615,8 @@ function logCrash(err, where = 'panel', at = null) {
   } catch { /* logging a crash must never crash */ }
 }
 onPlanRuleError((error, at) => logCrash(error, 'plan', at));
+// A plan for the intake on screen marks the answers that read the agent's corrections (planFor).
+onPlanEdits((record) => (state.intake?.record === record ? [...(state.intake.agentEdited ?? []), ...(state.intake.agentDerived ?? [])] : []));
 globalThis.addEventListener?.('error', (e) => logCrash(e.error ?? e.message));
 globalThis.addEventListener?.('unhandledrejection', (e) => logCrash(e.reason));
 

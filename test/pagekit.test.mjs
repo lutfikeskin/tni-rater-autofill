@@ -5448,6 +5448,30 @@ test('one intake vehicle value targets its VIN behind an extra quote row with th
   assert.equal(report.checks.length, 1, 'the extra vehicle still requires review');
 });
 
+// An answer read from a value the agent corrected in the panel (plan.js `edited`, from the intake's
+// agentEdited) says so on its filled item, for the usage log; the others don't (audit 2026-11-07, DATA-14).
+test('a filled answer that read the agent\'s correction is marked edited; the others are not', async () => {
+  const h = harness({ progressive: true, search: '?pageName=AddDriver' });
+  const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
+  h.document.body.append(yesNo('DriverInput.AnyAccidentsViolationsPastExpYears', 'Has this driver had any accidents, claims or violations in the past 3 years?'), yesNo('DriverInput.DefensiveDriverDiscount', 'Defensive Driver Discount'));
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+  const plan = buildPlan(record, progressive, {}, { edited: ['claims.hasClaims'] }).filter((s) => ['28F5', '299D'].includes(s.q));
+  assert.deepEqual([...new Set(plan.map((s) => `${s.q} ${!!s.edited}`))].sort(), ['28F5 true', '299D false']);
+  const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+  const qOf = (x) => plan.find((s) => s.id === x.stepId)?.q;
+  assert.deepEqual([...new Set(report.filled.map((x) => `${qOf(x)} ${!!x.edited}`))].sort(), ['28F5 true', '299D false']);
+  // CodeRabbit on #480: a carrier choice the fill keeps (it differs, and choices aren't replaced) isn't
+  // the agent's correction, so it isn't marked edited.
+  const k = harness({ progressive: true, search: '?pageName=AddDriver' });
+  const group = yesNo('DriverInput.AnyAccidentsViolationsPastExpYears', 'Has this driver had any accidents, claims or violations in the past 3 years?');
+  k.document.body.append(group);
+  const yes = [...k.document.querySelectorAll('input[type=radio]')].find((r) => r.value === 'Yes');
+  yes.checked = true;
+  const kept = await k.kit.fill(plan.filter((s) => s.q === '28F5'), { maxRounds: 4 });
+  assert.ok(kept.kept.length, JSON.stringify({ filled: kept.filled.length, failed: kept.failed }));
+  assert.ok([...kept.kept, ...kept.filled].every((x) => !x.edited), 'the kept choice is not marked edited');
+});
+
 // Answer provenance (plan.js `source`): a standard answer is reported as such, so the panel can tag
 // it; in review mode (a business class the rules weren't written for) it is a check item that holds
 // Continue, and an intake answer is neither.

@@ -11,7 +11,7 @@ import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals } from './core.js';
-import { firstView, render } from './record.js';
+import { changedFromRead, firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
 import { stopRecording } from './dev-recording.js';
@@ -249,7 +249,13 @@ async function restoreKeptWork(intake, after = -Infinity) {
     edited.add(path);
   }
   intake.agentEdited = [...edited];
-  for (const path of edited) rederive(intake.record, path, { keep: edited });
+  const by = { ...(intake.agentDerivedBy ?? {}) };
+  for (const path of edited) {
+    const derived = rederive(intake.record, path, { keep: edited }).filter((p) => changedFromRead(intake, p));
+    if (derived.length) by[path] = derived;
+  }
+  intake.agentDerivedBy = by;
+  intake.agentDerived = [...new Set(Object.values(by).flat())];
   // The checks a correction raises (NTL with cargo, say) are raised again before the kept checks are
   // found, so a Looks right on one has it to land on.
   for (const path of edited) editChecks(intake, path);
@@ -287,7 +293,7 @@ async function keepKeptWork(intake) {
 }
 
 function keepWork(intake, was) {
-  Object.assign(intake, { record: was.record ?? intake.record, warnings: was.warnings ?? intake.warnings, readFrom: was.readFrom ?? intake.readFrom, done: [...(was.done ?? [])], agentEdited: [...(was.agentEdited ?? [])],
+  Object.assign(intake, { record: was.record ?? intake.record, warnings: was.warnings ?? intake.warnings, readFrom: was.readFrom ?? intake.readFrom, done: [...(was.done ?? [])], agentEdited: [...(was.agentEdited ?? [])], agentDerived: [...(was.agentDerived ?? [])], agentDerivedBy: { ...(was.agentDerivedBy ?? {}) },
     notesReview: was.notesReview ?? null, namesReview: was.namesReview ?? null, ntlAdded: !!was.ntlAdded });
 }
 

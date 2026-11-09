@@ -676,18 +676,20 @@ test('a fill_field keeps its rule\'s concept and TNI entry in their shape only',
   assert.deepEqual(bad.dropped.sort(), ['concept', 'tni']);
 });
 
-test('a page layout keeps the page\'s messages, bounded', async () => {
+
+test('a fill_field keeps whether its answer read the agent\'s correction, as a boolean only', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {
-    await post({ events: [
-      ev({ type: 'page_layout', filled: undefined, fields: [], messages: ['This field is required'] }),
-      ev({ type: 'page_layout', filled: undefined, fields: [], messages: ['x'.repeat(201)] }),
-    ] });
+    const r = await (await post({ events: [
+      ev({ type: 'fill_field', filled: undefined, result: 'filled', q: null, key: 'k', label: 'Date of birth', path: 'drivers[0].dob', controlKind: 'text', source: 'intake', edited: true }),
+      ev({ type: 'fill_field', filled: undefined, result: 'filled', q: null, key: 'k', label: 'Date of birth', path: 'drivers[0].dob', controlKind: 'text', source: 'intake', edited: '01/02/1980' }),
+    ] })).json();
+    assert.equal(r.accepted, 2);
   });
-  const [ok, long] = stored(dataDir);
-  assert.deepEqual(ok.messages, ['This field is required']);
-  assert.equal(long.messages, undefined);
-  assert.deepEqual(long.dropped, ['messages']);
+  const [ok, bad] = stored(dataDir);
+  assert.equal(ok.edited, true);
+  assert.equal(bad.edited, undefined);
+  assert.deepEqual(bad.dropped, ['edited']);
 });
 
 test('keeps a carrier rule that threw while a plan was built, named by its concept and question', async () => {

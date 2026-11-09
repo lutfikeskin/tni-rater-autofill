@@ -438,12 +438,15 @@ export async function rulesHash(texts) {
 // A fill_field event's why fields, set only when true or given, from the item's resolution (one
 // rebuilt from its fields for a report from before resolutions): `source` its method, `standard` a
 // TNI standard, `manualOnly` the agent's alone; `review` the item's own (see fillEvents).
-/** @param {FillItem} x @param {string} list @returns {Pick<FillFieldEvent, 'source' | 'standard' | 'manualOnly' | 'review'>} */
+/** @param {FillItem} x @param {string} list @returns {Pick<FillFieldEvent, 'source' | 'standard' | 'manualOnly' | 'review' | 'edited'>} */
 function fieldWhy(x, list) {
   const r = resolutionOf(x, list);
   return {
     ...(r.method ? { source: r.method } : {}), ...(isStandard(x, list) ? { standard: true } : {}),
     ...(r.status === 'agent' ? { manualOnly: true } : {}), ...(x.review ? { review: true } : {}),
+    // From a value the agent set or corrected in the panel, not the parser's reading (plan.js `edited`).
+    // A filled answer only: one the carrier changed or refused isn't the agent's (CodeRabbit on #480).
+    ...(x.edited && list === 'filled' ? { edited: true } : {}),
   };
 }
 

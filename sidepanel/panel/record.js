@@ -330,6 +330,13 @@ async function restoreField(path, was, kind) {
 // The agent's edit of one intake field, from All client details or a check card's button: set
 // (synchronously, before anything awaits), marked agentEdited, derived values follow, logged
 // without the value, saved, and what Luna read is read again when it changed.
+// A derived value that differs from the intake as read (state.intake.intakeRecord); an intake saved by
+// an older build, without it, counts every recomputed value.
+export function changedFromRead(intake, path) {
+  if (!intake.intakeRecord) return true;
+  return JSON.stringify(get(intake.record, path) ?? null) !== JSON.stringify(get(intake.intakeRecord, path) ?? null);
+}
+
 async function agentEdit(path, after, kind, { restore = false } = {}) {
   const before = get(state.intake.record, path);
   set(state.intake.record, path, after);
@@ -360,6 +367,17 @@ async function agentEdit(path, after, kind, { restore = false } = {}) {
   // note): an empty box alone says nothing about it (CodeRabbit on #474).
   if (restore) restoreNoNumber(state.intake, path);
   if (derived.length) renderSections({ keep: derived });
+  // Recomputed from the agent's correction (claims box → any claims): an answer reading them reads
+  // the agent's value, for the log's `edited` (CodeRabbit on #480). Kept by the edit they came from
+  // (`agentDerivedBy`), so a restore takes back its own and the agent's other edits keep theirs.
+  // Only one whose value the correction changed from the intake as read: years in business worked
+  // out again from the PDF's own year established is still the parser's (CodeRabbit on #480).
+  const followed = derived.filter((p) => changedFromRead(state.intake, p));
+  const by = { ...(state.intake.agentDerivedBy ?? {}) };
+  if (restore || !followed.length) delete by[path];
+  else by[path] = followed;
+  state.intake.agentDerivedBy = by;
+  state.intake.agentDerived = [...new Set(Object.values(by).flat())];
   if (state.intake.warnings.length !== checks.length || state.intake.warnings.some((w, i) => w !== checks[i])) renderWarnings();
   intakeEdited();
   // Pages already filled with the old value are named for the agent (GAP-01).

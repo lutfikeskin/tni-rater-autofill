@@ -528,7 +528,7 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
       if (out.since !== undefined && !(Number.isSafeInteger(out.since) && out.since >= 0)) drop('since');
     }
     if (out.source !== undefined && !FIELD_SOURCES.includes(out.source)) drop('source');
-    for (const k of ['standard', 'manualOnly', 'review']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
+    for (const k of ['standard', 'manualOnly', 'review', 'edited']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
     // What the answer's rule means (its concept, its TNI rulebook entry): rule names, never text.
     for (const k of ['concept', 'tni']) if (out.type === 'fill_field' && out[k] !== undefined && !(typeof out[k] === 'string' && out[k].length <= 80 && /^[\w.:-]+$/.test(out[k]))) drop(k);
     // Why a fill's answer failed, as a code (types.js FailCode): words and dots, never text.
