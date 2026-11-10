@@ -1658,8 +1658,9 @@ function showReviewMode() {
 // quote's state differs), 'warn', 'info' or 'quiet' (a step that is the agent's). `actions`: its
 // buttons, { label, className, onClick }. Drawn by IssueCard (cards-view.jsx): the cards above the
 // answers there, the panel's other notes and a report's cards by notes-view.jsx.
-function issueSaid({ tone = '', title, text = null, notes = [], compare = [], actions = [], role = 'status' }) {
-  return { tone, title, text, notes, compare, actions: actions.filter(Boolean), role };
+function issueSaid({ tone = '', title, text = null, notes = [], sections = [], compare = [], actions = [], role = 'status' }) {
+  // `sections`: bulleted lists, each with an optional heading (What's new); only on a card that has them.
+  return { tone, title, text, notes, ...(sections.length ? { sections } : {}), compare, actions: actions.filter(Boolean), role };
 }
 
 // Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client

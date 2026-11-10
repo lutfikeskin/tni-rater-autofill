@@ -35,11 +35,17 @@ async function showWhatsNew() {
   }
 }
 
-// The card: this version's lines, then each earlier version's under its name.
+// The card: this version's lines as bullets, then every earlier version's together under one heading
+// (an agent several versions behind reads one list, not a section per version they never had).
 /** @param {string} version @param {WhatsNewEntry[]} entries */
 function whatsNewCard(version, entries) {
-  const notes = entries.flatMap((e) => (e.version === version ? e.lines : [`In v${e.version}:`, ...e.lines]));
-  return issueSaid({ tone: 'info', title: `What's new in v${version}`, notes,
+  const current = entries.filter((e) => e.version === version).flatMap((e) => e.lines);
+  const earlier = entries.filter((e) => e.version !== version).flatMap((e) => e.lines);
+  const sections = [
+    current.length ? { heading: null, items: current } : null,
+    earlier.length ? { heading: current.length ? 'Earlier updates' : null, items: earlier } : null,
+  ].filter(Boolean);
+  return issueSaid({ tone: 'info', title: `What's new in v${version}`, sections,
     actions: [{ label: 'Got it', className: 'ghost small-btn', onClick: () => { state.notes = { ...state.notes, whatsNew: null }; } }] });
 }
 

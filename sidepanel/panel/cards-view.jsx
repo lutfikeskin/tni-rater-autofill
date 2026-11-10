@@ -16,7 +16,7 @@ import { RATERS } from '../../src/carriers.js';
 
 // A card: its tone ('' red, 'warn', 'info', 'quiet'), title, what it says, its notes, what it
 // compares side by side, and its buttons. The panel's other cards are drawn with it too (notes-view.jsx).
-function IssueCard({ tone, title, text, notes, compare, actions, role }) {
+function IssueCard({ tone, title, text, notes, sections = [], compare, actions, role }) {
   return (
     <div className={`issue${tone ? ` ${tone}` : ''}`} role={role}>
       <div className="issue-head">
@@ -25,6 +25,12 @@ function IssueCard({ tone, title, text, notes, compare, actions, role }) {
           <span className="issue-title">{title}</span>
           {text ? <span>{text}</span> : null}
           {notes.map((note, i) => <span key={i} className="small-note">{note}</span>)}
+          {sections.map((s, i) => (
+            <div key={`s${i}`} className="issue-section">
+              {s.heading ? <span className="issue-section-head">{s.heading}</span> : null}
+              <ul className="issue-list">{s.items.map((item, j) => <li key={j}>{item}</li>)}</ul>
+            </div>
+          ))}
         </div>
       </div>
       {compare.length ? <div className="compare">{compare.map(([k, v], i) => <span key={i}><span className="k">{`${k}:`}</span>{` ${v}`}</span>)}</div> : null}
