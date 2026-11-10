@@ -263,7 +263,7 @@ async function init() {
   // The Filling switches as saved, in their boxes before anything reads them (settings-view.jsx).
   flushSync(() => {
     state.switches = { ...state.switches, autoFollowUps: saved.autoFollowUps ?? true, autoPages: saved.autoPages ?? true, autoAdvance: saved.autoAdvance ?? true,
-      checkBeforeContinue: saved.checkBeforeContinue ?? true, finishSound: saved.finishSound ?? true, turnSound: saved.turnSound === true };
+      checkBeforeContinue: saved.checkBeforeContinue ?? true, finishSound: saved.finishSound ?? true, turnSound: saved.turnSound ?? true };
   });
   await readMarkSwitch();
   // agent defaults: the stored profiles and this quote's answer, before the settings are logged; the
