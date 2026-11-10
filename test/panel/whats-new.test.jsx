@@ -33,14 +33,18 @@ const { Note } = await import('../../sidepanel/panel/notes-view.jsx');
 beforeEach(() => { for (const k of Object.keys(env.data)) delete env.data[k]; state.notes = { ...state.notes, whatsNew: null }; });
 afterEach(() => { cleanup(); document.body.replaceChildren(); });
 
-const said = (node) => [node.querySelector('.issue-title').textContent, ...[...node.querySelectorAll('.small-note')].map((n) => n.textContent)];
+// The title, then each section's heading (as `## heading`) and its bullets, in order.
+const said = (node) => [node.querySelector('.issue-title').textContent,
+  ...[...node.querySelectorAll('.issue-section-head, .issue-list li')].map((n) => (n.tagName === 'LI' ? n.textContent : `## ${n.textContent}`))];
 
 test("after an update the card says what's new since the version last said, once, until Got it", async () => {
   env.data.whatsNewSeen = '0.9.37';
   const { container } = render(<div id="whats-new"><Note name="whatsNew" /></div>);
   await act(() => showWhatsNew());
   const card = container.querySelector('.issue.info');
-  expect(said(card)).toEqual(["What's new in v0.9.40", 'Logos open the rater.', 'Quote summary.', 'In v0.9.38:', 'Older line.']);
+  // Bullets: this version's, then every earlier one's under one heading (the maintainer, 2026-11-10).
+  expect(said(card)).toEqual(["What's new in v0.9.40", 'Logos open the rater.', 'Quote summary.', '## Earlier updates', 'Older line.']);
+  expect(card.querySelectorAll('ul.issue-list').length).toBe(2);
   expect(env.data.whatsNewSeen).toBe('0.9.40');
   act(() => card.querySelector('button').click());
   expect(container.querySelector('.issue')).toBeNull();

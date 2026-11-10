@@ -2,40 +2,43 @@
 // What's new for agents in each version, said once on the panel's first opening after an update
 // (sidepanel/panel/whats-new.js draws it as a card). Written at a release, with the version bump
 // (docs/chrome-web-store.md): a few short lines in the agent's words about what they will see
-// differently, no client data and no developer detail. A version with no lines shows no card.
+// differently, no client data and no developer detail: one short sentence each, shown as a bullet. A version with no lines shows no card.
 // test/whats-new.test.mjs checks the shape: versions no newer than the package's, 1 to 5 lines each,
 // each under WHATS_NEW_LINE_MAX characters.
 
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
-  '0.9.38': [
-    'Pages fill faster: fewer pauses where the page is already settled.',
-    "GEICO: a dry van, flatbed, reefer, lowboy or tanker trailer's type comes from the intake; a ZIP's only city isn't flagged.",
-    "A quote tab you drag into another window is let go by this panel, and held again when it's back.",
-    "Sound when it's your turn is on unless you turn it off. The carrier's logo is bigger, and Settings has no Advanced section.",
+  '0.9.39': [
+    'Pages fill faster.',
+    'GEICO: the trailer type comes from the intake.',
+    'GEICO: a ZIP with only one city is no longer flagged.',
+    'A sound plays when a fill needs you. Turn it off in Settings.',
+    'Bigger carrier logo, simpler Settings, steadier quote tab.',
   ],
   '0.9.36': [
-    "Store copy: usage, and AI requests without your own OpenAI key, go to TNI's server or your organization's.",
+    "Usage and AI requests go through TNI's server.",
   ],
   '0.9.35': [
-    'Fixing a flagged value on its Intake card checks the card off for you.',
+    'Fixing a flagged value checks off its Intake card.',
   ],
   '0.9.34': [
-    'The bar while a page fills shows about how many of its questions are done.',
-    'Answers going in are tagged as in the report: Worked out, Your edit, Your default, TNI standard.',
-    'Report a problem asks what kind it is and gives you a reference to quote.',
-    'When an update is ready, the panel says so, with Reload now.',
+    'A bar shows how much of the page is done.',
+    'Each answer is tagged: Worked out, Your edit, Your default, TNI standard.',
+    'Report a problem gives you a reference to quote.',
+    'Reload now appears when an update is ready.',
   ],
   '0.9.33': [
-    'The panel has two tabs, Intake and This page, and the header says which stage of the quote you are on.',
-    'Client details mark your corrections, show what the intake said, and let you Restore it.',
-    'Save summary keeps a read-only copy of every answer in the quote, with where each came from.',
-    'Filling waits while you type in another field, then gives your cursor back.',
-    'A ? on each view opens a short guide, and Home lists any setup still to do.',
+    'The panel has two tabs: Intake and This page.',
+    'Correct client details, or Restore what the intake said.',
+    'Save summary keeps a copy of every answer.',
+    'Filling pauses while you type in another field.',
+    'A ? on any view opens a short guide.',
   ],
 };
 
-const WHATS_NEW_LINE_MAX = 160;
+// One short line each, read at a glance as a bullet (the maintainer, 2026-11-10: "no one's gonna
+// read a whole paragraph").
+const WHATS_NEW_LINE_MAX = 80;
 
 /** @param {string} v */
 function versionParts(v) {
