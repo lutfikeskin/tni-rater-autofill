@@ -11,7 +11,6 @@ import { pageOf } from './usage.js';
 import { announce, issueSaid, renderSite, renderSteps, scheduleLayout, unlockAudio } from './coordinator.js';
 import { aiSettings, renderAiSettings } from './assistant.js';
 import { initialsChanged } from './agent-defaults/store.js';
-import { markSwitch } from './tab-mark.js';
 
 // ---------------------------------------------------------------------------------------------
 // Usage log panel and problem reports
@@ -116,11 +115,8 @@ function settingsActs() {
     checkBeforeContinue: (on) => { usage.saveSettings({ checkBeforeContinue: on }); renderSteps(); },
     // Saved, never logged, like the one above. The chime needs a click in the panel first (unlockAudio).
     finishSound: (on) => { usage.saveSettings({ finishSound: on }); },
-    // Saved, never logged, off unless the agent turns it on (coordinator.js noteTurn).
+    // Saved, never logged, on unless the agent turns it off (coordinator.js noteTurn).
     turnSound: (on) => { usage.saveSettings({ turnSound: on }); },
-    // Not saved: on while the extension has the optional tabGroups permission, which Chrome asks the
-    // agent for here (tab-mark.js). Never logged.
-    markTab: (on) => markSwitch(on),
   };
   // Clear log's question, with what it names (usage.logMark: the count `n` and the last event's `seq`).
   const askClearLog = async () => {

@@ -1,8 +1,7 @@
 // @ts-check
-// The side panel: the quote's tab marked in the tab strip and on the toolbar icon. The panel says
-// which carrier tab it works and the dock's mark there (markFor) to the service worker, which
-// groups and badges the tab (src/tab-mark.js); and Settings' Mark the quote's tab, which asks for the
-// optional tabGroups permission.
+// The side panel: the quote's tab marked on the toolbar icon. The panel says which carrier tab it
+// works and the dock's mark there (markFor) to the service worker, which badges the tab
+// (src/tab-mark.js).
 // One part of the panel; sidepanel.js wires the parts together.
 import { markFor } from '../../src/tab-mark.js';
 import * as usage from '../usage-log.js';
@@ -54,24 +53,4 @@ function markTab(dock) {
   post(msg);
 }
 
-// Settings → Filling → Mark the quote's tab: on while the extension has tabGroups. Asked for from the
-// switch's own click (permissions.request needs it); off gives the permission back, and the worker
-// takes the tab out of its group (the badge stays: it needs no permission).
-async function readMarkSwitch() {
-  if (!inExtension || !chrome.permissions) return;
-  const on = await chrome.permissions.contains({ permissions: ['tabGroups'] }).catch(() => false);
-  state.switches = { ...state.switches, markTab: on };
-}
-function markSwitch(on) {
-  if (!inExtension || !chrome.permissions) { state.switches = { ...state.switches, markTab: false }; return; }
-  const asked = on ? chrome.permissions.request({ permissions: ['tabGroups'] }) : chrome.permissions.remove({ permissions: ['tabGroups'] }).then(() => false);
-  return asked.catch(() => false).then(() => readMarkSwitch());
-}
-// Granted or taken back elsewhere (chrome://extensions): the switch follows.
-function watchMarkSwitch() {
-  if (!inExtension || !chrome.permissions?.onAdded) return;
-  chrome.permissions.onAdded.addListener(() => { readMarkSwitch(); });
-  chrome.permissions.onRemoved.addListener(() => { readMarkSwitch(); });
-}
-
-export { markSwitch, markTab, readMarkSwitch, watchMarkSwitch };
+export { markTab };

@@ -168,8 +168,6 @@ function Settings({ act }) {
           <SwitchRow id="overwrite" name="Replace prefilled answers" title="Off keeps what the rater filled itself, like a DOT lookup" checked={!!switches.overwrite} said={switches} onChange={flip('overwrite')} />
           <SwitchRow id="finish-sound" name="Sound when the quote is done" checked={switches.finishSound !== false} said={switches} onChange={flip('finishSound')} />
           <SwitchRow id="turn-sound" name="Sound when it's your turn" title="When a fill needs you while you're in another app or tab" checked={switches.turnSound !== false} said={switches} onChange={flip('turnSound')} />
-          {/* Needs the optional tabGroups permission, which Chrome asks for on the first switch on (tab-mark.js). */}
-          <SwitchRow id="mark-tab" name="Mark the quote's tab" title="Groups the quote's tab, titled with what the panel is doing. Chrome asks to manage your tab groups." checked={!!switches.markTab} said={switches} onChange={flip('markTab')} />
         </div>
         <p className="fine">Never Binds or Submits.</p>
         <p id="filling-now-note" className="fine" role="status" hidden={!filling}>Answers are going in. A change here reaches what is filled after (a follow-up on this page included), and this fill only if it is still getting ready. To keep Continue from being clicked now, press Stop below.</p>

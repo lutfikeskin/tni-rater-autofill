@@ -32,7 +32,6 @@ import { mountSiteTrack } from './panel/site-view.jsx';
 import { mountSetup } from './panel/home-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaultsShown } from './panel/agent-defaults/store.js';
-import { readMarkSwitch, watchMarkSwitch } from './panel/tab-mark.js';
 import { forgetQuoteTab, noteNewTab, openPortal, restoreQuoteOwners } from './panel/quote-owner.js';
 import { fileReplacer } from './panel/file-drop.js';
 import { showWhatsNew } from './panel/whats-new.js';
@@ -224,8 +223,6 @@ function wire() {
     // A tab dragged into another window, or back: which tab this copy holds depends on its window.
     chrome.tabs.onAttached.addListener(refreshTab);
     chrome.tabs.onDetached.addListener(refreshTab);
-    // Settings' Mark the quote's tab follows the tabGroups permission, given or taken back anywhere.
-    watchMarkSwitch();
   }
 }
 
@@ -265,7 +262,6 @@ async function init() {
     state.switches = { ...state.switches, autoFollowUps: saved.autoFollowUps ?? true, autoPages: saved.autoPages ?? true, autoAdvance: saved.autoAdvance ?? true,
       checkBeforeContinue: saved.checkBeforeContinue ?? true, finishSound: saved.finishSound ?? true, turnSound: saved.turnSound ?? true };
   });
-  await readMarkSwitch();
   // agent defaults: the stored profiles and this quote's answer, before the settings are logged; the
   // agent's answer is logged and the page's dock and cards follow it.
   await loadDefaults();
