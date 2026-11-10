@@ -8,7 +8,7 @@
 
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
-  '0.9.39': [
+  '0.9.40': [
     'Pages fill faster.',
     'GEICO: the trailer type comes from the intake.',
     'GEICO: a ZIP with only one city is no longer flagged.',
