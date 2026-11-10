@@ -8,10 +8,8 @@
 // lives there so it is the same with the panel popped out (a popup window, sidepanel/panel/window.js)
 // as in the side panel, and so the mark goes when the panel closes.
 //
-// The badge needs no permission. The tab group with a title that went with it (Settings → Filling →
-// Mark the quote's tab) and its optional `tabGroups` permission were taken out (the maintainer,
-// 2026-11-10): off by default, likely unused, and the turn sound, the dock and the held quote tab
-// say the same. Never red: the badge says whose turn it is, not that something is wrong.
+// The badge needs no permission, and is the only mark: no tab group, no tabGroups permission.
+// Never red: the badge says whose turn it is, not that something is wrong.
 
 /** @typedef {'filling' | 'turn' | 'done'} TabMark */
 
