@@ -11398,13 +11398,13 @@ test('Sound when the quote is done is a Filling switch, on by default, kept on t
   // the saved settings say otherwise.
   const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
   assert.match(view, /<SwitchRow id="finish-sound" name="Sound when the quote is done" checked=\{switches\.finishSound !== false\} said=\{switches\} onChange=\{flip\('finishSound'\)\} \/>/);
-  assert.match(SIDEPANEL, /switches: \{ autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true, turnSound: false \},/, 'on by default');
+  assert.match(SIDEPANEL, /switches: \{ autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true, turnSound: true \},/, 'on by default');
   const t = settingsActsHarness();
   await t.acts.switch('finishSound', false);
   assert.deepEqual(t.calls, [['save', { finishSound: false }]], 'saved, not in the usage log');
   assert.equal(t.state.switches.finishSound, false);
   assert.match(extractFunction('wireUsage'), /document\.addEventListener\('pointerdown', unlockAudio, \{ once: true, capture: true \}\);/, 'the audio is unlocked by the agent\'s first click in the panel');
-  assert.match(extractFunction('init'), /flushSync\(\(\) => \{\s+state\.switches = \{ \.\.\.state\.switches, [^\n]*\n\s+checkBeforeContinue: saved\.checkBeforeContinue \?\? true, finishSound: saved\.finishSound \?\? true, turnSound: saved\.turnSound === true \};/);
+  assert.match(extractFunction('init'), /flushSync\(\(\) => \{\s+state\.switches = \{ \.\.\.state\.switches, [^\n]*\n\s+checkBeforeContinue: saved\.checkBeforeContinue \?\? true, finishSound: saved\.finishSound \?\? true, turnSound: saved\.turnSound \?\? true \};/);
 });
 
 // Review of PR #171 (Claude, Cursor): the chime kept a record of its own (`chimed`, by tab and the
@@ -12138,8 +12138,13 @@ test('the your-turn tone: a fill ending on the agent, switch on, once per page, 
   sandbox.state.tab.url = 'https://rater.test/d';
   step('filling');
   assert.equal(step('needs'), false, 'switch off');
+  // Never set by the agent: on, the default for agents (the maintainer, 2026-11-10).
+  delete sandbox.state.switches.turnSound;
+  sandbox.state.tab.url = 'https://rater.test/e';
+  step('filling');
+  assert.equal(step('needs'), true, 'on by default');
   const view = fs.readFileSync(new URL('../sidepanel/panel/settings-view.jsx', import.meta.url), 'utf8');
-  assert.ok(view.includes('id="turn-sound"') && view.includes('checked={switches.turnSound === true}'));
+  assert.ok(view.includes('id="turn-sound"') && view.includes('checked={switches.turnSound !== false}'));
 });
 
 // Audit 2026-11-07, LIVE-08: the dock's bar is measured while the fill answers (the share of the

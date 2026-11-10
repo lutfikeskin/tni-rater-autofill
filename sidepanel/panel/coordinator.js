@@ -1414,7 +1414,7 @@ function playChime() {
 // agent (questions, checks, AI picks, a hold, a stop or an error) while they look elsewhere, in another
 // app or on another tab (lookingElsewhere), so they know to come back. Once per page of a tab, and
 // only with Settings → Filling → Sound when it's your turn on (`turnSound`, saved on this computer,
-// never logged; off unless the agent turns it on, until TNI agrees). Two short notes made in the panel
+// never logged; on unless the agent turns it off, the maintainer's default for agents, 2026-11-10). Two short notes made in the panel
 // (WebAudio), distinct from the quote-done chime: no sound file, no permission. True when it was asked.
 const TURN_SOUND_PHASES = new Set(['needs', 'check', 'ai', 'hold', 'yours', 'stopped-fill', 'error']);
 let turnFrom = null;
@@ -1425,7 +1425,7 @@ const turnAsking = new Set();
 function noteTurn(d) {
   const was = turnFrom;
   turnFrom = d.phase;
-  if (was !== 'filling' || !TURN_SOUND_PHASES.has(d.phase) || state.switches?.turnSound !== true) return false;
+  if (was !== 'filling' || !TURN_SOUND_PHASES.has(d.phase) || state.switches?.turnSound === false) return false;
   const tabId = state.tab?.id;
   const page = `${tabId}|${state.tab?.url ?? ''}`;
   if (turnPages.has(page) || turnAsking.has(page)) return false;
