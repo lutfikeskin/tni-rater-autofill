@@ -8,14 +8,14 @@
 
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
-  '0.9.37': [
+  '0.9.38': [
     'Pages fill faster: fewer pauses where the page is already settled.',
     "GEICO: a dry van, flatbed, reefer, lowboy or tanker trailer's type comes from the intake; a ZIP's only city isn't flagged.",
     "A quote tab you drag into another window is let go by this panel, and held again when it's back.",
     "Sound when it's your turn is on unless you turn it off. The carrier's logo is bigger, and Settings has no Advanced section.",
   ],
   '0.9.36': [
-    "Store copy: usage, and AI requests without your own OpenAI key, go to TNI's server or your organization's; its Server box is read-only.",
+    "Store copy: usage, and AI requests without your own OpenAI key, go to TNI's server or your organization's.",
   ],
   '0.9.35': [
     'Fixing a flagged value on its Intake card checks the card off for you.',
@@ -24,7 +24,7 @@ const WHATS_NEW = {
     'The bar while a page fills shows about how many of its questions are done.',
     'Answers going in are tagged as in the report: Worked out, Your edit, Your default, TNI standard.',
     'Report a problem asks what kind it is and gives you a reference to quote.',
-    'When an update is ready, the panel says so, with Reload now. Optional: a tone when a fill needs you while you look elsewhere.',
+    'When an update is ready, the panel says so, with Reload now.',
   ],
   '0.9.33': [
     'The panel has two tabs, Intake and This page, and the header says which stage of the quote you are on.',
