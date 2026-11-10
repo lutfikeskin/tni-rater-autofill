@@ -1,35 +1,24 @@
 // @ts-check
-// The quote's tab, marked in Chrome's tab strip: a tab group titled with what the panel is doing
-// on it, which an agent on another tab sees, and a badge on the toolbar icon for that tab, seen
-// while it is in front, so the agent sees when the quote needs them (docs/browser-filling.md, "The quote's tab in the tab strip").
+// The quote's tab, marked with a badge on the toolbar icon for that tab, seen while it is in front,
+// so the agent sees when the quote needs them (docs/browser-filling.md, "The quote's tab's badge").
 //
 // The panel says which tab it works and its mark (markFor, from the dock: dockFor in
 // sidepanel/panel/coordinator.js) over a port named 'tab-mark'; the service worker (background.js)
-// runs a TabMarker, which groups the tab, titles and colours the group, and sets the badge. It
+// runs a TabMarker, which sets the badge. It
 // lives there so it is the same with the panel popped out (a popup window, sidepanel/panel/window.js)
 // as in the side panel, and so the mark goes when the panel closes.
 //
-// The badge needs no permission. The group's title and colour need `tabGroups`, an optional
-// permission (manifest.json): asked for from Settings → Filling → Mark the quote's tab, never on
-// install, since a required one would disable the store's update for every agent until they
-// accepted its warning. Without it no group is made (an unnamed grey group says nothing).
-// Never red: the group's colour says whose turn it is, not that something is wrong.
+// The badge needs no permission, and is the only mark: no tab group, no tabGroups permission.
+// Never red: the badge says whose turn it is, not that something is wrong.
 
 /** @typedef {'filling' | 'turn' | 'done'} TabMark */
 
-/** What each mark shows: the group's title and colour, and the toolbar badge's text and colour. */
+/** What each mark shows: the toolbar badge's text and colour. */
 export const MARKS = {
-  filling: { title: '● TNI · Filling', color: 'blue', badge: '•', badgeColor: '#1a73e8' },
-  turn: { title: '! TNI · Your turn', color: 'orange', badge: '!', badgeColor: '#e37400' },
-  done: { title: 'TNI · Done', color: 'green', badge: '', badgeColor: '#188038' },
+  filling: { badge: '•', badgeColor: '#1a73e8' },
+  turn: { badge: '!', badgeColor: '#e37400' },
+  done: { badge: '', badgeColor: '#188038' },
 };
-
-const OUR_TITLES = new Set(Object.values(MARKS).map((m) => m.title));
-
-/** A group with one of these titles is the panel's own (made by an earlier panel or worker). */
-export function ourTitle(title) {
-  return OUR_TITLES.has(title ?? '');
-}
 
 // The dock's phases (dockFor) where it waits on the agent: a question to answer, Looks right, a
 // Continue or Fill to press, a hold to sort out, a step that is theirs, a page that stopped or
@@ -66,39 +55,18 @@ export const TURN_DELAY = 1500;
 // is let go only if no copy has taken it up by then.
 export const CLOSE_GRACE = 5000;
 
-const NO_GROUP = -1; // chrome.tabGroups.TAB_GROUP_ID_NONE
-
-/**
- * What to do with the tab's group, from where the tab is and what the marker did with it for this
- * quote (`memo`): 'group' (into a new group), 'update' (the group is ours: title and colour),
- * 'adopt' (a group of ours an earlier worker made: taken as this quote's), 'leave' (the agent's
- * own group: the badge only), 'off' (the agent took the tab out of our group: badge only, for the
- * rest of the quote).
- * @param {{ groupId: number, groupTitle?: string | null }} tab
- * @param {{ groupId?: number | null, off?: boolean } | undefined} memo
- * @returns {'group' | 'update' | 'adopt' | 'leave' | 'off'}
- */
-export function groupStep(tab, memo) {
-  if (memo?.off) return 'off';
-  const inGroup = Number.isInteger(tab.groupId) && tab.groupId !== NO_GROUP;
-  const ours = memo?.groupId ?? null;
-  if (ours != null) return inGroup && tab.groupId === ours ? 'update' : 'off';
-  if (!inGroup) return 'group';
-  return ourTitle(tab.groupTitle) ? 'adopt' : 'leave';
-}
-
 /**
  * The service worker's half (background.js): the marks the panels ask for, put on their tabs.
- * `api` is chrome (tests pass a fake). What it did with each tab, per quote, is kept in
+ * `api` is chrome (tests pass a fake). What each tab shows, per quote, is kept in
  * chrome.storage.session (`tabMarks`), so a worker that Chrome stopped and started again still
- * knows a tab the agent took out of its group.
+ * knows a turn already shown.
  * @param {any} api
  * @param {{ turnDelay?: number, closeGrace?: number }} [opts]
  */
 export function createTabMarker(api, { turnDelay = TURN_DELAY, closeGrace = CLOSE_GRACE } = {}) {
   /** @type {Map<any, { tabId: number | null, mark: TabMark | null, quote: string | null }>} */
   const ports = new Map();
-  /** @type {Map<number, { quote: string | null, groupId: number | null, off: boolean, shown: TabMark | null }>} */
+  /** @type {Map<number, { quote: string | null, shown: TabMark | null }>} */
   let memos = null;
   /** @type {Map<number, any>} */
   const timers = new Map();
@@ -112,8 +80,7 @@ export function createTabMarker(api, { turnDelay = TURN_DELAY, closeGrace = CLOS
     return memos;
   };
   const persist = () => Promise.resolve(api.storage?.session?.set({ tabMarks: [...memos] })).catch(() => {});
-  const canGroup = async () => !!(api.tabGroups && api.tabs?.group && await Promise.resolve(api.permissions?.contains({ permissions: ['tabGroups'] })).catch(() => false));
-  // One change at a time per tab: two calls racing would make two groups.
+  // One change at a time per tab, in the order asked.
   const queue = (tabId, job) => {
     const next = (queues.get(tabId) ?? Promise.resolve()).then(job).catch((e) => console.warn('tab mark:', e?.message ?? e));
     queues.set(tabId, next);
@@ -132,40 +99,20 @@ export function createTabMarker(api, { turnDelay = TURN_DELAY, closeGrace = CLOS
     if (!tab) { all.delete(tabId); await persist(); return; }
     await badge(tabId, mark);
     let memo = all.get(tabId);
-    if (!memo || memo.quote !== quote) memo = { quote, groupId: null, off: false, shown: null };
+    if (!memo || memo.quote !== quote) memo = { quote, shown: null };
     all.set(tabId, memo);
-    if (await canGroup()) {
-      const inGroup = Number.isInteger(tab.groupId) && tab.groupId !== NO_GROUP;
-      const group = inGroup && memo.groupId == null ? await Promise.resolve(api.tabGroups.get(tab.groupId)).catch(() => null) : null;
-      const step = groupStep({ groupId: tab.groupId, groupTitle: group?.title }, memo);
-      if (step === 'off') { memo.off = true; memo.groupId = null; }
-      if (step === 'adopt') memo.groupId = tab.groupId;
-      if (step === 'group') memo.groupId = await api.tabs.group({ tabIds: tabId });
-      if (step === 'group' || step === 'adopt' || step === 'update') {
-        const { title, color } = MARKS[mark];
-        await api.tabGroups.update(memo.groupId, { title, color });
-      }
-    }
     memo.shown = mark;
     await persist();
   });
 
-  // The tab let go: no badge, and out of our group (tabs.ungroup needs no permission). What the
-  // agent did with it this quote is kept, should the quote come back to it.
+  // The tab let go: no badge.
   const release = (tabId) => queue(tabId, async () => {
     const all = await load();
     const memo = all.get(tabId);
     const tab = await Promise.resolve(api.tabs.get(tabId)).catch(() => null);
     if (!tab) { all.delete(tabId); await persist(); return; }
     await badge(tabId, null);
-    let ours = memo?.groupId ?? null;
-    // A group of ours this worker doesn't know (made before Chrome restarted it): let go too.
-    if (ours == null && !memo?.off && Number.isInteger(tab.groupId) && tab.groupId !== NO_GROUP && api.tabGroups) {
-      const group = await Promise.resolve(api.tabGroups.get(tab.groupId)).catch(() => null);
-      if (ourTitle(group?.title)) ours = tab.groupId;
-    }
-    if (ours != null && tab.groupId === ours) await api.tabs.ungroup(tabId);
-    if (memo) { memo.groupId = null; memo.shown = null; }
+    if (memo) memo.shown = null;
     await persist();
   });
 
@@ -200,25 +147,6 @@ export function createTabMarker(api, { turnDelay = TURN_DELAY, closeGrace = CLOS
     timers.set(tabId, setTimeout(() => { timers.delete(tabId); if (!held(tabId)) release(tabId); }, closeGrace));
   };
 
-  /** tabGroups granted or taken back: every tab marked again (or let go of its group). */
-  const permissionChanged = async () => {
-    const granted = await canGroup();
-    for (const [, s] of ports) {
-      if (s.tabId == null || !s.mark) continue;
-      if (granted) await apply(s.tabId, s.mark, s.quote);
-    }
-    if (granted) return;
-    // Taken back: our groups go (ungroup needs no permission); the badges stay.
-    const all = await load();
-    for (const [tabId, memo] of all) {
-      if (memo.groupId == null) continue;
-      const tab = await Promise.resolve(api.tabs.get(tabId)).catch(() => null);
-      if (tab?.groupId === memo.groupId) await Promise.resolve(api.tabs.ungroup(tabId)).catch(() => {});
-      memo.groupId = null;
-    }
-    await persist();
-  };
-
   /** A tab closed: nothing more to do with it. */
   const tabRemoved = async (tabId) => {
     cancel(tabId);
@@ -233,10 +161,8 @@ export function createTabMarker(api, { turnDelay = TURN_DELAY, closeGrace = CLOS
       port.onMessage.addListener((msg) => { said(port, msg); });
       port.onDisconnect.addListener(() => closed(port));
     });
-    api.permissions?.onAdded?.addListener(() => { permissionChanged(); });
-    api.permissions?.onRemoved?.addListener(() => { permissionChanged(); });
     api.tabs.onRemoved.addListener((tabId) => { tabRemoved(tabId); });
   };
 
-  return { said, closed, permissionChanged, tabRemoved, listen, idle: () => Promise.all([...queues.values()]) };
+  return { said, closed, tabRemoved, listen, idle: () => Promise.all([...queues.values()]) };
 }

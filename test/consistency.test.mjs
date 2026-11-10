@@ -194,9 +194,8 @@ test('every permission the manifest asks for has its justification in the store 
   const guide = read('docs/chrome-web-store.md');
   const manifest = JSON.parse(read('manifest.json'));
   for (const p of [...manifest.permissions, ...(manifest.optional_permissions ?? [])]) assert.ok(guide.includes(`- \`${p}\`:`), `docs/chrome-web-store.md: say why the extension needs ${p}`);
-  // tabGroups warns on install ("View and manage your tab groups"): required, a store update would be
-  // disabled for every agent until they accepted it. It is asked for from Settings (src/tab-mark.js).
-  assert.ok(!manifest.permissions.includes('tabGroups'));
+  // No tabGroups at all (2026-11-10): the quote's tab is marked by its toolbar badge only (src/tab-mark.js).
+  assert.ok(![...manifest.permissions, ...(manifest.optional_permissions ?? [])].includes('tabGroups'));
 });
 
 test('the manifest allows every carrier site and the usage server', () => {

@@ -22,9 +22,8 @@ for (const area of ['local', 'managed']) {
   }
 }
 
-// The quote's tab marked in the tab strip (a titled group, with the tabGroups permission the agent
-// gave in Settings) and on the toolbar icon (a badge): what the panel says over its 'tab-mark' port,
-// let go when the panel closes (src/tab-mark.js).
+// The quote's tab marked on the toolbar icon (a badge): what the panel says over its 'tab-mark'
+// port, let go when the panel closes (src/tab-mark.js).
 createTabMarker(chrome).listen();
 
 // A fill whose panel went away (closed, or reloaded, while it ran) is stopped as Stop does: what
