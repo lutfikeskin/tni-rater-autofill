@@ -8,6 +8,12 @@
 
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
+  '0.9.37': [
+    'Pages fill faster: fewer pauses where the page is already settled.',
+    "GEICO: the trailer's type comes from the intake, and a ZIP's only city is no longer flagged.",
+    "A quote tab you drag into another window is let go by this panel, and held again when it's back.",
+    "Sound when it's your turn is on unless you turn it off. The carrier's logo is bigger, and Settings has no Advanced section.",
+  ],
   '0.9.36': [
     "Store copy: usage, and AI requests without your own OpenAI key, go to TNI's server or your organization's; its Server box is read-only.",
   ],
