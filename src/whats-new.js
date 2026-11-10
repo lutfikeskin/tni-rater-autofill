@@ -16,7 +16,7 @@ const WHATS_NEW = {
     'Bigger carrier logo, simpler Settings, steadier quote tab.',
   ],
   '0.9.36': [
-    "Usage and AI requests go through TNI's server.",
+    "Usage goes to TNI's server; AI requests too, unless you use your own key.",
   ],
   '0.9.35': [
     'Fixing a flagged value checks off its Intake card.',
