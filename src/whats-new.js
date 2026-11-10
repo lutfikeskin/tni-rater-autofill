@@ -10,7 +10,7 @@
 const WHATS_NEW = {
   '0.9.37': [
     'Pages fill faster: fewer pauses where the page is already settled.',
-    "GEICO: the trailer's type comes from the intake, and a ZIP's only city is no longer flagged.",
+    "GEICO: a dry van, flatbed, reefer, lowboy or tanker trailer's type comes from the intake; a ZIP's only city isn't flagged.",
     "A quote tab you drag into another window is let go by this panel, and held again when it's back.",
     "Sound when it's your turn is on unless you turn it off. The carrier's logo is bigger, and Settings has no Advanced section.",
   ],
