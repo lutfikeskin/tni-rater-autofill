@@ -2049,6 +2049,26 @@ test('GEICO UM: $100,000/$300,000 where the list has no combined single limit (W
   assert.deepEqual([tx.value, tx.choiceAliases], ['$100,000/$300,000', ['$100,000 Combined Single Limit']]);
 });
 
+// TNI, 2026-11-13, W48-11 (agents' VA quotes on 0.9.31: GEICO's list starts at $125,000 Combined
+// Single Limit, "no option matches"; IN's UMBI and UIMBI the same): a list with neither $100,000
+// option leaves the question to the agent with a note, never a failed fill, and never another amount.
+test('GEICO UM: a list without $100,000 is the agent\'s, with a note, never another amount (W48-11)', () => {
+  for (const state of ['VA', 'IN', 'FL', 'TX', 'OH']) {
+    const p = plan(with_({ 'garaging.state': state }));
+    for (const [name, what] of [['Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)', 'uninsured motorist bodily injury'],
+      ['Uninsured motorist bodily injury, UMBI (TNI: $100,000 CSL)', 'uninsured motorist bodily injury (UMBI)'],
+      ['Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)', 'underinsured motorist bodily injury (UIMBI)']]) {
+      const s = one(p, name);
+      assert.equal(s.unofferedNote, `GEICO doesn't offer $100,000 ${what} here (neither $100,000 Combined Single Limit nor $100,000/$300,000): pick the limit yourself. The fill doesn't pick another amount.`, `${name} ${state}`);
+      // Only $100,000 is ever given: no alias reaches another amount, the lowest offered or any other.
+      for (const answer of [s.value, ...s.choiceAliases]) assert.match(answer, /^\$100,000(?: Combined Single Limit|\/\$300,000)$/, `${name} ${state}`);
+      // An agent's own amount the list lacks names that amount, and has no split.
+      const std = geico.rules.find((rule) => rule.name === name).std;
+      assert.equal(std.unofferedNote(300000), `GEICO doesn't offer $300,000 ${what} here (no $300,000 Combined Single Limit): pick the limit yourself. The fill doesn't pick another amount.`);
+    }
+  }
+});
+
 // The maintainer, 2026-10-26: a blank CDL box on the intake means No (TNI's standard), for the
 // owner's form and Add Driver alike; the live run left both drivers' CDL questions yellow.
 test('a blank CDL on the intake is No, as TNI\'s standard', () => {
