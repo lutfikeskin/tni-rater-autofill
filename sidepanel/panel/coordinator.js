@@ -28,6 +28,8 @@ import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishin
 import { leftOf, listCounts } from './report-rows.js';
 import { defaultsHold, fillDefaultsHash, isOwnDefault } from './agent-defaults/store.js';
 import { markTab } from './tab-mark.js';
+// Polite announcements for screen readers (fill results, counts that change): announce.js.
+import { announce } from './announce.js';
 import { CONTINUE, DOCK, FILLING } from './messages.js';
 import { fillEnded, fillRunning } from './fill-watch.js';
 import { bindQuoteTab, portalHold, quoteOwnerIssue } from './quote-owner.js';
@@ -1128,14 +1130,6 @@ function recount() {
   entry.left = left;
   renderSteps();
   announce(left ? `${left} left for you on this page.` : 'Nothing is left for you on this page.');
-}
-
-// Polite announcements for screen readers: fill results and counts that change.
-function announce(text) {
-  const live = $('announce');
-  if (!live) return;
-  live.textContent = '';
-  setTimeout(() => { live.textContent = text; }, 50);
 }
 
 // The two tabs under the client's name, Intake and This page: what each says about the intake and

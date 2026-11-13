@@ -123,6 +123,26 @@ test('a GEICO quote that reaches Final Quote Details is done, not declined', () 
   assert.equal(p.outcomes.progressive.declined, 1);
 });
 
+// W48-03 (W44-19): 0 of 53 GEICO quotes read as done though about 12 printed the quote proposal
+// (/PrintQuote, where TNI's GEICO quote ends), and GEICO's Add USDOT Number screen, which waits on the
+// agent's answer, read as the carrier's decline.
+test("a GEICO quote that prints its proposal is done; only GEICO's referral is a decline", () => {
+  const geico = (session, n, x) => ({ id: `${session}${n}`, t: at(n), receivedAt: at(n), session, v: '0.9.9', carrier: 'geico', page: '/quote', ...x });
+  const start = (session) => geico(session, 0, { type: 'intake_loaded', carrier: undefined, page: undefined });
+  const events = [...week(), ...['print', 'old', 'usdot', 'referral'].map(start),
+    geico('print', 1, { type: 'fill_run', step: 'Quote & Coverages', blockers: 0, blockerList: [], clicked: ['recalculate', 'printProposal'] }),
+    geico('print', 2, { type: 'page_view', page: '/PrintQuote' }),
+    // A proposal open before this quote's own fill is another quote's.
+    geico('old', 1, { type: 'page_view', page: '/PrintQuote' }),
+    geico('usdot', 1, { type: 'fill_run', step: 'Business & Owner Info', blockers: 0, blockerList: [] }),
+    geico('usdot', 2, { type: 'fill_run', blockers: 1, blockerList: ['stop: USDOT Number'], auto: 'stop' }),
+    geico('referral', 1, { type: 'fill_run', step: 'Additional Business Info', blockers: 0, blockerList: [] }),
+    geico('referral', 2, { type: 'fill_run', blockers: 1, blockerList: ['stop: GEICO referral'], auto: 'stop' })];
+  const { geico: g } = signals(events, { since: '2026-10-06' }).outcomes;
+  assert.deepEqual([g.quotes, g.done, g.declined], [4, 1, 1]);
+  assert.deepEqual(g.stopped.map(([p]) => p).sort(), ['/PrintQuote', '/quote']);
+});
+
 test('signals flags a restricted action the extension clicked', () => {
   const events = week();
   events.push({ id: 'x', t: '2026-10-06T13:00:00Z', receivedAt: '2026-10-06T13:00:00Z', session: 'new', v: '0.9.9', carrier: 'amwins', type: 'fill_run', page: '/application', advanced: 'Submit Application', clicked: [] });

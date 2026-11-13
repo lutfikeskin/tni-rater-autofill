@@ -81,7 +81,7 @@ const record = {
     { first: 'CASEY', middle: null, last: 'EXAMPLE', suffix: null, dob: '07/09/1995', licenseNumber: null, licenseState: 'IA', cdl: false, cdlYear: null, maritalStatus: 'Single', gender: null, excluded: false },
   ],
   vehicles: [
-    { type: 'Pickup Truck', year: 2019, make: 'RAM', model: '1500', vin: '1FTBR3X80MKA12345', value: 30000 },
+    { type: 'Pickup Truck', year: 2019, make: 'RAM', model: '1500', vin: '1FTBR3X89MKA12346', value: 30000 },
     { type: 'Box Truck', year: 2021, make: 'RAM', model: '2500', vin: null, value: 45000 },
   ],
   trailers: [{ type: 'Dry Van', year: 2015, make: 'WABASH', model: null, vin: null, value: 12000 }],
@@ -124,7 +124,7 @@ const EXPECT = {
   },
   // Year, make and model by the VIN's decode (checked against the intake, never typed).
   'Vehicles: vehicle 1': {
-    YesNoPreQuoteHaveFullVinActivity: 'Yes', GiveVinPreQuote: '1FTBR3X80MKA12345', GiveYear: '2019', GiveMake: 'RAM', GiveModel: '1500',
+    YesNoPreQuoteHaveFullVinActivity: 'Yes', GiveVinPreQuote: '1FTBR3X89MKA12346', GiveYear: '2019', GiveMake: 'RAM', GiveModel: '1500',
     GiveOtherVehicleType: '', GiveAnyVehicleCustomizationYesNo: 'No', GiveGrossVehicleWeight: '', GiveStreet: '1 Test Way', GiveZip: '68102', GiveCity: 'OMAHA',
     GiveFarthestOneWayDistance: '101-200', GiveCommercialVehicleForPersonalUse: 'No',
   },

@@ -45,7 +45,7 @@ const with_ = (changes, r = intake()) => {
   return r;
 };
 const CASEY = { first: 'Casey', middle: null, last: 'Example', suffix: null, dob: '07/09/1995', licenseNumber: null, licenseState: 'IA', cdl: false, cdlYear: null, maritalStatus: 'Single', gender: null, excluded: null };
-const SECOND_VEHICLE = { type: 'Cargo Van', year: 2019, make: 'RAM', model: 'ProMaster', vin: '1FTBR3X80MKA12399', value: 30000 };
+const SECOND_VEHICLE = { type: 'Cargo Van', year: 2019, make: 'RAM', model: 'ProMaster', vin: '1FTBR3X88MKA12399', value: 30000 };
 const TRAILER = { type: 'Dry Van', year: 2015, make: 'WABASH', model: null, vin: null, value: 12000 };
 // A blank intake: nothing the rules could answer from.
 const blank = () => ({

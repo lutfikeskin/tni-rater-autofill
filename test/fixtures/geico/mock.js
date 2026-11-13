@@ -118,8 +118,8 @@
   const state = (window.__geicoMock = {
     log: [], view: null, step: null, renders: 0, saved: [], units: { vehicles: [], trailers: [], drivers: [] }, business: null, editing: null,
     stopActions: [], recalcs: 0, premium: '', recalcResets: null, beats: 0,
-    decodes: { '1FTBR3X80MKA12345': { year: '2019', make: 'RAM', model: '1500' }, '1FTBR3X87MKA12399': { year: '2021', make: 'RAM', model: '2500' },
-      '54DC4W1B5KS800000': { year: '2019', make: 'RAM', model: 'PROMASTER' } },
+    decodes: { '1FTBR3X89MKA12346': { year: '2019', make: 'RAM', model: '1500' }, '1FTBR3X86MKA12398': { year: '2021', make: 'RAM', model: '2500' },
+      '54DC4W1B0KS800000': { year: '2019', make: 'RAM', model: 'PROMASTER' } },
     cities: { 68102: 'OMAHA' },
     options: { radio: params.get('radio') ?? 'attribute', delay, ssn: params.get('ssn') !== '0', plans: params.get('plans') ?? 'all' },
   });

@@ -49,7 +49,7 @@ test('text inputs carry no value but the synthetic prefills', () => {
     assert.notEqual(type, 'hidden', `a hidden input survived: ${attrOf(tag, 'id')}`);
     const value = attrOf(tag, 'value');
     if (value == null) continue;
-    const stem = String(attrOf(tag, 'name') ?? attrOf(tag, 'id')).match(/^Id_([A-Za-z][A-Za-z0-9]*)_\d+/)?.[1];
+    const stem = String(attrOf(tag, 'name') ?? attrOf(tag, 'id')).match(/^Id_([A-Za-z][A-Za-z0-9]*)_(?:Applicant_)?\d+/)?.[1];
     assert.equal(value, PREFILLS[stem], `${stem ?? attrOf(tag, 'id')} keeps a value`);
   }
 });

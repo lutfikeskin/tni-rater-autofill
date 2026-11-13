@@ -5,7 +5,7 @@
 import { GENERIC_RULES } from './rules.js';
 import { stepResolution } from './resolution.js';
 import { fieldInfo } from './schema.js';
-import { toDate, toMoney, toPhone } from './normalize.js';
+import { toDate, toMoney, toPhone, vinUnreadable } from './normalize.js';
 import { get, listOf } from './util.js';
 
 /** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, ListCondition, PlanOptions, PlanStep, StepOverlay } from '../types.js' */
@@ -216,9 +216,14 @@ const UNREADABLE = {
   money: (v) => (Number.isFinite(v) || toMoney(v) != null ? null : 'a dollar amount'),
   phone: (v) => (toPhone(v) ? null : 'a 10-digit US phone number'),
 };
-/** @param {any} kind  the schema kind of the field (fieldInfo) @param {any} value @returns {string | null} what the value should be, when it is not that */
-function unreadable(kind, value) {
+// A VIN, a text field, held the same way when it isn't one (W48-02: an 18-character VIN was typed
+// into Progressive's 17-character box and refused): the intake's vin.invalid check, its reason
+// quoted. Read as normalizeIntake reads it, so a valid VIN written with spaces or dashes fills.
+const isVin = (path) => /^(vehicles|trailers)\[\d+\]\.vin$/.test(path ?? '');
+/** @param {any} kind  the schema kind of the field (fieldInfo) @param {any} value @param {string | null} path  the record path it was read from @returns {string | null} what the value should be, when it is not that */
+function unreadable(kind, value, path) {
   if (value === null || value === undefined || value === '') return null;
+  if (isVin(path)) return vinUnreadable(value);
   return UNREADABLE[kind]?.(value) ?? null;
 }
 
@@ -314,8 +319,10 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
     const verifyOnly = typeof rule.verifyOnly === 'function' ? !!rule.verifyOnly(record, active) : !!rule.verifyOnly;
     // An intake value its field can't hold (UNREADABLE above) is the agent's, never filled. A step
     // that only checks the page against it, or leaves the page's answer, is left as it is.
-    const unreadableAs = source === 'intake' && !rule.value && !note && !ignore && !verifyOnly ? unreadable(info.kind, value) : null;
-    const unreadableNote = unreadableAs ? `${name}: the intake says "${value}", which isn't ${unreadableAs}. Answer it yourself.` : null;
+    const unreadableAs = source === 'intake' && !rule.value && !note && !ignore && !verifyOnly ? unreadable(info.kind, value, rule.path ? path : null) : null;
+    const unreadableNote = !unreadableAs ? null : isVin(rule.path ? path : null)
+      ? `${name}: the intake's VIN "${value}" ${unreadableAs}, so it isn't typed. Correct it in client details, or type the right VIN yourself.`
+      : `${name}: the intake says "${value}", which isn't ${unreadableAs}. Answer it yourself.`;
     if (unreadableAs) value = null;
     // A derived answer's evidence: the intake facts its rule read (the panel shows them on the PDF).
     const from = source === 'derived' && rule.value && value != null && value !== '' ? readsOf(rule.value, record, active, value) : null;

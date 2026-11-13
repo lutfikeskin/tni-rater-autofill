@@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { useAnnounce } from './announce.js';
 
 // Two tabs: the intake, and the page in front (its fill, then what is left on it for the agent).
 // Not a wizard: the page tab is one view, and the header's "Stage n of m" is the quote's place (audit
@@ -80,6 +81,8 @@ function Dock({ act }) {
   const d = useStore(panelStore, (s) => s.dock);
   const dock = useRef(null);
   const focused = useRef(false);
+  const pausedLine = useRef(null);
+  useAnnounce(d?.paused, pausedLine);
   // Focus that went anywhere outside the dock (the agent's, after the browser dropped it from Stop
   // once pressed) is no longer the dock's (review of #390).
   useEffect(() => {
@@ -107,7 +110,7 @@ function Dock({ act }) {
           <span id="dock-title" className="dock-title">{d?.title}</span>
           <span id="dock-sub" className="dock-sub" hidden={!d?.sub}>{d?.sub ?? ''}</span>
           {/* Automatic filling paused on this tab (renderDock's `paused`). */}
-          <span id="dock-paused" className="dock-paused" role="status" hidden={!d?.paused}>{d?.paused ?? ''}</span>
+          <span id="dock-paused" ref={pausedLine} className="dock-paused" hidden={!d?.paused}>{d?.paused ?? ''}</span>
         </div>
         {DOCK_BUTTONS.map(({ id, className, text, act: does }) => {
           const shown = !!d && d.button === id;

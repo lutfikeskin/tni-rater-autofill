@@ -58,7 +58,7 @@ function PdfSheet({ act }) {
           <div className="zoom">
             <button type="button" id="pdf-zoom-out" aria-label="Zoom out" disabled={!on('zoomOut')} onClick={() => act.zoomOut()}>−</button>
             {/* It shows the zoom, and sets it back to the page's width. */}
-            <button type="button" id="pdf-zoom-fit" title="Fit page" aria-label={zoom == null ? undefined : `Zoom ${zoom}%. Fit the page to the panel`} disabled={!on('fit')} onClick={() => act.fit()}>{zoom == null ? '' : `${zoom}%`}</button>
+            <button type="button" id="pdf-zoom-fit" title="Fit page" aria-label={zoom == null ? 'Fit page' : `Zoom ${zoom}%. Fit the page to the panel`} disabled={!on('fit')} onClick={() => act.fit()}>{zoom == null ? '' : `${zoom}%`}</button>
             <button type="button" id="pdf-zoom-in" aria-label="Zoom in" disabled={!on('zoomIn')} onClick={() => act.zoomIn()}>+</button>
           </div>
         </div>
