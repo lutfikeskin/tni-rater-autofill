@@ -35,7 +35,7 @@ git status --short          # no tracked changes before you start
   - a carrier option, plan step, report or event field not declared in `types.js`;
   - POSIX-only code (Windows is the main platform);
   - documents left stale;
-  - a panel view that breaks a rule in `docs/panel-ui.md` (a note that shows and hides with a live role of its own instead of `useAnnounce`);
+  - a panel view that breaks a rule in `docs/panel-ui.md` (a note that shows and hides with a live role of its own instead of `useAnnounce`, or something the agent needs said only in a `title`);
   - a test loosened, skipped or rewritten to mirror the change, or a baseline accepted (`npm run e2e -- --update`) without the changed pages explained;
   - lint turned off instead of fixed: a new `oxlint-disable` comment without `-- <why>` or with a reason that doesn't hold, or `.oxlintrc.json` rules weakened or files added to its `ignorePatterns`.
 

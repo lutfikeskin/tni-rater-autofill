@@ -46,3 +46,9 @@ A control the panel builds itself (a switch, a disclosure, and any tab list or m
 - A disclosure is a named button with `aria-expanded` `true` or `false` and an `aria-controls` that names a real element; Enter and Space open it and close it again. A button that only opens something (a second press asks again) isn't a disclosure: Clear log's `aria-expanded` is the one left out of the check for that.
 
 A new control of these kinds gets its `checkPattern` there, with its button's act given as the panel does it. A sheet's Tab and Escape are the panel's ([Over the panel](#over-the-panel)), so a view alone can't pass the dialog pattern.
+
+## Tooltips
+
+A `title` shows only to a mouse user who rests on the control: keyboard and touch users never see it (audit 2026-11-07, UX-10). So what an agent needs in order to decide goes in visible text: a switch's or checkbox's meaning under its name (Settings' Filling switches, the test-run mark `#test-run-about`, the developer's switch for your defaults `#defaults-dev-about`), a fold's purpose as its first line (`#defaults-about`, `#defaults-advanced-about`), a key as a line under its button (`#capture-key`, with `aria-keyshortcuts`). The control points at that line with `aria-describedby`, so a screen reader says it with the control.
+
+A `title` may stay where it repeats the control's name for a mouse user (an icon button's `aria-label`, as on the header's buttons and a sheet's Close) or adds a hint to a control whose name and visible text already say what it does (the client strip's tools, a row's Show on page and Mark done, the answer tags, which the answer key explains). A control's name never rests on its `title` alone: an icon button has its `aria-label` in every state (the PDF sheet's Fit page before the zoom is known included); `test/panel/control-names.test.jsx` asks for names with every `title` taken away.
