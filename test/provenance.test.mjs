@@ -127,7 +127,6 @@ const NOT_MAPPED = {
     'applicant.email': 'the optional customer email is deliberately left blank (TNI workflow)',
     'applicant.owner2': 'Progressive asks for one business owner',
     'applicant.yearsExperience': 'Progressive does not ask the years under own authority',
-    'operations.eldBrand': 'Progressive asks only whether an ELD is required',
     'operations.movingState': 'not asked by Progressive',
     'operations.teamDriving': 'on the intake since 2026-10-02; no Progressive question for it has been mapped',
     'operations.canadaLoads': 'on the intake since 2026-10; no Progressive question for it has been mapped',

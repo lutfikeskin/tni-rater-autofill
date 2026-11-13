@@ -200,6 +200,9 @@
  * @property {boolean} [matchStart]  a choice is an option reading as the answer or an alias, or beginning with
  *   it, never one that only mentions it further on (Progressive's business type lists: "<name> <description>",
  *   and "Auto Hauler (For Hire Trucking)" is not For Hire Trucking)
+ * @property {boolean} [matchName]  a choice is only the one option naming the same company as the answer, case,
+ *   punctuation, spacing, a closing company suffix (Inc, LLC) and a "(formerly …)" note aside; never a near name
+ *   or a fallback (Progressive's ELD vendors: "Garmin" is not "Garmin International")
  * @property {ClientValue<string | null>} [fallback]
  * @property {ClientValue<string | null>} [search]  what is typed to narrow a type-ahead list before the pick: a
  *   select2 list (`search-select`), or an ExtJS combo (Progressive's LA business description: "Trucking"), whose
@@ -454,6 +457,7 @@
  * @property {string | null} summaryAfter
  * @property {string[]} choiceAliases
  * @property {boolean} matchStart
+ * @property {boolean} matchName
  * @property {string | null} scope
  * @property {number | null | undefined} scopeIndex
  * @property {string[] | null} vehicleHint  the unit's year, make and model, which pick its row

@@ -162,6 +162,20 @@ const ARMED_FORCES_COURSE = { field: 'DriverInput.DefensiveDriverDiscount', labe
 // Progressive's telematics field asks about telematics devices or about dashcams (W45-01).
 const TELEMATICS_DEVICES = { field: 'TelematicsInput.MandatoryExistingDevices', label: 'telematics' };
 const DASHCAMS = { field: 'TelematicsInput.MandatoryExistingDevices', label: 'dashcam' };
+// Its vendor question, shown after a Yes there, asks for the telematics vendor or the ELD
+// provider, or for the dashcam vendor (W48-10).
+const ELD_VENDOR = { field: 'PolicyInput.ELDProvider', label: 'telematics vendor|electronic logging device|\\beld\\b' };
+const DASHCAM_VENDOR = { field: 'PolicyInput.ELDProvider', label: 'dashcam' };
+// TNI, 2026-11-13, W48-10: the vendor is the intake's ELD brand when Progressive lists that
+// vendor (the same name, case, punctuation, spacing and Inc / LLC aside: `matchName`); no brand, or
+// one Progressive doesn't list, is the agent's, with the brand quoted. Never Other, Undecided or a
+// near vendor on our own: an intake brand reading so is the agent's too.
+const eldBrand = (r) => String(r.operations?.eldBrand ?? '').trim() || null;
+const notAVendor = (brand) => /^(other|undecided|none|n ?a|unknown|not sure)\b/.test(String(brand).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim());
+const eldVendor = (r) => (eldBrand(r) && !notAVendor(eldBrand(r)) ? eldBrand(r) : null);
+const eldVendorNote = (r) => (!eldBrand(r) ? 'The intake gives no ELD brand: choose the customer\'s telematics vendor yourself.'
+  : eldVendor(r) ? null : `The intake's ELD brand is "${eldBrand(r)}", not a vendor to pick: choose the customer's telematics vendor yourself.`);
+const eldVendorUnoffered = (r) => `Progressive doesn't list the intake's ELD brand "${eldBrand(r)}": choose the customer's telematics vendor yourself (not Other or a similar name unless the client confirms it).`;
 const militaryCourse = (r) => (/\b(military|armed forces|army|navy|naval|air force|marines?|coast guard|national guard)\b/i.test(defensiveMention(r) ?? '') ? defensiveMention(r) : null);
 
 // A driver's accidents, claims or violations: the claims box's Yes or No. TNI (2026-10-19, after a
@@ -1001,6 +1015,13 @@ export const progressive = {
         note: (r) => (usesEld(r) == null ? 'The intake does not say whether the vehicles have an ELD: answer the telematics question yourself.' : null) },
       { concept: 'operations.dashcams', q: '13B', source: 'fact', field: 'TelematicsInput.MandatoryExistingDevices', whenShown: DASHCAMS, ask: 'Does the customer have dashcam(s) in their vehicle(s)?', name: 'Dashcams (the agent\'s)', kind: 'bool',
         note: 'Whether the vehicles have dashcams isn\'t on the intake (an ELD isn\'t a dashcam): answer it yourself.' },
+      // The vendor Progressive asks for after a Yes above (TNI, 2026-11-13, W48-10; agents' quotes
+      // on 0.9.31 and 0.9.40 held it as unknown and required): the intake's ELD brand when the list
+      // names that vendor, else the agent's. Asked about a dashcam, the agent's: an ELD isn't a dashcam.
+      { concept: 'operations.eld', q: '133', source: 'derived', clientFact: true, field: 'PolicyInput.ELDProvider', whenShown: ELD_VENDOR, ask: ['Please select the customer\'s telematics vendor.', 'Please select the customer\'s Electronic Logging Device (ELD) provider from the following list:'], name: 'Telematics vendor (the intake\'s ELD brand)', kind: 'choice', value: eldVendor, matchName: true,
+        note: eldVendorNote, unofferedNote: eldVendorUnoffered },
+      { concept: 'operations.dashcams', q: '13D', source: 'fact', field: 'PolicyInput.ELDProvider', whenShown: DASHCAM_VENDOR, ask: 'Please select the customer\'s dashcam vendor.', name: 'Dashcam vendor (the agent\'s)', kind: 'choice',
+        note: 'The dashcam vendor isn\'t on the intake (an ELD isn\'t a dashcam): choose it yourself.' },
       { concept: 'quote.agency', q: '135', source: 'fact', field: 'PolicyInput.SmartHaulEmail', ask: 'Email address provided:', name: 'Smart Haul email (the agent\'s own)', kind: 'text',
         note: 'Smart Haul asks for your own email address (Progressive tells you there when the savings apply), not the client\'s: type it yourself.' },
       // The commitments Progressive asks for when it offers no Snapshot Pro (TNI, 2026-11-06, W47-02;

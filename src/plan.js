@@ -434,6 +434,9 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       // The option must read as the answer (or an alias) or begin with it; one only mentioning it
       // further on is never picked (Progressive's business type lists: "Auto Hauler (For Hire Trucking)").
       matchStart: !!rule.matchStart,
+      // The option must name the same company as the answer, case, punctuation, spacing and a company
+      // suffix aside; never a near one or a fallback (Progressive's ELD vendors, W48-10).
+      matchName: !!rule.matchName,
       scope,
       scopeIndex,
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
