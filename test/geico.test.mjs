@@ -376,6 +376,21 @@ test('a vehicle\'s form and a trailer\'s never answer each other\'s questions', 
   assert.deepEqual([type.value, type.source, type.note ?? null], ['Dry Freight Trailer', 'derived', null]);
 });
 
+// W48-05: the trailer form's make is a text box ("Make", GiveCustomMake), left unfamiliar; the
+// vehicle form's make is a list (GiveMake), the vehicle's.
+test('trailer make: the trailer form\'s Make box takes this trailer\'s make, never on the vehicle form', () => {
+  const r = { ...RECORDS()[1] };
+  r.trailers = [r.trailers[0], { ...r.trailers[0], make: 'UTILITY' }];
+  const custom = (active) => plan(r, active).find((x) => x.field === 'GiveCustomMake');
+  const first = custom({ vehicles: 0, trailers: 0, drivers: 0 });
+  assert.ok(first?.value, 'the fixture\'s trailer has a make');
+  assert.deepEqual([first.value, first.path, first.source, first.whenShown], [r.trailers[0].make, 'trailers[0].make', 'intake', { field: 'GiveOtherVehicleType', label: '\\btrailer\\b', unit: 'trailers' }]);
+  assert.equal(custom({ vehicles: 0, trailers: 1, drivers: 0 }).value, 'UTILITY', 'the second trailer gets its own make');
+  assert.deepEqual(geico.rules.filter((x) => x.field === 'GiveCustomMake').map((x) => x.whenShown?.unit), ['trailers'], 'the vehicle form\'s make is never this rule\'s');
+  const vehicleMake = one(plan(r, { vehicles: 0, trailers: 0, drivers: 0 }), 'Vehicle make');
+  assert.deepEqual([vehicleMake.field, vehicleMake.path, vehicleMake.whenShown.unit], ['GiveMake', 'vehicles[0].make', 'vehicles']);
+});
+
 // The maintainer, 2026-11-09 (a GEICO recording: the trailer type went to the AI assistant, which
 // cited the interchange rule): the trailer form's type is the intake's trailer type by GEICO's name,
 // as for the interchange card; a type GEICO has no name for, or none, is the agent's pick.

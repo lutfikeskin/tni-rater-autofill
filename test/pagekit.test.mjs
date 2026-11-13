@@ -3570,6 +3570,23 @@ const choiceSelect = (h, id, texts, value = '') => {
   return select;
 };
 
+// W48-05: Progressive's Add Trailer Make list without the intake's make is the agent's, with the
+// rule's note, and Not Listed is never picked for them; a listed make is still picked.
+test('a trailer make the list lacks is the agent\'s with its note, never Not Listed; a listed one is picked', async () => {
+  const rule = progressive.rules.find((r) => r.field === 'RiskInput.MakeCode');
+  const step = (value) => ({ id: 'make', selector: '#make', path: 'trailers[0].make', name: 'Make', kind: 'choice', value, unofferedNote: rule.unofferedNote });
+  const h = harness();
+  const select = choiceSelect(h, 'make', ['Great Dane', 'Wabash', 'Not Listed']);
+  const report = await h.kit.fill([step('ACME TRAILERWORKS')], { maxRounds: 3 });
+  assert.equal(select.value, '', 'Not Listed stays the agent\'s pick');
+  assert.deepEqual([report.failed.length, report.filled.length], [0, 0]);
+  assert.deepEqual(plain(report.noData.map((x) => [x.note, x.manualOnly])), [[rule.unofferedNote, true]]);
+  const listed = harness();
+  const wabash = choiceSelect(listed, 'make', ['Great Dane', 'Wabash', 'Not Listed']);
+  assert.equal((await listed.kit.fill([step('WABASH')], { maxRounds: 3 })).filled.length, 1);
+  assert.equal(wabash.value, 'Wabash');
+});
+
 test('a yes/no answer never takes an option only beginning with the word: "No" is not "Not sure", "None" or "Not applicable"', async () => {
   for (const other of ['Not sure', 'None', 'Not applicable']) {
     const h = harness();
