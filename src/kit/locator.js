@@ -352,6 +352,17 @@ export function createLocator(kit) {
 
   const businessNameKey = (text) => squash(String(text).replace(/\((?:US)?DOT[^)]*\)/ig, ''));
 
+  // A company's name as `matchName` compares it: case, punctuation and spacing aside, without a
+  // closing company suffix (Inc, LLC, Corp, Co, Ltd) or a note of its former name ("Motive
+  // (formerly KeepTruckin)" is Motive; KeepTruckin alone is not). "E Z Logz" is "EZLogz",
+  // "Omnitracs, LLC" is "Omnitracs".
+  const COMPANY_SUFFIX = / (?:inc|incorporated|llc|l l c|corp|corporation|co|company|ltd|limited)$/;
+  function companyKey(text) {
+    let s = squash(String(text ?? '').replace(/\(\s*formerly\b[^)]*\)/ig, ' '));
+    while (COMPANY_SUFFIX.test(s)) s = s.replace(COMPANY_SUFFIX, '');
+    return s.replace(/ /g, '');
+  }
+
   // Registered business names that read the same once normalised count once (the lookup can
   // list one name twice).
   function uniqueBusinessNames(options) {
@@ -416,6 +427,13 @@ export function createLocator(kit) {
     // Unless that first choice is no answer (`firstNot`): then none, and the question is the agent's.
     if (step.kind === 'first-option') return step.firstNot && usable[0] && ruleRegex(step.firstNot).test(usable[0].text) ? null : got(usable[0], 'first-option');
     const cands = candidates(step);
+    // `matchName`: only the one option naming the same company (`companyKey`), never a near one or
+    // a fallback ("Garmin" is not "Garmin International"; Progressive's ELD vendors, W48-10).
+    if (step.matchName) {
+      const key = companyKey(step.value);
+      const hits = key ? usable.filter((o) => companyKey(o.text) === key) : [];
+      return hits.length === 1 ? got(hits[0], 'exact') : null;
+    }
     // `matchStart`: the answer, else each alias in turn, as an option reading so or beginning so
     // (Progressive's business type lists: "General Freight Trucking Haul general goods…"); never one
     // only mentioning it further on ("Auto Hauler (For Hire Trucking)" is not For Hire Trucking).

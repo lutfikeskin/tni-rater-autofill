@@ -4882,6 +4882,60 @@ test('More About Business: telematics from the ELD box, Snapshot Pro, dashcams a
   }
 });
 
+// TNI, 2026-11-13, W48-10 (agents' quotes on 0.9.31 and 0.9.40: Progressive's vendor question after
+// the telematics Yes was unfamiliar and required): the intake's ELD brand when the list names that
+// vendor (case, punctuation, spacing and Inc / LLC aside), else the agent's with the brand quoted;
+// never Other, Undecided or a near name. Asked about a dashcam, the agent's.
+const TELEMATICS_VENDORS = ['Geotab', 'Samsara', 'Undecided (Participating Dashcam)', 'Big Road', 'Blue Ink Tech (BIT)', 'EZLogz', 'ELD Mandate', 'Garmin International',
+  'J.J. Keller & Associates', 'Linxup', 'Motive', 'Omnitracs, LLC', 'Rand McNally', 'SmartDrive', 'Transflo', 'Truck X', 'Trucker Path', 'T-Mobile', 'Verizon Connect', 'Verizon Connect - Fleetmatics', 'Other'];
+const ELD_PROVIDERS = ['Motive (formerly KeepTruckin)', 'Geotab', 'Omnitracs, LLC', 'Big Road', 'Blue Ink Tech (BIT)', 'E Z Logz', 'ELD Mandate', 'Garmin International', 'J.J. Keller & Associates',
+  'Linxup', 'Rand McNally', 'Samsara', 'SmartDrive', 'Transflo', 'Truck X', 'Trucker Path', 'T-Mobile', 'Verizon Connect', 'Verizon Connect - Fleetmatics', 'Other'];
+async function fillVendor({ eldBrand, caption = 'Please select the customer\'s telematics vendor.', options = TELEMATICS_VENDORS, shown = true }) {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter', usesEld: true, eldBrand }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+  const plan = buildPlan(record, progressive).filter((s) => s.field === 'PolicyInput.ELDProvider');
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  const vendor = shown ? addExtText(h, 'v', '133', { caption, ref: 'PolicyInput.ELDProvider', required: true }) : null;
+  if (vendor) Object.assign(vendor.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => options.map((label) => ({ get: () => label })) } });
+  const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+  return { picked: vendor?.cmp.getValue() ?? null, report, needs: report.noData.map((x) => x.note).join(' ') };
+}
+
+test('Progressive More About Business: the telematics vendor is the intake\'s ELD brand when listed, else the agent\'s with the brand quoted (W48-10)', async () => {
+  for (const [eldBrand, picked, options, caption] of [
+    ['Motive', 'Motive'], ['samsara', 'Samsara'], ['Omnitracs', 'Omnitracs, LLC'], ['Geotab Inc.', 'Geotab'], ['BigRoad', 'Big Road'], ['Verizon Connect', 'Verizon Connect'],
+    // Progressive's ELD-provider wording of the same question, and its list's names.
+    ['Motive', 'Motive (formerly KeepTruckin)', ELD_PROVIDERS, 'Please select the customer\'s Electronic Logging Device (ELD) provider from the following list:'],
+    ['EZLogz', 'E Z Logz', ELD_PROVIDERS, 'Please select the customer\'s Electronic Logging Device (ELD) provider from the following list:'],
+  ]) {
+    const r = await fillVendor({ eldBrand, options, caption });
+    assert.equal(r.picked, picked, eldBrand);
+    assert.deepEqual([r.report.filled.length, r.report.noData.length, r.report.unknown.length, r.report.checks.length], [1, 0, 0, 0], eldBrand);
+  }
+  // Not listed by that name (a near name, a former name, a misspelling): the agent's, the brand quoted, nothing picked.
+  for (const eldBrand of ['Garmin', 'KeepTruckin', 'Verizon', 'JJ Keller', 'Samsara ELD', 'Acme Logs']) {
+    const r = await fillVendor({ eldBrand });
+    assert.equal(r.picked, '', eldBrand);
+    assert.match(r.needs, new RegExp(`doesn't list the intake's ELD brand "${eldBrand}"`), eldBrand);
+    assert.deepEqual([r.report.filled.length, r.report.unknown.length], [0, 0], eldBrand);
+    assert.ok(r.report.noData.every((x) => x.manualOnly), eldBrand);
+  }
+  // No brand, or one that names no vendor: never Other or Undecided on our own.
+  for (const [eldBrand, note] of [[null, /no ELD brand/], ['Other', /ELD brand is "Other"/], ['Undecided', /ELD brand is "Undecided"/]]) {
+    const r = await fillVendor({ eldBrand });
+    assert.equal(r.picked, '', String(eldBrand));
+    assert.match(r.needs, note, String(eldBrand));
+    assert.deepEqual([r.report.filled.length, r.report.unknown.length], [0, 0], String(eldBrand));
+  }
+  // Asked about a dashcam: the agent's, even with the intake's ELD brand listed.
+  const dashcam = await fillVendor({ eldBrand: 'Motive', caption: 'Please select the customer\'s dashcam vendor.' });
+  assert.equal(dashcam.picked, '');
+  assert.match(dashcam.needs, /dashcam vendor/);
+  assert.deepEqual([dashcam.report.filled.length, dashcam.report.unknown.length], [0, 0]);
+  // The telematics question answered No: no vendor question, nothing flagged.
+  const none = await fillVendor({ eldBrand: 'Motive', shown: false });
+  assert.deepEqual([none.report.filled.length, none.report.noData.length, none.report.unknown.length, none.report.leftRequired.length, none.report.checks.length], [0, 0, 0, 0, 0]);
+});
+
 // KY live run, 2026-10-26 (W44-32): Progressive asked the defensive driver discount about an Armed
 // Forces course, with No pre-selected; the fill kept it but held Continue on a reworded check, and the
 // agent confirmed No. That wording is now one of the rule's: TNI's No, no check.

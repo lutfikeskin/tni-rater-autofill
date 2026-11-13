@@ -1715,6 +1715,37 @@ test('Progressive More About Business: dashcam / device commitments and the cons
   }
 });
 
+// TNI, 2026-11-13, W48-10 (agents' quotes on 0.9.31 and 0.9.40 held Progressive's vendor question
+// as unknown and required): the vendor is the intake's ELD brand when Progressive lists that vendor
+// (`matchName`: the same name, case, punctuation and Inc / LLC aside), else the agent's with the brand
+// quoted; never Other, Undecided or a near name on our own. The dashcam vendor is the agent's.
+test('Progressive More About Business: the telematics vendor from the intake\'s ELD brand, else the agent\'s (W48-10)', () => {
+  const plan = (eldBrand) => buildPlan({ ...baseRecord(), operations: { ...baseRecord().operations, usesEld: true, eldBrand } }, progressive, {});
+  const ELD_VENDOR = { field: 'PolicyInput.ELDProvider', label: 'telematics vendor|electronic logging device|\\beld\\b', unit: null };
+  const DASHCAM_VENDOR = { field: 'PolicyInput.ELDProvider', label: 'dashcam', unit: null };
+  for (const [eldBrand, value, note] of [['Motive', 'Motive', null], ['  Samsara ', 'Samsara', null], [null, null, /no ELD brand/], ['', null, /no ELD brand/],
+    ['Other', null, /"Other", not a vendor/], ['Undecided', null, /"Undecided", not a vendor/], ['N/A', null, /"N\/A", not a vendor/]]) {
+    const p = plan(eldBrand);
+    const vendor = byQ(p, '133');
+    assert.deepEqual([vendor.field, vendor.concept, vendor.whenShown, vendor.source, vendor.kind, vendor.matchName, vendor.matchStart, vendor.value],
+      ['PolicyInput.ELDProvider', 'operations.eld', ELD_VENDOR, 'derived', 'choice', true, false, value], String(eldBrand));
+    if (note) assert.match(vendor.note, note, String(eldBrand)); else assert.equal(vendor.note, null, String(eldBrand));
+    // Left blank: the agent's alone, never the AI assistant's (a client fact).
+    assert.equal(vendor.manualOnly, value === null, String(eldBrand));
+    if (value) assert.match(vendor.unofferedNote, new RegExp(`doesn't list the intake's ELD brand "${value}"`));
+    const dashcam = byQ(p, '13D');
+    assert.deepEqual([dashcam.field, dashcam.concept, dashcam.whenShown, dashcam.source, dashcam.value, dashcam.manualOnly], ['PolicyInput.ELDProvider', 'operations.dashcams', DASHCAM_VENDOR, 'fact', null, true], String(eldBrand));
+  }
+  // Each wording finds only its own rule.
+  const label = (q) => new RegExp(byQ(plan('Motive'), q).whenShown.label, 'i');
+  for (const caption of ['Please select the customer\'s telematics vendor.', 'Please select the customer\'s Electronic Logging Device (ELD) provider from the following list:']) {
+    assert.ok(label('133').test(caption) && !label('13D').test(caption), caption);
+  }
+  assert.ok(label('13D').test('Please select the customer\'s dashcam vendor.') && !label('133').test('Please select the customer\'s dashcam vendor.'));
+  // Who answers the telematics question itself is unchanged (W45-01).
+  assert.equal(byQ(plan('Motive'), '117').value, true);
+});
+
 // TNI, 2026-10-26, W44-32 (KY live run: Progressive's anti-theft list was unfamiliar and required,
 // with nothing selected, and the agent picked None; the maintainer: "If not selected automatically,
 // no"): the anti-theft device is Progressive's own choice (the VIN lookup's) when it made one, and
