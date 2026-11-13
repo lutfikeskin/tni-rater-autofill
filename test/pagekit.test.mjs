@@ -1565,10 +1565,10 @@ test('the trailer page gets the trailer\'s answers and the vehicle page the vehi
   const record = {
     applicant: {}, garaging: { street: '1 Test Way', city: 'Testville', state: 'TN', zip: '37000' },
     operations: { businessClass: 'Freight Hauler', radius: 'Unlimited' }, drivers: [], priorInsurance: [], coverage: {}, claims: {},
-    vehicles: [{ type: 'Semi Truck', year: 2013, make: 'PETERBILT', model: '388', vin: '1XPWD40X1DD000001', value: 60000 }],
-    trailers: [{ type: 'Flatbed', year: 2019, make: 'WILSON', vin: '1W1MAFZB0KA000002', value: 45000 }], trailerInfo: {},
+    vehicles: [{ type: 'Semi Truck', year: 2013, make: 'PETERBILT', model: '388', vin: '1XPWD40X0DD000001', value: 60000 }],
+    trailers: [{ type: 'Flatbed', year: 2019, make: 'WILSON', vin: '1W1MAFZB1KA000002', value: 45000 }], trailerInfo: {},
   };
-  for (const [page, vin, value] of [['AddTrailer', '1W1MAFZB0KA000002', '45000'], ['AddVehicle', '1XPWD40X1DD000001', '60000']]) {
+  for (const [page, vin, value] of [['AddTrailer', '1W1MAFZB1KA000002', '45000'], ['AddVehicle', '1XPWD40X0DD000001', '60000']]) {
     const h = harness({ ext: true, search: `?pageName=${page}` });
     const box = addExtText(h, 'c', page === 'AddTrailer' ? '2A29' : '2B20', { caption: page === 'AddTrailer' ? 'VIN' : 'Vehicle Identification Number (VIN)', ref: 'RiskInput.VIN', row: '8_3' });
     const worth = addExtText(h, 'c', page === 'AddTrailer' ? '2B04' : '2CE8', { ref: 'RiskInput.NonPAValue', row: '8_3',
@@ -1826,7 +1826,7 @@ test('a data-model name fenced off this page does not keep a text rule from its 
 // and an intake ZIP still fills (or is flagged when the page says another).
 test('vehicle ZIP: Progressive\'s own ZIP is left when the intake has none; empty at the end stays the agent\'s', async () => {
   const zipRun = async (intakeZip, pageZip, { page = 'AddVehicle', caption = 'Zip code where the vehicle is located', vinSets } = {}) => {
-    const record = { applicant: { name: 'Sample Test LLC' }, garaging: { zip: intakeZip }, operations: {}, drivers: [], vehicles: [{ vin: '1FTBW3XM5HKA00001', type: 'Van' }], trailers: [{ vin: '1GRAA0621FB000001', type: 'Dry Van' }], priorInsurance: [], coverage: {}, claims: {} };
+    const record = { applicant: { name: 'Sample Test LLC' }, garaging: { zip: intakeZip }, operations: {}, drivers: [], vehicles: [{ vin: '1FTBW3XM9HKA00001', type: 'Van' }], trailers: [{ vin: '1GRAA0624FB000001', type: 'Dry Van' }], priorInsurance: [], coverage: {}, claims: {} };
     const h = harness({ ext: true, search: `?pageName=${page}` });
     const zip = addExtText(h, 'c', '2C02', { caption, ref: 'RiskInput.PrimaryZIP', required: true, value: pageZip });
     zip.input.value = pageZip;
@@ -3570,6 +3570,23 @@ const choiceSelect = (h, id, texts, value = '') => {
   return select;
 };
 
+// W48-05: Progressive's Add Trailer Make list without the intake's make is the agent's, with the
+// rule's note, and Not Listed is never picked for them; a listed make is still picked.
+test('a trailer make the list lacks is the agent\'s with its note, never Not Listed; a listed one is picked', async () => {
+  const rule = progressive.rules.find((r) => r.field === 'RiskInput.MakeCode');
+  const step = (value) => ({ id: 'make', selector: '#make', path: 'trailers[0].make', name: 'Make', kind: 'choice', value, unofferedNote: rule.unofferedNote });
+  const h = harness();
+  const select = choiceSelect(h, 'make', ['Great Dane', 'Wabash', 'Not Listed']);
+  const report = await h.kit.fill([step('ACME TRAILERWORKS')], { maxRounds: 3 });
+  assert.equal(select.value, '', 'Not Listed stays the agent\'s pick');
+  assert.deepEqual([report.failed.length, report.filled.length], [0, 0]);
+  assert.deepEqual(plain(report.noData.map((x) => [x.note, x.manualOnly])), [[rule.unofferedNote, true]]);
+  const listed = harness();
+  const wabash = choiceSelect(listed, 'make', ['Great Dane', 'Wabash', 'Not Listed']);
+  assert.equal((await listed.kit.fill([step('WABASH')], { maxRounds: 3 })).filled.length, 1);
+  assert.equal(wabash.value, 'Wabash');
+});
+
 test('a yes/no answer never takes an option only beginning with the word: "No" is not "Not sure", "None" or "Not applicable"', async () => {
   for (const other of ['Not sure', 'None', 'Not applicable']) {
     const h = harness();
@@ -4923,6 +4940,39 @@ test('a civilian defensive driving course in the notes: the Armed Forces wording
   assert.match(military.theirs, /Army defensive driving course/);
 });
 
+// W48-04 (0.9.40, 2 quotes): with "accidents, claims or violations?" Yes, Add Driver draws a row per
+// incident (its date, DateOfIncidentDup while the row is new and DateOfIncident once Progressive took
+// one, and the incident type). They were unfamiliar questions. They are the client's facts: the
+// agent's, each with a note quoting the claims box's notes, never filled from them.
+test('Progressive\'s incident rows on Add Driver are the agent\'s facts, never filled from the claims notes (W48-04)', async () => {
+  const record = (claims) => ({ applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims });
+  const fillRows = async (claims, rows) => {
+    const h = harness({ ext: true, search: '?pageName=AddDriver' });
+    // As the live page draws them (usage log, 0.9.40): the data-model name and the question.
+    const LIVE = { '29C3': ['AccidentsViolationsInput.DateOfIncidentDup', 'Date of Incident'], '29C5': ['AccidentsViolationsInput.DateOfIncident', 'Date of Incident'], '29C7': ['AccidentsViolationsInput.IncidentInput', 'Incident'] };
+    const fields = rows.map(([q, row, value = '']) => addExtText(h, 'd', q, { row, value, required: true, ref: LIVE[q][0], caption: LIVE[q][1] }));
+    const report = await h.kit.fill(buildPlan(record(claims), progressive), { maxRounds: 3 });
+    const incident = (list) => list.filter((x) => /^29C/.test(x.q ?? ''));
+    return { report, fields, unknown: incident(report.unknown), filled: incident(report.filled), left: incident(report.noData) };
+  };
+  // A first row the agent dated and typed, and a new second row.
+  const claims = { hasClaims: true, notes: 'Rear-ended on 3/2/2024; speeding ticket 2025' };
+  const two = await fillRows(claims, [['29C5', '6_1', '03/02/2024'], ['29C7', '6_1', 'Accident - Not At Fault'], ['29C3', '6_2'], ['29C7', '6_2']]);
+  assert.deepEqual(plain(two.unknown), [], 'no incident row is unfamiliar');
+  assert.deepEqual(plain(two.filled), []);
+  assert.deepEqual(two.fields.map((f) => f.cmp.getValue()), ['03/02/2024', 'Accident - Not At Fault', '', ''], 'nothing typed from the claims notes');
+  assert.equal(two.left.length, 4, 'each row\'s date and type are the agent\'s');
+  assert.ok(two.left.every((x) => x.manualOnly && /Rear-ended on 3\/2\/2024; speeding ticket 2025/.test(x.note)), 'with the claims notes quoted');
+  assert.deepEqual(collectItems([two.report]).items.filter((x) => /^29C/.test(x.q ?? '')), [], 'never the AI\'s');
+  // A Yes without notes: still the agent's, said so.
+  const bare = await fillRows({ hasClaims: true, notes: null }, [['29C3', '6_1'], ['29C7', '6_1']]);
+  assert.deepEqual([bare.unknown.length, bare.filled.length, bare.left.length], [0, 0, 2]);
+  assert.match(bare.left[0].note, /claims box gives no details/);
+  // No claims: Progressive draws no rows, and nothing about incidents is left for the agent.
+  const none = await fillRows({ hasClaims: false, notes: null }, []);
+  assert.deepEqual([none.unknown.length, none.filled.length, none.left.length], [0, 0, 0]);
+});
+
 // KY live run, 2026-10-26 (W44-32): Progressive's anti-theft list (no caption of its own) was
 // unfamiliar and required, with nothing selected; the agent picked None. TNI: None when Progressive
 // hasn't selected one, and its own choice (the VIN lookup's) kept as it is, without a check, also with
@@ -5554,6 +5604,49 @@ test('AmWINS\' copy-to-another-product box after Submit is left as the page has 
   other.document.body.append(new SelectNode(['', 'Business Auto', 'Trucking'], { id: 'product-type', name: 'product-type', ariaLabel: 'Product', value: '' }));
   const unknown = (await other.kit.fill(buildPlan(record, amwins), { maxRounds: 2 })).unknown;
   assert.deepEqual(plain(unknown.map((x) => [x.label, x.key])), [['Product', 'product-type']]);
+});
+
+// W48-04 (0.9.31, 1 quote): "Any prior loss?" Yes shows Loss History (#lossHistroyPanel), a row per
+// loss with no labelled fields: date of occurrence, coverage type, description, date of claim,
+// amounts paid and reserved, subrogation and claim open. They were unfamiliar questions. They are
+// the client's facts: the agent's, each with a note quoting the claims box's notes, never filled.
+test('AmWINS\' Loss History rows are the agent\'s facts, never filled from the claims notes (W48-04)', async () => {
+  const lossRow = (n) => {
+    const row = new FakeNode('div', { className: 'app-rp-section', attrs: { 'data-id': String(n) } });
+    const yesNo = (id) => {
+      const table = new FakeNode('table', { attrs: { 'data-id': id } });
+      table.append(...[['1', 'Yes'], ['0', 'No']].map(([value], i) => makeInput({ type: 'radio', name: `${id}_${n}_`, id: `${id}_${n}_${i}_`, value })));
+      return table;
+    };
+    row.append(
+      makeInput({ attrs: { 'data-id': 'dateOfOccurrence' } }),
+      new SelectNode(['', 'GENERAL LIABILITY', 'PROPERTY', 'AUTOMOBILE', 'PACKAGE', 'UMBRELLA'], { attrs: { 'data-id': 'coverageType' } }),
+      makeInput({ attrs: { 'data-id': 'description' } }), makeInput({ attrs: { 'data-id': 'dateOfClaim' } }),
+      makeInput({ attrs: { 'data-id': 'amounthPaid' } }), makeInput({ attrs: { 'data-id': 'amountReserved' } }),
+      yesNo('subrogation'), yesNo('claimOpen'));
+    return row;
+  };
+  const fillLosses = async (claims, rows) => {
+    const h = harness({ adapter: 'amwins', pathname: '/application/businessauto' });
+    const panel = new FakeNode('div', { id: 'lossHistroyPanel' });
+    panel.append(...Array.from({ length: rows }, (_, n) => lossRow(n)));
+    if (rows) h.document.body.append(panel);
+    const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims };
+    const report = await h.kit.fill(buildPlan(record, amwins), { maxRounds: 2 });
+    return { report, filled: report.filled.length, left: report.noData };
+  };
+  const two = await fillLosses({ hasClaims: true, notes: 'Cargo claim 2024, $8,000 paid' }, 2);
+  assert.deepEqual(plain(two.report.unknown), [], 'no Loss History field is unfamiliar');
+  assert.equal(two.filled, 0, 'nothing filled from the claims notes');
+  assert.equal(two.left.length, 16, 'each row\'s eight fields are the agent\'s');
+  // The Yes / No groups, by their name read as words, as the live page reads them (0.9.31).
+  assert.deepEqual(plain(two.left.filter((x) => x.controlKind === 'radio').map((x) => [x.label, x.how])),
+    [['subrogation 0', 'label'], ['claim open 0', 'label'], ['subrogation 1', 'label'], ['claim open 1', 'label']]);
+  assert.ok(two.left.every((x) => x.manualOnly && /Cargo claim 2024, \$8,000 paid/.test(x.note)), 'with the claims notes quoted');
+  assert.deepEqual(collectItems([two.report]).items, [], 'never the AI\'s');
+  // No prior loss: the panel isn't shown, and nothing about losses is left for the agent.
+  const none = await fillLosses({ hasClaims: false, notes: null }, 0);
+  assert.deepEqual([none.report.unknown.length, none.filled, none.left.length], [0, 0, 0]);
 });
 
 // Codex on c31942e: a fact the intake doesn't give reaches the report as the agent's (manualOnly),
@@ -6202,6 +6295,17 @@ test('GEICO field keys: the data-model name without its render number, a filing 
   assert.equal(key(makeInput({ type: 'radio', name: 'Id_GiveVehicleOrTrailer_90210', id: 'Id_GiveVehicleOrTrailer_902100-shadow' })), 'ref:GiveVehicleOrTrailer');
   // Not GEICO's shape: its id, as before.
   for (const id of ['Id_GiveYear', 'Id_GiveYear_12_extra', 'id_GiveYear_12', 'Id_1Year_12']) assert.equal(key(makeInput({ id })), id);
+  // The owner's boxes on Business & Owner Info (2026-11-12, W48-01): _Applicant_ before the number
+  // is the same name. No other qualifier is, nor GEICO's containers (Id_Chip_Eligible_<n>).
+  const applicant = [
+    makeInput({ id: 'Id_GiveFirstName_Applicant_84175', name: 'Id_GiveFirstName_Applicant_84175' }),
+    makeInput({ id: 'Id_GiveDateOfBirth_Applicant_42748' }),
+    makeInput({ type: 'radio', id: 'Id_GiveOwnerYesNo_Applicant_123450-shadow' }),
+    makeInput({ id: 'Id_GiveSsn_Applicant_31337', name: 'Id_GiveSsn_Applicant_31337maskedField' }),
+    makeInput({ type: 'checkbox', id: 'checkbox-Id_AddFilings_Applicant_123-MCS90' }),
+  ];
+  assert.deepEqual(applicant.map(key), ['ref:GiveFirstName', 'ref:GiveDateOfBirth', 'ref:GiveOwnerYesNo', 'ref:GiveSsn', 'ref:AddFilings.MCS90']);
+  for (const id of ['Id_GiveFirstName_CoApplicant_84175', 'Id_GiveFirstName_Driver_84175', 'Id_GiveFirstName_Applicant', 'Id_GiveFirstName_Applicant_1_2', 'Id_Chip_Eligible_7']) assert.equal(key(makeInput({ id })), id);
   // Progressive's data-model names and AmWINS' rows are their own adapters', keyed as before there.
   assert.equal(harness({ progressive: true }).context.__raterFieldKey(makeInput({ id: `f_c${'A'.repeat(32)}22F_1_2`, attrs: { fieldref: 'RiskInput.VIN' } })), 'ref:RiskInput.VIN@2');
   assert.equal(harness({ adapter: 'amwins' }).context.__raterFieldKey(makeInput({ type: 'checkbox', name: 'medicalPaymentExclude', id: 'medicalPaymentExclude1_0_' })), 'medicalPaymentExclude#2');
@@ -7697,6 +7801,41 @@ test('GEICO steps: a rule kept to a step answers only there, a rule kept to none
   r = await run('Drivers & Incidents', 'GEICO Vehicles');
   assert.deepEqual([r.first, r.zip, r.report.stepKey, r.report.halted], ['', '', '', true]);
   assert.deepEqual(plain(r.report.filled), []);
+});
+
+// Live, 2026-11-12 (W48-01): Business & Owner Info drew the owner's boxes Id_GiveFirstName_Applicant_
+// <n>, Id_GiveLastName_Applicant_<n> and Id_GiveDateOfBirth_Applicant_<n>. Read as no name, all three
+// were unfamiliar ("page changed") and the agent typed them in 4 of 4 quotes.
+test('GEICO\'s owner boxes named _Applicant_ are the owner\'s rules\' on Business & Owner Info, a driver\'s box still the driver\'s (W48-01)', async () => {
+  const plan = [
+    { id: 'first', field: 'GiveFirstName', steps: ['Business & Owner Info'], path: 'applicant.firstName', name: 'Owner first name', kind: 'text', value: 'Pat' },
+    { id: 'last', field: 'GiveLastName', steps: ['Business & Owner Info'], path: 'applicant.lastName', name: 'Owner last name', kind: 'text', value: 'Lane' },
+    { id: 'dob', field: 'GiveDateOfBirth', steps: ['Business & Owner Info'], path: 'applicant.dob', name: 'Owner date of birth', kind: 'text', value: '01/02/1980' },
+    { id: 'driver', field: 'GiveFirstName', steps: ['Drivers & Incidents'], path: 'drivers[0].firstName', name: 'Driver first name', kind: 'text', value: 'Sam' },
+  ];
+  // The rules GEICO's carrier config gives these boxes on that step are the ones named here.
+  const owners = buildPlan(geicoRecord(), geico).filter((s) => s.steps?.includes('Business & Owner Info') && !s.whenShown && !s.unlessShown).map((s) => s.field);
+  for (const field of ['GiveFirstName', 'GiveLastName', 'GiveDateOfBirth']) assert.ok(owners.includes(field), field);
+  const run = async (step, boxes) => {
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    geicoBar(h, step);
+    const els = boxes.map(([id, label]) => makeInput({ id, name: id, ariaLabel: label }));
+    h.document.body.append(...els);
+    const report = await h.kit.fill(plan, { maxRounds: 6 });
+    return { values: els.map((el) => el.value), report };
+  };
+  let r = await run('Business & Owner Info', [['Id_GiveFirstName_Applicant_84175', 'Business Owner First Name'],
+    ['Id_GiveLastName_Applicant_87466', 'Business Owner Last Name'], ['Id_GiveDateOfBirth_Applicant_42748', 'Date of Birth']]);
+  assert.deepEqual(r.values, ['Pat', 'Lane', '01/02/1980']);
+  assert.deepEqual(plain(r.report.unknown), []);
+  assert.deepEqual(plain(r.report.filled.map((x) => x.key)).sort(), ['ref:GiveDateOfBirth', 'ref:GiveFirstName', 'ref:GiveLastName']);
+  // Another qualifier is no owner's box: unfamiliar, never filled with the owner's name.
+  r = await run('Business & Owner Info', [['Id_GiveFirstName_CoApplicant_84176', 'First Name']]);
+  assert.deepEqual(r.values, ['']);
+  assert.deepEqual(plain(r.report.unknown.map((x) => x.key)), ['Id_GiveFirstName_CoApplicant_84176']);
+  // A driver's own box on Drivers & Incidents is the driver's, as before.
+  r = await run('Drivers & Incidents', [['Id_GiveFirstName_59097', 'First Name']]);
+  assert.deepEqual(r.values, ['Sam']);
 });
 
 test('GEICO forms: a vehicle form\'s rules answer beside its own question, a trailer form\'s beside the trailer wording, a form showing neither neither', async () => {

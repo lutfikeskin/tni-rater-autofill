@@ -12,7 +12,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { quoteSessions } from './events.mjs';
-import { reportsOf } from './carrier-reports.mjs';
+import { carrierRefusal, reportsOf } from './carrier-reports.mjs';
 import { NEVER_ADVANCE } from '../../src/restricted.js';
 import { receivedAt } from './daily.mjs';
 import { defaultsInForce, isOwnDefault } from './agent-defaults.mjs';
@@ -145,9 +145,10 @@ export function quoteOutcomes(events, quotes) {
     // Only after this quote's own fill: the page the panel opens on may be the previous client's
     // confirmation, or an old quote the agent reopened.
     if (q.seenWork && (finalPage(e.carrier, page) || finalPage(e.carrier, e.page) || finalClick(e))) q.done = true;
-    // A stop page is the carrier's refusal (Progressive's DeclinationNotice); a stop step that is a
-    // final page (GEICO's) is the agent's part of a quote that got there.
-    if (e.type === 'fill_run' && !finalPage(e.carrier, page) && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
+    // Only the carrier's refusal (carrier-reports.mjs carrierRefusal: Progressive's DeclinationNotice,
+    // GEICO's referral); a stop step (GEICO's, a final page) is the agent's part of a quote that got
+    // there, and GEICO's Add USDOT Number screen waits on the agent's answer (W48-03).
+    if (e.type === 'fill_run' && (e.blockerList ?? []).some((b) => carrierRefusal(e.carrier, b))) q.declined = true;
     if (e.type === 'page_view' && loginPage(e) && q.seenWork) q.logins++;
     perQuote.set(k, q);
   }
@@ -537,7 +538,7 @@ export function markdown(s, { noTestList = false } = {}) {
   const k = s.kpis;
   L.push('## Weekly numbers', '', 'Per quote (a quote re-filled many times counts once). Track these week over week.', '', '| Number | Value |', '| --- | --- |',
     `| Quotes (on any carrier · per carrier) | ${k.quotes} · ${k.carrierQuotes} |`,
-    `| Quotes done (reached the carrier's final page or printed) | ${k.donePercent ?? '—'}% |`,
+    `| Quotes done (reached the carrier's final page or printed, GEICO's PrintQuote too) | ${k.donePercent ?? '—'}% |`,
     `| Median minutes for a done quote | ${k.medianMinutesDone ?? '—'} |`,
     `| Answers filled by the rules, per quote | ${k.filledPerQuote ?? '—'} |`,
     `| Autofilled answers the agent corrected, per 100 filled (another value or cleared; reformatted apart: ${k.reformatted}${k.correctedOwnDefault ? `; ${k.correctedOwnDefault} of them the agent's own default` : ''}) | ${k.correctedPer100Filled ?? '—'} (${k.corrected}) |`,
@@ -555,7 +556,7 @@ export function markdown(s, { noTestList = false } = {}) {
   for (const [carrier, f] of Object.entries(s.funnel)) {
     L.push(`**${carrier}** (${f.quotes} quotes)`, '', '| Page | Quotes |', '| --- | --- |', ...f.pages.map((p) => `| ${p.page} | ${p.quotes} |`), '');
   }
-  L.push('## How quotes ended', '', 'Per carrier a quote went to: done (its final page or Progressive\'s Print/Send, after the quote\'s own fill), declined by the carrier, or stopped at its last page (finished elsewhere, abandoned, or still open). A login in the middle means the carrier\'s session ran out.', '');
+  L.push('## How quotes ended', '', 'Per carrier a quote went to: done (its final page, Progressive\'s Print/Send or GEICO\'s printed quote, after the quote\'s own fill), declined by the carrier (its refusal: Progressive\'s declination, GEICO\'s referral), or stopped at its last page (finished elsewhere, abandoned, or still open). A login in the middle means the carrier\'s session ran out.', '');
   for (const [carrier, o] of Object.entries(s.outcomes)) {
     L.push(`**${carrier}**: ${o.quotes} quotes · ${o.done} done (median ${o.medianMinutesDone ?? '—'} min) · ${o.declined} declined · ${o.loginInterrupted} interrupted by a login`, '', ...(o.stopped.length ? o.stopped.map(([p, c]) => `- stopped at ${p}: ${c}`) : []), '');
   }

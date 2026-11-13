@@ -43,6 +43,7 @@ Done for a code change means the related tests passed, and the claim was proven 
 - A skill, doc, or asset-only change needs no local checks beyond the ones it touches; its PR's Checks still run.
 - Reproduce a fill or UI bug on the real page first. Prove the fix the same way.
 - For panel or page changes, exercise the flow in a real browser. A screenshot is not verification.
+- A new switch, disclosure, tab list or menu in a panel view gets a `checkPattern` in `test/panel/aria-patterns.test.jsx` ([Testing](../../../docs/testing.md)).
 - When they will live-test, give a loadable build from `npm run package`. State its version, the base commit, and whether it includes latest `main`.
 - If behavior, commands, or data that a document describes changed, update that document in the same PR.
 

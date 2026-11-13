@@ -24,7 +24,7 @@ function IssueCard({ tone, title, text, notes, sections = [], compare, actions, 
         <div className="issue-text">
           <span className="issue-title">{title}</span>
           {text ? <span>{text}</span> : null}
-          {notes.map((note, i) => <span key={i} className="small-note">{note}</span>)}
+          {notes.map((note, i) => <span key={`${i}:${note}`} className="small-note">{note}</span>)}
           {sections.map((s, i) => (
             <div key={`s${i}`} className="issue-section">
               {s.heading ? <span className="issue-section-head">{s.heading}</span> : null}
@@ -36,7 +36,7 @@ function IssueCard({ tone, title, text, notes, sections = [], compare, actions, 
       {compare.length ? <div className="compare">{compare.map(([k, v], i) => <span key={i}><span className="k">{`${k}:`}</span>{` ${v}`}</span>)}</div> : null}
       {actions.length ? (
         <div className="issue-actions">
-          {actions.map((a, i) => <button key={i} type="button" className={a.className} onClick={a.onClick}>{a.label}</button>)}
+          {actions.map((a) => <button key={a.label} type="button" className={a.className} onClick={a.onClick}>{a.label}</button>)}
         </div>
       ) : null}
     </div>

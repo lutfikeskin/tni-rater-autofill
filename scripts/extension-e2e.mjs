@@ -3,7 +3,7 @@
 // The real extension (dist/tni-rater-autofill, rebuilt by npm run package) in Chromium, its side
 // panel opened as a page, on the AmWINS mock (test/fixtures/amwins, served by npm run replay on
 // port 8792): loads the sample intake, clears one client fact in All client details (the sample
-// answers every AmWINS client fact), verifies the missing fact holds Save & Continue, supplies
+// answers every AmWINS client fact) and corrects its second vehicle's VIN there (W48-02), verifies the missing fact holds Save & Continue, supplies
 // explicit synthetic agent answers using trusted browser controls, then resumes from the panel.
 // Checks retained answers after reloads, stops at the declaration and never submits, and that the
 // panel's document never scrolled its header out of view on the way (W44-10).
@@ -268,6 +268,21 @@ try {
   }, CLEARED, { timeout: 5000, polling: 100 });
 } catch (error) {
   throw new Error(`The panel did not save the cleared ${CLEARED}.`, { cause: error });
+}
+// The sample intake's second VIN fails the check digit (its vin.invalid check), so the fill would
+// hold it for the agent (W48-02). Correct it here, as that step's note says: a VIN the agent typed
+// in client details fills and is looked up as usual.
+const [VIN_PATH, VIN_FIXED] = ['vehicles[1].vin', '1FTBR3X88MKA12399'];
+const vinBox = panel.locator(`#f-${VIN_PATH.replace(/[^\w]/g, '_')}`);
+await vinBox.fill(VIN_FIXED);
+await vinBox.press('Tab');
+try {
+  await panel.waitForFunction(async ([p, vin]) => {
+    const { intake } = await chrome.storage.session.get('intake');
+    return intake?.agentEdited?.includes(p) && intake.record.vehicles[1].vin === vin;
+  }, [VIN_PATH, VIN_FIXED], { timeout: 5000, polling: 100 });
+} catch (error) {
+  throw new Error(`The panel did not save the corrected ${VIN_PATH}.`, { cause: error });
 }
 await panel.click('#details-close');
 await panel.locator('#details-view').waitFor({ state: 'hidden' });

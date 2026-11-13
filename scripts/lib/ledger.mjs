@@ -470,13 +470,19 @@ const LEFT = ['unfamiliar', 'leftRequired', 'noData', 'failed'];
 // `redefined`: how a ledger's label says the number was counted under its new definition
 // (`current`), what changed, and `at`, when it changed, only for a row whose label lagged the count
 // (a ledger opened after `at` counted the new way under the old label); without `at` the label alone
-// decides. A ledger number counted under the old definition gets no trend (weeklyRows).
+// decides. A row redefined more than once lists each change, oldest first; a ledger number counted
+// before any of them gets no trend (weeklyRows), and the report names each change it missed.
 export const NUMBERS = [
   { label: 'Quotes (any carrier · per carrier)', match: /^Quotes \(/i, show: (k) => `${k.quotes} · ${k.carrierQuotes}`, n: (k) => k.quotes, better: 0 },
   // A printed Progressive quote is done since PR #108 (carrier-reports.mjs finalPage, finalClick; merged
-  // 2026-10-20 08:08 UTC); until then the row read "reached the carrier's final page".
-  { label: "Quotes done (reached the carrier's final page or printed)", match: /^Quotes done/i, show: (k) => (k.donePercent == null ? '—' : `${k.donePercent}%`), n: (k) => k.donePercent, better: 1,
-    redefined: { name: 'Quotes done', at: '2026-10-20T08:08:38Z', current: /\bprinted\b/i, change: 'a printed Progressive quote (Print/Send or its PDF) counts as done since 2026-10-20' } },
+  // 2026-10-20 08:08 UTC); until then the row read "reached the carrier's final page". GEICO's printed
+  // quote (/PrintQuote) is done since W48-03 (2026-11-13); until then the row read "… or printed",
+  // and the label changed with the count in one commit (no `at`).
+  { label: "Quotes done (reached the carrier's final page or printed, GEICO's PrintQuote too)", match: /^Quotes done/i, show: (k) => (k.donePercent == null ? '—' : `${k.donePercent}%`), n: (k) => k.donePercent, better: 1,
+    redefined: [
+      { name: 'Quotes done', at: '2026-10-20T08:08:38Z', current: /\bprinted\b/i, change: 'a printed Progressive quote (Print/Send or its PDF) counts as done since 2026-10-20' },
+      { name: 'Quotes done', current: /\bGEICO\b/i, change: "GEICO's printed quote proposal (/PrintQuote) counts as done since 2026-11-13 (W48-03)" },
+    ] },
   { label: 'Median minutes for a done quote', match: /^Median minutes/i, show: (k) => `${k.medianMinutesDone ?? '—'}`, n: (k) => k.medianMinutesDone, better: -1 },
   { label: 'Answers filled by the rules, per quote', match: /^Answers filled/i, show: (k) => `${k.filledPerQuote ?? '—'}`, n: (k) => k.filledPerQuote, better: 1 },
   // Each answer once per quote since W46-07 (PR #293); until then every change event counted. The label
@@ -520,9 +526,9 @@ export function weeklyRows(kpis, previous, { createdAt = null } = {}) {
     const now = row.n(kpis);
     // The ledger's label names the definition it was counted under, unless the row's label lagged its
     // count (`at`) and the issue was opened after the change (its label copied from an older report).
-    const lagged = row.redefined?.at && counted && counted >= row.redefined.at;
-    const old = !!row.redefined && label != null && !row.redefined.current.test(label) && !lagged;
-    if (old && before != null) redefined.push({ name: row.redefined.name, change: row.redefined.change });
+    const missed = label == null ? [] : [].concat(row.redefined ?? []).filter((d) => !d.current.test(label) && !(d.at && counted && counted >= d.at));
+    const old = missed.length > 0;
+    if (old && before != null) redefined.push({ name: missed[0].name, change: missed.map((d) => d.change).join('; and ') });
     let trend = '—';
     if (row.zero && now > 0) trend = 'must be 0';
     else if (now == null || before == null) trend = '—';

@@ -700,7 +700,7 @@ test('AmWINS: each intake trailer is a line of the disclosure text, not a vehicl
   record.coverage = { ...record.coverage, cargo: false };
   record.priorInsurance = [{ type: 'Commercial Auto', carrier: 'PROGRESSIVE', limit: '$1M CSL', expiration: '12/01/2026' }];
   record.trailers = [
-    { type: 'Dry Van', year: 2015, make: 'Great Dane', model: null, vin: '1GRAA0621FB700000', value: 25000 },
+    { type: 'Dry Van', year: 2015, make: 'Great Dane', model: null, vin: '1GRAA0627FB700000', value: 25000 },
     { type: 'Flatbed', year: null, make: null, model: null, vin: null, value: 12500 },
     // Codex on PR #58: a year or value the intake couldn't read stays text (flagged on Check intake).
     { type: 'Reefer', year: '20015', make: 'UTILITY', model: null, vin: null, value: 'about 25k' },
@@ -708,12 +708,12 @@ test('AmWINS: each intake trailer is a line of the disclosure text, not a vehicl
   const plan = buildPlan(record, amwins, {});
   assert.equal(plan.find((x) => /^Disclosure/.test(x.name ?? '')).value, [
     'More than 500 miles radius of operation',
-    'Trailer - 2015 Great Dane Dry Van - VIN 1GRAA0621FB700000 - $25K',
+    'Trailer - 2015 Great Dane Dry Van - VIN 1GRAA0627FB700000 - $25K',
     'Trailer - Flatbed - $12.5K',
     'Trailer - UTILITY Reefer',
     'POP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026',
   ].join('\n'));
-  assert.equal(plan.find((x) => x.selector === '#vehLookupVin').value.includes('1GRAA0621FB700000'), false, 'not looked up as a vehicle');
+  assert.equal(plan.find((x) => x.selector === '#vehLookupVin').value.includes('1GRAA0627FB700000'), false, 'not looked up as a vehicle');
   // A trailer row added by hand anyway gets nothing from the generic rules: they are kept out of
   // AmWINS' row sections (pagekit test "a generic label rule never answers inside a carrier row section").
   const generic = plan.filter((x) => x.path === 'vehicles[0].type' || x.path === 'operations.radius');
@@ -1577,8 +1577,8 @@ const trailerRecord = () => ({
   ...baseRecord(),
   garaging: { street: '1 Test Way', unit: null, city: 'Testville', state: 'TN', zip: '37000' },
   operations: { ...baseRecord().operations, businessClass: 'Freight Hauler', radius: 'Unlimited', radiusMiles: null },
-  vehicles: [{ type: 'Semi Truck', year: 2013, make: 'PETERBILT', model: '388', vin: '1XPWD40X1DD000001', value: 60000 }],
-  trailers: [{ type: 'Flatbed', year: 2019, make: 'WILSON', model: null, vin: '1W1MAFZB0KA000002', value: 45000 }],
+  vehicles: [{ type: 'Semi Truck', year: 2013, make: 'PETERBILT', model: '388', vin: '1XPWD40X0DD000001', value: 60000 }],
+  trailers: [{ type: 'Flatbed', year: 2019, make: 'WILSON', model: null, vin: '1W1MAFZB1KA000002', value: 45000 }],
   trailerInfo: { ownership: 'Financed' },
 });
 
@@ -1599,7 +1599,7 @@ test('trailers: Add Trailer once the vehicles are in, its tile, its page, and it
   // Add Trailer: the trailer's answers, found on that page only; the vehicle's never there.
   const step = (q) => plan.find((s) => s.q === q);
   assert.deepEqual(['2A29', '2A2A', '2A2B', '2A65', '2AD0', '2AEE', '2AFF', '2B04'].map((q) => step(q).value),
-    ['1W1MAFZB0KA000002', 2019, 'WILSON', 501, 'Yes - Loan', true, true, 45000]);
+    ['1W1MAFZB1KA000002', 2019, 'WILSON', 501, 'Yes - Loan', true, true, 45000]);
   assert.ok(['2A29', '2B04'].every((q) => step(q).pageOnly && step(q).pages.includes('AddTrailer')));
   assert.ok(step('2B20').notPages.includes('AddTrailer'), "the vehicle's VIN is never looked for on the trailer page");
   assert.ok(plan.find((s) => s.path === 'vehicles[0].vin' && s.re).notPages.includes('AddTrailer'));
@@ -1629,6 +1629,23 @@ test('trailers: Add Trailer once the vehicles are in, its tile, its page, and it
   const none = buildPlan({ ...record, trailers: [] }, progressive, {});
   assert.ok(!none.some((s) => /^(addTrailer|trailerTile):/.test(s.action ?? '') || /^TR/.test(s.q ?? '')));
   assert.equal(none.find((s) => s.q === '1FF2').vehicleHint, null, 'one vehicle, no trailer: its row needs no name');
+});
+
+// W48-05 (0.9.40, IA): a trailer make Progressive doesn't list failed "no option matches", and the
+// agent's Not Listed showed "Enter Trailer Make", left unfamiliar and required.
+test('trailers: an unlisted make is the agent\'s pick with a note, and Enter Trailer Make takes this trailer\'s make', () => {
+  const record = trailerRecord();
+  record.trailers.push({ type: 'Dry Van', year: 2020, make: 'HYUNDAI TRANSLEAD', model: null, vin: '3H3V532C0LT000003', value: 30000 });
+  const make = buildPlan(record, progressive, { trailers: 0 }).find((s) => s.field === 'RiskInput.MakeCode');
+  // The list is still looked through for the intake's make: never Not Listed chosen here.
+  assert.deepEqual([make.value, make.pages, make.pageOnly], ['WILSON', ['AddTrailer'], true]);
+  assert.match(make.unofferedNote, /doesn't list the intake's trailer make: pick it yourself.*Not Listed/);
+  const typed = (active) => buildPlan(record, progressive, active).find((s) => s.field === 'RiskInput.OtherMake');
+  assert.deepEqual([typed({ trailers: 0 })?.value, typed({ trailers: 0 })?.path, typed({ trailers: 0 })?.source], ['WILSON', 'trailers[0].make', 'intake']);
+  assert.equal(typed({ trailers: 1 }).value, 'HYUNDAI TRANSLEAD', 'the second trailer gets its own make');
+  // Found on Add Trailer only: never on Add Vehicle, which carries the same data-model names.
+  assert.deepEqual([typed({ trailers: 0 }).pages, typed({ trailers: 0 }).pageOnly], [['AddTrailer'], true]);
+  assert.ok(!progressive.rules.some((r) => r.field === 'RiskInput.OtherMake' && r.page !== 'AddTrailer'));
 });
 
 // TNI 2026-10-07: "Defensive driver ... default answer no, AI can check the Description box of the
@@ -1902,20 +1919,20 @@ test('FL / UT / SC questions of 2026-10-07', () => {
 test('AmWINS vehicle rows are found by their VIN (witness), not their position; drivers and coverages keep theirs', async () => {
   const { amwins } = await import('../src/carriers/amwins.js');
   const record = baseRecord();
-  record.vehicles.push({ type: 'Box Truck', year: 2019, make: 'ISUZU', model: 'NPR', vin: '54DC4W1B5KS800001', value: 45000 });
+  record.vehicles.push({ type: 'Box Truck', year: 2019, make: 'ISUZU', model: 'NPR', vin: '54DC4W1B2KS800001', value: 45000 });
   const plan = buildPlan(record, amwins, {});
   const bodies = plan.filter((s) => /^Body type/.test(s.name));
   assert.deepEqual(bodies.map((s) => s.selector), Array(2).fill('#vehiclesPanel .app-rp-section [data-id="bodyType"]'), 'no row index in the selector');
   assert.deepEqual(bodies.map((s) => s.witness), [
     { selector: '[data-id="vin"]', path: 'vehicles[0].vin', value: '1FTBR3X87MKA12345' },
-    { selector: '[data-id="vin"]', path: 'vehicles[1].vin', value: '54DC4W1B5KS800001' },
+    { selector: '[data-id="vin"]', path: 'vehicles[1].vin', value: '54DC4W1B2KS800001' },
   ]);
   const vins = plan.filter((s) => s.path.endsWith('.vin') && s.selector?.includes('vehiclesPanel'));
   assert.equal(vins.length, 2);
   assert.ok(vins.every((s) => s.trustPage && s.witness?.value === s.value), 'the VIN rule keeps the page\'s VIN on its matched row');
   const value = plan.find((s) => s.path === 'vehicles[1].value');
   assert.equal(value.selector, '#vehiclesPanel .app-rp-section [data-id="costNew"]');
-  assert.equal(value.witness.value, '54DC4W1B5KS800001');
+  assert.equal(value.witness.value, '54DC4W1B2KS800001');
   // The import is done once the rows changed. Rules without a witness have none.
   assert.equal(plan.find((s) => s.baseAction === 'importVinRecords').verify, 'revealed');
   assert.equal(plan.find((s) => s.selector === '#driversPanel [data-id="firstName"]').witness, null);
@@ -2231,7 +2248,7 @@ const interchangeLayout = () => JSON.parse(fs.readFileSync(new URL('./fixtures/p
 const interchangeRecord = () => {
   const record = baseRecord();
   record.garaging.state = 'FL';
-  record.trailers = [{ type: 'Dry Van', year: 2019, make: 'WABASH', model: 'Van', vin: '1JJV532D0KL000001', value: 20000 }];
+  record.trailers = [{ type: 'Dry Van', year: 2019, make: 'WABASH', model: 'Van', vin: '1JJV532D9KL000001', value: 20000 }];
   record.trailerInfo = { interchange: true, interchangeLimit: '$50,000' };
   return record;
 };

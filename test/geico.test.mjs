@@ -45,7 +45,7 @@ const with_ = (changes, r = intake()) => {
   return r;
 };
 const CASEY = { first: 'Casey', middle: null, last: 'Example', suffix: null, dob: '07/09/1995', licenseNumber: null, licenseState: 'IA', cdl: false, cdlYear: null, maritalStatus: 'Single', gender: null, excluded: null };
-const SECOND_VEHICLE = { type: 'Cargo Van', year: 2019, make: 'RAM', model: 'ProMaster', vin: '1FTBR3X80MKA12399', value: 30000 };
+const SECOND_VEHICLE = { type: 'Cargo Van', year: 2019, make: 'RAM', model: 'ProMaster', vin: '1FTBR3X88MKA12399', value: 30000 };
 const TRAILER = { type: 'Dry Van', year: 2015, make: 'WABASH', model: null, vin: null, value: 12000 };
 // A blank intake: nothing the rules could answer from.
 const blank = () => ({
@@ -374,6 +374,21 @@ test('a vehicle\'s form and a trailer\'s never answer each other\'s questions', 
   assert.deepEqual([one(p, 'Vehicle value without customizations', VEH).value, one(p, 'Trailer value without customizations').value], [30000, 12000]);
   const type = p.find((x) => x.q === 'GiveOtherVehicleType.trailer');
   assert.deepEqual([type.value, type.source, type.note ?? null], ['Dry Freight Trailer', 'derived', null]);
+});
+
+// W48-05: the trailer form's make is a text box ("Make", GiveCustomMake), left unfamiliar; the
+// vehicle form's make is a list (GiveMake), the vehicle's.
+test('trailer make: the trailer form\'s Make box takes this trailer\'s make, never on the vehicle form', () => {
+  const r = { ...RECORDS()[1] };
+  r.trailers = [r.trailers[0], { ...r.trailers[0], make: 'UTILITY' }];
+  const custom = (active) => plan(r, active).find((x) => x.field === 'GiveCustomMake');
+  const first = custom({ vehicles: 0, trailers: 0, drivers: 0 });
+  assert.ok(first?.value, 'the fixture\'s trailer has a make');
+  assert.deepEqual([first.value, first.path, first.source, first.whenShown], [r.trailers[0].make, 'trailers[0].make', 'intake', { field: 'GiveOtherVehicleType', label: '\\btrailer\\b', unit: 'trailers' }]);
+  assert.equal(custom({ vehicles: 0, trailers: 1, drivers: 0 }).value, 'UTILITY', 'the second trailer gets its own make');
+  assert.deepEqual(geico.rules.filter((x) => x.field === 'GiveCustomMake').map((x) => x.whenShown?.unit), ['trailers'], 'the vehicle form\'s make is never this rule\'s');
+  const vehicleMake = one(plan(r, { vehicles: 0, trailers: 0, drivers: 0 }), 'Vehicle make');
+  assert.deepEqual([vehicleMake.field, vehicleMake.path, vehicleMake.whenShown.unit], ['GiveMake', 'vehicles[0].make', 'vehicles']);
 });
 
 // The maintainer, 2026-11-09 (a GEICO recording: the trailer type went to the AI assistant, which

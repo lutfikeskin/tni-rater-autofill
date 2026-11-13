@@ -36,7 +36,8 @@ test('the head, the setup note, the initials and the version', () => {
   fireEvent.click($(container, '#settings-done'));
   expect(calls).toEqual([['done']]);
   const note = $(container, '#setup-note');
-  expect([note.hidden, note.getAttribute('role'), $(container, '#version').textContent]).toEqual([true, 'status', '']);
+  // No live role of its own: it says its words through #announce as it shows them (announce.js).
+  expect([note.hidden, note.getAttribute('role'), $(container, '#version').textContent]).toEqual([true, null, '']);
   act(() => { state.health = { version: 'Version 0.9.28', setup: 'To finish setup, add your initials and set the usage server (Advanced).', agentMissing: true }; });
   expect([note.hidden, $(container, '#setup-text').textContent, $(container, '#version').textContent])
     .toEqual([false, 'To finish setup, add your initials and set the usage server (Advanced).', 'Version 0.9.28']);
@@ -142,8 +143,12 @@ test('Advanced: the test-run mark with an intake, the server boxes on their chan
   expect([advanced.tagName, advanced.open, advanced.querySelector('summary').textContent]).toEqual(['DETAILS', false, 'Advanced, for setup only']);
   const row = $(container, '#test-run-row');
   expect([row.hidden, row.textContent]).toEqual([true, ' This intake is a test run, not a client']);
+  // What it means is said under it, not in a tooltip (docs/panel-ui.md, "Tooltips"), with the row.
+  const about = $(container, '#test-run-about');
+  expect([row.title, about.hidden, $(container, '#test-run').getAttribute('aria-describedby')]).toEqual(['', true, 'test-run-about']);
   act(() => { state.testRun = false; });
-  expect([row.hidden, $(container, '#test-run').checked]).toEqual([false, false]);
+  expect([row.hidden, $(container, '#test-run').checked, about.hidden, about.textContent])
+    .toEqual([false, false, false, "A practice or test quote, not a client's: the weekly review leaves it out of its numbers."]);
   fireEvent.click($(container, '#test-run'));
   expect(calls).toEqual([['testRun', true]]);
   act(() => { state.testRun = true; });
@@ -162,6 +167,9 @@ test('Advanced: the test-run mark with an intake, the server boxes on their chan
   // Capture page layout off without a carrier page; what it did under it.
   const capture = $(container, '#capture');
   expect([capture.disabled, $(container, '#capture-status').hidden]).toEqual([false, true]);
+  // Its key is said under the buttons, and to screen readers, not in a tooltip.
+  expect([capture.title, capture.getAttribute('aria-keyshortcuts'), capture.getAttribute('aria-describedby'), $(container, '#capture-key').textContent])
+    .toEqual(['', 'Alt+Shift+C', 'capture-key', 'Capture page layout: Alt+Shift+C while the panel is open.']);
   act(() => { state.captureOff = true; state.captureStatus = 'Open a carrier page to capture its layout.'; });
   expect([capture.disabled, $(container, '#capture-status').hidden, $(container, '#capture-status').textContent]).toEqual([true, false, 'Open a carrier page to capture its layout.']);
   act(() => { state.captureOff = false; });
@@ -197,7 +205,7 @@ test('the developer recording: only with its buttons, which follow a recording, 
   act(() => { state.devrec = { on: true, status: 'Recording 0:05 · 12 events.', unfinished: { id: 'geico-x', label: 'Save 2 unfinished recordings, one by one' } }; });
   expect(shown()).toEqual(['devrec-note', 'devrec-stop', 'devrec-recover']);
   expect([$(container, '#devrec-recover').textContent, $(container, '#devrec-recover').dataset.id]).toEqual(['Save 2 unfinished recordings, one by one', 'geico-x']);
-  expect([$(container, '#devrec-status').hidden, $(container, '#devrec-status').getAttribute('role'), $(container, '#devrec-status').textContent]).toEqual([false, 'status', 'Recording 0:05 · 12 events.']);
+  expect([$(container, '#devrec-status').hidden, $(container, '#devrec-status').getAttribute('role'), $(container, '#devrec-status').textContent]).toEqual([false, null, 'Recording 0:05 · 12 events.']);
   expect($(container, '#advanced > summary').textContent, 'seen with Advanced folded').toBe('Advanced, for setup only · Recording');
   for (const id of ['devrec-note', 'devrec-stop', 'devrec-recover']) fireEvent.click($(container, `#${id}`));
   expect(calls).toEqual(['start', 'note', 'stop', 'recover']);
@@ -270,7 +278,7 @@ test('while answers go in, the Filling switches say a change reaches what is fil
   const calls = [];
   const { container } = render(<Settings act={acts(calls)} />);
   const note = $(container, '#filling-now-note');
-  expect([note.hidden, note.getAttribute('role')]).toEqual([true, 'status']);
+  expect([note.hidden, note.getAttribute('role')]).toEqual([true, null]);
   act(() => { state.filling = true; });
   expect([note.hidden, note.textContent]).toEqual([false, 'Answers are going in. A change here reaches what is filled after (a follow-up on this page included), and this fill only if it is still getting ready. To keep Continue from being clicked now, press Stop below.']);
   // The switches still work: the change reaches what is filled after (each fill reads Continue's

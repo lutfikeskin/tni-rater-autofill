@@ -41,6 +41,7 @@ import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreig
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingIs } from '../answers/state.js';
 import { recentModel, vehicleValueNote, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
+import { incidentRowNote } from '../answers/claims.js';
 import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorLimit, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
 
 // The intake's current bodily injury limit in Progressive's words: its "State Minimum" is the
@@ -128,6 +129,8 @@ const trailerValueNote = (r, a) => {
 const TRAILER_PAGES = ['MostCommonTrailers', 'AddTrailer'];
 /** @param {CarrierRule} rule @returns {CarrierRule} */
 const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
+// Add Trailer's Make list without the intake's make.
+const TRAILER_MAKE_UNOFFERED = 'Progressive doesn\'t list the intake\'s trailer make: pick it yourself, the same maker under another spelling if it is listed, else Not Listed (the intake\'s make then goes into Enter Trailer Make).';
 
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
 const isFlorida = (r) => garagingIs(r, 'FL');
@@ -181,6 +184,16 @@ const hasClaimsSource = (r) => (typeof r.claims?.hasClaims === 'boolean' ? 'inta
 const hasClaimsNote = (r) => (typeof r.claims?.hasClaims !== 'boolean' && claimSignal(r)
   ? `The claims box doesn't start with Yes or No, and ${claimSignal(r)}: answer it yourself.`
   : null);
+
+// The incident rows Yes opens on Add Driver: [q, field, question, what it asks], a step per row up
+// to INCIDENT_ROWS (a row past them stays an unfamiliar question).
+const INCIDENT_ROWS = 6;
+const INCIDENT_FIELDS = [
+  ['29C3', 'AccidentsViolationsInput.DateOfIncidentDup', 'Date of Incident', 'date'],
+  ['29C5', 'AccidentsViolationsInput.DateOfIncident', 'Date of Incident', 'date'],
+  ['29C7', 'AccidentsViolationsInput.IncidentInput', 'Incident', 'type'],
+];
+const INCIDENT_NOTE = incidentRowNote('each incident\'s date and type');
 
 // Hazardous material placard: the intake's answer. TNI (2026-10-19, after a live run): left blank,
 // No (standard) unless the intake says they haul hazardous material, or what they haul names
@@ -1078,7 +1091,11 @@ export const progressive = {
     ...onPage('AddTrailer', [
       { concept: 'trailer.vin', q: '2A29', field: 'RiskInput.VIN', ask: 'VIN', path: 'trailers[].vin' },
       { concept: 'trailer.year', q: '2A2A', field: 'RiskInput.Year', ask: 'Year', path: 'trailers[].year', kind: 'choice' },
-      { concept: 'trailer.make', q: '2A2B', field: 'RiskInput.MakeCode', ask: 'Make', path: 'trailers[].make', kind: 'choice' },
+      // A make Progressive doesn't list is the agent's (W48-05): a spelling of a listed maker is
+      // theirs to pick, else Not Listed, never chosen here. Not Listed shows "Enter Trailer Make",
+      // which takes the intake's make, this trailer's.
+      { concept: 'trailer.make', q: '2A2B', field: 'RiskInput.MakeCode', ask: 'Make', path: 'trailers[].make', kind: 'choice', unofferedNote: TRAILER_MAKE_UNOFFERED },
+      { concept: 'trailer.make', q: '2A2C', field: 'RiskInput.OtherMake', ask: 'Enter Trailer Make', path: 'trailers[].make', name: 'Trailer make, typed (shown after Make: Not Listed)' },
       { concept: 'trailer.garaging', q: '2A61', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', name: 'Trailer ZIP', ignore: noIntakeZip, emptyNote: vehicleZipNote },
       { concept: 'operations.radius', q: '2A65', source: 'derived', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this trailer travels for work', name: 'Trailer farthest one-way distance (as the vehicle)', kind: 'int', value: radiusMiles },
       { concept: 'trailer.loan-lease', q: '2AD0', source: 'derived', clientFact: true, field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from the trailer ownership)', kind: 'choice', value: trailerLoanLease, note: trailerFinancingNote },
@@ -1120,6 +1137,12 @@ export const progressive = {
       { concept: 'driver.excluded', q: '28C1', source: 'derived', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (No unless the intake marks them excluded)', kind: 'bool', value: excludedDriver },
       // The claims box's Yes or No; neither: TNI's standard No unless the notes mention one (hasClaims, 2026-10-19).
       { concept: 'driver.claims', q: '28F5', tni: 'progressive.claims', source: hasClaimsSource, field: 'DriverInput.AnyAccidentsViolationsPastExpYears', label: '^has this driver had any accidents claims or violations in the past', path: 'claims.hasClaims', name: 'Accidents / claims / violations (standard: No unless the intake says otherwise)', kind: 'bool', value: hasClaims, note: hasClaimsNote },
+      // What its Yes opens, one row per incident: the date (DateOfIncidentDup while the row is new,
+      // DateOfIncident once Progressive has taken a date) and the incident type. The client's facts:
+      // the intake has only the claims box's text, never read into a date or a type (W48-04: they
+      // were unfamiliar questions). A step per row, up to INCIDENT_ROWS; with No the rows aren't drawn.
+      ...INCIDENT_FIELDS.flatMap(([q, field, ask, what]) => Array.from({ length: INCIDENT_ROWS }, /** @returns {CarrierRule} */ () => ({
+        concept: 'driver.claims', q, source: 'fact', field, ask, each: true, name: `Incident ${what} (the agent's)`, note: INCIDENT_NOTE }))),
     ]),
 
     // --- Coverages and rates (CoveragesRates) ----------------------------------------------------

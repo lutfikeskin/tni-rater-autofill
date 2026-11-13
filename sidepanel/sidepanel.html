@@ -144,8 +144,8 @@
         <button type="button" id="send-problem" class="primary small-btn">Save report</button>
       </div>
     </div>
-    <!-- Whether the report just saved reached TNI (usage-panel.js sayProblem). -->
-    <p id="problem-said" class="problem-said" role="status" hidden></p>
+    <!-- Whether the report just saved reached TNI (usage-panel.js sayProblem, which says it through #announce). -->
+    <p id="problem-said" class="problem-said" hidden></p>
     <div class="foot-row">
       <button type="button" id="report-problem" class="link small" aria-expanded="false" aria-controls="problem-form">Report a problem</button>
       <!-- "Recording usage" (#recording), drawn by settings-view.jsx (mountRecordingLine). -->
@@ -154,7 +154,8 @@
     </div>
   </footer>
 
-  <!-- Fill results and changed counts, read out by screen readers (announce). -->
+  <!-- What the panel says to screen readers (announce.js): fill results, changed counts, and the notes
+       that show and hide. Always on the page and never hidden, so its words are read. -->
   <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
   <script type="module" src="sidepanel.js"></script>
 </body>
