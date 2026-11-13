@@ -10144,6 +10144,41 @@ test('GEICO FL UM: $100,000/$300,000 on a split-only list, the CSL kept when off
   assert.deepEqual(plain(await fillUm([...SPLIT, '$100,000 Combined Single Limit'])), { value: '$100,000 Combined Single Limit', failed: [] });
 });
 
+// TNI, 2026-11-13, W48-11: a UM list offering neither $100,000 Combined Single Limit nor
+// $100,000/$300,000 (VA's starts at $125,000 CSL; IN's UMBI and UIMBI, 0.9.31: "no option matches")
+// is the agent's at once, with a note, never a failed fill, and no other amount is picked. Each of
+// GEICO's three UM bodily injury questions; FL's split and a list with the CSL are unchanged.
+test('GEICO UM without $100,000 in its list: the agent\'s with a note, no other amount picked (W48-11)', async () => {
+  const fillUm = async (q, ask, options, state) => {
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    geicoBar(h, 'Quote & Coverages');
+    h.document.body.innerText = STALE;
+    const id = `Id_${randomUUID()}_40000`;
+    const box = new FakeNode('div');
+    const legend = new FakeNode('gds-label-legend', { attrs: { element: 'label', for: id } });
+    legend.append(new FakeNode('span', { textContent: ask }));
+    const select = new SelectNode(['Please Select', ...options], { id, ariaLabel: ask, value: 'Please Select' });
+    box.append(legend, select);
+    h.document.body.append(box);
+    const record = { ...geicoRecord(), garaging: { state } };
+    const plan = buildPlan(record, { id: 'geico', useGenericRules: false, rules: geico.rules.filter((r) => r.q === q), actions: [] });
+    const report = await h.kit.fill(plan, { replaceChoices: true, maxRounds: 5 });
+    return { value: select.value, failed: report.failed.map((x) => x.label), needs: report.noData.map((x) => [x.note, x.manualOnly]) };
+  };
+  const VA = ['$125,000 Combined Single Limit', '$300,000 Combined Single Limit', '$500,000 Combined Single Limit', '$750,000 Combined Single Limit', '$1,000,000 Combined Single Limit'];
+  const UNOFFERED = /^GEICO doesn't offer \$100,000 (?:uninsured|underinsured) motorist bodily injury.* here \(neither \$100,000 Combined Single Limit nor \$100,000\/\$300,000\): pick the limit yourself\. The fill doesn't pick another amount\.$/;
+  for (const [q, ask, state] of [['UninsuredMotorist', 'Uninsured Motorist Bodily Injury (includes Underinsured)', 'VA'],
+    ['UninsuredMotoristUmbi', 'Uninsured Motorist Bodily Injury (UMBI)', 'IN'], ['UnderinsuredMotorist', 'Underinsured Motorist Bodily Injury (UIMBI)', 'IN'],
+    ['UninsuredMotorist', 'Uninsured Motorist Bodily Injury (includes Underinsured)', 'TX']]) {
+    const r = plain(await fillUm(q, ask, VA, state));
+    assert.deepEqual([r.value, r.failed, r.needs.length, r.needs[0]?.[1]], ['Please Select', [], 1, true], `${q} ${state}`);
+    assert.match(r.needs[0][0], UNOFFERED, `${q} ${state}`);
+    // The counterexamples: a list with the CSL keeps it, and a split-only list takes the split (W47-03).
+    assert.deepEqual(plain(await fillUm(q, ask, ['$100,000 Combined Single Limit', ...VA], state)), { value: '$100,000 Combined Single Limit', failed: [], needs: [] }, `${q} ${state}`);
+    assert.deepEqual(plain(await fillUm(q, ask, ['I decline', '$50,000/$100,000', '$100,000/$300,000'], state)), { value: '$100,000/$300,000', failed: [], needs: [] }, `${q} ${state}`);
+  }
+});
+
 // What a fill streams to the panel while it runs (progress: the items judged so far, one snapshot a
 // round), read as the page takes each answer and every few ms, until `done` settles.
 function watchStream(kit, controls, done) {
