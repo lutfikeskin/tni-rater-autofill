@@ -191,7 +191,8 @@ const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const bump = (o, k, by = 1) => { o[k] = (o[k] ?? 0) + by; };
-const stemOf = (s) => String(s ?? '').match(/^Id_([A-Za-z][A-Za-z0-9]*)_\d+/)?.[1] ?? null;
+// The data-model name, as src/content/carriers/geico.js reads it (the owner's boxes: _Applicant_<n>).
+const stemOf = (s) => String(s ?? '').match(/^Id_([A-Za-z][A-Za-z0-9]*)_(?:Applicant_)?\d+/)?.[1] ?? null;
 const formOf = (tree) => find(tree, (n) => attr(n, 'id') === 'salesForm');
 const hasAncestorClass = (n, c) => { for (let p = n.parent; p; p = p.parent) if (p.type === 'el' && classes(p).includes(c)) return true; return false; };
 const inSummary = (n) => { for (let p = n; p; p = p.parent) if (p.type === 'el' && attr(p, 'id') === 'consolidated-summary-component') return true; return false; };
@@ -691,7 +692,7 @@ export function build(rawDir) {
   body.children.push({ type: 'raw', v: '\n<script src="mock.js"></script>\n' });
   const doc = serialize(shell).replace(/^\s+/, '');
   const html = `<!doctype html>\n<!-- GEICO commercial auto quote (/quote), every step one view: built by scripts/geico-fixture.mjs from the NE pages saved 2026-10-20 and the FL captures; client, agent and session values replaced; played by mock.js. -->\n${doc}`;
-  const stems = Object.fromEntries(Object.entries(views).map(([id, h]) => [id, [...new Set([...h.matchAll(/\b(?:id|name)="Id_([A-Za-z][A-Za-z0-9]*)_\d+/g)].map((m) => m[1]))].length]));
+  const stems = Object.fromEntries(Object.entries(views).map(([id, h]) => [id, [...new Set([...h.matchAll(/\b(?:id|name)="Id_([A-Za-z][A-Za-z0-9]*)_(?:Applicant_)?\d+/g)].map((m) => m[1]))].length]));
   return { html, state, reports, stems, frags: Object.keys(frags), savedMake: savedMake.toUpperCase() === FAKE.vehicle.make };
 }
 
@@ -725,7 +726,7 @@ async function check(rawDir) {
     const deep = (r, sel, acc = []) => { acc.push(...[...r.querySelectorAll(sel)].filter(outside)); for (const el of r.querySelectorAll('*')) if (el.shadowRoot) deep(el.shadowRoot, sel, acc); return acc; };
     const form = document.getElementById('salesForm');
     const visible = (el) => !!((el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden') || [...(el.labels ?? [])].some((l) => l.getClientRects().length));
-    const stem = (el) => String(el.name || el.id || '').replace(/^Id_([A-Za-z][A-Za-z0-9]*)_\d+.*$/, '$1').replace(/^Id_[0-9a-f-]{36}_\d+(_[A-Za-z]+)?$/, 'coverage$1');
+    const stem = (el) => String(el.name || el.id || '').replace(/^Id_([A-Za-z][A-Za-z0-9]*)_(?:Applicant_)?\d+.*$/, '$1').replace(/^Id_[0-9a-f-]{36}_\d+(_[A-Za-z]+)?$/, 'coverage$1');
     const controls = deep(form, 'input:not([type=hidden]), select, textarea').map((el) => ({ stem: stem(el), visible: visible(el), disabled: el.disabled }));
     const shown = [...new Set(controls.filter((c) => c.visible && !c.disabled).map((c) => c.stem))].sort();
     const hidden = [...new Set(controls.filter((c) => !c.visible).map((c) => c.stem))].filter((s) => !shown.includes(s)).sort();

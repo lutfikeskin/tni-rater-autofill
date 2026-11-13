@@ -227,6 +227,9 @@ test('a GEICO question recorded without its name is known by the name its id car
     { kind: 'select', id: 'Id_a1b2c3d4-1b3d-4e5f-9a6b-7c8d9e0f1a2b_412' },
     { kind: 'checkbox', id: 'darkModeSwitch-button-switch-checkbox', name: 'darkModeSwitch-button-switch-checkbox' },
     { kind: 'text', id: 'Id_GiveInitialZipCode', name: 'Id_GiveInitialZipCode' },
+    // The owner's boxes since 2026-11-12 (W48-01): _Applicant_ before the number; no other qualifier.
+    { kind: 'text', id: 'Id_GiveFirstName_Applicant_84175', name: 'Id_GiveFirstName_Applicant_84175' },
+    { kind: 'text', id: 'Id_GiveFirstName_CoApplicant_84175', name: 'Id_GiveFirstName_CoApplicant_84175' },
   ];
   for (const f of samples) {
     const name = dataName({ id: f.id, name: f.name });
@@ -234,6 +237,7 @@ test('a GEICO question recorded without its name is known by the name its id car
   }
   assert.deepEqual(samples.map((f) => fieldId(f)).slice(0, 6),
     ['ref:GiveInitialZipCode', 'ref:GiveHasFilingsYesNo', 'ref:GiveHasFilingsYesNo', 'ref:GiveVinPreQuote', 'ref:AddFilings.MCS90', 'ref:AddFilings.StateFiling']);
+  assert.deepEqual(samples.slice(-2).map((f) => fieldId(f)), ['ref:GiveFirstName', '#Id_GiveFirstName_CoApplicant_84175']);
   // As a layout the kit records now (its name in `ref`), whatever the number.
   assert.equal(fieldId({ kind: 'radio', id: 'Id_GiveFilingType_521330-shadow', name: 'Id_GiveFilingType_52133' }), fieldId({ kind: 'radio', ref: 'GiveFilingType', id: 'Id_GiveFilingType_10-shadow' }));
   // A Duck Creek question id still comes first.
