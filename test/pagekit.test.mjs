@@ -4923,6 +4923,39 @@ test('a civilian defensive driving course in the notes: the Armed Forces wording
   assert.match(military.theirs, /Army defensive driving course/);
 });
 
+// W48-04 (0.9.40, 2 quotes): with "accidents, claims or violations?" Yes, Add Driver draws a row per
+// incident (its date, DateOfIncidentDup while the row is new and DateOfIncident once Progressive took
+// one, and the incident type). They were unfamiliar questions. They are the client's facts: the
+// agent's, each with a note quoting the claims box's notes, never filled from them.
+test('Progressive\'s incident rows on Add Driver are the agent\'s facts, never filled from the claims notes (W48-04)', async () => {
+  const record = (claims) => ({ applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims });
+  const fillRows = async (claims, rows) => {
+    const h = harness({ ext: true, search: '?pageName=AddDriver' });
+    // As the live page draws them (usage log, 0.9.40): the data-model name and the question.
+    const LIVE = { '29C3': ['AccidentsViolationsInput.DateOfIncidentDup', 'Date of Incident'], '29C5': ['AccidentsViolationsInput.DateOfIncident', 'Date of Incident'], '29C7': ['AccidentsViolationsInput.IncidentInput', 'Incident'] };
+    const fields = rows.map(([q, row, value = '']) => addExtText(h, 'd', q, { row, value, required: true, ref: LIVE[q][0], caption: LIVE[q][1] }));
+    const report = await h.kit.fill(buildPlan(record(claims), progressive), { maxRounds: 3 });
+    const incident = (list) => list.filter((x) => /^29C/.test(x.q ?? ''));
+    return { report, fields, unknown: incident(report.unknown), filled: incident(report.filled), left: incident(report.noData) };
+  };
+  // A first row the agent dated and typed, and a new second row.
+  const claims = { hasClaims: true, notes: 'Rear-ended on 3/2/2024; speeding ticket 2025' };
+  const two = await fillRows(claims, [['29C5', '6_1', '03/02/2024'], ['29C7', '6_1', 'Accident - Not At Fault'], ['29C3', '6_2'], ['29C7', '6_2']]);
+  assert.deepEqual(plain(two.unknown), [], 'no incident row is unfamiliar');
+  assert.deepEqual(plain(two.filled), []);
+  assert.deepEqual(two.fields.map((f) => f.cmp.getValue()), ['03/02/2024', 'Accident - Not At Fault', '', ''], 'nothing typed from the claims notes');
+  assert.equal(two.left.length, 4, 'each row\'s date and type are the agent\'s');
+  assert.ok(two.left.every((x) => x.manualOnly && /Rear-ended on 3\/2\/2024; speeding ticket 2025/.test(x.note)), 'with the claims notes quoted');
+  assert.deepEqual(collectItems([two.report]).items.filter((x) => /^29C/.test(x.q ?? '')), [], 'never the AI\'s');
+  // A Yes without notes: still the agent's, said so.
+  const bare = await fillRows({ hasClaims: true, notes: null }, [['29C3', '6_1'], ['29C7', '6_1']]);
+  assert.deepEqual([bare.unknown.length, bare.filled.length, bare.left.length], [0, 0, 2]);
+  assert.match(bare.left[0].note, /claims box gives no details/);
+  // No claims: Progressive draws no rows, and nothing about incidents is left for the agent.
+  const none = await fillRows({ hasClaims: false, notes: null }, []);
+  assert.deepEqual([none.unknown.length, none.filled.length, none.left.length], [0, 0, 0]);
+});
+
 // KY live run, 2026-10-26 (W44-32): Progressive's anti-theft list (no caption of its own) was
 // unfamiliar and required, with nothing selected; the agent picked None. TNI: None when Progressive
 // hasn't selected one, and its own choice (the VIN lookup's) kept as it is, without a check, also with
@@ -5554,6 +5587,49 @@ test('AmWINS\' copy-to-another-product box after Submit is left as the page has 
   other.document.body.append(new SelectNode(['', 'Business Auto', 'Trucking'], { id: 'product-type', name: 'product-type', ariaLabel: 'Product', value: '' }));
   const unknown = (await other.kit.fill(buildPlan(record, amwins), { maxRounds: 2 })).unknown;
   assert.deepEqual(plain(unknown.map((x) => [x.label, x.key])), [['Product', 'product-type']]);
+});
+
+// W48-04 (0.9.31, 1 quote): "Any prior loss?" Yes shows Loss History (#lossHistroyPanel), a row per
+// loss with no labelled fields: date of occurrence, coverage type, description, date of claim,
+// amounts paid and reserved, subrogation and claim open. They were unfamiliar questions. They are
+// the client's facts: the agent's, each with a note quoting the claims box's notes, never filled.
+test('AmWINS\' Loss History rows are the agent\'s facts, never filled from the claims notes (W48-04)', async () => {
+  const lossRow = (n) => {
+    const row = new FakeNode('div', { className: 'app-rp-section', attrs: { 'data-id': String(n) } });
+    const yesNo = (id) => {
+      const table = new FakeNode('table', { attrs: { 'data-id': id } });
+      table.append(...[['1', 'Yes'], ['0', 'No']].map(([value], i) => makeInput({ type: 'radio', name: `${id}_${n}_`, id: `${id}_${n}_${i}_`, value })));
+      return table;
+    };
+    row.append(
+      makeInput({ attrs: { 'data-id': 'dateOfOccurrence' } }),
+      new SelectNode(['', 'GENERAL LIABILITY', 'PROPERTY', 'AUTOMOBILE', 'PACKAGE', 'UMBRELLA'], { attrs: { 'data-id': 'coverageType' } }),
+      makeInput({ attrs: { 'data-id': 'description' } }), makeInput({ attrs: { 'data-id': 'dateOfClaim' } }),
+      makeInput({ attrs: { 'data-id': 'amounthPaid' } }), makeInput({ attrs: { 'data-id': 'amountReserved' } }),
+      yesNo('subrogation'), yesNo('claimOpen'));
+    return row;
+  };
+  const fillLosses = async (claims, rows) => {
+    const h = harness({ adapter: 'amwins', pathname: '/application/businessauto' });
+    const panel = new FakeNode('div', { id: 'lossHistroyPanel' });
+    panel.append(...Array.from({ length: rows }, (_, n) => lossRow(n)));
+    if (rows) h.document.body.append(panel);
+    const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims };
+    const report = await h.kit.fill(buildPlan(record, amwins), { maxRounds: 2 });
+    return { report, filled: report.filled.length, left: report.noData };
+  };
+  const two = await fillLosses({ hasClaims: true, notes: 'Cargo claim 2024, $8,000 paid' }, 2);
+  assert.deepEqual(plain(two.report.unknown), [], 'no Loss History field is unfamiliar');
+  assert.equal(two.filled, 0, 'nothing filled from the claims notes');
+  assert.equal(two.left.length, 16, 'each row\'s eight fields are the agent\'s');
+  // The Yes / No groups, by their name read as words, as the live page reads them (0.9.31).
+  assert.deepEqual(plain(two.left.filter((x) => x.controlKind === 'radio').map((x) => [x.label, x.how])),
+    [['subrogation 0', 'label'], ['claim open 0', 'label'], ['subrogation 1', 'label'], ['claim open 1', 'label']]);
+  assert.ok(two.left.every((x) => x.manualOnly && /Cargo claim 2024, \$8,000 paid/.test(x.note)), 'with the claims notes quoted');
+  assert.deepEqual(collectItems([two.report]).items, [], 'never the AI\'s');
+  // No prior loss: the panel isn't shown, and nothing about losses is left for the agent.
+  const none = await fillLosses({ hasClaims: false, notes: null }, 0);
+  assert.deepEqual([none.report.unknown.length, none.filled, none.left.length], [0, 0, 0]);
 });
 
 // Codex on c31942e: a fact the intake doesn't give reaches the report as the agent's (manualOnly),

@@ -56,6 +56,7 @@ import { driverExcluded, ownerRowExcluded, owner, ownerDobNote } from '../answer
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { filingsIntent } from '../answers/filings.js';
 import { vehicleValueNote } from '../answers/vehicles.js';
+import { incidentRowNote } from '../answers/claims.js';
 import { EXPEDITING_OR_GENERAL_FREIGHT, namesExpeditingOrGeneralFreight } from '../answers/classes.js';
 
 // A UM limit as AmWINS lists it: $100K, and from a million $1M or $1.5M (captured layouts), never $1000K.
@@ -318,6 +319,18 @@ const START_PAGES = ['/commerciallines', '/CommercialLines'];
 const dataId = (id, within = '') => `${within ? `${within} ` : ''}[data-id="${id}"]`;
 const DRIVER = '#driversPanel';
 const VEHICLE = '#vehiclesPanel';
+// Loss History, shown by "Any prior loss?" Yes: [data-id, what it asks, kind], a step per row up to
+// LOSS_ROWS (a row past them stays an unfamiliar question).
+const LOSS_HISTORY = '#lossHistroyPanel';
+const LOSS_ROWS = 6;
+/** @type {[string, string, string][]} */
+const LOSS_FIELDS = [
+  ['dateOfOccurrence', 'date of occurrence', 'date'], ['coverageType', 'coverage type', 'choice'],
+  ['description', 'type / description of claim', 'text'], ['dateOfClaim', 'date of claim', 'date'],
+  ['amounthPaid', 'amount paid', 'text'], ['amountReserved', 'amount reserved', 'text'],
+  ['subrogation', 'subrogation', 'bool'], ['claimOpen', 'claim open', 'bool'],
+];
+const LOSS_NOTE = incidentRowNote('each loss\'s details');
 
 // "How long has the insured's current federal operating authority been active?", from the
 // intake's years under its own authority ("NEW" there is 0: LESS THAN 1 YEAR; TNI, 2026-10-26:
@@ -641,6 +654,14 @@ export const amwins = {
     { concept: 'prior.losses', name: 'Any prior loss', label: '^any prior loss$', kind: 'bool', source: 'derived', clientFact: true,
       value: (r) => typeof r.claims?.hasClaims === 'boolean' ? r.claims.hasClaims : null,
       note: (r) => typeof r.claims?.hasClaims === 'boolean' ? null : 'The intake doesn\'t answer the claims / violations question: answer prior loss yourself.' },
+    // Its Loss History rows (#lossHistroyPanel, the page's spelling), one per loss: the client's
+    // facts. The intake has only the claims box's text, never read into a date, a type or an amount
+    // (W48-04: they were unfamiliar questions). A step per row, up to LOSS_ROWS; with No the panel
+    // stays hidden. The boxes by their data-id; the Yes / No groups, which have none, by their name
+    // read as words ("subrogation 0", the row last).
+    ...LOSS_FIELDS.flatMap(([id, what, kind]) => Array.from({ length: LOSS_ROWS }, /** @returns {CarrierRule} */ () => ({
+      concept: 'prior.losses', ...(kind === 'bool' ? { label: `^${what} \\d+$` } : { selector: dataId(id, LOSS_HISTORY) }),
+      name: `Loss history: ${what} (the agent's)`, kind, source: 'fact', note: LOSS_NOTE }))),
 
     // --- Drivers ---------------------------------------------------------------------------------
     // Names and license number first: they retitle the driver panel; gender, marital status and
