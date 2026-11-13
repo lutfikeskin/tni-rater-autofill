@@ -14,3 +14,14 @@ A screen reader reads a live region (`role="status"`, `aria-live`) when its word
 - A card that must interrupt (a fill that stopped, a PDF that can't be read) keeps `role="alert"`.
 
 Don't add `role="status"` to an element that is drawn hidden or mounted with its words; use `useAnnounce` instead. `test/panel/announce.test.jsx` checks the region's timing and the hook. The issue cards drawn by `cards-view.jsx` and `notes-view.jsx` still take `role="status"` from their card's `role` as they are put on the page; moving them to `announce` is a change of its own.
+
+## Over the panel
+
+Four things cover part of the panel: the PDF sheet, the quote summary and client details (sheets, `role="dialog"` with `aria-modal="true"`), and Settings, which covers the view but leaves the header in use. The keyboard over them is one function, `overlayKey` in [overlay-keys.js](../sidepanel/panel/overlay-keys.js), which `sidepanel.js` calls on every keydown with the layers in that order:
+
+- Escape closes the topmost layer open, and only that one, through the panel's own close (`closePdf`, `closeSummary`, `closeDetails`, `closeSettings`), which gives focus back to the button that opened it.
+- Tab and Shift+Tab stay inside an open sheet, wrapping at its ends; Tab from outside it goes to its first stop. The stops are links, enabled buttons and boxes, `summary` and elements with a `tabindex`, that are shown (`checkVisibility`). Settings isn't modal: Tab leaves it as it would anywhere.
+- Opening a sheet moves focus into it (`openDetails`, `openSummary`, `openPdf`). Opening Settings leaves focus on its button, which says `aria-expanded="true"`; the next Tab goes into it.
+- Settings closed with focus inside it gives focus back to `#settings-btn`, however it closed: Done, Escape, its button (`closeSettings`), or a new intake loaded while it was open (`showScreen`).
+
+A new layer goes into that list in `sidepanel.js`, at its place in the order, with its own close that gives focus back. `test/panel/overlay-keys.test.jsx` and the safety tests check this.
