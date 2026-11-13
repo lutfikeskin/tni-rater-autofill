@@ -18,7 +18,11 @@ import { Details } from '../../sidepanel/panel/details-view.jsx';
 afterEach(cleanup);
 
 const ROLES = ['button', 'link', 'checkbox', 'switch', 'radio', 'textbox', 'searchbox', 'combobox', 'listbox', 'spinbutton', 'slider', 'tab', 'menuitem'];
-const nameless = (root) => ROLES.flatMap((role) => queryAllByRole(root, role, { name: '' }).map((el) => `${role} ${el.outerHTML.slice(0, 120)}`));
+// Asked with every `title` taken away first: a tooltip is never a control's only name ("Tooltips").
+const nameless = (root) => {
+  for (const el of root.querySelectorAll('[title]')) el.removeAttribute('title');
+  return ROLES.flatMap((role) => queryAllByRole(root, role, { name: '' }).map((el) => `${role} ${el.outerHTML.slice(0, 120)}`));
+};
 const quiet = new Proxy({}, { get: () => () => {} });
 
 test('every control in the panel\'s page has a name', () => {

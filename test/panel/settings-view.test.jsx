@@ -143,8 +143,12 @@ test('Advanced: the test-run mark with an intake, the server boxes on their chan
   expect([advanced.tagName, advanced.open, advanced.querySelector('summary').textContent]).toEqual(['DETAILS', false, 'Advanced, for setup only']);
   const row = $(container, '#test-run-row');
   expect([row.hidden, row.textContent]).toEqual([true, ' This intake is a test run, not a client']);
+  // What it means is said under it, not in a tooltip (docs/panel-ui.md, "Tooltips"), with the row.
+  const about = $(container, '#test-run-about');
+  expect([row.title, about.hidden, $(container, '#test-run').getAttribute('aria-describedby')]).toEqual(['', true, 'test-run-about']);
   act(() => { state.testRun = false; });
-  expect([row.hidden, $(container, '#test-run').checked]).toEqual([false, false]);
+  expect([row.hidden, $(container, '#test-run').checked, about.hidden, about.textContent])
+    .toEqual([false, false, false, "A practice or test quote, not a client's: the weekly review leaves it out of its numbers."]);
   fireEvent.click($(container, '#test-run'));
   expect(calls).toEqual([['testRun', true]]);
   act(() => { state.testRun = true; });
@@ -163,6 +167,9 @@ test('Advanced: the test-run mark with an intake, the server boxes on their chan
   // Capture page layout off without a carrier page; what it did under it.
   const capture = $(container, '#capture');
   expect([capture.disabled, $(container, '#capture-status').hidden]).toEqual([false, true]);
+  // Its key is said under the buttons, and to screen readers, not in a tooltip.
+  expect([capture.title, capture.getAttribute('aria-keyshortcuts'), capture.getAttribute('aria-describedby'), $(container, '#capture-key').textContent])
+    .toEqual(['', 'Alt+Shift+C', 'capture-key', 'Capture page layout: Alt+Shift+C while the panel is open.']);
   act(() => { state.captureOff = true; state.captureStatus = 'Open a carrier page to capture its layout.'; });
   expect([capture.disabled, $(container, '#capture-status').hidden, $(container, '#capture-status').textContent]).toEqual([true, false, 'Open a carrier page to capture its layout.']);
   act(() => { state.captureOff = false; });

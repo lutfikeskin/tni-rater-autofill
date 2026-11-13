@@ -51,7 +51,9 @@ test('with initials: the profile, each standard with TNI\'s amount first, and th
   // One folded row, as AI's: the profile in force and how many amounts it changes.
   expect(container.querySelector('#defaults-fold').open).toBe(false);
   expect(container.querySelector('#defaults-summary').textContent).toBe('Jordan K. · 1 changed');
-  expect(container.querySelector('#defaults-fold > summary').title).toMatch(/When your profile changes any, each quote asks first\. Client requests on the intake always win\./);
+  // What it does is a line inside it, not a tooltip keyboard users never see.
+  expect(container.querySelector('#defaults-fold > summary').title).toBe('');
+  expect(container.querySelector('#defaults-about').textContent).toMatch(/When your profile changes any, each quote asks first\. Client requests on the intake always win\./);
   const med = container.querySelector('#default-medPay');
   expect([...med.options].map((o) => o.textContent)).toEqual(['TNI\'s ($5,000)', '$500', '$1,000', '$2,000']);
   expect(med.selectedOptions[0].textContent).toBe('$1,000');
@@ -395,8 +397,12 @@ test('the developer\'s switch hides the whole feature, and shows it again', asyn
   expect(panelState.defaultsOn).toBe(false);
   // The switch itself, in Advanced.
   const calls = [];
-  const box = render(<DefaultsDevSwitch act={(on) => calls.push(on)} />).container.querySelector('#defaults-shown');
+  const dev = render(<DefaultsDevSwitch act={(on) => calls.push(on)} />).container;
+  const box = dev.querySelector('#defaults-shown');
   expect(box.checked).toBe(false);
+  // What it means is said under it, not in a tooltip.
+  expect([dev.querySelector('#defaults-dev-row').title, box.getAttribute('aria-describedby'), dev.querySelector('#defaults-dev-about').textContent])
+    .toEqual(['', 'defaults-dev-about', 'Only in this unpacked copy. Agents\' store build has it only once RELEASED_TO_AGENTS is true.']);
   fireEvent.click(box);
   expect(calls).toEqual([true]);
   // On again: an answer given while hidden doesn't count, so the quote asks before anything fills.

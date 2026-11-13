@@ -207,7 +207,8 @@ function Settings({ act }) {
         <summary className="eyebrow">{recording ? 'Advanced, for setup only · Recording' : 'Advanced, for setup only'}</summary>
         <div className="advanced-body">
           {/* For the maintainer's practice quotes; agents don't see it unless they open Advanced. Marking a test run needs an intake to mark. */}
-          <label id="test-run-row" className="test-run" title="A practice or test quote, not a client's: the weekly review leaves it out of its numbers." hidden={testRun == null}><Check id="test-run" checked={!!testRun} onChange={act.testRun} /> This intake is a test run, not a client</label>
+          <label id="test-run-row" className="test-run" hidden={testRun == null}><Check id="test-run" checked={!!testRun} aria-describedby="test-run-about" onChange={act.testRun} /> This intake is a test run, not a client</label>
+          <p id="test-run-about" className="fine" hidden={testRun == null}>A practice or test quote, not a client's: the weekly review leaves it out of its numbers.</p>
           {/* The store copy uses TNI's server or the organization's, not one typed here (SRV-16): read-only. */}
           <label className="field-stack">Server<TextBox id="server-url" type="url" placeholder="https://usage-server-production.up.railway.app" autoComplete="off" readOnly={!!card?.locked} onChange={act.serverUrl} /></label>
           <label className="field-stack" hidden={!!card?.locked}>Token<TextBox id="server-token" type="password" placeholder="if the server needs one" autoComplete="off" onChange={act.serverToken} /></label>
@@ -215,11 +216,13 @@ function Settings({ act }) {
           <label className="field-stack">Scenario<input id="capture-scenario" type="text" placeholder="e.g. FL van, hazmat yes/no" autoComplete="off" maxLength={60} /></label>
           <label className="field-stack">Note<input id="capture-note" type="text" placeholder="what you changed (kept here)" autoComplete="off" maxLength={200} /></label>
           <div className="actions wrap">
-            <button type="button" id="capture" className="ghost small-btn" title="Alt+Shift+C while the panel is open" disabled={captureOff} onClick={() => act.capture()}>Capture page layout</button>
+            <button type="button" id="capture" className="ghost small-btn" aria-keyshortcuts="Alt+Shift+C" aria-describedby="capture-key" disabled={captureOff} onClick={() => act.capture()}>Capture page layout</button>
             <button type="button" id="upload-usage" className="ghost small-btn" onClick={() => act.upload()}>Upload now</button>
             <button type="button" id="export-usage" className="ghost small-btn" onClick={() => act.exportLog()}>Export log</button>
             <button type="button" id="clear-usage" ref={askFocus.opener} className="ghost small-btn danger" aria-expanded={!!usageAsk} aria-controls="usage-confirm" onClick={() => act.clearLog()}>Clear log</button>
           </div>
+          {/* Capture's key, said under the buttons, not in a tooltip keyboard and touch users never see (docs/panel-ui.md, "Tooltips"). */}
+          <p id="capture-key" className="fine">Capture page layout: Alt+Shift+C while the panel is open.</p>
           {/* Asked before the usage log is deleted (settingsActs clearLog), as the file tools ask. */}
           <div id="usage-confirm" ref={askFocus.group} className="file-confirm" role="group" aria-labelledby="usage-confirm-text" hidden={!usageAsk}>
             <p id="usage-confirm-text" className="small">{usageAsk?.text ?? ''}</p>
