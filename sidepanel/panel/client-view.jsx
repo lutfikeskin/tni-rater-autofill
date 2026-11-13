@@ -4,10 +4,12 @@
 // from what render() says (state.client), clientNote (state.clientNote) and renderSteps
 // (state.newQuoteOff). What its buttons do is the panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountClient).
+import { useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { useAnnounce } from './announce.js';
 // agent defaults: the quote's defaults, once answered, as a pill among the tools.
 import { DefaultsChip } from './agent-defaults/view.jsx';
 
@@ -19,6 +21,8 @@ function ClientHead({ act }) {
   const newQuoteOff = useStore(panelStore, (s) => !!s.newQuoteOff);
   const note = useStore(panelStore, (s) => s.clientNote);
   const ask = client?.ask;
+  const noteLine = useRef(null);
+  useAnnounce(note, noteLine);
   return (
     <>
       <div className="client-head">
@@ -45,7 +49,7 @@ function ClientHead({ act }) {
           <button type="button" id="file-confirm-no" className="ghost" onClick={() => act.cancel()}>Cancel</button>
         </div>
       </div>
-      <p id="client-note" className="client-note small" role="status" hidden={!note}>{note ?? ''}</p>
+      <p id="client-note" ref={noteLine} className="client-note small" hidden={!note}>{note ?? ''}</p>
     </>
   );
 }

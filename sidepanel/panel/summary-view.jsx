@@ -4,10 +4,12 @@
 // (state.summary, quote-summary.js); its buttons are the panel's (`act`, wired in sidepanel.js):
 // close and save. Nothing here touches a carrier page.
 // One part of the panel; sidepanel.js mounts it (mountSummary).
+import { useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { useAnnounce } from './announce.js';
 
 /** @import { QuoteSummary } from '../../types.js' */
 
@@ -58,6 +60,8 @@ function Summary({ act }) {
   const open = useStore(panelStore, (s) => s.summary);
   /** @type {QuoteSummary | null} */
   const s = open?.summary ?? null;
+  const savedLine = useRef(null);
+  useAnnounce(open?.saved, savedLine);
   return (
     <>
       <div id="summary-scrim" className="sheet-scrim" onClick={() => act.close()} />
@@ -84,7 +88,7 @@ function Summary({ act }) {
             </>
           ) : null}
         </div>
-        <p id="summary-saved" className="small summary-saved" role="status" hidden={!open?.saved}>{open?.saved ?? ''}</p>
+        <p id="summary-saved" ref={savedLine} className="small summary-saved" hidden={!open?.saved}>{open?.saved ?? ''}</p>
         <div className="sheet-foot">
           <button type="button" id="summary-save" className="ghost small-btn" disabled={!s} onClick={() => act.save()}>Save summary</button>
           <button type="button" id="summary-back" className="primary small-btn" onClick={() => act.close()}>Back</button>

@@ -59,9 +59,10 @@ test('the file tools\' question: hidden until asked, what it says and its two bu
   expect(calls).toEqual(['yes', 'cancel']);
   act(() => { state.client = { ...state.client, ask: null }; });
   expect(ask.hidden).toBe(true);
-  // The note: a status line, hidden until it says something.
+  // The note: hidden until it says something, and said through #announce (announce.js), not a live
+  // role of its own.
   const note = $(container, '#client-note');
-  expect([note.hidden, note.getAttribute('role')]).toEqual([true, 'status']);
+  expect([note.hidden, note.getAttribute('role')]).toEqual([true, null]);
   act(() => { state.clientNote = 'Same intake: you corrected 2 answers, and that stays.'; });
   expect([note.hidden, note.textContent]).toEqual([false, 'Same intake: you corrected 2 answers, and that stays.']);
   act(() => { state.clientNote = null; });
