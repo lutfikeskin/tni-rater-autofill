@@ -67,6 +67,8 @@ Do not write a new Playwright script when one of those commands covers the path.
 - `#dock-back` name Back to the side panel
 - `#settings-btn` name Settings
 
+For a change to what covers the panel (Settings, client details, the quote summary, the PDF sheet), drive it with the keyboard as well as clicks: Escape closes the topmost one, Tab stays inside a sheet, and focus comes back to the button that opened it (`#settings-btn` for Settings, however it closed). `document.activeElement` is the evidence, not a screenshot.
+
 Wait on the panel and mock, not a sleep. `scripts/extension-e2e.mjs` uses `quiet()` and the dock's `data-phase` / `data-report`.
 
 A unit test or `vm` pagekit run is not this skill. Those belong to `npm test`.
