@@ -7,7 +7,7 @@ import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
 import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store, forgetKeptWork, keptWorkCleared, forgetJournals } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
-import { firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty, showScreen } from './panel/record.js';
+import { closeSettings, firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
@@ -36,6 +36,7 @@ import { forgetQuoteTab, noteNewTab, openPortal, restoreQuoteOwners } from './pa
 import { fileReplacer } from './panel/file-drop.js';
 import { showWhatsNew } from './panel/whats-new.js';
 import { showUpdateReady } from './panel/update-ready.js';
+import { overlayKey } from './panel/overlay-keys.js';
 import { flushSync } from 'react-dom';
 
 // ---------------------------------------------------------------------------------------------
@@ -45,7 +46,7 @@ function wire() {
   const drop = $('load');
   $('choose').addEventListener('click', (e) => { e.stopPropagation(); $('file').click(); });
   drop.addEventListener('click', () => $('file').click());
-  $('settings-btn').addEventListener('click', () => { if (state.settingsOpen) { state.settingsOpen = false; showScreen(); } else openSettings(); });
+  $('settings-btn').addEventListener('click', () => { if (state.settingsOpen) closeSettings(); else openSettings(); });
   $('pop-out').addEventListener('click', popOut);
   $('dock-back').addEventListener('click', dock);
   // The header's strip of the quote's steps; the usage log that can't be saved, a Pop out or Dock
@@ -66,7 +67,7 @@ function wire() {
   // `note(text)`: the footer pill's own box; without text, Settings' Note box.
   const devrecActs = { start: () => startRecording(), note: (text) => noteRecording(text), stop: () => stopRecording(), recover: () => recoverRecording(), discard: () => discardUnfinished() };
   mountSettings($('settings'), {
-    done: () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); },
+    done: () => closeSettings(),
     ...settingsActs(),
     ...aiActs(),
     testRun: (on) => { state.testRun = on; markTestRun(on); },
@@ -150,22 +151,13 @@ function wire() {
     width = w;
   }).observe($('pdf-scroll'));
   // Escape closes the PDF sheet, the quote summary, the client details drawer, then Settings; the
-  // sheet or the drawer keeps keyboard focus while it's open.
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.pdf && !$('pdf-view').hidden) { e.preventDefault(); closePdf(); return; }
-    if (e.key === 'Escape' && state.summary && !$('summary-view').hidden) { e.preventDefault(); closeSummary(); return; }
-    if (e.key === 'Escape' && state.detailsOpen && !$('details-view').hidden) { e.preventDefault(); closeDetails(); return; }
-    if (e.key === 'Escape' && state.settingsOpen) { e.preventDefault(); state.settingsOpen = false; showScreen(); $('settings-btn').focus(); return; }
-    const modal = state.pdf && !$('pdf-view').hidden ? $('pdf-view') : state.summary && !$('summary-view').hidden ? $('summary-view')
-      : state.detailsOpen && !$('details-view').hidden ? $('details-view') : null;
-    if (e.key !== 'Tab' || !modal) return;
-    const stops = [...modal.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')].filter((n) => n.offsetParent !== null);
-    if (!stops.length) return;
-    const [first, last] = [stops[0], stops.at(-1)];
-    if (!modal.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
-    else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-  });
+  // sheet or the drawer keeps keyboard focus while it's open (overlay-keys.js).
+  document.addEventListener('keydown', (e) => overlayKey(e, [
+    { el: $('pdf-view'), open: !!state.pdf, close: closePdf, modal: true },
+    { el: $('summary-view'), open: !!state.summary, close: closeSummary, modal: true },
+    { el: $('details-view'), open: !!state.detailsOpen, close: closeDetails, modal: true },
+    { el: $('settings'), open: !!state.settingsOpen, close: closeSettings },
+  ]));
   $('file').addEventListener('change', (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; });
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
   for (const t of [document.body]) {

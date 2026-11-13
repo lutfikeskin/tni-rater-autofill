@@ -13,8 +13,9 @@ const tidy = (s) => String(s ?? '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '
 // checkbox-Id_<name>_<n>-<box>), read as src/content/field-key.js dataName reads them. The number
 // changes on every redraw, so a layout recorded before the kit sent `ref` for them (the FL captures
 // of 2026-10-20) named one question differently on every step and after every Recalculate.
-const DATA_NAME = /^Id_([A-Za-z][A-Za-z0-9]*)_\d+(?:maskedField|-shadow)?$/;
-const BOX_NAME = /^checkbox-Id_([A-Za-z][A-Za-z0-9]*)_\d+-([A-Za-z0-9]+)$/;
+// The owner's boxes on Business & Owner Info carry _Applicant_ before the number (2026-11-12).
+const DATA_NAME = /^Id_([A-Za-z][A-Za-z0-9]*)_(?:Applicant_)?\d+(?:maskedField|-shadow)?$/;
+const BOX_NAME = /^checkbox-Id_([A-Za-z][A-Za-z0-9]*)_(?:Applicant_)?\d+-([A-Za-z0-9]+)$/;
 function dataName(f) {
   const box = String(f.id ?? '').match(BOX_NAME);
   if (box) return `${box[1]}.${box[2]}`;

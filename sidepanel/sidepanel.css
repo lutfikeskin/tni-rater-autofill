@@ -700,8 +700,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .defaults-pill { padding: 0 6px; }
   .defaults-pill > span { display: none; }
 }
+/* Reduced motion: nothing slides, spins or fades, before and after content included; the panel's
+   scrolling follows it too (scrollBehavior in coordinator.js). docs/panel-ui.md, "Motion". */
 @media (prefers-reduced-motion: reduce) {
-  *, *::after { animation: none !important; transition: none !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
   .progress span { width: 100%; opacity: 0.4; }
   .spinner { width: auto; height: auto; border: 0; border-radius: 0; color: var(--brand); font: 700 12px/1 var(--font-sans); }
   .spinner::before { content: "…"; }

@@ -6202,6 +6202,17 @@ test('GEICO field keys: the data-model name without its render number, a filing 
   assert.equal(key(makeInput({ type: 'radio', name: 'Id_GiveVehicleOrTrailer_90210', id: 'Id_GiveVehicleOrTrailer_902100-shadow' })), 'ref:GiveVehicleOrTrailer');
   // Not GEICO's shape: its id, as before.
   for (const id of ['Id_GiveYear', 'Id_GiveYear_12_extra', 'id_GiveYear_12', 'Id_1Year_12']) assert.equal(key(makeInput({ id })), id);
+  // The owner's boxes on Business & Owner Info (2026-11-12, W48-01): _Applicant_ before the number
+  // is the same name. No other qualifier is, nor GEICO's containers (Id_Chip_Eligible_<n>).
+  const applicant = [
+    makeInput({ id: 'Id_GiveFirstName_Applicant_84175', name: 'Id_GiveFirstName_Applicant_84175' }),
+    makeInput({ id: 'Id_GiveDateOfBirth_Applicant_42748' }),
+    makeInput({ type: 'radio', id: 'Id_GiveOwnerYesNo_Applicant_123450-shadow' }),
+    makeInput({ id: 'Id_GiveSsn_Applicant_31337', name: 'Id_GiveSsn_Applicant_31337maskedField' }),
+    makeInput({ type: 'checkbox', id: 'checkbox-Id_AddFilings_Applicant_123-MCS90' }),
+  ];
+  assert.deepEqual(applicant.map(key), ['ref:GiveFirstName', 'ref:GiveDateOfBirth', 'ref:GiveOwnerYesNo', 'ref:GiveSsn', 'ref:AddFilings.MCS90']);
+  for (const id of ['Id_GiveFirstName_CoApplicant_84175', 'Id_GiveFirstName_Driver_84175', 'Id_GiveFirstName_Applicant', 'Id_GiveFirstName_Applicant_1_2', 'Id_Chip_Eligible_7']) assert.equal(key(makeInput({ id })), id);
   // Progressive's data-model names and AmWINS' rows are their own adapters', keyed as before there.
   assert.equal(harness({ progressive: true }).context.__raterFieldKey(makeInput({ id: `f_c${'A'.repeat(32)}22F_1_2`, attrs: { fieldref: 'RiskInput.VIN' } })), 'ref:RiskInput.VIN@2');
   assert.equal(harness({ adapter: 'amwins' }).context.__raterFieldKey(makeInput({ type: 'checkbox', name: 'medicalPaymentExclude', id: 'medicalPaymentExclude1_0_' })), 'medicalPaymentExclude#2');
@@ -7697,6 +7708,41 @@ test('GEICO steps: a rule kept to a step answers only there, a rule kept to none
   r = await run('Drivers & Incidents', 'GEICO Vehicles');
   assert.deepEqual([r.first, r.zip, r.report.stepKey, r.report.halted], ['', '', '', true]);
   assert.deepEqual(plain(r.report.filled), []);
+});
+
+// Live, 2026-11-12 (W48-01): Business & Owner Info drew the owner's boxes Id_GiveFirstName_Applicant_
+// <n>, Id_GiveLastName_Applicant_<n> and Id_GiveDateOfBirth_Applicant_<n>. Read as no name, all three
+// were unfamiliar ("page changed") and the agent typed them in 4 of 4 quotes.
+test('GEICO\'s owner boxes named _Applicant_ are the owner\'s rules\' on Business & Owner Info, a driver\'s box still the driver\'s (W48-01)', async () => {
+  const plan = [
+    { id: 'first', field: 'GiveFirstName', steps: ['Business & Owner Info'], path: 'applicant.firstName', name: 'Owner first name', kind: 'text', value: 'Pat' },
+    { id: 'last', field: 'GiveLastName', steps: ['Business & Owner Info'], path: 'applicant.lastName', name: 'Owner last name', kind: 'text', value: 'Lane' },
+    { id: 'dob', field: 'GiveDateOfBirth', steps: ['Business & Owner Info'], path: 'applicant.dob', name: 'Owner date of birth', kind: 'text', value: '01/02/1980' },
+    { id: 'driver', field: 'GiveFirstName', steps: ['Drivers & Incidents'], path: 'drivers[0].firstName', name: 'Driver first name', kind: 'text', value: 'Sam' },
+  ];
+  // The rules GEICO's carrier config gives these boxes on that step are the ones named here.
+  const owners = buildPlan(geicoRecord(), geico).filter((s) => s.steps?.includes('Business & Owner Info') && !s.whenShown && !s.unlessShown).map((s) => s.field);
+  for (const field of ['GiveFirstName', 'GiveLastName', 'GiveDateOfBirth']) assert.ok(owners.includes(field), field);
+  const run = async (step, boxes) => {
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    geicoBar(h, step);
+    const els = boxes.map(([id, label]) => makeInput({ id, name: id, ariaLabel: label }));
+    h.document.body.append(...els);
+    const report = await h.kit.fill(plan, { maxRounds: 6 });
+    return { values: els.map((el) => el.value), report };
+  };
+  let r = await run('Business & Owner Info', [['Id_GiveFirstName_Applicant_84175', 'Business Owner First Name'],
+    ['Id_GiveLastName_Applicant_87466', 'Business Owner Last Name'], ['Id_GiveDateOfBirth_Applicant_42748', 'Date of Birth']]);
+  assert.deepEqual(r.values, ['Pat', 'Lane', '01/02/1980']);
+  assert.deepEqual(plain(r.report.unknown), []);
+  assert.deepEqual(plain(r.report.filled.map((x) => x.key)).sort(), ['ref:GiveDateOfBirth', 'ref:GiveFirstName', 'ref:GiveLastName']);
+  // Another qualifier is no owner's box: unfamiliar, never filled with the owner's name.
+  r = await run('Business & Owner Info', [['Id_GiveFirstName_CoApplicant_84176', 'First Name']]);
+  assert.deepEqual(r.values, ['']);
+  assert.deepEqual(plain(r.report.unknown.map((x) => x.key)), ['Id_GiveFirstName_CoApplicant_84176']);
+  // A driver's own box on Drivers & Incidents is the driver's, as before.
+  r = await run('Drivers & Incidents', [['Id_GiveFirstName_59097', 'First Name']]);
+  assert.deepEqual(r.values, ['Sam']);
 });
 
 test('GEICO forms: a vehicle form\'s rules answer beside its own question, a trailer form\'s beside the trailer wording, a form showing neither neither', async () => {
