@@ -17,8 +17,12 @@
   // name doesn't, so the name is read first); the VIN box adds maskedField. The boxes of a checkbox
   // group share one name and differ only by id, checkbox-Id_<Name>_<n>-<Box>: the box joins the
   // name (AddFilings.MCS90). A coverage id (Id_<uuid>_<n>_COMP) has none: a UUID has dashes.
-  const DATA_NAME = /^Id_([A-Za-z][A-Za-z0-9]*)_\d+(?:maskedField|-shadow)?$/;
-  const BOX_NAME = /^checkbox-Id_([A-Za-z][A-Za-z0-9]*)_\d+-([A-Za-z0-9]+)$/;
+  // Since 2026-11-12 Business & Owner Info names the owner's boxes Id_<Name>_Applicant_<n>
+  // (Id_GiveFirstName_Applicant_84175): the same data-model name, which the step's rules answer as
+  // before. Only that qualifier is read: another (a co-applicant's, a driver's) stays no name, and
+  // so unfamiliar, rather than be taken for the owner's box.
+  const DATA_NAME = /^Id_([A-Za-z][A-Za-z0-9]*)_(?:Applicant_)?\d+(?:maskedField|-shadow)?$/;
+  const BOX_NAME = /^checkbox-Id_([A-Za-z][A-Za-z0-9]*)_(?:Applicant_)?\d+-([A-Za-z0-9]+)$/;
   function dataName(el) {
     const box = String(el?.id ?? '').match(BOX_NAME);
     if (box) return `${box[1]}.${box[2]}`;

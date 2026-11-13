@@ -20,6 +20,7 @@ import { panelStore } from './state-store.js';
 import { HelpLink } from './help-link.jsx';
 import { DefaultsDevSwitch, TniDefaults } from './agent-defaults/view.jsx';
 import { useAskFocus } from './ask-focus.js';
+import { useAnnounce } from './announce.js';
 
 // A checkbox the panel reads by id. It shows `checked` whenever that changes, or whenever `said`
 // (what it was said in) is said again, and the agent's click is passed on as the box's own change
@@ -105,6 +106,8 @@ function DevRecording({ act }) {
   const devrec = useStore(panelStore, (s) => s.devrec);
   const on = !!devrec?.on;
   const left = devrec?.unfinished;
+  const statusLine = useRef(null);
+  useAnnounce(devrec?.status, statusLine);
   return (
     <div id="devrec" className="devrec" hidden={!act}>
       <p className="eyebrow">Developer recording</p>
@@ -117,7 +120,7 @@ function DevRecording({ act }) {
         {/* Deletes the newest unfinished one after a confirm that it can't be undone (REC-15). */}
         <button type="button" id="devrec-discard" className="ghost small-btn danger" hidden={!left} onClick={() => act?.discard()}>Discard it</button>
       </div>
-      <p id="devrec-status" className="fine" role="status" hidden={!devrec?.status}>{devrec?.status ?? ''}</p>
+      <p id="devrec-status" ref={statusLine} className="fine" hidden={!devrec?.status}>{devrec?.status ?? ''}</p>
     </div>
   );
 }
@@ -126,6 +129,9 @@ function DevRecording({ act }) {
 // value); upload, exportLog, clearLog (it asks first) with clearLogYes and clearLogNo, capture; testRun(on); the AI's aiOn(on), aiAuto(on), aiNames(on), keyEdit,
 // keySave and keyKey (a key pressed in the key's box); and the developer recording's (devrec: start,
 // note, stop, recover), or null where it isn't offered.
+// Said under the Filling switches while answers go in (audit 2026-11-07, UX-02).
+const FILLING_NOW = 'Answers are going in. A change here reaches what is filled after (a follow-up on this page included), and this fill only if it is still getting ready. To keep Continue from being clicked now, press Stop below.';
+
 function Settings({ act }) {
   const switches = useStore(panelStore, (s) => s.switches) ?? {};
   // A fill running: the switches it was given stay its own (audit 2026-11-07, UX-02).
@@ -140,6 +146,12 @@ function Settings({ act }) {
   const captureStatus = useStore(panelStore, (s) => s.captureStatus);
   const recording = useStore(panelStore, (s) => !!s.devrec?.on);
   const flip = (name) => (on) => act.switch(name, on);
+  const setupLine = useRef(null);
+  const fillingLine = useRef(null);
+  const captureLine = useRef(null);
+  useAnnounce(health?.setup, setupLine);
+  useAnnounce(filling ? FILLING_NOW : '', fillingLine);
+  useAnnounce(captureStatus, captureLine);
   return (
     <>
       <div className="settings-head">
@@ -147,7 +159,7 @@ function Settings({ act }) {
         <HelpLink topic="settings" />
         <button type="button" id="settings-done" className="primary small-btn" onClick={() => act.done()}>Done</button>
       </div>
-      <div id="setup-note" className="setup-note" role="status" hidden={!health?.setup}><span className="bang" aria-hidden="true">!</span><span id="setup-text">{health?.setup ?? ''}</span></div>
+      <div id="setup-note" ref={setupLine} className="setup-note" hidden={!health?.setup}><span className="bang" aria-hidden="true">!</span><span id="setup-text">{health?.setup ?? ''}</span></div>
 
       <div className="group">
         <div className="eyebrow">You</div>
@@ -170,7 +182,7 @@ function Settings({ act }) {
           <SwitchRow id="turn-sound" name="Sound when it's your turn" title="When a fill needs you while you're in another app or tab" checked={switches.turnSound !== false} said={switches} onChange={flip('turnSound')} />
         </div>
         <p className="fine">Never Binds or Submits.</p>
-        <p id="filling-now-note" className="fine" role="status" hidden={!filling}>Answers are going in. A change here reaches what is filled after (a follow-up on this page included), and this fill only if it is still getting ready. To keep Continue from being clicked now, press Stop below.</p>
+        <p id="filling-now-note" ref={fillingLine} className="fine" hidden={!filling}>{FILLING_NOW}</p>
       </div>
 
       {/* agent defaults: Settings → Your defaults, hidden while the feature is off. */}
@@ -195,7 +207,8 @@ function Settings({ act }) {
         <summary className="eyebrow">{recording ? 'Advanced, for setup only · Recording' : 'Advanced, for setup only'}</summary>
         <div className="advanced-body">
           {/* For the maintainer's practice quotes; agents don't see it unless they open Advanced. Marking a test run needs an intake to mark. */}
-          <label id="test-run-row" className="test-run" title="A practice or test quote, not a client's: the weekly review leaves it out of its numbers." hidden={testRun == null}><Check id="test-run" checked={!!testRun} onChange={act.testRun} /> This intake is a test run, not a client</label>
+          <label id="test-run-row" className="test-run" hidden={testRun == null}><Check id="test-run" checked={!!testRun} aria-describedby="test-run-about" onChange={act.testRun} /> This intake is a test run, not a client</label>
+          <p id="test-run-about" className="fine" hidden={testRun == null}>A practice or test quote, not a client's: the weekly review leaves it out of its numbers.</p>
           {/* The store copy uses TNI's server or the organization's, not one typed here (SRV-16): read-only. */}
           <label className="field-stack">Server<TextBox id="server-url" type="url" placeholder="https://usage-server-production.up.railway.app" autoComplete="off" readOnly={!!card?.locked} onChange={act.serverUrl} /></label>
           <label className="field-stack" hidden={!!card?.locked}>Token<TextBox id="server-token" type="password" placeholder="if the server needs one" autoComplete="off" onChange={act.serverToken} /></label>
@@ -203,11 +216,13 @@ function Settings({ act }) {
           <label className="field-stack">Scenario<input id="capture-scenario" type="text" placeholder="e.g. FL van, hazmat yes/no" autoComplete="off" maxLength={60} /></label>
           <label className="field-stack">Note<input id="capture-note" type="text" placeholder="what you changed (kept here)" autoComplete="off" maxLength={200} /></label>
           <div className="actions wrap">
-            <button type="button" id="capture" className="ghost small-btn" title="Alt+Shift+C while the panel is open" disabled={captureOff} onClick={() => act.capture()}>Capture page layout</button>
+            <button type="button" id="capture" className="ghost small-btn" aria-keyshortcuts="Alt+Shift+C" aria-describedby="capture-key" disabled={captureOff} onClick={() => act.capture()}>Capture page layout</button>
             <button type="button" id="upload-usage" className="ghost small-btn" onClick={() => act.upload()}>Upload now</button>
             <button type="button" id="export-usage" className="ghost small-btn" onClick={() => act.exportLog()}>Export log</button>
             <button type="button" id="clear-usage" ref={askFocus.opener} className="ghost small-btn danger" aria-expanded={!!usageAsk} aria-controls="usage-confirm" onClick={() => act.clearLog()}>Clear log</button>
           </div>
+          {/* Capture's key, said under the buttons, not in a tooltip keyboard and touch users never see (docs/panel-ui.md, "Tooltips"). */}
+          <p id="capture-key" className="fine">Capture page layout: Alt+Shift+C while the panel is open.</p>
           {/* Asked before the usage log is deleted (settingsActs clearLog), as the file tools ask. */}
           <div id="usage-confirm" ref={askFocus.group} className="file-confirm" role="group" aria-labelledby="usage-confirm-text" hidden={!usageAsk}>
             <p id="usage-confirm-text" className="small">{usageAsk?.text ?? ''}</p>
@@ -216,7 +231,7 @@ function Settings({ act }) {
               <button type="button" id="usage-confirm-no" ref={askFocus.cancel} className="ghost" onClick={() => act.clearLogNo()}>Cancel</button>
             </div>
           </div>
-          <p id="capture-status" className="fine" role="status" hidden={!captureStatus}>{captureStatus ?? ''}</p>
+          <p id="capture-status" ref={captureLine} className="fine" hidden={!captureStatus}>{captureStatus ?? ''}</p>
           <DevRecording act={act.devrec} />
           {/* agent defaults: the developer's switch for the whole feature, in every copy but agents' store build. */}
           {act.defaults ? <DefaultsDevSwitch act={act.defaultsShown} /> : null}

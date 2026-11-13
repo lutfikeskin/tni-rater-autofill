@@ -36,7 +36,8 @@ test('the sheet as the page held it: a dialog named by its title and file, the i
   // The buttons' names and words, as before.
   expect(['pdf-close', 'pdf-prev', 'pdf-next', 'pdf-zoom-out', 'pdf-zoom-in'].map((id) => $(container, `#${id}`).getAttribute('aria-label'))).toEqual(['Close', 'Previous page', 'Next page', 'Zoom out', 'Zoom in']);
   expect(['pdf-focus', 'pdf-prev', 'pdf-next', 'pdf-zoom-out', 'pdf-zoom-in', 'pdf-tab', 'pdf-back'].map((id) => $(container, `#${id}`).textContent)).toEqual(['Zoom to it', '‹', '›', '−', '+', 'Open full PDF', 'Back']);
-  expect($(container, '#pdf-zoom-fit').title).toBe('Fit page');
+  // Named before the PDF's zoom is known too: its name never rests on its tooltip alone.
+  expect([$(container, '#pdf-zoom-fit').title, $(container, '#pdf-zoom-fit').getAttribute('aria-label')]).toEqual(['Fit page', 'Fit page']);
 });
 
 test('a marked item: its title and where it is, the hint by its kind, the page and its marks, the controls', () => {

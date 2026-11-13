@@ -35,10 +35,10 @@ const record = {
   garaging: { street: '1 Test Way', unit: null, city: 'Omaha', state: 'NE', zip: '68102' },
   operations: { businessClass: 'Expediter', whatHaul: 'General freight hauler', radius: 'Unlimited', radiusMiles: null, hazmat: false, filingsRequired: true, filingsWhich: 'Federal Liability Filing', vehicleOwnership: 'Owned' },
   drivers: [{ first: 'SAMPLE A', middle: null, last: 'DRIVER', dob: '01/02/1968', licenseNumber: 'H1234567', licenseState: 'NE', maritalStatus: null }],
-  vehicles: ['54DC4W1B5KS800000', '54DC4W1B5KS800001', '54DC4W1B5KS800002']
+  vehicles: ['54DC4W1B0KS800000', '54DC4W1B2KS800001', '54DC4W1B4KS800002']
     .map((vin) => ({ type: 'Box Truck', year: 2019, make: 'ISUZU', model: 'NPR', vin, value: 45000 })),
   // AmWINS has no trailer section: the trailer is a line of the disclosure text (2026-10-08).
-  trailers: [{ type: 'Dry Van', year: 2015, make: 'GREAT DANE', model: null, vin: '1GRAA0621FB700000', value: 25000 }],
+  trailers: [{ type: 'Dry Van', year: 2015, make: 'GREAT DANE', model: null, vin: '1GRAA0627FB700000', value: 25000 }],
   priorInsurance: [{ type: 'Commercial Auto', carrier: 'PROGRESSIVE', limit: '$1M CSL', expiration: '12/01/2026' }],
   coverage: { autoLiabLimit: '$1M', cargo: true, cargoLimit: 100000, cargoDeductible: 1000 },
   claims: { hasClaims: false },
@@ -61,7 +61,7 @@ const EXPECT = [
   ['#driversPanel [data-id="firstName"]', 'SAMPLE A'], ['#driversPanel [data-id="lastName"]', 'DRIVER'], ['#driversPanel [data-id="dateOfBirth"]', '01/02/1968'],
   ['#driversPanel [data-id="gender"]', 'MALE'], ['#driversPanel [data-id="martialStatus"]', 'MARRIED'], ['#driversPanel [data-id="licenseYear"]', '1985'],
   ['#driversPanel [data-id="licenseNumber"]', 'H1234567'], ['#driversPanel [data-id="licenseState"]', 'Nebraska'],
-  ['#vehLookupVin', ''], ['#vehiclesPanel [data-id="vin"]', '54DC4W1B5KS800000'], ['#vehiclesPanel [data-id="bodyType"]', 'Box Truck'],
+  ['#vehLookupVin', ''], ['#vehiclesPanel [data-id="vin"]', '54DC4W1B0KS800000'], ['#vehiclesPanel [data-id="bodyType"]', 'Box Truck'],
   ['#vehiclesPanel [data-id="grossVehicleWeight"]', '14500'], ['#marketValue', /45,?000/], ['#vehiclesPanel [data-id="usageType"]', 'FOR HIRE'],
   ['#vehiclesPanel [data-id="radius"]', '201 + MILES'], ['radio:permanentlyAttachedEquipment_0_', 'No'],
   ['#cslLiabilityLimit', '$1M'], ['#medicalPayment', '$5,000'], ['radio:uninsuredMotorists', 'Yes'], ['#uninsuredMotoristsLimit', '$100K'],
@@ -76,7 +76,7 @@ const EXPECT = [
     'anyVehicleNotOwned', 'useTheirAuto', 'vehicleMaintenanceProgram', 'vehicleLeased', 'transportingHazardousMaterial', 'vehicleUsedByFamily',
     'mvrVerification', 'recruitingMethod', 'coveredByWC', 'ownedUnscheduledVehicle', 'convictionsMovingViolations'].map((n) => [`radio:${n}`, 'No']),
   ['radio:otherTopic', 'Yes'],
-  ['#remarks', 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nTrailer - 2015 GREAT DANE Dry Van - VIN 1GRAA0621FB700000 - $25K\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026'],
+  ['#remarks', 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nTrailer - 2015 GREAT DANE Dry Van - VIN 1GRAA0627FB700000 - $25K\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026'],
   ['#accept', false],
 ];
 // Left for the agent on purpose (facts the intake doesn't give, plan.js `source: 'fact'`, since

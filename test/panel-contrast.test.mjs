@@ -63,4 +63,6 @@ test('with reduced motion, a fill shows a steady full bar and a still spinner, n
   assert.match(reduced, /\.progress span \{[^}]*width: 100%;/);
   assert.match(reduced, /\.spinner::before \{ content: "…"; \}/);
   assert.match(reduced, /\.spinner \{[^}]*border: 0;/);
+  // Nothing else moves either: every element and its before and after content.
+  assert.match(reduced, /\*, \*::before, \*::after \{ animation: none !important; transition: none !important; \}/);
 });
