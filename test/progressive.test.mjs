@@ -1631,6 +1631,23 @@ test('trailers: Add Trailer once the vehicles are in, its tile, its page, and it
   assert.equal(none.find((s) => s.q === '1FF2').vehicleHint, null, 'one vehicle, no trailer: its row needs no name');
 });
 
+// W48-05 (0.9.40, IA): a trailer make Progressive doesn't list failed "no option matches", and the
+// agent's Not Listed showed "Enter Trailer Make", left unfamiliar and required.
+test('trailers: an unlisted make is the agent\'s pick with a note, and Enter Trailer Make takes this trailer\'s make', () => {
+  const record = trailerRecord();
+  record.trailers.push({ type: 'Dry Van', year: 2020, make: 'HYUNDAI TRANSLEAD', model: null, vin: '3H3V532C0LT000003', value: 30000 });
+  const make = buildPlan(record, progressive, { trailers: 0 }).find((s) => s.field === 'RiskInput.MakeCode');
+  // The list is still looked through for the intake's make: never Not Listed chosen here.
+  assert.deepEqual([make.value, make.pages, make.pageOnly], ['WILSON', ['AddTrailer'], true]);
+  assert.match(make.unofferedNote, /doesn't list the intake's trailer make: pick it yourself.*Not Listed/);
+  const typed = (active) => buildPlan(record, progressive, active).find((s) => s.field === 'RiskInput.OtherMake');
+  assert.deepEqual([typed({ trailers: 0 })?.value, typed({ trailers: 0 })?.path, typed({ trailers: 0 })?.source], ['WILSON', 'trailers[0].make', 'intake']);
+  assert.equal(typed({ trailers: 1 }).value, 'HYUNDAI TRANSLEAD', 'the second trailer gets its own make');
+  // Found on Add Trailer only: never on Add Vehicle, which carries the same data-model names.
+  assert.deepEqual([typed({ trailers: 0 }).pages, typed({ trailers: 0 }).pageOnly], [['AddTrailer'], true]);
+  assert.ok(!progressive.rules.some((r) => r.field === 'RiskInput.OtherMake' && r.page !== 'AddTrailer'));
+});
+
 // TNI 2026-10-07: "Defensive driver ... default answer no, AI can check the Description box of the
 // intake for that". A course mentioned there is the agent's (Codex on PR #43: not a silent No).
 test('defensive driver discount: No, unless the description box mentions a course', () => {

@@ -1341,6 +1341,8 @@ export const geico = {
     // The trailer form (NE): the active trailer's answers, never a vehicle's.
     ...on(VEHICLES, { whenShown: TRAILER_FORM }, [
       { concept: 'trailer.year', field: 'GiveYear', ask: 'Year', path: 'trailers[].year', name: 'Trailer year', kind: 'choice' },
+      // The trailer form's make is a text box (the vehicle form's a list, GiveMake): the intake's (W48-05).
+      { concept: 'trailer.make', field: 'GiveCustomMake', ask: 'Make', path: 'trailers[].make', name: 'Trailer make' },
       // 19 kinds of trailer: a gooseneck hitch isn't a Gooseneck Trailer.
       { concept: 'trailer.type', field: 'GiveOtherVehicleType', q: 'GiveOtherVehicleType.trailer', ask: 'Which of the following best describes the customer\'s trailer?', name: 'Trailer type (Dry Van is Dry Freight Trailer, Flatbed Flatbed Trailer, Reefer Refrigerated Dry Freight Trailer, Lowboy Lowboy Trailer, Tanker Tank Trailer; else the agent\'s pick)',
         kind: 'choice', source: (r, a) => (trailerType(r, a) ? 'derived' : null), value: trailerType, note: (r, a) => (trailerType(r, a) ? null : typeNote('trailer', trailerOf)(r, a)) },
