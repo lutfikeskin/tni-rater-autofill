@@ -54,7 +54,7 @@ import { STANDARDS, usd } from '../standards.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler } from '../answers/classes.js';
 import { garagingIs } from '../answers/state.js';
 import { filingsIntent } from '../answers/filings.js';
-import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand } from '../normalize.js';
+import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand, vinUnreadable } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { glRequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitNote, interchangeLimitRaised,
   interchangeLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
@@ -424,7 +424,14 @@ const vehicleOf = (r, a) => r.vehicles?.[a.vehicles ?? 0] ?? null;
 const trailerOf = (r, a) => r.trailers?.[a.trailers ?? 0] ?? null;
 // With a VIN the decode sets year, make and model (and disables make and model): they are checked
 // against the intake, never typed (a decode that differs is flagged). Without one they are typed.
-const hasVin = (r, a) => !!vehicleOf(r, a)?.vin;
+// A VIN the intake check flags (vin.invalid) is none here: never typed (plan.js), so "VIN at hand"
+// is the agent's, and the year, make and model are typed for them (W48-02).
+const vinOf = (r, a) => vehicleOf(r, a)?.vin ?? null;
+const badVin = (r, a) => (vinOf(r, a) ? vinUnreadable(vinOf(r, a)) : null);
+const hasVin = (r, a) => !!vinOf(r, a) && !badVin(r, a);
+const vinAtHandNote = (r, a) => (hasVin(r, a) ? null : badVin(r, a)
+  ? `The intake's VIN for this vehicle, "${vinOf(r, a)}", ${badVin(r, a)}: correct it in client details, or answer it yourself.`
+  : 'The intake has no VIN for this vehicle: answer it yourself.');
 // GEICO's VIN decode redraws the vehicle form, clearing the type, distance and personal use given
 // before it (FL live run 2, 2026-10-21: the Cascadia's Tractor was cleared three times). With a VIN,
 // the form's answers wait for the decoded year (pagekit waitFor).
@@ -1304,7 +1311,7 @@ export const geico = {
     ]),
     ...on(VEHICLES, { whenShown: VEHICLE_FORM }, [
       { concept: 'vehicle.vin', field: 'YesNoPreQuoteHaveFullVinActivity', ask: 'Entering the customer\'s VIN can help speed things up. Do you have it handy?', path: 'vehicles[].vin', name: 'VIN at hand',
-        kind: 'bool', source: 'derived', value: (r, a) => (hasVin(r, a) ? true : null), note: (r, a) => (hasVin(r, a) ? null : 'The intake has no VIN for this vehicle: answer it yourself.') },
+        kind: 'bool', source: 'derived', value: (r, a) => (hasVin(r, a) ? true : null), note: vinAtHandNote },
       { concept: 'vehicle.vin', field: 'GiveVinPreQuote', path: 'vehicles[].vin', name: 'VIN' },
       { concept: 'vehicle.year', field: 'GiveYear', ask: 'Year', path: 'vehicles[].year', name: 'Vehicle year', kind: 'choice', verifyOnly: hasVin },
       { concept: 'vehicle.make', field: 'GiveMake', path: 'vehicles[].make', name: 'Vehicle make', kind: 'choice', verifyOnly: hasVin },

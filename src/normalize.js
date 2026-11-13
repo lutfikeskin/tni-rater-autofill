@@ -145,6 +145,16 @@ export function vinProblem(vin) {
   return vin[8] === check ? null : 'fails the check-digit test (likely a typo)';
 }
 
+// What is wrong with a VIN in the client record (the intake's, or an agent's edit in the panel), read
+// as normalizeIntake reads one (spaces and dashes dropped, upper case): vinProblem's reason, the
+// intake's vin.invalid check. null for a VIN that looks right, and for none (vin.missing).
+/** @param {unknown} vin @returns {string | null} */
+export function vinUnreadable(vin) {
+  if (vin == null) return null;
+  const s = String(vin).replace(/[\s-]/g, '').toUpperCase();
+  return s ? vinProblem(s) : null;
+}
+
 // Street types that also start place names ("Glen Allen", "Bend", "Point Pleasant"): one only ends the
 // street when no stronger type follows it.
 const PLACE_SUFFIX = new Set(['ridge', 'rdg', 'point', 'pt', 'crossing', 'bend', 'pass', 'path', 'walk', 'crescent', 'cres', 'hollow', 'holw',

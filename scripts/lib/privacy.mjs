@@ -12,7 +12,7 @@ export const PII_PATTERNS = {
 };
 
 // Allowed on purpose: the synthetic values used in fixtures and mocks.
-const ALLOWED = [/\b555[-. )]*01\d/, /\b1 (Test|Sample|Agency) (Way|Garage Rd)\b/, /54DC4W1B5KS800000|1FTBR3X8[07]MKA12(345|399)/];
+const ALLOWED = [/\b555[-. )]*01\d/, /\b1 (Test|Sample|Agency) (Way|Garage Rd)\b/, /54DC4W1B0KS800000|1FTBR3X89MKA12346|1FTBR3X86MKA12398/];
 
 export function findPii(text) {
   const hits = [];
