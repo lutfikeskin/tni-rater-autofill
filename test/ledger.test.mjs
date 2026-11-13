@@ -458,29 +458,43 @@ test("a ledger's corrections counted per change event get no trend against the p
 
 // Post-merge review of #106 and #108: #108 made a printed Progressive quote done (2026-10-20), and
 // the ledger kept the old label, so a trend against an older ledger set two definitions side by side.
+const DONE_OLD = "Quotes done (reached the carrier's final page)";
+const DONE_PRINTED = "Quotes done (reached the carrier's final page or printed)";
+const DONE_NOW = "Quotes done (reached the carrier's final page or printed, GEICO's PrintQuote too)";
+const PROGRESSIVE_PRINTED = 'a printed Progressive quote (Print/Send or its PDF) counts as done since 2026-10-20';
+const GEICO_PRINTED = "GEICO's printed quote proposal (/PrintQuote) counts as done since 2026-11-13 (W48-03)";
+const doneNumbers = (label) => parseLedger(BODY.replace(DONE_OLD, label)).numbers;
+const doneRow = (w) => w.rows.find((r) => r.label.startsWith('Quotes done'));
+
 test("a ledger's Quotes done counted before a printed quote was done gets no trend, and the report says why", () => {
-  const OLD = "Quotes done (reached the carrier's final page)";
-  const NEW = "Quotes done (reached the carrier's final page or printed)";
-  const numbers = (label) => parseLedger(BODY.replace(OLD, label)).numbers;
-  const done = (w) => w.rows.find((r) => r.label.startsWith('Quotes done'));
   // This period's row carries the definition it counts under, as signals and the brief template do.
-  const old = weeklyRows(kpis(37), numbers(OLD));
-  assert.equal(done(old).label, NEW);
-  assert.deepEqual([done(old).trend, old.redefined.map((x) => x.name)], ['definition changed', ['Quotes done']]);
-  // Counted under the new definition: the ledger's label says so, or the issue was opened after the
-  // change (its label copied from a report older than it). Opened before it: the old definition.
-  for (const [w, why] of [[weeklyRows(kpis(37), numbers(NEW)), 'new label'], [weeklyRows(kpis(37), numbers(OLD), { createdAt: '2026-10-21T09:00:00Z' }), 'opened after']]) {
-    assert.deepEqual([done(w).trend, w.redefined], ['up (better)', []], why);
-  }
-  assert.equal(done(weeklyRows(kpis(37), numbers(OLD), { createdAt: '2026-10-18T18:39:03Z' })).trend, 'definition changed');
+  const old = weeklyRows(kpis(37), doneNumbers(DONE_OLD));
+  assert.equal(doneRow(old).label, DONE_NOW);
+  assert.deepEqual([doneRow(old).trend, old.redefined], ['definition changed', [{ name: 'Quotes done', change: `${PROGRESSIVE_PRINTED}; and ${GEICO_PRINTED}` }]]);
+  // Counted under the current definition: the ledger's label says so.
+  const now = weeklyRows(kpis(37), doneNumbers(DONE_NOW));
+  assert.deepEqual([doneRow(now).trend, now.redefined], ['up (better)', []]);
+  // Opened after 2026-10-20 (its label copied from a report older than it): Progressive's printed
+  // quote counted, GEICO's not yet. Opened before it: neither.
+  assert.deepEqual(weeklyRows(kpis(37), doneNumbers(DONE_OLD), { createdAt: '2026-10-21T09:00:00Z' }).redefined, [{ name: 'Quotes done', change: GEICO_PRINTED }]);
+  assert.equal(doneRow(weeklyRows(kpis(37), doneNumbers(DONE_OLD), { createdAt: '2026-10-18T18:39:03Z' })).trend, 'definition changed');
   // Without a number in the ledger there is nothing to set apart.
-  assert.deepEqual(weeklyRows(kpis(37), parseLedger(BODY.replace(/^\| Quotes done.*$/m, `| ${OLD} | — |`)).numbers).redefined, []);
+  assert.deepEqual(weeklyRows(kpis(37), parseLedger(BODY.replace(/^\| Quotes done.*$/m, `| ${DONE_OLD} | — |`)).numbers).redefined, []);
   // Too few quotes: that is the trend cell; the report still says the two definitions differ.
-  const few = weeklyRows(kpis(6), numbers(OLD));
-  assert.equal(done(few).trend, 'too few quotes');
+  const few = weeklyRows(kpis(6), doneNumbers(DONE_PRINTED));
+  assert.equal(doneRow(few).trend, 'too few quotes');
   const md = markdown({ ledger: { number: 86, title: 'Weekly review W42 (2026-10-06 – 2026-10-13)' }, since: '2026-10-13T00:00:00.000Z', quotes: 6, items: [], weekly: few, builds: [] });
-  assert.match(md, /\*\*Quotes done: two definitions\.\*\* W42's number was counted before the change \(a printed Progressive quote \(Print\/Send or its PDF\) counts as done since 2026-10-20\); this period's follows it, so no trend is called\./);
-  assert.doesNotMatch(markdown({ ledger: { title: 'x' }, since: null, quotes: 37, items: [], weekly: weeklyRows(kpis(37), numbers(NEW)), builds: [] }), /two definitions/);
+  assert.match(md, /\*\*Quotes done: two definitions\.\*\* W42's number was counted before the change \(GEICO's printed quote proposal \(\/PrintQuote\) counts as done since 2026-11-13 \(W48-03\)\); this period's follows it, so no trend is called\./);
+  assert.doesNotMatch(markdown({ ledger: { title: 'x' }, since: null, quotes: 37, items: [], weekly: now, builds: [] }), /two definitions/);
+});
+
+// W48-03 (W44-19): GEICO's printed quote counts as done. A ledger whose label says "or printed" but
+// not GEICO counted 0 GEICO quotes done, whenever it was opened: the label changed with the count.
+test("a ledger's Quotes done counted before GEICO's printed quote was done gets no trend", () => {
+  for (const createdAt of [null, '2026-11-12T09:00:00Z', '2026-11-20T09:00:00Z']) {
+    const w = weeklyRows(kpis(37), doneNumbers(DONE_PRINTED), { createdAt });
+    assert.deepEqual([doneRow(w).trend, w.redefined], ['definition changed', [{ name: 'Quotes done', change: GEICO_PRINTED }]], String(createdAt));
+  }
 });
 
 test('the report holds IDs, builds and counts, never an event\'s values', () => {

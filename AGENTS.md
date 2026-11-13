@@ -26,6 +26,7 @@ Start with the relevant source. Read the matching document when the task affects
 | Driving the packaged extension or carrier mocks to prove a fill | Skill [verify-tni-rater](.claude/skills/verify-tni-rater/SKILL.md) |
 | Intake parsing, mappings, defaults, applicability, or state/vehicle/coverage exceptions | [Intake and rules](docs/intake-and-rules.md) |
 | Live controls, page changes, helper actions, navigation, or fill verification | [Browser filling](docs/browser-filling.md) |
+| What the side panel draws: its views, markup and styles, and how a keyboard or screen-reader user gets it | [Panel UI](docs/panel-ui.md) |
 | Learning from new fields, corrections, exceptions, layouts, or usage events | [Learning](docs/learning.md) |
 | The developer recording of a quote: its trace, the panel's store, `npm run recording` | [Developer recording](docs/developer-recording.md) |
 | Reviewing a recorded quote: whether the recording is enough, where the time went, which waits could be shortened safely | Skill [recording-review](.claude/skills/recording-review/SKILL.md) |

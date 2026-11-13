@@ -115,7 +115,7 @@ export const TABLES = {
       ['last_page', 'VARCHAR', 'Page, or "page › step" on one-address carriers (AmWINS, GEICO)'],
       ['outcome', 'VARCHAR', 'done, declined or stopped (on last_page)'],
       ['done', 'BOOLEAN', "Reached the carrier's final page, or printed, after this quote's own fill there"],
-      ['declined', 'BOOLEAN', "A stop on a page that isn't final: the carrier's refusal"],
+      ['declined', 'BOOLEAN', "The carrier's own stop, its refusal (Progressive's declination, GEICO's referral), not a step or screen left to the agent"],
       ['logins', 'INTEGER', "Times the carrier's login came up mid-quote"],
     ],
     key: ['session', 'carrier'],

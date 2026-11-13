@@ -81,3 +81,103 @@ test('readable values are untouched', () => {
   for (const s of read(plan, 'vehicles[0].year')) assert.equal(s.value, 2022);
   for (const s of read(plan, 'drivers[0].dob')) assert.equal(s.value, '05/06/1970');
 });
+
+// W48-02: an intake VIN the intake check flags (vin.invalid: an 18-character VIN on JC's Progressive
+// AddVehicle, refused as longer than the field) is never typed: the agent's, on every carrier.
+const VALID = '1FTBR3X87MKA12345';
+const TOO_LONG = '1FTBR3X87MKA123456';
+/** @param {Array<string | null>} vins  the vehicles' VINs @param {Array<string | null>} [trailerVins] */
+const units = (vins, trailerVins = []) => ({
+  ...record(),
+  vehicles: vins.map((vin, i) => ({ type: 'Van', year: 2021 + i, make: 'FORD', model: 'Transit', vin, value: 45000 })),
+  trailers: trailerVins.map((vin) => ({ type: 'Enclosed', year: 2019, make: 'Wells', vin, value: 9000 })),
+});
+// The plan's steps, as the page kit reads them.
+/** @returns {any[]} */
+const planFor = (r, carrier, active = {}) => buildPlan(r, carrier, active);
+const vinSteps = (plan, path) => plan.filter((s) => s.path === path && s.source === 'intake');
+
+for (const carrier of [progressive, amwins, geico]) {
+  test(`${carrier.id}: an invalid intake VIN is the agent's, a valid one on the same quote still fills`, () => {
+    const plan = planFor(units([VALID, TOO_LONG]), carrier, { vehicles: 1 });
+    const bad = vinSteps(plan, 'vehicles[1].vin');
+    assert.ok(bad.length, 'the carrier has a VIN step');
+    for (const s of bad) {
+      assert.equal(s.value, null, `${s.name}: not typed`);
+      assert.equal(s.manualOnly, true);
+      assert.equal(s.resolution.status, 'agent');
+      assert.ok(s.note.includes(`"${TOO_LONG}" has 18 characters (should be 17), so it isn't typed`), s.note);
+    }
+    const good = vinSteps(planFor(units([VALID, TOO_LONG]), carrier, { vehicles: 0 }), 'vehicles[0].vin');
+    assert.ok(good.length);
+    for (const s of good) assert.equal(s.value, VALID, `${s.name}: vehicle 1's VIN fills`);
+  });
+}
+
+test('a valid VIN written with spaces or dashes, or a check-digit typo, reads as the intake check reads it', () => {
+  const spaced = vinSteps(planFor(units(['1FTBR 3X87-MKA12345']), progressive), 'vehicles[0].vin');
+  assert.ok(spaced.length);
+  for (const s of spaced) assert.equal(s.value, '1FTBR 3X87-MKA12345', 'not held');
+  const typo = vinSteps(planFor(units(['1FTBR3X80MKA12345']), progressive), 'vehicles[0].vin');
+  for (const s of typo) {
+    assert.equal(s.value, null);
+    assert.match(s.note, /fails the check-digit test/);
+  }
+});
+
+test('an agent\'s corrected VIN fills; a missing VIN keeps its own handling', () => {
+  // The panel's edit: parseEdit keeps the text; the plan reads it as the intake check does.
+  const edited = parseEdit('text', ' 1ftbr3x87mka12345 ');
+  for (const s of vinSteps(planFor(units([VALID, edited]), progressive, { vehicles: 1 }), 'vehicles[1].vin')) {
+    assert.equal(s.value, edited);
+    assert.equal(s.manualOnly, false);
+  }
+  for (const s of vinSteps(planFor(units([VALID, null]), progressive, { vehicles: 1 }), 'vehicles[1].vin')) {
+    assert.equal(s.value, null);
+    assert.equal(s.manualOnly, false, 'no VIN: as before, nothing the intake check quotes');
+    assert.doesNotMatch(s.note ?? '', /isn't typed/);
+  }
+});
+
+test('Progressive: the trailer\'s invalid VIN is the agent\'s; the VIN lookup is never clicked for it', () => {
+  const plan = planFor(units([VALID, TOO_LONG], ['1GRAA0621FB7000001']), progressive, { vehicles: 1 });
+  for (const s of vinSteps(plan, 'trailers[0].vin')) {
+    assert.equal(s.value, null);
+    assert.equal(s.resolution.status, 'agent');
+  }
+  // The lookup waits for the VIN box, which the fill leaves empty: it runs once the agent types it.
+  const lookup = plan.find((s) => s.action === 'lookupVin:1');
+  assert.deepEqual(lookup.after, ['vehicles[1].vin']);
+});
+
+test('GEICO: "VIN at hand" is the agent\'s for an invalid VIN, and the year, make and model are typed', () => {
+  const plan = planFor(units([TOO_LONG]), geico, { vehicles: 0 });
+  const atHand = plan.find((s) => s.field === 'YesNoPreQuoteHaveFullVinActivity');
+  assert.equal(atHand.value, null);
+  assert.match(atHand.note, /has 18 characters \(should be 17\): correct it in client details/);
+  for (const field of ['GiveYear', 'GiveMake', 'GiveModel']) assert.equal(plan.find((s) => s.field === field).verifyOnly, false, field);
+  assert.equal(plan.find((s) => s.field === 'GiveYear').waitFor, null, 'no decode to wait for');
+  const valid = planFor(units([VALID]), geico, { vehicles: 0 });
+  assert.equal(valid.find((s) => s.field === 'YesNoPreQuoteHaveFullVinActivity').value, true);
+  assert.equal(valid.find((s) => s.field === 'GiveMake').verifyOnly, true);
+});
+
+test('AmWINS: an invalid VIN is left out of the VIN list and the trailer line, and named', () => {
+  const plan = planFor(units([VALID, TOO_LONG], ['1GRAA0621FB7000001']), amwins, {});
+  const list = plan.find((s) => s.path === 'amwins.vinList');
+  assert.equal(list.value, VALID, 'the valid vehicle is still looked up');
+  assert.match(list.warn, /vehicle 2 \(2022 FORD Transit\): "1FTBR3X87MKA123456" has 18 characters/);
+  const disclosure = plan.find((s) => s.name === 'Disclosure details (from the intake)');
+  assert.doesNotMatch(disclosure.value, /VIN/);
+  assert.match(disclosure.value, /Trailer - 2019 Wells Enclosed - \$9K/);
+  assert.match(disclosure.warn, /trailer 1 \(2019 Wells\): "1GRAA0621FB7000001" has 18 characters/);
+  // None left to look up: the list is the agent's.
+  const none = planFor(units([TOO_LONG]), amwins, {}).find((s) => s.path === 'amwins.vinList');
+  assert.equal(none.value, null);
+  assert.equal(none.resolution.status, 'agent');
+  assert.match(none.note, /vehicle 1 \(2021 FORD Transit\)/);
+  // Every VIN valid: listed as before, with no warning.
+  const ok = planFor(units([VALID, '1FTBR3X88MKA12399']), amwins, {}).find((s) => s.path === 'amwins.vinList');
+  assert.equal(ok.value, `${VALID}\n1FTBR3X88MKA12399`);
+  assert.equal(ok.warn, null);
+});
