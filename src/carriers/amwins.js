@@ -49,13 +49,14 @@
 //   2026-10-26, W44-26: Medical Payments $5,000 wherever offered, PIP not selected).
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
-import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand } from '../normalize.js';
+import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand, vinUnreadable } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
 import { HAZ_HAUL } from '../util.js';
 import { driverExcluded, ownerRowExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { filingsIntent } from '../answers/filings.js';
 import { vehicleValueNote } from '../answers/vehicles.js';
+import { incidentRowNote } from '../answers/claims.js';
 import { EXPEDITING_OR_GENERAL_FREIGHT, namesExpeditingOrGeneralFreight } from '../answers/classes.js';
 
 // A UM limit as AmWINS lists it: $100K, and from a million $1M or $1.5M (captured layouts), never $1000K.
@@ -142,11 +143,12 @@ const moneyK = (n) => (n >= 1e6 ? `$${n / 1e6}M` : n >= 1e3 ? `$${n / 1e3}K` : `
 // AmWINS has no trailer section, so each intake trailer is a line here, in TNI's format
 // (2026-10-08): year, make and type, its VIN and its value; a part the intake lacks is left out.
 // So is a year or value the intake couldn't read ("about 25k" stays text, flagged on the Intake step):
-// never typed into the answer as it is.
+// never typed into the answer as it is, and a VIN the intake check flags (vin.invalid), named in the
+// answer's warning (disclosureWarn; W48-02).
 const number = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 const trailerLine = (t) => {
   const value = number(t.value);
-  const parts = [[number(t.year), t.make, t.type].filter(Boolean).join(' '), t.vin ? `VIN ${t.vin}` : null, value ? moneyK(value) : null].filter(Boolean);
+  const parts = [[number(t.year), t.make, t.type].filter(Boolean).join(' '), t.vin && !vinUnreadable(t.vin) ? `VIN ${t.vin}` : null, value ? moneyK(value) : null].filter(Boolean);
   return parts.length ? ['Trailer', ...parts].join(' - ') : null;
 };
 const disclosure = (r) => {
@@ -181,7 +183,26 @@ const disclosure = (r) => {
   }
   return lines.join('\n') || null;
 };
-const disclosureWarn = (r) => (r.coverage.cargo && noCargoDeductible(r) ? `${CARGO_DEDUCTIBLE_NOTE} Add the deductible to the Motor Truck Cargo line here.` : null);
+// The units whose intake VIN the intake check flags (vin.invalid), named as the agent knows them
+// ("vehicle 2 (2019 FORD Transit)") with the VIN as written: never typed (W48-02).
+const badVins = (units, label) => (units ?? []).flatMap((u, i) => {
+  const problem = u?.vin ? vinUnreadable(u.vin) : null;
+  const what = [number(u?.year), u?.make, u?.model].filter(Boolean).join(' ');
+  return problem ? [`${label} ${i + 1}${what ? ` (${what})` : ''}: "${u.vin}" ${problem}`] : [];
+});
+const badTrailerVinNote = (r) => {
+  const bad = badVins(r.trailers, 'trailer');
+  return bad.length ? `The intake's VIN isn't a valid VIN, so it is left out of its Trailer line (${bad.join('; ')}): correct it in client details, or add it here yourself.` : null;
+};
+const disclosureWarn = (r) => [r.coverage.cargo && noCargoDeductible(r) ? `${CARGO_DEDUCTIBLE_NOTE} Add the deductible to the Motor Truck Cargo line here.` : null, badTrailerVinNote(r)]
+  .filter(Boolean).join(' ') || null;
+// The VIN list Import Data looks up: each intake VIN that looks right, one per line. A VIN the intake
+// check flags is left out, and named: the agent's (W48-02).
+const vinList = (r) => (r.vehicles ?? []).map((v) => v.vin).filter((vin) => vin && !vinUnreadable(vin)).join('\n') || null;
+const badVehicleVinNote = (r) => {
+  const bad = badVins(r.vehicles, 'vehicle');
+  return bad.length ? `The intake's VIN isn't a valid VIN, so it isn't looked up (${bad.join('; ')}): correct it in client details, or add that vehicle yourself.` : null;
+};
 
 // Body type as on the intake: a Van is a Cargo Van.
 const bodyType = (r, a) => {
@@ -298,6 +319,18 @@ const START_PAGES = ['/commerciallines', '/CommercialLines'];
 const dataId = (id, within = '') => `${within ? `${within} ` : ''}[data-id="${id}"]`;
 const DRIVER = '#driversPanel';
 const VEHICLE = '#vehiclesPanel';
+// Loss History, shown by "Any prior loss?" Yes: [data-id, what it asks, kind], a step per row up to
+// LOSS_ROWS (a row past them stays an unfamiliar question).
+const LOSS_HISTORY = '#lossHistroyPanel';
+const LOSS_ROWS = 6;
+/** @type {[string, string, string][]} */
+const LOSS_FIELDS = [
+  ['dateOfOccurrence', 'date of occurrence', 'date'], ['coverageType', 'coverage type', 'choice'],
+  ['description', 'type / description of claim', 'text'], ['dateOfClaim', 'date of claim', 'date'],
+  ['amounthPaid', 'amount paid', 'text'], ['amountReserved', 'amount reserved', 'text'],
+  ['subrogation', 'subrogation', 'bool'], ['claimOpen', 'claim open', 'bool'],
+];
+const LOSS_NOTE = incidentRowNote('each loss\'s details');
 
 // "How long has the insured's current federal operating authority been active?", from the
 // intake's years under its own authority ("NEW" there is 0: LESS THAN 1 YEAR; TNI, 2026-10-26:
@@ -621,6 +654,14 @@ export const amwins = {
     { concept: 'prior.losses', name: 'Any prior loss', label: '^any prior loss$', kind: 'bool', source: 'derived', clientFact: true,
       value: (r) => typeof r.claims?.hasClaims === 'boolean' ? r.claims.hasClaims : null,
       note: (r) => typeof r.claims?.hasClaims === 'boolean' ? null : 'The intake doesn\'t answer the claims / violations question: answer prior loss yourself.' },
+    // Its Loss History rows (#lossHistroyPanel, the page's spelling), one per loss: the client's
+    // facts. The intake has only the claims box's text, never read into a date, a type or an amount
+    // (W48-04: they were unfamiliar questions). A step per row, up to LOSS_ROWS; with No the panel
+    // stays hidden. The boxes by their data-id; the Yes / No groups, which have none, by their name
+    // read as words ("subrogation 0", the row last).
+    ...LOSS_FIELDS.flatMap(([id, what, kind]) => Array.from({ length: LOSS_ROWS }, /** @returns {CarrierRule} */ () => ({
+      concept: 'prior.losses', ...(kind === 'bool' ? { label: `^${what} \\d+$` } : { selector: dataId(id, LOSS_HISTORY) }),
+      name: `Loss history: ${what} (the agent's)`, kind, source: 'fact', note: LOSS_NOTE }))),
 
     // --- Drivers ---------------------------------------------------------------------------------
     // Names and license number first: they retitle the driver panel; gender, marital status and
@@ -651,7 +692,9 @@ export const amwins = {
     // GL only, Property, Workers' Comp): not a quote question, left as the page has it (W46-09: it
     // was counted as unfamiliar in 11 quotes, 2026-11-03 – 11-05).
     { concept: 'quote.product', selector: '#product-copy', name: 'Product to copy the submission to (after Submit; left as the page has it)', ignore: true },
-    { concept: 'vehicle.vin', selector: '#vehLookupVin', path: 'amwins.vinList', name: 'VINs to look up (one per line)', source: 'derived', value: (r) => r.vehicles.map((v) => v.vin).filter(Boolean).join('\n') || null },
+    { concept: 'vehicle.vin', selector: '#vehLookupVin', path: 'amwins.vinList', name: 'VINs to look up (one per line)', source: 'derived', value: vinList, clientFact: true,
+      // No VIN left to look up: the list is the agent's; some left: the rest are listed, with the warning.
+      note: (r) => (vinList(r) ? null : badVehicleVinNote(r)), warn: (r) => (vinList(r) ? badVehicleVinNote(r) : null) },
     { concept: 'vehicle.garaging', selector: dataId('locationNumber', VEHICLE), tni: 'amwins.vehicle-location', name: 'Vehicle location (standard: the first, the insured)', kind: 'first-option', source: 'standard', value: () => 'first option' },
     // VIN, year, make, model come from Import Data (its wording wins). Each row below is found by
     // its VIN (the witness set at the end of this list), so a vehicle the import didn't add has

@@ -45,7 +45,7 @@ const with_ = (changes, r = intake()) => {
   return r;
 };
 const CASEY = { first: 'Casey', middle: null, last: 'Example', suffix: null, dob: '07/09/1995', licenseNumber: null, licenseState: 'IA', cdl: false, cdlYear: null, maritalStatus: 'Single', gender: null, excluded: null };
-const SECOND_VEHICLE = { type: 'Cargo Van', year: 2019, make: 'RAM', model: 'ProMaster', vin: '1FTBR3X80MKA12399', value: 30000 };
+const SECOND_VEHICLE = { type: 'Cargo Van', year: 2019, make: 'RAM', model: 'ProMaster', vin: '1FTBR3X88MKA12399', value: 30000 };
 const TRAILER = { type: 'Dry Van', year: 2015, make: 'WABASH', model: null, vin: null, value: 12000 };
 // A blank intake: nothing the rules could answer from.
 const blank = () => ({
@@ -374,6 +374,21 @@ test('a vehicle\'s form and a trailer\'s never answer each other\'s questions', 
   assert.deepEqual([one(p, 'Vehicle value without customizations', VEH).value, one(p, 'Trailer value without customizations').value], [30000, 12000]);
   const type = p.find((x) => x.q === 'GiveOtherVehicleType.trailer');
   assert.deepEqual([type.value, type.source, type.note ?? null], ['Dry Freight Trailer', 'derived', null]);
+});
+
+// W48-05: the trailer form's make is a text box ("Make", GiveCustomMake), left unfamiliar; the
+// vehicle form's make is a list (GiveMake), the vehicle's.
+test('trailer make: the trailer form\'s Make box takes this trailer\'s make, never on the vehicle form', () => {
+  const r = { ...RECORDS()[1] };
+  r.trailers = [r.trailers[0], { ...r.trailers[0], make: 'UTILITY' }];
+  const custom = (active) => plan(r, active).find((x) => x.field === 'GiveCustomMake');
+  const first = custom({ vehicles: 0, trailers: 0, drivers: 0 });
+  assert.ok(first?.value, 'the fixture\'s trailer has a make');
+  assert.deepEqual([first.value, first.path, first.source, first.whenShown], [r.trailers[0].make, 'trailers[0].make', 'intake', { field: 'GiveOtherVehicleType', label: '\\btrailer\\b', unit: 'trailers' }]);
+  assert.equal(custom({ vehicles: 0, trailers: 1, drivers: 0 }).value, 'UTILITY', 'the second trailer gets its own make');
+  assert.deepEqual(geico.rules.filter((x) => x.field === 'GiveCustomMake').map((x) => x.whenShown?.unit), ['trailers'], 'the vehicle form\'s make is never this rule\'s');
+  const vehicleMake = one(plan(r, { vehicles: 0, trailers: 0, drivers: 0 }), 'Vehicle make');
+  assert.deepEqual([vehicleMake.field, vehicleMake.path, vehicleMake.whenShown.unit], ['GiveMake', 'vehicles[0].make', 'vehicles']);
 });
 
 // The maintainer, 2026-11-09 (a GEICO recording: the trailer type went to the AI assistant, which
@@ -2047,6 +2062,26 @@ test('GEICO UM: $100,000/$300,000 where the list has no combined single limit (W
   // Texas unchanged: the split first, the CSL after.
   const tx = one(plan(with_({ 'garaging.state': 'TX' })), 'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)');
   assert.deepEqual([tx.value, tx.choiceAliases], ['$100,000/$300,000', ['$100,000 Combined Single Limit']]);
+});
+
+// TNI, 2026-11-13, W48-11 (agents' VA quotes on 0.9.31: GEICO's list starts at $125,000 Combined
+// Single Limit, "no option matches"; IN's UMBI and UIMBI the same): a list with neither $100,000
+// option leaves the question to the agent with a note, never a failed fill, and never another amount.
+test('GEICO UM: a list without $100,000 is the agent\'s, with a note, never another amount (W48-11)', () => {
+  for (const state of ['VA', 'IN', 'FL', 'TX', 'OH']) {
+    const p = plan(with_({ 'garaging.state': state }));
+    for (const [name, what] of [['Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)', 'uninsured motorist bodily injury'],
+      ['Uninsured motorist bodily injury, UMBI (TNI: $100,000 CSL)', 'uninsured motorist bodily injury (UMBI)'],
+      ['Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)', 'underinsured motorist bodily injury (UIMBI)']]) {
+      const s = one(p, name);
+      assert.equal(s.unofferedNote, `GEICO doesn't offer $100,000 ${what} here (neither $100,000 Combined Single Limit nor $100,000/$300,000): pick the limit yourself. The fill doesn't pick another amount.`, `${name} ${state}`);
+      // Only $100,000 is ever given: no alias reaches another amount, the lowest offered or any other.
+      for (const answer of [s.value, ...s.choiceAliases]) assert.match(answer, /^\$100,000(?: Combined Single Limit|\/\$300,000)$/, `${name} ${state}`);
+      // An agent's own amount the list lacks names that amount, and has no split.
+      const std = geico.rules.find((rule) => rule.name === name).std;
+      assert.equal(std.unofferedNote(300000), `GEICO doesn't offer $300,000 ${what} here (no $300,000 Combined Single Limit): pick the limit yourself. The fill doesn't pick another amount.`);
+    }
+  }
 });
 
 // The maintainer, 2026-10-26: a blank CDL box on the intake means No (TNI's standard), for the

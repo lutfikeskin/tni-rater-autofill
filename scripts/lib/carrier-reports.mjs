@@ -57,9 +57,11 @@ export const CARRIER_REPORTS = {
     // ('/', '/dashboard') are not the quote.
     quotePage: (p) => /^\/quote(?:\/|$)/i.test(p.split(' › ')[0]),
     portalPage: null,
-    // The steps after Quote & Coverages: its stop steps, reached with a rated quote, the agent's
-    // from there.
-    finalPage: new RegExp(`› (${stopSteps('geico').map(escape).join('|')})$`),
+    // The printed quote proposal (/PrintQuote, opened by Print Quote Proposal on a rated Quote &
+    // Coverages), where TNI's quote ends (geico.js finishedBy), as Progressive's printed quote is
+    // done (W48-03, W44-19: 0 of 53 GEICO quotes read as done though about 12 printed); or the
+    // steps after Quote & Coverages: its stop steps, reached with a rated quote, the agent's from there.
+    finalPage: new RegExp(`^/PrintQuote$|› (${stopSteps('geico').map(escape).join('|')})$`),
     finalClick: null,
     loginPage: LOGIN,
     // Its mock draws the quote with a script (test/fixtures/geico/mock.js): no static ids to compare.
@@ -71,3 +73,19 @@ export const REPORT_KEYS = ['quotePage', 'portalPage', 'finalPage', 'finalClick'
 
 /** The carrier's entry, or null for one the reports don't know (the local test page). */
 export const reportsOf = (carrier) => CARRIER_REPORTS[carrier] ?? null;
+
+/**
+ * A fill run's blocker that says the carrier refused the quote: `stop: <name>` (the panel's, on a
+ * carrier's stop) where the carrier's config marks that stop as its own: a stop page (Progressive's
+ * DeclinationNotice) or a stop screen marked `stopped` (GEICO's referral). A stop step (GEICO's MVR &
+ * CLUE) or a screen that is the agent's (GEICO's Add USDOT Number / Skip, an answer the intake lacks)
+ * is no refusal (W48-03).
+ * @param {string} carrier
+ * @param {unknown} blocker
+ */
+export function carrierRefusal(carrier, blocker) {
+  const name = /^stop: (.+)$/.exec(String(blocker ?? ''))?.[1];
+  const config = name ? CARRIERS.find((c) => c.id === carrier) : null;
+  if (!config) return false;
+  return Object.hasOwn(config.stopPages ?? {}, name) || config.stopButtons?.[name]?.stopped === true;
+}

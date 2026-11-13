@@ -194,7 +194,8 @@ function problemFate(fate, status, withFill, at) {
 const PROBLEM_KINDS = ['wrong-answer', 'stuck', 'missing-question', 'slow', 'other'];
 const problemRef = (id) => String(id).replace(/-/g, '').slice(0, 8).toUpperCase();
 // The footer's line about the report just saved, for a while (PROBLEM_SAID_MS), and gone when the box
-// opens again.
+// opens again. Said through #announce as it shows (announce.js): the line has no live role, since a
+// region shown as its words go in is often not read.
 // Long enough to note the reference.
 const PROBLEM_SAID_MS = 30_000;
 let problemSaidTimer = null;
@@ -206,6 +207,7 @@ function sayProblem(text) {
   if (!line) return;
   line.textContent = text ?? '';
   line.hidden = !text;
+  if (text) announce(text);
   if (text) problemSaidTimer = setTimeout(() => sayProblem(null), PROBLEM_SAID_MS);
 }
 

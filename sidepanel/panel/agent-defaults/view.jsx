@@ -114,8 +114,10 @@ export function TniDefaults({ act }) {
   return (
     <div className="group" id="tni-defaults">
       <details id="defaults-fold" className="fold">
-        <summary className="list-row" title={ABOUT_DEFAULTS}><svg className="fold-icon" aria-hidden="true"><use href="#sliders" /></svg><span className="fold-name">Your defaults</span><span id="defaults-summary" className="fold-note">{summaryOf(initials, active)}</span><span className="chev" aria-hidden="true">›</span></summary>
+        <summary className="list-row"><svg className="fold-icon" aria-hidden="true"><use href="#sliders" /></svg><span className="fold-name">Your defaults</span><span id="defaults-summary" className="fold-note">{summaryOf(initials, active)}</span><span className="chev" aria-hidden="true">›</span></summary>
         <div className="card">
+          {/* What it does is a line inside it, not a tooltip keyboard and touch users never see (docs/panel-ui.md, "Tooltips"). */}
+          <p id="defaults-about" className="fine card-note">{ABOUT_DEFAULTS}</p>
           {!initials ? <p className="fine card-note" role="status">Set your initials above to use your own defaults.</p> : (
             <>
               <label className="opt" htmlFor="defaults-profile">
@@ -208,9 +210,12 @@ export function DefaultsDevSwitch({ act }) {
   const on = useStore(panelStore, (s) => !!s.defaultsOn);
   if (!dev || !act) return null;
   return (
-    <label id="defaults-dev-row" className="test-run" title="Only in this unpacked copy. Agents' store build has it only once RELEASED_TO_AGENTS is true.">
-      <input id="defaults-shown" type="checkbox" checked={on} onChange={(e) => act(e.target.checked)} />
-      {RELEASED_TO_AGENTS ? 'Your defaults (released to agents)' : 'Your defaults (developer only: not released to agents)'}
-    </label>
+    <>
+      <label id="defaults-dev-row" className="test-run">
+        <input id="defaults-shown" type="checkbox" checked={on} aria-describedby="defaults-dev-about" onChange={(e) => act(e.target.checked)} />
+        {RELEASED_TO_AGENTS ? 'Your defaults (released to agents)' : 'Your defaults (developer only: not released to agents)'}
+      </label>
+      <p id="defaults-dev-about" className="fine">Only in this unpacked copy. Agents' store build has it only once RELEASED_TO_AGENTS is true.</p>
+    </>
   );
 }

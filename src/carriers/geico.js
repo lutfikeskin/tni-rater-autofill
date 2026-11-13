@@ -54,7 +54,7 @@ import { STANDARDS, usd } from '../standards.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler } from '../answers/classes.js';
 import { garagingIs } from '../answers/state.js';
 import { filingsIntent } from '../answers/filings.js';
-import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand } from '../normalize.js';
+import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand, vinUnreadable } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { glRequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitNote, interchangeLimitRaised,
   interchangeLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
@@ -424,7 +424,14 @@ const vehicleOf = (r, a) => r.vehicles?.[a.vehicles ?? 0] ?? null;
 const trailerOf = (r, a) => r.trailers?.[a.trailers ?? 0] ?? null;
 // With a VIN the decode sets year, make and model (and disables make and model): they are checked
 // against the intake, never typed (a decode that differs is flagged). Without one they are typed.
-const hasVin = (r, a) => !!vehicleOf(r, a)?.vin;
+// A VIN the intake check flags (vin.invalid) is none here: never typed (plan.js), so "VIN at hand"
+// is the agent's, and the year, make and model are typed for them (W48-02).
+const vinOf = (r, a) => vehicleOf(r, a)?.vin ?? null;
+const badVin = (r, a) => (vinOf(r, a) ? vinUnreadable(vinOf(r, a)) : null);
+const hasVin = (r, a) => !!vinOf(r, a) && !badVin(r, a);
+const vinAtHandNote = (r, a) => (hasVin(r, a) ? null : badVin(r, a)
+  ? `The intake's VIN for this vehicle, "${vinOf(r, a)}", ${badVin(r, a)}: correct it in client details, or answer it yourself.`
+  : 'The intake has no VIN for this vehicle: answer it yourself.');
 // GEICO's VIN decode redraws the vehicle form, clearing the type, distance and personal use given
 // before it (FL live run 2, 2026-10-21: the Cascadia's Tractor was cleared three times). With a VIN,
 // the form's answers wait for the decoded year (pagekit waitFor).
@@ -513,6 +520,11 @@ const UM_LIMIT = umLimit(STANDARDS.umCsl);
 // Texas split. Tried after the CSL, so a list offering it keeps the CSL. Only TNI's own amount has a
 // split here: an agent's other amount drops it, and its CSL missing is the agent's.
 const umSplitAlias = (/** @type {number} */ a) => (a === STANDARDS.umCsl ? [UM_SPLIT] : []);
+// A list offering neither (VA starts at $125,000 Combined Single Limit; IN's UMBI and UIMBI had
+// neither either, 0.9.31): the question is the agent's at once, with this note, never a failed fill,
+// and the fill never picks another amount, the lowest offered or any other (TNI, 2026-11-13, W48-11).
+const umUnoffered = (/** @type {string} */ what) => (/** @type {number} */ a) => `GEICO doesn't offer ${usd(a)} ${what} here (${
+  a === STANDARDS.umCsl ? `neither ${umLimit(a)} nor ${UM_SPLIT}` : `no ${umLimit(a)}`}): pick the limit yourself. The fill doesn't pick another amount.`;
 const PAY_PLAN = '11 Payments';
 
 // Farthest one-way distance: the intake's radius in miles, as GEICO's band; long haul ("Unlimited",
@@ -1304,7 +1316,7 @@ export const geico = {
     ]),
     ...on(VEHICLES, { whenShown: VEHICLE_FORM }, [
       { concept: 'vehicle.vin', field: 'YesNoPreQuoteHaveFullVinActivity', ask: 'Entering the customer\'s VIN can help speed things up. Do you have it handy?', path: 'vehicles[].vin', name: 'VIN at hand',
-        kind: 'bool', source: 'derived', value: (r, a) => (hasVin(r, a) ? true : null), note: (r, a) => (hasVin(r, a) ? null : 'The intake has no VIN for this vehicle: answer it yourself.') },
+        kind: 'bool', source: 'derived', value: (r, a) => (hasVin(r, a) ? true : null), note: vinAtHandNote },
       { concept: 'vehicle.vin', field: 'GiveVinPreQuote', path: 'vehicles[].vin', name: 'VIN' },
       { concept: 'vehicle.year', field: 'GiveYear', ask: 'Year', path: 'vehicles[].year', name: 'Vehicle year', kind: 'choice', verifyOnly: hasVin },
       { concept: 'vehicle.make', field: 'GiveMake', path: 'vehicles[].make', name: 'Vehicle make', kind: 'choice', verifyOnly: hasVin },
@@ -1341,6 +1353,8 @@ export const geico = {
     // The trailer form (NE): the active trailer's answers, never a vehicle's.
     ...on(VEHICLES, { whenShown: TRAILER_FORM }, [
       { concept: 'trailer.year', field: 'GiveYear', ask: 'Year', path: 'trailers[].year', name: 'Trailer year', kind: 'choice' },
+      // The trailer form's make is a text box (the vehicle form's a list, GiveMake): the intake's (W48-05).
+      { concept: 'trailer.make', field: 'GiveCustomMake', ask: 'Make', path: 'trailers[].make', name: 'Trailer make' },
       // 19 kinds of trailer: a gooseneck hitch isn't a Gooseneck Trailer.
       { concept: 'trailer.type', field: 'GiveOtherVehicleType', q: 'GiveOtherVehicleType.trailer', ask: 'Which of the following best describes the customer\'s trailer?', name: 'Trailer type (Dry Van is Dry Freight Trailer, Flatbed Flatbed Trailer, Reefer Refrigerated Dry Freight Trailer, Lowboy Lowboy Trailer, Tanker Tank Trailer; else the agent\'s pick)',
         kind: 'choice', source: (r, a) => (trailerType(r, a) ? 'derived' : null), value: trailerType, note: (r, a) => (trailerType(r, a) ? null : typeNote('trailer', trailerOf)(r, a)) },
@@ -1449,18 +1463,23 @@ export const geico = {
       // TNI's $100,000 CSL, in every state (FL live run 4, 2026-10-21, W43-17: GEICO pre-selected
       // $750,000); Texas lists only split limits, $100,000/$300,000 there (W43-33), but CSL ones with
       // a CSL liability or NTL (2026-10-26 live run: no split option, UM left at GEICO's $300,000):
-      // $100,000 CSL then. Elsewhere a list with split limits only takes $100,000/$300,000 (W47-03); a state
-      // without either option leaves it to the agent. After NTL is
+      // $100,000 CSL then. Elsewhere a list with split limits only takes $100,000/$300,000 (W47-03); a list
+      // without either option (VA) is the agent's at once, with umUnoffered's note, never another
+      // amount (TNI, 2026-11-13, W48-11). After NTL is
       // accepted GEICO resets it; GEICO fills one answer a round in page order, so UM comes after. GA and SC caption it "(UMBI)", SC asks underinsured
       // separately: the same limit (W43-33, TNI, 2026-10-21).
       { concept: 'coverage.um', q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury (TNI: ${usd(STANDARDS.umCsl)} CSL; TX ${UM_SPLIT})`,
         kind: 'choice', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT), choiceAliases: (r) => (texas(r) ? [UM_LIMIT] : umSplitAlias(STANDARDS.umCsl)),
+        unofferedNote: umUnoffered('uninsured motorist bodily injury')(STANDARDS.umCsl),
         // Texas' split is its own exception: the standard amount applies elsewhere only.
-        std: { id: 'umCsl', applies: (r) => !texas(r), write: umLimit, aliases: umSplitAlias, name: (a) => `Uninsured motorist bodily injury (TNI: ${usd(a)} CSL; TX ${UM_SPLIT})` } },
+        std: { id: 'umCsl', applies: (r) => !texas(r), write: umLimit, aliases: umSplitAlias, name: (a) => `Uninsured motorist bodily injury (TNI: ${usd(a)} CSL; TX ${UM_SPLIT})`,
+          unofferedNote: umUnoffered('uninsured motorist bodily injury') } },
       { concept: 'coverage.um', q: 'UninsuredMotoristUmbi', ask: 'Uninsured Motorist Bodily Injury (UMBI)', control: 'select', tni: 'geico.um', name: `Uninsured motorist bodily injury, UMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
-        kind: 'choice', source: 'standard', value: () => UM_LIMIT, choiceAliases: () => umSplitAlias(STANDARDS.umCsl), std: { id: 'umCsl', write: umLimit, aliases: umSplitAlias, name: (a) => `Uninsured motorist bodily injury, UMBI (TNI: ${usd(a)} CSL)` } },
+        kind: 'choice', source: 'standard', value: () => UM_LIMIT, choiceAliases: () => umSplitAlias(STANDARDS.umCsl), unofferedNote: umUnoffered('uninsured motorist bodily injury (UMBI)')(STANDARDS.umCsl),
+        std: { id: 'umCsl', write: umLimit, aliases: umSplitAlias, name: (a) => `Uninsured motorist bodily injury, UMBI (TNI: ${usd(a)} CSL)`, unofferedNote: umUnoffered('uninsured motorist bodily injury (UMBI)') } },
       { concept: 'coverage.um', q: 'UnderinsuredMotorist', ask: 'Underinsured Motorist Bodily Injury (UIMBI)', control: 'select', tni: 'geico.um', name: `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(STANDARDS.umCsl)} CSL)`,
-        kind: 'choice', source: 'standard', value: () => UM_LIMIT, choiceAliases: () => umSplitAlias(STANDARDS.umCsl), std: { id: 'umCsl', write: umLimit, aliases: umSplitAlias, name: (a) => `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(a)} CSL)` } },
+        kind: 'choice', source: 'standard', value: () => UM_LIMIT, choiceAliases: () => umSplitAlias(STANDARDS.umCsl), unofferedNote: umUnoffered('underinsured motorist bodily injury (UIMBI)')(STANDARDS.umCsl),
+        std: { id: 'umCsl', write: umLimit, aliases: umSplitAlias, name: (a) => `Underinsured motorist bodily injury, UIMBI (TNI: ${usd(a)} CSL)`, unofferedNote: umUnoffered('underinsured motorist bodily injury (UIMBI)') } },
       // TNI, 2026-10-27: when a state asks UM/UIM type or deductible (another form of the UM
       // questions), type is Add-On and deductible $1,000; the deductible isn't always shown.
       { concept: 'coverage.um', q: 'UninsuredMotoristDeductible', ask: 'Uninsured Motorist Deductible', control: 'select', tni: 'geico.um',
