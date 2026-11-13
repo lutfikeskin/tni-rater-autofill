@@ -56,5 +56,5 @@ test('coverage: AmWINS fields whose ids are not in the mock are reported as drif
 test('privacy scan catches client-looking data and lets synthetic values through', () => {
   assert.deepEqual(findPii('VIN 1HGCM82633A004352, call (312) 555-8899, mail jo@gmail.com, 617 Wheaton Rd, SSN 123-45-6789, USDOT 1234567').map((h) => h.kind).sort(),
     ['email', 'phone', 'ssn', 'street', 'usdot', 'vin']);
-  assert.deepEqual(findPii('client@example.test (402) 555-0100 1 Test Way 54DC4W1B5KS800000 2025 RAM PROMASTER 2500'), []);
+  assert.deepEqual(findPii('client@example.test (402) 555-0100 1 Test Way 54DC4W1B0KS800000 2025 RAM PROMASTER 2500'), []);
 });

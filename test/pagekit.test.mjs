@@ -1565,10 +1565,10 @@ test('the trailer page gets the trailer\'s answers and the vehicle page the vehi
   const record = {
     applicant: {}, garaging: { street: '1 Test Way', city: 'Testville', state: 'TN', zip: '37000' },
     operations: { businessClass: 'Freight Hauler', radius: 'Unlimited' }, drivers: [], priorInsurance: [], coverage: {}, claims: {},
-    vehicles: [{ type: 'Semi Truck', year: 2013, make: 'PETERBILT', model: '388', vin: '1XPWD40X1DD000001', value: 60000 }],
-    trailers: [{ type: 'Flatbed', year: 2019, make: 'WILSON', vin: '1W1MAFZB0KA000002', value: 45000 }], trailerInfo: {},
+    vehicles: [{ type: 'Semi Truck', year: 2013, make: 'PETERBILT', model: '388', vin: '1XPWD40X0DD000001', value: 60000 }],
+    trailers: [{ type: 'Flatbed', year: 2019, make: 'WILSON', vin: '1W1MAFZB1KA000002', value: 45000 }], trailerInfo: {},
   };
-  for (const [page, vin, value] of [['AddTrailer', '1W1MAFZB0KA000002', '45000'], ['AddVehicle', '1XPWD40X1DD000001', '60000']]) {
+  for (const [page, vin, value] of [['AddTrailer', '1W1MAFZB1KA000002', '45000'], ['AddVehicle', '1XPWD40X0DD000001', '60000']]) {
     const h = harness({ ext: true, search: `?pageName=${page}` });
     const box = addExtText(h, 'c', page === 'AddTrailer' ? '2A29' : '2B20', { caption: page === 'AddTrailer' ? 'VIN' : 'Vehicle Identification Number (VIN)', ref: 'RiskInput.VIN', row: '8_3' });
     const worth = addExtText(h, 'c', page === 'AddTrailer' ? '2B04' : '2CE8', { ref: 'RiskInput.NonPAValue', row: '8_3',
@@ -1826,7 +1826,7 @@ test('a data-model name fenced off this page does not keep a text rule from its 
 // and an intake ZIP still fills (or is flagged when the page says another).
 test('vehicle ZIP: Progressive\'s own ZIP is left when the intake has none; empty at the end stays the agent\'s', async () => {
   const zipRun = async (intakeZip, pageZip, { page = 'AddVehicle', caption = 'Zip code where the vehicle is located', vinSets } = {}) => {
-    const record = { applicant: { name: 'Sample Test LLC' }, garaging: { zip: intakeZip }, operations: {}, drivers: [], vehicles: [{ vin: '1FTBW3XM5HKA00001', type: 'Van' }], trailers: [{ vin: '1GRAA0621FB000001', type: 'Dry Van' }], priorInsurance: [], coverage: {}, claims: {} };
+    const record = { applicant: { name: 'Sample Test LLC' }, garaging: { zip: intakeZip }, operations: {}, drivers: [], vehicles: [{ vin: '1FTBW3XM9HKA00001', type: 'Van' }], trailers: [{ vin: '1GRAA0624FB000001', type: 'Dry Van' }], priorInsurance: [], coverage: {}, claims: {} };
     const h = harness({ ext: true, search: `?pageName=${page}` });
     const zip = addExtText(h, 'c', '2C02', { caption, ref: 'RiskInput.PrimaryZIP', required: true, value: pageZip });
     zip.input.value = pageZip;

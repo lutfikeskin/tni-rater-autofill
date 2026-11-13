@@ -35,7 +35,7 @@ export const OUT = path.join(root, 'test/fixtures/geico/quote.html');
 // The fake identity. Shapes the committed-fixture scan (scripts/lib/privacy.mjs ALLOWED) accepts; the
 // premiums repeat their digits so nobody mistakes them for a rate.
 export const FAKE = {
-  vins: ['1FTBR3X80MKA12345', '1FTBR3X87MKA12399', '54DC4W1B5KS800000'],
+  vins: ['1FTBR3X89MKA12346', '1FTBR3X86MKA12398', '54DC4W1B0KS800000'],
   email: 'client@example.test', phone: '(402) 555-0100',
   first: 'SAMPLE', last: 'DRIVER', owner: 'SAMPLE DRIVER', agent: 'SAMPLE AGENT', agency: 'SAMPLE AGENCY', business: 'SAMPLE TRUCKING LLC',
   street: '1 Test Way', zip: '68102', city: 'OMAHA', dob: '01/02/1968',
