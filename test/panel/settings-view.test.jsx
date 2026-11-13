@@ -36,7 +36,8 @@ test('the head, the setup note, the initials and the version', () => {
   fireEvent.click($(container, '#settings-done'));
   expect(calls).toEqual([['done']]);
   const note = $(container, '#setup-note');
-  expect([note.hidden, note.getAttribute('role'), $(container, '#version').textContent]).toEqual([true, 'status', '']);
+  // No live role of its own: it says its words through #announce as it shows them (announce.js).
+  expect([note.hidden, note.getAttribute('role'), $(container, '#version').textContent]).toEqual([true, null, '']);
   act(() => { state.health = { version: 'Version 0.9.28', setup: 'To finish setup, add your initials and set the usage server (Advanced).', agentMissing: true }; });
   expect([note.hidden, $(container, '#setup-text').textContent, $(container, '#version').textContent])
     .toEqual([false, 'To finish setup, add your initials and set the usage server (Advanced).', 'Version 0.9.28']);
@@ -197,7 +198,7 @@ test('the developer recording: only with its buttons, which follow a recording, 
   act(() => { state.devrec = { on: true, status: 'Recording 0:05 · 12 events.', unfinished: { id: 'geico-x', label: 'Save 2 unfinished recordings, one by one' } }; });
   expect(shown()).toEqual(['devrec-note', 'devrec-stop', 'devrec-recover']);
   expect([$(container, '#devrec-recover').textContent, $(container, '#devrec-recover').dataset.id]).toEqual(['Save 2 unfinished recordings, one by one', 'geico-x']);
-  expect([$(container, '#devrec-status').hidden, $(container, '#devrec-status').getAttribute('role'), $(container, '#devrec-status').textContent]).toEqual([false, 'status', 'Recording 0:05 · 12 events.']);
+  expect([$(container, '#devrec-status').hidden, $(container, '#devrec-status').getAttribute('role'), $(container, '#devrec-status').textContent]).toEqual([false, null, 'Recording 0:05 · 12 events.']);
   expect($(container, '#advanced > summary').textContent, 'seen with Advanced folded').toBe('Advanced, for setup only · Recording');
   for (const id of ['devrec-note', 'devrec-stop', 'devrec-recover']) fireEvent.click($(container, `#${id}`));
   expect(calls).toEqual(['start', 'note', 'stop', 'recover']);
@@ -270,7 +271,7 @@ test('while answers go in, the Filling switches say a change reaches what is fil
   const calls = [];
   const { container } = render(<Settings act={acts(calls)} />);
   const note = $(container, '#filling-now-note');
-  expect([note.hidden, note.getAttribute('role')]).toEqual([true, 'status']);
+  expect([note.hidden, note.getAttribute('role')]).toEqual([true, null]);
   act(() => { state.filling = true; });
   expect([note.hidden, note.textContent]).toEqual([false, 'Answers are going in. A change here reaches what is filled after (a follow-up on this page included), and this fill only if it is still getting ready. To keep Continue from being clicked now, press Stop below.']);
   // The switches still work: the change reaches what is filled after (each fill reads Continue's

@@ -6126,9 +6126,9 @@ test('a saved problem report says in the footer whether it reached TNI', async (
     const el = (id) => ({ id, value: '', hidden: true, disabled: false, textContent: '', attrs: {}, focus() {}, setAttribute(k, v) { this.attrs[k] = v; }, addEventListener: (type, fn) => { handlers[id] = fn; } });
     const els = Object.fromEntries(['report-problem', 'problem-form', 'problem-text', 'problem-kind', 'cancel-problem', 'send-problem', 'problem-said'].map((id) => [id, el(id)]));
     let release;
-    const logged = [];
+    const logged = [], announced = [];
     const context = { state: { intake: null, tab: null }, $: (id) => els[id], document: { addEventListener() {} }, setInterval() {}, setTimeout: () => 1, clearTimeout() {},
-      unlockAudio() {}, renderUsage() {}, announce() {}, redactor: () => (x) => x, redactionTerms: () => [], pageOf: (u) => u, problemContext: () => ({}),
+      unlockAudio() {}, renderUsage() {}, announce: (t) => announced.push(t), redactor: () => (x) => x, redactionTerms: () => [], pageOf: (u) => u, problemContext: () => ({}),
       crypto: { randomUUID: () => `id-${logged.length}` }, problemSaidTimer: null, PROBLEM_SAID_MS: 10_000, problemRun: 0,
       PROBLEM_KINDS: ['wrong-answer', 'stuck', 'missing-question', 'slow', 'other'], problemRef: () => 'REF',
       uploadNow: () => new Promise((r) => { release = r; }),
@@ -6136,7 +6136,7 @@ test('a saved problem report says in the footer whether it reached TNI', async (
         eventFate: async () => { if (fate instanceof Error) throw fate; return fate; } } };
     vm.runInNewContext(['problemSaid', 'problemFate', 'sayProblem', 'wireUsage'].map(extractFunction).join('\n'), context);
     context.wireUsage();
-    return { els, handlers, logged, release: () => release?.(), context };
+    return { els, handlers, logged, announced, release: () => release?.(), context };
   };
   // Refused by the server, though the upload ended ok: not said as sent.
   const refused = make({ fate: 'refused' });
@@ -6147,6 +6147,8 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   refused.release();
   await sending;
   assert.match(refused.els['problem-said'].textContent, /didn't take it/);
+  // Each line the footer shows is said to screen readers too, through #announce.
+  assert.deepEqual(refused.announced.filter((t) => t !== 'Thanks — saved with the usage log.'), ['Report saved. Sending it to TNI…', refused.els['problem-said'].textContent]);
   assert.equal(refused.logged[0].id, 'id-0', 'logged with the id its fate is read by');
   // Not saved: said, its text kept and the box left open; nothing is sent.
   const lost = make({ saved: false });
@@ -6190,7 +6192,8 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   assert.deepEqual([slow.els['problem-text'].value, slow.els['problem-form'].hidden, slow.els['problem-said'].textContent], ['And the drivers page', false, '']);
   assert.equal(slow.logged.length, 1, 'the first report is still saved, and sent');
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
-  assert.match(html, /<div id="problem-form"[\s\S]*?<\/div>\n\s+<\/div>\n\s+<!--[^\n]*-->\n\s+<p id="problem-said" class="problem-said" role="status" hidden><\/p>/);
+  // The line has no live role: what it says goes through #announce (announce.js) as it shows.
+  assert.match(html, /<div id="problem-form"[\s\S]*?<\/div>\n\s+<\/div>\n\s+<!--[^\n]*-->\n\s+<p id="problem-said" class="problem-said" hidden><\/p>/);
 });
 
 // Audit 2026-11-07, UX-12a: a new agent met a dense panel whose only sign of missing setup was a dot
