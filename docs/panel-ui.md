@@ -37,3 +37,12 @@ A list whose items can change while it is on screen is keyed by what each item i
 ## Motion
 
 With the system's reduced-motion setting on, nothing in the panel slides, spins or fades: one rule at the end of `sidepanel.css` turns off every animation and transition, on elements and on their `::before` and `::after` content, and the fill's bar and spinner change to a steady full bar and a still "…" so they don't read as stuck. Scrolling the panel does it too: every `scrollIntoView` takes its `behavior` from `scrollBehavior()` (`coordinator.js`), `auto` with reduced motion and `smooth` otherwise, never a fixed `smooth`. `test/panel-contrast.test.mjs` checks the CSS, and the safety tests check Settings' scroll to a box.
+
+## Checked against their pattern
+
+A control the panel builds itself (a switch, a disclosure, and any tab list or menu to come) is held to its WAI-ARIA pattern in `test/panel/aria-patterns.test.jsx`, with `checkPattern` from `@ui-sdk/core/testing`, a development dependency pinned exactly that nothing in the extension imports:
+
+- A switch is an `input type="checkbox"` with `role="switch"` and a name (its row's label), and Space turns it on and off.
+- A disclosure is a named button with `aria-expanded` `true` or `false` and an `aria-controls` that names a real element; Enter and Space open it and close it again. A button that only opens something (a second press asks again) isn't a disclosure: Clear log's `aria-expanded` is the one left out of the check for that.
+
+A new control of these kinds gets its `checkPattern` there, with its button's act given as the panel does it. A sheet's Tab and Escape are the panel's ([Over the panel](#over-the-panel)), so a view alone can't pass the dialog pattern.
