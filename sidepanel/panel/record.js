@@ -90,7 +90,7 @@ function openSettings(focusId = null) {
   if ($('assistant').contains($(focusId))) $('assistant').open = true;
   if (focusId === 'ai-openai-key') openKeyForm(true);
   else $(focusId).focus();
-  $(focusId).scrollIntoView({ block: 'center', behavior: 'smooth' });
+  $(focusId).scrollIntoView({ block: 'center', behavior: scrollBehavior() });
 }
 
 // The assistant's key in Settings: Add key (or Change) opens the box with the saved key in it, as

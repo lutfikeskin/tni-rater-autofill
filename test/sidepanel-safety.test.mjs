@@ -6239,10 +6239,14 @@ test('Home\'s setup checklist is ticked by the health checks, and gone once all 
     const box = { focused: false, focus() { this.focused = true; }, scrollIntoView() {} };
     const fold = (holds) => ({ open: false, contains: (el) => el === box && holds });
     const ui = { view: {}, advanced: fold(focus === 'server-url'), assistant: fold(focus === 'ai-on'), [focus]: box };
-    const opened = { state: {}, $: (id) => ui[id], showScreen: () => {}, openKeyForm: () => {} };
+    const scrolled = [];
+    box.scrollIntoView = (o) => scrolled.push(o.behavior);
+    const opened = { state: {}, $: (id) => ui[id], showScreen: () => {}, openKeyForm: () => {}, matchMedia: () => ({ matches: true }) };
     vm.runInNewContext(extractFunction('openSettings'), opened);
     opened.openSettings(focus);
     assert.deepEqual([box.focused, ui.advanced.open, ui.assistant.open], [true, focus === 'server-url', focus === 'ai-on'], focus);
+    // It scrolls to the box as the panel's other scrolling does (scrollBehavior): not smoothly with reduced motion.
+    assert.deepEqual(scrolled, ['auto'], focus);
   }
 });
 

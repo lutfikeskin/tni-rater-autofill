@@ -77,7 +77,7 @@ function AiCard({ card }) {
           {card.tip ? <div className="ai-tip">{card.tip}</div> : null}
           {card.why ? <div className="ai-why">{card.why}</div> : null}
           {(card.rules ?? []).map((rule, i) => (
-            <details key={i} className="ai-why ai-rule"><summary>Read the whole rule</summary>{rule}</details>
+            <details key={`${i}:${rule}`} className="ai-why ai-rule"><summary>Read the whole rule</summary>{rule}</details>
           ))}
           <div className="ai-actions">
             <PutButton className="primary accept" label="Use this answer" put={card.use} />
