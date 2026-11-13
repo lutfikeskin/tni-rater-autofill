@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
-import { Cards, mountCards } from '../../sidepanel/panel/cards-view.jsx';
+import { Cards, IssueCard, mountCards } from '../../sidepanel/panel/cards-view.jsx';
 
 // The cards at the top of the page view in React (React PR 7, 2026-11-01): what showCarrierNote,
 // showStateNote, showStopPage, showReviewMode and renderSteps wrote on the page with issueCard,
@@ -98,4 +98,17 @@ test('mountCards draws before it returns', () => {
     expect(['fill-waiting', 'issues', 'carrier-note', 'fill-error'].map((id) => !!host.querySelector(`#${id}`))).toEqual([true, true, true, true]);
   });
   host.remove();
+});
+
+// docs/panel-ui.md, "Lists": a card's buttons are keyed by their label, not their place, so a card
+// said again with a button gone keeps the agent's focus on the button they were on. Keyed by place,
+// the first button's node took the second's label and the focused one was removed.
+test('a card said again with a button gone keeps focus on the button the agent was on', () => {
+  const said = (actions) => ({ tone: 'warn', title: 'Owner not verified', text: null, notes: [], compare: [], role: 'status',
+    actions: actions.map((label) => ({ label, className: 'ghost', onClick() {} })) });
+  const { container, rerender } = render(<IssueCard {...said(['Looks right', 'See intake'])} />);
+  const button = [...container.querySelectorAll('.issue-actions button')].find((b) => b.textContent === 'See intake');
+  button.focus();
+  rerender(<IssueCard {...said(['See intake'])} />);
+  expect([document.activeElement, button.isConnected, button.textContent]).toEqual([button, true, 'See intake']);
 });

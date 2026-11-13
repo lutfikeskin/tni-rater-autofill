@@ -4785,8 +4785,8 @@ test('client details open in a drawer that takes focus and gives it back', () =>
   assert.equal(context.state.detailsOpen, false);
   assert.equal(context.document.activeElement, opener, 'focus back on the row that opened it');
   assert.match(extractFunction('jumpTo'), /flushSync\(openDetails\);/, 'Show in client details opens it at the field');
-  assert.match(extractFunction('wire'), /e\.key === 'Escape' && state\.detailsOpen[^\n]*closeDetails\(\)/);
-  assert.match(extractFunction('wire'), /state\.detailsOpen && !\$\('details-view'\)\.hidden \? \$\('details-view'\)/, 'Tab stays inside it');
+  // Escape closes it and Tab stays inside it (overlayKey: test/panel/overlay-keys.test.jsx).
+  assert.match(extractFunction('wire'), /\{ el: \$\('details-view'\), open: !!state\.detailsOpen, close: closeDetails, modal: true \}/);
 });
 
 // The panel in a window of its own (TNI, 2026-10-22: keep it on another monitor while the quote
@@ -6126,9 +6126,9 @@ test('a saved problem report says in the footer whether it reached TNI', async (
     const el = (id) => ({ id, value: '', hidden: true, disabled: false, textContent: '', attrs: {}, focus() {}, setAttribute(k, v) { this.attrs[k] = v; }, addEventListener: (type, fn) => { handlers[id] = fn; } });
     const els = Object.fromEntries(['report-problem', 'problem-form', 'problem-text', 'problem-kind', 'cancel-problem', 'send-problem', 'problem-said'].map((id) => [id, el(id)]));
     let release;
-    const logged = [];
+    const logged = [], announced = [];
     const context = { state: { intake: null, tab: null }, $: (id) => els[id], document: { addEventListener() {} }, setInterval() {}, setTimeout: () => 1, clearTimeout() {},
-      unlockAudio() {}, renderUsage() {}, announce() {}, redactor: () => (x) => x, redactionTerms: () => [], pageOf: (u) => u, problemContext: () => ({}),
+      unlockAudio() {}, renderUsage() {}, announce: (t) => announced.push(t), redactor: () => (x) => x, redactionTerms: () => [], pageOf: (u) => u, problemContext: () => ({}),
       crypto: { randomUUID: () => `id-${logged.length}` }, problemSaidTimer: null, PROBLEM_SAID_MS: 10_000, problemRun: 0,
       PROBLEM_KINDS: ['wrong-answer', 'stuck', 'missing-question', 'slow', 'other'], problemRef: () => 'REF',
       uploadNow: () => new Promise((r) => { release = r; }),
@@ -6136,7 +6136,7 @@ test('a saved problem report says in the footer whether it reached TNI', async (
         eventFate: async () => { if (fate instanceof Error) throw fate; return fate; } } };
     vm.runInNewContext(['problemSaid', 'problemFate', 'sayProblem', 'wireUsage'].map(extractFunction).join('\n'), context);
     context.wireUsage();
-    return { els, handlers, logged, release: () => release?.(), context };
+    return { els, handlers, logged, announced, release: () => release?.(), context };
   };
   // Refused by the server, though the upload ended ok: not said as sent.
   const refused = make({ fate: 'refused' });
@@ -6147,6 +6147,8 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   refused.release();
   await sending;
   assert.match(refused.els['problem-said'].textContent, /didn't take it/);
+  // Each line the footer shows is said to screen readers too, through #announce.
+  assert.deepEqual(refused.announced.filter((t) => t !== 'Thanks — saved with the usage log.'), ['Report saved. Sending it to TNI…', refused.els['problem-said'].textContent]);
   assert.equal(refused.logged[0].id, 'id-0', 'logged with the id its fate is read by');
   // Not saved: said, its text kept and the box left open; nothing is sent.
   const lost = make({ saved: false });
@@ -6190,7 +6192,8 @@ test('a saved problem report says in the footer whether it reached TNI', async (
   assert.deepEqual([slow.els['problem-text'].value, slow.els['problem-form'].hidden, slow.els['problem-said'].textContent], ['And the drivers page', false, '']);
   assert.equal(slow.logged.length, 1, 'the first report is still saved, and sent');
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
-  assert.match(html, /<div id="problem-form"[\s\S]*?<\/div>\n\s+<\/div>\n\s+<!--[^\n]*-->\n\s+<p id="problem-said" class="problem-said" role="status" hidden><\/p>/);
+  // The line has no live role: what it says goes through #announce (announce.js) as it shows.
+  assert.match(html, /<div id="problem-form"[\s\S]*?<\/div>\n\s+<\/div>\n\s+<!--[^\n]*-->\n\s+<p id="problem-said" class="problem-said" hidden><\/p>/);
 });
 
 // Audit 2026-11-07, UX-12a: a new agent met a dense panel whose only sign of missing setup was a dot
@@ -6236,10 +6239,14 @@ test('Home\'s setup checklist is ticked by the health checks, and gone once all 
     const box = { focused: false, focus() { this.focused = true; }, scrollIntoView() {} };
     const fold = (holds) => ({ open: false, contains: (el) => el === box && holds });
     const ui = { view: {}, advanced: fold(focus === 'server-url'), assistant: fold(focus === 'ai-on'), [focus]: box };
-    const opened = { state: {}, $: (id) => ui[id], showScreen: () => {}, openKeyForm: () => {} };
+    const scrolled = [];
+    box.scrollIntoView = (o) => scrolled.push(o.behavior);
+    const opened = { state: {}, $: (id) => ui[id], showScreen: () => {}, openKeyForm: () => {}, matchMedia: () => ({ matches: true }) };
     vm.runInNewContext(extractFunction('openSettings'), opened);
     opened.openSettings(focus);
     assert.deepEqual([box.focused, ui.advanced.open, ui.assistant.open], [true, focus === 'server-url', focus === 'ai-on'], focus);
+    // It scrolls to the box as the panel's other scrolling does (scrollBehavior): not smoothly with reduced motion.
+    assert.deepEqual(scrolled, ['auto'], focus);
   }
 });
 
@@ -9795,6 +9802,44 @@ test('a page with nothing to fill and nothing left offers Continue, a fill that 
   assert.match(extractFunction('showScreen'), /renderDock\(\);\n\}$/);
 });
 
+// Settings closed with keyboard focus inside it gives focus back to its button in the header, however
+// it closed (docs/panel-ui.md, "Over the panel"): Done and Escape did, but a new intake loaded while
+// it was open (intake.js) left focus on a hidden box, so the next Tab started from the page's top.
+test('Settings closed with focus in it gives focus back to its button, however it closed', () => {
+  const document = { activeElement: null };
+  const nodes = {};
+  const el = (id) => (nodes[id] ??= { id, hidden: false, attrs: {}, inside: [], setAttribute(k, v) { this.attrs[k] = v; },
+    contains(n) { return n === this || this.inside.includes(n); }, focus() { document.activeElement = this; } });
+  const box = { id: 'agent-initials' };
+  el('settings').inside.push(box);
+  const state = { intake: {}, settingsOpen: true, view: 'check' };
+  const context = { state, document, $: el, renderDock() {} };
+  vm.runInNewContext(['showScreen', 'closeSettings'].map(extractFunction).join('\n'), context);
+  context.showScreen();
+  document.activeElement = box;
+  // Closed by the panel itself (a new intake: intake.js sets settingsOpen and draws).
+  state.settingsOpen = false;
+  context.showScreen();
+  assert.deepEqual([el('settings').hidden, document.activeElement?.id, el('settings-btn').attrs['aria-expanded']], [true, 'settings-btn', 'false']);
+  // Focus elsewhere (the page's answers) stays where it is.
+  state.settingsOpen = true;
+  context.showScreen();
+  const row = { id: 'step-fill' };
+  document.activeElement = row;
+  state.settingsOpen = false;
+  context.showScreen();
+  assert.equal(document.activeElement, row);
+  // Done, Escape and its button close it through closeSettings, which always gives its button focus.
+  state.settingsOpen = true;
+  context.showScreen();
+  context.closeSettings();
+  assert.deepEqual([state.settingsOpen, el('settings').hidden, document.activeElement?.id], [false, true, 'settings-btn']);
+  const wire = extractFunction('wire');
+  assert.match(wire, /\$\('settings-btn'\)\.addEventListener\('click', \(\) => \{ if \(state\.settingsOpen\) closeSettings\(\); else openSettings\(\); \}\);/);
+  assert.match(wire, /done: \(\) => closeSettings\(\),/);
+  assert.match(wire, /\{ el: \$\('settings'\), open: !!state\.settingsOpen, close: closeSettings \},\n\s+\]\)\);/);
+});
+
 // Reviews of #389: Continue's switch was read before the page check (pageMoved), so one flipped
 // while the panel checked the page missed the fill about to begin, and GEICO's add clicks kept the
 // value read with the list. Read after the page check, right before the options go to the kit, it
@@ -10723,8 +10768,7 @@ test('the PDF sheet: what openPdf and drawPdf say, the page copied onto the shee
   const wire = extractFunction('wire');
   assert.match(wire, /mountPdf\(\$\('pdf-view'\), \{\s+close: \(\) => closePdf\(\),\s+tab: \(\) => openPdfInTab\(\),\s+focus: \(\) => pdfZoom\(Math\.max\(state\.pdf\?\.zoom \?\? 1, PDF_FOCUS_ZOOM\), \{ focus: true \}\),\s+page: \(step\) => pdfPage\(step\),\s+zoomIn: \(\) => pdfZoom\(PDF_ZOOMS\.find\(\(z\) => z > state\.pdf\?\.zoom\)\),\s+zoomOut: \(\) => pdfZoom\(PDF_ZOOMS\.findLast\(\(z\) => z < state\.pdf\?\.zoom\)\),\s+fit: \(\) => pdfZoom\(1\),\s+\}\);\s+pdfPan\(\$\('pdf-scroll'\)\);/);
   // The sheet keeps focus and Escape closes it, as before: #pdf-view stays the page's host.
-  assert.match(wire, /if \(e\.key === 'Escape' && state\.pdf && !\$\('pdf-view'\)\.hidden\) \{ e\.preventDefault\(\); closePdf\(\); return; \}/);
-  assert.match(wire, /const modal = state\.pdf && !\$\('pdf-view'\)\.hidden \? \$\('pdf-view'\)/);
+  assert.match(wire, /document\.addEventListener\('keydown', \(e\) => overlayKey\(e, \[\n\s+\{ el: \$\('pdf-view'\), open: !!state\.pdf, close: closePdf, modal: true \},/);
 });
 
 // The client strip (the maintainer, 2026-10-23): Change file and Clear were behind a ⋯ menu (three

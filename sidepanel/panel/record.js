@@ -50,10 +50,13 @@ function render() {
 
 // Settings over everything but the header; otherwise the start screen, or the quote in the view its
 // steps picked (step 1's checks, or the page's answers), with the intake PDF in a sheet over it.
-// The dock goes away with Settings.
+// The dock goes away with Settings. Settings closed with keyboard focus in it, however it closed
+// (Done, Escape, a new intake loaded), gives focus back to its button in the header, not to the page
+// (docs/panel-ui.md, "Over the panel").
 function showScreen() {
   const has = !!state.intake;
   const settings = state.settingsOpen;
+  const focusLeft = !settings && !$('settings').hidden && $('settings').contains(document.activeElement);
   $('settings').hidden = !settings;
   $('pdf-view').hidden = !(has && !settings && state.pdf);
   $('details-view').hidden = !(has && !settings && state.detailsOpen && !state.pdf);
@@ -65,7 +68,15 @@ function showScreen() {
   $('check-view').hidden = settings || !has || state.view !== 'check';
   $('page-view').hidden = settings || !has || state.view !== 'page';
   $('settings-btn').setAttribute('aria-expanded', String(settings));
+  if (focusLeft) $('settings-btn').focus();
   renderDock();
+}
+
+// Settings closed by Done, Escape or its button: focus on its button (showScreen).
+function closeSettings() {
+  state.settingsOpen = false;
+  showScreen();
+  $('settings-btn').focus();
 }
 
 // Settings, at `focusId` when given (a setup reminder's field, the assistant's switch, its key).
@@ -79,7 +90,7 @@ function openSettings(focusId = null) {
   if ($('assistant').contains($(focusId))) $('assistant').open = true;
   if (focusId === 'ai-openai-key') openKeyForm(true);
   else $(focusId).focus();
-  $(focusId).scrollIntoView({ block: 'center', behavior: 'smooth' });
+  $(focusId).scrollIntoView({ block: 'center', behavior: scrollBehavior() });
 }
 
 // The assistant's key in Settings: Add key (or Change) opens the box with the saved key in it, as
@@ -516,4 +527,4 @@ function releaseUnitForms(list, index) {
   if (gone.length) persistUnitForms(state.tab?.id, state.unitForms);
 }
 
-export { agentEdit, checkShown, firstView, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setFilter, setView, showEmpty, showScreen, toggleDone };
+export { agentEdit, checkShown, closeSettings, firstView, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setFilter, setView, showEmpty, showScreen, toggleDone };
